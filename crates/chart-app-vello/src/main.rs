@@ -182,6 +182,12 @@ struct PerWindowState {
     /// (no dirty mark fired on the way out). We mark dirty once on the
     /// inside→outside transition so the toolbar redraws and clears the highlight.
     was_in_toolbar_zone: bool,
+    /// When this window was created. Used to gate first visibility: we keep a
+    /// freshly-promoted (post-login) window hidden until its chart has bars to
+    /// draw, so the user never sees an empty chart flash for ~2s while data
+    /// loads. A timeout fallback (created_at.elapsed()) shows the window anyway
+    /// if data never arrives, so it can't stay invisible forever.
+    created_at: std::time::Instant,
     /// When true this window is a skeleton placeholder (shown while vault unlock
     /// or first-run wizard is pending).  Skeleton windows suppress tab/toolbar
     /// rendering and chart content — only chrome window controls are drawn.
@@ -1411,6 +1417,7 @@ impl App<'_> {
             delete_window_requested: false,
             last_sidebar_hover_row: None,
             was_in_toolbar_zone: false,
+            created_at: std::time::Instant::now(),
             skeleton,
             render_backend: sidebar_content::state::RenderBackend::VelloGpu,
             instanced_renderer: None,
@@ -4194,12 +4201,29 @@ impl ApplicationHandler for App<'_> {
             self.gpu_frame_pending = false;
 
             // After GpuDone the previous frame has been presented on screen.
-            // Make any newly created windows visible now so they appear with
-            // their first rendered frame rather than a blank white rectangle.
+            // Make any newly created window visible — but hold it back until its
+            // chart actually has bars to draw, so a freshly promoted (post-login)
+            // window doesn't flash an empty chart for ~2s while data loads. A
+            // timeout fallback shows it anyway if data never arrives (so it can
+            // never stay invisible forever).
             for pw in self.windows.values_mut() {
                 if !pw.visible_set {
-                    pw.window.set_visible(true);
-                    pw.visible_set = true;
+                    // Skeleton (loading/login) windows have no bars by design —
+                    // show them immediately (the loading screen IS their content).
+                    // Live windows wait for bars (or a 4s timeout) to avoid the
+                    // empty-chart flash.
+                    let ready = pw.skeleton
+                        || pw.chart
+                            .panel_app
+                            .panel_grid
+                            .active_window()
+                            .map(|w| w.has_data())
+                            .unwrap_or(false)
+                        || pw.created_at.elapsed() >= std::time::Duration::from_secs(4);
+                    if ready {
+                        pw.window.set_visible(true);
+                        pw.visible_set = true;
+                    }
                 }
             }
         }
