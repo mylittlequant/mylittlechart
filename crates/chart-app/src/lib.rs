@@ -105,11 +105,6 @@ const ALL_EXCHANGE_IDS: &[digdigdig3::ExchangeId] = &[
     digdigdig3::ExchangeId::Moex,
 ];
 
-/// How many connectors to dial per tick during the staggered warm-up. 4/tick at
-/// ~116 fps connects all 21 within the first ~50 ms of frames — fast enough to be
-/// ready by the time the user clears the login screen, gentle enough that the
-/// dials don't all land in one frame.
-const CONNECTOR_WARMUP_BATCH: usize = 4;
 
 // =============================================================================
 // Account type helpers
@@ -539,14 +534,6 @@ pub struct ChartApp {
     /// event slips through. Input-driven marks (clicks, settings) are NOT gated
     /// — they set sidebar_data_dirty directly for instant feedback.
     last_sidebar_data_mark: Option<std::time::Instant>,
-
-    /// Cursor into ALL_EXCHANGE_IDS for the staggered connector warm-up. tick()
-    /// dials CONNECTOR_WARMUP_BATCH connectors per frame starting from here until
-    /// the list is exhausted, so the 21 dials spread across the skeleton/loading
-    /// screen instead of bursting in the constructor. Runs on the skeleton window
-    /// too (the bridge is shared and outlives the promote), so data is usually
-    /// flowing by the time the chart appears.
-    connector_warmup_cursor: usize,
 
     /// Last render timing breakdown in microseconds (for PERF diagnostics).
     /// Tuple: (chart_us, toolbar_us, sidebar_us, setup_us)
@@ -1007,7 +994,6 @@ impl ChartApp {
             sidebar_data_dirty: true,
             last_active_leaf: None,
             last_sidebar_data_mark: None,
-            connector_warmup_cursor: 0,
             render_timing_us: (0, 0, 0, 0),
             pending_sub_pane_ratios: std::collections::HashMap::new(),
             pending_sub_pane_above_main: std::collections::HashMap::new(),
@@ -1159,11 +1145,11 @@ impl ChartApp {
         }
 
         // The full set of enabled connectors is NOT connected here (that fired 21
-        // simultaneous dials in the constructor). Instead they connect in small
-        // batches from tick() — see connect_next_connector_batch — so the dials
-        // spread out during the skeleton/loading screen while the user is logging
-        // in. The connector runtime + bridge are shared and outlive the skeleton→
-        // live promote, so by the time the chart appears the connectors are up.
+        // simultaneous dials in the constructor). They warm up once from tick()
+        // via warmup_connectors() → bridge.warmup_all_connectors (bridge-guarded,
+        // off the UI thread) during the skeleton/loading screen. The bridge is
+        // shared and outlives the skeleton→live promote, so by the time the chart
+        // appears the connectors are up and the live window does no connector work.
         // The exchanges actually NEEDED right away (active window + watchlist) are
         // connected eagerly above/below this point.
 
@@ -1308,7 +1294,6 @@ impl ChartApp {
             sidebar_data_dirty: true,
             last_active_leaf: None,
             last_sidebar_data_mark: None,
-            connector_warmup_cursor: 0,
             render_timing_us: (0, 0, 0, 0),
             pending_sub_pane_ratios: std::collections::HashMap::new(),
             pending_sub_pane_above_main: std::collections::HashMap::new(),
@@ -1517,7 +1502,6 @@ impl ChartApp {
             sidebar_data_dirty: true,
             last_active_leaf: None,
             last_sidebar_data_mark: None,
-            connector_warmup_cursor: 0,
             render_timing_us: (0, 0, 0, 0),
             pending_sub_pane_ratios: std::collections::HashMap::new(),
             pending_sub_pane_above_main: std::collections::HashMap::new(),
@@ -1752,10 +1736,9 @@ impl ChartApp {
             }
         }
 
-        // Connectors are warmed up in small batches from tick() (see
-        // connect_next_connector_batch), not all-at-once here — the dials spread
-        // out during the skeleton/loading screen. Exchanges needed immediately
-        // (window + watchlist) are connected eagerly above.
+        // Connectors warm up once from tick() via warmup_connectors() (bridge-
+        // guarded, off the UI thread, during the skeleton screen), not here.
+        // Exchanges needed immediately (window + watchlist) connect eagerly above.
 
         if !skeleton {
             bridge.request_symbols(exchange_id);
@@ -4564,26 +4547,27 @@ impl ChartApp {
 
     }
 
-    /// Dial the next batch of enabled connectors. Called once per tick (including
-    /// on the skeleton/loading window) until the whole ALL_EXCHANGE_IDS list has
-    /// been walked. Spreads the 21 startup dials across many frames so they don't
-    /// burst in one frame, while still being ready well before the user finishes
-    /// the login screen. Idempotent: ensure_connector is a no-op for already-
-    /// connected exchanges (so the eagerly-connected window/watchlist exchanges
-    /// are skipped here). Each ConnectorReady auto-calls request_symbols, so the
-    /// Symbol Search list fills in as the batches land.
-    pub fn connect_next_connector_batch(&mut self) {
-        if self.connector_warmup_cursor >= ALL_EXCHANGE_IDS.len() {
-            return;
-        }
-        let end = (self.connector_warmup_cursor + CONNECTOR_WARMUP_BATCH).min(ALL_EXCHANGE_IDS.len());
-        for &eid in &ALL_EXCHANGE_IDS[self.connector_warmup_cursor..end] {
-            // Respect the per-connector enabled toggle (default on).
-            if self.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
-                self.bridge.ensure_connector(eid);
-            }
-        }
-        self.connector_warmup_cursor = end;
+    /// Warm up all enabled connectors exactly once, via the shared bridge.
+    ///
+    /// The one-shot guard lives in the BRIDGE (which outlives the skeleton→live
+    /// promote), not on ChartApp (which is dropped+recreated by the promote). So
+    /// the dials fire once — during the empty skeleton/loading screen — and the
+    /// live window's call is a no-op. This replaces the old per-ChartApp batch
+    /// cursor, which reset on promote and re-walked all 21 exchanges in the
+    /// visible chart (the source of the 30-40s startup churn). The dials run
+    /// concurrently on the bridge's own runtime, off the UI thread.
+    pub fn warmup_connectors(&self) {
+        let enabled: Vec<digdigdig3::ExchangeId> = ALL_EXCHANGE_IDS
+            .iter()
+            .copied()
+            .filter(|eid| {
+                self.sidebar_state.connector_enabled
+                    .get(eid.as_str())
+                    .copied()
+                    .unwrap_or(true)
+            })
+            .collect();
+        self.bridge.warmup_all_connectors(&enabled);
     }
 
     // -------------------------------------------------------------------------

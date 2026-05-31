@@ -6,6 +6,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, RwLock};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use bar_service::{BarSeries, BarSeriesKey, SharedSeriesMap};
 use trade_service::{SharedTradeMap, TradeSeries, TradeKey, DEFAULT_CAPACITY};
@@ -266,6 +267,13 @@ pub struct DataBridge {
     /// sides see the same `HashMap`. The async REST/WS tasks write orderbook state here;
     /// panels read at render time. Mirrors `trade_map` semantics.
     orderbook_map: SharedOrderbookMap,
+    /// One-shot guard for the all-connector warm-up. Set the first time
+    /// `warmup_all_connectors` runs so the warm-up fires exactly once over the
+    /// lifetime of the (shared, long-lived) bridge — NOT once per ChartApp. The
+    /// bridge outlives the skeleton→live window promote, so the connectors dialed
+    /// during the skeleton screen are reused; the live window's tick sees the flag
+    /// already set and does nothing (no re-dial, no stale per-window cursor).
+    warmup_started: AtomicBool,
 }
 
 impl DataBridge {
@@ -313,6 +321,7 @@ impl DataBridge {
             oldest_fetched_ts: Arc::new(Mutex::new(HashMap::new())),
             rest_orderbook_pollers: Arc::new(Mutex::new(HashMap::new())),
             orderbook_map: shared_orderbook,
+            warmup_started: AtomicBool::new(false),
         }, rx, connector_ready_rx)
     }
 
@@ -379,6 +388,34 @@ impl DataBridge {
     ) -> Option<i64> {
         let key = make_series_key(exchange_id, account_type, symbol, timeframe);
         self.oldest_fetched_ts.lock().ok()?.get(&key).copied()
+    }
+
+    /// Warm up every connector in `exchanges`, exactly ONCE over the bridge's
+    /// lifetime (guarded by an internal one-shot flag).
+    ///
+    /// Each `ensure_connector` is a non-blocking async spawn on the bridge's own
+    /// runtime — the whole set dials concurrently off the UI thread. Because the
+    /// bridge is shared and outlives the skeleton→live window promote, calling
+    /// this on the skeleton window dials all connectors during the (empty) loading
+    /// screen; the live window's call sees the flag already set and returns
+    /// immediately — no re-dial, no per-window progress cursor to reset, no work
+    /// leaking into the visible chart.
+    ///
+    /// Idempotent at two levels: the one-shot flag prevents a second pass, and
+    /// `ensure_connector` itself no-ops for already-connected exchanges.
+    pub fn warmup_all_connectors(&self, exchanges: &[ExchangeId]) {
+        // compare_exchange: only the first caller proceeds; all later calls (e.g.
+        // the promoted live window) short-circuit.
+        if self
+            .warmup_started
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return;
+        }
+        for &eid in exchanges {
+            self.ensure_connector(eid);
+        }
     }
 
     /// Ensure a connector is initialized for the given exchange.

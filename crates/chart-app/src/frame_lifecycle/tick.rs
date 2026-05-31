@@ -16,12 +16,11 @@ impl ChartApp {
         let _ = current_time_ms;
         let tick_start = std::time::Instant::now();
 
-        // Staggered connector warm-up: dial the next batch of enabled connectors.
-        // Runs every frame (including on the skeleton/loading window) until the
-        // whole exchange list is connected, so the 21 dials spread out during the
-        // login screen and data is flowing by the time the chart appears. No-op
-        // once the list is exhausted; idempotent for already-connected exchanges.
-        self.connect_next_connector_batch();
+        // Connector warm-up: dial all enabled connectors once (bridge-guarded).
+        // Fires on the first tick of the skeleton/loading window (concurrent, off
+        // the UI thread); the bridge's one-shot flag makes every later call —
+        // including the promoted live window's — a no-op. Cheap to call every tick.
+        self.warmup_connectors();
 
         // Load chat history for any restored chat leaves on the very first tick.
         // PTY sessions spawn-on-demand only (user must click [Start]).
