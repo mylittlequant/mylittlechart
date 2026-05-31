@@ -115,15 +115,6 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert
             pw.toolbar_dirty = false;
         }
 
-        // Input frame begin. When chart_dirty, render_to_scene (inside render())
-        // calls begin_frame itself. On cache-hit frames render() is skipped, so we
-        // must begin the input frame here — otherwise the per-frame modal/popup
-        // zone registrations below would pile up in the coordinator's widgets Vec
-        // with nothing ever clearing them (unbounded growth while the mouse idles).
-        if !pw.chart_dirty {
-            pw.chart.begin_input_frame();
-        }
-
         // Chart content (chart panels, modals) — toolbar skipped because
         // it is composited from the cached toolbar_scene below.
         // The chart scene is cached: only rebuild when chart_dirty is set.
@@ -245,13 +236,6 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert
             pw.scene.append(&popup_scene, None);
         }
 
-        // Finalize the input frame now that EVERY layer (chart, toolbar, sidebar,
-        // modals, panel-overlay-popups) has registered its hit-zones. This bakes
-        // the hover snapshot from the complete zone set so the cursor-type
-        // resolver reflects the true topmost layer under the pointer. Must come
-        // after render_modal_layer + render_panel_overlay_popups.
-        pw.chart.finalize_input_frame();
-
         // Render chrome context menu overlay
         if pw.chrome_state.context_menu.open {
             let mut overlay_ctx = VelloGpuRenderContext::new(&mut pw.scene, 0.0, 0.0, None, None);
@@ -318,8 +302,6 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert
                 // draws the profile/welcome/skeleton screens — gating it externally
                 // hid the loading/login screen.
                 pw.chart.render_modal_layer(&mut chart_ctx, frame_time);
-                // Finalize input frame after all zones (chart + modal) registered.
-                pw.chart.finalize_input_frame();
 
                 // Render chrome context menu overlay (at y_offset=0, absolute coords).
                 if pw.chrome_state.context_menu.open {
@@ -395,7 +377,6 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert
                 // Render modal layer on top (still inside translate — modals use chart-relative coords).
                 // Unconditional — draws profile/welcome/skeleton screens too.
                 pw.chart.render_modal_layer(&mut cpu_ctx, frame_time);
-                pw.chart.finalize_input_frame();
                 cpu_ctx.restore();
                 // Render chrome context menu overlay.
                 if pw.chrome_state.context_menu.open {
@@ -443,7 +424,6 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert
                 // Render modal layer on top (still inside translate — modals use chart-relative coords).
                 // Unconditional — draws profile/welcome/skeleton screens too.
                 pw.chart.render_modal_layer(&mut skia_ctx, frame_time);
-                pw.chart.finalize_input_frame();
                 skia_ctx.restore();
                 // Render chrome context menu overlay.
                 if pw.chrome_state.context_menu.open {
@@ -481,7 +461,6 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert
                 // Render modal layer on top (still inside translate — modals use chart-relative coords).
                 // Unconditional — draws profile/welcome/skeleton screens too.
                 pw.chart.render_modal_layer(&mut hybrid_ctx, frame_time);
-                pw.chart.finalize_input_frame();
                 hybrid_ctx.translate(0.0, -chrome::CHROME_HEIGHT);
                 // Render chrome context menu overlay.
                 if pw.chrome_state.context_menu.open {

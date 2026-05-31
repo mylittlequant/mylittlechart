@@ -3967,20 +3967,14 @@ impl ChartApp {
         let out_last_watchlist_modal_result: Option<zengeld_chart::layout::modals::watchlist_modal::WatchlistModalResult> = None;
         let out_last_wl_group_name_result: Option<WlGroupNameInputResult> = None;
 
-        // 9. Frame timing checkpoint.
+        // 9. End frame — dispatch widget responses (clicks / drag / scroll).
         //
-        // NOTE: end_frame() is intentionally NOT called here. It used to be, but
-        // that baked the hover snapshot BEFORE the modal / popup / panel-overlay
-        // layers registered their hit-zones (those run in render_modal_layer /
-        // render_panel_overlay_popups, AFTER render_to_scene returns). The result
-        // was that the cursor-type resolver (get_cursor → is_over_ui → the
-        // end_frame hover snapshot) never saw modal/skeleton zones, so the
-        // crosshair cursor showed over modals and the loading screen.
-        //
-        // end_frame() is now called once at the very end of build_window_scene
-        // (via ChartApp::finalize_input_frame), after EVERY layer — chart, toolbar,
-        // sidebar, modals, popups — has registered its zones. The hover snapshot
-        // then reflects the true topmost layer under the pointer.
+        // The hover SNAPSHOT this bakes is no longer used to resolve the cursor
+        // type or hover highlights — those are now hit-tested LIVE on the pointer
+        // event via InputCoordinator::hit_test_now (see on_mouse_move/get_cursor),
+        // which eliminates the one-frame lag and does not depend on which layers
+        // registered before vs after end_frame. end_frame stays here (baseline
+        // cadence: once per render pass) purely for response dispatch.
         let _rt4 = std::time::Instant::now(); // checkpoint: after sidebar + modals
         let out_render_timing_us = (
             _rt2.duration_since(_rt1).as_micros() as u64, // chart
@@ -3988,6 +3982,7 @@ impl ChartApp {
             _rt4.duration_since(_rt3).as_micros() as u64, // sidebar + modals
             _rt1.duration_since(_rt0).as_micros() as u64, // layout + setup
         );
+        let _responses = self.input_coordinator.borrow_mut().end_frame();
 
         RenderOutput {
             scale_corner_zones_by_leaf: out_scale_corner_zones,
@@ -4569,22 +4564,6 @@ impl ChartApp {
 
     }
 
-    /// Begin the input frame (clears the prior frame's hit-zones and flushes the
-    /// current pointer position into the coordinator).
-    ///
-    /// Normally `render_to_scene` calls `begin_frame` itself. But on VelloGpu
-    /// CACHE-HIT frames (`chart_dirty == false`) `render_to_scene` is skipped,
-    /// while `render_modal_layer` / `render_panel_overlay_popups` still run and
-    /// register zones every frame. Without a `begin_frame` to clear the `widgets`
-    /// Vec first, those registrations would accumulate unboundedly on idle frames.
-    /// The compositor calls this before any layer registers zones on cache-hit
-    /// frames so the zone set is rebuilt cleanly every frame.
-    pub fn begin_input_frame(&self) {
-        let input_state = InputState::default()
-            .with_pointer_pos(self.last_mouse_pos.0, self.last_mouse_pos.1);
-        self.input_coordinator.borrow_mut().begin_frame(input_state);
-    }
-
     /// Dial the next batch of enabled connectors. Called once per tick (including
     /// on the skeleton/loading window) until the whole ALL_EXCHANGE_IDS list has
     /// been walked. Spreads the 21 startup dials across many frames so they don't
@@ -4605,23 +4584,6 @@ impl ChartApp {
             }
         }
         self.connector_warmup_cursor = end;
-    }
-
-    /// Finalize the input frame after ALL layers (chart, toolbar, sidebar,
-    /// modals, popups) have registered their hit-zones.
-    ///
-    /// This MUST be called exactly once per frame, at the very end of scene
-    /// building — after render_to_scene (begin_frame + chart/toolbar/sidebar
-    /// zones), render_modal_layer (modal/skeleton zones), and
-    /// render_panel_overlay_popups (popup zones). It runs the InputCoordinator
-    /// hit-test and bakes the hover snapshot from the COMPLETE zone set, so the
-    /// cursor-type resolver (get_cursor → is_over_ui) correctly reflects the
-    /// topmost layer under the pointer (modal beats chart, etc.).
-    ///
-    /// Widget responses are not consumed (the previous end_frame call discarded
-    /// them too) — kept for parity.
-    pub fn finalize_input_frame(&self) {
-        let _responses = self.input_coordinator.borrow_mut().end_frame();
     }
 
     // -------------------------------------------------------------------------

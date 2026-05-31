@@ -22,7 +22,7 @@ orderbook-service = { path = "../orderbook-service" }
 orderbook-store = { path = "../orderbook-store" }
 vello-context = { path = "../vello-context" }
 zengeld-chart = { path = "../chart" }
-uzor = "=1.3.5"
+uzor = "=1.3.6"
 vello = "0.8"
 winit = "0.30"
 pollster = "0.4"
@@ -35,10 +35,10 @@ zengeld-server = { path = "../zengeld-server" }
 zengeld-terminal-indicators = { path = "../indicators" }
 sysinfo = "0.34"
 instanced-context = { path = "../instanced-context" }
-uzor-render-wgpu-instanced = "=1.3.5"
+uzor-render-wgpu-instanced = "=1.3.6"
 vello-cpu-context = { path = "../vello-cpu-context" }
 vello-hybrid-context = { path = "../vello-hybrid-context" }
-uzor-render-vello-hybrid = "=1.3.5"
+uzor-render-vello-hybrid = "=1.3.6"
 vello_hybrid = { version = "0.0.7", features = ["wgpu"] }
 tiny-skia-context = { path = "../tiny-skia-context" }
 keyring = "3"

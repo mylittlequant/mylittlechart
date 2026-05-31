@@ -4360,10 +4360,12 @@ impl ChartApp {
         }
 
         // --- Update toolbar hover state from InputCoordinator ---
-        // The coordinator's hovered_widget() returns the topmost widget under
-        // the pointer as of the last begin_frame() (which uses last_mouse_pos).
-        // We parse the prefix to determine which toolbar strip is hovered.
-        if let Some(hovered) = self.input_coordinator.borrow_mut().hovered_widget() {
+        // LIVE hit-test at the current cursor (x, y) against the zones registered
+        // by the last render frame — NOT the stale hovered_widget() snapshot baked
+        // by the previous end_frame. This resolves hover synchronously with the
+        // pointer (zero frame lag). We parse the prefix to determine which toolbar
+        // strip / dropdown / leaf-tab / etc. is hovered.
+        if let Some(hovered) = self.input_coordinator.borrow().hit_test_now(x, y) {
             let id_str = hovered.as_str();
             if let Some(item_id) = id_str.strip_prefix("dtb:") {
                 self.panel_app.toolbar_state.hovered_left_toolbar_id = Some(item_id.to_string());
@@ -4486,7 +4488,9 @@ impl ChartApp {
         self.panel_app.overlay_settings_state.hovered_item_id = None;
 
         {
-            let hovered = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.as_str().to_string());
+            // LIVE hit-test (see note above) — modal hover fields resolved from the
+            // current cursor position, not the stale end_frame snapshot.
+            let hovered = self.input_coordinator.borrow().hit_test_now(x, y).map(|h| h.as_str().to_string());
             if let Some(ref id_str) = hovered {
                 let id = id_str.as_str();
 
@@ -5042,8 +5046,9 @@ impl ChartApp {
         }
 
         // Sidebar separator: show EwResize cursor when hovering over or dragging the separator.
+        // LIVE hit-test at (x, y) — not the stale end_frame hover snapshot.
         let on_sidebar_separator = self.sidebar_separator_drag_active
-            || self.input_coordinator.borrow_mut().hovered_widget()
+            || self.input_coordinator.borrow().hit_test_now(x, y)
                 .map(|h| h.as_str() == "right_sidebar_separator")
                 .unwrap_or(false);
         if on_sidebar_separator {
@@ -5052,7 +5057,7 @@ impl ChartApp {
 
         // Watchlist column separators: show EwResize cursor when hovering or dragging.
         let on_watchlist_col_sep = self.sidebar_state.watchlist_sep_drag.is_some()
-            || self.input_coordinator.borrow_mut().hovered_widget()
+            || self.input_coordinator.borrow().hit_test_now(x, y)
                 .map(|h| h.as_str().starts_with("watchlist_sep_"))
                 .unwrap_or(false);
         if on_watchlist_col_sep {
@@ -5071,7 +5076,7 @@ impl ChartApp {
         // would fire first and swallow the resize cursor).
         {
             use uzor::panels::SeparatorOrientation;
-            let hovered = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.as_str().to_string());
+            let hovered = self.input_coordinator.borrow().hit_test_now(x, y).map(|h| h.as_str().to_string());
             if let Some(ref wid) = hovered {
                 if let Some(idx_str) = wid.strip_prefix("agent:sep:") {
                     if let Ok(sep_idx) = idx_str.parse::<usize>() {
@@ -5108,10 +5113,11 @@ impl ChartApp {
         }
 
         // Universal UI check: any registered widget hovered = default cursor.
-        // Since the chart canvas is NOT a registered widget, is_over_ui() returns
-        // true only when the pointer is over a toolbar, modal, context menu,
-        // dropdown, color picker, or any other registered UI element.
-        if self.input_coordinator.borrow_mut().is_over_ui() {
+        // Since the chart canvas is NOT a registered widget, is_over_ui_now()
+        // returns true only when the pointer is over a toolbar, modal, context
+        // menu, dropdown, color picker, or any other registered UI element. LIVE
+        // hit-test at (x, y) — not the stale end_frame snapshot.
+        if self.input_coordinator.borrow().is_over_ui_now(x, y) {
             return CursorStyle::Default;
         }
 
