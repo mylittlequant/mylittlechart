@@ -508,6 +508,16 @@ pub struct ChartApp {
     /// mark sidebar_data_dirty automatically.
     last_active_leaf: Option<zengeld_chart::LeafId>,
 
+    /// Rate-limit gate for the per-live-event sidebar dirty mark (Watchlist /
+    /// Connectors panels). Live data (ticks, connector-ready) arrives in bursts
+    /// — at startup all ~21 connectors flood it in one frame, forcing a full
+    /// sidebar rebuild (~30ms) per frame. We collapse that: a live-data event
+    /// only re-marks the sidebar dirty at most once per this interval. The
+    /// per-second prepare-timer guarantees the panel still refreshes even if no
+    /// event slips through. Input-driven marks (clicks, settings) are NOT gated
+    /// — they set sidebar_data_dirty directly for instant feedback.
+    last_sidebar_data_mark: Option<std::time::Instant>,
+
     /// Last render timing breakdown in microseconds (for PERF diagnostics).
     /// Tuple: (chart_us, toolbar_us, sidebar_us, setup_us)
     /// - chart_us:   time spent in the chart render block (split or single)
@@ -966,6 +976,7 @@ impl ChartApp {
             diagnostics_enabled: false,
             sidebar_data_dirty: true,
             last_active_leaf: None,
+            last_sidebar_data_mark: None,
             render_timing_us: (0, 0, 0, 0),
             pending_sub_pane_ratios: std::collections::HashMap::new(),
             pending_sub_pane_above_main: std::collections::HashMap::new(),
@@ -1129,22 +1140,7 @@ impl ChartApp {
                 ExchangeId::Dydx, ExchangeId::Moex,
             ];
             for &eid in ALL_EXCHANGE_IDS {
-                // Original 24 exchanges default to enabled; new ones default to disabled.
-                // l3/open connectors with real capabilities — enabled by default
-                let default_enabled = matches!(eid,
-                    ExchangeId::Binance | ExchangeId::Bybit |
-                    ExchangeId::OKX | ExchangeId::KuCoin |
-                    ExchangeId::GateIO | ExchangeId::Bitget |
-                    ExchangeId::MEXC | ExchangeId::HTX |
-                    ExchangeId::Kraken | ExchangeId::Coinbase |
-                    ExchangeId::BingX | ExchangeId::Bitfinex |
-                    ExchangeId::Bitstamp | ExchangeId::Gemini |
-                    ExchangeId::CryptoCom | ExchangeId::Lighter |
-                    ExchangeId::Upbit |
-                    ExchangeId::Deribit | ExchangeId::HyperLiquid |
-                    ExchangeId::Dydx |
-                    ExchangeId::Moex
-                );
+                let default_enabled = true;
                 if !app.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(default_enabled) {
                     continue;
                 }
@@ -1292,6 +1288,7 @@ impl ChartApp {
             diagnostics_enabled: false,
             sidebar_data_dirty: true,
             last_active_leaf: None,
+            last_sidebar_data_mark: None,
             render_timing_us: (0, 0, 0, 0),
             pending_sub_pane_ratios: std::collections::HashMap::new(),
             pending_sub_pane_above_main: std::collections::HashMap::new(),
@@ -1499,6 +1496,7 @@ impl ChartApp {
             diagnostics_enabled: false,
             sidebar_data_dirty: true,
             last_active_leaf: None,
+            last_sidebar_data_mark: None,
             render_timing_us: (0, 0, 0, 0),
             pending_sub_pane_ratios: std::collections::HashMap::new(),
             pending_sub_pane_above_main: std::collections::HashMap::new(),
@@ -1746,22 +1744,7 @@ impl ChartApp {
                 ExchangeId::Dydx, ExchangeId::Moex,
             ];
             for &eid in ALL_EXCHANGE_IDS {
-                // Original 24 exchanges default to enabled; new ones default to disabled.
-                // l3/open connectors with real capabilities — enabled by default
-                let default_enabled = matches!(eid,
-                    ExchangeId::Binance | ExchangeId::Bybit |
-                    ExchangeId::OKX | ExchangeId::KuCoin |
-                    ExchangeId::GateIO | ExchangeId::Bitget |
-                    ExchangeId::MEXC | ExchangeId::HTX |
-                    ExchangeId::Kraken | ExchangeId::Coinbase |
-                    ExchangeId::BingX | ExchangeId::Bitfinex |
-                    ExchangeId::Bitstamp | ExchangeId::Gemini |
-                    ExchangeId::CryptoCom | ExchangeId::Lighter |
-                    ExchangeId::Upbit |
-                    ExchangeId::Deribit | ExchangeId::HyperLiquid |
-                    ExchangeId::Dydx |
-                    ExchangeId::Moex
-                );
+                let default_enabled = true;
                 if !app.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(default_enabled) {
                     continue;
                 }
@@ -2445,7 +2428,7 @@ impl ChartApp {
     /// When `skip_toolbar_draw` is `true`, the toolbar vector graphics are NOT
     /// re-emitted into `ctx`.  Instead, hit zones are re-registered from the
     /// cached `self.last_toolbar_result` so input routing remains correct.
-    pub fn render_to_scene(&mut self, ctx: &mut dyn RenderContext, current_time_ms: u64, skip_toolbar_draw: bool) -> RenderOutput {
+    pub fn render_to_scene(&mut self, ctx: &mut dyn RenderContext, _current_time_ms: u64, skip_toolbar_draw: bool) -> RenderOutput {
         let _rt0 = std::time::Instant::now();
         let w = self.width as f64;
         let h = self.height as f64;
@@ -3791,129 +3774,17 @@ impl ChartApp {
 
         let _rt3 = std::time::Instant::now(); // checkpoint: after toolbars
 
-        // 5. Render modals
-
-        // Modal layout uses content_rect bounds so settings modals stay
-        // within the chart area and never overlap the right sidebar.
-        let modal_right_edge = content_rect.x + content_rect.width;
-        let modal_layout = ChartModalLayout {
-            prim_screen_w: modal_right_edge,
-            prim_screen_h: h,
-            prim_modal_y: 60.0,
-            ind_screen_w: modal_right_edge,
-            ind_screen_h: h,
-            chart_x: content_rect.x,
-            chart_y: content_rect.y,
-            content_w: content_rect.width,
-            content_h: content_rect.height,
-        };
-
-        let toolbar_theme = self.panel_app.toolbar_theme_for_render();
-        let toolbar_state = ToolbarState::default();
-
-        // Use a raw pointer to work around the borrow checker:
-        // render_modals reads self.panel_app's modal state but also needs
-        // &window.drawing_manager which lives in panel_grid (another field of panel_app).
-        // Both fields are independent — no actual aliasing occurs.
-        let dm_ptr: *const zengeld_chart::drawing::DrawingManager = self.panel_app.panel_grid
-            .active_window()
-            .map(|w| &w.drawing_manager as *const _)
-            .unwrap_or(std::ptr::null::<zengeld_chart::drawing::DrawingManager>());
-
-        // SAFETY: dm_ptr points into panel_grid which render_modals does not mutate.
-        let dm_ref = if dm_ptr.is_null() {
-            None
-        } else {
-            Some(unsafe { &*dm_ptr })
-        };
-
-        // Build ChartSettingsData from current panel_app state and theme.
-        // Uses build_chart_settings_data() so legend/tooltip fields are read
-        // from the actual window state instead of being hardcoded.
-        let chart_settings_data = self.build_chart_settings_data();
-
-        // Snapshot the theme_manager pointer so render_modals can borrow it.
-        let theme_manager_ptr: *const zengeld_chart::theme::ThemeManager =
-            &self.panel_app.theme_manager as *const _;
-
-        let modal_result = self.panel_app.render_modals(
-            ctx,
-            &modal_layout,
-            dm_ref,
-            Some(&self.indicator_manager as &dyn IndicatorSource),
-            Some(&chart_settings_data),
-            // SAFETY: theme_manager lives inside panel_app which render_modals
-            // does not mutate (it only reads modal state fields).
-            Some(unsafe { &*theme_manager_ptr }),
-            &frame_theme,
-            &toolbar_theme,
-            &toolbar_state,
-            current_time_ms,
-            &mut self.input_coordinator.borrow_mut(),
-        );
-        let mut out_frame_result: Option<ChartModalRenderResult> = Some(modal_result);
-
-        // 5b. Render indicator / symbol / compare search modal (if open)
-        let out_search_modal_result: Option<zengeld_chart::ModalSearchResult> = if self.modal_state.current.is_search_overlay() {
-            let screen = ChartScreenArea { x: 0.0, y: 0.0, width: modal_right_edge, height: h };
-            let indicator_catalog = self.build_indicator_catalog();
-            let hovered = self.modal_state.hovered_item_id.as_deref();
-            let toolbar_theme_search = self.panel_app.toolbar_theme_for_render();
-
-            let indicator_sets = &self.panel_app.template_manager.indicator_sets;
-            Some(render_search_overlay(
-                ctx,
-                screen,
-                &self.modal_state,
-                &indicator_catalog,
-                indicator_sets,
-                hovered,
-                &frame_theme,
-                &toolbar_theme_search,
-                current_time_ms,
-                &mut self.input_coordinator.borrow_mut(),
-            ))
-        } else {
-            None
-        };
-
-        // 5c. Render preset name input for CreateIndicatorSet mode AFTER search
-        // overlay so it draws on top visually.
-        if self.panel_app.preset_name_input.is_open
-            && self.panel_app.preset_name_input.mode
-                == zengeld_chart::ui::modal_settings::PresetNameInputMode::CreateIndicatorSet
-        {
-            use zengeld_chart::layout::modals::preset_name_input::render_preset_name_input;
-            let pni_result = render_preset_name_input(
-                ctx,
-                w, h,
-                &self.panel_app.preset_name_input,
-                &frame_theme,
-                &toolbar_theme,
-                current_time_ms,
-                &mut self.input_coordinator.borrow_mut(),
-            );
-            // Store in frame_result so click handlers can access it
-            if let Some(ref mut fr) = out_frame_result {
-                fr.preset_name_input = Some(pni_result);
-            }
-        }
-
-        // 6. Render context menu (highest z-order after modals)
-        let out_context_menu_result: Option<ContextMenuResult> = if self.panel_app.context_menu_state.is_open() {
-            let dropdown_theme = self.panel_app.dropdown_theme_for_render();
-            let hovered_id = self.hovered_context_menu_item_id.as_deref();
-            Some(render_context_menu(
-                ctx,
-                &self.panel_app.context_menu_state,
-                &dropdown_theme,
-                hovered_id,
-                &mut self.input_coordinator.borrow_mut(),
-            ))
-        } else {
-            None
-        };
-
+        // 5. Modals are NO LONGER drawn here.
+        // They are drawn in render_modal_layer(), called by the VelloGpu compositor
+        // AFTER the crosshair overlay is composited, so modals appear on top of the
+        // crosshair rather than below it.
+        // render_modal_layer() stores results directly into self.frame_result,
+        // self.search_modal_result, self.context_menu_result, etc.
+        // For non-VelloGpu backends, render_modal_layer() is called on the same ctx
+        // immediately after render() returns (see scene_builder.rs).
+        let out_frame_result: Option<ChartModalRenderResult> = None;
+        let out_search_modal_result: Option<zengeld_chart::ModalSearchResult> = None;
+        let out_context_menu_result: Option<ContextMenuResult> = None;
 
         // 8. Render right sidebar if a panel is open.
         //    Sidebar sits between chart content (price scale) and right toolbar.
@@ -4086,130 +3957,25 @@ impl ChartApp {
             None
         };
 
-        // 8a. Render color picker popups AFTER the sidebar so they draw on top of it.
-        // Panel-targeting sync color grid is skipped here — it is rendered in
-        // render_panel_overlay_popups() after the sidebar scene is composited.
-        if !self.panel_app.sync_color_grid.target_is_panel() {
-            let cp_result = self.panel_app.render_color_picker_popups(
-                ctx,
-                &modal_layout,
-                &toolbar_theme,
-                &mut self.input_coordinator.borrow_mut(),
-            );
-            // Merge into frame_result — color picker and sync_color_grid fields only.
-            if let Some(ref mut fr) = out_frame_result {
-                if cp_result.color_picker.is_some() {
-                    fr.color_picker = cp_result.color_picker;
-                }
-                if cp_result.sync_color_grid.is_some() {
-                    fr.sync_color_grid = cp_result.sync_color_grid;
-                }
-            }
-        }
+        // 8a-8d. Modals (color pickers, watchlist, clock popup) moved to render_modal_layer().
 
-        // 8b. Render watchlist modal if open (above sidebar, below context menu).
-        let out_last_watchlist_modal_result: Option<zengeld_chart::layout::modals::watchlist_modal::WatchlistModalResult> = if self.watchlist_modal.is_open() {
-            // Build WatchlistEntry items from sidebar_state.watchlist_items.
-            // Pre-collect color flags so the iterator closure doesn't double-borrow self.
-            let color_flags: Vec<String> = self.sidebar_state.watchlist_items.iter()
-                .map(|item| {
-                    self.sidebar_state.watchlist_manager.active_list()
-                        .and_then(|l| l.get_color_flag(&item.symbol, &item.exchange, &item.account_type))
-                        .unwrap_or("")
-                        .to_string()
-                })
-                .collect();
-            let entries: Vec<WatchlistEntry> = self.sidebar_state.watchlist_items.iter()
-                .zip(color_flags.iter())
-                .map(|(item, flag)| WatchlistEntry {
-                    symbol: item.symbol.clone(),
-                    exchange: item.exchange.clone(),
-                    price: item.last_price,
-                    change_pct: item.change_percent,
-                    change_abs: item.last_price - (item.last_price / (1.0 + item.change_percent / 100.0)),
-                    high_24h: item.high_24h,
-                    low_24h: item.low_24h,
-                    volume_24h: item.volume_24h,
-                    color_flag: flag.clone(),
-                    account_type: item.account_type.clone(),
-                })
-                .collect();
+        let out_last_watchlist_modal_result: Option<zengeld_chart::layout::modals::watchlist_modal::WatchlistModalResult> = None;
+        let out_last_wl_group_name_result: Option<WlGroupNameInputResult> = None;
 
-            let groups_info: Vec<WatchlistGroupInfo> = self.sidebar_state.watchlist_manager.lists.iter()
-                .map(|list| WatchlistGroupInfo {
-                    id: list.id,
-                    name: list.name.clone(),
-                    color: if list.groups.is_empty() {
-                        String::new()
-                    } else {
-                        list.groups[0].color.clone()
-                    },
-                    symbol_count: list.all_symbols().len(),
-                    is_active: list.id == self.sidebar_state.watchlist_manager.active_list_id,
-                })
-                .collect();
-
-            let wl_modal_result = render_watchlist_modal(
-                ctx,
-                modal_right_edge,
-                h,
-                &self.watchlist_modal,
-                &entries,
-                &groups_info,
-                &frame_theme,
-                &toolbar_theme,
-                current_time_ms,
-                &mut self.input_coordinator.borrow_mut(),
-            );
-            Some(wl_modal_result)
-        } else {
-            None
-        };
-
-        // 8c. Render watchlist group name input modal (on top of watchlist modal)
-        let out_last_wl_group_name_result: Option<WlGroupNameInputResult> = if self.wl_group_name_input.is_open() {
-            let result = render_wl_group_name_input(
-                ctx,
-                modal_right_edge,
-                h,
-                &self.wl_group_name_input,
-                &frame_theme,
-                &toolbar_theme,
-                current_time_ms,
-                &mut self.input_coordinator.borrow_mut(),
-            );
-            Some(result)
-        } else {
-            None
-        };
-
-        // 8d. Render clock popup (timezone selector + 24h toggle)
-        if self.panel_app.clock_popup_state.is_open {
-            let bottom_toolbar_y = h - panel_layout.bottom_toolbar_rect.height;
-            let (active_offset, use_24h, show_utc) = self.panel_app.panel_grid.active_window()
-                .map(|w| (
-                    w.scale_settings.time_format.timezone_offset_hours,
-                    w.scale_settings.time_format.use_24h,
-                    w.scale_settings.time_format.show_utc_prefix,
-                ))
-                .unwrap_or((0, false, true));
-            let hovered = self.panel_app.clock_popup_state.hovered_item.as_deref();
-            render_clock_popup(
-                ctx,
-                w,
-                h,
-                bottom_toolbar_y,
-                active_offset,
-                use_24h,
-                show_utc,
-                hovered,
-                &frame_theme,
-                &toolbar_theme,
-                &mut self.input_coordinator.borrow_mut(),
-            );
-        }
-
-        // 9. End frame — collect widget responses (ignored for now)
+        // 9. Frame timing checkpoint.
+        //
+        // NOTE: end_frame() is intentionally NOT called here. It used to be, but
+        // that baked the hover snapshot BEFORE the modal / popup / panel-overlay
+        // layers registered their hit-zones (those run in render_modal_layer /
+        // render_panel_overlay_popups, AFTER render_to_scene returns). The result
+        // was that the cursor-type resolver (get_cursor → is_over_ui → the
+        // end_frame hover snapshot) never saw modal/skeleton zones, so the
+        // crosshair cursor showed over modals and the loading screen.
+        //
+        // end_frame() is now called once at the very end of build_window_scene
+        // (via ChartApp::finalize_input_frame), after EVERY layer — chart, toolbar,
+        // sidebar, modals, popups — has registered its zones. The hover snapshot
+        // then reflects the true topmost layer under the pointer.
         let _rt4 = std::time::Instant::now(); // checkpoint: after sidebar + modals
         let out_render_timing_us = (
             _rt2.duration_since(_rt1).as_micros() as u64, // chart
@@ -4217,7 +3983,6 @@ impl ChartApp {
             _rt4.duration_since(_rt3).as_micros() as u64, // sidebar + modals
             _rt1.duration_since(_rt0).as_micros() as u64, // layout + setup
         );
-        let _responses = self.input_coordinator.borrow_mut().end_frame();
 
         RenderOutput {
             scale_corner_zones_by_leaf: out_scale_corner_zones,
@@ -4763,6 +4528,13 @@ impl ChartApp {
     /// Does NOT call `input_coordinator.begin_frame()` / `end_frame()` — that
     /// is the responsibility of the enclosing `render()` call (same contract as
     /// `render_toolbar_only` and `render_sidebar_only`).
+    /// Cheap predicate: is there any panel-overlay popup to draw this frame?
+    /// Lets the scene builder skip the per-frame `Scene::new()` + render + append
+    /// when nothing is open (the common case).
+    pub fn has_panel_overlay_popups(&self) -> bool {
+        self.panel_app.sync_color_grid.is_open() && self.panel_app.sync_color_grid.target_is_panel()
+    }
+
     pub fn render_panel_overlay_popups(&self, ctx: &mut dyn RenderContext) {
         let toolbar_theme = self.panel_app.toolbar_theme_for_render();
         let w = self.width as f64;
@@ -4790,6 +4562,323 @@ impl ChartApp {
             );
         }
 
+    }
+
+    /// Begin the input frame (clears the prior frame's hit-zones and flushes the
+    /// current pointer position into the coordinator).
+    ///
+    /// Normally `render_to_scene` calls `begin_frame` itself. But on VelloGpu
+    /// CACHE-HIT frames (`chart_dirty == false`) `render_to_scene` is skipped,
+    /// while `render_modal_layer` / `render_panel_overlay_popups` still run and
+    /// register zones every frame. Without a `begin_frame` to clear the `widgets`
+    /// Vec first, those registrations would accumulate unboundedly on idle frames.
+    /// The compositor calls this before any layer registers zones on cache-hit
+    /// frames so the zone set is rebuilt cleanly every frame.
+    pub fn begin_input_frame(&self) {
+        let input_state = InputState::default()
+            .with_pointer_pos(self.last_mouse_pos.0, self.last_mouse_pos.1);
+        self.input_coordinator.borrow_mut().begin_frame(input_state);
+    }
+
+    /// Finalize the input frame after ALL layers (chart, toolbar, sidebar,
+    /// modals, popups) have registered their hit-zones.
+    ///
+    /// This MUST be called exactly once per frame, at the very end of scene
+    /// building — after render_to_scene (begin_frame + chart/toolbar/sidebar
+    /// zones), render_modal_layer (modal/skeleton zones), and
+    /// render_panel_overlay_popups (popup zones). It runs the InputCoordinator
+    /// hit-test and bakes the hover snapshot from the COMPLETE zone set, so the
+    /// cursor-type resolver (get_cursor → is_over_ui) correctly reflects the
+    /// topmost layer under the pointer (modal beats chart, etc.).
+    ///
+    /// Widget responses are not consumed (the previous end_frame call discarded
+    /// them too) — kept for parity.
+    pub fn finalize_input_frame(&self) {
+        let _responses = self.input_coordinator.borrow_mut().end_frame();
+    }
+
+    // -------------------------------------------------------------------------
+    // Modal layer (drawn ABOVE the crosshair overlay)
+    // -------------------------------------------------------------------------
+
+    /// Draw all modal / popup / dialog layers into `ctx` and store their results
+    /// directly into `self` (no `RenderOutput` — same contract as
+    /// `render_toolbar_only` / `render_sidebar_only`).
+    ///
+    /// # Drawing order
+    /// chart → overlay(crosshair) → **modals** (this method)
+    ///
+    /// The VelloGpu compositor appends the scene produced here AFTER the overlay
+    /// scene, ensuring modals always draw on top of the crosshair.
+    ///
+    /// # Input-frame contract
+    /// Does NOT call `input_coordinator.begin_frame()` / `end_frame()`.
+    /// Widget registrations made here accumulate in `self.input_coordinator.widgets`
+    /// and are cleared by the NEXT frame's `begin_frame()` — exactly the same
+    /// contract as `render_panel_overlay_popups`.  Input events that arrive between
+    /// renders will hit-test against these registrations, which is correct because
+    /// modal hit-zones must beat chart/toolbar zones (modals are the topmost layer).
+    pub fn render_modal_layer(&mut self, ctx: &mut dyn RenderContext, current_time_ms: u64) {
+        let w = self.width as f64;
+        let h = self.height as f64;
+
+        // Recompute layout locals that the modal blocks depend on.
+        // This mirrors what render_to_scene computes; the cost is negligible
+        // (pure arithmetic, no allocation).
+        let sidebar_w = if self.panel_app.user_settings_state.show_profile_manager
+            || self.panel_app.user_settings_state.show_welcome_wizard
+        {
+            0.0
+        } else {
+            self.sidebar_state.right_width()
+        };
+        let window_rect = LayoutRect::new(0.0, 0.0, w, h);
+        let panel_layout = ChartPanelLayout::compute(&window_rect, &self.panel_app.toolbar_config);
+        let content_rect = {
+            let mut r = panel_layout.content_rect;
+            r.width = (r.width - sidebar_w).max(0.0);
+            r
+        };
+        let modal_right_edge = content_rect.x + content_rect.width;
+        let modal_layout = ChartModalLayout {
+            prim_screen_w: modal_right_edge,
+            prim_screen_h: h,
+            prim_modal_y: 60.0,
+            ind_screen_w: modal_right_edge,
+            ind_screen_h: h,
+            chart_x: content_rect.x,
+            chart_y: content_rect.y,
+            content_w: content_rect.width,
+            content_h: content_rect.height,
+        };
+        let frame_theme = self.panel_app.frame_theme_for_render();
+        let toolbar_theme = self.panel_app.toolbar_theme_for_render();
+        let toolbar_state = ToolbarState::default();
+
+        // 5. Render chart-level modals (primitive settings, indicator settings,
+        //    chart settings, compare settings, etc.)
+        //
+        // Use a raw pointer to work around the borrow checker: render_modals reads
+        // panel_app modal state but also needs &window.drawing_manager (panel_grid).
+        // Both fields are independent — no actual aliasing occurs.
+        let dm_ptr: *const zengeld_chart::drawing::DrawingManager = self.panel_app.panel_grid
+            .active_window()
+            .map(|w| &w.drawing_manager as *const _)
+            .unwrap_or(std::ptr::null::<zengeld_chart::drawing::DrawingManager>());
+        // SAFETY: dm_ptr points into panel_grid which render_modals does not mutate.
+        let dm_ref = if dm_ptr.is_null() {
+            None
+        } else {
+            Some(unsafe { &*dm_ptr })
+        };
+        let chart_settings_data = self.build_chart_settings_data();
+        let theme_manager_ptr: *const zengeld_chart::theme::ThemeManager =
+            &self.panel_app.theme_manager as *const _;
+
+        let modal_result = self.panel_app.render_modals(
+            ctx,
+            &modal_layout,
+            dm_ref,
+            Some(&self.indicator_manager as &dyn IndicatorSource),
+            Some(&chart_settings_data),
+            // SAFETY: theme_manager lives inside panel_app which render_modals
+            // does not mutate (it only reads modal state fields).
+            Some(unsafe { &*theme_manager_ptr }),
+            &frame_theme,
+            &toolbar_theme,
+            &toolbar_state,
+            current_time_ms,
+            &mut self.input_coordinator.borrow_mut(),
+        );
+        let mut frame_result: Option<ChartModalRenderResult> = Some(modal_result);
+
+        // 5b. Search overlay (indicator / symbol / compare)
+        let search_modal_result: Option<zengeld_chart::ModalSearchResult> =
+            if self.modal_state.current.is_search_overlay() {
+                let screen = ChartScreenArea { x: 0.0, y: 0.0, width: modal_right_edge, height: h };
+                let indicator_catalog = self.build_indicator_catalog();
+                let hovered = self.modal_state.hovered_item_id.as_deref();
+                let toolbar_theme_search = self.panel_app.toolbar_theme_for_render();
+                let indicator_sets = &self.panel_app.template_manager.indicator_sets;
+                Some(render_search_overlay(
+                    ctx,
+                    screen,
+                    &self.modal_state,
+                    &indicator_catalog,
+                    indicator_sets,
+                    hovered,
+                    &frame_theme,
+                    &toolbar_theme_search,
+                    current_time_ms,
+                    &mut self.input_coordinator.borrow_mut(),
+                ))
+            } else {
+                None
+            };
+
+        // 5c. Preset name input (CreateIndicatorSet mode)
+        if self.panel_app.preset_name_input.is_open
+            && self.panel_app.preset_name_input.mode
+                == zengeld_chart::ui::modal_settings::PresetNameInputMode::CreateIndicatorSet
+        {
+            use zengeld_chart::layout::modals::preset_name_input::render_preset_name_input;
+            let pni_result = render_preset_name_input(
+                ctx,
+                w, h,
+                &self.panel_app.preset_name_input,
+                &frame_theme,
+                &toolbar_theme,
+                current_time_ms,
+                &mut self.input_coordinator.borrow_mut(),
+            );
+            if let Some(ref mut fr) = frame_result {
+                fr.preset_name_input = Some(pni_result);
+            }
+        }
+
+        // 6. Context menu
+        let context_menu_result: Option<ContextMenuResult> =
+            if self.panel_app.context_menu_state.is_open() {
+                let dropdown_theme = self.panel_app.dropdown_theme_for_render();
+                let hovered_id = self.hovered_context_menu_item_id.as_deref();
+                Some(render_context_menu(
+                    ctx,
+                    &self.panel_app.context_menu_state,
+                    &dropdown_theme,
+                    hovered_id,
+                    &mut self.input_coordinator.borrow_mut(),
+                ))
+            } else {
+                None
+            };
+
+        // 8a. Color picker popups (non-panel-targeting ones).
+        // Panel-targeting sync_color_grid is still handled by render_panel_overlay_popups().
+        if !self.panel_app.sync_color_grid.target_is_panel() {
+            let cp_result = self.panel_app.render_color_picker_popups(
+                ctx,
+                &modal_layout,
+                &toolbar_theme,
+                &mut self.input_coordinator.borrow_mut(),
+            );
+            if let Some(ref mut fr) = frame_result {
+                if cp_result.color_picker.is_some() {
+                    fr.color_picker = cp_result.color_picker;
+                }
+                if cp_result.sync_color_grid.is_some() {
+                    fr.sync_color_grid = cp_result.sync_color_grid;
+                }
+            }
+        }
+
+        // 8b. Watchlist modal
+        let last_watchlist_modal_result: Option<zengeld_chart::layout::modals::watchlist_modal::WatchlistModalResult> =
+            if self.watchlist_modal.is_open() {
+                let color_flags: Vec<String> = self.sidebar_state.watchlist_items.iter()
+                    .map(|item| {
+                        self.sidebar_state.watchlist_manager.active_list()
+                            .and_then(|l| l.get_color_flag(&item.symbol, &item.exchange, &item.account_type))
+                            .unwrap_or("")
+                            .to_string()
+                    })
+                    .collect();
+                let entries: Vec<WatchlistEntry> = self.sidebar_state.watchlist_items.iter()
+                    .zip(color_flags.iter())
+                    .map(|(item, flag)| WatchlistEntry {
+                        symbol: item.symbol.clone(),
+                        exchange: item.exchange.clone(),
+                        price: item.last_price,
+                        change_pct: item.change_percent,
+                        change_abs: item.last_price - (item.last_price / (1.0 + item.change_percent / 100.0)),
+                        high_24h: item.high_24h,
+                        low_24h: item.low_24h,
+                        volume_24h: item.volume_24h,
+                        color_flag: flag.clone(),
+                        account_type: item.account_type.clone(),
+                    })
+                    .collect();
+                let groups_info: Vec<WatchlistGroupInfo> = self.sidebar_state.watchlist_manager.lists.iter()
+                    .map(|list| WatchlistGroupInfo {
+                        id: list.id,
+                        name: list.name.clone(),
+                        color: if list.groups.is_empty() {
+                            String::new()
+                        } else {
+                            list.groups[0].color.clone()
+                        },
+                        symbol_count: list.all_symbols().len(),
+                        is_active: list.id == self.sidebar_state.watchlist_manager.active_list_id,
+                    })
+                    .collect();
+                Some(render_watchlist_modal(
+                    ctx,
+                    modal_right_edge,
+                    h,
+                    &self.watchlist_modal,
+                    &entries,
+                    &groups_info,
+                    &frame_theme,
+                    &toolbar_theme,
+                    current_time_ms,
+                    &mut self.input_coordinator.borrow_mut(),
+                ))
+            } else {
+                None
+            };
+
+        // 8c. Watchlist group name input modal
+        let last_wl_group_name_result: Option<WlGroupNameInputResult> =
+            if self.wl_group_name_input.is_open() {
+                Some(render_wl_group_name_input(
+                    ctx,
+                    modal_right_edge,
+                    h,
+                    &self.wl_group_name_input,
+                    &frame_theme,
+                    &toolbar_theme,
+                    current_time_ms,
+                    &mut self.input_coordinator.borrow_mut(),
+                ))
+            } else {
+                None
+            };
+
+        // 8d. Clock popup (timezone selector + 24h toggle)
+        if self.panel_app.clock_popup_state.is_open {
+            let bottom_toolbar_y = h - panel_layout.bottom_toolbar_rect.height;
+            let (active_offset, use_24h, show_utc) = self.panel_app.panel_grid.active_window()
+                .map(|w| (
+                    w.scale_settings.time_format.timezone_offset_hours,
+                    w.scale_settings.time_format.use_24h,
+                    w.scale_settings.time_format.show_utc_prefix,
+                ))
+                .unwrap_or((0, false, true));
+            let hovered = self.panel_app.clock_popup_state.hovered_item.as_deref();
+            render_clock_popup(
+                ctx,
+                w,
+                h,
+                bottom_toolbar_y,
+                active_offset,
+                use_24h,
+                show_utc,
+                hovered,
+                &frame_theme,
+                &toolbar_theme,
+                &mut self.input_coordinator.borrow_mut(),
+            );
+        }
+
+        // Store results directly into self — input handlers read these fields
+        // between renders.  apply_render_output() may set them to None when the
+        // chart scene is rebuilt (chart_dirty), but render_modal_layer() always
+        // runs on the same frame and overwrites them here before any input event
+        // could read stale values.
+        self.frame_result = frame_result;
+        self.search_modal_result = search_modal_result;
+        self.context_menu_result = context_menu_result;
+        self.last_watchlist_modal_result = last_watchlist_modal_result;
+        self.last_wl_group_name_result = last_wl_group_name_result;
     }
 
     // -------------------------------------------------------------------------
@@ -5433,6 +5522,7 @@ impl ChartApp {
             Vec::new()
         }
     }
+
 
     /// Alias for `build_symbol_search_results` — kept for compatibility with callers
     /// in `input.rs` that still reference the old name.

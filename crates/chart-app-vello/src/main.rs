@@ -336,6 +336,16 @@ struct App<'s> {
     /// Small about_to_wait_us + large dt → loop was idle/WaitUntil, not overloaded.
     /// Large about_to_wait_us → genuinely heavy frame.
     cached_about_to_wait_us: u64,
+    /// Time (µs) the main thread blocked in Step 1 waiting for the previous
+    /// frame's GpuDone. This is an otherwise-invisible stall: it appears in
+    /// neither cached_scene_us (CPU build) nor cached_gpu_us (GPU submit). A
+    /// large value means the GPU thread is the bottleneck (CPU build finished
+    /// first and is now starving on the pipeline).
+    cached_gpu_wait_us: u64,
+    /// µs in vello render_to_texture (compute encode + submit) — GPU half 1.
+    cached_render_tex_us: u64,
+    /// µs in get_current_texture + blit + present — GPU half 2 (swapchain).
+    cached_present_us: u64,
 
     // ── Pipelined GPU render thread ───────────────────────────────────────
     /// Sender side of the command channel to the GPU render thread.
@@ -988,6 +998,9 @@ impl App<'_> {
             cached_scene_us: 0,
             cached_gpu_us: 0,
             cached_about_to_wait_us: 0,
+            cached_gpu_wait_us: 0,
+            cached_render_tex_us: 0,
+            cached_present_us: 0,
             gpu_cmd_tx: None,
             gpu_done_rx: None,
             gpu_thread: None,
@@ -1693,6 +1706,8 @@ impl App<'_> {
                         GpuCommand::Submit { window_addrs, msaa_samples, render_cx_addr } => {
                             let mut close_all = false;
                             let mut total_gpu_us = 0u64;
+                            let mut render_tex_us = 0u64;
+                            let mut present_us = 0u64;
 
                             // SAFETY: each address is a unique live PerWindowState;
                             // the main thread waits for GpuDone before touching
@@ -1705,16 +1720,23 @@ impl App<'_> {
                                     unsafe { &mut *(pw_addr as *mut PerWindowState) };
 
                                 // submit_window_gpu reads pw.gpu_scene (not pw.scene).
-                                let gpu_us = submit_window_gpu_from_gpu_scene(
+                                let (rt_us, pr_us) = submit_window_gpu_from_gpu_scene(
                                     pw,
                                     render_cx,
                                     &mut close_all,
                                     msaa_samples,
                                 );
-                                total_gpu_us += gpu_us;
+                                render_tex_us += rt_us;
+                                present_us += pr_us;
+                                total_gpu_us += rt_us + pr_us;
                             }
 
-                            let _ = done_tx.send(GpuDone { close_all, total_gpu_us });
+                            let _ = done_tx.send(GpuDone {
+                                close_all,
+                                total_gpu_us,
+                                render_tex_us,
+                                present_us,
+                            });
                         }
                     }
                 }
@@ -4140,13 +4162,18 @@ impl ApplicationHandler for App<'_> {
 
         let mut total_scene_us = 0u64;
         let mut total_gpu_us = 0u64;
+        let mut gpu_wait_us = 0u64;
 
         // Step 1: wait for the GPU thread to finish the previous frame.
         if self.gpu_frame_pending {
             if let Some(ref done_rx) = self.gpu_done_rx {
+                let wait_t0 = std::time::Instant::now();
                 match done_rx.recv() {
                     Ok(done) => {
+                        gpu_wait_us = wait_t0.elapsed().as_micros() as u64;
                         total_gpu_us = done.total_gpu_us;
+                        self.cached_render_tex_us = done.render_tex_us;
+                        self.cached_present_us = done.present_us;
                         if done.close_all {
                             self.close_all_requested = true;
                         }
@@ -4238,32 +4265,47 @@ impl ApplicationHandler for App<'_> {
         // build_window_scene only touches pw.scene (and non-GPU fields).
         let active_toasts_ref: &[alert_delivery::ToastNotification] = &active_toasts;
         let parallel_t0 = std::time::Instant::now();
-        std::thread::scope(|s| {
-            let mut handles = Vec::with_capacity(window_refs.len());
-            for pw in window_refs.iter_mut() {
-                let pw_addr: usize = (*pw) as *mut PerWindowState as usize;
-                let h = s.spawn(move || {
-                    // SAFETY: pw_addr is the unique address of a live
-                    // PerWindowState; no other thread holds a reference to it.
-                    // std::thread::scope guarantees join before scope exits.
-                    let pw_ref: &mut PerWindowState =
-                        unsafe { &mut *(pw_addr as *mut PerWindowState) };
-                    build_window_scene(pw_ref, active_toasts_ref, frame_time)
-                });
-                handles.push(h);
+        // Single window (the common case): build inline. Spawning an OS thread
+        // per frame via thread::scope costs ~0.5-2ms on Windows for the spawn+
+        // join alone — pure overhead when there's only one scene to build and
+        // nothing to parallelize against. Sub-scenes measure ~1.2ms total, so a
+        // 6-8ms `total_scene_us` was almost entirely this spawn/join. Only fan
+        // out to threads when there are 2+ windows to build concurrently.
+        if window_refs.len() <= 1 {
+            if let Some(pw) = window_refs.first_mut() {
+                // Return value (per-window scene_us) is ignored — total_scene_us
+                // is overwritten with parallel_t0 wall-clock below either way.
+                let _ = build_window_scene(pw, active_toasts_ref, frame_time);
             }
-            for h in handles {
-                if let Ok(s_us) = h.join() {
-                    if s_us > total_scene_us { total_scene_us = s_us; }
+        } else {
+            std::thread::scope(|s| {
+                let mut handles = Vec::with_capacity(window_refs.len());
+                for pw in window_refs.iter_mut() {
+                    let pw_addr: usize = (*pw) as *mut PerWindowState as usize;
+                    let h = s.spawn(move || {
+                        // SAFETY: pw_addr is the unique address of a live
+                        // PerWindowState; no other thread holds a reference to it.
+                        // std::thread::scope guarantees join before scope exits.
+                        let pw_ref: &mut PerWindowState =
+                            unsafe { &mut *(pw_addr as *mut PerWindowState) };
+                        build_window_scene(pw_ref, active_toasts_ref, frame_time)
+                    });
+                    handles.push(h);
                 }
-            }
-        });
-        // Overwrite scene timing with wall-clock of the whole parallel phase.
+                for h in handles {
+                    if let Ok(s_us) = h.join() {
+                        if s_us > total_scene_us { total_scene_us = s_us; }
+                    }
+                }
+            });
+        }
+        // Overwrite scene timing with wall-clock of the whole build phase.
         total_scene_us = parallel_t0.elapsed().as_micros() as u64;
 
         // Cache timing values so the next frame's populate block can display them.
         self.cached_scene_us = total_scene_us;
         self.cached_gpu_us = total_gpu_us;
+        self.cached_gpu_wait_us = gpu_wait_us;
 
         // ── Scene-build spike log ────────────────────────────────────────────
         // The scene-build (CPU) phase occasionally explodes to 14-20ms with no
@@ -4311,7 +4353,7 @@ impl ApplicationHandler for App<'_> {
                     ))
                     .unwrap_or((0, 0, 0, 0, 0, 0));
                 eprintln!(
-                    "[PERF] Frame {} total={:.1}ms atw={:.1}ms dt[min={:.1} max={:.1} n={}] ema_fps={:.0} | tick_app={:.1}ms drains={:.1}ms persist={:.1}ms sync={:.1}ms tick={:.1}ms perf_pop={:.1}ms agent={:.1}ms render={:.1}ms (scene={:.1}ms gpu={:.1}ms) | breakdown: chart={:.1}ms tb={:.1}ms side={:.1}ms setup={:.1}ms | tick-detail: obpanel={}us(n={}) trpanel={}us(n={}) barapply={}us composite={}us | LEAK[queue={} handles={} ticker={}]",
+                    "[PERF] Frame {} total={:.1}ms atw={:.1}ms dt[min={:.1} max={:.1} n={}] ema_fps={:.0} | tick_app={:.1}ms drains={:.1}ms persist={:.1}ms sync={:.1}ms tick={:.1}ms perf_pop={:.1}ms agent={:.1}ms render={:.1}ms (scene={:.1}ms gpu={:.1}ms[rtex={:.1} pres={:.1}] gpu_wait={:.1}ms) | breakdown: chart={:.1}ms tb={:.1}ms side={:.1}ms setup={:.1}ms | tick-detail: obpanel={}us(n={}) trpanel={}us(n={}) barapply={}us composite={}us | LEAK[queue={} handles={} ticker={}]",
                     self.frame_count,
                     total as f64 / 1000.0,
                     self.cached_about_to_wait_us as f64 / 1000.0,
@@ -4329,6 +4371,9 @@ impl ApplicationHandler for App<'_> {
                     _t8.duration_since(_t7).as_micros() as f64 / 1000.0,
                     total_scene_us as f64 / 1000.0,
                     total_gpu_us as f64 / 1000.0,
+                    self.cached_render_tex_us as f64 / 1000.0,
+                    self.cached_present_us as f64 / 1000.0,
+                    self.cached_gpu_wait_us as f64 / 1000.0,
                     chart_us as f64 / 1000.0,
                     toolbar_us as f64 / 1000.0,
                     sidebar_us as f64 / 1000.0,

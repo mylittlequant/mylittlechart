@@ -19,4 +19,11 @@ pub(crate) struct GpuDone {
     pub(crate) close_all: bool,
     /// Wall-clock µs spent on GPU submit across all windows.
     pub(crate) total_gpu_us: u64,
+    /// µs spent in vello `render_to_texture` (compute encode + submit) — the
+    /// scene-rendering half of the GPU work.
+    pub(crate) render_tex_us: u64,
+    /// µs spent in `get_current_texture` + blit + `present` — the swapchain
+    /// acquire/present half. With AutoNoVsync this should be small; a large
+    /// value points at swapchain back-pressure (GPU queue depth).
+    pub(crate) present_us: u64,
 }

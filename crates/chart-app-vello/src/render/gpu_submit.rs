@@ -186,17 +186,19 @@ pub(crate) fn submit_window_gpu(pw: &mut PerWindowState, render_cx: &RenderConte
 /// instead of `pw.scene`.  `gpu_scene` holds the scene built by the main
 /// thread during the *previous* frame; `scene` is the one the main thread is
 /// building for the *current* frame while this function runs concurrently.
+/// Returns `(render_tex_us, present_us)` so the caller can attribute GPU cost
+/// to vello scene-rendering vs swapchain acquire/present separately.
 pub(crate) fn submit_window_gpu_from_gpu_scene(
     pw: &mut PerWindowState,
     render_cx: &RenderContext,
     close_all: &mut bool,
     msaa_samples: u8,
-) -> u64 {
+) -> (u64, u64) {
     let width = pw.surface.config.width;
     let height = pw.surface.config.height;
 
     if width == 0 || height == 0 {
-        return 0;
+        return (0, 0);
     }
 
     let dev_id = pw.surface.dev_id;
@@ -364,7 +366,7 @@ pub(crate) fn submit_window_gpu_from_gpu_scene(
         Ok(t) => t,
         Err(vello::wgpu::SurfaceError::OutOfMemory) => {
             *close_all = true;
-            return render_tex_us;
+            return (render_tex_us, 0);
         }
         Err(e) => {
             eprintln!("[GPU] Surface error: {:?}, reconfiguring", e);
@@ -375,7 +377,7 @@ pub(crate) fn submit_window_gpu_from_gpu_scene(
             // now-dead TextureView ("no longer alive", gen 7 vs 8) and panic the
             // GPU thread. Recreate the target so the next frame binds a live view.
             crate::screenshot::add_copy_src_to_target_texture(&mut pw.surface, device);
-            return render_tex_us;
+            return (render_tex_us, 0);
         }
     };
 
@@ -451,5 +453,5 @@ pub(crate) fn submit_window_gpu_from_gpu_scene(
     surface_texture.present();
     let present_us = present_t0.elapsed().as_micros() as u64;
 
-    render_tex_us + present_us
+    (render_tex_us, present_us)
 }

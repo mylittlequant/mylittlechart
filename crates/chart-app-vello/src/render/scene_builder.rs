@@ -115,6 +115,15 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert
             pw.toolbar_dirty = false;
         }
 
+        // Input frame begin. When chart_dirty, render_to_scene (inside render())
+        // calls begin_frame itself. On cache-hit frames render() is skipped, so we
+        // must begin the input frame here — otherwise the per-frame modal/popup
+        // zone registrations below would pile up in the coordinator's widgets Vec
+        // with nothing ever clearing them (unbounded growth while the mouse idles).
+        if !pw.chart_dirty {
+            pw.chart.begin_input_frame();
+        }
+
         // Chart content (chart panels, modals) — toolbar skipped because
         // it is composited from the cached toolbar_scene below.
         // The chart scene is cached: only rebuild when chart_dirty is set.
@@ -187,10 +196,43 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert
         // Store composite timing (reset + core appends) in per-window state for the PERF panel.
         pw.chart.last_composite_us = reset_us + composite_us;
 
+        // Modal layer — drawn AFTER overlay (crosshair) and toolbar so that modals
+        // (Symbol Search, settings dialogs, color pickers, context menu, watchlist,
+        // clock popup, AND the profile-manager / welcome-wizard / skeleton-fill that
+        // make up the loading/login screen) always appear on top of everything else.
+        // These are application-level UI, not chart content — so they belong here,
+        // above the chart+overlay, never inside chart_scene.
+        //
+        // Drawn UNCONDITIONALLY every frame: render_modal_layer internally gates each
+        // sub-modal on its own is_open() flag and draws nothing when closed (cheap —
+        // a fresh empty Scene + a few branch checks). An external "any modal open"
+        // gate was WRONG: it omitted the skeleton/profile/welcome screens, so the
+        // login/wizard vanished and the chart bled through. Never gate this.
+        //
+        // Input-frame contract: render_modal_layer() does NOT call begin_frame() /
+        // end_frame() — same contract as render_toolbar_only() and render_sidebar_only().
+        // Widget registrations accumulate in input_coordinator.widgets and are cleared
+        // by the NEXT frame's begin_frame(), which is correct: input events that arrive
+        // between renders hit-test against the most-recently-registered modal zones.
+        {
+            let mut modal_scene = vello::Scene::new();
+            let mut modal_ctx = VelloGpuRenderContext::new(
+                &mut modal_scene,
+                0.0,
+                chrome::CHROME_HEIGHT,
+                None,
+                None,
+            );
+            pw.chart.render_modal_layer(&mut modal_ctx, frame_time);
+            pw.scene.append(&modal_scene, None);
+        }
+
         // Panel overlay popups — drawn after sidebar and toolbar so they appear
         // on top of both.  These include the sync color grid (panel target) and
         // the panel sync menu (gear-icon dropdown on panel headers).
-        {
+        // Skip the per-frame Scene allocation + append entirely when nothing is
+        // open (the common case) — this block ran unconditionally every frame.
+        if pw.chart.has_panel_overlay_popups() {
             let mut popup_scene = vello::Scene::new();
             let mut popup_ctx = VelloGpuRenderContext::new(
                 &mut popup_scene,
@@ -202,6 +244,13 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert
             pw.chart.render_panel_overlay_popups(&mut popup_ctx);
             pw.scene.append(&popup_scene, None);
         }
+
+        // Finalize the input frame now that EVERY layer (chart, toolbar, sidebar,
+        // modals, panel-overlay-popups) has registered its hit-zones. This bakes
+        // the hover snapshot from the complete zone set so the cursor-type
+        // resolver reflects the true topmost layer under the pointer. Must come
+        // after render_modal_layer + render_panel_overlay_popups.
+        pw.chart.finalize_input_frame();
 
         // Render chrome context menu overlay
         if pw.chrome_state.context_menu.open {
@@ -254,7 +303,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert
                     chrome::render(&mut chrome_ctx, &pw.chrome_state, width as f64, skeleton_active);
                 }
 
-                // Render chart + toolbar + sidebar + modals at y_offset=CHROME_HEIGHT.
+                // Render chart + toolbar + sidebar at y_offset=CHROME_HEIGHT.
                 let mut chart_ctx = instanced_context::InstancedChartRenderContext::new(
                     width as f32,
                     height as f32,
@@ -264,6 +313,13 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert
                     None,
                 );
                 pw.chart.render(&mut chart_ctx, frame_time, false);
+                // Render modal layer on top (same ctx — single flat draw list).
+                // Unconditional: render_modal_layer self-gates each sub-modal AND
+                // draws the profile/welcome/skeleton screens — gating it externally
+                // hid the loading/login screen.
+                pw.chart.render_modal_layer(&mut chart_ctx, frame_time);
+                // Finalize input frame after all zones (chart + modal) registered.
+                pw.chart.finalize_input_frame();
 
                 // Render chrome context menu overlay (at y_offset=0, absolute coords).
                 if pw.chrome_state.context_menu.open {
@@ -332,10 +388,14 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert
                         || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
                     chrome::render(&mut cpu_ctx, &pw.chrome_state, width as f64, skeleton_active);
                 }
-                // Render chart + toolbar + sidebar + modals offset by CHROME_HEIGHT.
+                // Render chart + toolbar + sidebar offset by CHROME_HEIGHT.
                 cpu_ctx.save();
                 cpu_ctx.translate(0.0, chrome::CHROME_HEIGHT);
                 pw.chart.render(&mut cpu_ctx, frame_time, false);
+                // Render modal layer on top (still inside translate — modals use chart-relative coords).
+                // Unconditional — draws profile/welcome/skeleton screens too.
+                pw.chart.render_modal_layer(&mut cpu_ctx, frame_time);
+                pw.chart.finalize_input_frame();
                 cpu_ctx.restore();
                 // Render chrome context menu overlay.
                 if pw.chrome_state.context_menu.open {
@@ -380,6 +440,10 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert
                 skia_ctx.save();
                 skia_ctx.translate(0.0, chrome::CHROME_HEIGHT);
                 pw.chart.render(&mut skia_ctx, frame_time, false);
+                // Render modal layer on top (still inside translate — modals use chart-relative coords).
+                // Unconditional — draws profile/welcome/skeleton screens too.
+                pw.chart.render_modal_layer(&mut skia_ctx, frame_time);
+                pw.chart.finalize_input_frame();
                 skia_ctx.restore();
                 // Render chrome context menu overlay.
                 if pw.chrome_state.context_menu.open {
@@ -414,6 +478,10 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert
                 }
                 hybrid_ctx.translate(0.0, chrome::CHROME_HEIGHT);
                 pw.chart.render(&mut hybrid_ctx, frame_time, false);
+                // Render modal layer on top (still inside translate — modals use chart-relative coords).
+                // Unconditional — draws profile/welcome/skeleton screens too.
+                pw.chart.render_modal_layer(&mut hybrid_ctx, frame_time);
+                pw.chart.finalize_input_frame();
                 hybrid_ctx.translate(0.0, -chrome::CHROME_HEIGHT);
                 // Render chrome context menu overlay.
                 if pw.chrome_state.context_menu.open {

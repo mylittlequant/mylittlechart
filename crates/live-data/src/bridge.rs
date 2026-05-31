@@ -393,7 +393,11 @@ impl DataBridge {
         let tx = self.tx.clone();
         let connector_ready_tx = self.connector_ready_tx.clone();
         self.runtime.spawn(async move {
-            // Creating connector asynchronously.
+            // Creating connector asynchronously. No stagger — the connector
+            // tokio runtime is independent of the UI thread, so a startup burst
+            // of TCP/TLS handshakes does not block rendering (it never did; the
+            // measured present-stall came from a different path). Eager connect
+            // gives the fullest symbol list and fastest first data.
             match hub.connect_public(exchange_id, false).await {
                 Ok(()) => {
                     let _ = tx.send(LiveUpdate::ConnectorReady { exchange_id });

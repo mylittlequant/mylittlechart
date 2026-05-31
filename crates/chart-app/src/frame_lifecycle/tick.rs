@@ -113,13 +113,27 @@ impl ChartApp {
             // Only mark sidebar dirty for panels that display live trade data.
             // Performance uses its own 1-second timer; Alerts, ObjectTree, and
             // Signals are not affected by individual price ticks.
+            //
+            // Rate-limited: a burst of live events (startup connector flood, or
+            // a busy tape) would otherwise re-mark the sidebar dirty on every
+            // single event, forcing a full ~30ms rebuild every frame. We mark at
+            // most once per 100ms here; the per-second prepare-timer guarantees
+            // the panel still refreshes if no mark slips through. Input clicks
+            // set sidebar_data_dirty directly elsewhere and are not gated.
             {
                 use sidebar_content::state::RightSidebarPanel;
-                match self.sidebar_state.right_panel {
-                    RightSidebarPanel::Watchlist | RightSidebarPanel::Connectors => {
+                if matches!(
+                    self.sidebar_state.right_panel,
+                    RightSidebarPanel::Watchlist | RightSidebarPanel::Connectors
+                ) {
+                    let due = self
+                        .last_sidebar_data_mark
+                        .map(|t| t.elapsed() >= std::time::Duration::from_millis(100))
+                        .unwrap_or(true);
+                    if due {
                         self.sidebar_data_dirty = true;
+                        self.last_sidebar_data_mark = Some(std::time::Instant::now());
                     }
-                    _ => {}
                 }
             }
             // Census this drained event by type (for the spike log).
