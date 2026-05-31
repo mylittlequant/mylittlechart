@@ -571,7 +571,11 @@ async fn build_ws(
     ws_rtt_handles: &Arc<Mutex<HashMap<ExchangeId, Arc<tokio::sync::Mutex<u64>>>>>,
     credentials: Option<digdigdig3::Credentials>,
 ) -> Result<Box<dyn WebSocketConnector>, String> {
-    macro_rules! standard {
+    // dig3 0.3.12 (Wave 3): every connector now wraps UniversalWsTransport,
+    // so most `new(...)` constructors are SYNC. A handful still return a
+    // future (Binance/Bybit/GateIO/Bitget/Deribit/KuCoin/OKX/MEXC) because
+    // they hit listen-key REST during construction.
+    macro_rules! async_standard {
         ($ws_type:ty) => {{
             let ws = <$ws_type>::new(credentials.clone(), false, AccountType::Spot)
                 .await
@@ -584,11 +588,9 @@ async fn build_ws(
         }};
     }
 
-    macro_rules! credentials_only {
+    macro_rules! sync_standard {
         ($ws_type:ty) => {{
-            let ws = <$ws_type>::new(credentials.clone())
-                .await
-                .map_err(|e| format!("WS create failed: {}", e))?;
+            let ws = <$ws_type>::new(credentials.clone(), false, AccountType::Spot);
             ws.connect(AccountType::Spot)
                 .await
                 .map_err(|e| format!("WS connect failed: {}", e))?;
@@ -597,11 +599,9 @@ async fn build_ws(
         }};
     }
 
-    macro_rules! credentials_with_account {
+    macro_rules! sync_testnet_only {
         ($ws_type:ty) => {{
-            let ws = <$ws_type>::new(credentials.clone(), AccountType::Spot)
-                .await
-                .map_err(|e| format!("WS create failed: {}", e))?;
+            let ws = <$ws_type>::new(false);
             ws.connect(AccountType::Spot)
                 .await
                 .map_err(|e| format!("WS connect failed: {}", e))?;
@@ -610,10 +610,9 @@ async fn build_ws(
         }};
     }
 
-    macro_rules! sync_new {
+    macro_rules! sync_noarg {
         ($ws_type:ty) => {{
-            let ws = <$ws_type>::new(credentials.clone(), false, AccountType::Spot)
-                .map_err(|e| format!("WS create failed: {}", e))?;
+            let ws = <$ws_type>::new();
             ws.connect(AccountType::Spot)
                 .await
                 .map_err(|e| format!("WS connect failed: {}", e))?;
@@ -623,17 +622,15 @@ async fn build_ws(
     }
 
     let ws: Box<dyn WebSocketConnector> = match exchange_id {
-        // ── Standard: new(creds, testnet, account_type) async ──
-        ExchangeId::Binance  => standard!(BinanceWebSocket),
-        ExchangeId::Bybit    => standard!(BybitWebSocket),
-        ExchangeId::GateIO   => standard!(GateioWebSocket),
-        ExchangeId::Bitfinex => standard!(BitfinexWebSocket),
-        ExchangeId::BingX    => standard!(BingxWebSocket),
-        ExchangeId::Bitget   => standard!(BitgetWebSocket),
-        ExchangeId::Deribit  => standard!(DeribitWebSocket),
-        ExchangeId::KuCoin   => standard!(KuCoinWebSocket),
+        // ── Async new(creds, testnet, account_type) ─────────────────────────
+        ExchangeId::Binance => async_standard!(BinanceWebSocket),
+        ExchangeId::Bybit   => async_standard!(BybitWebSocket),
+        ExchangeId::GateIO  => async_standard!(GateioWebSocket),
+        ExchangeId::Bitget  => async_standard!(BitgetWebSocket),
+        ExchangeId::Deribit => async_standard!(DeribitWebSocket),
+        ExchangeId::KuCoin  => async_standard!(KuCoinWebSocket),
 
-        // ── OKX: new(creds, testnet, account_type) async ──
+        // ── OKX: async new(creds, testnet, account_type) ────────────────────
         ExchangeId::OKX => {
             let ws = OkxWebSocket::new(credentials.clone(), false, AccountType::Spot)
                 .await
@@ -649,17 +646,9 @@ async fn build_ws(
             Box::new(ws)
         }
 
-        // ── Credentials only (no testnet, no account_type) ──
-        ExchangeId::Coinbase => credentials_only!(CoinbaseWebSocket),
-        // ── Credentials + AccountType (no testnet) ──
-        ExchangeId::MEXC     => credentials_with_account!(MexcWebSocket),
-
-        // ── Sync constructor ──
-        ExchangeId::HTX => sync_new!(HtxWebSocket),
-
-        // ── Kraken: new(token_opt, account_type) async — uses its own token type ──
-        ExchangeId::Kraken => {
-            let ws = KrakenWebSocket::new(None, AccountType::Spot)
+        // ── MEXC: async new(creds, account_type) ────────────────────────────
+        ExchangeId::MEXC => {
+            let ws = MexcWebSocket::new(credentials.clone(), AccountType::Spot)
                 .await
                 .map_err(|e| format!("WS create failed: {}", e))?;
             ws.connect(AccountType::Spot)
@@ -669,10 +658,25 @@ async fn build_ws(
             Box::new(ws)
         }
 
-        // ── Bitstamp: new() takes no arguments ──
-        ExchangeId::Bitstamp => {
-            let ws = BitstampWebSocket::new()
+        // ── Sync new(creds, testnet, account_type) ──────────────────────────
+        ExchangeId::BingX => sync_standard!(BingxWebSocket),
+        ExchangeId::Upbit => sync_standard!(UpbitWebSocket),
+
+        // ── Sync new(creds) ─────────────────────────────────────────────────
+        ExchangeId::Coinbase => {
+            let ws = CoinbaseWebSocket::new(credentials.clone());
+            ws.connect(AccountType::Spot)
                 .await
+                .map_err(|e| format!("WS connect failed: {}", e))?;
+            capture_rtt(&ws, exchange_id, ws_rtt_handles);
+            Box::new(ws)
+        }
+
+        // ── Sync new(creds, testnet, account_type) returning Result ─────────
+        // HTX takes the same triplet as the async standard ones but the
+        // constructor itself is sync — it just returns ExchangeResult<Self>.
+        ExchangeId::HTX => {
+            let ws = HtxWebSocket::new(credentials.clone(), false, AccountType::Spot)
                 .map_err(|e| format!("WS create failed: {}", e))?;
             ws.connect(AccountType::Spot)
                 .await
@@ -681,33 +685,32 @@ async fn build_ws(
             Box::new(ws)
         }
 
-        // ── HyperLiquid: sync new(testnet) ──
-        ExchangeId::HyperLiquid => {
-            let ws = HyperliquidWebSocket::new(false);
-            ws.connect(AccountType::Spot)
+        // ── Sync new(testnet) ───────────────────────────────────────────────
+        ExchangeId::Bitfinex    => sync_testnet_only!(BitfinexWebSocket),
+        ExchangeId::Gemini      => sync_testnet_only!(GeminiWebSocket),
+        ExchangeId::HyperLiquid => sync_testnet_only!(HyperliquidWebSocket),
+
+        // ── Crypto.com: sync new(testnet) ───────────────────────────────────
+        ExchangeId::CryptoCom => {
+            let mut ws = CryptoComWebSocket::new(false);
+            WebSocketConnector::connect(&mut ws, AccountType::Spot)
                 .await
                 .map_err(|e| format!("WS connect failed: {}", e))?;
-            capture_rtt(&ws, exchange_id, ws_rtt_handles);
+            if let Some(rtt) = WebSocketConnector::ping_rtt_handle(&ws) {
+                if let Ok(mut h) = ws_rtt_handles.lock() {
+                    h.insert(exchange_id, rtt);
+                }
+            }
             Box::new(ws)
         }
 
-        // ── Upbit: new(creds, region) async ──
-        ExchangeId::Upbit => {
-            let ws = UpbitWebSocket::new(credentials.clone(), "sg")
-                .await
-                .map_err(|e| format!("WS create failed: {}", e))?;
-            ws.connect(AccountType::Spot)
-                .await
-                .map_err(|e| format!("WS connect failed: {}", e))?;
-            capture_rtt(&ws, exchange_id, ws_rtt_handles);
-            Box::new(ws)
-        }
+        // ── Sync new() ──────────────────────────────────────────────────────
+        ExchangeId::Kraken   => sync_noarg!(KrakenWebSocket),
+        ExchangeId::Bitstamp => sync_noarg!(BitstampWebSocket),
 
-        // ── dYdX: new(testnet, account_type) async ──
+        // ── dYdX: sync new(testnet, account_type) ───────────────────────────
         ExchangeId::Dydx => {
-            let ws = DydxWebSocket::new(false, AccountType::Spot)
-                .await
-                .map_err(|e| format!("WS create failed: {}", e))?;
+            let ws = DydxWebSocket::new(false, AccountType::Spot);
             ws.connect(AccountType::Spot)
                 .await
                 .map_err(|e| format!("WS connect failed: {}", e))?;
@@ -715,7 +718,7 @@ async fn build_ws(
             Box::new(ws)
         }
 
-        // ── MOEX: sync new_public() ──
+        // ── MOEX: sync new_public() ─────────────────────────────────────────
         ExchangeId::Moex => {
             let ws = MoexWebSocket::new_public();
             ws.connect(AccountType::Spot)
@@ -725,41 +728,9 @@ async fn build_ws(
             Box::new(ws)
         }
 
-        // ── Gemini: new_market_data(testnet) async ──
-        ExchangeId::Gemini => {
-            let mut ws = GeminiWebSocket::new_market_data(false)
-                .await
-                .map_err(|e| format!("WS create failed: {}", e))?;
-            WebSocketConnector::connect(&mut ws, AccountType::Spot)
-                .await
-                .map_err(|e| format!("WS connect failed: {}", e))?;
-            if let Some(rtt) = WebSocketConnector::ping_rtt_handle(&ws) {
-                if let Ok(mut h) = ws_rtt_handles.lock() {
-                    h.insert(exchange_id, rtt);
-                }
-            }
-            Box::new(ws)
-        }
-
-        // ── Crypto.com: sync new(auth, is_user_stream) — uses its own auth type ──
-        ExchangeId::CryptoCom => {
-            let mut ws = CryptoComWebSocket::new(None, false);
-            WebSocketConnector::connect(&mut ws, AccountType::Spot)
-                .await
-                .map_err(|e| format!("WS connect failed: {}", e))?;
-            if let Some(rtt) = WebSocketConnector::ping_rtt_handle(&ws) {
-                if let Ok(mut h) = ws_rtt_handles.lock() {
-                    h.insert(exchange_id, rtt);
-                }
-            }
-            Box::new(ws)
-        }
-
-        // ── Lighter: public(testnet) async ──
+        // ── Lighter: sync public(testnet) ───────────────────────────────────
         ExchangeId::Lighter => {
-            let mut ws = LighterWebSocket::public(false)
-                .await
-                .map_err(|e| format!("WS create failed: {}", e))?;
+            let mut ws = LighterWebSocket::public(false);
             WebSocketConnector::connect(&mut ws, AccountType::Spot)
                 .await
                 .map_err(|e| format!("WS connect failed: {}", e))?;
