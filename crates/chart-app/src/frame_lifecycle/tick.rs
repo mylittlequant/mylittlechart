@@ -16,6 +16,13 @@ impl ChartApp {
         let _ = current_time_ms;
         let tick_start = std::time::Instant::now();
 
+        // Staggered connector warm-up: dial the next batch of enabled connectors.
+        // Runs every frame (including on the skeleton/loading window) until the
+        // whole exchange list is connected, so the 21 dials spread out during the
+        // login screen and data is flowing by the time the chart appears. No-op
+        // once the list is exhausted; idempotent for already-connected exchanges.
+        self.connect_next_connector_batch();
+
         // Load chat history for any restored chat leaves on the very first tick.
         // PTY sessions spawn-on-demand only (user must click [Start]).
         if !self.agent_autostarted {

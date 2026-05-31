@@ -89,6 +89,28 @@ use live_data::{DataBridge, LiveUpdate, LiveDataProvider};
 use zengeld_chart::panel_app::ChartPanelApp;
 use uzor::input::{InputCoordinator, InputState};
 
+/// Every exchange whose connector is warmed up at startup (in small batches from
+/// tick(), spread across the skeleton/loading screen so dials don't burst).
+const ALL_EXCHANGE_IDS: &[digdigdig3::ExchangeId] = &[
+    digdigdig3::ExchangeId::Binance, digdigdig3::ExchangeId::Bybit,
+    digdigdig3::ExchangeId::OKX, digdigdig3::ExchangeId::KuCoin,
+    digdigdig3::ExchangeId::GateIO, digdigdig3::ExchangeId::Bitget,
+    digdigdig3::ExchangeId::MEXC, digdigdig3::ExchangeId::HTX,
+    digdigdig3::ExchangeId::Kraken, digdigdig3::ExchangeId::Coinbase,
+    digdigdig3::ExchangeId::BingX, digdigdig3::ExchangeId::Bitfinex,
+    digdigdig3::ExchangeId::Bitstamp, digdigdig3::ExchangeId::Gemini,
+    digdigdig3::ExchangeId::CryptoCom, digdigdig3::ExchangeId::Lighter,
+    digdigdig3::ExchangeId::Upbit, digdigdig3::ExchangeId::Deribit,
+    digdigdig3::ExchangeId::HyperLiquid, digdigdig3::ExchangeId::Dydx,
+    digdigdig3::ExchangeId::Moex,
+];
+
+/// How many connectors to dial per tick during the staggered warm-up. 4/tick at
+/// ~116 fps connects all 21 within the first ~50 ms of frames — fast enough to be
+/// ready by the time the user clears the login screen, gentle enough that the
+/// dials don't all land in one frame.
+const CONNECTOR_WARMUP_BATCH: usize = 4;
+
 // =============================================================================
 // Account type helpers
 // =============================================================================
@@ -517,6 +539,14 @@ pub struct ChartApp {
     /// event slips through. Input-driven marks (clicks, settings) are NOT gated
     /// — they set sidebar_data_dirty directly for instant feedback.
     last_sidebar_data_mark: Option<std::time::Instant>,
+
+    /// Cursor into ALL_EXCHANGE_IDS for the staggered connector warm-up. tick()
+    /// dials CONNECTOR_WARMUP_BATCH connectors per frame starting from here until
+    /// the list is exhausted, so the 21 dials spread across the skeleton/loading
+    /// screen instead of bursting in the constructor. Runs on the skeleton window
+    /// too (the bridge is shared and outlives the promote), so data is usually
+    /// flowing by the time the chart appears.
+    connector_warmup_cursor: usize,
 
     /// Last render timing breakdown in microseconds (for PERF diagnostics).
     /// Tuple: (chart_us, toolbar_us, sidebar_us, setup_us)
@@ -977,6 +1007,7 @@ impl ChartApp {
             sidebar_data_dirty: true,
             last_active_leaf: None,
             last_sidebar_data_mark: None,
+            connector_warmup_cursor: 0,
             render_timing_us: (0, 0, 0, 0),
             pending_sub_pane_ratios: std::collections::HashMap::new(),
             pending_sub_pane_above_main: std::collections::HashMap::new(),
@@ -1127,26 +1158,14 @@ impl ChartApp {
             bridge.request_bars(exchange_id, "BTCUSDT", &zengeld_chart::state::Timeframe::new("1H", 60), digdigdig3::AccountType::Spot, None, Some(app.panel_app.user_manager.profile.bar_count as usize), false);
         }
 
-        // Ensure connectors for all registered exchanges.
-        // New connectors default to disabled — only explicitly enabled ones start.
-        {
-            use digdigdig3::ExchangeId;
-            const ALL_EXCHANGE_IDS: &[ExchangeId] = &[
-                ExchangeId::Binance, ExchangeId::Bybit, ExchangeId::OKX, ExchangeId::KuCoin,
-                ExchangeId::GateIO, ExchangeId::Bitget, ExchangeId::MEXC, ExchangeId::HTX,
-                ExchangeId::Kraken, ExchangeId::Coinbase, ExchangeId::BingX, ExchangeId::Bitfinex,
-                ExchangeId::Bitstamp, ExchangeId::Gemini, ExchangeId::CryptoCom, ExchangeId::Lighter,
-                ExchangeId::Upbit, ExchangeId::Deribit, ExchangeId::HyperLiquid,
-                ExchangeId::Dydx, ExchangeId::Moex,
-            ];
-            for &eid in ALL_EXCHANGE_IDS {
-                let default_enabled = true;
-                if !app.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(default_enabled) {
-                    continue;
-                }
-                bridge.ensure_connector(eid);
-            }
-        }
+        // The full set of enabled connectors is NOT connected here (that fired 21
+        // simultaneous dials in the constructor). Instead they connect in small
+        // batches from tick() — see connect_next_connector_batch — so the dials
+        // spread out during the skeleton/loading screen while the user is logging
+        // in. The connector runtime + bridge are shared and outlive the skeleton→
+        // live promote, so by the time the chart appears the connectors are up.
+        // The exchanges actually NEEDED right away (active window + watchlist) are
+        // connected eagerly above/below this point.
 
         // Request the full symbol list from Binance (already started above).
         // Moex symbols will be requested via ConnectorReady once it initialises.
@@ -1289,6 +1308,7 @@ impl ChartApp {
             sidebar_data_dirty: true,
             last_active_leaf: None,
             last_sidebar_data_mark: None,
+            connector_warmup_cursor: 0,
             render_timing_us: (0, 0, 0, 0),
             pending_sub_pane_ratios: std::collections::HashMap::new(),
             pending_sub_pane_above_main: std::collections::HashMap::new(),
@@ -1497,6 +1517,7 @@ impl ChartApp {
             sidebar_data_dirty: true,
             last_active_leaf: None,
             last_sidebar_data_mark: None,
+            connector_warmup_cursor: 0,
             render_timing_us: (0, 0, 0, 0),
             pending_sub_pane_ratios: std::collections::HashMap::new(),
             pending_sub_pane_above_main: std::collections::HashMap::new(),
@@ -1731,26 +1752,10 @@ impl ChartApp {
             }
         }
 
-        // Warm up all enabled connectors (idempotent — ensure_connector is a no-op if started).
-        // New connectors default to disabled — only explicitly enabled ones start.
-        if !skeleton {
-            use digdigdig3::ExchangeId;
-            const ALL_EXCHANGE_IDS: &[ExchangeId] = &[
-                ExchangeId::Binance, ExchangeId::Bybit, ExchangeId::OKX, ExchangeId::KuCoin,
-                ExchangeId::GateIO, ExchangeId::Bitget, ExchangeId::MEXC, ExchangeId::HTX,
-                ExchangeId::Kraken, ExchangeId::Coinbase, ExchangeId::BingX, ExchangeId::Bitfinex,
-                ExchangeId::Bitstamp, ExchangeId::Gemini, ExchangeId::CryptoCom, ExchangeId::Lighter,
-                ExchangeId::Upbit, ExchangeId::Deribit, ExchangeId::HyperLiquid,
-                ExchangeId::Dydx, ExchangeId::Moex,
-            ];
-            for &eid in ALL_EXCHANGE_IDS {
-                let default_enabled = true;
-                if !app.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(default_enabled) {
-                    continue;
-                }
-                bridge.ensure_connector(eid);
-            }
-        }
+        // Connectors are warmed up in small batches from tick() (see
+        // connect_next_connector_batch), not all-at-once here — the dials spread
+        // out during the skeleton/loading screen. Exchanges needed immediately
+        // (window + watchlist) are connected eagerly above.
 
         if !skeleton {
             bridge.request_symbols(exchange_id);
@@ -4578,6 +4583,28 @@ impl ChartApp {
         let input_state = InputState::default()
             .with_pointer_pos(self.last_mouse_pos.0, self.last_mouse_pos.1);
         self.input_coordinator.borrow_mut().begin_frame(input_state);
+    }
+
+    /// Dial the next batch of enabled connectors. Called once per tick (including
+    /// on the skeleton/loading window) until the whole ALL_EXCHANGE_IDS list has
+    /// been walked. Spreads the 21 startup dials across many frames so they don't
+    /// burst in one frame, while still being ready well before the user finishes
+    /// the login screen. Idempotent: ensure_connector is a no-op for already-
+    /// connected exchanges (so the eagerly-connected window/watchlist exchanges
+    /// are skipped here). Each ConnectorReady auto-calls request_symbols, so the
+    /// Symbol Search list fills in as the batches land.
+    pub fn connect_next_connector_batch(&mut self) {
+        if self.connector_warmup_cursor >= ALL_EXCHANGE_IDS.len() {
+            return;
+        }
+        let end = (self.connector_warmup_cursor + CONNECTOR_WARMUP_BATCH).min(ALL_EXCHANGE_IDS.len());
+        for &eid in &ALL_EXCHANGE_IDS[self.connector_warmup_cursor..end] {
+            // Respect the per-connector enabled toggle (default on).
+            if self.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
+                self.bridge.ensure_connector(eid);
+            }
+        }
+        self.connector_warmup_cursor = end;
     }
 
     /// Finalize the input frame after ALL layers (chart, toolbar, sidebar,
