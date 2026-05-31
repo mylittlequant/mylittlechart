@@ -407,6 +407,23 @@ impl DataBridge {
         self.tx.subscribe()
     }
 
+    /// Snapshot the bridge's per-exchange symbol cache.
+    ///
+    /// Returns every exchange whose REST `exchange_info` has already resolved
+    /// during this process — i.e. every `SymbolsLoaded` event ever broadcast.
+    /// New `ChartApp` instances (notably the live-window instance created
+    /// during skeleton→live promote) use this to seed their `exchange_symbols`
+    /// map without racing against the broadcast channel: the skeleton's
+    /// receiver caught every `SymbolsLoaded` between connect and promote, but
+    /// dropping the skeleton ChartApp dropped that map with it; the cache
+    /// itself lives on the bridge and survives.
+    pub fn symbols_snapshot(&self) -> HashMap<ExchangeId, Vec<SymbolInfo>> {
+        match self.symbol_cache.lock() {
+            Ok(c) => c.clone(),
+            Err(p) => p.into_inner().clone(),
+        }
+    }
+
     /// Get a reference to the connector hub.
     pub fn pool(&self) -> &ExchangeHub {
         &self.hub

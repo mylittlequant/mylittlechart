@@ -1252,7 +1252,11 @@ impl ChartApp {
             live_update_rx,
             mini_ticker_cache: std::collections::HashMap::new(),
             active_exchange: digdigdig3::ExchangeId::Binance,
-            exchange_symbols: std::collections::HashMap::new(),
+            // Seed from the bridge's session-long symbol cache so that windows
+            // created after the connect wave (notably the live window after
+            // skeleton→live promote) start with every venue already loaded
+            // instead of waiting for re-broadcast that never comes.
+            exchange_symbols: bridge.symbols_snapshot(),
             window_id: format!(
                 "win_{}",
                 std::time::SystemTime::now()
@@ -1466,7 +1470,8 @@ impl ChartApp {
             live_update_rx,
             mini_ticker_cache: std::collections::HashMap::new(),
             active_exchange: digdigdig3::ExchangeId::Binance,
-            exchange_symbols: std::collections::HashMap::new(),
+            // Seed from the bridge's session-long symbol cache (see new_empty).
+            exchange_symbols: bridge.symbols_snapshot(),
             window_id,
             window_x: None,
             window_y: None,
