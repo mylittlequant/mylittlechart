@@ -176,12 +176,14 @@ struct PerWindowState {
     /// Used to suppress `sidebar_dirty_scene` when the cursor moves within
     /// the same row — hover highlight only changes at row boundaries (36 px).
     last_sidebar_hover_row: Option<usize>,
-    /// Whether the cursor was inside a toolbar band on the previous CursorMoved.
-    /// `toolbar_dirty` is only set while INSIDE a toolbar zone — so a fast exit
-    /// into the chart left the cached toolbar scene with a stale hover highlight
-    /// (no dirty mark fired on the way out). We mark dirty once on the
-    /// inside→outside transition so the toolbar redraws and clears the highlight.
-    was_in_toolbar_zone: bool,
+    /// The hovered toolbar-button id the cached toolbar scene was last drawn with.
+    /// The cached toolbar scene only rebuilds on `toolbar_dirty`, which the coarse
+    /// zone check sets only while the cursor is INSIDE a toolbar band — so a fast
+    /// exit into the chart left a stale highlight lit. We compare the current
+    /// hovered toolbar id against this each CursorMoved and force a rebuild when it
+    /// CHANGES (enter/leave/switch). Rebuilding only on a real change avoids the
+    /// flicker that came from forcing rebuilds on every out-of-zone frame.
+    last_drawn_toolbar_hover: Option<String>,
     /// When this window was created. Used to gate first visibility: we keep a
     /// freshly-promoted (post-login) window hidden until its chart has bars to
     /// draw, so the user never sees an empty chart flash for ~2s while data
@@ -1416,7 +1418,7 @@ impl App<'_> {
             close_window_requested: false,
             delete_window_requested: false,
             last_sidebar_hover_row: None,
-            was_in_toolbar_zone: false,
+            last_drawn_toolbar_hover: None,
             created_at: std::time::Instant::now(),
             skeleton,
             render_backend: sidebar_content::state::RenderBackend::VelloGpu,

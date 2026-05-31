@@ -4585,6 +4585,20 @@ impl ChartApp {
         self.input_coordinator.borrow_mut().begin_frame(input_state);
     }
 
+    /// The currently-hovered toolbar button id (across all four toolbar strips),
+    /// as recomputed by the last `on_mouse_move`. Used by the window layer to
+    /// detect when the toolbar highlight changes and rebuild the cached toolbar
+    /// scene exactly then — so a stuck highlight clears on a fast exit and the
+    /// highlight never flickers. Returns the strip-prefixed id (e.g. "csb:..") so
+    /// two different strips' buttons with the same suffix don't compare equal.
+    pub fn hovered_toolbar_id_snapshot(&self) -> Option<String> {
+        let ts = &self.panel_app.toolbar_state;
+        ts.hovered_top_toolbar_id.as_ref().map(|s| format!("csb:{s}"))
+            .or_else(|| ts.hovered_left_toolbar_id.as_ref().map(|s| format!("dtb:{s}")))
+            .or_else(|| ts.hovered_right_toolbar_id.as_ref().map(|s| format!("rtb:{s}")))
+            .or_else(|| ts.hovered_bottom_toolbar_id.as_ref().map(|s| format!("btb:{s}")))
+    }
+
     /// Dial the next batch of enabled connectors. Called once per tick (including
     /// on the skeleton/loading window) until the whole ALL_EXCHANGE_IDS list has
     /// been walked. Spreads the 21 startup dials across many frames so they don't

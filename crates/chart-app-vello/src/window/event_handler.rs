@@ -240,14 +240,22 @@ impl App<'_> {
                         || x > chart_w - RIGHT_TOOLBAR_WIDTH;
                     if in_toolbar_zone {
                         pw.toolbar_dirty = true;
-                    } else if pw.was_in_toolbar_zone {
-                        // Cursor just left a toolbar band. The last in-zone frame lit
-                        // a button highlight into the cached toolbar scene; without a
-                        // dirty mark on the way out (fast/horizontal exit), that
-                        // highlight would stick. Force one rebuild to clear it.
-                        pw.toolbar_dirty = true;
                     }
-                    pw.was_in_toolbar_zone = in_toolbar_zone;
+                    // Rebuild the toolbar scene whenever the hovered button actually
+                    // CHANGES (enter / leave / switch), not just while inside the
+                    // zone. on_mouse_move (above) already recomputed the hovered
+                    // toolbar id for this move; if it differs from what the cached
+                    // toolbar scene was last drawn with, force a rebuild. This clears
+                    // a stuck highlight on a fast exit into the chart (the zone check
+                    // alone never fires on the way out) and — because it rebuilds
+                    // ONLY on a real change — does not flicker.
+                    {
+                        let cur_hover = pw.chart.hovered_toolbar_id_snapshot();
+                        if cur_hover != pw.last_drawn_toolbar_hover {
+                            pw.toolbar_dirty = true;
+                            pw.last_drawn_toolbar_hover = cur_hover;
+                        }
+                    }
 
                     // Dropdowns extend below the toolbar zone — always rebuild toolbar
                     // scene when any dropdown is open so hover highlights update.
