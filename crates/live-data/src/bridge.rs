@@ -30,9 +30,6 @@ use digdigdig3::connector_manager::ExchangeHub;
 use zengeld_chart::Bar;
 use zengeld_chart::state::Timeframe;
 
-use digdigdig3::core::websocket::KlineInterval;
-use digdigdig3_station::{Event as StationEvent, Stream as StationStream, SubscriptionSet};
-
 use crate::convert::{kline_to_bar, timeframe_to_interval};
 use crate::ws_manager::{WsActorMap, WsCmd, WsKey, WsStreamType};
 
@@ -558,15 +555,15 @@ impl DataBridge {
         account_type: AccountType,
         _limit: Option<u16>,
         _total_bars: Option<usize>,
-        _force: bool,
+        force: bool,
     ) {
+        let hub = self.hub.clone();
         let tx = self.tx.clone();
         let symbol_str = symbol.to_string();
-        let interval_str = timeframe_to_interval(timeframe);
+        let interval = timeframe_to_interval(timeframe);
         let tf_name = timeframe.name.clone();
         let cache = self.bar_cache.clone();
         let active_fetches = self.active_fetches.clone();
-        let station = self.station.clone();
 
         let cache_key = make_series_key(exchange_id, account_type, &symbol_str, &tf_name);
 
@@ -580,162 +577,252 @@ impl DataBridge {
             af.insert(cache_key.clone());
         }
 
+        // Snapshot the disk/session cache BEFORE Phase A so we can detect a gap.
+        let cached_bars: Option<Vec<Bar>> = {
+            let bars = read_series_bars(&self.bar_cache, &cache_key);
+            if bars.is_empty() { None } else { Some(bars) }
+        };
+
+        // If cache exists, send it immediately (Level 1 — instant render while
+        // the network fetch is in flight).
+        if let Some(ref bars) = cached_bars {
+            crate::dlog!("[Bridge] {:?} serving {} cached bars instantly for sym={} tf={}", exchange_id, bars.len(), symbol_str, tf_name);
+            let _ = tx.send(LiveUpdate::BarsLoaded {
+                exchange_id,
+                account_type,
+                symbol: symbol_str.clone(),
+                timeframe: tf_name.clone(),
+                bars: bars.clone(),
+            });
+        }
+
+        // Capture disk cache boundaries for gap detection (Phase B).
+        let disk_last_ts: Option<i64> = cached_bars.as_ref()
+            .and_then(|bars| bars.last())
+            .map(|b| b.timestamp);
+        let had_disk_cache = cached_bars.is_some();
+
         self.runtime.spawn(async move {
-            // RAII guard: removes the in-flight key on every exit path.
-            struct FetchGuard {
-                active_fetches: Arc<Mutex<HashSet<BarSeriesKey>>>,
-                key: BarSeriesKey,
-            }
-            impl Drop for FetchGuard {
-                fn drop(&mut self) {
-                    if let Ok(mut af) = self.active_fetches.lock() {
-                        af.remove(&self.key);
+            // Helper macro to remove the in-flight key on every exit path.
+            macro_rules! finish_fetch {
+                () => {
+                    if let Ok(mut af) = active_fetches.lock() {
+                        af.remove(&cache_key);
                     }
-                }
+                };
             }
-            let _guard = FetchGuard { active_fetches: active_fetches.clone(), key: cache_key.clone() };
 
-            // Build SubscriptionSet: use `add` (smart normalization path).
-            let kline_interval = KlineInterval::new(&interval_str);
-            let sub_set = SubscriptionSet::new()
-                .add(
-                    exchange_id,
-                    symbol_str.clone(),
-                    account_type,
-                    [StationStream::Kline(kline_interval)],
-                );
+            // Wait for connector if ensure_connector is still initializing it.
+            let connector = {
+                let mut attempts = 0;
+                loop {
+                    if let Some(c) = hub.rest(exchange_id) {
+                        break c;
+                    }
+                    attempts += 1;
+                    if attempts > 50 {
+                        let _ = tx.send(LiveUpdate::Error {
+                            exchange_id,
+                            message: format!("connector {:?} not initialized", exchange_id),
+                        });
+                        finish_fetch!();
+                        return;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            };
 
-            crate::dlog!("[Bridge] station.subscribe {:?} sym={} tf={}", exchange_id, symbol_str, interval_str);
+            let sym = parse_symbol_for_exchange(exchange_id, &symbol_str);
 
-            let mut report = match station.subscribe(sub_set).await {
-                Ok(r) => r,
+            // ── Phase A: Quick fresh fetch ───────────────────────────────────
+            // Skip the network fetch if the cache is already fresh (last bar
+            // within 2× the interval of now). This avoids redundant API calls
+            // when switching between presets that share the same data.
+            let interval_secs = interval_to_seconds(&interval);
+            let now_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            let cache_is_fresh = disk_last_ts
+                .map(|ts| (now_secs - ts) < interval_secs * 2)
+                .unwrap_or(false);
+
+            if cache_is_fresh && !force {
+                crate::dlog!("[Bridge] Phase A: {:?} sym={} interval={} cache is fresh (age={}s < {}s), skipping fetch",
+                    exchange_id, symbol_str, interval,
+                    now_secs - disk_last_ts.unwrap_or(0),
+                    interval_secs * 2);
+                finish_fetch!();
+                return;
+            }
+
+            crate::dlog!("[Bridge] Phase A: {:?} sym={} interval={} fetching 300 fresh bars", exchange_id, symbol_str, interval);
+
+            let phase_a_result = connector
+                .get_klines((&sym).into(),&interval, Some(300), account_type, None)
+                .await;
+
+            let fresh_300: Vec<Bar> = match phase_a_result {
+                Ok(klines) => {
+                    let bars: Vec<Bar> = klines.iter().map(kline_to_bar).collect();
+                    crate::dlog!("[Bridge] Phase A: got {} bars", bars.len());
+                    bars
+                }
                 Err(e) => {
+                    eprintln!("[Bridge] Phase A error: {:?} {}", exchange_id, e);
                     let _ = tx.send(LiveUpdate::Error {
                         exchange_id,
-                        message: format!("station.subscribe failed: {e}"),
+                        message: format!("get_klines failed: {}", e),
                     });
+                    finish_fetch!();
                     return;
                 }
             };
 
-            // Emit partial-failure warnings but keep going if at least one stream is ok.
-            if !report.failed.is_empty() {
-                let failed_msg: String = report.failed.iter()
-                    .map(|f| format!("{:?}/{}", f.stream, f.error))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                crate::dlog!("[Bridge] station subscribe partial failure: {}", failed_msg);
-                if report.ok.is_empty() {
-                    let _ = tx.send(LiveUpdate::Error {
-                        exchange_id,
-                        message: format!("station subscribe: all streams failed: {failed_msg}"),
-                    });
+            let fresh_first_ts: Option<i64> = fresh_300.first().map(|b| b.timestamp);
+            let fresh_last_ts: Option<i64> = fresh_300.last().map(|b| b.timestamp);
+
+            if let (Some(ft), Some(lt)) = (fresh_first_ts, fresh_last_ts) {
+                crate::dlog!("[Bridge] Phase A fresh range: {} -> {} ({} bars)", ft, lt, fresh_300.len());
+            }
+
+            // Merge fresh_300 into any existing session cache.
+            let period_secs = tf_period_secs(&tf_name);
+            let merged_a = {
+                let old = read_series_bars(&cache, &cache_key);
+                if old.is_empty() {
+                    set_series_bars(&cache, &cache_key, fresh_300.clone(), period_secs);
+                    fresh_300.clone()
+                } else {
+                    crate::dlog!("[Bridge] Phase A merging {} fresh + {} cached", fresh_300.len(), old.len());
+                    merge_into_series(&cache, &cache_key, fresh_300.clone(), period_secs)
+                }
+            };
+
+            // Send Phase A BarsLoaded (Level 2 — viewport goes to Follow mode).
+            let _ = tx.send(LiveUpdate::BarsLoaded {
+                exchange_id,
+                account_type,
+                symbol: symbol_str.clone(),
+                timeframe: tf_name.clone(),
+                bars: merged_a.clone(),
+            });
+
+            // ── Phase B: Async heal — fill gap between disk cache and fresh bars ──
+            // Only runs when a disk cache existed before this call.
+            if !had_disk_cache {
+                crate::dlog!("[Bridge] Phase B: skipped (no disk cache)");
+                finish_fetch!();
+                return;
+            }
+
+            let disk_last = match disk_last_ts {
+                Some(ts) => ts,
+                None => {
+                    finish_fetch!();
                     return;
                 }
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("station subscribe: some streams failed: {failed_msg}"),
-                });
+            };
+            let fresh_first = match fresh_first_ts {
+                Some(ts) => ts,
+                None => {
+                    finish_fetch!();
+                    return;
+                }
+            };
+
+            let gap_seconds = fresh_first - disk_last;
+            if gap_seconds <= 0 {
+                crate::dlog!("[Bridge] Phase B: no gap (disk_last={} fresh_first={}), done", disk_last, fresh_first);
+                finish_fetch!();
+                return;
             }
 
-            // ── Drain warm-start batch ──────────────────────────────────────
-            // Station emits disk-replay events first (up to warm_start=1000),
-            // then live WS events. We read with a short 200ms timeout: anything
-            // that arrives quickly is treated as historical warm-start data;
-            // once the timeout fires we flush the batch as one BarsLoaded.
-            let mut warm_bars: Vec<Bar> = Vec::new();
+            let interval_secs = interval_to_seconds(&interval);
+            let gap_bars = if interval_secs > 0 { gap_seconds / interval_secs } else { gap_seconds };
+            let heal_target = (gap_bars * 2).max(100) as usize;
 
-            loop {
-                match tokio::time::timeout(
-                    std::time::Duration::from_millis(200),
-                    report.handle.recv(),
-                ).await {
-                    Ok(Some(StationEvent::Bar { point, .. })) => {
-                        warm_bars.push(bar_point_to_bar(&point));
+            crate::dlog!(
+                "[Bridge] Phase B: gap={}s = ~{} bars, heal_target={} bars (disk_last={} fresh_first={})",
+                gap_seconds, gap_bars, heal_target, disk_last, fresh_first
+            );
+
+            // Paginate backward from fresh_first to fill the gap toward disk_last.
+            // end_time cursor starts just before the earliest fresh bar (in ms).
+            let mut end_time_cursor: Option<i64> = Some(fresh_first * 1000 - 1);
+            let mut heal_bars: Vec<Bar> = Vec::with_capacity(heal_target);
+            let mut pages: usize = 0;
+
+            'heal: loop {
+                let result = connector
+                    .get_klines((&sym).into(),&interval, Some(500), account_type, end_time_cursor)
+                    .await;
+
+                match result {
+                    Ok(klines) => {
+                        if klines.is_empty() {
+                            crate::dlog!("[Bridge] Phase B: empty page, stopping");
+                            break 'heal;
+                        }
+                        pages += 1;
+                        let batch: Vec<Bar> = klines.iter().map(kline_to_bar).collect();
+
+                        // Move cursor to before the oldest bar in this page.
+                        if let Some(oldest_ms) = klines.iter().map(|k| k.open_time).min() {
+                            end_time_cursor = Some(oldest_ms - 1);
+                        }
+
+                        let oldest_bar_ts = batch.first().map(|b| b.timestamp).unwrap_or(0);
+                        // batch is fresh REST data and wins on conflicts (second arg wins).
+                        heal_bars = merge_bars(heal_bars, batch);
+
+                        crate::dlog!("[Bridge] Phase B: page {} -> {} heal bars (oldest_ts={})", pages, heal_bars.len(), oldest_bar_ts);
+
+                        if heal_bars.len() >= heal_target {
+                            crate::dlog!("[Bridge] Phase B: reached heal_target={}", heal_target);
+                            break 'heal;
+                        }
+                        // Stop when we've reached into the disk cache range.
+                        if oldest_bar_ts <= disk_last {
+                            crate::dlog!("[Bridge] Phase B: reached disk_last={}, gap covered", disk_last);
+                            break 'heal;
+                        }
+                        if pages >= 20 {
+                            crate::dlog!("[Bridge] Phase B: capped at 20 pages");
+                            break 'heal;
+                        }
                     }
-                    Ok(Some(_other_event)) => {
-                        // Non-bar events during warm-start window — ignore.
-                    }
-                    Ok(None) => {
-                        // Handle closed — station shut down the stream.
-                        crate::dlog!("[Bridge] station handle closed during warm-start for {:?} sym={} tf={}", exchange_id, symbol_str, tf_name);
-                        break;
-                    }
-                    Err(_timeout) => {
-                        // 200ms elapsed — warm-start window closed.
-                        break;
+                    Err(e) => {
+                        crate::dlog!("[Bridge] Phase B error at page {}: {}", pages, e);
+                        break 'heal;
                     }
                 }
             }
 
-            crate::dlog!("[Bridge] station warm-start: {} bars for {:?} sym={} tf={}", warm_bars.len(), exchange_id, symbol_str, tf_name);
-
-            if !warm_bars.is_empty() {
-                // Sort and dedup before writing to cache.
-                warm_bars.sort_by_key(|b| b.timestamp);
-                warm_bars.dedup_by_key(|b| b.timestamp);
-
-                let period_secs = tf_period_secs(&tf_name);
-                let merged = merge_into_series(&cache, &cache_key, warm_bars.clone(), period_secs);
-
-                let _ = tx.send(LiveUpdate::BarsLoaded {
-                    exchange_id,
-                    account_type,
-                    symbol: symbol_str.clone(),
-                    timeframe: tf_name.clone(),
-                    bars: merged,
-                });
+            if heal_bars.is_empty() {
+                crate::dlog!("[Bridge] Phase B: no heal bars fetched, done");
+                finish_fetch!();
+                return;
             }
 
-            // ── Live event drain ────────────────────────────────────────────
-            // After warm-start batch, forward each subsequent Bar event as a
-            // BarUpdate (closed=true — station only emits closed bars for klines).
-            loop {
-                let ev = match report.handle.recv().await {
-                    Some(e) => e,
-                    None => {
-                        crate::dlog!("[Bridge] station handle closed for {:?} sym={} tf={}", exchange_id, symbol_str, tf_name);
-                        break;
-                    }
-                };
+            crate::dlog!("[Bridge] Phase B: fetched {} heal bars over {} pages, merging", heal_bars.len(), pages);
 
-                if let StationEvent::Bar { point, .. } = ev {
-                    let bar = bar_point_to_bar(&point);
+            // Merge heal bars into current cache (which already has Phase A result).
+            // heal_bars goes as "old" so that the already-cached Phase A data wins on conflicts.
+            let merged_b = merge_into_series(&cache, &cache_key, heal_bars, period_secs);
 
-                    // Write into bar_cache so render path stays live.
-                    {
-                        let period_secs = tf_period_secs(&tf_name);
-                        let handle = get_or_create_series(&cache, &cache_key, period_secs);
-                        if let Ok(mut series) = handle.write() {
-                            // Upsert: kline open_time may repeat on partial updates.
-                            let ts = bar.timestamp;
-                            if let Some(last) = series.bars.back_mut() {
-                                if last.timestamp == ts {
-                                    *last = bar.clone();
-                                    series.version += 1;
-                                    series.dirty = true;
-                                } else {
-                                    series.bars.push_back(bar.clone());
-                                    series.version += 1;
-                                    series.dirty = true;
-                                }
-                            } else {
-                                series.bars.push_back(bar.clone());
-                                series.version += 1;
-                                series.dirty = true;
-                            }
-                        };
-                    }
+            crate::dlog!("[Bridge] Phase B done: sending {} bars (fully healed)", merged_b.len());
 
-                    let _ = tx.send(LiveUpdate::BarUpdate {
-                        exchange_id,
-                        account_type,
-                        symbol: symbol_str.clone(),
-                        bar,
-                        is_closed: true,
-                    });
-                }
-            }
+            // Send Phase B BarsLoaded (Level 3 — fully healed dataset).
+            let _ = tx.send(LiveUpdate::BarsLoaded {
+                exchange_id,
+                account_type,
+                symbol: symbol_str,
+                timeframe: tf_name,
+                bars: merged_b,
+            });
+
+            finish_fetch!();
         });
     }
 
@@ -1848,25 +1935,6 @@ fn interval_to_seconds(interval: &str) -> i64 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DIG3 STATION TYPE ADAPTERS
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Convert a dig3-station `BarPoint` to a chart `Bar`.
-///
-/// `BarPoint.open_time` is in milliseconds; `Bar.timestamp` is in seconds.
-fn bar_point_to_bar(point: &digdigdig3_station::data::bar::BarPoint) -> Bar {
-    let ts = point.open_time / 1000;
-    Bar {
-        timestamp: ts,
-        open: point.open,
-        high: point.high,
-        low: point.low,
-        close: point.close,
-        volume: point.volume,
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // SHARED SERIES HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1919,6 +1987,19 @@ fn read_series_len(map: &SharedSeriesMap, key: &BarSeriesKey) -> usize {
         Some(handle) => handle.read().unwrap_or_else(|e| e.into_inner()).len(),
         None => 0,
     }
+}
+
+/// Replace the bars in a series (creating it if needed). Bumps version and
+/// marks the series dirty.
+fn set_series_bars(map: &SharedSeriesMap, key: &BarSeriesKey, mut bars: Vec<Bar>, period_secs: i64) {
+    bars.sort_by_key(|b| b.timestamp);
+    bars.dedup_by_key(|b| b.timestamp);
+    bars.retain(|b| b.timestamp >= 1_000_000_000 && b.timestamp <= 9_999_999_999);
+    let handle = get_or_create_series(map, key, period_secs);
+    let mut series = handle.write().unwrap_or_else(|e| e.into_inner());
+    series.bars = VecDeque::from(bars);
+    series.version += 1;
+    series.dirty = true;
 }
 
 /// Atomically read–merge–write bars in a series. Returns the merged result.
