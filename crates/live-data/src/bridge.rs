@@ -302,6 +302,18 @@ pub struct DataBridge {
     /// is called multiple times for the same key. Guarded by `std::sync::Mutex` —
     /// only held briefly (never across `.await`).
     station_orderbook_subscribed: Arc<Mutex<HashSet<OrderbookKey>>>,
+    /// C5: tracks which `(ExchangeId, String, AccountType)` keys already have a
+    /// live station ticker-subscriber task spawned.
+    ///
+    /// Prevents spawning N parallel station forwarders when `subscribe_mini_ticker`
+    /// is called multiple times for the same symbol key.
+    station_ticker_subscribed: Arc<Mutex<HashSet<(ExchangeId, String, AccountType)>>>,
+    /// C5: tracks which `(ExchangeId, AccountType)` pairs already have a live
+    /// station private-subscriber task spawned.
+    ///
+    /// One authenticated WS covers all symbols for that account — keyed by
+    /// `(exchange, account_type)` not per-symbol.
+    station_private_subscribed: Arc<Mutex<HashSet<(ExchangeId, AccountType)>>>,
 }
 
 impl DataBridge {
@@ -387,6 +399,8 @@ impl DataBridge {
             station,
             station_trade_subscribed: Arc::new(Mutex::new(HashSet::new())),
             station_orderbook_subscribed: Arc::new(Mutex::new(HashSet::new())),
+            station_ticker_subscribed: Arc::new(Mutex::new(HashSet::new())),
+            station_private_subscribed: Arc::new(Mutex::new(HashSet::new())),
         }, rx, connector_ready_rx)
     }
 
@@ -1140,6 +1154,8 @@ impl DataBridge {
     /// Subscribe to a single symbol's mini ticker stream via WebSocket.
     ///
     /// Routes the symbol to the shared per-exchange ticker actor.
+    /// Also spawns a station ticker side-channel (C5) for the same key — parallel
+    /// to the ws_manager Ticker actor, not a replacement.
     pub fn subscribe_mini_ticker(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
         let key = WsKey { exchange_id, stream_type: WsStreamType::Ticker, account_type };
         let tx = self.tx.clone();
@@ -1149,6 +1165,67 @@ impl DataBridge {
             let cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt, None, None);
             let _ = cmd_tx.try_send(WsCmd::AddSymbol { symbol: symbol.to_string() });
         }
+
+        // C5: spawn station ticker side-channel once per (exchange_id, symbol, account_type).
+        let ticker_key = (exchange_id, symbol.to_string(), account_type);
+        {
+            let mut subs = self.station_ticker_subscribed
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if !subs.insert(ticker_key.clone()) {
+                return;
+            }
+        }
+        let station = self.station.clone();
+        let tx = self.tx.clone();
+        let subs_set = self.station_ticker_subscribed.clone();
+        let symbol_owned = symbol.to_string();
+        let key_for_cleanup = ticker_key;
+        self.runtime.spawn(async move {
+            let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                exchange_id,
+                symbol_owned.clone(),
+                account_type,
+                [digdigdig3_station::Stream::Ticker],
+            );
+            let mut report = match station.subscribe(sub_set).await {
+                Ok(r) => r,
+                Err(e) => {
+                    crate::dlog!("[Bridge] station ticker subscribe failed {:?} sym={}: {:?}",
+                        exchange_id, symbol_owned, e);
+                    if let Ok(mut s) = subs_set.lock() {
+                        s.remove(&key_for_cleanup);
+                    }
+                    return;
+                }
+            };
+            if !report.failed.is_empty() {
+                crate::dlog!("[Bridge] station ticker partial-fail {:?} sym={}: {} failed",
+                    exchange_id, symbol_owned, report.failed.len());
+            }
+            while let Some(ev) = report.handle.recv().await {
+                if let digdigdig3_station::Event::Ticker { point, .. } = ev {
+                    // NaN sentinel → None for optional 24h-stats fields.
+                    let opt = |v: f64| if v.is_nan() { None } else { Some(v) };
+                    let _ = tx.send(LiveUpdate::MiniTickerUpdate {
+                        exchange_id,
+                        account_type,
+                        symbol: symbol_owned.clone(),
+                        last_price: point.last,
+                        price_change_percent: opt(point.change_pct_24h),
+                        high_price: opt(point.high_24h),
+                        low_price: opt(point.low_24h),
+                        volume: opt(point.vol_24h),
+                    });
+                }
+            }
+            // Forwarder handle dropped. Remove gate so a future subscribe_mini_ticker can re-spawn.
+            if let Ok(mut s) = subs_set.lock() {
+                s.remove(&key_for_cleanup);
+            }
+            crate::dlog!("[Bridge] station ticker forwarder exited {:?} sym={}, gate removed",
+                exchange_id, symbol_owned);
+        });
     }
 
     /// Subscribe to L2 orderbook depth updates via WebSocket.
@@ -1399,8 +1476,155 @@ impl DataBridge {
         let rt = self.runtime.handle().clone();
         if let Ok(mut actors) = self.ws_actors.lock() {
             // get_or_spawn returns existing cmd_tx if already running.
-            let _cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt, Some(credentials), None);
+            let _cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt, Some(credentials.clone()), None);
         }
+
+        // C5: spawn station private side-channel once per (exchange_id, account_type).
+        // One authenticated WS covers all private streams (order/balance/position).
+        // WASM: add_authenticated returns UnsupportedOperation → subscribe fails → silent skip.
+        let private_key = (exchange_id, account_type);
+        {
+            let mut subs = self.station_private_subscribed
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if !subs.insert(private_key) {
+                return;
+            }
+        }
+        let station = self.station.clone();
+        let tx = self.tx.clone();
+        let subs_set = self.station_private_subscribed.clone();
+        self.runtime.spawn(async move {
+            let sub_set = digdigdig3_station::SubscriptionSet::new().add_authenticated(
+                exchange_id,
+                account_type,
+                credentials,
+                [
+                    digdigdig3_station::Stream::OrderUpdate,
+                    digdigdig3_station::Stream::BalanceUpdate,
+                    digdigdig3_station::Stream::PositionUpdate,
+                ],
+            );
+            let mut report = match station.subscribe(sub_set).await {
+                Ok(r) => r,
+                Err(e) => {
+                    crate::dlog!("[Bridge] station private subscribe failed {:?} at={:?}: {:?}",
+                        exchange_id, account_type, e);
+                    if let Ok(mut s) = subs_set.lock() {
+                        s.remove(&private_key);
+                    }
+                    return;
+                }
+            };
+            if !report.failed.is_empty() {
+                crate::dlog!("[Bridge] station private partial-fail {:?} at={:?}: {} failed",
+                    exchange_id, account_type, report.failed.len());
+            }
+            while let Some(ev) = report.handle.recv().await {
+                match ev {
+                    digdigdig3_station::Event::OrderUpdate { symbol, point, .. } => {
+                        use digdigdig3::{OrderSide, OrderStatus, OrderType};
+                        let side = if point.side == 0 { OrderSide::Buy } else { OrderSide::Sell };
+                        let order_type = match point.order_type {
+                            1 => OrderType::Limit { price: point.price },
+                            _ => OrderType::Market,
+                        };
+                        let status = match point.status {
+                            1 => OrderStatus::PartiallyFilled,
+                            2 => OrderStatus::Filled,
+                            3 => OrderStatus::Canceled,
+                            4 => OrderStatus::Rejected,
+                            _ => OrderStatus::New,
+                        };
+                        // order_id string is lost in point (hashed); use hash as surrogate.
+                        let event = digdigdig3::OrderUpdateEvent {
+                            order_id: format!("{}", point.order_id_hash),
+                            client_order_id: if point.client_id_hash != 0 {
+                                Some(format!("{}", point.client_id_hash))
+                            } else {
+                                None
+                            },
+                            side,
+                            order_type,
+                            status,
+                            price: if point.price != 0.0 { Some(point.price) } else { None },
+                            quantity: point.qty,
+                            filled_quantity: point.filled_qty,
+                            average_price: if point.avg_price != 0.0 { Some(point.avg_price) } else { None },
+                            last_fill_price: if point.last_fill_price != 0.0 { Some(point.last_fill_price) } else { None },
+                            last_fill_quantity: if point.last_fill_qty != 0.0 { Some(point.last_fill_qty) } else { None },
+                            last_fill_commission: if point.last_fill_commission != 0.0 { Some(point.last_fill_commission) } else { None },
+                            commission_asset: None,
+                            trade_id: None,
+                            timestamp: point.ts_ms,
+                        };
+                        let _ = tx.send(LiveUpdate::OrderUpdate {
+                            exchange_id,
+                            account_type,
+                            symbol,
+                            event,
+                        });
+                    }
+                    digdigdig3_station::Event::BalanceUpdate { symbol, point, .. } => {
+                        // asset string is lost in point (hashed); use symbol from event or hash.
+                        // Station BalanceUpdate symbol = asset ticker (e.g. "USDT") per Event docs.
+                        let asset = if symbol.is_empty() {
+                            format!("{}", point.asset_hash)
+                        } else {
+                            symbol
+                        };
+                        let event = digdigdig3::BalanceUpdateEvent {
+                            asset,
+                            free: point.free,
+                            locked: point.locked,
+                            total: point.total,
+                            delta: if point.delta != 0.0 { Some(point.delta) } else { None },
+                            reason: None,
+                            timestamp: point.ts_ms,
+                        };
+                        let _ = tx.send(LiveUpdate::BalanceUpdate {
+                            exchange_id,
+                            account_type,
+                            event,
+                        });
+                    }
+                    digdigdig3_station::Event::PositionUpdate { symbol, point, .. } => {
+                        use digdigdig3::PositionSide;
+                        let side = match point.side {
+                            1 => PositionSide::Short,
+                            2 => PositionSide::Both,
+                            _ => PositionSide::Long,
+                        };
+                        let event = digdigdig3::PositionUpdateEvent {
+                            side,
+                            quantity: point.qty,
+                            entry_price: point.entry_price,
+                            mark_price: if point.mark_price != 0.0 { Some(point.mark_price) } else { None },
+                            unrealized_pnl: point.unrealized_pnl,
+                            realized_pnl: if point.realized_pnl != 0.0 { Some(point.realized_pnl) } else { None },
+                            liquidation_price: if point.liquidation_price != 0.0 { Some(point.liquidation_price) } else { None },
+                            leverage: None,
+                            margin_type: None,
+                            reason: None,
+                            timestamp: point.ts_ms,
+                        };
+                        let _ = tx.send(LiveUpdate::PositionUpdate {
+                            exchange_id,
+                            account_type,
+                            symbol,
+                            event,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            // Forwarder handle dropped. Remove gate so a future connect_private can re-spawn.
+            if let Ok(mut s) = subs_set.lock() {
+                s.remove(&private_key);
+            }
+            crate::dlog!("[Bridge] station private forwarder exited {:?} at={:?}, gate removed",
+                exchange_id, account_type);
+        });
     }
 
     /// Remove one consumer interest in depth stream for this symbol.
