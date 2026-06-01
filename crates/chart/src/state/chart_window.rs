@@ -778,7 +778,11 @@ impl ChartWindow {
         self.update_prev_close_line();
 
         self.viewport.bar_count = self.bars.len();
-        self.snap_to_end(DEFAULT_SNAP_MARGIN);
+        // NOTE: do NOT call snap_to_end here — all three callers
+        // (BarsLoaded backfill, BackfillComplete, ScrollBarsLoaded) explicitly
+        // preserve the user's pan/zoom. Snapping to the end on every prepend
+        // makes scroll-left appear to "jump back to newest" once the user has
+        // scrolled past the snap margin.
 
         if self.price_scale.scale_mode.is_auto_y() {
             self.calc_auto_scale();

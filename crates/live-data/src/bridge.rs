@@ -30,6 +30,7 @@ use digdigdig3::connector_manager::ExchangeHub;
 use zengeld_chart::Bar;
 use zengeld_chart::state::Timeframe;
 
+use digdigdig3::core::websocket::KlineInterval;
 use crate::convert::{kline_to_bar, timeframe_to_interval};
 use crate::ws_manager::{WsActorMap, WsCmd, WsKey, WsStreamType};
 
@@ -345,6 +346,7 @@ impl DataBridge {
                 .storage_root(storage_root)
                 .persistence(digdigdig3_station::PersistenceConfig::on())
                 .warm_start(1000)
+                .unsubscribe_grace(std::time::Duration::from_secs(30))
                 .build()
                 .await
                 .expect("failed to build digdigdig3-station")
@@ -618,6 +620,52 @@ impl DataBridge {
             .and_then(|bars| bars.last())
             .map(|b| b.timestamp);
         let had_disk_cache = cached_bars.is_some();
+
+        // ── Station live kline subscriber (side-channel, independent of REST flow) ──
+        {
+            let station = self.station.clone();
+            let station_tx = self.tx.clone();
+            let station_cache = self.bar_cache.clone();
+            let station_cache_key = make_series_key(exchange_id, account_type, &symbol_str, &tf_name);
+            let station_symbol = symbol_str.clone();
+            let station_interval = interval.clone();
+            let station_tf_name = tf_name.clone();
+            let station_period_secs = tf_period_secs(&tf_name);
+            self.runtime.spawn(async move {
+                let kline_iv = KlineInterval::new(&station_interval);
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                    exchange_id,
+                    station_symbol.clone(),
+                    account_type,
+                    [digdigdig3_station::Stream::Kline(kline_iv)],
+                );
+                let mut report = match station.subscribe(sub_set).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        crate::dlog!("[Bridge] station kline subscribe failed for {:?} sym={} tf={}: {:?}",
+                            exchange_id, station_symbol, station_tf_name, e);
+                        return;
+                    }
+                };
+                if !report.failed.is_empty() {
+                    crate::dlog!("[Bridge] station kline partial-fail {:?} sym={} tf={}: {} failed",
+                        exchange_id, station_symbol, station_tf_name, report.failed.len());
+                }
+                while let Some(ev) = report.handle.recv().await {
+                    if let digdigdig3_station::Event::Bar { point, .. } = ev {
+                        let bar = bar_point_to_bar(&point);
+                        upsert_bar_into_cache(&station_cache, &station_cache_key, &bar, station_period_secs);
+                        let _ = station_tx.send(LiveUpdate::BarUpdate {
+                            exchange_id,
+                            account_type,
+                            symbol: station_symbol.clone(),
+                            bar,
+                            is_closed: true,
+                        });
+                    }
+                }
+            });
+        }
 
         self.runtime.spawn(async move {
             // Helper macro to remove the in-flight key on every exit path.
@@ -1504,7 +1552,7 @@ impl DataBridge {
 
             // Effective limit accounts for exchange-specific per-request caps
             // (e.g. OKX returns at most 300 bars regardless of what we request).
-            let effective_limit = exchange_kline_limit(exchange_id, 500);
+            let effective_limit = hub.max_kline_limit(exchange_id, 500);
 
             let mut end_time_cursor = end_time_cursor_init;
             let mut accumulated: Vec<Bar> = Vec::with_capacity(still_need.min(20_000));
@@ -1766,12 +1814,14 @@ impl DataBridge {
                 };
             }
 
-            // Wait for connector (same pattern as other methods).
-            let connector = {
+            // Wait for connector — ensures the exchange is connected before
+            // fetch_history attempts its REST call (fetch_history returns Err
+            // immediately if hub has no connector for this exchange).
+            {
                 let mut attempts = 0;
                 loop {
-                    if let Some(c) = hub.rest(exchange_id) {
-                        break c;
+                    if hub.rest(exchange_id).is_some() {
+                        break;
                     }
                     attempts += 1;
                     if attempts > 50 {
@@ -1784,25 +1834,31 @@ impl DataBridge {
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
-            };
-
-            let sym = parse_symbol_for_exchange(exchange_id, &symbol_str);
+            }
 
             // end_time = just before the oldest timestamp the caller has (ms).
-            let end_time_ms = Some(before_ts * 1000 - 1);
+            let end_time_ms = before_ts * 1000 - 1;
 
             crate::dlog!(
-                "[Bridge] scroll fetch: {:?} sym={} tf={} end_time_ms={:?} batch={}",
+                "[Bridge] scroll fetch (station): {:?} sym={} tf={} end_time_ms={} batch={}",
                 exchange_id, symbol_str, tf_name, end_time_ms, batch_size
             );
 
             // Clamp to the exchange's actual per-request maximum so we request
             // exactly what the exchange will return, and can correctly distinguish
             // a full page from an exhausted-history short page.
-            let limit = exchange_kline_limit(exchange_id, (batch_size as u16).min(500));
-            let result = connector
-                .get_klines((&sym).into(), &interval, Some(limit), account_type, end_time_ms)
-                .await;
+            let limit = hub.max_kline_limit(exchange_id, (batch_size as u16).min(500));
+            let kline_iv = KlineInterval::new(&interval);
+            let hub_arc = std::sync::Arc::new(hub);
+            let result = digdigdig3_station::fetch_history(
+                &hub_arc,
+                exchange_id,
+                &symbol_str,
+                account_type,
+                &kline_iv,
+                end_time_ms,
+                limit,
+            ).await;
 
             match result {
                 Err(e) => {
@@ -1814,7 +1870,7 @@ impl DataBridge {
                     // (e.g. rate limit). The scroll trigger will retry on the next frame.
                     finish_scroll!();
                 }
-                Ok(klines) if klines.is_empty() => {
+                Ok(points) if points.is_empty() => {
                     crate::dlog!(
                         "[Bridge] scroll fetch: {:?} sym={} tf={}: empty page, no more history",
                         exchange_id, symbol_str, tf_name
@@ -1828,9 +1884,9 @@ impl DataBridge {
                     }
                     finish_scroll!();
                 }
-                Ok(klines) => {
-                    let page_len = klines.len();
-                    let new_page: Vec<Bar> = klines.iter().map(kline_to_bar).collect();
+                Ok(points) => {
+                    let page_len = points.len();
+                    let new_page: Vec<Bar> = points.iter().map(bar_point_to_bar).collect();
                     let prepend_count = new_page.len();
 
                     crate::dlog!(
@@ -1881,24 +1937,6 @@ impl DataBridge {
 // ─────────────────────────────────────────────────────────────────────────────
 // EXCHANGE KLINE LIMIT
 // ─────────────────────────────────────────────────────────────────────────────
-
-/// Returns the effective per-request kline limit for a given exchange.
-///
-/// Many exchanges silently clamp the `limit` parameter to their internal
-/// maximum.  When we ask for 500 bars and OKX only returns 300, the count 300
-/// must be treated as a *full page* — not as "exchange ran out of data".
-///
-/// Compare `page_len` against this value (not against our requested number) to
-/// correctly detect exhausted history.
-fn exchange_kline_limit(exchange_id: ExchangeId, requested: u16) -> u16 {
-    let exchange_max: u16 = match exchange_id {
-        ExchangeId::OKX => 300,
-        ExchangeId::KuCoin => 1500,
-        // Binance, Bybit, and most others cap at 1 000.
-        _ => 1000,
-    };
-    requested.min(exchange_max)
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ACCOUNT TYPE HELPERS
@@ -2059,6 +2097,59 @@ fn merge_bars(old: Vec<Bar>, fresh: Vec<Bar>) -> Vec<Bar> {
     merged.sort_by_key(|b| b.timestamp);
     merged.retain(|b| b.timestamp >= 1_000_000_000 && b.timestamp <= 9_999_999_999);
     merged
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STATION BAR CONVERSION
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Convert a `digdigdig3_station::BarPoint` to a chart `Bar`.
+///
+/// `BarPoint.open_time` is in milliseconds; `Bar.timestamp` is in seconds.
+fn bar_point_to_bar(point: &digdigdig3_station::data::BarPoint) -> Bar {
+    Bar {
+        timestamp: point.open_time / 1000,
+        open: point.open,
+        high: point.high,
+        low: point.low,
+        close: point.close,
+        volume: point.volume,
+    }
+}
+
+/// Upsert a single bar into the shared bar cache.
+///
+/// - If the last bar in the series has the same timestamp, overwrite it
+///   (in-progress bar update).
+/// - If the new bar is newer, append it.
+/// - If the new bar is older, skip silently (late delivery, already covered
+///   by the REST flow).
+fn upsert_bar_into_cache(
+    cache: &SharedSeriesMap,
+    key: &BarSeriesKey,
+    bar: &Bar,
+    period_secs: i64,
+) {
+    let handle = get_or_create_series(cache, key, period_secs);
+    let write_result = handle.write();
+    if let Ok(mut series) = write_result {
+        if let Some(last) = series.bars.back_mut() {
+            if last.timestamp == bar.timestamp {
+                *last = *bar;
+                series.version += 1;
+                series.dirty = true;
+            } else if bar.timestamp > last.timestamp {
+                series.bars.push_back(*bar);
+                series.version += 1;
+                series.dirty = true;
+            }
+            // older bar — skip silently
+        } else {
+            series.bars.push_back(*bar);
+            series.version += 1;
+            series.dirty = true;
+        }
+    };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

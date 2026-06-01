@@ -366,14 +366,13 @@ impl ChartApp {
                         // Replace bars with the full merged set from the bridge.
                         window.update_bars(bars.clone());
 
-                        // Enforce max_loaded_bars: evict oldest bars if over limit.
-                        let max = self.panel_app.user_manager.profile.data_load.max_loaded_bars as usize;
-                        if max > 0 && window.bars.len() > max {
-                            let excess = window.bars.len() - max;
-                            window.bars.drain(..excess);
-                            window.viewport.view_start = (window.viewport.view_start - excess as f64).max(0.0);
-                            window.viewport.bar_count = window.bars.len();
-                        }
+                        // NOTE: do NOT evict here. The scroll-trigger gate at
+                        // line ~1077 already refuses to request more bars once
+                        // window.bars.len() >= max_loaded_bars, so this branch
+                        // can never overshoot. Front-drain eviction here would
+                        // drop the bars we just prepended (oldest end) and
+                        // visually "snap" the viewport back to newer data —
+                        // exactly the opposite of the user's intent.
 
                         if window.price_scale.scale_mode.is_auto_y() {
                             window.calc_auto_scale();
