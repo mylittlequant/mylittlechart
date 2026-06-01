@@ -288,6 +288,13 @@ pub struct DataBridge {
     /// (OrderUpdate / BalanceUpdate / PositionUpdate — auth required),
     /// scroll-left pagination (before_ts REST), and exchange_info.
     station: Arc<digdigdig3_station::Station>,
+    /// C3: tracks which `(exchange_id, account_type, symbol)` keys already have
+    /// a live station trade-subscriber task spawned.
+    ///
+    /// Prevents spawning N parallel station forwarders when `subscribe_trades`
+    /// is called multiple times for the same key (one panel + chart header + etc.).
+    /// Guarded by `std::sync::Mutex` — only held briefly (never across `.await`).
+    station_trade_subscribed: Arc<Mutex<HashSet<TradeKey>>>,
 }
 
 impl DataBridge {
@@ -369,6 +376,7 @@ impl DataBridge {
             orderbook_map: shared_orderbook,
             warmup_started: AtomicBool::new(false),
             station,
+            station_trade_subscribed: Arc::new(Mutex::new(HashSet::new())),
         }, rx, connector_ready_rx)
     }
 
@@ -1030,7 +1038,7 @@ impl DataBridge {
         let handle = {
             let mut map = self.trade_map.write().unwrap_or_else(|e| e.into_inner());
             let h = map
-                .entry(trade_key)
+                .entry(trade_key.clone())
                 .or_insert_with(|| {
                     Arc::new(RwLock::new(TradeSeries::new(DEFAULT_CAPACITY)))
                 })
@@ -1041,6 +1049,81 @@ impl DataBridge {
         if let Ok(mut series) = handle.write() {
             series.refcount += 1;
         }
+
+        // C3: spawn a station trade-subscriber once per (exchange_id, account_type, symbol).
+        // Subsequent calls for the same key (multiple panels sharing the same stream) skip
+        // the spawn — the existing forwarder is still alive (or in 30s grace window).
+        {
+            let mut subs = self.station_trade_subscribed
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if subs.insert(trade_key.clone()) {
+                // First subscriber for this key: spawn the station forwarder.
+                let station = self.station.clone();
+                let tx = self.tx.clone();
+                let station_trade_subscribed = self.station_trade_subscribed.clone();
+                let symbol_owned = symbol.to_string();
+                self.runtime.spawn(async move {
+                    let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                        exchange_id,
+                        symbol_owned.clone(),
+                        account_type,
+                        [digdigdig3_station::Stream::Trade],
+                    );
+                    let mut report = match station.subscribe(sub_set).await {
+                        Ok(r) => r,
+                        Err(e) => {
+                            crate::dlog!(
+                                "[Bridge] station trade subscribe failed {:?} sym={}: {:?}",
+                                exchange_id, symbol_owned, e
+                            );
+                            // Remove gate key so a future subscribe_trades can retry.
+                            let mut subs = station_trade_subscribed
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner());
+                            subs.remove(&trade_key);
+                            return;
+                        }
+                    };
+                    if !report.failed.is_empty() {
+                        crate::dlog!(
+                            "[Bridge] station trade partial-fail {:?} sym={}: {} failed",
+                            exchange_id, symbol_owned, report.failed.len()
+                        );
+                    }
+                    // Drain station trade events and re-emit on the bridge broadcast.
+                    // tick.rs already writes received TradeUpdate events into trade_map, so
+                    // we only need to emit on the broadcast channel here (no direct map write).
+                    // Known: this produces a duplicate TradeUpdate alongside ws_manager until C6.
+                    while let Some(ev) = report.handle.recv().await {
+                        if let digdigdig3_station::Event::Trade { point, .. } = ev {
+                            let _ = tx.send(LiveUpdate::TradeUpdate {
+                                exchange_id,
+                                account_type,
+                                symbol: symbol_owned.clone(),
+                                price: point.price,
+                                quantity: point.quantity,
+                                timestamp: point.ts_ms,
+                                // TradePoint.side 0 = buyer maker, 1 = seller maker.
+                                // Matches ws_manager semantic: is_buyer_maker=true when buyer made.
+                                is_buyer_maker: point.side == 0,
+                            });
+                        }
+                    }
+                    // Forwarder handle dropped (unsubscribe/grace expired).
+                    // Remove from gate so a future subscribe_trades can re-spawn.
+                    let mut subs = station_trade_subscribed
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    subs.remove(&trade_key);
+                    crate::dlog!(
+                        "[Bridge] station trade forwarder exited {:?} sym={}, gate removed",
+                        exchange_id, symbol_owned
+                    );
+                });
+            }
+        }
+
         handle
     }
 
