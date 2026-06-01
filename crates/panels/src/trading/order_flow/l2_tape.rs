@@ -934,11 +934,102 @@ impl L2TapeState {
             return;
         }
 
+        // Fall back to wall-clock when no wire timestamp is available (e.g. REST
+        // delta or legacy callers). Per-event wire ts is preferred — use
+        // `apply_ob_update_with_ts` from the tick loop for that path.
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as i64;
 
+        self.apply_delta_classified(delta_bids, delta_asks, timestamp, &view_opt);
+
+        if let Some(ref v) = view_opt {
+            self.last_seen_orderbook_version = v.version;
+        }
+    }
+
+    /// Apply one WS delta event using its original wire timestamp `ts_ms`.
+    ///
+    /// Call this from the tick loop (once per `ObDeltaEvent`) so each L2-tape
+    /// row carries the real per-tick wire time instead of a single
+    /// `SystemTime::now()` taken for the whole per-frame batch.
+    pub fn apply_ob_update_with_ts(
+        &mut self,
+        delta_bids: &[(f64, f64)],
+        delta_asks: &[(f64, f64)],
+        ts_ms: i64,
+    ) {
+        // Ensure view + ptr tracking are up-to-date (same as apply_ob_update).
+        if let Some(ref ob_handle) = self.shared_orderbook.clone() {
+            let cur_ptr = Arc::as_ptr(ob_handle) as usize;
+            if cur_ptr != self.ob_series_ptr {
+                self.ob_view = None;
+                self.ob_series_ptr = cur_ptr;
+                self.previous_book.clear();
+                self.last_seen_orderbook_version = 0;
+            }
+            if self.ob_view.is_none() {
+                if let Ok(series) = ob_handle.read() {
+                    self.ob_view = Some(series.subscribe_view());
+                }
+            }
+        }
+
+        let view_opt = self.ob_view.as_ref().map(|va| va.load_full());
+
+        if let Some(ref view) = view_opt {
+            let best_bid = view.bids.last().map(|(p, _)| *p).unwrap_or(0.0);
+            let best_ask = view.asks.first().map(|(p, _)| *p).unwrap_or(0.0);
+            if best_bid > 0.0 && best_ask > 0.0 {
+                self.dom_market_price = Some((best_bid + best_ask) / 2.0);
+            }
+        }
+
+        // If previous_book is empty (first event after init or REST rebuild) seed
+        // it from the shared view first, then apply the incremental delta on top.
+        if self.previous_book.is_empty() {
+            if let Some(ref view) = view_opt {
+                for &(price, qty) in &view.bids {
+                    if qty > 0.0 {
+                        let tick = self.price_to_tick(price);
+                        let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+                        entry.0 = qty;
+                    }
+                }
+                for &(price, qty) in &view.asks {
+                    if qty > 0.0 {
+                        let tick = self.price_to_tick(price);
+                        let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+                        entry.1 = qty;
+                    }
+                }
+            }
+        }
+
+        if delta_bids.is_empty() && delta_asks.is_empty() {
+            return;
+        }
+
+        self.apply_delta_classified(delta_bids, delta_asks, ts_ms, &view_opt);
+
+        if let Some(ref v) = view_opt {
+            self.last_seen_orderbook_version = v.version;
+        }
+    }
+
+    /// Core delta-classification loop shared by both public update methods.
+    ///
+    /// Classifies each (price, qty) pair as Add / Modify / Cancel, updates
+    /// `previous_book`, pushes `L2Event`s with `timestamp`, and prunes stale
+    /// events from the front of the deque.
+    fn apply_delta_classified(
+        &mut self,
+        delta_bids: &[(f64, f64)],
+        delta_asks: &[(f64, f64)],
+        timestamp: i64,
+        view_opt: &Option<Arc<OrderbookView>>,
+    ) {
         // Incremental: classify each delta level and push events.
         for &(price, qty) in delta_bids {
             let tick = self.price_to_tick(price);
@@ -1037,9 +1128,7 @@ impl L2TapeState {
             self.recalc_max_qty();
         }
 
-        if let Some(ref v) = view_opt {
-            self.last_seen_orderbook_version = v.version;
-        }
+        let _ = view_opt; // version update done by caller
     }
 
     /// Apply a full orderbook snapshot.

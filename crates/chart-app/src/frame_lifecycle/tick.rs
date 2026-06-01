@@ -80,10 +80,18 @@ impl ChartApp {
         // Event routing:
         //   OrderbookSnapshot{source:Rest}  → force_rebuild = true (deep REST seed)
         //   OrderbookSnapshot{source:Ws}    → SKIP (the Delta event that follows carries the changes)
-        //   OrderbookDelta{bids, asks}       → accumulate bid_changes/ask_changes
+        //   OrderbookDelta{bids, asks}       → push ObDeltaEvent preserving per-event ts
+        /// One WS delta message with its original wire timestamp.
+        struct ObDeltaEvent {
+            ts_ms: i64,
+            bids: Vec<(f64, f64)>,
+            asks: Vec<(f64, f64)>,
+        }
         struct ObDeltaEntry {
-            bid_changes: Vec<(f64, f64)>,
-            ask_changes: Vec<(f64, f64)>,
+            /// Per-event raw deltas in arrival order.  Each entry preserves its own ts
+            /// so panels (L2 tape) render tick-by-tick rather than collapsing to one
+            /// SystemTime::now() per render-frame batch.
+            events: Vec<ObDeltaEvent>,
             /// True when a REST snapshot arrived this frame → panels must full-rebuild.
             force_rebuild: bool,
         }
@@ -712,8 +720,7 @@ impl ChartApp {
                             // from the deep snapshot now in the shared series.
                             let key = (symbol, exchange_id.as_str().to_string(), account_type.short_label().to_string());
                             let entry = ob_dirty.entry(key).or_insert_with(|| ObDeltaEntry {
-                                bid_changes: Vec::new(),
-                                ask_changes: Vec::new(),
+                                events: Vec::new(),
                                 force_rebuild: false,
                             });
                             entry.force_rebuild = true;
@@ -726,18 +733,17 @@ impl ChartApp {
                         }
                     }
                 }
-                LiveUpdate::OrderbookDelta { exchange_id, account_type, symbol, bids, asks, timestamp: _ } => {
+                LiveUpdate::OrderbookDelta { exchange_id, account_type, symbol, bids, asks, timestamp } => {
                     self.last_ob_event_count += 1;
-                    // Accumulate raw delta changes (5-20 levels typical).
-                    // Multiple deltas per frame are concatenated in arrival order.
+                    // Push each delta event with its original wire timestamp so
+                    // L2-tape rows get per-event ts instead of one SystemTime::now()
+                    // for the whole per-frame batch.
                     let key = (symbol, exchange_id.as_str().to_string(), account_type.short_label().to_string());
                     let entry = ob_dirty.entry(key).or_insert_with(|| ObDeltaEntry {
-                        bid_changes: Vec::new(),
-                        ask_changes: Vec::new(),
+                        events: Vec::new(),
                         force_rebuild: false,
                     });
-                    entry.bid_changes.extend_from_slice(&bids);
-                    entry.ask_changes.extend_from_slice(&asks);
+                    entry.events.push(ObDeltaEvent { ts_ms: timestamp, bids, asks });
                 }
                 LiveUpdate::ConnectorMetrics { .. } => {
                     // Metrics snapshots are collected on-demand by the metrics panel.
@@ -781,36 +787,61 @@ impl ChartApp {
         }
 
         // ── Coalesced orderbook panel re-aggregation ─────────────────────────
-        // Tick each affected order-flow panel ONCE per frame regardless of how
-        // many OB snapshot/delta events were drained.  The panel reads the latest
-        // published view via its internal version check, so a single tick reflects
-        // the final book state.  This collapses the per-event N re-aggregations
-        // (measured ~4.5ms each on a ~1000-level book) into one.
+        // DOM + heatmap: tick once per frame with the merged level changes (they
+        // track current book state, not history — per-event ts is irrelevant).
+        // L2 tape: iterate the per-event list so each tape row carries its own
+        // original wire timestamp instead of a single SystemTime::now() for the
+        // whole batch.
         if !ob_dirty.is_empty() {
             let _ob_panel_start = std::time::Instant::now();
             for ((symbol, ex_str, at_str), entry) in &ob_dirty {
-                // ── DOM: incremental or full-rebuild ──────────────────────────
+                // ── DOM: incremental or full-rebuild (bulk — level state only) ──
+                // DOM shows current snapshot depth, not tape history. Passing the
+                // last event's merged changes is correct; per-event ts not needed.
                 let dom_t0 = std::time::Instant::now();
+                // Flatten all events into a single delta slice for DOM (level state).
+                let (bulk_bids, bulk_asks): (Vec<(f64, f64)>, Vec<(f64, f64)>) = {
+                    let mut b: Vec<(f64, f64)> = Vec::new();
+                    let mut a: Vec<(f64, f64)> = Vec::new();
+                    for ev in &entry.events {
+                        b.extend_from_slice(&ev.bids);
+                        a.extend_from_slice(&ev.asks);
+                    }
+                    (b, a)
+                };
                 for state in self.panels_store.dom.values_mut() {
                     if &state.symbol == symbol && &state.exchange == ex_str && &state.account_type == at_str {
                         state.apply_ob_update(
-                            &entry.bid_changes,
-                            &entry.ask_changes,
+                            &bulk_bids,
+                            &bulk_asks,
                             entry.force_rebuild,
                         );
                     }
                 }
                 self.last_dom_panel_us += dom_t0.elapsed().as_micros() as u64;
 
-                // ── L2 Tape: incremental or full-rebuild ──────────────────────
+                // ── L2 Tape: per-event calls with original wire ts ─────────────
+                // Each ObDeltaEvent carries its own ts_ms from the WS message so
+                // tape rows show real tick-level timing, not a frame-batch ts.
                 let l2_t0 = std::time::Instant::now();
                 for state in self.panels_store.l2_tape.values_mut() {
                     if &state.symbol == symbol && &state.exchange == ex_str && &state.account_type == at_str {
-                        state.apply_ob_update(
-                            &entry.bid_changes,
-                            &entry.ask_changes,
-                            entry.force_rebuild,
-                        );
+                        if entry.force_rebuild || entry.events.is_empty() {
+                            // Full rebuild or snapshot-only frame: no delta events.
+                            state.apply_ob_update(
+                                &[],
+                                &[],
+                                entry.force_rebuild,
+                            );
+                        } else {
+                            for ev in &entry.events {
+                                state.apply_ob_update_with_ts(
+                                    &ev.bids,
+                                    &ev.asks,
+                                    ev.ts_ms,
+                                );
+                            }
+                        }
                         state.prune_flash();
                     }
                 }
