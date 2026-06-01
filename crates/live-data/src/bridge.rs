@@ -295,6 +295,13 @@ pub struct DataBridge {
     /// is called multiple times for the same key (one panel + chart header + etc.).
     /// Guarded by `std::sync::Mutex` — only held briefly (never across `.await`).
     station_trade_subscribed: Arc<Mutex<HashSet<TradeKey>>>,
+    /// C4: tracks which `OrderbookKey` entries already have a live station
+    /// orderbook-subscriber task spawned.
+    ///
+    /// Prevents spawning N parallel station forwarders when `subscribe_orderbook`
+    /// is called multiple times for the same key. Guarded by `std::sync::Mutex` —
+    /// only held briefly (never across `.await`).
+    station_orderbook_subscribed: Arc<Mutex<HashSet<OrderbookKey>>>,
 }
 
 impl DataBridge {
@@ -354,6 +361,8 @@ impl DataBridge {
                 .persistence(digdigdig3_station::PersistenceConfig::on())
                 .warm_start(1000)
                 .unsubscribe_grace(std::time::Duration::from_secs(30))
+                .orderbook_rest_seed(true)
+                .orderbook_seed_depth(1000)
                 .build()
                 .await
                 .expect("failed to build digdigdig3-station")
@@ -377,6 +386,7 @@ impl DataBridge {
             warmup_started: AtomicBool::new(false),
             station,
             station_trade_subscribed: Arc::new(Mutex::new(HashSet::new())),
+            station_orderbook_subscribed: Arc::new(Mutex::new(HashSet::new())),
         }, rx, connector_ready_rx)
     }
 
@@ -1240,13 +1250,96 @@ impl DataBridge {
         let ob_key = OrderbookKey::new(exchange_id, account_type, symbol);
         let handle = {
             let mut map = self.orderbook_map.write().unwrap_or_else(|e| e.into_inner());
-            map.entry(ob_key)
+            map.entry(ob_key.clone())
                 .or_insert_with(|| Arc::new(RwLock::new(OrderbookSeries::new(DEFAULT_HISTORY_CAPACITY))))
                 .clone()
         };
         if let Ok(mut series) = handle.write() {
             series.refcount += 1;
         }
+
+        // C4: spawn a station orderbook-subscriber once per OrderbookKey.
+        // Parallel writer alongside ws_manager Depth/DepthDiff actor (removed in C6).
+        {
+            let mut subs = self.station_orderbook_subscribed
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if subs.insert(ob_key.clone()) {
+                // First subscriber for this key: spawn the station forwarder.
+                let station = self.station.clone();
+                let tx = self.tx.clone();
+                let station_orderbook_subscribed = self.station_orderbook_subscribed.clone();
+                let symbol_owned = symbol.to_string();
+                let key_for_cleanup = ob_key.clone();
+                self.runtime.spawn(async move {
+                    let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                        exchange_id,
+                        symbol_owned.clone(),
+                        account_type,
+                        [digdigdig3_station::Stream::OrderbookDelta],
+                    );
+                    let mut report = match station.subscribe(sub_set).await {
+                        Ok(r) => r,
+                        Err(e) => {
+                            crate::dlog!(
+                                "[Bridge] station ob subscribe failed {:?} sym={}: {:?}",
+                                exchange_id, symbol_owned, e
+                            );
+                            if let Ok(mut subs) = station_orderbook_subscribed.lock() {
+                                subs.remove(&key_for_cleanup);
+                            }
+                            return;
+                        }
+                    };
+                    if !report.failed.is_empty() {
+                        crate::dlog!(
+                            "[Bridge] station ob partial-fail {:?} sym={}: {} failed",
+                            exchange_id, symbol_owned, report.failed.len()
+                        );
+                    }
+                    while let Some(ev) = report.handle.recv().await {
+                        match ev {
+                            digdigdig3_station::Event::OrderbookSnapshot { point, .. } => {
+                                let bids = strip_ob_padding(&point.bids);
+                                let asks = strip_ob_padding(&point.asks);
+                                let _ = tx.send(LiveUpdate::OrderbookSnapshot {
+                                    exchange_id,
+                                    account_type,
+                                    symbol: symbol_owned.clone(),
+                                    bids,
+                                    asks,
+                                    timestamp: point.ts_ms,
+                                    source: OrderbookSource::Rest,
+                                });
+                            }
+                            digdigdig3_station::Event::OrderbookDelta { point, .. } => {
+                                let bids = strip_ob_padding(&point.bid_changes);
+                                let asks = strip_ob_padding(&point.ask_changes);
+                                let _ = tx.send(LiveUpdate::OrderbookDelta {
+                                    exchange_id,
+                                    account_type,
+                                    symbol: symbol_owned.clone(),
+                                    bids,
+                                    asks,
+                                    timestamp: point.ts_ms,
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
+                    // Forwarder handle dropped (unsubscribe/grace expired).
+                    // Remove from gate so a future subscribe_orderbook can re-spawn.
+                    if let Ok(mut subs) = station_orderbook_subscribed.lock() {
+                        subs.remove(&key_for_cleanup);
+                    }
+                    crate::dlog!(
+                        "[Bridge] station ob forwarder exited {:?} sym={}, gate removed",
+                        exchange_id, symbol_owned
+                    );
+                });
+            }
+        }
+
         handle
     }
 
@@ -2683,4 +2776,21 @@ impl DataBridge {
     pub fn supported_account_types(&self, exchange_id: ExchangeId) -> Option<Vec<AccountType>> {
         self.hub.rest(exchange_id).map(|c| c.supported_account_types())
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ORDERBOOK HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Strip zero-padded tail from an orderbook side returned by station.
+///
+/// Per station 0.3.9 convention:
+/// - `(0.0, 0.0)` = padding sentinel (skip).
+/// - `(price, 0.0)` where `price != 0.0` = explicit removal (keep — consumer needs it).
+/// - `(price, qty)` where both nonzero = add/update (keep).
+fn strip_ob_padding(arr: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    arr.iter()
+        .filter(|(p, q)| !(*p == 0.0 && *q == 0.0))
+        .copied()
+        .collect()
 }
