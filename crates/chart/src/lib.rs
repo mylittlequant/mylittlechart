@@ -327,7 +327,7 @@ pub use state::{
     // Pane management (multi-pane charts)
     PaneManager, Pane, PaneId, PaneGeometry, InteractionRegion, MAIN_PANE,
     // Sub-pane (unified geometry + Y-axis state for indicator panes)
-    SubPane,
+    SubPane, SubPaneId, generate_sub_pane_id, bump_sub_pane_id_past,
     // Coordinate utilities (clamping, boundary policy)
     coordinate_utils,
     // Command pattern (undo/redo)

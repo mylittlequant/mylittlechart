@@ -33,6 +33,9 @@ pub use chart::*;
 // Layout types
 pub use pane::{
     SubPane,
+    SubPaneId,
+    generate_sub_pane_id,
+    bump_sub_pane_id_past,
     Pane,
     PaneId,
     PaneManager,

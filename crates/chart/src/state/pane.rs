@@ -4,6 +4,44 @@
 //! Each pane has its own viewport, price scale, and height.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use serde::{Deserialize, Serialize};
+
+use super::chart_window::ChartId;
+
+// =============================================================================
+// SubPaneId
+// =============================================================================
+
+/// Stable identifier for a sub-pane independent of its position inside a
+/// `ChartWindow.sub_panes` Vec.  Allows a sub-pane to be referenced as a
+/// docking-leaf payload (`FreeItem::SubPane(SubPaneId.0)`) from any docking
+/// container (slot, agent, future Trading container) without needing the
+/// parent chart's leaf id.
+///
+/// Global `AtomicU64` counter — every `SubPane::new()` allocation gets a
+/// fresh id.  Counter starts at 1; 0 is reserved as "unbound" sentinel.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SubPaneId(pub u64);
+
+impl std::fmt::Display for SubPaneId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+static NEXT_SUB_PANE_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Generate a globally unique `SubPaneId`.
+pub fn generate_sub_pane_id() -> SubPaneId {
+    SubPaneId(NEXT_SUB_PANE_ID.fetch_add(1, Ordering::SeqCst))
+}
+
+/// Advance the counter past `min_id` so future `generate_sub_pane_id()` calls
+/// never collide with ids restored from a preset.
+pub fn bump_sub_pane_id_past(min_id: u64) {
+    NEXT_SUB_PANE_ID.fetch_max(min_id + 1, Ordering::SeqCst);
+}
 
 /// Pane identifier
 pub type PaneId = usize;
@@ -331,9 +369,19 @@ impl PaneGeometry {
 /// Unified sub-pane structure combining geometry and Y-axis state.
 /// This is the single source of truth for sub-pane data, eliminating
 /// the need for separate SubPaneGeometry and SubPaneYState collections.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct SubPane {
     // Identity
+    /// Stable docking-leaf identity.  Lets a docking container reference this
+    /// sub-pane as `FreeItem::SubPane(id.0)` without depending on its position
+    /// inside the parent `ChartWindow.sub_panes` Vec.  Allocated on creation
+    /// via [`generate_sub_pane_id`]; cloned panes get a fresh id.
+    pub id: SubPaneId,
+    /// Parent chart this sub-pane belongs to.  Hard link — sub-pane has no
+    /// symbol/viewport/crosshair of its own; everything is derived from the
+    /// parent chart's bars + viewport.  Set by `ChartWindow::sync_sub_panes`.
+    /// `ChartId(0)` until the pane is first attached to a chart.
+    pub parent_chart: ChartId,
     /// Indicator instance ID (unique identifier)
     pub instance_id: u64,
     /// Index in the sub-panes list (updated each frame)
@@ -372,10 +420,45 @@ pub struct SubPane {
     pub pre_maximize_height_ratio: f32,
 }
 
+/// Manual `Clone` — generates a FRESH `SubPaneId` for the clone instead of
+/// duplicating the original's id.  This preserves the global uniqueness
+/// invariant when `ChartWindow::clone_for_split` or any other path copies a
+/// chart with its sub-panes.  All other fields (including `parent_chart`
+/// and `instance_id`) are copied verbatim; the caller is responsible for
+/// rebinding `parent_chart` if the clone lives under a different chart.
+impl Clone for SubPane {
+    fn clone(&self) -> Self {
+        Self {
+            id: generate_sub_pane_id(),
+            parent_chart: self.parent_chart,
+            instance_id: self.instance_id,
+            index: self.index,
+            y_offset: self.y_offset,
+            height: self.height,
+            chart_width: self.chart_width,
+            price_min: self.price_min,
+            price_max: self.price_max,
+            auto_scale: self.auto_scale,
+            drag_start_price_min: self.drag_start_price_min,
+            drag_start_price_max: self.drag_start_price_max,
+            height_ratio: self.height_ratio,
+            hidden: self.hidden,
+            above_main: self.above_main,
+            maximized: self.maximized,
+            pre_maximize_height_ratio: self.pre_maximize_height_ratio,
+        }
+    }
+}
+
 impl SubPane {
-    /// Create a new SubPane with the given instance ID
+    /// Create a new SubPane with the given indicator instance ID.  Allocates
+    /// a fresh `SubPaneId` from the global counter.  `parent_chart` starts
+    /// at `ChartId(0)` (unbound) and is set by `ChartWindow::sync_sub_panes`
+    /// when the pane is attached.
     pub fn new(instance_id: u64) -> Self {
         Self {
+            id: generate_sub_pane_id(),
+            parent_chart: ChartId(0),
             instance_id,
             index: 0,
             y_offset: 0.0,
