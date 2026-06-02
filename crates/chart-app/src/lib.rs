@@ -3842,14 +3842,14 @@ impl ChartApp {
                             .and_then(|s| label_from_source(&s.source, &s.symbol, &s.exchange, &s.account_type)),
                         FreeItem::TradingContainer(id) => panels_store.trading_container.get(id)
                             .and_then(|s| label_from_source(&s.source, &s.symbol, &s.exchange, &s.account_type)),
+                        FreeItem::IndicatorPanel(id) => panels_store.indicator_panel.get(id)
+                            .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
                         FreeItem::PositionManager(_)
                         | FreeItem::TradeLog(_)
                         | FreeItem::RiskCalculator(_)
-                        // Chart / IndicatorPanel don't expose symbol-source / overlay
-                        // info to the sidebar header — they render via dedicated
-                        // paths (Stage 4).
-                        | FreeItem::Chart(_)
-                        | FreeItem::IndicatorPanel(_) => None,
+                        // Chart doesn't expose symbol-source / overlay info to
+                        // the sidebar header — it renders via dedicated path.
+                        | FreeItem::Chart(_) => None,
                     }
                 },
                 &|item: &sidebar_content::free_slot::FreeItem| -> Option<(bool, f64, f64)> {
@@ -3899,14 +3899,14 @@ impl ChartApp {
                             .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
                         FreeItem::TradingContainer(id) => panels_store.trading_container.get(id)
                             .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                        FreeItem::IndicatorPanel(id) => panels_store.indicator_panel.get(id)
+                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
                         FreeItem::PositionManager(_)
                         | FreeItem::TradeLog(_)
                         | FreeItem::RiskCalculator(_)
-                        // Chart / IndicatorPanel don't expose symbol-source / overlay
-                        // info to the sidebar header — they render via dedicated
-                        // paths (Stage 4).
-                        | FreeItem::Chart(_)
-                        | FreeItem::IndicatorPanel(_) => None,
+                        // Chart doesn't expose symbol-source / overlay info
+                        // to the sidebar header — dedicated render path.
+                        | FreeItem::Chart(_) => None,
                     }
                 },
                 &|item: &sidebar_content::free_slot::FreeItem| -> Option<Vec<bool>> {
@@ -4346,13 +4346,13 @@ impl ChartApp {
                         .and_then(|s| label_from_source(&s.source, &s.symbol, &s.exchange, &s.account_type)),
                     FreeItem::TradingContainer(id) => panels_store.trading_container.get(id)
                         .and_then(|s| label_from_source(&s.source, &s.symbol, &s.exchange, &s.account_type)),
+                    FreeItem::IndicatorPanel(id) => panels_store.indicator_panel.get(id)
+                        .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
                     FreeItem::PositionManager(_)
                     | FreeItem::TradeLog(_)
                     | FreeItem::RiskCalculator(_)
-                    // Chart / IndicatorPanel render via dedicated paths — no
-                    // symbol-source label / overlay info from these closures.
-                    | FreeItem::Chart(_)
-                    | FreeItem::IndicatorPanel(_) => None,
+                    // Chart renders via dedicated path — no symbol-source label.
+                    | FreeItem::Chart(_) => None,
                 }
             },
             &|item: &sidebar_content::free_slot::FreeItem| -> Option<(bool, f64, f64)> {
@@ -4402,13 +4402,13 @@ impl ChartApp {
                         .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
                     FreeItem::TradingContainer(id) => panels_store.trading_container.get(id)
                         .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                    FreeItem::IndicatorPanel(id) => panels_store.indicator_panel.get(id)
+                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
                     FreeItem::PositionManager(_)
                     | FreeItem::TradeLog(_)
                     | FreeItem::RiskCalculator(_)
-                    // Chart / IndicatorPanel render via dedicated paths — no
-                    // symbol-source label / overlay info from these closures.
-                    | FreeItem::Chart(_)
-                    | FreeItem::IndicatorPanel(_) => None,
+                    // Chart renders via dedicated path — no overlay info.
+                    | FreeItem::Chart(_) => None,
                 }
             },
             &|item: &sidebar_content::free_slot::FreeItem| -> Option<Vec<bool>> {

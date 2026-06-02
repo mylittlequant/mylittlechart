@@ -17,6 +17,7 @@ use zengeld_panels::trading::order_flow::{
     big_trades::BigTradesState,
     dom::DomState,
     footprint::FootprintState,
+    indicator_panel::IndicatorPanelState,
     l2_tape::L2TapeState,
     liquidity_heatmap::LiquidityHeatmapState,
     trade_tape::TradeTapeState,
@@ -53,6 +54,9 @@ pub struct TradingPanelsStore {
     pub trade_log: HashMap<PanelId, TradeLogState>,
     pub risk_calculator: HashMap<PanelId, RiskCalculatorState>,
     pub trading_container: HashMap<PanelId, TradingContainerState>,
+    /// Standalone indicator-visualization panels.  See
+    /// `zengeld_panels::trading::order_flow::indicator_panel`.
+    pub indicator_panel: HashMap<PanelId, IndicatorPanelState>,
 }
 
 impl TradingPanelsStore {
@@ -73,6 +77,7 @@ impl TradingPanelsStore {
             trade_log: HashMap::new(),
             risk_calculator: HashMap::new(),
             trading_container: HashMap::new(),
+            indicator_panel: HashMap::new(),
         }
     }
 
@@ -211,6 +216,15 @@ impl TradingPanelsStore {
         id
     }
 
+    /// Allocate a new standalone IndicatorPanel.  `instance_id == 0` is
+    /// allowed (panel renders an "unbound" placeholder until the user picks
+    /// an indicator).
+    pub fn create_indicator_panel(&mut self, symbol: String, instance_id: u64) -> PanelId {
+        let id = self.alloc_id();
+        self.indicator_panel.insert(id, IndicatorPanelState::with_instance(symbol, instance_id));
+        id
+    }
+
     // -------------------------------------------------------------------------
     // get_panel / get_panel_mut — trait-object access for migrated panels
     // -------------------------------------------------------------------------
@@ -218,12 +232,11 @@ impl TradingPanelsStore {
     /// Get an immutable reference to a panel's `TradingPanel` impl, if migrated.
     /// Returns `None` for panels not yet migrated to the trait.
     ///
-    /// `FreeItem::Chart` and `FreeItem::IndicatorPanel` are NOT trading
-    /// panels — they have dedicated render paths (Stage 4) and storage
-    /// (`self.chart` for ChartWindow lookup; `self.indicator_panel` for
-    /// IndicatorPanelState).  This method returns `None` for them; the
-    /// dispatcher in `panels_render.rs::render_free_item` must special-case
-    /// those variants before falling through to `TradingPanel`.
+    /// `FreeItem::Chart` is NOT a trading panel — it has a dedicated render
+    /// path that resolves through `ChartPanelGrid` / chart-window storage.
+    /// `FreeItem::IndicatorPanel` IS a trading panel — it implements the
+    /// `TradingPanel` trait like DOM/TradeTape/etc. and is dispatched
+    /// through this method normally.
     pub fn get_panel(&self, item: &FreeItem) -> Option<&dyn TradingPanel> {
         match item {
             FreeItem::Dom(id) => self.dom.get(id).map(|s| s as &dyn TradingPanel),
@@ -238,12 +251,13 @@ impl TradingPanelsStore {
             FreeItem::TradeLog(id) => self.trade_log.get(id).map(|s| s as &dyn TradingPanel),
             FreeItem::RiskCalculator(id) => self.risk_calculator.get(id).map(|s| s as &dyn TradingPanel),
             FreeItem::TradingContainer(id) => self.trading_container.get(id).map(|s| s as &dyn TradingPanel),
-            FreeItem::Chart(_) | FreeItem::IndicatorPanel(_) => None,
+            FreeItem::IndicatorPanel(id) => self.indicator_panel.get(id).map(|s| s as &dyn TradingPanel),
+            FreeItem::Chart(_) => None,
         }
     }
 
     /// Get a mutable reference to a panel's `TradingPanel` impl, if migrated.
-    /// `FreeItem::Chart` / `FreeItem::IndicatorPanel` return `None` — see [`get_panel`].
+    /// `FreeItem::Chart` returns `None` — see [`get_panel`].
     pub fn get_panel_mut(&mut self, item: &FreeItem) -> Option<&mut dyn TradingPanel> {
         match item {
             FreeItem::Dom(id) => self.dom.get_mut(id).map(|s| s as &mut dyn TradingPanel),
@@ -258,7 +272,8 @@ impl TradingPanelsStore {
             FreeItem::TradeLog(id) => self.trade_log.get_mut(id).map(|s| s as &mut dyn TradingPanel),
             FreeItem::RiskCalculator(id) => self.risk_calculator.get_mut(id).map(|s| s as &mut dyn TradingPanel),
             FreeItem::TradingContainer(id) => self.trading_container.get_mut(id).map(|s| s as &mut dyn TradingPanel),
-            FreeItem::Chart(_) | FreeItem::IndicatorPanel(_) => None,
+            FreeItem::IndicatorPanel(id) => self.indicator_panel.get_mut(id).map(|s| s as &mut dyn TradingPanel),
+            FreeItem::Chart(_) => None,
         }
     }
 
@@ -353,10 +368,29 @@ impl TradingPanelsStore {
                 ));
                 Some(FreeItem::TradingContainer(pid))
             }
-            // Chart / IndicatorPanel cloning is not yet wired (Stage 4 will
-            // add dedicated `self.chart` / `self.indicator_panel` storage
-            // and the matching clone semantics).  For now: refuse to clone.
-            FreeItem::Chart(_) | FreeItem::IndicatorPanel(_) => None,
+            FreeItem::IndicatorPanel(id) => {
+                let s = self.indicator_panel.get(id)?;
+                let pid = self.alloc_id();
+                let mut clone = IndicatorPanelState::with_instance(
+                    s.symbol.clone(),
+                    s.instance_id,
+                );
+                clone.exchange = s.exchange.clone();
+                clone.account_type = s.account_type.clone();
+                clone.indicator_config_id = s.indicator_config_id;
+                clone.bar_spacing = s.bar_spacing;
+                clone.view_position = s.view_position;
+                clone.price_min = s.price_min;
+                clone.price_max = s.price_max;
+                clone.auto_scale = s.auto_scale;
+                clone.height_ratio = s.height_ratio;
+                self.indicator_panel.insert(pid, clone);
+                Some(FreeItem::IndicatorPanel(pid))
+            }
+            // Chart cloning is not yet wired — Stage 8 (central area cleanup)
+            // will give panels_store ownership of ChartWindows.  For now:
+            // refuse to clone a Chart leaf.
+            FreeItem::Chart(_) => None,
         }
     }
 
@@ -379,11 +413,11 @@ impl TradingPanelsStore {
             FreeItem::TradeLog(id)         => { self.trade_log.remove(id); }
             FreeItem::RiskCalculator(id)   => { self.risk_calculator.remove(id); }
             FreeItem::TradingContainer(id) => { self.trading_container.remove(id); }
-            // Chart / IndicatorPanel storage is added in Stage 4; for now
-            // removal is a no-op so closing a chart/indicator leaf doesn't
-            // crash.  When Stage 4 lands this branch will remove from
-            // `self.chart` / `self.indicator_panel`.
-            FreeItem::Chart(_) | FreeItem::IndicatorPanel(_) => {}
+            FreeItem::IndicatorPanel(id)   => { self.indicator_panel.remove(id); }
+            // Chart removal is not yet wired — Stage 8 (central area cleanup)
+            // will give panels_store ownership of ChartWindows.  For now:
+            // no-op so closing a chart leaf doesn't crash.
+            FreeItem::Chart(_) => {}
         }
     }
 

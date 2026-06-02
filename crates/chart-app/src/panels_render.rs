@@ -127,15 +127,21 @@ pub fn panel_header_info(
             account_type: s.account_type.clone(),
             is_dom: false,
         }),
+        FreeItem::IndicatorPanel(id) => store.indicator_panel.get(id).map(|s| PanelHeaderInfo {
+            source_label: "Synced",
+            source_color: "#374151",
+            symbol: s.symbol.clone(),
+            exchange: s.exchange.clone(),
+            account_type: s.account_type.clone(),
+            is_dom: false,
+        }),
         // Panels without SymbolSource — these don't render the source-header strip.
         FreeItem::PositionManager(_)
         | FreeItem::TradeLog(_)
         | FreeItem::RiskCalculator(_)
-        // Chart leaves and standalone sub-panes render their own internal
-        // headers (chart toolbar; sub-pane has no separate header strip).
-        // The panel-header strip is suppressed for both.
-        | FreeItem::Chart(_)
-        | FreeItem::IndicatorPanel(_) => None,
+        // Chart leaves render their own internal header (chart toolbar) — the
+        // panel-header strip is suppressed.
+        | FreeItem::Chart(_) => None,
     }
 }
 
