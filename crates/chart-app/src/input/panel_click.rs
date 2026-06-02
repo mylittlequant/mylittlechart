@@ -1405,6 +1405,13 @@ impl ChartApp {
                             if let Some(ref item) = item_opt {
                                 let pid = sidebar_content::free_slot::PanelId(item.panel_id().0);
                                 let member = zengeld_chart::tag_manager::SyncMemberId::Panel(pid.0);
+                                eprintln!(
+                                    "[TAGDIAG] SPAWN kind={} pid={} mode={:?} active_chart={:?} active_group={:?}",
+                                    kind_str, pid.0,
+                                    self.sidebar_state.slot_source_mode,
+                                    self.panel_app.panel_grid.active_chart_id().map(|c| c.0),
+                                    self.panel_app.tag_manager.active_chart_group.map(|g| g.0),
+                                );
                                 match self.sidebar_state.slot_source_mode {
                                     sidebar_content::state::SlotSourceMode::Tagged => {
                                         // Attach to active chart's sync group. If that group is
@@ -1425,6 +1432,7 @@ impl ChartApp {
                                                 .unwrap_or(false);
                                             if was_auto {
                                                 if let Some(new_color) = self.panel_app.tag_manager.promote_to_tagged(gid) {
+                                                    eprintln!("[TAGDIAG] SPAWN promote auto→tagged gid={} color={:?}", gid.0, new_color);
                                                     // Mirror color into leaf_color_tags for every
                                                     // chart member of this group so chart leaf
                                                     // headers also show the new color marker.
@@ -1440,6 +1448,9 @@ impl ChartApp {
                                                 }
                                             }
                                             self.panel_app.tag_manager.set_synced(member, gid);
+                                            eprintln!("[TAGDIAG] SPAWN Tagged set_synced pid={} gid={}", pid.0, gid.0);
+                                        } else {
+                                            eprintln!("[TAGDIAG] SPAWN Tagged FAILED no group_id pid={}", pid.0);
                                         }
                                     }
                                     sidebar_content::state::SlotSourceMode::Untagged => {
@@ -1453,6 +1464,7 @@ impl ChartApp {
                                             tf,
                                         );
                                         self.panel_app.tag_manager.set_auto_group(member, solo_gid);
+                                        eprintln!("[TAGDIAG] SPAWN Untagged pid={} solo_gid={} sym={}", pid.0, solo_gid.0, symbol);
                                         // Seed exchange/account_type on the new group so apply_key
                                         // picks them up next frame.
                                         if let Some(g) = self.panel_app.tag_manager.group_mut(solo_gid) {
@@ -1698,6 +1710,17 @@ impl ChartApp {
                                         if let Some(item) = item_opt {
                                             // Deregister from TagManager before removing state.
                                             let member = zengeld_chart::tag_manager::SyncMemberId::Panel(item.panel_id().0);
+                                            let gid_before = self.panel_app.tag_manager.group_for_member(member);
+                                            let members_in_group_before = gid_before
+                                                .and_then(|g| self.panel_app.tag_manager.members(g))
+                                                .map(|m| m.len())
+                                                .unwrap_or(0);
+                                            eprintln!(
+                                                "[TAGDIAG] CLOSE_PANE pid={} gid={:?} members_in_group={}",
+                                                item.panel_id().0,
+                                                gid_before.map(|g| g.0),
+                                                members_in_group_before,
+                                            );
                                             self.panel_app.tag_manager.disconnect(member);
                                             self.panel_app.tag_manager.synced_panels_remove(member);
                                             // Unsubscribe panels from shared data streams
@@ -1825,11 +1848,18 @@ impl ChartApp {
                                 );
                                 if is_market_data {
                                     let member = SyncMemberId::Panel(item.panel_id().0);
-                                    let is_untagged = self.panel_app.tag_manager
-                                        .group_for_member(member)
+                                    let gid_opt = self.panel_app.tag_manager.group_for_member(member);
+                                    let auto_opt = gid_opt
                                         .and_then(|gid| self.panel_app.tag_manager.group(gid))
-                                        .map(|g| g.auto_created)
-                                        .unwrap_or(true);
+                                        .map(|g| g.auto_created);
+                                    let is_untagged = auto_opt.unwrap_or(true);
+                                    eprintln!(
+                                        "[TAGDIAG] FOCUS pid={} gid={:?} auto_created={:?} → mode={}",
+                                        item.panel_id().0,
+                                        gid_opt.map(|g| g.0),
+                                        auto_opt,
+                                        if is_untagged { "Untagged" } else { "Tagged" },
+                                    );
                                     self.sidebar_state.slot_source_mode = if is_untagged {
                                         SlotSourceMode::Untagged
                                     } else {
@@ -1869,6 +1899,17 @@ impl ChartApp {
                             if let Some(item) = item_opt {
                                 // Deregister from TagManager before removing state.
                                 let member = zengeld_chart::tag_manager::SyncMemberId::Panel(item.panel_id().0);
+                                let gid_before = self.panel_app.tag_manager.group_for_member(member);
+                                let members_in_group_before = gid_before
+                                    .and_then(|g| self.panel_app.tag_manager.members(g))
+                                    .map(|m| m.len())
+                                    .unwrap_or(0);
+                                eprintln!(
+                                    "[TAGDIAG] CLOSE_LEAF pid={} gid={:?} members_in_group={}",
+                                    item.panel_id().0,
+                                    gid_before.map(|g| g.0),
+                                    members_in_group_before,
+                                );
                                 self.panel_app.tag_manager.disconnect(member);
                                 self.panel_app.tag_manager.synced_panels_remove(member);
                                 // Unsubscribe panels from shared data streams before
@@ -1977,6 +2018,29 @@ impl ChartApp {
                                     Some(item) => item,
                                     None => return, // source leaf missing or state gone
                                 };
+                                // Inherit tag-membership from source so split copies share
+                                // the same sync group (color marker, symbol, sync state).
+                                // Without this the new PanelId has no group → no color tag,
+                                // doesn't follow active chart, leaks defaults.
+                                if let Some(src_item) = source_item.as_ref() {
+                                    let src_member = zengeld_chart::tag_manager::SyncMemberId::Panel(src_item.panel_id().0);
+                                    let new_member = zengeld_chart::tag_manager::SyncMemberId::Panel(new_item.panel_id().0);
+                                    let src_gid = self.panel_app.tag_manager.group_for_member(src_member);
+                                    let src_was_synced = self.panel_app.tag_manager.is_synced(src_member);
+                                    eprintln!(
+                                        "[TAGDIAG] SPLIT src_pid={} new_pid={} src_gid={:?} src_synced={}",
+                                        src_item.panel_id().0, new_item.panel_id().0,
+                                        src_gid.map(|g| g.0), src_was_synced,
+                                    );
+                                    if let Some(gid) = src_gid {
+                                        if src_was_synced {
+                                            self.panel_app.tag_manager.set_synced(new_member, gid);
+                                        } else {
+                                            self.panel_app.tag_manager.set_auto_group(new_member, gid);
+                                        }
+                                        eprintln!("[TAGDIAG] SPLIT inherited new_pid={} gid={}", new_item.panel_id().0, gid.0);
+                                    }
+                                }
                                 let new_id = self.sidebar_state.slot_dockings[idx]
                                     .inner_mut()
                                     .tree_mut()
