@@ -3,10 +3,16 @@
 //! Each of the 4 slot sidebars hosts its own `DockingManager<FreeItem>`. The
 //! set `{Main, Slot1..Slot4}` forms a single cross-container drag hyperspace.
 //!
-//! `FreeItem::Chart(u64)` wraps `ChartId.0` and `FreeItem::SubPane(u64)`
-//! wraps `SubPaneId.0` (raw `u64` to keep `sidebar-content` free of a
-//! `zengeld-chart` dependency).  Conversion happens at the `chart-app`
-//! boundary.  See `docs/plans/chart-subpane-pid-refactor-2026-06-03.md`.
+//! `FreeItem::Chart(u64)` wraps `ChartId.0` (raw `u64` to keep
+//! `sidebar-content` free of a `zengeld-chart` dependency).  Conversion
+//! happens at the `chart-app` boundary.
+//!
+//! `FreeItem::IndicatorPanel(u64)` is a standalone indicator-visualization
+//! panel (not the chart-internal `SubPane`).  IndicatorPanel carries its
+//! own symbol/exchange/account_type + sync-group membership + viewport,
+//! like DOM / TradeTape / etc.  Wraps `PanelId.0` from `TradingPanelsStore`.
+//!
+//! See `docs/plans/chart-subpane-pid-refactor-2026-06-03.md`.
 
 // =============================================================================
 // PanelId
@@ -34,12 +40,10 @@ pub struct PanelId(pub u64);
 /// Most variants carry only a `PanelId` (u64 wrapper).  The matching heavy
 /// state lives in `chart-app::TradingPanelsStore` keyed by that id.
 ///
-/// `Chart` and `SubPane` are exceptions: they wrap raw `u64`s representing
-/// `ChartId.0` and `SubPaneId.0` respectively (both defined in
-/// `zengeld-chart`).  Raw `u64` avoids a cross-crate type dependency from
-/// `sidebar-content` to `zengeld-chart`; conversion happens at the
-/// `chart-app` boundary, where the docking-leaf payload is resolved against
-/// `panels_store.chart` / `panels_store.sub_pane_index`.
+/// `Chart` is an exception: wraps raw `ChartId.0`.  Raw `u64` avoids a
+/// cross-crate type dependency from `sidebar-content` to `zengeld-chart`;
+/// conversion happens at the `chart-app` boundary, where the chart leaf
+/// payload is resolved against the chart-window storage.
 #[derive(Clone, Debug)]
 pub enum FreeItem {
     Dom(PanelId),
@@ -54,24 +58,24 @@ pub enum FreeItem {
     TradeLog(PanelId),
     RiskCalculator(PanelId),
     TradingContainer(PanelId),
-    /// Embedded chart leaf — wraps `ChartId.0`.  State lives in
-    /// `panels_store.chart: HashMap<ChartId, ChartWindow>` (Stage 2).
+    /// Embedded chart leaf — wraps `ChartId.0`.  Resolved at the chart-app
+    /// boundary against the chart-window storage.
     Chart(u64),
-    /// Standalone sub-pane leaf — wraps `SubPaneId.0`.  Looked up via
-    /// `panels_store.sub_pane_index: HashMap<SubPaneId, ChartId>` → parent
-    /// chart's `sub_panes: Vec<SubPane>` (Stage 2).
-    SubPane(u64),
+    /// Standalone indicator-visualization panel — wraps `PanelId.0` from
+    /// `TradingPanelsStore`.  Carries its own symbol / exchange /
+    /// account_type + viewport + sync-group membership, independent of any
+    /// parent chart.  Distinct from chart-internal `SubPane`.
+    IndicatorPanel(PanelId),
 }
 
 impl FreeItem {
     /// Extract the leaf payload's identity as a `PanelId` u64 wrapper.
     ///
-    /// For trading-panel variants this returns the real `PanelId` stored in
-    /// `TradingPanelsStore`.  For `Chart` it wraps the `ChartId.0`; for
-    /// `SubPane` it wraps the `SubPaneId.0` — those lookups bypass the
-    /// `TradingPanelsStore` panel HashMaps and resolve via dedicated maps
-    /// (`panels_store.chart` / `panels_store.sub_pane_index`).  Callers
-    /// distinguish by `kind_str()` or by matching the variant directly.
+    /// For trading-panel variants and `IndicatorPanel` this returns the
+    /// real `PanelId` stored in `TradingPanelsStore`.  For `Chart` it wraps
+    /// the `ChartId.0` — the chart lookup bypasses the `TradingPanelsStore`
+    /// panel HashMaps.  Callers distinguish by `kind_str()` or by matching
+    /// the variant directly.
     pub fn panel_id(&self) -> PanelId {
         match self {
             FreeItem::Dom(id)
@@ -85,8 +89,9 @@ impl FreeItem {
             | FreeItem::PositionManager(id)
             | FreeItem::TradeLog(id)
             | FreeItem::RiskCalculator(id)
-            | FreeItem::TradingContainer(id) => *id,
-            FreeItem::Chart(raw) | FreeItem::SubPane(raw) => PanelId(*raw),
+            | FreeItem::TradingContainer(id)
+            | FreeItem::IndicatorPanel(id) => *id,
+            FreeItem::Chart(raw) => PanelId(*raw),
         }
     }
 
@@ -106,7 +111,7 @@ impl FreeItem {
             FreeItem::RiskCalculator(_)    => "risk_calculator",
             FreeItem::TradingContainer(_)  => "trading_container",
             FreeItem::Chart(_)             => "chart",
-            FreeItem::SubPane(_)           => "sub_pane",
+            FreeItem::IndicatorPanel(_)    => "indicator_panel",
         }
     }
 }
@@ -128,7 +133,7 @@ impl uzor::panels::DockPanel for FreeItem {
             FreeItem::RiskCalculator(_)    => "Risk Calculator",
             FreeItem::TradingContainer(_)  => "Trading",
             FreeItem::Chart(_)             => "Chart",
-            FreeItem::SubPane(_)           => "Sub-pane",
+            FreeItem::IndicatorPanel(_)    => "Indicator",
         }
     }
 
@@ -153,20 +158,20 @@ impl uzor::panels::DockPanel for FreeItem {
             FreeItem::RiskCalculator(_)    => "free_risk_calculator",
             FreeItem::TradingContainer(_)  => "free_trading_container",
             FreeItem::Chart(_)             => "free_chart",
-            FreeItem::SubPane(_)           => "free_sub_pane",
+            FreeItem::IndicatorPanel(_)    => "free_indicator_panel",
         }
     }
 
     /// Minimum panel size in pixels (width, height).
     ///
     /// Uniform 100x80 for most variants — enough for a header strip + a
-    /// couple of data rows.  Chart and Sub-pane need more room for their
-    /// price-axis / time-axis rendering to remain legible.
+    /// couple of data rows.  Chart and IndicatorPanel need more room for
+    /// their price-axis / time-axis rendering to remain legible.
     fn min_size(&self) -> (f32, f32) {
         match self {
-            FreeItem::Chart(_)   => (200.0, 150.0),
-            FreeItem::SubPane(_) => (160.0, 80.0),
-            _                    => (100.0, 80.0),
+            FreeItem::Chart(_)          => (200.0, 150.0),
+            FreeItem::IndicatorPanel(_) => (160.0, 80.0),
+            _                           => (100.0, 80.0),
         }
     }
 

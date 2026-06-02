@@ -135,7 +135,7 @@ pub fn panel_header_info(
         // headers (chart toolbar; sub-pane has no separate header strip).
         // The panel-header strip is suppressed for both.
         | FreeItem::Chart(_)
-        | FreeItem::SubPane(_) => None,
+        | FreeItem::IndicatorPanel(_) => None,
     }
 }
 

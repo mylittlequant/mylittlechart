@@ -3845,11 +3845,11 @@ impl ChartApp {
                         FreeItem::PositionManager(_)
                         | FreeItem::TradeLog(_)
                         | FreeItem::RiskCalculator(_)
-                        // Chart / SubPane don't expose symbol-source / overlay
+                        // Chart / IndicatorPanel don't expose symbol-source / overlay
                         // info to the sidebar header — they render via dedicated
-                        // paths (`render_chart_leaf` / `render_subpane_leaf`).
+                        // paths (Stage 4).
                         | FreeItem::Chart(_)
-                        | FreeItem::SubPane(_) => None,
+                        | FreeItem::IndicatorPanel(_) => None,
                     }
                 },
                 &|item: &sidebar_content::free_slot::FreeItem| -> Option<(bool, f64, f64)> {
@@ -3902,11 +3902,11 @@ impl ChartApp {
                         FreeItem::PositionManager(_)
                         | FreeItem::TradeLog(_)
                         | FreeItem::RiskCalculator(_)
-                        // Chart / SubPane don't expose symbol-source / overlay
+                        // Chart / IndicatorPanel don't expose symbol-source / overlay
                         // info to the sidebar header — they render via dedicated
-                        // paths (`render_chart_leaf` / `render_subpane_leaf`).
+                        // paths (Stage 4).
                         | FreeItem::Chart(_)
-                        | FreeItem::SubPane(_) => None,
+                        | FreeItem::IndicatorPanel(_) => None,
                     }
                 },
                 &|item: &sidebar_content::free_slot::FreeItem| -> Option<Vec<bool>> {
@@ -4349,10 +4349,10 @@ impl ChartApp {
                     FreeItem::PositionManager(_)
                     | FreeItem::TradeLog(_)
                     | FreeItem::RiskCalculator(_)
-                    // Chart / SubPane render via dedicated paths — no
+                    // Chart / IndicatorPanel render via dedicated paths — no
                     // symbol-source label / overlay info from these closures.
                     | FreeItem::Chart(_)
-                    | FreeItem::SubPane(_) => None,
+                    | FreeItem::IndicatorPanel(_) => None,
                 }
             },
             &|item: &sidebar_content::free_slot::FreeItem| -> Option<(bool, f64, f64)> {
@@ -4405,10 +4405,10 @@ impl ChartApp {
                     FreeItem::PositionManager(_)
                     | FreeItem::TradeLog(_)
                     | FreeItem::RiskCalculator(_)
-                    // Chart / SubPane render via dedicated paths — no
+                    // Chart / IndicatorPanel render via dedicated paths — no
                     // symbol-source label / overlay info from these closures.
                     | FreeItem::Chart(_)
-                    | FreeItem::SubPane(_) => None,
+                    | FreeItem::IndicatorPanel(_) => None,
                 }
             },
             &|item: &sidebar_content::free_slot::FreeItem| -> Option<Vec<bool>> {

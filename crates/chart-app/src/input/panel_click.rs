@@ -2228,9 +2228,10 @@ impl ChartApp {
                                         FreeItem::OrderEntry(id) => self.panels_store.order_entry.get(id).map(|s| s.source.clone()),
                                         FreeItem::TradingContainer(id) => self.panels_store.trading_container.get(id).map(|s| s.source.clone()),
                                         FreeItem::PositionManager(_) | FreeItem::TradeLog(_) | FreeItem::RiskCalculator(_) => None,
-                                        // Chart / SubPane are TagManager-driven (parent_chart's group), no
-                                        // independent SymbolSource — source-cycle button is a no-op for them.
-                                        FreeItem::Chart(_) | FreeItem::SubPane(_) => None,
+                                        // Chart / IndicatorPanel are sync-group members like other
+                                        // market-data panels — no independent SymbolSource field.  Source-
+                                        // cycle button is a no-op for them.
+                                        FreeItem::Chart(_) | FreeItem::IndicatorPanel(_) => None,
                                     };
 
                                     let new_source = match current_source {

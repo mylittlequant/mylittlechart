@@ -218,10 +218,10 @@ impl TradingPanelsStore {
     /// Get an immutable reference to a panel's `TradingPanel` impl, if migrated.
     /// Returns `None` for panels not yet migrated to the trait.
     ///
-    /// `FreeItem::Chart` and `FreeItem::SubPane` are NOT trading panels —
-    /// they have dedicated render paths (`render_chart_leaf` /
-    /// `render_subpane_leaf`) and storage (`self.chart` /
-    /// `self.sub_pane_index`).  This method returns `None` for them; the
+    /// `FreeItem::Chart` and `FreeItem::IndicatorPanel` are NOT trading
+    /// panels — they have dedicated render paths (Stage 4) and storage
+    /// (`self.chart` for ChartWindow lookup; `self.indicator_panel` for
+    /// IndicatorPanelState).  This method returns `None` for them; the
     /// dispatcher in `panels_render.rs::render_free_item` must special-case
     /// those variants before falling through to `TradingPanel`.
     pub fn get_panel(&self, item: &FreeItem) -> Option<&dyn TradingPanel> {
@@ -238,12 +238,12 @@ impl TradingPanelsStore {
             FreeItem::TradeLog(id) => self.trade_log.get(id).map(|s| s as &dyn TradingPanel),
             FreeItem::RiskCalculator(id) => self.risk_calculator.get(id).map(|s| s as &dyn TradingPanel),
             FreeItem::TradingContainer(id) => self.trading_container.get(id).map(|s| s as &dyn TradingPanel),
-            FreeItem::Chart(_) | FreeItem::SubPane(_) => None,
+            FreeItem::Chart(_) | FreeItem::IndicatorPanel(_) => None,
         }
     }
 
     /// Get a mutable reference to a panel's `TradingPanel` impl, if migrated.
-    /// `FreeItem::Chart` / `FreeItem::SubPane` return `None` — see [`get_panel`].
+    /// `FreeItem::Chart` / `FreeItem::IndicatorPanel` return `None` — see [`get_panel`].
     pub fn get_panel_mut(&mut self, item: &FreeItem) -> Option<&mut dyn TradingPanel> {
         match item {
             FreeItem::Dom(id) => self.dom.get_mut(id).map(|s| s as &mut dyn TradingPanel),
@@ -258,7 +258,7 @@ impl TradingPanelsStore {
             FreeItem::TradeLog(id) => self.trade_log.get_mut(id).map(|s| s as &mut dyn TradingPanel),
             FreeItem::RiskCalculator(id) => self.risk_calculator.get_mut(id).map(|s| s as &mut dyn TradingPanel),
             FreeItem::TradingContainer(id) => self.trading_container.get_mut(id).map(|s| s as &mut dyn TradingPanel),
-            FreeItem::Chart(_) | FreeItem::SubPane(_) => None,
+            FreeItem::Chart(_) | FreeItem::IndicatorPanel(_) => None,
         }
     }
 
@@ -353,12 +353,10 @@ impl TradingPanelsStore {
                 ));
                 Some(FreeItem::TradingContainer(pid))
             }
-            // Chart / SubPane cloning is not yet wired (Stage 2 will add
-            // dedicated `self.chart` / `self.sub_pane_index` storage and the
-            // matching clone semantics — spawn a fresh ChartWindow for Chart
-            // and a fresh SubPaneId sharing the same instance_id+parent for
-            // SubPane).  For now: refuse to clone.
-            FreeItem::Chart(_) | FreeItem::SubPane(_) => None,
+            // Chart / IndicatorPanel cloning is not yet wired (Stage 4 will
+            // add dedicated `self.chart` / `self.indicator_panel` storage
+            // and the matching clone semantics).  For now: refuse to clone.
+            FreeItem::Chart(_) | FreeItem::IndicatorPanel(_) => None,
         }
     }
 
@@ -381,11 +379,11 @@ impl TradingPanelsStore {
             FreeItem::TradeLog(id)         => { self.trade_log.remove(id); }
             FreeItem::RiskCalculator(id)   => { self.risk_calculator.remove(id); }
             FreeItem::TradingContainer(id) => { self.trading_container.remove(id); }
-            // Chart / SubPane storage is added in Stage 2; for now removal is
-            // a no-op so closing a chart leaf doesn't crash.  When Stage 2
-            // lands this branch will remove from `self.chart` /
-            // `self.sub_pane_index`.
-            FreeItem::Chart(_) | FreeItem::SubPane(_) => {}
+            // Chart / IndicatorPanel storage is added in Stage 4; for now
+            // removal is a no-op so closing a chart/indicator leaf doesn't
+            // crash.  When Stage 4 lands this branch will remove from
+            // `self.chart` / `self.indicator_panel`.
+            FreeItem::Chart(_) | FreeItem::IndicatorPanel(_) => {}
         }
     }
 

@@ -8737,11 +8737,11 @@ impl ChartApp {
                                 market_price: state.market_price,
                             }
                         }
-                        // Chart / SubPane persistence is wired in Stage 6
-                        // (PersistedFreeItemKind::{Chart, SubPane} variants
-                        // not yet defined).  For now skip them — leaf drops
-                        // from preset and is recreated on next session.
-                        FreeItem::Chart(_) | FreeItem::SubPane(_) => return None,
+                        // Chart / IndicatorPanel persistence is wired in
+                        // Stage 6 (PersistedFreeItemKind::{Chart, IndicatorPanel}
+                        // variants not yet defined).  For now skip them —
+                        // leaf drops from preset and is recreated next session.
+                        FreeItem::Chart(_) | FreeItem::IndicatorPanel(_) => return None,
                     };
                     Some(zengeld_chart::preset::preset::PersistedFreeLeaf {
                         leaf_id: leaf.id.0,
