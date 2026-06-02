@@ -579,7 +579,26 @@ impl ChartApp {
                     for state in self.panels_store.footprint.values_mut() {
                         state.tick();
                     }
+                    // Lazy auto-rebind: if a trade_tape has symbol/exchange/account_type set
+                    // but no shared_trades handle (e.g. after preset restore with BoundToChart
+                    // source — symbol was empty at restore time, then resolved via propagate
+                    // but never re-subscribed), subscribe now.
                     for state in self.panels_store.trade_tape.values_mut() {
+                        if state.shared_trades.is_none()
+                            && !state.symbol.is_empty()
+                            && !state.exchange.is_empty()
+                        {
+                            if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
+                                let at = account_type_from_label(&state.account_type);
+                                let h = self.bridge.subscribe_trades(eid, &state.symbol, at);
+                                state.shared_trades = Some(h);
+                                state.last_seen_version = 0;
+                                crate::dlog!(
+                                    "[ChartApp] trade_tape auto-rebind {} {} {}",
+                                    state.exchange, state.symbol, state.account_type
+                                );
+                            }
+                        }
                         state.tick();
                     }
                     self.last_trade_panel_us += _trade_panel_start.elapsed().as_micros() as u64;
