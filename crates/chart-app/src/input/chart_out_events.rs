@@ -830,18 +830,6 @@ impl ChartApp {
                                 }
                             }
                         }
-                        let panel_members_snap: Vec<u64> = group.members.iter()
-                            .filter_map(|m| m.as_panel())
-                            .collect();
-                        let chart_members_snap: Vec<u64> = group.members.iter()
-                            .filter_map(|m| m.as_chart())
-                            .collect();
-                        eprintln!(
-                            "[TAGDIAG] RESTORE_GROUP gid={} auto={} sym={} ex={} at={} charts={:?} panels={:?} synced_panel_ids={:?}",
-                            sg_snap.id, sg_snap.auto_created,
-                            sg_snap.symbol, sg_snap.exchange, sg_snap.account_type,
-                            chart_members_snap, panel_members_snap, sg_snap.synced_panel_ids,
-                        );
                         self.panel_app.tag_manager.insert_group_raw(group);
                         // Restore per-group synced_panels list. Each panel id stored
                         // in synced_panel_ids was Synced (= follows active chart) at

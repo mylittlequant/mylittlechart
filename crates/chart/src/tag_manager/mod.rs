@@ -531,12 +531,6 @@ impl TagManager {
     /// Moves all Synced panels to the new group so they follow the active chart.
     pub fn reassign_synced_panels(&mut self, new_group_id: SyncGroupId) {
         let panels: Vec<SyncMemberId> = self.synced_panels.iter().copied().collect();
-        eprintln!(
-            "[TAGDIAG] REASSIGN new_gid={} synced_panels={:?} prev_active_gid={:?}",
-            new_group_id.0,
-            panels.iter().filter_map(|m| m.as_panel()).collect::<Vec<_>>(),
-            self.active_chart_group.map(|g| g.0),
-        );
         for member in panels {
             self.disconnect(member);
             let _ = self.connect(member, new_group_id);

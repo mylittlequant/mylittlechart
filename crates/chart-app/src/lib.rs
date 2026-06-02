@@ -4885,10 +4885,6 @@ impl ChartApp {
                 self.panel_app.tag_manager.panel_members(group_id),
             )
         };
-        eprintln!(
-            "[TAGDIAG] APPLY_KEY gid={} sym={} ex={} at={} panels={:?}",
-            group_id.0, symbol, exchange, account_type, panel_ids,
-        );
 
         // Track which (exchange, symbol, account_type) combos need depth subscription
         // so panels that receive orderbook data start getting the new symbol's stream.

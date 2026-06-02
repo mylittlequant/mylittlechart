@@ -207,16 +207,9 @@ impl ChartApp {
 
             // When the active chart changes, reassign all Synced panels to the new
             // chart's group and apply the group's instrument key to their states.
-            let new_active_group_opt = self.panel_app.panel_grid
+            if let Some(new_active_group) = self.panel_app.panel_grid
                 .active_chart_id()
-                .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid));
-            eprintln!(
-                "[TAGDIAG] ACTIVE_LEAF_CHANGE leaf={:?} active_chart={:?} new_active_group={:?}",
-                current_leaf,
-                self.panel_app.panel_grid.active_chart_id().map(|c| c.0),
-                new_active_group_opt.map(|g| g.0),
-            );
-            if let Some(new_active_group) = new_active_group_opt
+                .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
             {
                 // Sync the group's full instrument key from the new active window.
                 // symbol included — without this, restored groups carry stale
@@ -227,10 +220,6 @@ impl ChartApp {
                     let sym = w.symbol.clone();
                     let exch = w.exchange.clone();
                     let at = w.account_type.clone();
-                    eprintln!(
-                        "[TAGDIAG] ACTIVE_LEAF_CHANGE seed_group gid={} sym={} ex={} at={}",
-                        new_active_group.0, sym, exch, at,
-                    );
                     if let Some(g) = self.panel_app.tag_manager.group_mut(new_active_group) {
                         g.symbol = sym;
                         g.exchange = exch;
