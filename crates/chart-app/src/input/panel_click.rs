@@ -1407,7 +1407,11 @@ impl ChartApp {
                                 let member = zengeld_chart::tag_manager::SyncMemberId::Panel(pid.0);
                                 match self.sidebar_state.slot_source_mode {
                                     sidebar_content::state::SlotSourceMode::Tagged => {
-                                        // Attach to active chart's sync group.
+                                        // Attach to active chart's sync group. If that group is
+                                        // still auto-created (untagged), promote it to a real
+                                        // visible color tag so the panel-chart pair shows a
+                                        // shared color marker — this is the moment a 1-member
+                                        // untagged group becomes a 2+-member tagged one.
                                         let group_id = self.panel_app.tag_manager.active_chart_group
                                             .or_else(|| {
                                                 self.panel_app.panel_grid
@@ -1415,6 +1419,26 @@ impl ChartApp {
                                                     .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
                                             });
                                         if let Some(gid) = group_id {
+                                            // Promote if currently auto-created.
+                                            let was_auto = self.panel_app.tag_manager.group(gid)
+                                                .map(|g| g.auto_created)
+                                                .unwrap_or(false);
+                                            if was_auto {
+                                                if let Some(new_color) = self.panel_app.tag_manager.promote_to_tagged(gid) {
+                                                    // Mirror color into leaf_color_tags for every
+                                                    // chart member of this group so chart leaf
+                                                    // headers also show the new color marker.
+                                                    let chart_member_ids: Vec<zengeld_chart::ChartId> =
+                                                        self.panel_app.tag_manager.chart_members(gid)
+                                                            .into_iter()
+                                                            .collect();
+                                                    for cid in chart_member_ids {
+                                                        if let Some(leaf) = self.panel_app.panel_grid.leaf_for_chart_id(cid) {
+                                                            self.panel_app.leaf_color_tags.insert(leaf, new_color);
+                                                        }
+                                                    }
+                                                }
+                                            }
                                             self.panel_app.tag_manager.set_synced(member, gid);
                                         }
                                     }

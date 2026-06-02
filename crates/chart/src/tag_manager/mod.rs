@@ -721,6 +721,25 @@ impl TagManager {
         }
     }
 
+    /// Promote an auto-created (untagged) group to a visible tagged group.
+    ///
+    /// Assigns the next unused color from the palette and clears the
+    /// `auto_created` flag so the group appears in UI color overlays.
+    /// No-op if the group is not auto-created.
+    ///
+    /// Returns the assigned color, or `None` if the group does not exist
+    /// or was already tagged.
+    pub fn promote_to_tagged(&mut self, group_id: SyncGroupId) -> Option<[f32; 4]> {
+        let color = self.next_unused_color();
+        let group = self.groups.get_mut(&group_id)?;
+        if !group.auto_created {
+            return None;
+        }
+        group.auto_created = false;
+        group.color = color;
+        Some(color)
+    }
+
     /// Find a group by its display color.
     ///
     /// This is a bridge for UI code that identifies groups by color rather than id.
