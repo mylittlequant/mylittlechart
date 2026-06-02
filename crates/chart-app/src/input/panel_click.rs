@@ -1377,6 +1377,16 @@ impl ChartApp {
                                 }
                                 Some(sidebar_content::free_slot::FreeItem::TradingContainer(pid))
                             }
+                            "indicator_panel" => {
+                                // Spawn unbound (instance_id=0).  User picks the
+                                // indicator from the panel's own control plane.
+                                let pid = self.panels_store.create_indicator_panel(symbol.clone(), 0);
+                                if let Some(state) = self.panels_store.indicator_panel.get_mut(&pid) {
+                                    state.exchange = exchange_str.clone();
+                                    state.account_type = account_type_str.clone();
+                                }
+                                Some(sidebar_content::free_slot::FreeItem::IndicatorPanel(pid))
+                            }
                             _ => None,
                         };
 
@@ -1396,10 +1406,11 @@ impl ChartApp {
 
                         // Register market-data panels in TagManager as Synced members.
                         // order_entry / trading_container are account-bound, not market-data.
+                        // indicator_panel is market-data (symbol-bound).
                         let is_market_data = matches!(
                             kind_str,
                             "dom" | "footprint" | "volume_profile" | "liquidity_heatmap"
-                                | "big_trades" | "l2_tape" | "trade_tape"
+                                | "big_trades" | "l2_tape" | "trade_tape" | "indicator_panel"
                         );
                         if is_market_data {
                             if let Some(ref item) = item_opt {
