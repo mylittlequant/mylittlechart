@@ -32,7 +32,6 @@ use zengeld_chart::state::Timeframe;
 
 use digdigdig3::core::websocket::KlineInterval;
 use crate::convert::{kline_to_bar, timeframe_to_interval};
-use crate::ws_manager::{WsActorMap, WsCmd, WsKey, WsStreamType};
 
 /// Identifies whether an [`LiveUpdate::OrderbookSnapshot`] originated from the
 /// one-shot REST bootstrap (deep, up to 1000 levels) or from the WebSocket
@@ -213,11 +212,6 @@ pub struct DataBridge {
     /// buffer from filling up when the app-level consumer falls behind, which
     /// would otherwise stall all other broadcast receivers.
     connector_ready_tx: mpsc::UnboundedSender<ExchangeId>,
-    /// Multiplexed WebSocket actors — one per `(ExchangeId, WsStreamType)`.
-    ///
-    /// All symbols for the same exchange+stream type share a single WS
-    /// connection, managed by a long-running actor task.
-    ws_actors: Arc<Mutex<WsActorMap>>,
     /// Session-level bar cache.
     ///
     /// Key: `BarSeriesKey`. Stores bars from previous requests so that switching
@@ -255,13 +249,6 @@ pub struct DataBridge {
     /// scroll-left requests can request the correct older window without
     /// re-fetching data that is already cached.
     oldest_fetched_ts: Arc<Mutex<HashMap<BarSeriesKey, i64>>>,
-    /// Per-symbol one-shot REST bootstrap task handles.
-    ///
-    /// Keyed by `(ExchangeId, symbol, AccountType)`. Each handle is spawned
-    /// once when a depth subscription starts and aborted (if still running)
-    /// when the last depth consumer unsubscribes. The task exits after a
-    /// single REST fetch — it is not a periodic poller.
-    rest_orderbook_pollers: Arc<Mutex<HashMap<(ExchangeId, String, AccountType), tokio::task::JoinHandle<()>>>>,
     /// Session-level live orderbook series map.
     ///
     /// Key: `OrderbookKey`. Shared with `App` via `Arc` — both sides see the same
@@ -386,14 +373,12 @@ impl DataBridge {
             hub,
             tx,
             connector_ready_tx,
-            ws_actors: Arc::new(Mutex::new(WsActorMap::new())),
             bar_cache,
             trade_map,
             symbol_cache: Arc::new(Mutex::new(HashMap::new())),
             active_fetches: Arc::new(Mutex::new(HashSet::new())),
             ws_rtt_handles: Arc::new(Mutex::new(HashMap::new())),
             oldest_fetched_ts: Arc::new(Mutex::new(HashMap::new())),
-            rest_orderbook_pollers: Arc::new(Mutex::new(HashMap::new())),
             orderbook_map: shared_orderbook,
             warmup_started: AtomicBool::new(false),
             station,
@@ -1055,16 +1040,6 @@ impl DataBridge {
         symbol: &str,
         account_type: AccountType,
     ) -> Arc<RwLock<TradeSeries>> {
-        // Spawn / re-use the WS actor for the Trades stream.
-        let ws_key = WsKey { exchange_id, stream_type: WsStreamType::Trades, account_type };
-        let tx = self.tx.clone();
-        let rtt = self.ws_rtt_handles.clone();
-        let rt = self.runtime.handle().clone();
-        if let Ok(mut actors) = self.ws_actors.lock() {
-            let cmd_tx = actors.get_or_spawn(ws_key, tx, rtt, &rt, None, None);
-            let _ = cmd_tx.try_send(WsCmd::AddSymbol { symbol: symbol.to_string() });
-        }
-
         // Get-or-create the TradeSeries in the shared map, incrementing refcount.
         let trade_key = TradeKey::new(exchange_id, account_type, symbol);
         let handle = {
@@ -1126,7 +1101,6 @@ impl DataBridge {
                     // Drain station trade events and re-emit on the bridge broadcast.
                     // tick.rs already writes received TradeUpdate events into trade_map, so
                     // we only need to emit on the broadcast channel here (no direct map write).
-                    // Known: this produces a duplicate TradeUpdate alongside ws_manager until C6.
                     while let Some(ev) = report.handle.recv().await {
                         if let digdigdig3_station::Event::Trade { point, .. } = ev {
                             let _ = tx.send(LiveUpdate::TradeUpdate {
@@ -1137,7 +1111,7 @@ impl DataBridge {
                                 quantity: point.quantity,
                                 timestamp: point.ts_ms,
                                 // TradePoint.side 0 = buyer maker, 1 = seller maker.
-                                // Matches ws_manager semantic: is_buyer_maker=true when buyer made.
+                                // is_buyer_maker=true when side==0 (buyer made the trade).
                                 is_buyer_maker: point.side == 0,
                             });
                         }
@@ -1161,19 +1135,8 @@ impl DataBridge {
 
     /// Subscribe to a single symbol's mini ticker stream via WebSocket.
     ///
-    /// Routes the symbol to the shared per-exchange ticker actor.
-    /// Also spawns a station ticker side-channel (C5) for the same key — parallel
-    /// to the ws_manager Ticker actor, not a replacement.
+    /// Routes the symbol to the station ticker stream (C5).
     pub fn subscribe_mini_ticker(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
-        let key = WsKey { exchange_id, stream_type: WsStreamType::Ticker, account_type };
-        let tx = self.tx.clone();
-        let rtt = self.ws_rtt_handles.clone();
-        let rt = self.runtime.handle().clone();
-        if let Ok(mut actors) = self.ws_actors.lock() {
-            let cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt, None, None);
-            let _ = cmd_tx.try_send(WsCmd::AddSymbol { symbol: symbol.to_string() });
-        }
-
         // C5: spawn station ticker side-channel once per (exchange_id, symbol, account_type).
         let ticker_key = (exchange_id, symbol.to_string(), account_type);
         {
@@ -1238,193 +1201,125 @@ impl DataBridge {
 
     /// Subscribe to L2 orderbook depth updates via WebSocket.
     ///
-    /// Routes the symbol to the shared per-exchange depth actor, which
-    /// multiplexes all symbols over a single WS connection.
-    ///
-    /// The WS actor subscribes to the incremental diff stream (`@depth@100ms`
-    /// on Binance) rather than a partial-snapshot stream.  To seed the local
-    /// book before the first WS delta arrives, a **one-shot** REST bootstrap
-    /// task is spawned here.  The bootstrap fetches a deep snapshot (up to
-    /// 1000 levels) and writes it via `series.apply_rest(…)`, then exits.
-    ///
-    /// The bootstrap handle is stored in `rest_orderbook_pollers` (same map,
-    /// different semantics) so it can be aborted on unsubscribe if it hasn't
-    /// finished yet.  A second call for the same `(exchange_id, symbol,
-    /// account_type)` reuses the existing handle.
+    /// Ensures an `OrderbookSeries` exists in the shared map for this key and
+    /// triggers the station orderbook subscriber (C4), which handles REST seed
+    /// and incremental WS deltas via `Station` (with `orderbook_rest_seed(true)`).
     pub fn subscribe_depth(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
-        // Idempotent: if a bootstrap task is already in flight or done, skip.
-        let poll_key = (exchange_id, symbol.to_string(), account_type);
-        if let Ok(mut pollers) = self.rest_orderbook_pollers.lock() {
-            if pollers.contains_key(&poll_key) {
-                return;
-            }
+        // Ensure the OrderbookSeries entry exists (subscribe_orderbook may not have been called).
+        let ob_key = OrderbookKey::new(exchange_id, account_type, symbol);
+        {
+            let mut map = self.orderbook_map.write().unwrap_or_else(|e| e.into_inner());
+            map.entry(ob_key.clone())
+                .or_insert_with(|| Arc::new(RwLock::new(OrderbookSeries::new(DEFAULT_HISTORY_CAPACITY))));
+        }
 
-            // Clone everything needed inside the async task before spawning.
+        // C4: station orderbook subscriber (idempotent — gate on station_orderbook_subscribed).
+        let mut subs = self.station_orderbook_subscribed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if subs.insert(ob_key.clone()) {
+            let station = self.station.clone();
             let tx = self.tx.clone();
-            let rtt = self.ws_rtt_handles.clone();
-            let rt = self.runtime.handle().clone();
-            let hub = self.hub.clone();
-            let orderbook_map = self.orderbook_map.clone();
-            let ws_actors = self.ws_actors.clone();
+            let station_orderbook_subscribed = self.station_orderbook_subscribed.clone();
             let symbol_owned = symbol.to_string();
-
-            // Spawn a sequenced bootstrap task:
-            //   Phase 1 — await REST bootstrap (deep snapshot seeds the book)
-            //   Phase 2 — THEN send AddSymbol to WS actors (book is ready)
-            //
-            // The WS actors are spawned here (so their connections can start
-            // negotiating while REST is in-flight) but they do NOT subscribe to
-            // any symbol until the REST response has been applied.  This prevents
-            // WS partial snapshots and deltas from arriving before the full
-            // ladder is in place and then being wiped by a late REST clear().
-            let handle = self.runtime.spawn(async move {
-                // Pre-spawn both WS actors so the TCP/TLS handshake can happen in
-                // parallel with the REST request.  No AddSymbol yet.
-                {
-                    if let Ok(mut actors) = ws_actors.lock() {
-                        let key = WsKey { exchange_id, stream_type: WsStreamType::Depth, account_type };
-                        actors.get_or_spawn(key, tx.clone(), rtt.clone(), &rt, None, Some(orderbook_map.clone()));
-
-                        let key_diff = WsKey { exchange_id, stream_type: WsStreamType::DepthDiff, account_type };
-                        actors.get_or_spawn(key_diff, tx.clone(), rtt.clone(), &rt, None, Some(orderbook_map.clone()));
+            let key_for_cleanup = ob_key.clone();
+            self.runtime.spawn(async move {
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                    exchange_id,
+                    symbol_owned.clone(),
+                    account_type,
+                    [digdigdig3_station::Stream::OrderbookDelta],
+                );
+                let mut report = match station.subscribe(sub_set).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        crate::dlog!(
+                            "[Bridge] station ob subscribe failed {:?} sym={}: {:?}",
+                            exchange_id, symbol_owned, e
+                        );
+                        if let Ok(mut subs) = station_orderbook_subscribed.lock() {
+                            subs.remove(&key_for_cleanup);
+                        }
+                        return;
+                    }
+                };
+                if !report.failed.is_empty() {
+                    crate::dlog!(
+                        "[Bridge] station ob partial-fail {:?} sym={}: {} failed",
+                        exchange_id, symbol_owned, report.failed.len()
+                    );
+                }
+                while let Some(ev) = report.handle.recv().await {
+                    match ev {
+                        digdigdig3_station::Event::OrderbookSnapshot { point, .. } => {
+                            let bids = strip_ob_padding(&point.bids);
+                            let asks = strip_ob_padding(&point.asks);
+                            let _ = tx.send(LiveUpdate::OrderbookSnapshot {
+                                exchange_id,
+                                account_type,
+                                symbol: symbol_owned.clone(),
+                                bids,
+                                asks,
+                                timestamp: point.ts_ms,
+                                source: OrderbookSource::Rest,
+                            });
+                        }
+                        digdigdig3_station::Event::OrderbookDelta { point, .. } => {
+                            let bids = strip_ob_padding(&point.bid_changes);
+                            let asks = strip_ob_padding(&point.ask_changes);
+                            let _ = tx.send(LiveUpdate::OrderbookDelta {
+                                exchange_id,
+                                account_type,
+                                symbol: symbol_owned.clone(),
+                                bids,
+                                asks,
+                                timestamp: point.ts_ms,
+                            });
+                        }
+                        _ => {}
                     }
                 }
-
-                // Phase 1: await REST bootstrap — full book before any WS data.
-                rest_orderbook_bootstrap_inner(
-                    hub.clone(),
-                    exchange_id,
-                    &symbol_owned,
-                    account_type,
-                    tx.clone(),
-                    orderbook_map.clone(),
-                ).await;
-
-                // Phase 2: now that the book is seeded, let WS actors subscribe.
-                if let Ok(mut actors) = ws_actors.lock() {
-                    let key = WsKey { exchange_id, stream_type: WsStreamType::Depth, account_type };
-                    let cmd_tx = actors.get_or_spawn(key, tx.clone(), rtt.clone(), &rt, None, Some(orderbook_map.clone()));
-                    let _ = cmd_tx.try_send(WsCmd::AddSymbol { symbol: symbol_owned.clone() });
-
-                    let key_diff = WsKey { exchange_id, stream_type: WsStreamType::DepthDiff, account_type };
-                    let cmd_tx_diff = actors.get_or_spawn(key_diff, tx, rtt, &rt, None, Some(orderbook_map));
-                    let _ = cmd_tx_diff.try_send(WsCmd::AddSymbol { symbol: symbol_owned });
+                if let Ok(mut subs) = station_orderbook_subscribed.lock() {
+                    subs.remove(&key_for_cleanup);
                 }
+                crate::dlog!(
+                    "[Bridge] station ob forwarder exited {:?} sym={}, gate removed",
+                    exchange_id, symbol_owned
+                );
             });
-
-            pollers.insert(poll_key, handle);
         }
     }
 
     /// Subscribe to the shared `OrderbookSeries` for `(exchange, symbol, account_type)`.
     ///
-    /// Mirrors `subscribe_trades`: increments `refcount`, starts the WS depth
-    /// actor + one-shot REST bootstrap (via `subscribe_depth`), and returns a
-    /// cloned `Arc` so the caller (DOM panel) can read the live snapshot without
-    /// going through the broadcast channel.
+    /// Mirrors `subscribe_trades`: increments `refcount`, starts the station
+    /// orderbook subscriber (via `subscribe_depth`), and returns a cloned `Arc`
+    /// so the caller (DOM panel) can read the live snapshot without going through
+    /// the broadcast channel.
     pub fn subscribe_orderbook(
         &self,
         exchange_id: ExchangeId,
         symbol: &str,
         account_type: AccountType,
     ) -> Arc<RwLock<OrderbookSeries>> {
-        // Start WS depth actor + one-shot REST bootstrap (idempotent).
+        // Start station depth subscriber + ensure series entry exists (idempotent).
         self.subscribe_depth(exchange_id, symbol, account_type);
 
-        // Get-or-create the OrderbookSeries in the shared map, incrementing refcount.
+        // Increment refcount on the series created by subscribe_depth.
         let ob_key = OrderbookKey::new(exchange_id, account_type, symbol);
         let handle = {
+            let map = self.orderbook_map.read().unwrap_or_else(|e| e.into_inner());
+            map.get(&ob_key).cloned()
+        };
+        let handle = handle.unwrap_or_else(|| {
             let mut map = self.orderbook_map.write().unwrap_or_else(|e| e.into_inner());
-            map.entry(ob_key.clone())
+            map.entry(ob_key)
                 .or_insert_with(|| Arc::new(RwLock::new(OrderbookSeries::new(DEFAULT_HISTORY_CAPACITY))))
                 .clone()
-        };
+        });
         if let Ok(mut series) = handle.write() {
             series.refcount += 1;
         }
-
-        // C4: spawn a station orderbook-subscriber once per OrderbookKey.
-        // Parallel writer alongside ws_manager Depth/DepthDiff actor (removed in C6).
-        {
-            let mut subs = self.station_orderbook_subscribed
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            if subs.insert(ob_key.clone()) {
-                // First subscriber for this key: spawn the station forwarder.
-                let station = self.station.clone();
-                let tx = self.tx.clone();
-                let station_orderbook_subscribed = self.station_orderbook_subscribed.clone();
-                let symbol_owned = symbol.to_string();
-                let key_for_cleanup = ob_key.clone();
-                self.runtime.spawn(async move {
-                    let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
-                        exchange_id,
-                        symbol_owned.clone(),
-                        account_type,
-                        [digdigdig3_station::Stream::OrderbookDelta],
-                    );
-                    let mut report = match station.subscribe(sub_set).await {
-                        Ok(r) => r,
-                        Err(e) => {
-                            crate::dlog!(
-                                "[Bridge] station ob subscribe failed {:?} sym={}: {:?}",
-                                exchange_id, symbol_owned, e
-                            );
-                            if let Ok(mut subs) = station_orderbook_subscribed.lock() {
-                                subs.remove(&key_for_cleanup);
-                            }
-                            return;
-                        }
-                    };
-                    if !report.failed.is_empty() {
-                        crate::dlog!(
-                            "[Bridge] station ob partial-fail {:?} sym={}: {} failed",
-                            exchange_id, symbol_owned, report.failed.len()
-                        );
-                    }
-                    while let Some(ev) = report.handle.recv().await {
-                        match ev {
-                            digdigdig3_station::Event::OrderbookSnapshot { point, .. } => {
-                                let bids = strip_ob_padding(&point.bids);
-                                let asks = strip_ob_padding(&point.asks);
-                                let _ = tx.send(LiveUpdate::OrderbookSnapshot {
-                                    exchange_id,
-                                    account_type,
-                                    symbol: symbol_owned.clone(),
-                                    bids,
-                                    asks,
-                                    timestamp: point.ts_ms,
-                                    source: OrderbookSource::Rest,
-                                });
-                            }
-                            digdigdig3_station::Event::OrderbookDelta { point, .. } => {
-                                let bids = strip_ob_padding(&point.bid_changes);
-                                let asks = strip_ob_padding(&point.ask_changes);
-                                let _ = tx.send(LiveUpdate::OrderbookDelta {
-                                    exchange_id,
-                                    account_type,
-                                    symbol: symbol_owned.clone(),
-                                    bids,
-                                    asks,
-                                    timestamp: point.ts_ms,
-                                });
-                            }
-                            _ => {}
-                        }
-                    }
-                    // Forwarder handle dropped (unsubscribe/grace expired).
-                    // Remove from gate so a future subscribe_orderbook can re-spawn.
-                    if let Ok(mut subs) = station_orderbook_subscribed.lock() {
-                        subs.remove(&key_for_cleanup);
-                    }
-                    crate::dlog!(
-                        "[Bridge] station ob forwarder exited {:?} sym={}, gate removed",
-                        exchange_id, symbol_owned
-                    );
-                });
-            }
-        }
-
         handle
     }
 
@@ -1474,20 +1369,7 @@ impl DataBridge {
         account_type: AccountType,
         credentials: digdigdig3::Credentials,
     ) {
-        let key = WsKey {
-            exchange_id,
-            stream_type: WsStreamType::Private,
-            account_type,
-        };
-        let tx = self.tx.clone();
-        let rtt = self.ws_rtt_handles.clone();
-        let rt = self.runtime.handle().clone();
-        if let Ok(mut actors) = self.ws_actors.lock() {
-            // get_or_spawn returns existing cmd_tx if already running.
-            let _cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt, Some(credentials.clone()), None);
-        }
-
-        // C5: spawn station private side-channel once per (exchange_id, account_type).
+        // C5: spawn station private subscriber once per (exchange_id, account_type).
         // One authenticated WS covers all private streams (order/balance/position).
         // WASM: add_authenticated returns UnsupportedOperation → subscribe fails → silent skip.
         let private_key = (exchange_id, account_type);
@@ -1637,23 +1519,11 @@ impl DataBridge {
 
     /// Remove one consumer interest in depth stream for this symbol.
     ///
-    /// Also aborts the one-shot REST bootstrap task if it is still in flight
-    /// (no grace period — the bootstrap is cheap to restart on re-subscribe).
-    pub fn unsubscribe_depth(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
-        if let Ok(actors) = self.ws_actors.lock() {
-            let key = WsKey { exchange_id, stream_type: WsStreamType::Depth, account_type };
-            actors.send_cmd(&key, WsCmd::RemoveSymbol { symbol: symbol.to_string() });
-            let key_diff = WsKey { exchange_id, stream_type: WsStreamType::DepthDiff, account_type };
-            actors.send_cmd(&key_diff, WsCmd::RemoveSymbol { symbol: symbol.to_string() });
-        }
-
-        // Abort the REST poll task for this symbol immediately.
-        let poll_key = (exchange_id, symbol.to_string(), account_type);
-        if let Ok(mut pollers) = self.rest_orderbook_pollers.lock() {
-            if let Some(handle) = pollers.remove(&poll_key) {
-                handle.abort();
-            }
-        }
+    /// Station manages unsubscribe lifecycle via the 30s grace window configured
+    /// in the builder. The gate key is removed when the forwarder task exits.
+    pub fn unsubscribe_depth(&self, _exchange_id: ExchangeId, _symbol: &str, _account_type: AccountType) {
+        // Station unsubscription is handled by the station_orderbook_subscribed gate:
+        // the forwarder task exits when station drops the handle after the grace period.
     }
 
     /// Remove one consumer interest in trade stream for this symbol.
@@ -1665,11 +1535,6 @@ impl DataBridge {
     /// When the refcount reaches zero the series is removed from the map,
     /// freeing memory.
     pub fn unsubscribe_trades(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
-        let ws_key = WsKey { exchange_id, stream_type: WsStreamType::Trades, account_type };
-        if let Ok(actors) = self.ws_actors.lock() {
-            actors.send_cmd(&ws_key, WsCmd::RemoveSymbol { symbol: symbol.to_string() });
-        }
-
         // Decrement TradeSeries refcount; remove when it hits zero.
         let trade_key = TradeKey::new(exchange_id, account_type, symbol);
         if let Ok(mut map) = self.trade_map.write() {
@@ -1694,44 +1559,23 @@ impl DataBridge {
     /// Call this when switching symbols to stop old trade streams.
     /// Mini ticker subscriptions (watchlist) are preserved.
     pub fn unsubscribe_all(&self) {
-        if let Ok(mut actors) = self.ws_actors.lock() {
-            let trade_keys: Vec<WsKey> = actors
-                .actors
-                .keys()
-                .filter(|k| k.stream_type == WsStreamType::Trades)
-                .cloned()
-                .collect();
-            for key in trade_keys {
-                actors.remove(&key);
-            }
-        }
+        // Station manages trade subscription lifecycle via grace windows.
+        // No legacy ws_actor trade streams remain.
     }
 
     /// Unsubscribe a single mini-ticker symbol (when symbol removed from watchlist).
     ///
     /// Sends a `RemoveSymbol` command to the ticker actor; the actor applies a
     /// 30-second grace period before actually unsubscribing from the exchange.
-    pub fn unsubscribe_mini_ticker(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
-        let key = WsKey { exchange_id, stream_type: WsStreamType::Ticker, account_type };
-        if let Ok(actors) = self.ws_actors.lock() {
-            actors.send_cmd(&key, WsCmd::RemoveSymbol { symbol: symbol.to_string() });
-        }
+    pub fn unsubscribe_mini_ticker(&self, _exchange_id: ExchangeId, _symbol: &str, _account_type: AccountType) {
+        // Station manages ticker subscription lifecycle via grace windows.
     }
 
-    /// Stop all WebSocket actors for a specific exchange.
-    pub fn unsubscribe_exchange(&self, exchange_id: ExchangeId) {
-        if let Ok(mut actors) = self.ws_actors.lock() {
-            let keys: Vec<WsKey> = actors
-                .actors
-                .keys()
-                .filter(|k| k.exchange_id == exchange_id)
-                .cloned()
-                .collect();
-            for key in keys {
-                actors.remove(&key);
-                crate::dlog!("[Bridge] Stopped WS actor: {:?}/{:?}", key.exchange_id, key.stream_type);
-            }
-        }
+    /// Stop all WebSocket subscriptions for a specific exchange.
+    ///
+    /// Station manages subscription lifecycle; legacy ws_actor maps are removed.
+    pub fn unsubscribe_exchange(&self, _exchange_id: ExchangeId) {
+        // No legacy ws_actor map remains. Station grace windows handle cleanup.
     }
 
     /// Disable a connector — remove from pool and stop all WS tasks.
@@ -1749,20 +1593,18 @@ impl DataBridge {
         self.ensure_connector(exchange_id);
     }
 
-    /// Count active WebSocket actors for a specific exchange.
-    pub fn ws_task_count(&self, exchange_id: ExchangeId) -> usize {
-        self.ws_actors
-            .lock()
-            .map(|a| a.active_count_for_exchange(exchange_id))
-            .unwrap_or(0)
+    /// Count active WebSocket tasks for a specific exchange.
+    ///
+    /// Returns 0 — legacy ws_actor map removed. Station reports liveness via `ws_health`.
+    pub fn ws_task_count(&self, _exchange_id: ExchangeId) -> usize {
+        0
     }
 
-    /// Count total active WebSocket actors across all exchanges.
+    /// Count total active WebSocket tasks across all exchanges.
+    ///
+    /// Returns 0 — legacy ws_actor map removed. Station reports liveness via `ws_health`.
     pub fn ws_task_count_total(&self) -> usize {
-        self.ws_actors
-            .lock()
-            .map(|a| a.total_active_count())
-            .unwrap_or(0)
+        0
     }
 
     /// Get summary metrics for all active connectors.
@@ -2729,89 +2571,6 @@ fn parse_symbol(s: &str) -> Symbol {
     result
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// REST ORDERBOOK POLLER
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Periodic REST orderbook snapshot task.
-///
-/// Fetches a single deep orderbook snapshot via REST and seeds the local book.
-///
-/// This is the **canonical Binance pattern**: subscribe to the diff stream
-/// (`@depth@100ms`) for incremental updates, then bootstrap ONCE from REST
-/// to get the initial deep state (up to 1000 levels).  After this task
-/// completes, all subsequent updates flow through the WS delta path.
-///
-/// Errors are logged with `eprintln!`; on failure the local book simply
-/// remains empty until the WS diff stream has applied enough updates.
-/// Inner implementation of the REST orderbook bootstrap.
-///
-/// Fetches a deep snapshot (up to 1000 levels), writes it into
-/// `orderbook_map` via `apply_rest`, and broadcasts a backward-compat
-/// `OrderbookSnapshot` event.  Called directly (awaited) from the
-/// sequenced bootstrap task in `subscribe_depth` so that WS subscriptions
-/// only start AFTER this snapshot has landed.
-async fn rest_orderbook_bootstrap_inner(
-    hub: ExchangeHub,
-    exchange_id: ExchangeId,
-    symbol: &str,
-    account_type: AccountType,
-    tx: broadcast::Sender<LiveUpdate>,
-    orderbook_map: SharedOrderbookMap,
-) {
-    // Resolve max depth from connector caps. Falls back to 1000 if unknown.
-    let depth: u16 = match hub.rest(exchange_id) {
-        Some(conn) => conn
-            .orderbook_capabilities(account_type)
-            .rest_max_depth
-            .map(|d| d as u16)
-            .unwrap_or(1000),
-        None => 1000,
-    };
-
-    let conn = match hub.rest(exchange_id) {
-        Some(c) => c,
-        None => return,
-    };
-
-    let sym = parse_symbol_for_exchange(exchange_id, symbol);
-
-    match conn.get_orderbook((&sym).into(), Some(depth), account_type).await {
-        Ok(book) => {
-            let bids: Vec<(f64, f64)> = book.bids.iter().map(|l| (l.price, l.size)).collect();
-            let asks: Vec<(f64, f64)> = book.asks.iter().map(|l| (l.price, l.size)).collect();
-            let ts = book.timestamp;
-
-            // Write to SharedOrderbookMap — range-replace seeds the book without
-            // clearing any WS data that may have arrived concurrently.
-            let ob_key = OrderbookKey::new(exchange_id, account_type, symbol);
-            if let Some(handle) = orderbook_map.read().ok().and_then(|m| m.get(&ob_key).cloned()) {
-                if let Ok(mut series) = handle.write() {
-                    series.apply_rest(&bids, &asks, ts);
-                }
-            }
-
-            // Broadcast so any panel listening on the channel gets the bootstrap
-            // snapshot immediately (backward compat).
-            let _ = tx.send(LiveUpdate::OrderbookSnapshot {
-                exchange_id,
-                account_type,
-                symbol: symbol.to_string(),
-                bids,
-                asks,
-                timestamp: ts,
-                source: OrderbookSource::Rest,
-            });
-        }
-        Err(e) => {
-            eprintln!(
-                "[OB Bootstrap] {:?} {} failed: {}",
-                exchange_id, symbol, e
-            );
-        }
-    }
-    // Task exits after one fetch — no loop.
-}
 
 // ── Trading / Account / Position bridge methods ─────────────────────────────
 

@@ -44,10 +44,8 @@
 //! ```
 
 mod bridge;
-mod depth_book;
 mod provider;
 mod convert;
-mod ws_manager;
 
 pub use bridge::{DataBridge, LiveUpdate, OrderbookSource, account_type_from_short_label};
 pub use provider::LiveDataProvider;
