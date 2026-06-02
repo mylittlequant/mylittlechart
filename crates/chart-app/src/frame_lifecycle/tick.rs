@@ -579,58 +579,15 @@ impl ChartApp {
                     for state in self.panels_store.footprint.values_mut() {
                         state.tick();
                     }
-                    // Lazy auto-rebind for TradeTape:
-                    // 1) If panel is in a sync group, pull the canonical
-                    //    (symbol/exchange/account_type) from the group's instrument —
-                    //    this fixes the stale-key bug where a panel persisted with
-                    //    an older symbol (e.g. BTCUSDT) than the chart it's bound to
-                    //    (now BTC-USDT-SWAP on OKX) since panel-side symbol updates
-                    //    were only fired on sync-toggle, not on every chart change.
-                    // 2) If shared_trades handle is None but symbol+exchange are set,
-                    //    subscribe now (self-heal after preset restore).
-                    let panel_id_list: Vec<sidebar_content::free_slot::PanelId> =
-                        self.panels_store.trade_tape.keys().copied().collect();
-                    for pid in panel_id_list {
-                        let group_key: Option<(String, String, String)> = self
-                            .panel_app
-                            .tag_manager
-                            .group_for_member(zengeld_chart::tag_manager::SyncMemberId::Panel(pid.0))
-                            .and_then(|gid| self.panel_app.tag_manager.group(gid))
-                            .map(|g| (g.symbol.clone(), g.exchange.clone(), g.account_type.clone()));
-                        let Some(state) = self.panels_store.trade_tape.get_mut(&pid) else { continue };
-
-                        // (1) Sync key with group if it diverged.
-                        if let Some((g_sym, g_exch, g_at)) = &group_key {
-                            if !g_sym.is_empty()
-                                && (state.symbol != *g_sym
-                                    || state.exchange != *g_exch
-                                    || state.account_type != *g_at)
-                            {
-                                let old_sym = state.symbol.clone();
-                                let old_exch = state.exchange.clone();
-                                let old_at = state.account_type.clone();
-                                state.symbol = g_sym.clone();
-                                state.exchange = g_exch.clone();
-                                state.account_type = g_at.clone();
-                                // Drop stale handle so step (2) below resubscribes.
-                                state.shared_trades = None;
-                                state.last_seen_version = 0;
-                                state.trades.clear();
-                                state.max_qty_seen = 0.0;
-                                crate::dlog!(
-                                    "[ChartApp] trade_tape key resync via group: {}/{}/{} -> {}/{}/{}",
-                                    old_exch, old_sym, old_at, g_exch, g_sym, g_at
-                                );
-                                if !old_sym.is_empty() {
-                                    if let Some(old_eid) = digdigdig3::ExchangeId::from_str(&old_exch) {
-                                        let old_at_enum = account_type_from_label(&old_at);
-                                        self.bridge.unsubscribe_trades(old_eid, &old_sym, old_at_enum);
-                                    }
-                                }
-                            }
-                        }
-
-                        // (2) Subscribe if not yet bound.
+                    // Lazy self-heal for TradeTape after preset restore:
+                    // shared_trades is a runtime Arc handle that is NOT persisted —
+                    // after restore state.symbol is correct but the handle is None.
+                    // Sync group apply_key_to_panels_in_group will set it on the next
+                    // active-chart-change or symbol-change, but in the meantime
+                    // (first frames after load) the panel would render empty. This
+                    // loop subscribes proactively whenever the handle is None and
+                    // we have a non-empty (symbol, exchange) pair.
+                    for state in self.panels_store.trade_tape.values_mut() {
                         if state.shared_trades.is_none()
                             && !state.symbol.is_empty()
                             && !state.exchange.is_empty()
@@ -640,10 +597,6 @@ impl ChartApp {
                                 let h = self.bridge.subscribe_trades(eid, &state.symbol, at);
                                 state.shared_trades = Some(h);
                                 state.last_seen_version = 0;
-                                crate::dlog!(
-                                    "[ChartApp] trade_tape auto-rebind {} {} {}",
-                                    state.exchange, state.symbol, state.account_type
-                                );
                             }
                         }
                         state.tick();
