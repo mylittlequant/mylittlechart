@@ -3844,7 +3844,12 @@ impl ChartApp {
                             .and_then(|s| label_from_source(&s.source, &s.symbol, &s.exchange, &s.account_type)),
                         FreeItem::PositionManager(_)
                         | FreeItem::TradeLog(_)
-                        | FreeItem::RiskCalculator(_) => None,
+                        | FreeItem::RiskCalculator(_)
+                        // Chart / SubPane don't expose symbol-source / overlay
+                        // info to the sidebar header — they render via dedicated
+                        // paths (`render_chart_leaf` / `render_subpane_leaf`).
+                        | FreeItem::Chart(_)
+                        | FreeItem::SubPane(_) => None,
                     }
                 },
                 &|item: &sidebar_content::free_slot::FreeItem| -> Option<(bool, f64, f64)> {
@@ -3896,7 +3901,12 @@ impl ChartApp {
                             .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
                         FreeItem::PositionManager(_)
                         | FreeItem::TradeLog(_)
-                        | FreeItem::RiskCalculator(_) => None,
+                        | FreeItem::RiskCalculator(_)
+                        // Chart / SubPane don't expose symbol-source / overlay
+                        // info to the sidebar header — they render via dedicated
+                        // paths (`render_chart_leaf` / `render_subpane_leaf`).
+                        | FreeItem::Chart(_)
+                        | FreeItem::SubPane(_) => None,
                     }
                 },
                 &|item: &sidebar_content::free_slot::FreeItem| -> Option<Vec<bool>> {
@@ -4338,7 +4348,11 @@ impl ChartApp {
                         .and_then(|s| label_from_source(&s.source, &s.symbol, &s.exchange, &s.account_type)),
                     FreeItem::PositionManager(_)
                     | FreeItem::TradeLog(_)
-                    | FreeItem::RiskCalculator(_) => None,
+                    | FreeItem::RiskCalculator(_)
+                    // Chart / SubPane render via dedicated paths — no
+                    // symbol-source label / overlay info from these closures.
+                    | FreeItem::Chart(_)
+                    | FreeItem::SubPane(_) => None,
                 }
             },
             &|item: &sidebar_content::free_slot::FreeItem| -> Option<(bool, f64, f64)> {
@@ -4390,7 +4404,11 @@ impl ChartApp {
                         .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
                     FreeItem::PositionManager(_)
                     | FreeItem::TradeLog(_)
-                    | FreeItem::RiskCalculator(_) => None,
+                    | FreeItem::RiskCalculator(_)
+                    // Chart / SubPane render via dedicated paths — no
+                    // symbol-source label / overlay info from these closures.
+                    | FreeItem::Chart(_)
+                    | FreeItem::SubPane(_) => None,
                 }
             },
             &|item: &sidebar_content::free_slot::FreeItem| -> Option<Vec<bool>> {

@@ -1,9 +1,12 @@
 //! Per-slot docking grid types for the free-slot hyperspace (Slot1..Slot4).
 //!
 //! Each of the 4 slot sidebars hosts its own `DockingManager<FreeItem>`. The
-//! set `{Main, Slot1..Slot4}` forms a single cross-container drag hyperspace
-//! in Phase 3-new, with the restriction that `FreeItem::Chart(_)` is locked to
-//! Main. See [`docs/plans/sidebar-containers-docking.md`] for the full model.
+//! set `{Main, Slot1..Slot4}` forms a single cross-container drag hyperspace.
+//!
+//! `FreeItem::Chart(u64)` wraps `ChartId.0` and `FreeItem::SubPane(u64)`
+//! wraps `SubPaneId.0` (raw `u64` to keep `sidebar-content` free of a
+//! `zengeld-chart` dependency).  Conversion happens at the `chart-app`
+//! boundary.  See `docs/plans/chart-subpane-pid-refactor-2026-06-03.md`.
 
 // =============================================================================
 // PanelId
@@ -28,8 +31,15 @@ pub struct PanelId(pub u64);
 /// into the free-slot hyperspace and trading panels can never leak into the
 /// Agents sidebar.
 ///
-/// Each variant carries only a `PanelId` (u64 wrapper). The matching heavy
+/// Most variants carry only a `PanelId` (u64 wrapper).  The matching heavy
 /// state lives in `chart-app::TradingPanelsStore` keyed by that id.
+///
+/// `Chart` and `SubPane` are exceptions: they wrap raw `u64`s representing
+/// `ChartId.0` and `SubPaneId.0` respectively (both defined in
+/// `zengeld-chart`).  Raw `u64` avoids a cross-crate type dependency from
+/// `sidebar-content` to `zengeld-chart`; conversion happens at the
+/// `chart-app` boundary, where the docking-leaf payload is resolved against
+/// `panels_store.chart` / `panels_store.sub_pane_index`.
 #[derive(Clone, Debug)]
 pub enum FreeItem {
     Dom(PanelId),
@@ -44,10 +54,24 @@ pub enum FreeItem {
     TradeLog(PanelId),
     RiskCalculator(PanelId),
     TradingContainer(PanelId),
+    /// Embedded chart leaf — wraps `ChartId.0`.  State lives in
+    /// `panels_store.chart: HashMap<ChartId, ChartWindow>` (Stage 2).
+    Chart(u64),
+    /// Standalone sub-pane leaf — wraps `SubPaneId.0`.  Looked up via
+    /// `panels_store.sub_pane_index: HashMap<SubPaneId, ChartId>` → parent
+    /// chart's `sub_panes: Vec<SubPane>` (Stage 2).
+    SubPane(u64),
 }
 
 impl FreeItem {
-    /// Extract the `PanelId` from whichever variant is active.
+    /// Extract the leaf payload's identity as a `PanelId` u64 wrapper.
+    ///
+    /// For trading-panel variants this returns the real `PanelId` stored in
+    /// `TradingPanelsStore`.  For `Chart` it wraps the `ChartId.0`; for
+    /// `SubPane` it wraps the `SubPaneId.0` — those lookups bypass the
+    /// `TradingPanelsStore` panel HashMaps and resolve via dedicated maps
+    /// (`panels_store.chart` / `panels_store.sub_pane_index`).  Callers
+    /// distinguish by `kind_str()` or by matching the variant directly.
     pub fn panel_id(&self) -> PanelId {
         match self {
             FreeItem::Dom(id)
@@ -62,6 +86,7 @@ impl FreeItem {
             | FreeItem::TradeLog(id)
             | FreeItem::RiskCalculator(id)
             | FreeItem::TradingContainer(id) => *id,
+            FreeItem::Chart(raw) | FreeItem::SubPane(raw) => PanelId(*raw),
         }
     }
 
@@ -80,6 +105,8 @@ impl FreeItem {
             FreeItem::TradeLog(_)          => "trade_log",
             FreeItem::RiskCalculator(_)    => "risk_calculator",
             FreeItem::TradingContainer(_)  => "trading_container",
+            FreeItem::Chart(_)             => "chart",
+            FreeItem::SubPane(_)           => "sub_pane",
         }
     }
 }
@@ -100,6 +127,8 @@ impl uzor::panels::DockPanel for FreeItem {
             FreeItem::TradeLog(_)          => "Trade Log",
             FreeItem::RiskCalculator(_)    => "Risk Calculator",
             FreeItem::TradingContainer(_)  => "Trading",
+            FreeItem::Chart(_)             => "Chart",
+            FreeItem::SubPane(_)           => "Sub-pane",
         }
     }
 
@@ -123,16 +152,22 @@ impl uzor::panels::DockPanel for FreeItem {
             FreeItem::TradeLog(_)          => "free_trade_log",
             FreeItem::RiskCalculator(_)    => "free_risk_calculator",
             FreeItem::TradingContainer(_)  => "free_trading_container",
+            FreeItem::Chart(_)             => "free_chart",
+            FreeItem::SubPane(_)           => "free_sub_pane",
         }
     }
 
     /// Minimum panel size in pixels (width, height).
-    /// Single uniform minimum: 100x80 — enough for a header strip + a couple
-    /// of data rows. Larger per-panel minima made narrow slot widths
-    /// undragable (drag_separator could not redistribute share when every
-    /// child was already at min).
+    ///
+    /// Uniform 100x80 for most variants — enough for a header strip + a
+    /// couple of data rows.  Chart and Sub-pane need more room for their
+    /// price-axis / time-axis rendering to remain legible.
     fn min_size(&self) -> (f32, f32) {
-        (100.0, 80.0)
+        match self {
+            FreeItem::Chart(_)   => (200.0, 150.0),
+            FreeItem::SubPane(_) => (160.0, 80.0),
+            _                    => (100.0, 80.0),
+        }
     }
 
     fn closable(&self) -> bool {
