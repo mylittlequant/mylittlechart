@@ -16,7 +16,6 @@ members = [
     "crates/vello-hybrid-context",
     "crates/tiny-skia-context",
     "crates/bar-service",
-    "crates/trade-store",
     "crates/trade-service",
     "crates/orderbook-store",
     "crates/orderbook-service",

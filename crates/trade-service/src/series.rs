@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use trade_store::Trade;
+use crate::types::Trade;
 
 /// Default maximum trades held in memory per series.
 pub const DEFAULT_CAPACITY: usize = 100_000;

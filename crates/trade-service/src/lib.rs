@@ -1,10 +1,15 @@
 mod series;
-mod service;
 mod types;
 
-pub use series::{TradeSeries, DEFAULT_CAPACITY};
-pub use service::{TradeService, TradeServiceEvent, SharedTradeMap};
-pub use types::TradeKey;
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
-// Re-export Trade so callers import from one place.
-pub use trade_store::Trade;
+pub use series::{TradeSeries, DEFAULT_CAPACITY};
+pub use types::{TradeKey, Trade};
+
+/// Shared trade ring-map — cloneable handle.
+///
+/// Owned by `DataBridge`. Populated lazily as windows subscribe to trades.
+/// Each entry is a per-(exchange,symbol,account_type) ring buffer wrapped
+/// in `Arc<RwLock<...>>` for cross-thread reads.
+pub type SharedTradeMap = Arc<RwLock<HashMap<TradeKey, Arc<RwLock<TradeSeries>>>>>;
