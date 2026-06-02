@@ -377,6 +377,11 @@ impl ChartApp {
                     window.drawing_manager.clear_all_primitives();
                     window.restore_drawings_for_symbol(sym_part, exchange_part, &wl_at_label);
                 }
+                // Propagate symbol change to all peers in the same sync group.
+                let wl_active_leaf = self.panel_app.panel_grid.docking().active_leaf();
+                if let Some(leaf) = wl_active_leaf {
+                    self.propagate_symbol_to_sync_group(leaf, sym_part, exchange_part, &wl_at_label);
+                }
                 self.active_exchange = resolved_exchange;
                 // Unsubscribe only the old symbol's trade stream, leaving other
                 // windows' streams intact.

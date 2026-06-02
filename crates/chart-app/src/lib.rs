@@ -5121,6 +5121,16 @@ impl ChartApp {
                 }
                 needs_depth_sub = true;
             }
+            if let Some(s) = self.panels_store.order_entry.get_mut(&panel_id) {
+                s.symbol = symbol.clone();
+                s.exchange = exchange.clone();
+                s.account_type = account_type.clone();
+            }
+            if let Some(s) = self.panels_store.trading_container.get_mut(&panel_id) {
+                s.symbol = symbol.clone();
+                s.exchange = exchange.clone();
+                s.account_type = account_type.clone();
+            }
         }
 
         // Unsubscribe old depth streams that are no longer needed.  We deduplicate
@@ -6236,14 +6246,26 @@ impl ChartApp {
         };
         let visible_bars = if bar_spacing > 0.0 { source_chart_width / bar_spacing } else { 100.0 };
 
-        let source_color = match self.panel_app.leaf_color_tags.get(&source_leaf).copied() {
-            Some(c) => c,
-            None => return,
+        // Enumerate peers via TagManager group membership so untagged groups propagate too.
+        let source_chart_id_vp = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf);
+        let group_id_vp = source_chart_id_vp
+            .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid));
+        let sync_leaves: Vec<zengeld_chart::LeafId> = if let Some(gid) = group_id_vp {
+            self.panel_app.tag_manager
+                .chart_members(gid)
+                .into_iter()
+                .filter_map(|cid| self.panel_app.panel_grid.leaf_for_chart_id(cid))
+                .filter(|&lid| lid != source_leaf)
+                .collect()
+        } else {
+            match self.panel_app.leaf_color_tags.get(&source_leaf).copied() {
+                Some(source_color) => self.panel_app.leaf_color_tags.iter()
+                    .filter(|(&lid, &c)| lid != source_leaf && input::sync_colors_match(c, source_color))
+                    .map(|(&lid, _)| lid)
+                    .collect(),
+                None => return,
+            }
         };
-        let sync_leaves: Vec<zengeld_chart::LeafId> = self.panel_app.leaf_color_tags.iter()
-            .filter(|(&lid, &c)| lid != source_leaf && input::sync_colors_match(c, source_color))
-            .map(|(&lid, _)| lid)
-            .collect();
         for leaf_id in sync_leaves {
             if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
                 // Apply scale_mode BEFORE the auto-scale check so the new mode takes effect.

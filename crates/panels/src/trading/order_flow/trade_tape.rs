@@ -101,6 +101,9 @@ pub struct TradeTapeState {
     /// Tick size from a linked DOM panel.
     pub dom_tick_size: Option<f64>,
 
+    /// Crosshair price propagated from a linked chart in the same sync group.
+    pub crosshair_price: Option<f64>,
+
     /// Which columns to show.
     pub column_config: TradeTapeColumnConfig,
 }
@@ -138,6 +141,7 @@ impl TradeTapeState {
             last_seen_version: 0,
             dom_market_price: None,
             dom_tick_size: None,
+            crosshair_price: None,
             column_config: TradeTapeColumnConfig::default(),
         }
     }

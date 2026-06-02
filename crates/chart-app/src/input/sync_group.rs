@@ -779,14 +779,28 @@ impl ChartApp {
             .unwrap_or(true);
         if !should_sync { return; }
 
-        let source_color = match self.panel_app.leaf_color_tags.get(&source_leaf).copied() {
-            Some(c) => c,
-            None => return,
+        // Enumerate peer leaves via TagManager group membership (not leaf_color_tags).
+        // This makes propagation work for untagged (auto-created) groups too.
+        let source_chart_id_for_peers = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf);
+        let group_id_for_peers = source_chart_id_for_peers
+            .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid));
+        let sync_leaves: Vec<zengeld_chart::LeafId> = if let Some(gid) = group_id_for_peers {
+            self.panel_app.tag_manager
+                .chart_members(gid)
+                .into_iter()
+                .filter_map(|cid| self.panel_app.panel_grid.leaf_for_chart_id(cid))
+                .filter(|&lid| lid != source_leaf)
+                .collect()
+        } else {
+            // No group: fall back to color-tag matching for legacy ungrouped windows.
+            match self.panel_app.leaf_color_tags.get(&source_leaf).copied() {
+                Some(source_color) => self.panel_app.leaf_color_tags.iter()
+                    .filter(|(&lid, &c)| lid != source_leaf && sync_colors_match(c, source_color))
+                    .map(|(&lid, _)| lid)
+                    .collect(),
+                None => return,
+            }
         };
-        let sync_leaves: Vec<zengeld_chart::LeafId> = self.panel_app.leaf_color_tags.iter()
-            .filter(|(&lid, &c)| lid != source_leaf && sync_colors_match(c, source_color))
-            .map(|(&lid, _)| lid)
-            .collect();
         let symbol_owned = symbol.to_string();
         let exchange_owned = exchange.to_string();
         let account_type_owned = account_type.to_string();
@@ -898,14 +912,26 @@ impl ChartApp {
             .unwrap_or(true);
         if !should_sync { return; }
 
-        let source_color = match self.panel_app.leaf_color_tags.get(&source_leaf).copied() {
-            Some(c) => c,
-            None => return,
+        // Enumerate peer leaves via TagManager group membership (not leaf_color_tags).
+        let source_chart_id_for_tf = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf);
+        let group_id_for_tf = source_chart_id_for_tf
+            .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid));
+        let sync_leaves: Vec<zengeld_chart::LeafId> = if let Some(gid) = group_id_for_tf {
+            self.panel_app.tag_manager
+                .chart_members(gid)
+                .into_iter()
+                .filter_map(|cid| self.panel_app.panel_grid.leaf_for_chart_id(cid))
+                .filter(|&lid| lid != source_leaf)
+                .collect()
+        } else {
+            match self.panel_app.leaf_color_tags.get(&source_leaf).copied() {
+                Some(source_color) => self.panel_app.leaf_color_tags.iter()
+                    .filter(|(&lid, &c)| lid != source_leaf && sync_colors_match(c, source_color))
+                    .map(|(&lid, _)| lid)
+                    .collect(),
+                None => return,
+            }
         };
-        let sync_leaves: Vec<zengeld_chart::LeafId> = self.panel_app.leaf_color_tags.iter()
-            .filter(|(&lid, &c)| lid != source_leaf && sync_colors_match(c, source_color))
-            .map(|(&lid, _)| lid)
-            .collect();
 
         // Collect (exchange_string, symbol, account_type) for each peer BEFORE mutating windows,
         // so we can call bridge.request_bars() after setting the new timeframe.
@@ -1066,34 +1092,43 @@ impl ChartApp {
             .unwrap_or(true);
         if !should_sync { return; }
 
-        let source_color = match self.panel_app.leaf_color_tags.get(&source_leaf).copied() {
-            Some(c) => c,
-            None => return,
-        };
-
         // Propagate crosshair to peer chart windows in the same color-tag group.
         // Per-member override (`effective_sync_crosshair`) takes precedence over
         // the group-level flag — a peer with `sync_crosshair = Some(false)` must
         // not receive updates even when the group default is enabled.
-        let sync_leaves: Vec<zengeld_chart::LeafId> = self.panel_app.leaf_color_tags.iter()
-            .filter(|(&lid, &c)| lid != source_leaf && sync_colors_match(c, source_color))
-            .filter(|(&lid, _)| {
-                // Skip peers whose effective per-member override disables crosshair sync.
-                let peer_chart_id = self.panel_app.panel_grid.chart_id_for_leaf(lid);
-                let peer_should_sync = group_id
-                    .zip(peer_chart_id)
-                    .and_then(|(gid, cid)| {
-                        self.panel_app.tag_manager.group(gid).map(|g| {
-                            g.effective_sync_crosshair(
-                                zengeld_chart::tag_manager::SyncMemberId::Chart(cid.0),
-                            )
+        // Use TagManager membership so untagged groups propagate too.
+        let sync_leaves: Vec<zengeld_chart::LeafId> = if let Some(gid) = group_id {
+            self.panel_app.tag_manager
+                .chart_members(gid)
+                .into_iter()
+                .filter_map(|cid| self.panel_app.panel_grid.leaf_for_chart_id(cid))
+                .filter(|&lid| lid != source_leaf)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .filter(|&lid| {
+                    let peer_chart_id = self.panel_app.panel_grid.chart_id_for_leaf(lid);
+                    let peer_should_sync = group_id
+                        .zip(peer_chart_id)
+                        .and_then(|(gid2, cid)| {
+                            self.panel_app.tag_manager.group(gid2).map(|g| {
+                                g.effective_sync_crosshair(
+                                    zengeld_chart::tag_manager::SyncMemberId::Chart(cid.0),
+                                )
+                            })
                         })
-                    })
-                    .unwrap_or(true);
-                peer_should_sync
-            })
-            .map(|(&lid, _)| lid)
-            .collect();
+                        .unwrap_or(true);
+                    peer_should_sync
+                })
+                .collect()
+        } else {
+            match self.panel_app.leaf_color_tags.get(&source_leaf).copied() {
+                Some(source_color) => self.panel_app.leaf_color_tags.iter()
+                    .filter(|(&lid, &c)| lid != source_leaf && sync_colors_match(c, source_color))
+                    .map(|(&lid, _)| lid)
+                    .collect(),
+                None => Vec::new(),
+            }
+        };
         for leaf_id in sync_leaves {
             if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
                 window.set_crosshair_from_timestamp(timestamp, price, visible, pane_index);
@@ -1122,6 +1157,9 @@ impl ChartApp {
                     s.crosshair_price = crosshair_price;
                 }
                 if let Some(s) = self.panels_store.volume_profile.get_mut(&panel_id) {
+                    s.crosshair_price = crosshair_price;
+                }
+                if let Some(s) = self.panels_store.trade_tape.get_mut(&panel_id) {
                     s.crosshair_price = crosshair_price;
                 }
             }
