@@ -416,13 +416,6 @@ struct App<'s> {
     /// True when the user confirms they have saved the new recovery key after a
     /// recovery re-key.  Skeleton promote is deferred until this flag is set.
     pending_promote_after_recovery_key: bool,
-
-
-
-    /// Orderbook cache persistence service — owns OrderbookStoreHandle + shared orderbook map.
-    orderbook_service: orderbook_service::OrderbookService,
-    /// Wall-clock instant of the last periodic orderbook-cache save.
-    last_orderbook_cache_save: std::time::Instant,
 }
 
 /// Snapshot of system CPU/RAM metrics produced by the background sampler thread.
@@ -527,34 +520,6 @@ fn render_toasts(
 
 use render::scene_builder::build_window_scene;
 use render::gpu_submit::submit_window_gpu_from_gpu_scene;
-
-
-/// Collect `(exchange, symbol, timeframe, account_type)` 4-tuples from all windows of all
-/// open tabs in the given profile.  Used at startup to pre-load the bar cache from disk.
-fn collect_bar_keys_from_presets(
-    profile: &zengeld_chart::UserProfile,
-    presets: &std::collections::HashMap<String, zengeld_chart::preset::preset::ChartPreset>,
-) -> Vec<(String, String, String, String)> {
-    let mut keys = std::collections::HashSet::new();
-    for ws in &profile.windows {
-        for tab_id in &ws.open_tabs {
-            if let Some(preset) = presets.get(tab_id) {
-                for win in &preset.windows {
-                    if !win.symbol.is_empty() && !win.exchange.is_empty() {
-                        keys.insert((
-                            win.exchange.to_lowercase(),
-                            win.symbol.clone(),
-                            win.timeframe.name.clone(),
-                            win.account_type.clone(), // "S" by default (serde(default) on ChartWindowSnapshot)
-                        ));
-                    }
-                }
-            }
-        }
-    }
-    keys.into_iter().collect()
-}
-
 impl App<'_> {
     fn new(
         symbol: &str,
@@ -741,41 +706,6 @@ impl App<'_> {
         }
 
 
-        // ── Orderbook cache persistence ───────────────────────────────────────
-        // Mirror the TradeService pattern: create the OrderbookStoreHandle, load
-        // persisted snapshots, and seed the shared orderbook map so that panels
-        // opening at startup see the last known orderbook state immediately.
-        let orderbook_dir = zengeld_chart::app_data_dir().join("orderbook");
-        let orderbook_store_handle = orderbook_store::OrderbookStoreHandle::new(orderbook_dir, bridge.runtime());
-        let mut orderbook_service = orderbook_service::OrderbookService::with_map(
-            bridge.orderbook_map(),
-            orderbook_store_handle.clone(),
-            orderbook_service::DEFAULT_HISTORY_CAPACITY,
-        );
-
-        // Seed OrderbookService series from disk data so panels don't start cold.
-        {
-            let bar_keys = collect_bar_keys_from_presets(&profile, &profile_manager.presets);
-            let mut seen = std::collections::HashSet::new();
-            for (exchange_str, symbol, _timeframe, account_type_label) in &bar_keys {
-                if seen.insert((exchange_str.clone(), symbol.clone(), account_type_label.clone())) {
-                    if let Some(eid) = chart_app::ExchangeId::from_str(exchange_str) {
-                        let at = chart_app::account_type_from_label(account_type_label);
-                        let key = orderbook_service::OrderbookKey::new(eid, at, symbol.as_str());
-                        let history = orderbook_store_handle.load(
-                            key.exchange_str(),
-                            &key.symbol,
-                            key.account_type_label(),
-                        );
-                        if !history.is_empty() {
-                            eprintln!("[App] seeding {} orderbook snapshots for {}/{}", history.len(), exchange_str, symbol);
-                            orderbook_service.seed_from_disk(key, history);
-                        }
-                    }
-                }
-            }
-        }
-
         // Load device settings once for App struct initialisation.
         let ds_init = zengeld_chart::user_profile::DeviceSettings::load();
 
@@ -893,8 +823,6 @@ impl App<'_> {
             pending_switch_after_recovery: None,
             pending_recovery_master_key: None,
             pending_promote_after_recovery_key: false,
-            orderbook_service,
-            last_orderbook_cache_save: std::time::Instant::now(),
         }
     }
 
@@ -1782,10 +1710,6 @@ impl App<'_> {
             }
         }
 
-        // 10. Flush orderbook cache to disk.
-        eprintln!("[App] save_all: flushing {} orderbook series to disk", self.orderbook_service.series_count());
-        self.orderbook_service.flush_dirty();
-        self.orderbook_service.flush_sync();
     }
 
     /// Drain app-level broadcast messages each frame.
@@ -1922,12 +1846,6 @@ impl ApplicationHandler for App<'_> {
         // Process app-level broadcast messages (ConnectorReady → request_symbols).
         self.tick_app_state();
         let _t1 = std::time::Instant::now();
-
-        // ── Periodic orderbook cache save (every 30 seconds) ─────────────────
-        if self.last_orderbook_cache_save.elapsed() >= std::time::Duration::from_secs(30) {
-            self.last_orderbook_cache_save = std::time::Instant::now();
-            self.orderbook_service.flush_dirty();
-        }
 
         // ── Drain watchlist actions from all windows → AppState ────────────
         // Windows queue WatchlistAction instead of mutating directly.

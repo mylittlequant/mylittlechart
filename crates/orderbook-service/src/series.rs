@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 use arc_swap::ArcSwap;
 use ordered_float::OrderedFloat;
-use orderbook_store::TimedSnapshot;
+use crate::types::TimedSnapshot;
 
 /// Immutable, lock-free snapshot of an orderbook for render threads.
 ///
@@ -310,23 +310,6 @@ impl OrderbookSeries {
         self.publish_view();
     }
 
-    /// Legacy full-replace, kept for tests and potential callers that want to
-    /// truly wipe the book. Not used by the apply_* paths anymore.
-    #[allow(dead_code)]
-    fn replace_all(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)]) {
-        self.current.bids.clear();
-        self.current.asks.clear();
-        for &(p, q) in bids {
-            if q > 0.0 {
-                self.current.bids.insert(OrderedFloat(p), q);
-            }
-        }
-        for &(p, q) in asks {
-            if q > 0.0 {
-                self.current.asks.insert(OrderedFloat(p), q);
-            }
-        }
-    }
 }
 
 /// Compute (min_price, max_price) from a slice of (price, qty) levels.

@@ -17,7 +17,6 @@ live-data = { path = "../live-data" }
 bar-service = { path = "../bar-service" }
 trade-service = { path = "../trade-service" }
 orderbook-service = { path = "../orderbook-service" }
-orderbook-store = { path = "../orderbook-store" }
 vello-context = { path = "../vello-context" }
 zengeld-chart = { path = "../chart" }
 uzor = "=1.3.6"

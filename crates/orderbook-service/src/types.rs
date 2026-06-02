@@ -1,5 +1,18 @@
 use digdigdig3::{ExchangeId, AccountType};
 
+/// A full orderbook snapshot captured at a specific moment.
+///
+/// Held in the in-memory history ring of `OrderbookSeries`.
+///
+/// - `bids`: descending price order (highest bid first)
+/// - `asks`: ascending price order (lowest ask first)
+#[derive(Debug, Clone)]
+pub struct TimedSnapshot {
+    pub timestamp_ms: i64,
+    pub bids: Vec<(f64, f64)>,  // (price, qty)
+    pub asks: Vec<(f64, f64)>,  // (price, qty)
+}
+
 /// Canonical key for an orderbook series.
 ///
 /// Each (exchange, account_type, symbol) triple maps to exactly one

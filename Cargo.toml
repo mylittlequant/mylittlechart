@@ -17,7 +17,6 @@ members = [
     "crates/tiny-skia-context",
     "crates/bar-service",
     "crates/trade-service",
-    "crates/orderbook-store",
     "crates/orderbook-service",
     "crates/diagnostics",
     "crates/trading-manager",

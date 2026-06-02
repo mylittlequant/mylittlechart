@@ -264,8 +264,8 @@ pub struct DataBridge {
     rest_orderbook_pollers: Arc<Mutex<HashMap<(ExchangeId, String, AccountType), tokio::task::JoinHandle<()>>>>,
     /// Session-level live orderbook series map.
     ///
-    /// Key: `OrderbookKey`. Shared with `OrderbookService` in `App` via `Arc` — both
-    /// sides see the same `HashMap`. The async REST/WS tasks write orderbook state here;
+    /// Key: `OrderbookKey`. Shared with `App` via `Arc` — both sides see the same
+    /// `HashMap`. The async REST/WS tasks write orderbook state here;
     /// panels read at render time. Mirrors `trade_map` semantics.
     orderbook_map: SharedOrderbookMap,
     /// One-shot guard for the all-connector warm-up. Set the first time
@@ -279,7 +279,7 @@ pub struct DataBridge {
     /// migrating bridge data flow (bars, trades, orderbook, ticker, funding,
     /// OI, etc.) over to Station so that warm-start, on-disk persistence,
     /// reconnect, gap-heal, and replay are owned by station instead of
-    /// duplicated ad-hoc in bridge + bar-store + trade-store + orderbook-store.
+    /// duplicated ad-hoc in bridge + bar-store + trade-store.
     ///
     /// Constructed in [`Self::new`] on the bridge's runtime via `block_on`.
     /// Bars migrate in phase 2B (this commit is 2A — Station built but no
@@ -425,8 +425,8 @@ impl DataBridge {
 
     /// Get a clone of the shared orderbook map.
     ///
-    /// Use this to initialize `OrderbookService::with_map()` in `App` — both sides
-    /// will share the same underlying `HashMap` via `Arc`.
+    /// Returns a clone of the shared orderbook map for `App` and panel use.
+    /// Both sides share the same underlying `HashMap` via `Arc`.
     pub fn orderbook_map(&self) -> SharedOrderbookMap {
         self.orderbook_map.clone()
     }

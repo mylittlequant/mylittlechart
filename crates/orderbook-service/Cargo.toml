@@ -4,10 +4,6 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-orderbook-store = { path = "../orderbook-store" }
 digdigdig3 = "=0.3.15"
 ordered-float = "4"
 arc-swap = "1"
-
-[dev-dependencies]
-tokio = { version = "1", features = ["rt", "sync"] }
