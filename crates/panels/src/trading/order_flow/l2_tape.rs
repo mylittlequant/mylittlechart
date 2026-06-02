@@ -80,6 +80,11 @@ pub struct L2TapeState {
     /// Symbol being monitored
     pub symbol: String,
 
+    /// Frame separator on/off — visually delineate WS frame boundaries.
+    /// Default: true. Binance @depth@100ms emits one frame with N levels sharing
+    /// a single E timestamp; this separator shows those groupings honestly.
+    pub frame_separator: bool,
+
     /// Exchange identifier string (e.g. "binance")
     pub exchange: String,
 
@@ -290,6 +295,39 @@ impl TradingPanel for L2TapeState {
             ctx.fill_text(&self.symbol, (x + w - 6.0) as f64, header_text_y);
         }
 
+        // Compute wall-clock time once for S5 rate badge and flash detection below.
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+
+        // S5: rate badge — frames/sec + levels/sec from last 1 second of events.
+        {
+            let cutoff = (now_ms as i64).saturating_sub(1000);
+            let mut uniq_ts: std::collections::HashSet<i64> = std::collections::HashSet::new();
+            let mut total_levels = 0usize;
+            for ev in self.events.iter() {
+                if ev.timestamp >= cutoff {
+                    uniq_ts.insert(ev.timestamp);
+                    total_levels += 1;
+                }
+            }
+            let frames_per_sec = uniq_ts.len();
+            let levels_per_sec = total_levels;
+            let badge_text = format!("{}f/s {}l/s", frames_per_sec, levels_per_sec);
+            let symbol_w = if !self.symbol.is_empty() {
+                self.symbol.len() as f64 * 5.5
+            } else {
+                0.0
+            };
+            let badge_x = (x + w - 6.0) as f64 - symbol_w - 10.0;
+            ctx.set_font("9px sans-serif");
+            ctx.set_text_align(TextAlign::Right);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.set_fill_color(&theme.text_muted);
+            ctx.fill_text(&badge_text, badge_x, header_text_y);
+        }
+
         let content_h = h - L2_HEADER_HEIGHT;
         let max_rows = (content_h / L2_ROW_HEIGHT).floor() as usize;
         if max_rows == 0 {
@@ -299,10 +337,6 @@ impl TradingPanel for L2TapeState {
         let events = self.visible_events(max_rows);
 
         // Build flash-active serial set once per frame.
-        let now_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
         let flash_active: std::collections::HashSet<usize> = self.flash_events
             .iter()
             .filter(|&&(_, start)| now_ms.saturating_sub(start) < 200)
@@ -321,6 +355,7 @@ impl TradingPanel for L2TapeState {
             4
         };
 
+        let mut prev_ts: Option<i64> = None;
         for (row_idx, (deque_idx, event)) in events.iter().enumerate() {
             let row_y = y + L2_HEADER_HEIGHT + (row_idx as f32 * L2_ROW_HEIGHT);
             let row_mid_y = (row_y + L2_ROW_HEIGHT / 2.0) as f64;
@@ -390,6 +425,17 @@ impl TradingPanel for L2TapeState {
                 let qty_str = abbreviate_qty(event.quantity);
                 ctx.set_fill_color(&theme.text_primary);
                 ctx.fill_text(&qty_str, cx as f64, row_mid_y);
+            }
+
+            // S2: frame separator — thin line on top edge when this row starts a new WS frame.
+            if self.frame_separator {
+                if let Some(p_ts) = prev_ts {
+                    if event.timestamp != p_ts {
+                        ctx.set_fill_color("#5a5a5a99");
+                        ctx.fill_rect(x as f64, row_y as f64, w as f64, 1.0);
+                    }
+                }
+                prev_ts = Some(event.timestamp);
             }
         }
 
@@ -463,6 +509,7 @@ impl L2TapeState {
     pub fn new() -> Self {
         Self {
             symbol: String::new(),
+            frame_separator: true,
             exchange: String::new(),
             account_type: String::new(),
             events: VecDeque::new(),
