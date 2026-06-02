@@ -887,17 +887,15 @@ impl ChartWindow {
             // verbatim (existing SubPaneId stays stable across reconciliation
             // passes; only `index` is refreshed).  We do NOT call `.clone()`
             // here because the manual Clone impl on SubPane allocates a fresh
-            // SubPaneId — that would break stable identity for docking-leaf
-            // references.  Move-by-take + push instead.
+            // SubPaneId — that would break stable identity for tab navigation
+            // / save-restore.  Move-by-take + push instead.
             if let Some(pos) = self.sub_panes.iter().position(|p| p.instance_id == instance_id) {
                 let mut pane = self.sub_panes.remove(pos);
                 pane.index = index;
-                pane.parent_chart = self.id;
                 new_sub_panes.push(pane);
             } else {
                 let mut pane = SubPane::new(instance_id);
                 pane.index = index;
-                pane.parent_chart = self.id;
 
                 // Initialize price_min/max from indicator data
                 if let Some((p_min, p_max)) = self.indicator_source.calculate_pane_range(instance_id, visible_start, visible_end) {
