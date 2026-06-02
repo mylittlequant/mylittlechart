@@ -1812,26 +1812,42 @@ impl ChartApp {
                                 use zengeld_panels::trading::SymbolSource;
                                 use sidebar_content::free_slot::FreeItem;
                                 use sidebar_content::state::SlotSourceMode;
-                                // Market-data panels no longer carry SymbolSource; their mode is
-                                // always reflected as Auto (synced via TagManager).
-                                let source = match &item {
-                                    FreeItem::Dom(_)
-                                    | FreeItem::Footprint(_)
-                                    | FreeItem::VolumeProfile(_)
-                                    | FreeItem::LiquidityHeatmap(_)
-                                    | FreeItem::BigTrades(_)
-                                    | FreeItem::L2Tape(_)
-                                    | FreeItem::TradeTape(_) => Some(SymbolSource::HyperFocus),
-                                    FreeItem::OrderEntry(id) => self.panels_store.order_entry.get(id).map(|s| s.source.clone()),
-                                    FreeItem::TradingContainer(id) => self.panels_store.trading_container.get(id).map(|s| s.source.clone()),
-                                    FreeItem::PositionManager(_) | FreeItem::TradeLog(_) | FreeItem::RiskCalculator(_) => None,
-                                };
-                                if let Some(src) = source {
-                                    self.sidebar_state.slot_source_mode = match src {
-                                        SymbolSource::HyperFocus => SlotSourceMode::Tagged,
-                                        SymbolSource::Fixed { .. } => SlotSourceMode::Untagged,
-                                        SymbolSource::BoundToChart { .. } => SlotSourceMode::Tagged,
+                                use zengeld_chart::tag_manager::SyncMemberId;
+                                // For market-data panels: mode reflects the panel's actual
+                                // group state (auto_created = Untagged, else Tagged).
+                                // For account-bound panels: mode reflects their SymbolSource.
+                                let is_market_data = matches!(
+                                    &item,
+                                    FreeItem::Dom(_) | FreeItem::Footprint(_)
+                                    | FreeItem::VolumeProfile(_) | FreeItem::LiquidityHeatmap(_)
+                                    | FreeItem::BigTrades(_) | FreeItem::L2Tape(_)
+                                    | FreeItem::TradeTape(_)
+                                );
+                                if is_market_data {
+                                    let member = SyncMemberId::Panel(item.panel_id().0);
+                                    let is_untagged = self.panel_app.tag_manager
+                                        .group_for_member(member)
+                                        .and_then(|gid| self.panel_app.tag_manager.group(gid))
+                                        .map(|g| g.auto_created)
+                                        .unwrap_or(true);
+                                    self.sidebar_state.slot_source_mode = if is_untagged {
+                                        SlotSourceMode::Untagged
+                                    } else {
+                                        SlotSourceMode::Tagged
                                     };
+                                } else {
+                                    let source = match &item {
+                                        FreeItem::OrderEntry(id) => self.panels_store.order_entry.get(id).map(|s| s.source.clone()),
+                                        FreeItem::TradingContainer(id) => self.panels_store.trading_container.get(id).map(|s| s.source.clone()),
+                                        _ => None,
+                                    };
+                                    if let Some(src) = source {
+                                        self.sidebar_state.slot_source_mode = match src {
+                                            SymbolSource::HyperFocus => SlotSourceMode::Tagged,
+                                            SymbolSource::Fixed { .. } => SlotSourceMode::Untagged,
+                                            SymbolSource::BoundToChart { .. } => SlotSourceMode::Tagged,
+                                        };
+                                    }
                                 }
                             }
                             self.sidebar_data_dirty = true;
@@ -2341,26 +2357,39 @@ impl ChartApp {
                                     use zengeld_panels::trading::SymbolSource;
                                     use sidebar_content::free_slot::FreeItem;
                                     use sidebar_content::state::SlotSourceMode;
-                                    // Market-data panels no longer carry SymbolSource; they always
-                                    // show as Auto (synced via TagManager).
-                                    let source = match &item {
-                                        FreeItem::Dom(_)
-                                        | FreeItem::Footprint(_)
-                                        | FreeItem::VolumeProfile(_)
-                                        | FreeItem::LiquidityHeatmap(_)
-                                        | FreeItem::BigTrades(_)
-                                        | FreeItem::L2Tape(_)
-                                        | FreeItem::TradeTape(_) => Some(SymbolSource::HyperFocus),
-                                        FreeItem::OrderEntry(id) => self.panels_store.order_entry.get(id).map(|s| s.source.clone()),
-                                        FreeItem::TradingContainer(id) => self.panels_store.trading_container.get(id).map(|s| s.source.clone()),
-                                        FreeItem::PositionManager(_) | FreeItem::TradeLog(_) | FreeItem::RiskCalculator(_) => None,
-                                    };
-                                    if let Some(src) = source {
-                                        self.sidebar_state.slot_source_mode = match src {
-                                            SymbolSource::HyperFocus => SlotSourceMode::Tagged,
-                                            SymbolSource::Fixed { .. } => SlotSourceMode::Untagged,
-                                            SymbolSource::BoundToChart { .. } => SlotSourceMode::Tagged,
+                                    use zengeld_chart::tag_manager::SyncMemberId;
+                                    let is_market_data = matches!(
+                                        &item,
+                                        FreeItem::Dom(_) | FreeItem::Footprint(_)
+                                        | FreeItem::VolumeProfile(_) | FreeItem::LiquidityHeatmap(_)
+                                        | FreeItem::BigTrades(_) | FreeItem::L2Tape(_)
+                                        | FreeItem::TradeTape(_)
+                                    );
+                                    if is_market_data {
+                                        let member = SyncMemberId::Panel(item.panel_id().0);
+                                        let is_untagged = self.panel_app.tag_manager
+                                            .group_for_member(member)
+                                            .and_then(|gid| self.panel_app.tag_manager.group(gid))
+                                            .map(|g| g.auto_created)
+                                            .unwrap_or(true);
+                                        self.sidebar_state.slot_source_mode = if is_untagged {
+                                            SlotSourceMode::Untagged
+                                        } else {
+                                            SlotSourceMode::Tagged
                                         };
+                                    } else {
+                                        let source = match &item {
+                                            FreeItem::OrderEntry(id) => self.panels_store.order_entry.get(id).map(|s| s.source.clone()),
+                                            FreeItem::TradingContainer(id) => self.panels_store.trading_container.get(id).map(|s| s.source.clone()),
+                                            _ => None,
+                                        };
+                                        if let Some(src) = source {
+                                            self.sidebar_state.slot_source_mode = match src {
+                                                SymbolSource::HyperFocus => SlotSourceMode::Tagged,
+                                                SymbolSource::Fixed { .. } => SlotSourceMode::Untagged,
+                                                SymbolSource::BoundToChart { .. } => SlotSourceMode::Tagged,
+                                            };
+                                        }
                                     }
                                 }
                                 self.sidebar_data_dirty = true;
