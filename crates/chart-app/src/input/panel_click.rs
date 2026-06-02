@@ -1148,9 +1148,12 @@ impl ChartApp {
                         let source = match self.sidebar_state.slot_source_mode {
                             SlotSourceMode::Auto => SymbolSource::HyperFocus,
                             SlotSourceMode::Pinned => {
+                                // No active window → empty symbol; panel will resolve later
+                                // via auto-rebind / group propagation rather than carrying
+                                // a wrong hardcoded fallback.
                                 let sym = self.panel_app.panel_grid.active_window()
                                     .map(|w| w.symbol.clone())
-                                    .unwrap_or_else(|| "BTCUSDT".to_string());
+                                    .unwrap_or_default();
                                 let exch = self.panel_app.panel_grid.active_window()
                                     .map(|w| w.exchange.clone())
                                     .unwrap_or_else(|| self.active_exchange.as_str().to_string());
@@ -1186,8 +1189,11 @@ impl ChartApp {
                             })
                         };
                         let resolved = source.resolve(active_resolved.as_ref(), &resolve_leaf);
+                        // No resolution (no active window / unresolved BoundToChart) → empty
+                        // symbol. Panel will pick up its key via group propagation rather
+                        // than carrying a hardcoded BTCUSDT.
                         let symbol = resolved.as_ref().map(|r| r.symbol.clone())
-                            .unwrap_or_else(|| "BTCUSDT".to_string());
+                            .unwrap_or_default();
                         let exchange_str = resolved.as_ref().map(|r| r.exchange.clone())
                             .unwrap_or_else(|| self.active_exchange.as_str().to_string());
                         let account_type_str = resolved.as_ref().map(|r| r.account_type.clone())

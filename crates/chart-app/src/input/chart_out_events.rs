@@ -949,12 +949,12 @@ impl ChartApp {
                     // a default group so primitives always use the grouped path.
                     if preset.sync_groups.is_empty() && !self.panel_app.panel_grid.windows().is_empty() {
                         // Auto groups get transparent color вЂ” never occupy palette slots
-                        let (symbol, timeframe) = self.panel_app.panel_grid.iter_windows().next()
-                            .map(|(_, w)| (w.symbol.clone(), w.timeframe.clone()))
-                            .unwrap_or_else(|| (
-                                "BTCUSDT".to_string(),
-                                zengeld_chart::state::Timeframe::h1(),
-                            ));
+                        let Some((_, first_win)) = self.panel_app.panel_grid.iter_windows().next() else {
+                            eprintln!("[sync_group] preset restore step 5b: iter_windows empty despite non-empty guard - skipping auto group");
+                            return;
+                        };
+                        let symbol = first_win.symbol.clone();
+                        let timeframe = first_win.timeframe.clone();
                         let group_id = self.panel_app.tag_manager.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
                         let leaf_chart_ids: Vec<(zengeld_chart::LeafId, zengeld_chart::ChartId)> =
                             self.panel_app.panel_grid.iter_windows()

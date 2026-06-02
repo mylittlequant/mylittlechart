@@ -242,9 +242,6 @@ struct App<'s> {
     pending_spawns: Vec<SpawnRequest>,
     /// Set to true when ALL windows should close.
     close_all_requested: bool,
-    /// Default symbol for new charts.
-    #[allow(dead_code)]
-    default_symbol: String,
     /// Shared DataBridge — tokio runtime + connector pool, created once at startup.
     bridge: std::sync::Arc<live_data::DataBridge>,
     /// Saved window states loaded from profile at startup — used in resumed() to restore windows.
@@ -522,7 +519,6 @@ use render::scene_builder::build_window_scene;
 use render::gpu_submit::submit_window_gpu_from_gpu_scene;
 impl App<'_> {
     fn new(
-        symbol: &str,
         bridge: std::sync::Arc<live_data::DataBridge>,
         saved_windows: Vec<zengeld_chart::WindowState>,
         profile: zengeld_chart::UserProfile,
@@ -758,7 +754,6 @@ impl App<'_> {
             windows: HashMap::new(),
             pending_spawns: Vec::new(),
             close_all_requested: false,
-            default_symbol: symbol.to_string(),
             bridge,
             saved_windows,
             profile,
@@ -4368,7 +4363,6 @@ fn main() {
     let profile = profile_manager.profile.clone();
     let saved_windows = profile.windows.clone();
 
-    let symbol = std::env::args().nth(1).unwrap_or_else(|| "BTCUSDT".to_string());
-    let mut app = App::new(&symbol, bridge, saved_windows, profile, profile_manager, connector_ready_rx, is_first_run, needs_vault_unlock, needs_migration);
+    let mut app = App::new(bridge, saved_windows, profile, profile_manager, connector_ready_rx, is_first_run, needs_vault_unlock, needs_migration);
     event_loop.run_app(&mut app).expect("Event loop error");
 }

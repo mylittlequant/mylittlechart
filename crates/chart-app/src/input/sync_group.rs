@@ -170,10 +170,11 @@ impl ChartApp {
         // 4. Create a new auto_created group for the desynced window.
         // Every window must always be in a group — standalone path is dead.
         if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(leaf_id) {
-            let (symbol, timeframe) = self.panel_app.panel_grid
-                .window_for_leaf(leaf_id)
-                .map(|w| (w.symbol.clone(), w.timeframe.clone()))
-                .unwrap_or_else(|| ("BTCUSDT".to_string(), zengeld_chart::state::Timeframe::h1()));
+            let Some(win) = self.panel_app.panel_grid.window_for_leaf(leaf_id) else {
+                eprintln!("[sync_group] perform_desync: window_for_leaf({:?}) returned None — skipping desync", leaf_id);
+                return;
+            };
+            let (symbol, timeframe) = (win.symbol.clone(), win.timeframe.clone());
             // Auto groups get transparent color — never occupy palette slots
             let new_group_id = self.panel_app.tag_manager.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
             let _ = self.panel_app.tag_manager.connect_chart(chart_id, new_group_id);
@@ -217,16 +218,16 @@ impl ChartApp {
         if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(joining_leaf) {
             let existing_group = self.panel_app.tag_manager.find_group_by_color(color);
             let is_new_group = existing_group.is_none();
-            let group_id = existing_group.unwrap_or_else(|| {
-                let (symbol, tf) = self.panel_app.panel_grid
-                    .window_for_leaf(joining_leaf)
-                    .map(|w| (w.symbol.clone(), w.timeframe.clone()))
-                    .unwrap_or_else(|| (
-                        "BTCUSDT".to_string(),
-                        zengeld_chart::state::Timeframe::h1(),
-                    ));
+            let group_id = if let Some(gid) = existing_group {
+                gid
+            } else {
+                let Some(win) = self.panel_app.panel_grid.window_for_leaf(joining_leaf) else {
+                    eprintln!("[sync_group] sync_join_color_group: window_for_leaf({:?}) returned None — skipping join", joining_leaf);
+                    return;
+                };
+                let (symbol, tf) = (win.symbol.clone(), win.timeframe.clone());
                 self.panel_app.tag_manager.create_group(color, symbol, tf)
-            });
+            };
             let _ = self.panel_app.tag_manager.connect_chart(chart_id, group_id);
             eprintln!(
                 "[TagManager] Connected chart {:?} to group {:?} (new={})",
@@ -459,13 +460,11 @@ impl ChartApp {
 
             // Give each NEW (non-mother) leaf its own fresh auto_created group.
             for &leaf_id in new_leaves.iter().skip(1) {
-                let (symbol, timeframe) = self.panel_app.panel_grid
-                    .window_for_leaf(leaf_id)
-                    .map(|w| (w.symbol.clone(), w.timeframe.clone()))
-                    .unwrap_or_else(|| (
-                        "BTCUSDT".to_string(),
-                        zengeld_chart::state::Timeframe::h1(),
-                    ));
+                let Some(win) = self.panel_app.panel_grid.window_for_leaf(leaf_id) else {
+                    eprintln!("[sync_group] split untagged: window_for_leaf({:?}) returned None — skipping new leaf", leaf_id);
+                    continue;
+                };
+                let (symbol, timeframe) = (win.symbol.clone(), win.timeframe.clone());
                 let gid = self.panel_app.tag_manager.create_group_auto(
                     [0.0, 0.0, 0.0, 0.0],
                     symbol,
@@ -510,18 +509,19 @@ impl ChartApp {
                 }
             }
 
+            // Resolve first-leaf window once — needed by both auto-promote and no-group branches.
+            let first_leaf_win = self.panel_app.panel_grid.window_for_leaf(new_leaves[0]);
+            if first_leaf_win.is_none() {
+                eprintln!("[sync_group] split tagged: window_for_leaf({:?}) returned None — skipping split tag", new_leaves[0]);
+                return;
+            }
             let group_id = if let Some(existing_group) = pre_split_group_id {
                 if pre_split_is_auto {
                     // Was untagged (auto group) — split promotes to a real color tag.
                     // Create a NEW visible group with the first free color.
                     let color = self.panel_app.tag_manager.next_unused_color();
-                    let (symbol, timeframe) = self.panel_app.panel_grid
-                        .window_for_leaf(new_leaves[0])
-                        .map(|w| (w.symbol.clone(), w.timeframe.clone()))
-                        .unwrap_or_else(|| (
-                            "BTCUSDT".to_string(),
-                            zengeld_chart::state::Timeframe::h1(),
-                        ));
+                    let win = first_leaf_win.expect("checked above");
+                    let (symbol, timeframe) = (win.symbol.clone(), win.timeframe.clone());
                     let gid = self.panel_app.tag_manager.create_group(color, symbol, timeframe);
                     eprintln!("[TagManager] Split promoted auto group to visible tag {:?}", gid);
                     gid
@@ -533,13 +533,8 @@ impl ChartApp {
                 // No existing group — pick color from TagManager's palette.
                 let color = pre_split_color
                     .unwrap_or_else(|| self.panel_app.tag_manager.next_unused_color());
-                let (symbol, timeframe) = self.panel_app.panel_grid
-                    .window_for_leaf(new_leaves[0])
-                    .map(|w| (w.symbol.clone(), w.timeframe.clone()))
-                    .unwrap_or_else(|| (
-                        "BTCUSDT".to_string(),
-                        zengeld_chart::state::Timeframe::h1(),
-                    ));
+                let win = first_leaf_win.expect("checked above");
+                let (symbol, timeframe) = (win.symbol.clone(), win.timeframe.clone());
                 self.panel_app.tag_manager.create_group(color, symbol, timeframe)
             };
 

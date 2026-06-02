@@ -8489,13 +8489,11 @@ impl ChartApp {
         if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
             if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(active_leaf) {
                 // Auto groups get transparent color — never occupy palette slots
-                let (symbol, timeframe) = self.panel_app.panel_grid
-                    .window_for_leaf(active_leaf)
-                    .map(|w| (w.symbol.clone(), w.timeframe.clone()))
-                    .unwrap_or_else(|| (
-                        "BTCUSDT".to_string(),
-                        zengeld_chart::state::Timeframe::h1(),
-                    ));
+                let Some(win) = self.panel_app.panel_grid.window_for_leaf(active_leaf) else {
+                    eprintln!("[sync_group] new_pane: window_for_leaf({:?}) returned None — skipping auto group", active_leaf);
+                    return;
+                };
+                let (symbol, timeframe) = (win.symbol.clone(), win.timeframe.clone());
                 let group_id = self.panel_app.tag_manager.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
                 let _ = self.panel_app.tag_manager.connect_chart(chart_id, group_id);
                 if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(active_leaf) {

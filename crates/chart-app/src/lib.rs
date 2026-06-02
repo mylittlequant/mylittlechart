@@ -1039,19 +1039,6 @@ impl ChartApp {
             app.panels_store.set_trading_snapshot(tm.snapshot());
         }
 
-        // Initialize WatchlistManager with a minimal default.
-        // The full list is restored from persisted user state by load_user_state().
-        app.sidebar_state.watchlist_manager = sidebar_content::watchlist::WatchlistManager::new(
-            vec![
-                sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "binance".to_string()),
-                sidebar_content::watchlist::WatchlistSymbol::new("ETHUSDT".to_string(), "binance".to_string()),
-                sidebar_content::watchlist::WatchlistSymbol::new("SOLUSDT".to_string(), "binance".to_string()),
-                sidebar_content::watchlist::WatchlistSymbol::new("BNBUSDT".to_string(), "binance".to_string()),
-                sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "bybit".to_string()),
-                sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "okx".to_string()),
-            ],
-        );
-
         // Load persisted user state (templates, presets, profile) from disk.
         // Must happen before toolbar_config override so that the active_preset_id
         // from the profile is respected during the first render.
@@ -1204,7 +1191,7 @@ impl ChartApp {
         let live_update_rx = bridge.add_listener();
 
         let mut app = Self {
-            panel_app: ChartPanelApp::new("BTCUSDT"),
+            panel_app: ChartPanelApp::new(""),
             input_coordinator: RefCell::new(InputCoordinator::new()),
             input_handler: DefaultChartInputHandler::new(),
             width: 1280,
@@ -1422,7 +1409,7 @@ impl ChartApp {
         skeleton: bool,
     ) -> Self {
         let mut app = Self {
-            panel_app: ChartPanelApp::new("BTCUSDT"),
+            panel_app: ChartPanelApp::new(""),
             input_coordinator: RefCell::new(InputCoordinator::new()),
             input_handler: DefaultChartInputHandler::new(),
             width: 1280,
