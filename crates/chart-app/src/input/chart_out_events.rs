@@ -1350,6 +1350,27 @@ impl ChartApp {
                                         self.panels_store.trading_container.insert(pid, s);
                                     }
                                 }
+                                PersistedFreeItemKind::IndicatorPanel {
+                                    symbol, exchange, account_type, instance_id,
+                                    indicator_config_id, price_min, price_max, auto_scale,
+                                    bar_spacing, view_position, height_ratio,
+                                } => {
+                                    if !self.panels_store.indicator_panel.contains_key(&pid) {
+                                        let mut s = zengeld_panels::trading::order_flow::indicator_panel::IndicatorPanelState::with_instance(
+                                            symbol.clone(), *instance_id,
+                                        );
+                                        s.exchange = exchange.clone();
+                                        s.account_type = account_type.clone();
+                                        s.indicator_config_id = *indicator_config_id;
+                                        s.price_min = *price_min;
+                                        s.price_max = *price_max;
+                                        s.auto_scale = *auto_scale;
+                                        s.bar_spacing = *bar_spacing;
+                                        s.view_position = *view_position;
+                                        s.height_ratio = *height_ratio;
+                                        self.panels_store.indicator_panel.insert(pid, s);
+                                    }
+                                }
                             }
                         }
 
@@ -1384,6 +1405,7 @@ impl ChartApp {
                                                 zengeld_chart::preset::preset::PersistedFreeItemKind::TradeLog                 => FreeItem::TradeLog(pid),
                                                 zengeld_chart::preset::preset::PersistedFreeItemKind::RiskCalculator           => FreeItem::RiskCalculator(pid),
                                                 zengeld_chart::preset::preset::PersistedFreeItemKind::TradingContainer { .. }  => FreeItem::TradingContainer(pid),
+                                                zengeld_chart::preset::preset::PersistedFreeItemKind::IndicatorPanel { .. }   => FreeItem::IndicatorPanel(pid),
                                             };
                                             Some(item)
                                         }) {

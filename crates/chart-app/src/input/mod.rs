@@ -8737,11 +8737,27 @@ impl ChartApp {
                                 market_price: state.market_price,
                             }
                         }
-                        // Chart / IndicatorPanel persistence is wired in
-                        // Stage 6 (PersistedFreeItemKind::{Chart, IndicatorPanel}
-                        // variants not yet defined).  For now skip them —
-                        // leaf drops from preset and is recreated next session.
-                        FreeItem::Chart(_) | FreeItem::IndicatorPanel(_) => return None,
+                        FreeItem::IndicatorPanel(id) => {
+                            let state = self.panels_store.indicator_panel.get(id)?;
+                            PersistedFreeItemKind::IndicatorPanel {
+                                symbol: state.symbol.clone(),
+                                exchange: state.exchange.clone(),
+                                account_type: state.account_type.clone(),
+                                instance_id: state.instance_id,
+                                indicator_config_id: state.indicator_config_id,
+                                price_min: state.price_min,
+                                price_max: state.price_max,
+                                auto_scale: state.auto_scale,
+                                bar_spacing: state.bar_spacing,
+                                view_position: state.view_position,
+                                height_ratio: state.height_ratio,
+                            }
+                        }
+                        // Chart persistence is wired in Stage 8 (panels_store
+                        // ownership of ChartWindows + ChartWindowSnapshot).
+                        // For now skip — chart leaf drops from preset and
+                        // is recreated next session.
+                        FreeItem::Chart(_) => return None,
                     };
                     Some(zengeld_chart::preset::preset::PersistedFreeLeaf {
                         leaf_id: leaf.id.0,

@@ -164,7 +164,39 @@ pub enum PersistedFreeItemKind {
         tick_size: f64,
         market_price: f64,
     },
+    /// Standalone IndicatorPanel — symbol + which indicator + axis state.
+    /// Live data (bars Vec, last_seen_bar_version) is ephemeral and re-pulled
+    /// from the bar pool on restore.
+    IndicatorPanel {
+        #[serde(default)]
+        symbol: String,
+        #[serde(default)]
+        exchange: String,
+        #[serde(default)]
+        account_type: String,
+        #[serde(default)]
+        instance_id: u64,
+        #[serde(default)]
+        indicator_config_id: u64,
+        #[serde(default)]
+        price_min: f64,
+        #[serde(default = "default_price_max")]
+        price_max: f64,
+        #[serde(default = "default_true")]
+        auto_scale: bool,
+        #[serde(default = "default_bar_spacing")]
+        bar_spacing: f64,
+        #[serde(default)]
+        view_position: f64,
+        #[serde(default = "default_height_ratio")]
+        height_ratio: f32,
+    },
 }
+
+fn default_price_max() -> f64 { 100.0 }
+fn default_true() -> bool { true }
+fn default_bar_spacing() -> f64 { 8.0 }
+fn default_height_ratio() -> f32 { 1.0 }
 
 impl ChartPreset {
     /// Create a new, empty preset with the given display name.
