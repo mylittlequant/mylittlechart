@@ -3623,57 +3623,47 @@ fn render_slot_toolbar_in_header(
         cur_x + new_w + gap
     };
 
-    // ── Helper: draw [A][P][L] buttons ───────────────────────────────────────
-    let draw_apl_btns = |mut cur_x: f64, row_y: f64, ctx: &mut dyn RenderContext,
+    // ── Helper: draw [T/U] toggle (Tagged / Untagged) ────────────────────────
+    // Two equal halves rendered as one pill: left = Tagged, right = Untagged.
+    // The active half is highlighted with the accent colour; click on either half
+    // sets the mode and triggers a sidebar redraw.
+    let draw_apl_btns = |cur_x: f64, row_y: f64, ctx: &mut dyn RenderContext,
                          state: &mut SidebarState,
                          input_coordinator: &mut InputCoordinator,
                          result: &mut RightSidebarResult| {
         use crate::state::SlotSourceMode;
-        let apl_w = 28.0_f64;
+        let half_w = 28.0_f64;
+        let full_w = half_w * 2.0 + 2.0; // 2 px gap between halves
         ctx.set_font("12px sans-serif");
         ctx.set_text_baseline(TextBaseline::Middle);
-
-        // [A] Auto
-        let sa_id  = format!("slot:{slot_idx}:source:auto");
-        let is_a   = state.slot_source_mode == SlotSourceMode::Auto;
-        let a_rect = WidgetRect::new(cur_x, row_y, apl_w, btn_h);
-        let a_hov  = !is_a && input_coordinator.is_hovered(&uzor::types::WidgetId::from(sa_id.as_str()));
-        ctx.set_fill_color(if is_a { &theme.accent } else if a_hov { &theme.item_bg_hover } else { &theme.background });
-        ctx.fill_rounded_rect(a_rect.x, a_rect.y, a_rect.width, a_rect.height, 3.0);
-        ctx.set_fill_color(if is_a { &theme.item_text_active } else { &theme.item_text_muted });
         ctx.set_text_align(TextAlign::Center);
-        ctx.fill_text(SidebarKey::SourceAutoBtn.get(current_language()), a_rect.x + a_rect.width / 2.0, a_rect.y + a_rect.height / 2.0);
-        if !is_a { input_coordinator.register(sa_id.as_str(), a_rect, uzor::input::Sense::CLICK); }
-        result.item_rects.push((sa_id, a_rect));
-        cur_x += apl_w + 2.0;
 
-        // [P] Pinned
-        let sp_id  = format!("slot:{slot_idx}:source:pinned");
-        let is_p   = state.slot_source_mode == SlotSourceMode::Pinned;
-        let p_rect = WidgetRect::new(cur_x, row_y, apl_w, btn_h);
-        let p_hov  = !is_p && input_coordinator.is_hovered(&uzor::types::WidgetId::from(sp_id.as_str()));
-        ctx.set_fill_color(if is_p { &theme.accent } else if p_hov { &theme.item_bg_hover } else { &theme.background });
-        ctx.fill_rounded_rect(p_rect.x, p_rect.y, p_rect.width, p_rect.height, 3.0);
-        ctx.set_fill_color(if is_p { &theme.item_text_active } else { &theme.item_text_muted });
-        ctx.set_text_align(TextAlign::Center);
-        ctx.fill_text(SidebarKey::SourcePinnedBtn.get(current_language()), p_rect.x + p_rect.width / 2.0, p_rect.y + p_rect.height / 2.0);
-        if !is_p { input_coordinator.register(sp_id.as_str(), p_rect, uzor::input::Sense::CLICK); }
-        result.item_rects.push((sp_id, p_rect));
-        cur_x += apl_w + 2.0;
+        let is_tagged   = state.slot_source_mode == SlotSourceMode::Tagged;
+        let is_untagged = !is_tagged;
 
-        // [L] Linked
-        let sl_id  = format!("slot:{slot_idx}:source:linked");
-        let is_l   = state.slot_source_mode == SlotSourceMode::Linked;
-        let l_rect = WidgetRect::new(cur_x, row_y, apl_w, btn_h);
-        let l_hov  = !is_l && input_coordinator.is_hovered(&uzor::types::WidgetId::from(sl_id.as_str()));
-        ctx.set_fill_color(if is_l { &theme.accent } else if l_hov { &theme.item_bg_hover } else { &theme.background });
-        ctx.fill_rounded_rect(l_rect.x, l_rect.y, l_rect.width, l_rect.height, 3.0);
-        ctx.set_fill_color(if is_l { &theme.item_text_active } else { &theme.item_text_muted });
-        ctx.set_text_align(TextAlign::Center);
-        ctx.fill_text(SidebarKey::SourceLinkedBtn.get(current_language()), l_rect.x + l_rect.width / 2.0, l_rect.y + l_rect.height / 2.0);
-        if !is_l { input_coordinator.register(sl_id.as_str(), l_rect, uzor::input::Sense::CLICK); }
-        result.item_rects.push((sl_id, l_rect));
-        cur_x + apl_w + gap
+        // [T] Tagged half
+        let st_id   = format!("slot:{slot_idx}:source:toggle");
+        let t_rect  = WidgetRect::new(cur_x, row_y, half_w, btn_h);
+        let t_hov   = !is_tagged && input_coordinator.is_hovered(&uzor::types::WidgetId::from(st_id.as_str()));
+        ctx.set_fill_color(if is_tagged { &theme.accent } else if t_hov { &theme.item_bg_hover } else { &theme.background });
+        ctx.fill_rounded_rect(t_rect.x, t_rect.y, t_rect.width, t_rect.height, 3.0);
+        ctx.set_fill_color(if is_tagged { &theme.item_text_active } else { &theme.item_text_muted });
+        ctx.fill_text(SidebarKey::SourceTaggedBtn.get(current_language()), t_rect.x + t_rect.width / 2.0, t_rect.y + t_rect.height / 2.0);
+        if !is_tagged { input_coordinator.register(st_id.as_str(), t_rect, uzor::input::Sense::CLICK); }
+        result.item_rects.push((st_id, t_rect));
+
+        // [U] Untagged half
+        let su_id   = format!("slot:{slot_idx}:source:toggle_u");
+        let u_rect  = WidgetRect::new(cur_x + half_w + 2.0, row_y, half_w, btn_h);
+        let u_hov   = !is_untagged && input_coordinator.is_hovered(&uzor::types::WidgetId::from(su_id.as_str()));
+        ctx.set_fill_color(if is_untagged { &theme.accent } else if u_hov { &theme.item_bg_hover } else { &theme.background });
+        ctx.fill_rounded_rect(u_rect.x, u_rect.y, u_rect.width, u_rect.height, 3.0);
+        ctx.set_fill_color(if is_untagged { &theme.item_text_active } else { &theme.item_text_muted });
+        ctx.fill_text(SidebarKey::SourceUntaggedBtn.get(current_language()), u_rect.x + u_rect.width / 2.0, u_rect.y + u_rect.height / 2.0);
+        if !is_untagged { input_coordinator.register(su_id.as_str(), u_rect, uzor::input::Sense::CLICK); }
+        result.item_rects.push((su_id, u_rect));
+
+        cur_x + full_w + gap
     };
 
     // ── Helper: draw [H][V][R][⊞][↺] controls ────────────────────────────────
@@ -6612,9 +6602,8 @@ pub fn find_free_slot_tooltip(widget_id: &str) -> Option<&'static str> {
     // Slot toolbar suffixes.
     match after_idx {
         "new"            => Some(SidebarKey::SlotAddPanel.get(lang)),
-        "source:auto"    => Some(SidebarKey::SlotSourceAuto.get(lang)),
-        "source:pinned"  => Some(SidebarKey::SlotSourcePinned.get(lang)),
-        "source:linked"  => Some(SidebarKey::SlotSourceLinked.get(lang)),
+        "source:toggle"   => Some(SidebarKey::SlotSourceTagged.get(lang)),
+        "source:toggle_u" => Some(SidebarKey::SlotSourceUntagged.get(lang)),
         "split:h"        => Some(SidebarKey::SlotSplitH.get(lang)),
         "split:v"        => Some(SidebarKey::SlotSplitV.get(lang)),
         "split:replace"  => Some(SidebarKey::SlotSplitReplace.get(lang)),

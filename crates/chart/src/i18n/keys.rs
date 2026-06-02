@@ -1141,12 +1141,12 @@ pub enum SidebarKey {
     WsPingLabel          = 11,
 
     // ---- Slot source-mode toggle buttons ----
-    /// "A" — Auto mode button
-    SourceAutoBtn        = 12,
-    /// "P" — Pinned mode button
-    SourcePinnedBtn      = 13,
-    /// "L" — Linked mode button
-    SourceLinkedBtn      = 14,
+    /// "T" — Tagged mode button (join active group)
+    SourceTaggedBtn      = 12,
+    /// "U" — Untagged mode button (solo group)
+    SourceUntaggedBtn    = 13,
+    /// Reserved (was SourceLinkedBtn) — kept for table index stability.
+    _SourceLinkedReserved = 14,
 
     // ---- Agent panel empty/action state labels ----
     /// "Pick a CLI above to open a pane"
@@ -1199,12 +1199,12 @@ pub enum SidebarKey {
     SlotTickSize         = 36,
     /// "Add panel"
     SlotAddPanel         = 37,
-    /// "Auto symbol (follow chart)"
-    SlotSourceAuto       = 38,
-    /// "Pinned symbol (fixed)"
-    SlotSourcePinned     = 39,
-    /// "Linked symbol (bound to chart)"
-    SlotSourceLinked     = 40,
+    /// "Tagged — joins active chart group"
+    SlotSourceTagged     = 38,
+    /// "Untagged — own solo group (snapshot)"
+    SlotSourceUntagged   = 39,
+    /// Reserved (was SlotSourceLinked) — kept for table index stability.
+    _SlotSourceLinkedReserved = 40,
     /// "Split side by side"
     SlotSplitH           = 41,
     /// "Split top and bottom"

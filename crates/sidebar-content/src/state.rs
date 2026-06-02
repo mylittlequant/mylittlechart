@@ -32,12 +32,12 @@ pub enum AgentSpawnLayout {
 /// Controls what data source a free slot panel tracks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SlotSourceMode {
-    /// Automatically follows the active chart symbol/timeframe.
-    Auto,
-    /// Pinned to a specific symbol/timeframe set by the user.
-    Pinned,
-    /// Linked to the chart — mirrors the chart's current selection.
-    Linked,
+    /// New panel joins the active chart's sync group.
+    /// Receives symbol propagation according to the group's sync flags.
+    Tagged,
+    /// New panel spawns in its own 1-member auto-created group (no peers).
+    /// Initial symbol is a snapshot of the active chart at spawn time.
+    Untagged,
 }
 
 // =============================================================================
@@ -424,9 +424,8 @@ pub struct SidebarState {
 
     /// Data source mode for free slot panels.
     ///
-    /// Controls whether the slot follows the active chart automatically (`Auto`),
-    /// is pinned to a fixed symbol/timeframe (`Pinned`), or mirrors the chart
-    /// selection in real time (`Linked`).
+    /// `Tagged` — panel joins the active chart's sync group on spawn.
+    /// `Untagged` — panel gets its own solo group (snapshot of active symbol).
     pub slot_source_mode: SlotSourceMode,
 
     /// Which agent Chat leaf's sessions dropdown is currently open (`None` = all closed).
@@ -816,7 +815,7 @@ impl Default for SidebarState {
             slot_spawn_dropdown: None,
             slot_spawn_button_rect: [None; 4],
             slot_spawn_layout: AgentSpawnLayout::SplitH,
-            slot_source_mode: SlotSourceMode::Auto,
+            slot_source_mode: SlotSourceMode::Tagged,
             hovered_free_leaf: None,
             free_leaf_overlay_hover: std::collections::HashMap::new(),
             agent_sessions_dropdown: None,

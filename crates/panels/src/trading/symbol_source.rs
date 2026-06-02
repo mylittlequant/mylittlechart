@@ -23,6 +23,9 @@ pub enum SymbolSource {
     /// Bound to a specific chart leaf by its numeric ID.
     /// Inherits symbol/exchange/account_type from that leaf.
     /// If the leaf is removed, falls back to HyperFocus behavior.
+    ///
+    /// Deprecated: new code should use `HyperFocus` (Tagged) or `Fixed` (Untagged).
+    /// Kept for serde compatibility with older preset.json files.
     BoundToChart {
         leaf_id: u64,
     },

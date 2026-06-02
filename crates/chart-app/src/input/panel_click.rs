@@ -1146,11 +1146,9 @@ impl ChartApp {
 
                         // Build SymbolSource from the toolbar's current source mode.
                         let source = match self.sidebar_state.slot_source_mode {
-                            SlotSourceMode::Auto => SymbolSource::HyperFocus,
-                            SlotSourceMode::Pinned => {
-                                // No active window → empty symbol; panel will resolve later
-                                // via auto-rebind / group propagation rather than carrying
-                                // a wrong hardcoded fallback.
+                            SlotSourceMode::Tagged => SymbolSource::HyperFocus,
+                            SlotSourceMode::Untagged => {
+                                // Frozen snapshot of active chart key at spawn time.
                                 let sym = self.panel_app.panel_grid.active_window()
                                     .map(|w| w.symbol.clone())
                                     .unwrap_or_default();
@@ -1161,12 +1159,6 @@ impl ChartApp {
                                     .map(|w| w.account_type.clone())
                                     .unwrap_or_else(|| digdigdig3::AccountType::Spot.short_label().to_string());
                                 SymbolSource::Fixed { symbol: sym, exchange: exch, account_type: at }
-                            }
-                            SlotSourceMode::Linked => {
-                                let leaf_id = self.panel_app.panel_grid.docking().active_leaf()
-                                    .map(|lid| lid.0)
-                                    .unwrap_or(0);
-                                SymbolSource::BoundToChart { leaf_id }
                             }
                         };
 
@@ -1413,14 +1405,37 @@ impl ChartApp {
                             if let Some(ref item) = item_opt {
                                 let pid = sidebar_content::free_slot::PanelId(item.panel_id().0);
                                 let member = zengeld_chart::tag_manager::SyncMemberId::Panel(pid.0);
-                                let group_id = self.panel_app.tag_manager.active_chart_group
-                                    .or_else(|| {
-                                        self.panel_app.panel_grid
-                                            .active_chart_id()
-                                            .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
-                                    });
-                                if let Some(gid) = group_id {
-                                    self.panel_app.tag_manager.set_synced(member, gid);
+                                match self.sidebar_state.slot_source_mode {
+                                    sidebar_content::state::SlotSourceMode::Tagged => {
+                                        // Attach to active chart's sync group.
+                                        let group_id = self.panel_app.tag_manager.active_chart_group
+                                            .or_else(|| {
+                                                self.panel_app.panel_grid
+                                                    .active_chart_id()
+                                                    .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
+                                            });
+                                        if let Some(gid) = group_id {
+                                            self.panel_app.tag_manager.set_synced(member, gid);
+                                        }
+                                    }
+                                    sidebar_content::state::SlotSourceMode::Untagged => {
+                                        // Spawn panel into its own 1-member auto-created group.
+                                        let tf = self.panel_app.panel_grid.active_window()
+                                            .map(|w| w.timeframe.clone())
+                                            .unwrap_or_else(zengeld_chart::state::Timeframe::h1);
+                                        let solo_gid = self.panel_app.tag_manager.create_group_auto(
+                                            [0.0, 0.0, 0.0, 0.0],
+                                            symbol.clone(),
+                                            tf,
+                                        );
+                                        let _ = self.panel_app.tag_manager.set_auto_group(member, solo_gid);
+                                        // Seed exchange/account_type on the new group so apply_key
+                                        // picks them up next frame.
+                                        if let Some(g) = self.panel_app.tag_manager.group_mut(solo_gid) {
+                                            g.exchange = exchange_str.clone();
+                                            g.account_type = account_type_str.clone();
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1527,9 +1542,10 @@ impl ChartApp {
                                 self.sidebar_data_dirty = true;
                                 return;
                             }
-                            "source:auto" => {
+                            // Toggle: left half sets Tagged, right half sets Untagged.
+                            "source:toggle" => {
                                 self.sidebar_state.slot_source_mode =
-                                    sidebar_content::state::SlotSourceMode::Auto;
+                                    sidebar_content::state::SlotSourceMode::Tagged;
                                 // If a panel in this slot is focused, update its source too.
                                 if let Some((focused_idx, focused_leaf)) = self.sidebar_state.focused_free_leaf {
                                     if focused_idx == idx {
@@ -1542,8 +1558,6 @@ impl ChartApp {
                                             use zengeld_panels::trading::SymbolSource;
                                             use sidebar_content::free_slot::FreeItem;
                                             let src = SymbolSource::HyperFocus;
-                                            // Market-data panels (dom, footprint, etc.) no longer use
-                                            // SymbolSource; they are tracked via TagManager.
                                             match &item {
                                                 FreeItem::OrderEntry(id) => { if let Some(s) = self.panels_store.order_entry.get_mut(id) { s.source = src; } }
                                                 FreeItem::TradingContainer(id) => { if let Some(s) = self.panels_store.trading_container.get_mut(id) { s.source = src; } }
@@ -1556,9 +1570,9 @@ impl ChartApp {
                                 self.sidebar_data_dirty = true;
                                 return;
                             }
-                            "source:pinned" => {
+                            "source:toggle_u" => {
                                 self.sidebar_state.slot_source_mode =
-                                    sidebar_content::state::SlotSourceMode::Pinned;
+                                    sidebar_content::state::SlotSourceMode::Untagged;
                                 // If a panel in this slot is focused, update its source too.
                                 if let Some((focused_idx, focused_leaf)) = self.sidebar_state.focused_free_leaf {
                                     if focused_idx == idx {
@@ -1570,7 +1584,6 @@ impl ChartApp {
                                         if let Some(item) = item_opt {
                                             use zengeld_panels::trading::SymbolSource;
                                             use sidebar_content::free_slot::FreeItem;
-                                            // Pin to current active chart symbol/exchange/account_type.
                                             let symbol = self.panel_app.panel_grid.active_window()
                                                 .map(|w| w.symbol.clone())
                                                 .unwrap_or_default();
@@ -1581,40 +1594,6 @@ impl ChartApp {
                                                 .map(|w| w.account_type.clone())
                                                 .unwrap_or_default();
                                             let src = SymbolSource::Fixed { symbol, exchange, account_type };
-                                            // Market-data panels (dom, footprint, etc.) no longer use
-                                            // SymbolSource; they are tracked via TagManager.
-                                            match &item {
-                                                FreeItem::OrderEntry(id) => { if let Some(s) = self.panels_store.order_entry.get_mut(id) { s.source = src; } }
-                                                FreeItem::TradingContainer(id) => { if let Some(s) = self.panels_store.trading_container.get_mut(id) { s.source = src; } }
-                                                _ => {}
-                                            }
-                                            self.autosave_snapshot();
-                                        }
-                                    }
-                                }
-                                self.sidebar_data_dirty = true;
-                                return;
-                            }
-                            "source:linked" => {
-                                self.sidebar_state.slot_source_mode =
-                                    sidebar_content::state::SlotSourceMode::Linked;
-                                // If a panel in this slot is focused, update its source too.
-                                if let Some((focused_idx, focused_leaf)) = self.sidebar_state.focused_free_leaf {
-                                    if focused_idx == idx {
-                                        let item_opt = self.sidebar_state.slot_dockings[idx]
-                                            .inner()
-                                            .tree()
-                                            .leaf(focused_leaf)
-                                            .and_then(|l| l.active_panel().cloned());
-                                        if let Some(item) = item_opt {
-                                            use zengeld_panels::trading::SymbolSource;
-                                            use sidebar_content::free_slot::FreeItem;
-                                            let leaf_id = self.panel_app.panel_grid.docking().active_leaf()
-                                                .map(|lid| lid.0)
-                                                .unwrap_or(0);
-                                            let src = SymbolSource::BoundToChart { leaf_id };
-                                            // Market-data panels (dom, footprint, etc.) no longer use
-                                            // SymbolSource; they are tracked via TagManager.
                                             match &item {
                                                 FreeItem::OrderEntry(id) => { if let Some(s) = self.panels_store.order_entry.get_mut(id) { s.source = src; } }
                                                 FreeItem::TradingContainer(id) => { if let Some(s) = self.panels_store.trading_container.get_mut(id) { s.source = src; } }
@@ -1825,9 +1804,9 @@ impl ChartApp {
                                 };
                                 if let Some(src) = source {
                                     self.sidebar_state.slot_source_mode = match src {
-                                        SymbolSource::HyperFocus => SlotSourceMode::Auto,
-                                        SymbolSource::Fixed { .. } => SlotSourceMode::Pinned,
-                                        SymbolSource::BoundToChart { .. } => SlotSourceMode::Linked,
+                                        SymbolSource::HyperFocus => SlotSourceMode::Tagged,
+                                        SymbolSource::Fixed { .. } => SlotSourceMode::Untagged,
+                                        SymbolSource::BoundToChart { .. } => SlotSourceMode::Tagged,
                                     };
                                 }
                             }
@@ -2354,9 +2333,9 @@ impl ChartApp {
                                     };
                                     if let Some(src) = source {
                                         self.sidebar_state.slot_source_mode = match src {
-                                            SymbolSource::HyperFocus => SlotSourceMode::Auto,
-                                            SymbolSource::Fixed { .. } => SlotSourceMode::Pinned,
-                                            SymbolSource::BoundToChart { .. } => SlotSourceMode::Linked,
+                                            SymbolSource::HyperFocus => SlotSourceMode::Tagged,
+                                            SymbolSource::Fixed { .. } => SlotSourceMode::Untagged,
+                                            SymbolSource::BoundToChart { .. } => SlotSourceMode::Tagged,
                                         };
                                     }
                                 }
