@@ -96,6 +96,13 @@ pub struct ChartPanelGrid {
     /// Set by the caller before each drag via `set_leaf_min_width`.
     /// Any leaf not present in the map is treated as having min_width = 0.
     leaf_min_widths: HashMap<LeafId, f32>,
+    /// Reverse lookup: `SubPaneId` → owning `ChartId`.  Lets a standalone
+    /// sub-pane leaf (`FreeItem::SubPane(SubPaneId.0)`) anywhere in the
+    /// docking system find its parent chart without scanning every window.
+    ///
+    /// Rebuilt by [`Self::rebuild_sub_pane_index`] — called by the frame
+    /// lifecycle after `sync_sub_panes()` runs on each window.
+    sub_pane_index: HashMap<crate::state::SubPaneId, ChartId>,
 }
 
 impl ChartPanelGrid {
@@ -130,6 +137,7 @@ impl ChartPanelGrid {
             leaf_to_chart,
             expanded: false,
             leaf_min_widths: HashMap::new(),
+            sub_pane_index: HashMap::new(),
         }
     }
 
@@ -209,6 +217,45 @@ impl ChartPanelGrid {
     /// `windows`, which the borrow checker disallows.
     pub fn windows_mut(&mut self) -> &mut HashMap<ChartId, ChartWindow> {
         &mut self.windows
+    }
+
+    // =========================================================================
+    // PID-keyed lookups for docking-leaf payloads
+    // (FreeItem::Chart, FreeItem::SubPane) — used by render_free_item arms
+    // =========================================================================
+
+    /// Look up a chart window by id.  Convenience wrapper used by the
+    /// embedded-chart leaf render path: a `FreeItem::Chart(u64)` is dispatched
+    /// through `ChartPanelGrid::chart(ChartId(u64))` to fetch its window.
+    pub fn chart(&self, id: ChartId) -> Option<&ChartWindow> {
+        self.windows.get(&id)
+    }
+
+    /// Look up a sub-pane by its stable id.  Returns `(parent_chart, pane)`.
+    /// Uses [`Self::sub_pane_index`] to find the owning chart in O(1), then
+    /// scans that chart's `sub_panes: Vec<SubPane>` for the matching `id`
+    /// (linear in the chart's pane count — bounded by indicator instances).
+    pub fn sub_pane(
+        &self,
+        id: crate::state::SubPaneId,
+    ) -> Option<(&ChartWindow, &crate::state::SubPane)> {
+        let chart_id = self.sub_pane_index.get(&id).copied()?;
+        let chart = self.windows.get(&chart_id)?;
+        let pane = chart.sub_panes.iter().find(|p| p.id == id)?;
+        Some((chart, pane))
+    }
+
+    /// Rebuild the `SubPaneId → ChartId` reverse-index.  Called by the frame
+    /// lifecycle after `sync_sub_panes()` has run on each window.  Idempotent
+    /// and cheap (one pass over every sub-pane of every window — bounded by
+    /// total indicator-instances * windows).
+    pub fn rebuild_sub_pane_index(&mut self) {
+        self.sub_pane_index.clear();
+        for (&chart_id, window) in self.windows.iter() {
+            for pane in window.sub_panes.iter() {
+                self.sub_pane_index.insert(pane.id, chart_id);
+            }
+        }
     }
 
     /// Resolve a `LeafId` to its associated `ChartId`, if any.

@@ -5268,15 +5268,26 @@ impl ChartApp {
             let mut used_ids: std::collections::HashSet<u64> = std::collections::HashSet::new();
 
             // Helper: build / update a single SubPane.
+            //
+            // For existing panes we clone() then RESTORE the original id —
+            // SubPane's manual Clone impl allocates a fresh SubPaneId on every
+            // copy (so duplicates don't share docking-leaf identity), which
+            // would mint a new id every frame here.  Preserving the source's
+            // id keeps `FreeItem::SubPane(id)` references stable across
+            // reconciliation passes.
             let build_pane = |instance_id: u64,
                               existing: Option<&zengeld_chart::state::SubPane>,
                               pending_ratios: &Option<std::collections::HashMap<u64, f32>>,
                               pending_above_main: &Option<std::collections::HashSet<u64>>,
                               range_map: &std::collections::HashMap<u64, Option<(f64, f64)>>|
              -> zengeld_chart::state::SubPane {
+                let preserved_id = existing.map(|e| e.id);
+                let preserved_parent = existing.map(|e| e.parent_chart);
                 let mut pane = existing
                     .cloned()
                     .unwrap_or_else(|| zengeld_chart::state::SubPane::new(instance_id));
+                if let Some(id) = preserved_id { pane.id = id; }
+                if let Some(p) = preserved_parent { pane.parent_chart = p; }
 
                 // Apply saved price range when creating a brand-new pane.
                 if existing.is_none() {
@@ -5350,12 +5361,19 @@ impl ChartApp {
                 new_sub_panes.push(pane);
             }
 
-            // Update indices.
+            // Update indices and bind parent_chart for every pane (covers both
+            // freshly-built and existing ones — cheap, just a field write).
+            let parent_chart = window.id;
             for (i, pane) in new_sub_panes.iter_mut().enumerate() {
                 pane.index = i;
+                pane.parent_chart = parent_chart;
             }
             window.sub_panes = new_sub_panes;
         }
+
+        // Refresh the SubPaneId → ChartId reverse index now that every window's
+        // sub_panes list has been reconciled.  Cheap O(total_subpanes) pass.
+        self.panel_app.panel_grid.rebuild_sub_pane_index();
 
         // Clear all pending restore state once applied (one-shot).
         self.pending_sub_pane_ratios.clear();
