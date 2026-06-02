@@ -417,12 +417,7 @@ struct App<'s> {
     /// recovery re-key.  Skeleton promote is deferred until this flag is set.
     pending_promote_after_recovery_key: bool,
 
-    /// Bar cache persistence service — owns BarStoreHandle + in-memory series map.
-    bar_service: bar_service::BarService,
-    /// Wall-clock instant of the last periodic bar-cache save.
-    last_bar_cache_save: std::time::Instant,
-    /// Wall-clock instant of the last periodic bar-cache cleanup run.
-    last_cleanup_check: std::time::Instant,
+
 
     /// Trade cache persistence service — owns TradeStoreHandle + shared trade map.
     trade_service: trade_service::TradeService,
@@ -538,43 +533,6 @@ fn render_toasts(
 use render::scene_builder::build_window_scene;
 use render::gpu_submit::submit_window_gpu_from_gpu_scene;
 
-/// Rough timeframe string → period in seconds for BarSeries.
-fn timeframe_period_secs(tf: &str) -> i64 {
-    match tf {
-        "1s" => 1,
-        "5s" => 5,
-        "15s" => 15,
-        "30s" => 30,
-        "1m" => 60,
-        "3m" => 180,
-        "5m" => 300,
-        "15m" => 900,
-        "30m" => 1800,
-        "1h" | "1H" => 3600,
-        "2h" | "2H" => 7200,
-        "4h" | "4H" => 14400,
-        "6h" | "6H" => 21600,
-        "8h" | "8H" => 28800,
-        "12h" | "12H" => 43200,
-        "1d" | "1D" => 86400,
-        "3d" | "3D" => 259200,
-        "1w" | "1W" => 604800,
-        "1M" => 2592000,
-        _ => {
-            // Try to parse numeric prefix as minutes/hours/days/weeks.
-            let num_str: String = tf.chars().take_while(|c| c.is_ascii_digit()).collect();
-            if let Ok(n) = num_str.parse::<i64>() {
-                if tf.ends_with('m') { n * 60 }
-                else if tf.ends_with('h') || tf.ends_with('H') { n * 3600 }
-                else if tf.ends_with('d') || tf.ends_with('D') { n * 86400 }
-                else if tf.ends_with('w') || tf.ends_with('W') { n * 604800 }
-                else { n * 60 } // default to minutes
-            } else {
-                60 // fallback: 1 minute
-            }
-        }
-    }
-}
 
 /// Collect `(exchange, symbol, timeframe, account_type)` 4-tuples from all windows of all
 /// open tabs in the given profile.  Used at startup to pre-load the bar cache from disk.
@@ -606,7 +564,6 @@ impl App<'_> {
     fn new(
         symbol: &str,
         bridge: std::sync::Arc<live_data::DataBridge>,
-        shared_series: bar_service::SharedSeriesMap,
         saved_windows: Vec<zengeld_chart::WindowState>,
         profile: zengeld_chart::UserProfile,
         profile_manager: zengeld_chart::ProfileManager,
@@ -788,53 +745,6 @@ impl App<'_> {
             eprintln!("[App] startup language: {}", profile.language);
         }
 
-        // ── Bar cache persistence ─────────────────────────────────────────────
-        // Create the BarStoreHandle, load persisted bars, and seed the shared series
-        // map so that the first symbol switch is instant without a network round-trip.
-        // `BarService::with_map` attaches to the same `SharedSeriesMap` that
-        // `DataBridge` already holds, so persistence and live-fetch share one map.
-        let mut bar_service = {
-            let bars_dir = zengeld_chart::app_data_dir().join("bars");
-            let bar_store_handle = bar_store::BarStoreHandle::new(bars_dir, bridge.runtime());
-            bar_service::BarService::with_map(shared_series, bar_store_handle, bar_service::DEFAULT_CAPACITY)
-        };
-
-        // Collect bar keys from presets and load them from disk.
-        // Seed both BarService (persistence) and DataBridge cache (runtime).
-        {
-            let bar_keys = collect_bar_keys_from_presets(&profile, &profile_manager.presets);
-            let bar_key_refs: Vec<(&str, &str, &str, &str)> = bar_keys
-                .iter()
-                .map(|(e, s, t, a)| (e.as_str(), s.as_str(), t.as_str(), a.as_str()))
-                .collect();
-            let loaded = bar_service.load_many(&bar_key_refs);
-            if !loaded.is_empty() {
-                eprintln!("[App] pre-loaded {} bar cache entries from disk", loaded.len());
-                // Seed BarService series from disk data.
-                for (exchange_str, symbol, timeframe, account_type_label, bars) in &loaded {
-                    if let Some(eid) = chart_app::ExchangeId::from_str(exchange_str) {
-                        let at = chart_app::account_type_from_label(account_type_label);
-                        let period_secs = timeframe_period_secs(timeframe);
-                        let key = bar_service::BarSeriesKey::new(eid, at, symbol.clone(), timeframe.clone());
-                        bar_service.seed_from_disk(key, bars.clone(), period_secs);
-                    }
-                }
-                // Bridge shares the same SharedSeriesMap — no separate seed needed.
-            }
-        }
-
-        // ── Bar store startup cleanup ─────────────────────────────────────────
-        // Run stale-file eviction and LRU size trim on a background thread so
-        // app startup is not blocked by disk I/O.
-        {
-            let bars_dir = bar_service.bars_dir().to_path_buf();
-            let max_size_mb = profile.data_load.max_store_size_mb;
-            let cleanup_days = profile.data_load.store_cleanup_days;
-            std::thread::spawn(move || {
-                let cleanup = bar_store::BarStoreCleanup::new(bars_dir);
-                cleanup.run_cleanup(max_size_mb, cleanup_days);
-            });
-        }
 
         // ── Trade cache persistence ───────────────────────────────────────────
         // Create the TradeStoreHandle, load persisted trades, and seed the shared
@@ -1029,9 +939,6 @@ impl App<'_> {
             pending_switch_after_recovery: None,
             pending_recovery_master_key: None,
             pending_promote_after_recovery_key: false,
-            bar_service,
-            last_bar_cache_save: std::time::Instant::now(),
-            last_cleanup_check: std::time::Instant::now(),
             trade_service,
             last_trade_cache_save: std::time::Instant::now(),
             orderbook_service,
@@ -1923,12 +1830,7 @@ impl App<'_> {
             }
         }
 
-        // 10. Flush bar cache to disk.
-        eprintln!("[App] save_all: flushing {} bar series to disk", self.bar_service.series_count());
-        self.bar_service.flush_dirty();
-        self.bar_service.flush_sync();
-
-        // 11. Flush trade cache to disk.
+        // 10. Flush trade cache to disk.
         eprintln!("[App] save_all: flushing {} trade series to disk", self.trade_service.series_count());
         self.trade_service.flush_dirty();
         self.trade_service.flush_sync();
@@ -2074,13 +1976,6 @@ impl ApplicationHandler for App<'_> {
         self.tick_app_state();
         let _t1 = std::time::Instant::now();
 
-        // ── Periodic bar cache save (every 5 minutes) ─────────────────────────
-        if self.last_bar_cache_save.elapsed() >= std::time::Duration::from_secs(300) {
-            self.last_bar_cache_save = std::time::Instant::now();
-            // BarService already has all data from tick() events — just flush.
-            self.bar_service.flush_dirty();
-        }
-
         // ── Periodic trade cache save (every 30 seconds) ──────────────────────
         if self.last_trade_cache_save.elapsed() >= std::time::Duration::from_secs(30) {
             self.last_trade_cache_save = std::time::Instant::now();
@@ -2091,31 +1986,6 @@ impl ApplicationHandler for App<'_> {
         if self.last_orderbook_cache_save.elapsed() >= std::time::Duration::from_secs(30) {
             self.last_orderbook_cache_save = std::time::Instant::now();
             self.orderbook_service.flush_dirty();
-        }
-
-        // ── Event-driven bar cache flush (backfill / scroll) ─────────────────
-        // BarService tracks dirty state internally via merge_rest_batch /
-        // apply_trade.  Also check per-window flag for backward compat
-        // (BackfillComplete / ScrollBarsLoaded set it).
-        let any_bars_dirty = self.bar_service.has_any_dirty()
-            || self.windows.values().any(|pw| pw.chart.bars_cache_dirty);
-        if any_bars_dirty {
-            for pw in self.windows.values_mut() {
-                pw.chart.bars_cache_dirty = false;
-            }
-            self.bar_service.flush_dirty();
-        }
-
-        // ── Periodic bar store cleanup (every hour) ───────────────────────────
-        if self.last_cleanup_check.elapsed() >= std::time::Duration::from_secs(3600) {
-            self.last_cleanup_check = std::time::Instant::now();
-            let bars_dir = self.bar_service.bars_dir().to_path_buf();
-            let max_size_mb = self.profile.data_load.max_store_size_mb;
-            let cleanup_days = self.profile.data_load.store_cleanup_days;
-            std::thread::spawn(move || {
-                let cleanup = bar_store::BarStoreCleanup::new(bars_dir);
-                cleanup.run_cleanup(max_size_mb, cleanup_days);
-            });
         }
 
         // ── Drain watchlist actions from all windows → AppState ────────────
@@ -3840,7 +3710,6 @@ impl ApplicationHandler for App<'_> {
             }
 
             let frame_time = screenshot::now_ms();
-            let bar_svc = &mut self.bar_service;
             for pw in self.windows.values_mut() {
                 // Skip tick for minimized windows — no point updating viewport
                 // or processing trades for an invisible surface.  On restore,
@@ -3848,7 +3717,7 @@ impl ApplicationHandler for App<'_> {
                 if pw.was_minimized {
                     continue;
                 }
-                pw.chart.tick(frame_time, bar_svc);
+                pw.chart.tick(frame_time);
             }
         }
 
@@ -3859,7 +3728,7 @@ impl ApplicationHandler for App<'_> {
                 pw.chart.pending_reset_cache = false;
                 pw.chart.pending_reset_storage = false;
 
-                // Collect window info before borrowing bar_service / bridge.
+                // Collect window info before borrowing bridge.
                 let (symbol, exchange, account_type, timeframe, bar_count) =
                     if let Some(window) = pw.chart.panel_app.panel_grid.active_window() {
                         (
@@ -3873,16 +3742,8 @@ impl ApplicationHandler for App<'_> {
                         continue;
                     };
 
-                if delete_storage {
-                    self.bar_service.delete_file(&exchange, &symbol, &timeframe.name, &account_type);
-                }
-
-                // Remove the in-memory series so the next fetch starts clean.
-                if let Some(eid) = chart_app::ExchangeId::from_str(&exchange) {
-                    let at = chart_app::account_type_from_label(&account_type);
-                    let key = bar_service::BarSeriesKey::new(eid, at, symbol.clone(), timeframe.name.clone());
-                    self.bar_service.remove_series(&key);
-                }
+                // disk persistence removed — delete_storage flag is a no-op now
+                let _ = delete_storage;
 
                 // Clear bars on the window and mark pending load.
                 if let Some(window) = pw.chart.panel_app.panel_grid.active_window_mut() {
@@ -4649,6 +4510,6 @@ fn main() {
     let saved_windows = profile.windows.clone();
 
     let symbol = std::env::args().nth(1).unwrap_or_else(|| "BTCUSDT".to_string());
-    let mut app = App::new(&symbol, bridge, shared_series, saved_windows, profile, profile_manager, connector_ready_rx, is_first_run, needs_vault_unlock, needs_migration);
+    let mut app = App::new(&symbol, bridge, saved_windows, profile, profile_manager, connector_ready_rx, is_first_run, needs_vault_unlock, needs_migration);
     event_loop.run_app(&mut app).expect("Event loop error");
 }

@@ -431,6 +431,14 @@ impl DataBridge {
         self.orderbook_map.clone()
     }
 
+    /// Get a clone of the session bar cache map.
+    ///
+    /// Used by `ChartApp::tick` to create `TrackedSeriesHandle` entries directly
+    /// from the shared map without going through the removed `BarService`.
+    pub fn bar_cache(&self) -> SharedSeriesMap {
+        self.bar_cache.clone()
+    }
+
     /// Create a new update receiver that receives all future updates.
     ///
     /// Use this to attach additional windows (spawned with `new_empty`) to the

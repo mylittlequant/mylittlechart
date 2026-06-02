@@ -12,7 +12,7 @@ impl ChartApp {
     ///
     /// Drains the async `LiveUpdate` channel (bar loads, WebSocket bar updates,
     /// connector-ready events) and runs the alert crossing checker.
-    pub fn tick(&mut self, current_time_ms: u64, bar_svc: &mut bar_service::BarService) {
+    pub fn tick(&mut self, current_time_ms: u64) {
         let _ = current_time_ms;
         let tick_start = std::time::Instant::now();
 
@@ -179,6 +179,7 @@ impl ChartApp {
 
                     // Obtain/update TrackedSeriesHandle for matched windows.
                     {
+                        use std::sync::{Arc, RwLock};
                         let period_secs = loaded_tf.as_ref().map_or(60, |tf| tf.minutes as i64) * 60;
                         let bs_key = bar_service::BarSeriesKey::new(exchange_id, account_type, symbol.clone(), tf_name.clone());
                         let matched_cids: Vec<u64> = self.panel_app.panel_grid.windows().iter()
@@ -190,10 +191,16 @@ impl ChartApp {
                             })
                             .map(|(cid, _window)| cid.0)
                             .collect();
+                        let bar_cache = self.bridge.bar_cache();
                         for cid_val in matched_cids {
                             let handle_key = (cid_val, bs_key.clone());
                             self.series_handles.entry(handle_key).or_insert_with(|| {
-                                let arc = bar_svc.get_or_create(bs_key.clone(), period_secs);
+                                let arc = {
+                                    let mut map = bar_cache.write().unwrap_or_else(|e| e.into_inner());
+                                    map.entry(bs_key.clone())
+                                        .or_insert_with(|| Arc::new(RwLock::new(bar_service::BarSeries::new(bar_service::DEFAULT_CAPACITY, period_secs))))
+                                        .clone()
+                                };
                                 bar_service::TrackedSeriesHandle::new(arc)
                             });
                         }
@@ -422,22 +429,6 @@ impl ChartApp {
                     let mut needs_backfill = false;
 
                     let _bar_apply_start = std::time::Instant::now();
-
-                    // Feed trade into BarService for each active timeframe.
-                    {
-                        let mut seen_tfs: Vec<String> = Vec::new();
-                        for window in self.panel_app.panel_grid.windows().values() {
-                            if window.pending_symbol_load { continue; }
-                            if window.symbol == symbol && window.account_type == account_type.short_label() {
-                                let tf_name = &window.timeframe.name;
-                                if !seen_tfs.contains(tf_name) {
-                                    seen_tfs.push(tf_name.clone());
-                                    let key = bar_service::BarSeriesKey::new(exchange_id, account_type, symbol.clone(), tf_name.clone());
-                                    bar_svc.apply_trade(&key, price, quantity, timestamp);
-                                }
-                            }
-                        }
-                    }
 
                     // Update the last bar of every window matching this symbol.
                     for window in self.panel_app.panel_grid.windows_mut().values_mut() {

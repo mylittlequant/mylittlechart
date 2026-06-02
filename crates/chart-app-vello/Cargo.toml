@@ -14,7 +14,6 @@ chart-app = { path = "../chart-app" }
 sidebar-content = { path = "../sidebar-content" }
 alert-delivery = { path = "../alert-delivery" }
 live-data = { path = "../live-data" }
-bar-store = { path = "../bar-store" }
 bar-service = { path = "../bar-service" }
 trade-service = { path = "../trade-service" }
 trade-store = { path = "../trade-store" }

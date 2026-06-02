@@ -7,10 +7,7 @@ edition.workspace = true
 # Chart types (Bar, Timeframe, DataProvider trait)
 zengeld-chart = { path = "../chart" }
 
-# Bar cache persistence
-bar-store = { path = "../bar-store" }
-
-# Shared in-memory bar series (replaces DataBridge's internal bar_cache)
+# Shared in-memory bar series
 bar-service = { path = "../bar-service" }
 
 # Shared in-memory trade rings
