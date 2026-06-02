@@ -513,6 +513,11 @@ impl TagManager {
         self.synced_panels.contains(&panel)
     }
 
+    /// Snapshot the synced_panels set (for persistence).
+    pub fn synced_panels_snapshot(&self) -> Vec<SyncMemberId> {
+        self.synced_panels.iter().copied().collect()
+    }
+
     /// Remove a member from `synced_panels` without affecting group membership.
     ///
     /// Call this when permanently removing a panel (e.g. user closes the panel).

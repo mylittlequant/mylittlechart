@@ -831,6 +831,15 @@ impl ChartApp {
                             }
                         }
                         self.panel_app.tag_manager.insert_group_raw(group);
+                        // Restore per-group synced_panels list. Each panel id stored
+                        // in synced_panel_ids was Synced (= follows active chart) at
+                        // save time; re-register via set_synced so that next active
+                        // chart change re-attaches the panel correctly.
+                        let gid = zengeld_chart::tag_manager::SyncGroupId(sg_snap.id);
+                        for &pid in &sg_snap.synced_panel_ids {
+                            let member = zengeld_chart::tag_manager::SyncMemberId::Panel(pid);
+                            self.panel_app.tag_manager.set_synced(member, gid);
+                        }
                     }
                     eprintln!("[ChartApp] restored {} sync groups", preset.sync_groups.len());
 

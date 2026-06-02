@@ -8566,9 +8566,11 @@ impl ChartApp {
             preset.windows.push(ChartWindowSnapshot::from_window(window, leaf_id.0));
         }
 
-        // Snapshot sync groups
+        // Snapshot sync groups (with synced_panels cross-reference so each
+        // group's persisted synced_panel_ids list survives restore).
+        let synced_snapshot = self.panel_app.tag_manager.synced_panels_snapshot();
         for group in self.panel_app.tag_manager.groups() {
-            preset.sync_groups.push(SyncGroupSnapshot::from_group(group));
+            preset.sync_groups.push(SyncGroupSnapshot::from_group(group, &synced_snapshot));
         }
 
         // Snapshot indicators (sorted by display order so restore preserves sequence).

@@ -441,7 +441,12 @@ pub struct SyncGroupSnapshot {
 
 impl SyncGroupSnapshot {
     /// Capture a snapshot from a live [`SyncGroup`].
-    pub fn from_group(group: &SyncGroup) -> Self {
+    ///
+    /// `synced_panels` is the global TagManager.synced_panels set (panel ids
+    /// flagged "follow active chart"). We persist only those panel ids that
+    /// are also members of THIS group so that on restore each group recovers
+    /// its own follow-list.
+    pub fn from_group(group: &SyncGroup, synced_panels: &[SyncMemberId]) -> Self {
         let primitives = group
             .primitives
             .iter()
@@ -457,6 +462,16 @@ impl SyncGroupSnapshot {
                 SyncMemberId::Panel(id) => panel_members.push(*id),
             }
         }
+
+        // Cross-reference synced_panels with this group's panel members so
+        // we save only the panels that BELONG to this group.
+        let synced_panel_ids: Vec<u64> = synced_panels
+            .iter()
+            .filter_map(|m| match m {
+                SyncMemberId::Panel(id) if group.members.contains(m) => Some(*id),
+                _ => None,
+            })
+            .collect();
 
         // Serialize per-member overrides
         let member_overrides: Vec<MemberOverrideSnapshot> = group
@@ -501,7 +516,7 @@ impl SyncGroupSnapshot {
             members,
             panel_members,
             member_overrides,
-            synced_panel_ids: Vec::new(), // populated by TagManager on save
+            synced_panel_ids,
             primitives,
             command_history: Some(group.command_history.clone()),
             auto_created: group.auto_created,
