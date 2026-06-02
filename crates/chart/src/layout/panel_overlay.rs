@@ -216,15 +216,13 @@ pub fn render_leaf_tab(
     ctx.set_fill_color(text_color);
     ctx.fill_text(&final_text, text_x, center_y);
 
-    // ── Color tag square ──────────────────────────────────────────────────────
+    // ── Color tag square (only when tagged; untagged → no marker) ─────────────
     let tag_x = tag_container_x;
     let tag_y = center_y - TAG_SIZE / 2.0;
-    let tag_hex = match color_tag {
-        Some(c) => rgba_hex(c),
-        None => hex_with_alpha(&toolbar_theme.item_text_muted, 0.50),
-    };
-    ctx.set_fill_color(&tag_hex);
-    ctx.fill_rounded_rect(tag_x, tag_y, TAG_SIZE, TAG_SIZE, 2.0);
+    if let Some(c) = color_tag {
+        ctx.set_fill_color(&rgba_hex(c));
+        ctx.fill_rounded_rect(tag_x, tag_y, TAG_SIZE, TAG_SIZE, 2.0);
+    }
 
     // ── Gear menu (shown when any zone is hovered) ────────────────────────────
     if hovered_zone != LeafTabHoverZone::None {

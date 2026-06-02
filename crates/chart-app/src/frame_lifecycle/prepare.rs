@@ -211,12 +211,17 @@ impl ChartApp {
                 .active_chart_id()
                 .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
             {
-                // Update the group's exchange/account_type from the new active window so that
-                // the group carries the full instrument key (symbol already tracked by TagManager).
+                // Sync the group's full instrument key from the new active window.
+                // symbol included — without this, restored groups carry stale
+                // group.symbol from the prior session and apply_key_to_panels_in_group
+                // overwrites panel state.symbol with that stale value on the very
+                // first frame (when last_active_leaf=None ≠ current_leaf).
                 if let Some(w) = self.panel_app.panel_grid.active_window() {
+                    let sym = w.symbol.clone();
                     let exch = w.exchange.clone();
                     let at = w.account_type.clone();
                     if let Some(g) = self.panel_app.tag_manager.group_mut(new_active_group) {
+                        g.symbol = sym;
                         g.exchange = exch;
                         g.account_type = at;
                     }

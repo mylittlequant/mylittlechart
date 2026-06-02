@@ -1521,6 +1521,54 @@ impl ChartApp {
                     }
                     eprintln!("[ChartApp] LoadPreset: requesting bars for {} windows", bars_requested);
 
+                    // Prune orphan Panel members from all restored sync groups.
+                    // SyncGroupSnapshot.panel_members can carry ids from the prior
+                    // session that were closed-then-saved in a race; those ids
+                    // have no entry in panels_store after Step 8b. Leaving them
+                    // in group.members + member_to_group leaks zombie references
+                    // that mis-route propagate_* / apply_key_to_panels_in_group.
+                    {
+                        use zengeld_chart::tag_manager::SyncMemberId;
+                        use sidebar_content::free_slot::PanelId;
+                        // Collect live PanelIds across every panel-state map.
+                        let live_panel_ids: std::collections::HashSet<u64> = {
+                            let store = &self.panels_store;
+                            let mut s: std::collections::HashSet<u64> = std::collections::HashSet::new();
+                            for PanelId(id) in store.dom.keys() { s.insert(*id); }
+                            for PanelId(id) in store.footprint.keys() { s.insert(*id); }
+                            for PanelId(id) in store.volume_profile.keys() { s.insert(*id); }
+                            for PanelId(id) in store.liquidity_heatmap.keys() { s.insert(*id); }
+                            for PanelId(id) in store.big_trades.keys() { s.insert(*id); }
+                            for PanelId(id) in store.l2_tape.keys() { s.insert(*id); }
+                            for PanelId(id) in store.trade_tape.keys() { s.insert(*id); }
+                            for PanelId(id) in store.order_entry.keys() { s.insert(*id); }
+                            for PanelId(id) in store.position_manager.keys() { s.insert(*id); }
+                            for PanelId(id) in store.trade_log.keys() { s.insert(*id); }
+                            for PanelId(id) in store.risk_calculator.keys() { s.insert(*id); }
+                            for PanelId(id) in store.trading_container.keys() { s.insert(*id); }
+                            s
+                        };
+                        // Collect orphans (Panel members in any group with no live state).
+                        let mut orphans: Vec<SyncMemberId> = Vec::new();
+                        for group in self.panel_app.tag_manager.groups() {
+                            for member in group.members.iter() {
+                                if let SyncMemberId::Panel(pid) = member {
+                                    if !live_panel_ids.contains(pid) {
+                                        orphans.push(SyncMemberId::Panel(*pid));
+                                    }
+                                }
+                            }
+                        }
+                        let pruned = orphans.len();
+                        for member in orphans {
+                            self.panel_app.tag_manager.disconnect(member);
+                            self.panel_app.tag_manager.synced_panels_remove(member);
+                        }
+                        if pruned > 0 {
+                            eprintln!("[ChartApp] preset restore: pruned {} orphan panel members from sync groups", pruned);
+                        }
+                    }
+
                     eprintln!("[ChartApp] preset '{}' fully restored", preset.name);
                     state_mutated = true;
                 } else {

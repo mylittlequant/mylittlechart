@@ -1452,7 +1452,7 @@ impl ChartApp {
                                             symbol.clone(),
                                             tf,
                                         );
-                                        let _ = self.panel_app.tag_manager.set_auto_group(member, solo_gid);
+                                        self.panel_app.tag_manager.set_auto_group(member, solo_gid);
                                         // Seed exchange/account_type on the new group so apply_key
                                         // picks them up next frame.
                                         if let Some(g) = self.panel_app.tag_manager.group_mut(solo_gid) {
