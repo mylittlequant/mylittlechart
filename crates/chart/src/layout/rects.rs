@@ -543,36 +543,29 @@ impl ExtendedFrameLayout {
 
         let available_height = chart_panel.height - time_scale_height;
 
-        // Sub-panes carve their share of `available_height` from uzor's
-        // root proportions. The first proportion belongs to the main chart;
-        // the remaining N parallel `sub_pane_instance_ids`. If the
-        // proportions slice is short/missing, fall back to uniform shares.
-        let min_main_chart = 80.0_f64;
-        let min_sub_pane = 30.0_f64;
-        let total_sub_props: f64 = sub_proportions.iter().take(sub_pane_count).copied().sum();
-        let main_share = if total_sub_props > 0.0 {
-            (1.0 - total_sub_props.min(0.95)).max(0.05)
-        } else {
-            0.6
-        };
-        let total_share = main_share + total_sub_props;
-        // Account for separator pixels before distributing.
+        // Build a local InnerLayout from the caller-supplied proportions
+        // and let it own the heights math (per-slot min enforcement +
+        // separator budget). Single source of truth for vertical layout.
+        let mut local = crate::state::InnerLayout::new();
+        local.separator_px = separator_height;
+        let want_ids: Vec<u64> = sub_pane_instance_ids
+            .iter()
+            .copied()
+            .take(sub_pane_count)
+            .collect();
+        local.sync_with(&want_ids);
+        // Apply the caller's share Vec verbatim (skip the main slot --
+        // InnerLayout already keeps it at proportions[0]).
+        if sub_proportions.len() >= sub_pane_count {
+            local.proportions = std::iter::once(local.proportions[0])
+                .chain(sub_proportions.iter().take(sub_pane_count).copied())
+                .collect();
+            local.normalize();
+        }
+        let heights = local.heights(available_height);
+        let main_chart_height = heights.first().copied().unwrap_or(available_height);
+        let scaled_heights: Vec<f64> = heights.iter().skip(1).copied().collect();
         let separator_budget = separator_height * sub_pane_count as f64;
-        let content_budget = (available_height - separator_budget).max(0.0);
-        let main_chart_height = ((main_share / total_share) * content_budget).max(min_main_chart);
-        let remaining = (content_budget - main_chart_height).max(0.0);
-
-        let scaled_heights: Vec<f64> = if total_sub_props > 0.0 {
-            sub_proportions
-                .iter()
-                .take(sub_pane_count)
-                .map(|&p| ((p / total_sub_props) * remaining).max(min_sub_pane))
-                .collect()
-        } else {
-            // No proportions yet -- uniform share.
-            let uniform = (remaining / sub_pane_count as f64).max(min_sub_pane);
-            vec![uniform; sub_pane_count]
-        };
         let actual_available_for_subs: f64 =
             scaled_heights.iter().sum::<f64>() + separator_budget;
 
