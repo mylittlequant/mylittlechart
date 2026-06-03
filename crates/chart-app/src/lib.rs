@@ -5364,6 +5364,13 @@ impl ChartApp {
                 pane.index = i;
             }
             window.sub_panes = new_sub_panes;
+
+            // Phase 2: reconcile the inner uzor docking tree with the
+            // canonical sub_panes Vec. Adds leaves for newly-spawned
+            // indicators, removes leaves for vanished ones. Sub-pane render
+            // geometry will read from this tree once the render path is
+            // switched over.
+            window.sync_inner_docking_from_sub_panes();
         }
 
         // Clear all pending restore state once applied (one-shot).

@@ -471,6 +471,137 @@ impl ChartContainer {
         window
     }
 
+    // =========================================================================
+    // Inner-docking helpers (Phase 2 of chart-container cut)
+    // =========================================================================
+
+    /// Find the leaf id for an `IndicatorPanel { instance_id }` leaf in the
+    /// inner docking tree, if present.
+    pub fn indicator_leaf_id(&self, instance_id: u64) -> Option<uzor::panels::LeafId> {
+        use uzor::panels::PanelNode;
+        fn walk(node: &PanelNode<ChartContainerLeaf>, target: u64) -> Option<uzor::panels::LeafId> {
+            match node {
+                PanelNode::Leaf(l) => l
+                    .panels
+                    .iter()
+                    .find_map(|p| match p {
+                        ChartContainerLeaf::IndicatorPanel { instance_id } if *instance_id == target => Some(l.id),
+                        _ => None,
+                    }),
+                PanelNode::Branch(b) => b
+                    .children
+                    .iter()
+                    .find_map(|c| walk(c, target)),
+            }
+        }
+        {
+            let root = self.inner_docking.tree().root();
+            root.children.iter().find_map(|c| walk(c, instance_id))
+        }
+    }
+
+    /// Ensure the inner docking tree has an `IndicatorPanel` leaf for the
+    /// given indicator `instance_id`. Returns the leaf id (whether already
+    /// present or newly created).
+    pub fn ensure_indicator_leaf(&mut self, instance_id: u64) -> uzor::panels::LeafId {
+        if let Some(leaf) = self.indicator_leaf_id(instance_id) {
+            return leaf;
+        }
+        // Split the existing bottom-most leaf downward to host the new
+        // indicator panel. We anchor to `main_leaf_id` for the first
+        // indicator and to the last-added indicator leaf for subsequent
+        // ones so they stack predictably under the chart.
+        use uzor::panels::SplitKind;
+        let anchor = self.last_inner_leaf_id();
+        let new_leaf = self
+            .inner_docking
+            .tree_mut()
+            .split_leaf(anchor, SplitKind::SplitBottom, ChartContainerLeaf::IndicatorPanel { instance_id });
+        new_leaf.unwrap_or(self.main_leaf_id)
+    }
+
+    /// Remove an indicator panel leaf from the inner docking tree.
+    /// No-op if the leaf is not present.
+    pub fn remove_indicator_leaf(&mut self, instance_id: u64) {
+        if let Some(leaf) = self.indicator_leaf_id(instance_id) {
+            self.inner_docking.tree_mut().remove_leaf(leaf);
+        }
+    }
+
+    /// Reconcile the inner docking tree against the canonical sub-pane Vec:
+    /// add leaves for sub-panes that don't have one yet, remove leaves for
+    /// instance_ids that are no longer present.
+    pub fn sync_inner_docking_from_sub_panes(&mut self) {
+        // Collect the canonical instance ids from the sub_panes Vec.
+        let want: std::collections::HashSet<u64> =
+            self.sub_panes.iter().map(|p| p.instance_id).collect();
+
+        // Collect current indicator leaf ids in the tree.
+        let have: std::collections::HashMap<u64, uzor::panels::LeafId> = {
+            use uzor::panels::PanelNode;
+            let mut acc = std::collections::HashMap::new();
+            fn walk(
+                node: &PanelNode<ChartContainerLeaf>,
+                acc: &mut std::collections::HashMap<u64, uzor::panels::LeafId>,
+            ) {
+                match node {
+                    PanelNode::Leaf(l) => {
+                        for p in &l.panels {
+                            if let ChartContainerLeaf::IndicatorPanel { instance_id } = p {
+                                acc.insert(*instance_id, l.id);
+                            }
+                        }
+                    }
+                    PanelNode::Branch(b) => {
+                        for c in &b.children {
+                            walk(c, acc);
+                        }
+                    }
+                }
+            }
+            for c in &self.inner_docking.tree().root().children {
+                walk(c, &mut acc);
+            }
+            acc
+        };
+
+        // Remove leaves that are no longer wanted.
+        let to_remove: Vec<uzor::panels::LeafId> = have
+            .iter()
+            .filter_map(|(iid, leaf)| if want.contains(iid) { None } else { Some(*leaf) })
+            .collect();
+        for leaf in to_remove {
+            self.inner_docking.tree_mut().remove_leaf(leaf);
+        }
+
+        // Add leaves for sub-panes that don't have one yet.
+        for pane in &self.sub_panes.clone() {
+            if !have.contains_key(&pane.instance_id) {
+                let _ = self.ensure_indicator_leaf(pane.instance_id);
+            }
+        }
+    }
+
+    /// Find the most recently added leaf in the inner docking tree.
+    /// Used as the split anchor for stacking new indicator panels.
+    fn last_inner_leaf_id(&self) -> uzor::panels::LeafId {
+        use uzor::panels::PanelNode;
+        fn last(node: &PanelNode<ChartContainerLeaf>) -> Option<uzor::panels::LeafId> {
+            match node {
+                PanelNode::Leaf(l) => Some(l.id),
+                PanelNode::Branch(b) => b.children.last().and_then(last),
+            }
+        }
+        self.inner_docking
+            .tree()
+            .root()
+            .children
+            .iter()
+            .rev()
+            .find_map(last)
+            .unwrap_or(self.main_leaf_id)
+    }
+
     /// Update title based on current symbol and timeframe
     pub fn update_title(&mut self) {
         self.title = format!("{} {}", self.symbol, self.timeframe.name);
