@@ -170,6 +170,11 @@ impl ChartApp {
 
             // ── Alert — open alert settings modal for selected primitive ────
             "inline:alert" => {
+                // S2.7.1e: read symbol via branch_meta (B1).
+                let inline_alert_symbol: String = self.panel_app.panel_grid.active_container_id()
+                    .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                    .map(String::from)
+                    .unwrap_or_default();
                 if let Some(window) = self.panel_app.panel_grid.active_container() {
                     if let Some(prim) = window.drawing_manager.selected_primitive() {
                         let prim_id = prim.data().id;
@@ -180,9 +185,8 @@ impl ChartApp {
                         } else {
                             window.bars.last().map(|b| b.close).unwrap_or(0.0)
                         };
-                        let symbol = window.symbol.clone();
                         let source = alerts::AlertSource::Drawing { primitive_id: prim_id, label };
-                        self.panel_app.alert_settings_state.open_new(source, &symbol, price);
+                        self.panel_app.alert_settings_state.open_new(source, &inline_alert_symbol, price);
                         self.panel_app.alert_settings_state.pin_initial_position(
                             self.content_rect.width, self.content_rect.height,
                         );
@@ -351,19 +355,21 @@ impl ChartApp {
                     .unwrap_or(self.active_exchange);
                 // Switch the active chart to this symbol+exchange.
                 // Capture old trade-stream identity BEFORE mutating window state.
+                // S2.7.1e: read old instrument fields via branch_meta (B1).
                 let old_trade_exchange = self.active_exchange;
-                let old_trade_symbol = self.panel_app.panel_grid.active_container()
-                    .map(|w| w.symbol.clone())
-                    .unwrap_or_default();
-                let old_trade_at = self.panel_app.panel_grid.active_container()
-                    .map(|w| crate::account_type_from_label(&w.account_type))
-                    .unwrap_or(digdigdig3::AccountType::Spot);
-                let timeframe = self.panel_app.panel_grid.active_container()
-                    .map(|w| w.timeframe.clone())
-                    .unwrap_or_default();
-                // Phase 4 S2.2: capture chart_id BEFORE the mutating block so we
-                // can update branch_meta after the panel_grid borrow drops.
                 let active_chart_id = self.panel_app.panel_grid.active_container_id();
+                let old_trade_symbol: String = active_chart_id
+                    .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                    .map(String::from)
+                    .unwrap_or_default();
+                let old_trade_at = active_chart_id
+                    .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid))
+                    .map(|at| crate::account_type_from_label(at))
+                    .unwrap_or(digdigdig3::AccountType::Spot);
+                let timeframe = active_chart_id
+                    .and_then(|cid| crate::branch_meta_bridge::read_timeframe(&self.branch_meta, cid))
+                    .cloned()
+                    .unwrap_or_default();
                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     let old_sym = window.symbol.clone();
                     let old_exchange = window.exchange.clone();
@@ -571,8 +577,10 @@ impl ChartApp {
             return;
         };
 
-        let symbol = self.panel_app.panel_grid.active_container()
-            .map(|w| w.symbol.clone())
+        // S2.7.1e: read symbol via branch_meta (B1).
+        let symbol: String = self.panel_app.panel_grid.active_container_id()
+            .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+            .map(String::from)
             .unwrap_or_default();
 
         // Remove all existing indicators (exclusive deployment, like preset)
@@ -669,8 +677,10 @@ impl ChartApp {
     pub(super) fn execute_create_indicator_set(&mut self, name: String) {
         use zengeld_chart::templates::{IndicatorTemplate, OutputStyleConfig};
 
-        let symbol = self.panel_app.panel_grid.active_container()
-            .map(|w| w.symbol.clone())
+        // S2.7.1e: read symbol via branch_meta (B1).
+        let symbol: String = self.panel_app.panel_grid.active_container_id()
+            .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+            .map(String::from)
             .unwrap_or_default();
 
         let instances = self.indicator_manager.get_instances_for_symbol(&symbol);
@@ -807,23 +817,26 @@ impl ChartApp {
                 match self.modal_state.current {
                     OpenModal::SymbolSearch => {
                         // Capture previous symbol, exchange, and account_type BEFORE changing.
-                        let previous_symbol = self.panel_app.panel_grid.active_container()
-                            .map(|w| w.symbol.clone())
+                        // S2.7.1e: read via branch_meta (B1).
+                        let active_chart_id = self.panel_app.panel_grid.active_container_id();
+                        let previous_symbol: String = active_chart_id
+                            .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                            .map(String::from)
                             .unwrap_or_default();
                         let old_trade_exchange = self.active_exchange;
-                        let old_trade_at = self.panel_app.panel_grid.active_container()
-                            .map(|w| crate::account_type_from_label(&w.account_type))
+                        let old_trade_at = active_chart_id
+                            .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid))
+                            .map(|at| crate::account_type_from_label(at))
                             .unwrap_or(digdigdig3::AccountType::Spot);
                         let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
                         let new_symbol_str = symbol_part.to_string();
                         // Set symbol, clear bars, and request data asynchronously.
-                        let timeframe = self.panel_app.panel_grid.active_container()
-                            .map(|w| w.timeframe.clone())
+                        let timeframe = active_chart_id
+                            .and_then(|cid| crate::branch_meta_bridge::read_timeframe(&self.branch_meta, cid))
+                            .cloned()
                             .unwrap_or_default();
                         // account_type is embedded in the item key — use it directly.
                         let search_at_label = item_at_label.clone();
-                        // Phase 4 S2.2: capture chart_id BEFORE the mutating block.
-                        let active_chart_id = self.panel_app.panel_grid.active_container_id();
                         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                             // Snapshot current drawings before switching symbol
                             let old_sym = window.symbol.clone();
@@ -1760,12 +1773,17 @@ impl ChartApp {
             if local_x >= 0.0 && local_x <= chart_rect.width
                 && local_y >= 0.0 && local_y <= chart_rect.height
             {
+                // S2.7.1e: read symbol via branch_meta before the closure (B1).
+                let overlay_symbol: String = self.panel_app.panel_grid.active_container_id()
+                    .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                    .map(String::from)
+                    .unwrap_or_default();
                 let ind_hit = self.panel_app.panel_grid.active_container()
                     .and_then(|window| {
                         self.indicator_manager.hit_test_overlay(
                             local_x,
                             local_y,
-                            &window.symbol,
+                            &overlay_symbol,
                             &window.viewport,
                             &window.price_scale,
                             chart_rect.height,

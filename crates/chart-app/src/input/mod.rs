@@ -541,20 +541,24 @@ impl ChartApp {
 
         // Pre-extract active-window data needed by the indicator closures.
         // Done before the mutable borrow of panel_grid inside handle_right_click.
-        let (symbol, viewport, price_scale, sub_pane_ranges) = {
+        // S2.7.1e: read symbol via branch_meta (B6 — closure capture).
+        let active_cid_rc = self.panel_app.panel_grid.active_container_id();
+        let symbol: String = active_cid_rc
+            .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+            .map(String::from)
+            .unwrap_or_default();
+        let (viewport, price_scale, sub_pane_ranges) = {
             if let Some(window) = self.panel_app.panel_grid.active_container() {
                 let ranges: Vec<(u64, f64, f64)> = window.sub_panes.iter()
                     .map(|sp| (sp.instance_id, sp.price_min, sp.price_max))
                     .collect();
                 (
-                    window.symbol.clone(),
                     window.viewport.clone(),
                     window.price_scale.clone(),
                     ranges,
                 )
             } else {
                 (
-                    String::new(),
                     zengeld_chart::Viewport::default(),
                     zengeld_chart::PriceScale::new(0.0, 1.0),
                     Vec::new(),
@@ -8108,12 +8112,14 @@ impl ChartApp {
         // Build the set of visible sub-pane instance IDs from indicator_manager
         // (single source of truth for visibility).  Collect before borrowing
         // active_container() again so the borrow checker stays happy.
+        // S2.7.1e: read symbol via branch_meta (B1).
         let visible_set: std::collections::HashSet<u64> = {
-            let symbol = self.panel_app.panel_grid.active_container()
-                .map(|w| w.symbol.clone())
+            let active_chart_id = self.panel_app.panel_grid.active_container_id();
+            let symbol: String = active_chart_id
+                .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                .map(String::from)
                 .unwrap_or_default();
-            let chart_id = self.panel_app.panel_grid.active_container_id()
-                .map(|cid| cid.0);
+            let chart_id = active_chart_id.map(|cid| cid.0);
             if let Some(cid) = chart_id {
                 self.indicator_manager
                     .get_instances_for_symbol_in_window(&symbol, cid)
@@ -8168,18 +8174,23 @@ impl ChartApp {
         let scale_settings = &window.scale_settings;
 
         // Build visible set from indicator_manager (single source of truth).
+        // S2.7.1e: read symbol via branch_meta (B1).
         let visible_set: std::collections::HashSet<u64> = {
             let chart_id = self.panel_app.panel_grid.container_id_for_leaf(leaf_id);
+            let symbol: String = chart_id
+                .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                .map(String::from)
+                .unwrap_or_default();
             if let Some(cid) = chart_id {
                 self.indicator_manager
-                    .get_instances_for_symbol_in_window(&window.symbol, cid.0)
+                    .get_instances_for_symbol_in_window(&symbol, cid.0)
                     .into_iter()
                     .filter(|i| i.visible && i.pane > 0)
                     .map(|i| i.id)
                     .collect()
             } else {
                 self.indicator_manager
-                    .get_instances_for_symbol(&window.symbol)
+                    .get_instances_for_symbol(&symbol)
                     .into_iter()
                     .filter(|i| i.visible && i.pane > 0)
                     .map(|i| i.id)
@@ -8333,9 +8344,16 @@ impl ChartApp {
                 self.indicator_manager.calculate_all_for_window(active_cid, &bars);
                 self.sync_sub_panes_from_manager();
                 // Propagate to sync group peers
+                // S2.7.1e: read exchange/account_type via branch_meta (B1).
                 if let Some(leaf) = self.panel_app.panel_grid.docking().active_leaf() {
-                    let (exchange, account_type) = self.panel_app.panel_grid.active_container()
-                        .map(|w| (w.exchange.clone(), w.account_type.clone()))
+                    let active_cid_prop = self.panel_app.panel_grid.active_container_id();
+                    let exchange: String = active_cid_prop
+                        .and_then(|cid| crate::branch_meta_bridge::read_exchange(&self.branch_meta, cid))
+                        .map(String::from)
+                        .unwrap_or_default();
+                    let account_type: String = active_cid_prop
+                        .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid))
+                        .map(String::from)
                         .unwrap_or_default();
                     self.propagate_symbol_to_sync_group(leaf, new_symbol, &exchange, &account_type);
                 }
@@ -8496,12 +8514,19 @@ impl ChartApp {
         // always go through the grouped path (standalone path is broken).
         if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
             if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(active_leaf) {
-                // Auto groups get transparent color — never occupy palette slots
-                let Some(win) = self.panel_app.panel_grid.container_for_leaf(active_leaf) else {
+                // Auto groups get transparent color — never occupy palette slots.
+                // S2.7.1e: read symbol/timeframe via branch_meta (B6);
+                // no longer need a shared borrow of the window for these fields.
+                if self.panel_app.panel_grid.container_for_leaf(active_leaf).is_none() {
                     eprintln!("[sync_group] new_pane: container_for_leaf({:?}) returned None — skipping auto group", active_leaf);
                     return;
-                };
-                let (symbol, timeframe) = (win.symbol.clone(), win.timeframe.clone());
+                }
+                let symbol: String = crate::branch_meta_bridge::read_symbol(&self.branch_meta, chart_id)
+                    .map(String::from)
+                    .unwrap_or_default();
+                let timeframe = crate::branch_meta_bridge::read_timeframe(&self.branch_meta, chart_id)
+                    .cloned()
+                    .unwrap_or_default();
                 let group_id = self.panel_app.tag_manager.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
                 let _ = self.panel_app.tag_manager.connect_chart(chart_id, group_id);
                 if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(active_leaf) {

@@ -300,23 +300,31 @@ impl ChartApp {
                         .copied()
                         .unwrap_or(self.active_exchange);
 
-                    let prev_symbol = self.panel_app.panel_grid.active_container()
-                        .map(|w| w.symbol.clone());
-                    let prev_exchange = self.panel_app.panel_grid.active_container()
-                        .map(|w| w.exchange.clone());
-                    let prev_account_type = self.panel_app.panel_grid.active_container()
-                        .map(|w| w.account_type.clone());
+                    // S2.7.1e: read prev instrument fields via branch_meta (B1).
+                    let wl_active_cid = self.panel_app.panel_grid.active_container_id();
+                    let prev_symbol: Option<String> = wl_active_cid
+                        .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                        .map(String::from);
+                    let prev_exchange: Option<String> = wl_active_cid
+                        .and_then(|cid| crate::branch_meta_bridge::read_exchange(&self.branch_meta, cid))
+                        .map(String::from);
+                    let prev_account_type: Option<String> = wl_active_cid
+                        .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid))
+                        .map(String::from);
                     if prev_symbol.as_deref() != Some(&symbol) || prev_exchange.as_deref() != Some(&item_exchange) || prev_account_type.as_deref() != Some(&item_account_type) {
                         // Capture old trade-stream identity BEFORE mutating window state.
                         let old_trade_exchange = self.active_exchange;
-                        let old_trade_symbol = self.panel_app.panel_grid.active_container()
-                            .map(|w| w.symbol.clone())
+                        let old_trade_symbol: String = wl_active_cid
+                            .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                            .map(String::from)
                             .unwrap_or_default();
-                        let old_trade_at = self.panel_app.panel_grid.active_container()
-                            .map(|w| crate::account_type_from_label(&w.account_type))
+                        let old_trade_at = wl_active_cid
+                            .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid))
+                            .map(|at| crate::account_type_from_label(at))
                             .unwrap_or(digdigdig3::AccountType::Spot);
-                        let timeframe = self.panel_app.panel_grid.active_container()
-                            .map(|w| w.timeframe.clone())
+                        let timeframe = wl_active_cid
+                            .and_then(|cid| crate::branch_meta_bridge::read_timeframe(&self.branch_meta, cid))
+                            .cloned()
                             .unwrap_or_default();
                         let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
                         // Phase 4 S2.2: capture chart_id BEFORE the mutating block.
@@ -1158,39 +1166,50 @@ impl ChartApp {
                         use sidebar_content::state::SlotSourceMode;
 
                         // Build SymbolSource from the toolbar's current source mode.
+                        // S2.7.1e: read instrument fields via branch_meta (B1).
+                        let spawn_active_cid = self.panel_app.panel_grid.active_container_id();
                         let source = match self.sidebar_state.slot_source_mode {
                             SlotSourceMode::Tagged => SymbolSource::HyperFocus,
                             SlotSourceMode::Untagged => {
                                 // Frozen snapshot of active chart key at spawn time.
-                                let sym = self.panel_app.panel_grid.active_container()
-                                    .map(|w| w.symbol.clone())
+                                let sym: String = spawn_active_cid
+                                    .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                                    .map(String::from)
                                     .unwrap_or_default();
-                                let exch = self.panel_app.panel_grid.active_container()
-                                    .map(|w| w.exchange.clone())
+                                let exch: String = spawn_active_cid
+                                    .and_then(|cid| crate::branch_meta_bridge::read_exchange(&self.branch_meta, cid))
+                                    .map(String::from)
                                     .unwrap_or_else(|| self.active_exchange.as_str().to_string());
-                                let at = self.panel_app.panel_grid.active_container()
-                                    .map(|w| w.account_type.clone())
+                                let at: String = spawn_active_cid
+                                    .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid))
+                                    .map(String::from)
                                     .unwrap_or_else(|| digdigdig3::AccountType::Spot.short_label().to_string());
                                 SymbolSource::Fixed { symbol: sym, exchange: exch, account_type: at }
                             }
                         };
 
                         // Resolve immediately to get the concrete symbol for initial setup.
-                        let active_resolved = self.panel_app.panel_grid.active_container().map(|w| {
+                        // S2.7.1e: read instrument fields via branch_meta (B1).
+                        let active_resolved = spawn_active_cid.map(|cid| {
                             zengeld_panels::trading::ResolvedSymbol {
-                                symbol: w.symbol.clone(),
-                                exchange: w.exchange.clone(),
-                                account_type: w.account_type.clone(),
+                                symbol: crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid)
+                                    .map(String::from).unwrap_or_default(),
+                                exchange: crate::branch_meta_bridge::read_exchange(&self.branch_meta, cid)
+                                    .map(String::from).unwrap_or_default(),
+                                account_type: crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid)
+                                    .map(String::from).unwrap_or_default(),
                             }
                         });
                         let resolve_leaf = |lid: u64| -> Option<zengeld_panels::trading::ResolvedSymbol> {
                             let leaf = zengeld_chart::LeafId(lid);
-                            self.panel_app.panel_grid.container_for_leaf(leaf).map(|w| {
-                                zengeld_panels::trading::ResolvedSymbol {
-                                    symbol: w.symbol.clone(),
-                                    exchange: w.exchange.clone(),
-                                    account_type: w.account_type.clone(),
-                                }
+                            let leaf_cid = self.panel_app.panel_grid.container_id_for_leaf(leaf)?;
+                            Some(zengeld_panels::trading::ResolvedSymbol {
+                                symbol: crate::branch_meta_bridge::read_symbol(&self.branch_meta, leaf_cid)
+                                    .map(String::from).unwrap_or_default(),
+                                exchange: crate::branch_meta_bridge::read_exchange(&self.branch_meta, leaf_cid)
+                                    .map(String::from).unwrap_or_default(),
+                                account_type: crate::branch_meta_bridge::read_account_type(&self.branch_meta, leaf_cid)
+                                    .map(String::from).unwrap_or_default(),
                             })
                         };
                         let resolved = source.resolve(active_resolved.as_ref(), &resolve_leaf);
@@ -1468,8 +1487,10 @@ impl ChartApp {
                                     }
                                     sidebar_content::state::SlotSourceMode::Untagged => {
                                         // Spawn panel into its own 1-member auto-created group.
-                                        let tf = self.panel_app.panel_grid.active_container()
-                                            .map(|w| w.timeframe.clone())
+                                        // S2.7.1e: read timeframe via branch_meta (B1).
+                                        let tf = spawn_active_cid
+                                            .and_then(|cid| crate::branch_meta_bridge::read_timeframe(&self.branch_meta, cid))
+                                            .cloned()
                                             .unwrap_or_else(zengeld_chart::state::Timeframe::h1);
                                         let solo_gid = self.panel_app.tag_manager.create_group_auto(
                                             [0.0, 0.0, 0.0, 0.0],
@@ -1625,14 +1646,19 @@ impl ChartApp {
                                         if let Some(item) = item_opt {
                                             use zengeld_panels::trading::SymbolSource;
                                             use sidebar_content::free_slot::FreeItem;
-                                            let symbol = self.panel_app.panel_grid.active_container()
-                                                .map(|w| w.symbol.clone())
+                                            // S2.7.1e: read instrument fields via branch_meta (B1).
+                                            let toggle_u_cid = self.panel_app.panel_grid.active_container_id();
+                                            let symbol: String = toggle_u_cid
+                                                .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                                                .map(String::from)
                                                 .unwrap_or_default();
-                                            let exchange = self.panel_app.panel_grid.active_container()
-                                                .map(|w| w.exchange.clone())
+                                            let exchange: String = toggle_u_cid
+                                                .and_then(|cid| crate::branch_meta_bridge::read_exchange(&self.branch_meta, cid))
+                                                .map(String::from)
                                                 .unwrap_or_default();
-                                            let account_type = self.panel_app.panel_grid.active_container()
-                                                .map(|w| w.account_type.clone())
+                                            let account_type: String = toggle_u_cid
+                                                .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid))
+                                                .map(String::from)
                                                 .unwrap_or_default();
                                             let src = SymbolSource::Fixed { symbol, exchange, account_type };
                                             match &item {
@@ -2258,17 +2284,22 @@ impl ChartApp {
                                         FreeItem::Chart(_) | FreeItem::IndicatorPanel(_) => None,
                                     };
 
+                                    // S2.7.1e: read instrument fields via branch_meta (B1).
+                                    let source_cycle_cid = self.panel_app.panel_grid.active_container_id();
                                     let new_source = match current_source {
                                         Some(SymbolSource::HyperFocus) => {
                                             // Pin to current active chart symbol/exchange/account_type.
-                                            let symbol = self.panel_app.panel_grid.active_container()
-                                                .map(|w| w.symbol.clone())
+                                            let symbol: String = source_cycle_cid
+                                                .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                                                .map(String::from)
                                                 .unwrap_or_default();
-                                            let exchange = self.panel_app.panel_grid.active_container()
-                                                .map(|w| w.exchange.clone())
+                                            let exchange: String = source_cycle_cid
+                                                .and_then(|cid| crate::branch_meta_bridge::read_exchange(&self.branch_meta, cid))
+                                                .map(String::from)
                                                 .unwrap_or_default();
-                                            let account_type = self.panel_app.panel_grid.active_container()
-                                                .map(|w| w.account_type.clone())
+                                            let account_type: String = source_cycle_cid
+                                                .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid))
+                                                .map(String::from)
                                                 .unwrap_or_default();
                                             Some(SymbolSource::Fixed { symbol, exchange, account_type })
                                         }
@@ -2456,8 +2487,10 @@ impl ChartApp {
                 .and_then(|w| w.bars.last())
                 .map(|b| b.close)
                 .unwrap_or(0.0);
-            let symbol = self.panel_app.panel_grid.active_container()
-                .map(|w| w.symbol.clone())
+            // S2.7.1e: read symbol via branch_meta (B1).
+            let symbol: String = self.panel_app.panel_grid.active_container_id()
+                .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                .map(String::from)
                 .unwrap_or_else(|| "BTCUSD".to_string());
             let source = alerts::AlertSource::Price { symbol: symbol.clone() };
             self.panel_app.alert_settings_state.open_new(source, &symbol, price);
@@ -2730,8 +2763,10 @@ impl ChartApp {
                         }
                     }
                 }
-                let symbol = self.panel_app.panel_grid.active_container()
-                    .map(|w| w.symbol.clone())
+                // S2.7.1e: read symbol via branch_meta (B1).
+                let symbol: String = self.panel_app.panel_grid.active_container_id()
+                    .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                    .map(String::from)
                     .unwrap_or_else(|| "BTCUSD".to_string());
                 let source = alerts::AlertSource::Drawing { primitive_id: id, label: source_name.clone() };
                 self.panel_app.alert_settings_state.open_new(source, &symbol, price);
@@ -2752,8 +2787,10 @@ impl ChartApp {
                 let source_name = self.indicator_manager.get_instance(id)
                     .map(|inst| inst.name.clone())
                     .unwrap_or_else(|| format!("Indicator {}", id));
-                let symbol = self.panel_app.panel_grid.active_container()
-                    .map(|w| w.symbol.clone())
+                // S2.7.1e: read symbol via branch_meta (B1).
+                let symbol: String = self.panel_app.panel_grid.active_container_id()
+                    .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                    .map(String::from)
                     .unwrap_or_else(|| "BTCUSD".to_string());
                 let source = alerts::AlertSource::Signal {
                     indicator_id: id,
