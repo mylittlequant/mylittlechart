@@ -26,6 +26,7 @@ pub mod action_executor;
 pub mod chart_window;
 pub mod sub_panel;
 pub mod panel_grid;
+pub mod chart_container_leaf;
 
 // Core chart struct
 pub use chart::*;
@@ -79,6 +80,17 @@ pub use chart_window::{ChartWindow, ChartId, ConnectionStatus, WindowRect, WINDO
 
 // Chart-internal split/expand system (uzor-panels integration)
 pub use sub_panel::ChartSubPanel;
+
+// Inner-docking leaf payload for ChartContainer (Phase 1 of chart-container cut).
+// `ChartContainerId` is an alias for `ChartId` (plan D1); the canvas gets its
+// own `ChartPanelId`.
+pub use chart_container_leaf::{
+    ChartContainerId,
+    ChartContainerLeaf,
+    ChartPanelId,
+    generate_chart_panel_id,
+    bump_chart_panel_id_past,
+};
 
 // Panel grid — input-aware layout manager
 pub use panel_grid::{ChartPanelGrid, ChartInputTarget, ChartRightClickHit, ChartDragStartHit, SplitHitResult, FreehandCompleteResult};
