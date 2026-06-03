@@ -7912,15 +7912,43 @@ impl ChartApp {
                 }
             }
             Command::ChangeSymbol { new_symbol, .. } => {
+                // Phase 4 S2.2: capture chart_id BEFORE the mutating block.
+                let active_chart_id = self.panel_app.panel_grid.active_container_id();
+                let mut mirror_args: Option<(zengeld_chart::state::Timeframe, String, String)> = None;
                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     window.change_symbol(new_symbol);
+                    mirror_args = Some((window.timeframe.clone(), window.exchange.clone(), window.account_type.clone()));
                     eprintln!("[Undo/Redo] Changed symbol to {}", new_symbol);
+                }
+                if let (Some(chart_id), Some((tf, exch, at))) = (active_chart_id, mirror_args) {
+                    crate::branch_meta_bridge::mirror_symbol(
+                        &mut self.branch_meta,
+                        chart_id,
+                        new_symbol,
+                        tf,
+                        &exch,
+                        &at,
+                    );
                 }
             }
             Command::ChangeTimeframe { new_timeframe, .. } => {
+                // Phase 4 S2.2: capture chart_id BEFORE the mutating block.
+                let active_chart_id = self.panel_app.panel_grid.active_container_id();
+                let mut mirror_args: Option<(String, String, String)> = None;
                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     window.change_timeframe(new_timeframe.clone());
+                    mirror_args = Some((window.symbol.clone(), window.exchange.clone(), window.account_type.clone()));
                     eprintln!("[Undo/Redo] Changed timeframe to {:?}", new_timeframe);
+                }
+                if let (Some(chart_id), Some((sym, exch, at))) = (active_chart_id, mirror_args) {
+                    crate::branch_meta_bridge::mirror_timeframe(
+                        &mut self.branch_meta,
+                        chart_id,
+                        new_timeframe.clone(),
+                        &sym,
+                        &exch,
+                        &at,
+                    );
                 }
             }
             Command::AddCompareSeries { series } => {

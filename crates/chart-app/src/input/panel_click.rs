@@ -319,6 +319,8 @@ impl ChartApp {
                             .map(|w| w.timeframe.clone())
                             .unwrap_or_default();
                         let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
+                        // Phase 4 S2.2: capture chart_id BEFORE the mutating block.
+                        let active_chart_id = self.panel_app.panel_grid.active_container_id();
                         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                             let old_sym = window.symbol.clone();
                             let old_exchange = window.exchange.clone();
@@ -335,6 +337,17 @@ impl ChartApp {
                             window.pending_symbol_load = true;
                             window.drawing_manager.clear_all_primitives();
                             window.restore_drawings_for_symbol(&symbol, &item_exchange, &item_account_type);
+                        }
+                        // Phase 4 S2.2 dual-write: mirror new instrument into branch_meta.
+                        if let Some(chart_id) = active_chart_id {
+                            crate::branch_meta_bridge::mirror_instrument(
+                                &mut self.branch_meta,
+                                chart_id,
+                                &symbol,
+                                timeframe.clone(),
+                                &item_exchange,
+                                &item_account_type,
+                            );
                         }
                         self.active_exchange = resolved_exchange;
                         // Unsubscribe only the old symbol's trade stream, leaving other

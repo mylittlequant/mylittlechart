@@ -15,6 +15,7 @@
 //! ```
 
 pub mod agent;
+pub mod branch_meta_bridge;
 pub mod chart_panel_state;
 pub mod chart_state;
 pub mod frame_lifecycle;
@@ -1142,6 +1143,8 @@ impl ChartApp {
             // Preset restored successfully.
         } else {
             // ── Fresh state — Binance default ──────────────────────────────
+            // Phase 4 S2.2: capture chart_id BEFORE the mutating block.
+            let active_chart_id = app.panel_app.panel_grid.active_container_id();
             if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
                 window.data_provider = data_provider.clone();
                 window.exchange = exchange_name.clone();
@@ -1150,6 +1153,17 @@ impl ChartApp {
                 window.symbol = "BTCUSDT".to_string();
                 window.timeframe = zengeld_chart::state::Timeframe::new("1H", 60);
                 window.drawing_manager.set_current_symbol_key(&window.symbol, &window.exchange, &window.account_type);
+            }
+            // Phase 4 S2.2 dual-write: seed branch_meta for the freshly-default chart.
+            if let Some(chart_id) = active_chart_id {
+                crate::branch_meta_bridge::mirror_instrument(
+                    &mut app.branch_meta,
+                    chart_id,
+                    "BTCUSDT",
+                    zengeld_chart::state::Timeframe::new("1H", 60),
+                    &exchange_name,
+                    "S",
+                );
             }
             app.panel_app.toolbar_config = ToolbarConfig::standalone();
 
@@ -1370,6 +1384,8 @@ impl ChartApp {
             LiveDataProvider::new(exchange_id, exchange_name.clone(), digdigdig3::AccountType::Spot, bridge.clone()),
         );
 
+        // Phase 4 S2.2: capture chart_id BEFORE the mutating block.
+        let active_chart_id = app.panel_app.panel_grid.active_container_id();
         if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
             window.data_provider = data_provider.clone();
             window.exchange = exchange_name.clone();
@@ -1377,6 +1393,17 @@ impl ChartApp {
             window.symbol = "BTCUSDT".to_string();
             window.timeframe = zengeld_chart::state::Timeframe::new("1H", 60);
             window.drawing_manager.set_current_symbol_key(&window.symbol, &window.exchange, &window.account_type);
+        }
+        // Phase 4 S2.2 dual-write: seed branch_meta for the freshly-default chart.
+        if let Some(chart_id) = active_chart_id {
+            crate::branch_meta_bridge::mirror_instrument(
+                &mut app.branch_meta,
+                chart_id,
+                "BTCUSDT",
+                zengeld_chart::state::Timeframe::new("1H", 60),
+                &exchange_name,
+                "S",
+            );
         }
         app.panel_app.toolbar_config = ToolbarConfig::standalone();
 
@@ -1721,12 +1748,25 @@ impl ChartApp {
                 app.needs_initial_viewport_fit = true;
             } else {
                 // Fresh state — Binance default.
+                // Phase 4 S2.2: capture chart_id BEFORE the mutating block.
+                let active_chart_id = app.panel_app.panel_grid.active_container_id();
                 if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
                     window.data_provider = data_provider.clone();
                     window.exchange = exchange_name.clone();
                     window.toolbar_config = ToolbarConfig::standalone();
                     window.symbol = "BTCUSDT".to_string();
                     window.timeframe = zengeld_chart::state::Timeframe::new("1H", 60);
+                }
+                // Phase 4 S2.2 dual-write: seed branch_meta for the freshly-default chart.
+                if let Some(chart_id) = active_chart_id {
+                    crate::branch_meta_bridge::mirror_instrument(
+                        &mut app.branch_meta,
+                        chart_id,
+                        "BTCUSDT",
+                        zengeld_chart::state::Timeframe::new("1H", 60),
+                        &exchange_name,
+                        "S",
+                    );
                 }
                 app.panel_app.toolbar_config = ToolbarConfig::standalone();
 
@@ -2060,14 +2100,29 @@ impl ChartApp {
             bridge.unsubscribe_trades(old_trade_exchange, &old_trade_symbol, old_trade_at);
         }
 
+        // Phase 4 S2.2: capture chart_id BEFORE the mutating block.
+        let active_chart_id = self.panel_app.panel_grid.active_container_id();
         // Attach the provider to the active window and request paginated bars.
+        let mut mirror_args: Option<(String, zengeld_chart::state::Timeframe, String, String)> = None;
         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
             window.data_provider = provider;
-            window.exchange = exchange_name;
+            window.exchange = exchange_name.clone();
             let symbol = window.symbol.clone();
             let timeframe = window.timeframe.clone();
             let at = account_type_from_label(&window.account_type);
+            mirror_args = Some((symbol.clone(), timeframe.clone(), exchange_name, window.account_type.clone()));
             bridge.request_bars(exchange_id, &symbol, &timeframe, at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), false);
+        }
+        // Phase 4 S2.2 dual-write: mirror new exchange into branch_meta.
+        if let (Some(chart_id), Some((sym, tf, exch, at_label))) = (active_chart_id, mirror_args) {
+            crate::branch_meta_bridge::mirror_exchange(
+                &mut self.branch_meta,
+                chart_id,
+                &exch,
+                &sym,
+                tf,
+                &at_label,
+            );
         }
     }
 

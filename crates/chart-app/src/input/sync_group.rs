@@ -430,6 +430,38 @@ impl ChartApp {
         let new_leaves = self.panel_app.panel_grid.split_active(kind);
         self.propagate_crosshair_after_split(&new_leaves);
 
+        // Phase 4 S2.2: seed branch_meta for every new leaf produced by the
+        // split. `clone_for_split` copies the source's 4 instrument fields
+        // onto the new container; mirror that into branch_meta so the new
+        // chart has an entry from frame 1. Two-phase: collect (chart_id,
+        // instrument tuple) while holding shared panel_grid borrow, then
+        // mirror with mut borrow on branch_meta after the read borrow drops.
+        let split_seeds: Vec<(zengeld_chart::state::ChartId, String, zengeld_chart::state::Timeframe, String, String)> =
+            new_leaves
+                .iter()
+                .filter_map(|&lid| {
+                    let chart_id = self.panel_app.panel_grid.container_id_for_leaf(lid)?;
+                    let win = self.panel_app.panel_grid.container_for_leaf(lid)?;
+                    Some((
+                        chart_id,
+                        win.symbol.clone(),
+                        win.timeframe.clone(),
+                        win.exchange.clone(),
+                        win.account_type.clone(),
+                    ))
+                })
+                .collect();
+        for (chart_id, sym, tf, exch, at) in split_seeds {
+            crate::branch_meta_bridge::mirror_instrument(
+                &mut self.branch_meta,
+                chart_id,
+                &sym,
+                tf,
+                &exch,
+                &at,
+            );
+        }
+
         // When "Split Without Group" is enabled, the mother window (new_leaves[0])
         // keeps its existing group/tag state.  Only the new sibling leaves
         // (new_leaves[1..]) get fresh independent auto_created groups.
@@ -819,6 +851,15 @@ impl ChartApp {
             }
         }
 
+        // Phase 4 S2.2: pre-collect (LeafId, ChartId) so we can update
+        // `branch_meta` after the panel_grid mutating borrow drops. Read-only
+        // borrow of `panel_grid` is dropped here before the mutating loop.
+        let peer_chart_ids: Vec<(zengeld_chart::LeafId, Option<zengeld_chart::state::ChartId>)> =
+            sync_leaves
+                .iter()
+                .map(|lid| (*lid, self.panel_app.panel_grid.container_id_for_leaf(*lid)))
+                .collect();
+
         // Apply the full instrument key change (symbol + exchange + account_type) to each peer
         // window directly, bypassing change_symbol() which uses NullDataProvider and always fails.
         for (leaf_id, (old_symbol, old_exchange, old_account_type, _)) in sync_leaves.iter().zip(peer_info.iter()) {
@@ -835,6 +876,24 @@ impl ChartApp {
                 window.drawing_manager.clear_all_primitives();
                 window.restore_drawings_for_symbol(&symbol_owned, &exchange_owned, &account_type_owned);
                 window.update_title();
+            }
+        }
+
+        // Phase 4 S2.2 dual-write: mirror (symbol, exchange, account_type) into
+        // `branch_meta` for each peer. `panel_grid` borrow is released here so
+        // `branch_meta` can be mutably borrowed. Timeframe seed comes from the
+        // pre-mutation snapshot (peer_info) — peer windows kept their timeframe
+        // during this propagation.
+        for ((_, chart_id_opt), (_, _, _, peer_tf)) in peer_chart_ids.iter().zip(peer_info.iter()) {
+            if let Some(chart_id) = chart_id_opt {
+                crate::branch_meta_bridge::mirror_instrument(
+                    &mut self.branch_meta,
+                    *chart_id,
+                    &symbol_owned,
+                    peer_tf.clone(),
+                    &exchange_owned,
+                    &account_type_owned,
+                );
             }
         }
 
@@ -942,6 +1001,14 @@ impl ChartApp {
             }
         }
 
+        // Phase 4 S2.2: pre-collect (LeafId, ChartId) for branch_meta dual-write
+        // after the mutating loop drops the panel_grid borrow.
+        let peer_chart_ids: Vec<(zengeld_chart::LeafId, Option<zengeld_chart::state::ChartId>)> =
+            sync_leaves
+                .iter()
+                .map(|lid| (*lid, self.panel_app.panel_grid.container_id_for_leaf(*lid)))
+                .collect();
+
         // Set timeframe and clear stale bars on each peer window directly,
         // bypassing change_timeframe() which uses NullDataProvider and fails.
         for leaf_id in &sync_leaves {
@@ -951,6 +1018,24 @@ impl ChartApp {
                 window.viewport.bar_count = 0;
                 window.viewport.view_start = 0.0;
                 window.update_title();
+            }
+        }
+
+        // Phase 4 S2.2 dual-write: mirror new timeframe into branch_meta for
+        // each peer. Seed defaults come from `peer_requests` (pre-mutation
+        // exchange / symbol / account_type — unchanged by this propagation).
+        for ((_, chart_id_opt), (exchange_seed, symbol_seed, at_seed))
+            in peer_chart_ids.iter().zip(peer_requests.iter())
+        {
+            if let Some(chart_id) = chart_id_opt {
+                crate::branch_meta_bridge::mirror_timeframe(
+                    &mut self.branch_meta,
+                    *chart_id,
+                    tf.clone(),
+                    symbol_seed,
+                    exchange_seed,
+                    at_seed,
+                );
             }
         }
 

@@ -361,6 +361,9 @@ impl ChartApp {
                 let timeframe = self.panel_app.panel_grid.active_container()
                     .map(|w| w.timeframe.clone())
                     .unwrap_or_default();
+                // Phase 4 S2.2: capture chart_id BEFORE the mutating block so we
+                // can update branch_meta after the panel_grid borrow drops.
+                let active_chart_id = self.panel_app.panel_grid.active_container_id();
                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     let old_sym = window.symbol.clone();
                     let old_exchange = window.exchange.clone();
@@ -376,6 +379,18 @@ impl ChartApp {
                     window.pending_symbol_load = true;
                     window.drawing_manager.clear_all_primitives();
                     window.restore_drawings_for_symbol(sym_part, exchange_part, &wl_at_label);
+                }
+                // Phase 4 S2.2 dual-write: mirror new (symbol, exchange,
+                // account_type) into branch_meta for the active chart.
+                if let Some(chart_id) = active_chart_id {
+                    crate::branch_meta_bridge::mirror_instrument(
+                        &mut self.branch_meta,
+                        chart_id,
+                        sym_part,
+                        timeframe.clone(),
+                        exchange_part,
+                        &wl_at_label,
+                    );
                 }
                 // Propagate symbol change to all peers in the same sync group.
                 let wl_active_leaf = self.panel_app.panel_grid.docking().active_leaf();
@@ -792,6 +807,8 @@ impl ChartApp {
                             .unwrap_or_default();
                         // account_type is embedded in the item key — use it directly.
                         let search_at_label = item_at_label.clone();
+                        // Phase 4 S2.2: capture chart_id BEFORE the mutating block.
+                        let active_chart_id = self.panel_app.panel_grid.active_container_id();
                         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                             // Snapshot current drawings before switching symbol
                             let old_sym = window.symbol.clone();
@@ -809,6 +826,18 @@ impl ChartApp {
                             window.pending_symbol_load = true;
                             window.drawing_manager.clear_all_primitives();
                             window.restore_drawings_for_symbol(symbol_part, resolved_exchange.as_str(), &search_at_label);
+                        }
+                        // Phase 4 S2.2 dual-write: mirror new instrument into
+                        // branch_meta for the active chart.
+                        if let Some(chart_id) = active_chart_id {
+                            crate::branch_meta_bridge::mirror_instrument(
+                                &mut self.branch_meta,
+                                chart_id,
+                                symbol_part,
+                                timeframe.clone(),
+                                resolved_exchange.as_str(),
+                                &search_at_label,
+                            );
                         }
                         // Switch to the exchange that owns this symbol and request bars.
                         self.active_exchange = resolved_exchange;

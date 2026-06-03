@@ -65,12 +65,28 @@ impl ChartApp {
                     let at_label_tf = self.panel_app.panel_grid.active_container()
                         .map(|w| w.account_type.clone())
                         .unwrap_or_else(|| "S".to_string());
+                    // Phase 4 S2.2: capture chart_id + current exchange BEFORE mutating block.
+                    let active_chart_id = self.panel_app.panel_grid.active_container_id();
+                    let exchange_seed = self.panel_app.panel_grid.active_container()
+                        .map(|w| w.exchange.clone())
+                        .unwrap_or_default();
                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         window.timeframe = tf.clone();
                         window.update_title();
                         window.bars.clear();
                         window.viewport.bar_count = 0;
                         window.viewport.view_start = 0.0;
+                    }
+                    // Phase 4 S2.2 dual-write: mirror new timeframe into branch_meta.
+                    if let Some(chart_id) = active_chart_id {
+                        crate::branch_meta_bridge::mirror_timeframe(
+                            &mut self.branch_meta,
+                            chart_id,
+                            tf.clone(),
+                            &symbol,
+                            &exchange_seed,
+                            &at_label_tf,
+                        );
                     }
                     // Fetch bars for new timeframe. Trade stream stays alive вЂ” trades
                     // build bars regardless of timeframe and the symbol has not changed.
@@ -662,6 +678,18 @@ impl ChartApp {
                                         snap.drawings.primitives.len()
                                     );
 
+                                    // Phase 4 S2.2: seed branch_meta from the restored
+                                    // snapshot. `window` is a local var here; no panel_grid
+                                    // borrow holds the branch_meta map.
+                                    crate::branch_meta_bridge::mirror_instrument(
+                                        &mut self.branch_meta,
+                                        chart_id,
+                                        &snap.symbol,
+                                        snap.timeframe.clone(),
+                                        &snap.exchange,
+                                        &snap.account_type,
+                                    );
+
                                     new_containers.insert(chart_id, window);
                                     new_leaf_to_chart.insert(leaf_id, chart_id);
                                 }
@@ -801,6 +829,20 @@ impl ChartApp {
                                     snap.window_id, snap.symbol, snap.timeframe.name,
                                     snap.drawings.primitives.len());
                             }
+                        }
+                        // Phase 4 S2.2 dual-write: mirror restored instrument into
+                        // branch_meta. `windows` (panel_grid mut borrow) is dropped
+                        // here; this second loop is over the read-only preset slice.
+                        for snap in &preset.windows {
+                            let chart_id = zengeld_chart::state::chart_container::ChartId(snap.window_id);
+                            crate::branch_meta_bridge::mirror_instrument(
+                                &mut self.branch_meta,
+                                chart_id,
+                                &snap.symbol,
+                                snap.timeframe.clone(),
+                                &snap.exchange,
+                                &snap.account_type,
+                            );
                         }
                     }
 
