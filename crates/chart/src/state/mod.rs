@@ -27,6 +27,7 @@ pub mod chart_window;
 pub mod sub_panel;
 pub mod panel_grid;
 pub mod chart_container_leaf;
+pub mod chart_container;
 
 // Core chart struct
 pub use chart::*;
@@ -91,6 +92,7 @@ pub use chart_container_leaf::{
     generate_chart_panel_id,
     bump_chart_panel_id_past,
 };
+pub use chart_container::ChartContainer;
 
 // Panel grid — input-aware layout manager
 pub use panel_grid::{ChartPanelGrid, ChartInputTarget, ChartRightClickHit, ChartDragStartHit, SplitHitResult, FreehandCompleteResult};
