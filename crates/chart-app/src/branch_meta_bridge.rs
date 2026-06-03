@@ -162,6 +162,79 @@ pub fn mirror_account_type(
 }
 
 // =============================================================================
+// Read accessors (S2.7.1) — flip reads from `ChartContainer.field` to
+// `branch_meta`. These are the post-cutover canonical reads.
+// =============================================================================
+//
+// Convention: read helpers return `Option<&T>` (or `Option<T>` for Copy
+// types) referring into the branch_meta entry. Callers fall back via
+// `.unwrap_or("")` / `.unwrap_or_default()` as appropriate.
+//
+// Lifetime: borrows the `branch_meta` map for the lifetime of the read.
+// Callers that need to mutate `branch_meta` afterwards must drop the
+// borrow first (use `.map(String::from)` or `.copied()` to detach).
+
+#[inline]
+pub fn read_symbol<'a>(
+    branch_meta: &'a HashMap<BranchId, BranchMeta>,
+    chart_id: ChartId,
+) -> Option<&'a str> {
+    branch_meta
+        .get(&branch_key_for_chart(chart_id))
+        .and_then(|m| m.symbol.as_deref())
+}
+
+#[inline]
+pub fn read_timeframe<'a>(
+    branch_meta: &'a HashMap<BranchId, BranchMeta>,
+    chart_id: ChartId,
+) -> Option<&'a Timeframe> {
+    branch_meta
+        .get(&branch_key_for_chart(chart_id))
+        .and_then(|m| m.timeframe.as_ref())
+}
+
+#[inline]
+pub fn read_exchange<'a>(
+    branch_meta: &'a HashMap<BranchId, BranchMeta>,
+    chart_id: ChartId,
+) -> Option<&'a str> {
+    branch_meta
+        .get(&branch_key_for_chart(chart_id))
+        .and_then(|m| m.exchange.as_deref())
+}
+
+#[inline]
+pub fn read_account_type<'a>(
+    branch_meta: &'a HashMap<BranchId, BranchMeta>,
+    chart_id: ChartId,
+) -> Option<&'a str> {
+    branch_meta
+        .get(&branch_key_for_chart(chart_id))
+        .and_then(|m| m.account_type.as_deref())
+}
+
+#[inline]
+pub fn read_group_id(
+    branch_meta: &HashMap<BranchId, BranchMeta>,
+    chart_id: ChartId,
+) -> Option<SyncGroupId> {
+    branch_meta
+        .get(&branch_key_for_chart(chart_id))
+        .and_then(|m| m.group_id)
+}
+
+#[inline]
+pub fn read_prev_close_price(
+    branch_meta: &HashMap<BranchId, BranchMeta>,
+    chart_id: ChartId,
+) -> Option<f64> {
+    branch_meta
+        .get(&branch_key_for_chart(chart_id))
+        .and_then(|m| m.prev_close_price)
+}
+
+// =============================================================================
 // Group M (S2.3) — group_id / prev_close_price / connection_status
 // =============================================================================
 //
