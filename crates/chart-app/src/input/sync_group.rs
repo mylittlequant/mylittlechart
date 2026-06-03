@@ -123,6 +123,7 @@ impl ChartApp {
                     window.command_history = stashed;
                     eprintln!("[TagManager] Desync: restored stashed command history");
                 }
+
                 // Restore the window's pre-join scale mode. The stash is populated
                 // when a window joins a group with sync_viewport=ON; restoring it
                 // here undoes the group-imposed A/M/F override.
@@ -143,6 +144,10 @@ impl ChartApp {
             // write too. This intermediate mirror keeps branch_meta consistent
             // if anything reads between the two writes.
             crate::branch_meta_bridge::mirror_group_id(&mut self.branch_meta, chart_id, None);
+            // Phase 4 S2.4 dual-write: clear pre_tag_ids, stash, history mirrors.
+            crate::branch_meta_bridge::mirror_pre_tag_ids(&mut self.branch_meta, chart_id, Vec::new());
+            crate::branch_meta_bridge::clear_stashed_primitives(&mut self.stashed_primitives, chart_id);
+            crate::branch_meta_bridge::mirror_stashed_command_history(&mut self.branch_meta, chart_id, None);
 
             // Remove tag indicators: all indicators for this window EXCEPT pre-tag ones.
             // Then unhide pre-tag indicators.
@@ -350,6 +355,25 @@ impl ChartApp {
                 }
                 // Phase 4 S2.3 dual-write: mirror new group_id (new group path).
                 crate::branch_meta_bridge::mirror_group_id(&mut self.branch_meta, chart_id, Some(group_id));
+                // Phase 4 S2.4 dual-write: pre_tag_ids, stashed_primitives, stashed_command_history.
+                {
+                    let ids = self.panel_app.panel_grid.container_for_leaf(joining_leaf)
+                        .map(|w| w.pre_tag_indicator_ids.clone())
+                        .unwrap_or_default();
+                    crate::branch_meta_bridge::mirror_pre_tag_ids(&mut self.branch_meta, chart_id, ids);
+                }
+                {
+                    let prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
+                        self.panel_app.panel_grid.container_for_leaf(joining_leaf)
+                            .map(|w| w.stashed_primitives.iter().map(|p| p.clone_box()).collect())
+                            .unwrap_or_default();
+                    crate::branch_meta_bridge::stash_primitives(&mut self.stashed_primitives, chart_id, prims);
+                }
+                {
+                    let history = self.panel_app.panel_grid.container_for_leaf(joining_leaf)
+                        .and_then(|w| w.stashed_command_history.clone());
+                    crate::branch_meta_bridge::mirror_stashed_command_history(&mut self.branch_meta, chart_id, history);
+                }
                 return;
             }
 
@@ -404,6 +428,20 @@ impl ChartApp {
             }
             // Phase 4 S2.3 dual-write: mirror new group_id (existing group path).
             crate::branch_meta_bridge::mirror_group_id(&mut self.branch_meta, chart_id, Some(group_id));
+            // Phase 4 S2.4 dual-write: pre_tag_ids, stashed_primitives, stashed_command_history.
+            crate::branch_meta_bridge::mirror_pre_tag_ids(&mut self.branch_meta, chart_id, pre_tag_ids.clone());
+            {
+                let prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
+                    self.panel_app.panel_grid.container_for_leaf(joining_leaf)
+                        .map(|w| w.stashed_primitives.iter().map(|p| p.clone_box()).collect())
+                        .unwrap_or_default();
+                crate::branch_meta_bridge::stash_primitives(&mut self.stashed_primitives, chart_id, prims);
+            }
+            {
+                let history = self.panel_app.panel_grid.container_for_leaf(joining_leaf)
+                    .and_then(|w| w.stashed_command_history.clone());
+                crate::branch_meta_bridge::mirror_stashed_command_history(&mut self.branch_meta, chart_id, history);
+            }
 
             // Hide pre-tag indicators by setting visible=false.
             for &id in &pre_tag_ids {
@@ -653,6 +691,25 @@ impl ChartApp {
                             &mut window.command_history,
                             zengeld_chart::CommandHistory::new(250),
                         ));
+                    }
+                    // Phase 4 S2.4 dual-write: mirror split new-group source state.
+                    {
+                        let ids = self.panel_app.panel_grid.container_for_leaf(source_leaf)
+                            .map(|w| w.pre_tag_indicator_ids.clone())
+                            .unwrap_or_default();
+                        crate::branch_meta_bridge::mirror_pre_tag_ids(&mut self.branch_meta, source_cid, ids);
+                    }
+                    {
+                        let prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
+                            self.panel_app.panel_grid.container_for_leaf(source_leaf)
+                                .map(|w| w.stashed_primitives.iter().map(|p| p.clone_box()).collect())
+                                .unwrap_or_default();
+                        crate::branch_meta_bridge::stash_primitives(&mut self.stashed_primitives, source_cid, prims);
+                    }
+                    {
+                        let history = self.panel_app.panel_grid.container_for_leaf(source_leaf)
+                            .and_then(|w| w.stashed_command_history.clone());
+                        crate::branch_meta_bridge::mirror_stashed_command_history(&mut self.branch_meta, source_cid, history);
                     }
                 }
             }

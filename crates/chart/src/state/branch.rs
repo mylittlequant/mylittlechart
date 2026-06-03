@@ -17,6 +17,7 @@ use crate::state::chart_container_leaf::ChartPanelId;
 use crate::state::chart_container::ConnectionStatus;
 use crate::state::Timeframe;
 use crate::tag_manager::SyncGroupId;
+use crate::state::history::CommandHistory;
 
 // =============================================================================
 // Identifiers
@@ -295,6 +296,15 @@ pub struct BranchMeta {
     /// `ChartContainer.prev_close_price`; re-derived on every
     /// `set_bars` / `update_bars`.
     pub prev_close_price: Option<f64>,
+    /// Indicator instance IDs that existed BEFORE this window joined a
+    /// sync group. Restored on desync so window-local indicators
+    /// survive a join/leave cycle. Phase 4 S2.4 mirror of
+    /// `ChartContainer.pre_tag_indicator_ids`.
+    pub pre_tag_indicator_ids: Vec<u64>,
+    /// Window-local undo history stashed at sync-group join time,
+    /// restored on desync. Phase 4 S2.4 mirror of
+    /// `ChartContainer.stashed_command_history`.
+    pub stashed_command_history: Option<CommandHistory>,
 }
 
 impl BranchMeta {
@@ -316,6 +326,8 @@ impl BranchMeta {
             label: None,
             connection_status: None,
             prev_close_price: None,
+            pre_tag_indicator_ids: Vec::new(),
+            stashed_command_history: None,
         }
     }
 
@@ -332,6 +344,8 @@ impl BranchMeta {
             label: Some(label.into()),
             connection_status: None,
             prev_close_price: None,
+            pre_tag_indicator_ids: Vec::new(),
+            stashed_command_history: None,
         }
     }
 
@@ -348,6 +362,8 @@ impl BranchMeta {
             label,
             connection_status: None,
             prev_close_price: None,
+            pre_tag_indicator_ids: Vec::new(),
+            stashed_command_history: None,
         }
     }
 }

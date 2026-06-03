@@ -21,6 +21,8 @@
 use std::collections::HashMap;
 
 use uzor::panels::BranchId;
+use zengeld_chart::drawing::primitives_v2::Primitive;
+use zengeld_chart::state::history::CommandHistory;
 use zengeld_chart::state::{BranchMeta, ChartId, ConnectionStatus, Timeframe};
 use zengeld_chart::tag_manager::SyncGroupId;
 
@@ -203,6 +205,68 @@ pub fn mirror_connection_status(
     }
 }
 
+// =============================================================================
+// Group N (S2.4) — pre_tag_indicator_ids / stashed_command_history /
+//                  stashed_primitives (separate map; Box<dyn Primitive>
+//                  cannot live on BranchMeta because it would break
+//                  BranchMeta's Clone derive)
+// =============================================================================
+
+/// Mirror the pre-tag indicator id list into branch_meta. Silent no-op
+/// if the entry is missing.
+pub fn mirror_pre_tag_ids(
+    branch_meta: &mut std::collections::HashMap<BranchId, BranchMeta>,
+    chart_id: ChartId,
+    ids: Vec<u64>,
+) {
+    if let Some(entry) = branch_meta.get_mut(&branch_key_for_chart(chart_id)) {
+        entry.pre_tag_indicator_ids = ids;
+    }
+}
+
+/// Mirror the stashed window-local command history into branch_meta.
+/// Silent no-op if the entry is missing.
+pub fn mirror_stashed_command_history(
+    branch_meta: &mut std::collections::HashMap<BranchId, BranchMeta>,
+    chart_id: ChartId,
+    history: Option<CommandHistory>,
+) {
+    if let Some(entry) = branch_meta.get_mut(&branch_key_for_chart(chart_id)) {
+        entry.stashed_command_history = history;
+    }
+}
+
+/// Store an owned vec of stashed primitives for `chart_id`. Replaces any
+/// existing stash. `Box<dyn Primitive>` has no Clone — callers must pass
+/// ownership (typically built via `iter().map(|p| p.clone_box()).collect()`
+/// from the source vec).
+pub fn stash_primitives(
+    stashed_primitives: &mut std::collections::HashMap<BranchId, Vec<Box<dyn Primitive>>>,
+    chart_id: ChartId,
+    prims: Vec<Box<dyn Primitive>>,
+) {
+    stashed_primitives.insert(branch_key_for_chart(chart_id), prims);
+}
+
+/// Take ownership of the stashed primitives for `chart_id`, leaving the
+/// entry removed. Returns `None` if there was no stash. Used on desync
+/// to move stashed primitives back into the live drawing manager.
+pub fn take_stashed_primitives(
+    stashed_primitives: &mut std::collections::HashMap<BranchId, Vec<Box<dyn Primitive>>>,
+    chart_id: ChartId,
+) -> Option<Vec<Box<dyn Primitive>>> {
+    stashed_primitives.remove(&branch_key_for_chart(chart_id))
+}
+
+/// Clear the stashed-primitives entry for `chart_id` without taking
+/// ownership of its contents.
+pub fn clear_stashed_primitives(
+    stashed_primitives: &mut std::collections::HashMap<BranchId, Vec<Box<dyn Primitive>>>,
+    chart_id: ChartId,
+) {
+    stashed_primitives.remove(&branch_key_for_chart(chart_id));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,5 +346,49 @@ mod tests {
         mirror_connection_status(&mut bm, ChartId(13), ConnectionStatus::Delayed);
         let entry = bm.get(&branch_key_for_chart(ChartId(13))).unwrap();
         assert_eq!(entry.connection_status, Some(ConnectionStatus::Delayed));
+    }
+
+    #[test]
+    fn mirror_pre_tag_ids_writes_on_existing_entry() {
+        let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
+        mirror_instrument(&mut bm, ChartId(15), "BTC", tf(), "Binance", "S");
+        mirror_pre_tag_ids(&mut bm, ChartId(15), vec![10, 20, 30]);
+        let entry = bm.get(&branch_key_for_chart(ChartId(15))).unwrap();
+        assert_eq!(entry.pre_tag_indicator_ids, vec![10, 20, 30]);
+    }
+
+    #[test]
+    fn mirror_pre_tag_ids_no_lazy_insert() {
+        let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
+        mirror_pre_tag_ids(&mut bm, ChartId(99), vec![1, 2]);
+        assert!(bm.is_empty());
+    }
+
+    #[test]
+    fn mirror_stashed_command_history_round_trips() {
+        let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
+        mirror_instrument(&mut bm, ChartId(17), "BTC", tf(), "Binance", "S");
+        let history = CommandHistory::new(50);
+        mirror_stashed_command_history(&mut bm, ChartId(17), Some(history));
+        let entry = bm.get(&branch_key_for_chart(ChartId(17))).unwrap();
+        assert!(entry.stashed_command_history.is_some());
+    }
+
+    #[test]
+    fn stashed_primitives_round_trip_take() {
+        let mut sp: HashMap<BranchId, Vec<Box<dyn Primitive>>> = HashMap::new();
+        // empty stash inserted then taken
+        stash_primitives(&mut sp, ChartId(19), Vec::new());
+        let taken = take_stashed_primitives(&mut sp, ChartId(19));
+        assert!(taken.is_some());
+        assert!(taken.unwrap().is_empty());
+        assert!(sp.is_empty(), "take should remove the entry");
+    }
+
+    #[test]
+    fn take_stashed_primitives_returns_none_when_missing() {
+        let mut sp: HashMap<BranchId, Vec<Box<dyn Primitive>>> = HashMap::new();
+        let taken = take_stashed_primitives(&mut sp, ChartId(123));
+        assert!(taken.is_none());
     }
 }

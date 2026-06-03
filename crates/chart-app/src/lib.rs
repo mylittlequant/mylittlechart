@@ -700,6 +700,17 @@ pub struct ChartApp {
     /// by `uzor::panels::BranchId(chart_id.0)` as a temporary stub —
     /// callers map `ChartId.0 -> BranchId.0` directly.
     pub branch_meta: std::collections::HashMap<uzor::panels::BranchId, zengeld_chart::state::BranchMeta>,
+
+    /// Phase 4 S2.4 — branch-keyed stash of drawing primitives saved at
+    /// sync-group join time and restored on desync.
+    ///
+    /// Lives OUTSIDE `BranchMeta` because `Box<dyn Primitive>` has no
+    /// `Clone` impl, which would break `BranchMeta`'s `Clone` derive.
+    /// Same `BranchId` key space as `branch_meta`.
+    pub stashed_primitives: std::collections::HashMap<
+        uzor::panels::BranchId,
+        Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>>,
+    >,
 }
 
 /// An action that mutates the app-level watchlist.
@@ -1061,6 +1072,7 @@ impl ChartApp {
             active_frame_layout: None,
             frame_layouts: std::collections::HashMap::new(),
             branch_meta: std::collections::HashMap::new(),
+            stashed_primitives: std::collections::HashMap::new(),
         };
 
         if let Some(tm) = &app.trading_manager {
@@ -1364,6 +1376,7 @@ impl ChartApp {
             active_frame_layout: None,
             frame_layouts: std::collections::HashMap::new(),
             branch_meta: std::collections::HashMap::new(),
+            stashed_primitives: std::collections::HashMap::new(),
         };
 
         app.sidebar_state.watchlist_manager = sidebar_content::watchlist::WatchlistManager::new(
@@ -1588,6 +1601,7 @@ impl ChartApp {
             active_frame_layout: None,
             frame_layouts: std::collections::HashMap::new(),
             branch_meta: std::collections::HashMap::new(),
+            stashed_primitives: std::collections::HashMap::new(),
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_user_state below.

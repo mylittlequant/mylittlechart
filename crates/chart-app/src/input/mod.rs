@@ -8012,6 +8012,19 @@ impl ChartApp {
                             window.pre_tag_indicator_ids.push(*instance_id);
                         }
                     }
+                    // Phase 4 S2.4 dual-write: mirror updated pre_tag_ids.
+                    {
+                        let ids = self.panel_app.panel_grid.containers()
+                            .values()
+                            .find(|w| w.id == chart_id_val)
+                            .map(|w| w.pre_tag_indicator_ids.clone())
+                            .unwrap_or_default();
+                        crate::branch_meta_bridge::mirror_pre_tag_ids(
+                            &mut self.branch_meta,
+                            chart_id_val,
+                            ids,
+                        );
+                    }
                     self.sync_sub_panes_from_manager();
                     eprintln!("[Undo/Redo] Re-created indicator {} (id={}) window_id={}", type_id, instance_id, chart_id_val.0);
                 } else {
@@ -8024,6 +8037,19 @@ impl ChartApp {
                     let removed_id = *instance_id;
                     for window in self.panel_app.panel_grid.containers_mut().values_mut() {
                         window.pre_tag_indicator_ids.retain(|iid| *iid != removed_id);
+                    }
+                    // Phase 4 S2.4 dual-write: mirror updated pre_tag_ids for every window.
+                    let updates: Vec<(zengeld_chart::state::ChartId, Vec<u64>)> = self.panel_app.panel_grid
+                        .containers()
+                        .values()
+                        .map(|w| (w.id, w.pre_tag_indicator_ids.clone()))
+                        .collect();
+                    for (cid, ids) in updates {
+                        crate::branch_meta_bridge::mirror_pre_tag_ids(
+                            &mut self.branch_meta,
+                            cid,
+                            ids,
+                        );
                     }
                     self.sync_sub_panes_from_manager();
                     eprintln!("[Undo/Redo] Removed indicator instance {}", instance_id);

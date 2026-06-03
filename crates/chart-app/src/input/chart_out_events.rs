@@ -695,6 +695,26 @@ impl ChartApp {
                                         chart_id,
                                         snap.group_id.map(zengeld_chart::tag_manager::SyncGroupId),
                                     );
+                                    // Phase 4 S2.4 dual-write: pre_tag_ids, stashed_primitives, stashed_command_history.
+                                    crate::branch_meta_bridge::mirror_pre_tag_ids(
+                                        &mut self.branch_meta,
+                                        chart_id,
+                                        snap.pre_tag_indicator_ids.clone(),
+                                    );
+                                    {
+                                        let prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
+                                            window.stashed_primitives.iter().map(|p| p.clone_box()).collect();
+                                        crate::branch_meta_bridge::stash_primitives(
+                                            &mut self.stashed_primitives,
+                                            chart_id,
+                                            prims,
+                                        );
+                                    }
+                                    crate::branch_meta_bridge::mirror_stashed_command_history(
+                                        &mut self.branch_meta,
+                                        chart_id,
+                                        snap.stashed_command_history.clone(),
+                                    );
 
                                     new_containers.insert(chart_id, window);
                                     new_leaf_to_chart.insert(leaf_id, chart_id);
@@ -849,6 +869,38 @@ impl ChartApp {
                                 &snap.exchange,
                                 &snap.account_type,
                             );
+                            // Phase 4 S2.3 dual-write: mirror restored group_id (patch path).
+                            crate::branch_meta_bridge::mirror_group_id(
+                                &mut self.branch_meta,
+                                chart_id,
+                                snap.group_id.map(zengeld_chart::tag_manager::SyncGroupId),
+                            );
+                            // Phase 4 S2.4 dual-write: pre_tag_ids + stashed_command_history.
+                            // stashed_primitives: collect from the live container (panel_grid mut
+                            // borrow dropped above so we take a fresh shared borrow here).
+                            crate::branch_meta_bridge::mirror_pre_tag_ids(
+                                &mut self.branch_meta,
+                                chart_id,
+                                snap.pre_tag_indicator_ids.clone(),
+                            );
+                            crate::branch_meta_bridge::mirror_stashed_command_history(
+                                &mut self.branch_meta,
+                                chart_id,
+                                snap.stashed_command_history.clone(),
+                            );
+                            {
+                                let prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
+                                    self.panel_app.panel_grid
+                                        .containers()
+                                        .get(&chart_id)
+                                        .map(|w| w.stashed_primitives.iter().map(|p| p.clone_box()).collect())
+                                        .unwrap_or_default();
+                                crate::branch_meta_bridge::stash_primitives(
+                                    &mut self.stashed_primitives,
+                                    chart_id,
+                                    prims,
+                                );
+                            }
                         }
                     }
 
@@ -2045,7 +2097,7 @@ impl ChartApp {
                     };
 
                     if new_sync {
-                        // OFF в†’ ON: stash window-local primitives (those not in group.primitives).
+                        // OFF → ON: stash window-local primitives (those not in group.primitives).
                         // Collect the set of IDs that live in the group.
                         let group_prim_ids: std::collections::HashSet<u64> = self
                             .panel_app
@@ -2076,8 +2128,20 @@ impl ChartApp {
                                 stash_count
                             );
                         }
+                        // Phase 4 S2.4 dual-write: mirror updated stash (ON path).
+                        if let Some(cid) = chart_id {
+                            let prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
+                                self.panel_app.panel_grid.active_container()
+                                    .map(|w| w.stashed_primitives.iter().map(|p| p.clone_box()).collect())
+                                    .unwrap_or_default();
+                            crate::branch_meta_bridge::stash_primitives(
+                                &mut self.stashed_primitives,
+                                cid,
+                                prims,
+                            );
+                        }
                     } else {
-                        // ON в†’ OFF: restore stashed window-local primitives.
+                        // ON → OFF: restore stashed window-local primitives.
                         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                             let restored: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
                                 std::mem::take(&mut window.stashed_primitives);
@@ -2086,6 +2150,13 @@ impl ChartApp {
                             eprintln!(
                                 "[TagManager] sync_drawings OFF: restored {} stashed primitives",
                                 count
+                            );
+                        }
+                        // Phase 4 S2.4 dual-write: clear stash (OFF path).
+                        if let Some(cid) = chart_id {
+                            crate::branch_meta_bridge::take_stashed_primitives(
+                                &mut self.stashed_primitives,
+                                cid,
                             );
                         }
                     }
