@@ -15,6 +15,7 @@
 //! ```
 
 pub mod agent;
+pub mod chart_panel_state;
 pub mod chart_state;
 pub mod frame_lifecycle;
 pub mod input;
@@ -686,6 +687,18 @@ pub struct ChartApp {
     pub(crate) active_frame_layout: Option<zengeld_chart::ExtendedFrameLayout>,
     /// Per-leaf chart geometry for split mode, keyed by LeafId. Same lifecycle.
     pub(crate) frame_layouts: std::collections::HashMap<zengeld_chart::LeafId, zengeld_chart::ExtendedFrameLayout>,
+
+    /// Phase 4 — sidecar metadata for each semantic uzor Branch.
+    ///
+    /// Empty in S2.1. S2.2..S2.5 migrate instrument-level
+    /// (`symbol` / `timeframe` / `exchange` / `account_type` / `group_id` /
+    /// `signal_manager` / `trade_manager` / `indicator_source` / sync stash)
+    /// fields out of `ChartContainer` into entries of this map.
+    ///
+    /// Per S2.G6: until S3 wires real uzor Branch ids, entries are keyed
+    /// by `uzor::panels::BranchId(chart_id.0)` as a temporary stub —
+    /// callers map `ChartId.0 -> BranchId.0` directly.
+    pub branch_meta: std::collections::HashMap<uzor::panels::BranchId, zengeld_chart::state::BranchMeta>,
 }
 
 /// An action that mutates the app-level watchlist.
@@ -1046,6 +1059,7 @@ impl ChartApp {
             ).ok(),
             active_frame_layout: None,
             frame_layouts: std::collections::HashMap::new(),
+            branch_meta: std::collections::HashMap::new(),
         };
 
         if let Some(tm) = &app.trading_manager {
@@ -1335,6 +1349,7 @@ impl ChartApp {
             trading_manager: None,
             active_frame_layout: None,
             frame_layouts: std::collections::HashMap::new(),
+            branch_meta: std::collections::HashMap::new(),
         };
 
         app.sidebar_state.watchlist_manager = sidebar_content::watchlist::WatchlistManager::new(
@@ -1545,6 +1560,7 @@ impl ChartApp {
             trading_manager: None,
             active_frame_layout: None,
             frame_layouts: std::collections::HashMap::new(),
+            branch_meta: std::collections::HashMap::new(),
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_user_state below.

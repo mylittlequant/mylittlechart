@@ -11,6 +11,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use sidebar_content::free_slot::PanelId;
 use trading_manager::SharedTradingSnapshot;
+use zengeld_chart::state::ChartPanelId;
+
+use crate::chart_panel_state::ChartPanelState;
 
 use zengeld_panels::panel_trait::TradingPanel;
 use zengeld_panels::trading::order_flow::{
@@ -57,6 +60,13 @@ pub struct TradingPanelsStore {
     /// Standalone indicator-visualization panels.  See
     /// `zengeld_panels::trading::order_flow::indicator_panel`.
     pub indicator_panel: HashMap<PanelId, IndicatorPanelState>,
+
+    /// Phase 4 / S2 chart canvas state, keyed by [`ChartPanelId`].
+    ///
+    /// Empty in S2.1. Subsequent S2.X commits migrate canvas-leaf fields
+    /// (bars / viewport / scales / drawing_manager / display options / …)
+    /// out of `ChartContainer` into [`ChartPanelState`].
+    pub chart_panel: HashMap<ChartPanelId, ChartPanelState>,
 }
 
 impl TradingPanelsStore {
@@ -78,6 +88,7 @@ impl TradingPanelsStore {
             risk_calculator: HashMap::new(),
             trading_container: HashMap::new(),
             indicator_panel: HashMap::new(),
+            chart_panel: HashMap::new(),
         }
     }
 
