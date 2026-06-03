@@ -766,6 +766,7 @@ pub fn draw_overlay_indicators(
                 chart_rect.height,
                 price_scale.price_min,
                 price_scale.price_max,
+                false, // main chart — icons pin near each bar's high/low
             );
         }
     }
@@ -851,6 +852,13 @@ pub fn draw_indicator_signals(
     chart_height: f64,
     price_min: f64,
     price_max: f64,
+    // Explicit flag set by caller — true when rendering into a sub-pane (icons
+    // pin to top/bottom of the pane rect), false when on the main price chart
+    // (icons pin near each bar's high/low).  Replaces a magic-number heuristic
+    // (`price_max <= 150.0 && price_min >= -150.0`) that misclassified
+    // sub-panes with large cumulative ranges (AD, OBV) as if they were the
+    // main chart, sending arrow icons off-screen.
+    is_in_sub_pane: bool,
 ) {
     use crate::indicator_source::SignalShape;
 
@@ -869,7 +877,7 @@ pub fn draw_indicator_signals(
     let icon_size = signal_display.size;
     let offset = signal_display.offset;
 
-    let is_sub_pane = price_max <= 150.0 && price_min >= -150.0;
+    let is_sub_pane = is_in_sub_pane;
 
     for signal in signals {
         if signal.bar_index < visible_start || signal.bar_index > visible_end {
@@ -1379,6 +1387,7 @@ pub fn render_sub_pane(
             content.height,
             pane_min,
             pane_max,
+            true, // sub-pane — icons pin to top/bottom of the pane rect
         );
     }
 
