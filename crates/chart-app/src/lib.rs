@@ -652,12 +652,6 @@ pub struct ChartApp {
     /// `(slot_index, separator_index, start_mouse_pos, total_available_size)`.
     pub(crate) slot_sep_drag: Option<(usize, usize, f64, f32)>,
 
-    /// Active sub-pane separator drag (between main chart and sub-pane, or
-    /// between two sub-panes).  Mirrors slot_sep_drag pattern.
-    ///
-    /// `(instance_id, start_mouse_y, available_height)`.
-    pub(crate) sub_pane_sep_drag: Option<(u64, f64, f64)>,
-
     /// Active coordinator-routed panel drag (DOM, L2Tape, Footprint, BigTrades, LiquidityHeatmap, VolumeProfile).
     ///
     /// `(free_item, local_id, last_x, last_y)` — replaces per-panel fields.
@@ -1030,7 +1024,6 @@ impl ChartApp {
             panels_store: panels_store::TradingPanelsStore::new(),
             agent_sep_drag: None,
             slot_sep_drag: None,
-            sub_pane_sep_drag: None,
 
             active_drag_panel: None,
             slot_tradetape_drag: None,
@@ -1322,7 +1315,6 @@ impl ChartApp {
             panels_store: panels_store::TradingPanelsStore::new(),
             agent_sep_drag: None,
             slot_sep_drag: None,
-            sub_pane_sep_drag: None,
 
             active_drag_panel: None,
             slot_tradetape_drag: None,
@@ -1532,7 +1524,6 @@ impl ChartApp {
             panels_store: panels_store::TradingPanelsStore::new(),
             agent_sep_drag: None,
             slot_sep_drag: None,
-            sub_pane_sep_drag: None,
 
             active_drag_panel: None,
             slot_tradetape_drag: None,
