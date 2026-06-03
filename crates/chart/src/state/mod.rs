@@ -28,6 +28,7 @@ pub mod sub_panel;
 pub mod panel_grid;
 pub mod chart_container_leaf;
 pub mod inner_layout;
+pub mod branch;
 
 // Core chart struct
 pub use chart::*;
@@ -107,6 +108,18 @@ pub use chart_container_leaf::{
 
 // Inner 1D vertical stack layout (own math, no uzor docking).
 pub use inner_layout::InnerLayout;
+
+// Phase 4 — Branch-as-Group payload + sidecar metadata (stubs in S1).
+// ChartPanelId / generate_chart_panel_id / bump_chart_panel_id_past are
+// re-exported above via chart_container_leaf — Phase 4 reuses them.
+pub use branch::{
+    AcceptPolicy,
+    BranchKind,
+    BranchMeta,
+    InstanceId,
+    PanelLeaf,
+    PanelLeafKind,
+};
 
 // Panel grid — input-aware layout manager
 pub use panel_grid::{ChartPanelGrid, ChartInputTarget, ChartRightClickHit, ChartDragStartHit, SplitHitResult, FreehandCompleteResult};
