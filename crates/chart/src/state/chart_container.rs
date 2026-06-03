@@ -110,6 +110,12 @@ pub struct ChartContainer {
     /// Unique chart identifier (ChartId)
     pub id: ChartId,
 
+    /// Identifier of this container's canvas leaf — used to look up
+    /// `ChartPanelState` in `TradingPanelsStore.chart_panel` after the
+    /// Phase 4 S2.6 canvas-state migration. Allocated fresh on every
+    /// construction (including `clone_for_split`).
+    pub chart_panel_id: crate::state::chart_container_leaf::ChartPanelId,
+
     /// Display title (e.g., "BTCUSD 1H")
     pub title: String,
 
@@ -350,6 +356,7 @@ impl ChartContainer {
 
         let mut window = Self {
             id,
+            chart_panel_id: crate::state::chart_container_leaf::generate_chart_panel_id(),
             title: format!("{} {}", symbol, timeframe.name.clone()),
             bars: Vec::new(),
             viewport: Viewport::default(),
@@ -567,6 +574,8 @@ impl ChartContainer {
         Self {
             // New chart ID
             id: new_chart_id,
+            // Fresh canvas-leaf id for the split; the source's stays put.
+            chart_panel_id: crate::state::chart_container_leaf::generate_chart_panel_id(),
 
             // Generate new title from symbol/timeframe
             title: format!("{} {}", self.symbol, self.timeframe.name),
