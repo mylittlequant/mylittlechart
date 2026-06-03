@@ -277,20 +277,16 @@ pub fn compute_chart_internal_layout(
     toolbar_config: &ToolbarConfig,
     sub_pane_instance_ids: &[u64],
     scale_settings: &ScaleSettings,
-    sub_pane_heights: &[f64],
+    sub_proportions: &[f64],
     separator_height: f64,
-    maximized_instance_id: Option<u64>,
-    above_main_flags: &[bool],
 ) -> ChartInternalLayout {
     let panel_layout = ChartPanelLayout::compute(full_panel_rect, toolbar_config);
-    let extended = ExtendedFrameLayout::compute_from_chart_panel(
+    let extended = ExtendedFrameLayout::from_proportions(
         &panel_layout.content_rect,
         sub_pane_instance_ids,
+        sub_proportions,
         scale_settings,
-        sub_pane_heights,
         separator_height,
-        maximized_instance_id,
-        above_main_flags,
     );
     ChartInternalLayout {
         panel_layout,

@@ -2513,55 +2513,14 @@ impl ChartApp {
                 // Mirror slot_sep_drag pattern: dedicated Option field on
                 // ChartApp consumed at the TOP of on_drag_move, before any
                 // other drag-handling branches that could swallow the event.
-                let available_h = self.panel_app.panel_grid.docking().active_leaf()
+                // Snapshot the leaf content area; uzor's drag_separator
+                // handles everything else (bounds, neighbor split, min-size).
+                let (content_w, content_h) = self.panel_app.panel_grid.docking().active_leaf()
                     .and_then(|l| self.get_leaf_absolute_rect(l))
-                    .map(|r| r.height)
-                    .unwrap_or(1.0);
-
-                // Snapshot rendered heights of this pane and the neighbor
-                // above it at drag-start so per-event accumulation can't
-                // drift. Read from the frame_layouts cache (post-clamp pixel
-                // heights) -- if missing, fall back to ratio*available_h.
-                let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
-                let rendered: std::collections::HashMap<u64, f64> = active_leaf
-                    .and_then(|leaf| self.frame_layouts.get(&leaf))
-                    .map(|ext| ext.sub_panes.iter()
-                        .map(|sp| (sp.instance_id, sp.content.height))
-                        .collect())
-                    .unwrap_or_default();
-                let (start_pane_h, start_neighbor_h, neighbor_id) = {
-                    let window = self.panel_app.panel_grid.active_container();
-                    let mut pane_h = 0.0_f64;
-                    let mut neigh_h = 0.0_f64;
-                    let mut neigh_id: Option<u64> = None;
-                    if let Some(w) = window {
-                        if let Some(pane_idx) = w.sub_panes.iter().position(|p| p.instance_id == instance_id) {
-                            let p = &w.sub_panes[pane_idx];
-                            pane_h = rendered.get(&instance_id).copied()
-                                .filter(|&h| h > 0.0)
-                                .unwrap_or_else(|| (p.height_ratio as f64 * available_h).max(80.0));
-                            if !p.above_main {
-                                // For below-main panes the neighbor is the
-                                // previous below-main pane (or main chart).
-                                if let Some(prev_idx) = w.sub_panes[..pane_idx]
-                                    .iter()
-                                    .rposition(|q| !q.above_main)
-                                {
-                                    let q = &w.sub_panes[prev_idx];
-                                    neigh_h = rendered.get(&q.instance_id).copied()
-                                        .filter(|&h| h > 0.0)
-                                        .unwrap_or_else(|| (q.height_ratio as f64 * available_h).max(80.0));
-                                    neigh_id = Some(q.instance_id);
-                                }
-                            }
-                        }
-                    }
-                    (pane_h, neigh_h, neigh_id)
-                };
-
+                    .map(|r| (r.width, r.height))
+                    .unwrap_or((1.0, 1.0));
                 self.sub_pane_sep_drag = Some((
-                    instance_id, y, available_h,
-                    start_pane_h, start_neighbor_h, neighbor_id,
+                    instance_id, y, content_w, content_h, 0.0, None,
                 ));
                 self.ui_drag_active = true;
                 return false;
@@ -2613,70 +2572,21 @@ impl ChartApp {
         // event, but `dy` here is already the per-event delta, not cumulative
         // from start).  Apply it to the height_ratio directly each frame —
         // visually 1:1 with cursor.
-        if let Some((instance_id, start_y, available_h, start_pane_h, start_neighbor_h, neighbor_id)) = self.sub_pane_sep_drag {
-            let _ = dy;
-            // Anchor: cursor-Y delta from drag start, not per-event dy.
-            // Per-event dy is fired by winit on every mouse step, but the
-            // legacy ChartPanelGrid::drag_pane_separator reads from
-            // frame_layouts cache which lags one frame -- so accumulating
-            // per-event dy and re-reading the cache amplifies the delta
-            // ~10x. Anchor to the snapshot taken at drag-start and feed
-            // an absolute new height into the legacy API by computing the
-            // equivalent single-shot dy needed to land the pane at that
-            // height starting from its rendered baseline.
-            let cumulative_dy = y - start_y;
-
-            // For below-main panes with a neighbor (= preceding below-main
-            // pane), uzor-style behaviour: shift the separator and split
-            // the total between the two siblings. For above-main or
-            // standalone below-main, just resize this pane against the
-            // main-chart slot.
-            //
-            // We bypass the cache-based drag_pane_separator() entirely and
-            // write height_ratio directly, anchored to the start snapshot.
-            let min_h = 80.0_f64;
-            let window = match self.panel_app.panel_grid.active_container_mut() {
-                Some(w) => w,
-                None => return,
-            };
-            let pane_idx = match window.sub_panes.iter().position(|p| p.instance_id == instance_id) {
-                Some(i) => i,
-                None => return,
-            };
-            let is_above = window.sub_panes[pane_idx].above_main;
-
-            if is_above {
-                // Above-main: drag down grows the pane.
-                let other_h: f64 = window.sub_panes.iter()
-                    .enumerate()
-                    .filter(|(i, _)| *i != pane_idx)
-                    .map(|(_, p)| (p.height_ratio as f64 * available_h).max(min_h))
-                    .sum();
-                let max_h = (available_h - min_h - other_h).max(min_h);
-                let new_h = (start_pane_h + cumulative_dy).clamp(min_h, max_h);
-                window.sub_panes[pane_idx].height_ratio = (new_h / available_h) as f32;
-            } else if let Some(nid) = neighbor_id {
-                // Below-main with neighbor: split total between this pane
-                // and the neighbor above it.
-                let total = start_pane_h + start_neighbor_h;
-                let new_above = (start_neighbor_h + cumulative_dy).clamp(min_h, total - min_h);
-                let new_below = total - new_above;
-                let neighbor_idx = window.sub_panes.iter().position(|p| p.instance_id == nid);
-                if let Some(ni) = neighbor_idx {
-                    window.sub_panes[ni].height_ratio = (new_above / available_h) as f32;
-                }
-                window.sub_panes[pane_idx].height_ratio = (new_below / available_h) as f32;
-            } else {
-                // First below-main pane: drag against main chart.
-                let other_h: f64 = window.sub_panes.iter()
-                    .enumerate()
-                    .filter(|(i, _)| *i != pane_idx)
-                    .map(|(_, p)| (p.height_ratio as f64 * available_h).max(min_h))
-                    .sum();
-                let max_h = (available_h - min_h - other_h).max(min_h);
-                // Drag up (negative cumulative_dy) grows the pane.
-                let new_h = (start_pane_h - cumulative_dy).clamp(min_h, max_h);
-                window.sub_panes[pane_idx].height_ratio = (new_h / available_h) as f32;
+        if let Some((instance_id, _start_y, content_w, content_h, _, _)) = self.sub_pane_sep_drag {
+            let _ = y;
+            // Delegate to the same uzor sep-drag API the sidebar / agent /
+            // outer-grid separators use. ChartContainer mirrors the new
+            // proportions back into SubPane.height_ratio so the renderer
+            // (which still reads from sub_panes Vec via
+            // compute_from_chart_panel) sees the result on the next frame.
+            // Per-event `dy` is the per-frame delta uzor expects.
+            if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                let _ = window.drag_sub_pane_separator_via_uzor(
+                    instance_id,
+                    dy as f32,
+                    content_w as f32,
+                    content_h as f32,
+                );
             }
             return;
         }
@@ -8161,62 +8071,38 @@ impl ChartApp {
         };
 
         // Collect sub-pane instance IDs from the window's SubPane list,
-        // filtering by indicator_manager visibility (the single source of truth).
+        // filtering by indicator_manager visibility (single source of truth).
         let sub_pane_ids: Vec<u64> = self.panel_app.panel_grid
             .active_container()
             .map(|win| {
-                if let Some(maximized) = win.sub_panes.iter().find(|p| p.maximized && visible_set.contains(&p.instance_id)) {
-                    vec![maximized.instance_id]
-                } else {
-                    win.sub_panes.iter()
-                        .filter(|p| visible_set.contains(&p.instance_id))
-                        .map(|p| p.instance_id)
-                        .collect()
-                }
+                win.sub_panes.iter()
+                    .filter(|p| visible_set.contains(&p.instance_id))
+                    .map(|p| p.instance_id)
+                    .collect()
             })
             .unwrap_or_default();
 
-        let maximized_instance_id: Option<u64> = self.panel_app.panel_grid
-            .active_container()
-            .and_then(|win| win.sub_panes.iter().find(|p| p.maximized && sub_pane_ids.contains(&p.instance_id)))
-            .map(|p| p.instance_id);
-
-        // Build per-pane heights from the active window's SubPane list so that
-        // hit-testing coordinates exactly match what render_full_chart_panel produced.
-        // When maximized, compute_from_chart_panel ignores these and uses full available height.
-        let sub_pane_heights: Vec<f64> = self.panel_app.panel_grid
+        // Geometry from the container's inner uzor docking tree's
+        // proportions [main, sub_1, sub_2, ...].
+        let sub_proportions: Vec<f64> = self.panel_app.panel_grid
             .active_container()
             .map(|win| {
-                sub_pane_ids.iter().map(|&id| {
-                    let ratio = win.sub_panes.iter()
-                        .find(|p| p.instance_id == id)
-                        .map(|p| p.height_ratio)
-                        .unwrap_or(0.0);
-                    if ratio <= 0.0 { 100.0 } else { (ratio as f64 * content_rect.height).max(30.0) }
-                }).collect()
+                win.inner_docking
+                    .tree()
+                    .root()
+                    .proportions
+                    .iter()
+                    .skip(1)
+                    .copied()
+                    .collect()
             })
-            .unwrap_or_else(|| {
-                zengeld_chart::default_sub_pane_heights(sub_pane_ids.len(), 100.0)
-            });
-        let above_main_flags: Vec<bool> = self.panel_app.panel_grid
-            .active_container()
-            .map(|win| {
-                sub_pane_ids.iter().map(|&id| {
-                    win.sub_panes.iter()
-                        .find(|p| p.instance_id == id)
-                        .map(|p| p.above_main)
-                        .unwrap_or(false)
-                }).collect()
-            })
-            .unwrap_or_else(|| vec![false; sub_pane_ids.len()]);
-        ExtendedFrameLayout::compute_from_chart_panel(
+            .unwrap_or_default();
+        ExtendedFrameLayout::from_proportions(
             &content_rect,
             &sub_pane_ids,
+            &sub_proportions,
             &scale_settings,
-            &sub_pane_heights,
-            1.0, // separator_height
-            maximized_instance_id,
-            &above_main_flags,
+            1.0,
         )
     }
 
@@ -8254,42 +8140,26 @@ impl ChartApp {
         };
 
         // Collect sub-pane IDs filtered by indicator_manager visibility.
-        let sub_pane_ids: Vec<u64> = if let Some(maximized) = window.sub_panes.iter().find(|p| p.maximized && visible_set.contains(&p.instance_id)) {
-            vec![maximized.instance_id]
-        } else {
-            window.sub_panes.iter()
-                .filter(|p| visible_set.contains(&p.instance_id))
-                .map(|p| p.instance_id)
-                .collect()
-        };
+        let sub_pane_ids: Vec<u64> = window.sub_panes.iter()
+            .filter(|p| visible_set.contains(&p.instance_id))
+            .map(|p| p.instance_id)
+            .collect();
 
-        let maximized_instance_id: Option<u64> = window.sub_panes.iter()
-            .find(|p| p.maximized && sub_pane_ids.contains(&p.instance_id))
-            .map(|p| p.instance_id);
-
-        // Build per-pane heights matching sub_pane_ids order (filtered by hidden/maximized).
-        // When maximized, compute_from_chart_panel ignores these and uses full available height.
-        let sub_pane_heights: Vec<f64> = sub_pane_ids.iter().map(|&id| {
-            let ratio = window.sub_panes.iter()
-                .find(|p| p.instance_id == id)
-                .map(|p| p.height_ratio)
-                .unwrap_or(0.0);
-            if ratio <= 0.0 { 100.0 } else { (ratio as f64 * leaf_rect.height).max(30.0) }
-        }).collect();
-        let above_main_flags: Vec<bool> = sub_pane_ids.iter().map(|&id| {
-            window.sub_panes.iter()
-                .find(|p| p.instance_id == id)
-                .map(|p| p.above_main)
-                .unwrap_or(false)
-        }).collect();
-        Some(ExtendedFrameLayout::compute_from_chart_panel(
+        let sub_proportions: Vec<f64> = window
+            .inner_docking
+            .tree()
+            .root()
+            .proportions
+            .iter()
+            .skip(1)
+            .copied()
+            .collect();
+        Some(ExtendedFrameLayout::from_proportions(
             leaf_rect,
             &sub_pane_ids,
+            &sub_proportions,
             scale_settings,
-            &sub_pane_heights,
-            1.0, // separator_height
-            maximized_instance_id,
-            &above_main_flags,
+            1.0,
         ))
     }
 

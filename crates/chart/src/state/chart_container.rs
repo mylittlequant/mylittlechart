@@ -589,13 +589,15 @@ impl ChartContainer {
         // `ensure_indicator_leaf` then.
     }
 
-    /// Push the canonical `sub_panes` Vec heights into the inner docking
-    /// tree's root proportions. The main chart's slot gets the remainder.
+    /// Seed the inner docking tree's root proportions from the
+    /// canonical `sub_panes` Vec's `height_ratio` values. Used on preset
+    /// restore -- the legacy preset format stores `sub_pane_height_ratios`
+    /// per indicator instance, and the restore path writes those into
+    /// `SubPane.height_ratio`. This helper turns that into uzor
+    /// proportions so the renderer reads them correctly.
     ///
-    /// Phase 2 of the chart-container cut: after Phase 3 retires the
-    /// `SubPane` Vec, the inner docking tree is the only height source --
-    /// this helper bridges the gap during the transition.
-    pub fn push_sub_pane_ratios_to_inner_docking(&mut self) {
+    /// Idempotent. Has no effect when sub_panes is empty.
+    pub fn seed_inner_proportions_from_sub_pane_ratios(&mut self) {
         // We need a stable ordering: the inner docking tree's root children
         // hold [main_chart, indicator_1, indicator_2, ...] in the same order
         // they were added via `ensure_indicator_leaf`. The sub_panes Vec is
@@ -652,10 +654,26 @@ impl ChartContainer {
         content_width: f32,
         content_height: f32,
     ) -> bool {
-        // Locate the sub-pane index in the canonical Vec.
-        let pane_idx = match self.sub_panes.iter().position(|p| p.instance_id == instance_id) {
-            Some(i) => i,
+        // Find the inner-docking leaf hosting this indicator. Its position
+        // in the root branch's children Vec gives us the separator index:
+        // separator N sits between root.children[N] and root.children[N+1],
+        // so the separator above an indicator at position K is at index K-1.
+        let target_leaf = match self.indicator_leaf_id(instance_id) {
+            Some(l) => l,
             None => return false,
+        };
+        let child_idx = match self
+            .inner_docking
+            .tree()
+            .root()
+            .children
+            .iter()
+            .position(|c| match c {
+                uzor::panels::PanelNode::Leaf(l) => l.id == target_leaf,
+                _ => false,
+            }) {
+            Some(i) if i >= 1 => i,
+            _ => return false,
         };
 
         // Recompute layout so separator metadata is current.
@@ -667,16 +685,6 @@ impl ChartContainer {
         };
         self.inner_docking.layout(area);
 
-        // The inner root branch holds [main_chart, sub_1, sub_2, ...] in
-        // SplitBottom order. Horizontal separators between siblings of the
-        // root correspond to gaps between these children, ordered top->bottom.
-        // The separator above sub-pane `pane_idx` is at uzor separator
-        // index `pane_idx` (sep 0 = between main and sub_1, sep 1 = between
-        // sub_1 and sub_2, etc.).
-        //
-        // Filter the separator list to horizontal-only (vertical separators
-        // would mean the inner tree got nested branches from something not
-        // ChartContainer-owned -- defensive guard).
         use uzor::panels::SeparatorOrientation;
         let h_seps: Vec<usize> = self
             .inner_docking
@@ -692,36 +700,14 @@ impl ChartContainer {
             })
             .collect();
 
-        let sep_idx = match h_seps.get(pane_idx) {
+        // h_seps[K-1] is the separator above the K-th root child (K=child_idx).
+        let sep_idx = match h_seps.get(child_idx - 1) {
             Some(i) => *i,
             None => return false,
         };
 
-        let ok = self
-            .inner_docking
-            .drag_separator(sep_idx, delta_y, content_width, content_height);
-        if !ok {
-            return false;
-        }
-
-        // Mirror the new proportions back into the SubPane Vec so the
-        // legacy render path picks them up on the next frame.
-        let proportions: Vec<f64> = self
-            .inner_docking
-            .tree()
-            .root()
-            .proportions
-            .iter()
-            .copied()
-            .collect();
-        if proportions.len() == self.sub_panes.len() + 1 {
-            for (i, p) in self.sub_panes.iter_mut().enumerate() {
-                if let Some(&prop) = proportions.get(i + 1) {
-                    p.height_ratio = prop as f32;
-                }
-            }
-        }
-        true
+        self.inner_docking
+            .drag_separator(sep_idx, delta_y, content_width, content_height)
     }
 
     /// Find the most recently added leaf in the inner docking tree.

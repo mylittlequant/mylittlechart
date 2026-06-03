@@ -2932,6 +2932,12 @@ pub struct ChartPanelRenderData<'a> {
     /// Whether this leaf is rendered inside a multi-leaf split layout.
     /// When true, top/bottom frame borders are suppressed (the split separator handles them).
     pub is_split: bool,
+    /// Container inner-docking root proportions parallel to the sub-pane
+    /// instance ids list. First entry is the main chart's share; the rest
+    /// are sub-pane shares in tree order. Empty slice means "no proportions
+    /// available yet -- fall back to uniform shares" (e.g. first render
+    /// before sync_inner_docking_from_sub_panes ran).
+    pub inner_proportions: &'a [f64],
 }
 
 /// Render a complete chart panel — background, grid, series, scales, indicators,
@@ -2993,42 +2999,20 @@ pub fn render_full_chart_panel(
     let panel_layout = crate::panel_app::ChartPanelLayout::compute(window_rect, data.toolbar_config);
     let content_rect = &panel_layout.content_rect;
 
-    let maximized_instance_id: Option<u64> = data.sub_panes
-        .and_then(|panes| panes.iter().find(|p| p.maximized && visible_ids.contains(&p.instance_id)))
-        .map(|p| p.instance_id);
-
-    // Build per-pane heights matching sub_pane_ids order (filtered by hidden/maximized).
-    // When maximized, compute_from_chart_panel ignores these and uses full available height.
-    let sub_pane_heights: Vec<f64> = if let Some(panes) = data.sub_panes {
-        sub_pane_ids.iter().map(|&id| {
-            let ratio = panes.iter()
-                .find(|p| p.instance_id == id)
-                .map(|p| p.height_ratio)
-                .unwrap_or(0.0);
-            if ratio <= 0.0 { 100.0 } else { (ratio as f64 * content_rect.height).max(30.0) }
-        }).collect()
+    // Sub-pane geometry comes from the container's inner uzor docking
+    // tree's root proportions. `inner_proportions` is `[main_share,
+    // sub_1_share, sub_2_share, ...]`. Empty -> uniform fallback.
+    let sub_props: Vec<f64> = if data.inner_proportions.len() > 1 {
+        data.inner_proportions.iter().skip(1).copied().collect()
     } else {
-        crate::layout::default_sub_pane_heights(sub_pane_ids.len(), 100.0)
+        Vec::new()
     };
-    // Build above_main flags parallel to sub_pane_ids.
-    let above_main_flags: Vec<bool> = if let Some(panes) = data.sub_panes {
-        sub_pane_ids.iter().map(|&id| {
-            panes.iter()
-                .find(|p| p.instance_id == id)
-                .map(|p| p.above_main)
-                .unwrap_or(false)
-        }).collect()
-    } else {
-        vec![false; sub_pane_ids.len()]
-    };
-    let extended_layout = crate::layout::ExtendedFrameLayout::compute_from_chart_panel(
+    let extended_layout = crate::layout::ExtendedFrameLayout::from_proportions(
         content_rect,
         &sub_pane_ids,
+        &sub_props,
         data.scale_settings,
-        &sub_pane_heights,
-        1.0, // separator_height
-        maximized_instance_id,
-        &above_main_flags,
+        1.0,
     );
     let main_chart = &extended_layout.main_chart;
 
@@ -3439,6 +3423,7 @@ pub fn render_chart_splits(
             // render_full_chart_panel computes layout from the full rect.
             toolbar_config: &window.toolbar_config,
             is_split: true,
+            inner_proportions: &window.inner_docking.tree().root().proportions,
         };
 
         // sub_pane_ranges writeback is not performed here because render_chart_splits

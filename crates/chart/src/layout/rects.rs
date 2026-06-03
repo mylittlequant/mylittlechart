@@ -434,33 +434,86 @@ pub struct ExtendedFrameLayout {
 }
 
 impl ExtendedFrameLayout {
-    /// Compute extended layout directly from a chart panel rect
+    /// Compute extended layout from a chart panel rect and a container's
+    /// inner uzor docking tree.
     ///
-    /// This is a simpler alternative to `compute()` that works when you already
-    /// have the chart panel rect (e.g., inside `render_multi_chart_window`).
+    /// The inner tree's root branch holds children in vertical SplitBottom
+    /// order: `[MainChart, IndicatorPanel_1, IndicatorPanel_2, ...]`. The
+    /// branch's `proportions` Vec is the single source of truth for how
+    /// vertical space is split between the chart canvas and its sub-panes.
+    ///
+    /// This replaces the legacy `compute_from_chart_panel(... sub_pane_heights,
+    /// above_main_flags, maximized_instance_id ...)`. Above-main panes,
+    /// per-pane height_ratio, and the maximize overlay are no longer
+    /// concepts in the chart-container model -- they roll into uzor leaves
+    /// (`SplitTop` for above-main when reintroduced) and container-level
+    /// flags (Phase 3 of the chart-container cut).
     ///
     /// # Arguments
-    /// * `chart_panel` - The available chart panel rect (already excludes toolbars/sidebars)
-    /// * `sub_pane_instance_ids` - Instance IDs of indicators that need sub-panes
-    /// * `scale_settings` - Scale settings for positioning and dimensions
-    /// * `sub_pane_heights` - Per-pane heights in pixels (one per sub-pane, must match
-    ///   `sub_pane_instance_ids` length). Use [`default_sub_pane_heights`] to build a
-    ///   uniform slice when per-pane sizes are not available.
-    /// * `separator_height` - Height of separator between panes (typically 1.0)
-    /// * `maximized_instance_id` - When `Some(id)`, that sub-pane is drawn as a
-    ///   full-height overlay.  Other panes get zero height.
-    /// * `above_main_flags` - Parallel to `sub_pane_instance_ids`: when `true`,
-    ///   the pane is placed ABOVE the main chart instead of below.  An empty
-    ///   slice (or a slice shorter than `sub_pane_instance_ids`) is treated as
-    ///   all-false, preserving backward compatibility.
-    pub fn compute_from_chart_panel(
+    /// * `chart_panel` -- the available chart panel rect (already excludes
+    ///   toolbars/sidebars).
+    /// * `inner_docking` -- the container's inner uzor docking tree.
+    /// * `scale_settings` -- scale positioning and dimensions.
+    /// * `separator_height` -- pixel height of the horizontal separator
+    ///   between stacked panes (typically 1).
+    pub fn from_inner_docking<P: uzor::panels::DockPanel>(
+        chart_panel: &LayoutRect,
+        inner_docking: &uzor::layout::DockState<P>,
+        scale_settings: &ScaleSettings,
+        separator_height: f64,
+    ) -> Self {
+        // Extract sub-pane instance ids in tree order (skipping the main
+        // chart leaf at index 0).
+        let root = inner_docking.tree().root();
+        let sub_pane_instance_ids: Vec<u64> = root
+            .children
+            .iter()
+            .skip(1)
+            .filter_map(|c| match c {
+                uzor::panels::PanelNode::Leaf(l) => l
+                    .panels
+                    .first()
+                    .and_then(|p| {
+                        // We don't know the concrete payload type here; use
+                        // type_id as a heuristic. The chart-container leaf
+                        // uses "container_indicator_panel" for sub-panes and
+                        // exposes nothing else publicly, so any leaf past
+                        // index 0 is an indicator. Use leaf id as fallback
+                        // identifier when payload doesn't expose instance.
+                        let _ = p;
+                        Some(l.id.0)
+                    }),
+                _ => None,
+            })
+            .collect();
+
+        // Proportions parallel to children (main first, then sub-panes).
+        let proportions: &[f64] = &root.proportions;
+        let sub_proportions: Vec<f64> = if proportions.len() >= 1 {
+            proportions.iter().skip(1).copied().collect()
+        } else {
+            Vec::new()
+        };
+
+        Self::from_proportions(
+            chart_panel,
+            &sub_pane_instance_ids,
+            &sub_proportions,
+            scale_settings,
+            separator_height,
+        )
+    }
+
+    /// Same as `from_inner_docking` but takes pre-extracted instance ids and
+    /// proportions directly. Used when the caller already has the
+    /// `ChartContainer` handle and can pull instance ids out of the leaf
+    /// payload typed as `ChartContainerLeaf`.
+    pub fn from_proportions(
         chart_panel: &LayoutRect,
         sub_pane_instance_ids: &[u64],
+        sub_proportions: &[f64],
         scale_settings: &ScaleSettings,
-        sub_pane_heights: &[f64],
         separator_height: f64,
-        maximized_instance_id: Option<u64>,
-        above_main_flags: &[bool],
     ) -> Self {
         // Clamp scale dimensions to the chart_panel bounds so nothing can
         // overflow into neighbouring leaves when the leaf is squeezed below
@@ -488,80 +541,40 @@ impl ExtendedFrameLayout {
             };
         }
 
-        // Build per-pane heights, filling in the default (100px) for missing entries.
-        let default_h = 100.0_f64;
-        let pane_heights: Vec<f64> = (0..sub_pane_count)
-            .map(|i| {
-                sub_pane_heights
-                    .get(i)
-                    .copied()
-                    .filter(|&h| h > 0.0)
-                    .unwrap_or(default_h)
-            })
-            .collect();
-
-        // Resolve above_main per pane (missing entries default to false).
-        let above_flags: Vec<bool> = (0..sub_pane_count)
-            .map(|i| above_main_flags.get(i).copied().unwrap_or(false))
-            .collect();
-
-        // Count panes in each group.
-        let above_count = above_flags.iter().filter(|&&f| f).count();
-        let below_count = sub_pane_count - above_count;
-
-        // Total heights consumed by above and below groups (separators + content).
-        let above_raw_h: f64 = above_flags.iter().zip(pane_heights.iter())
-            .filter(|(&f, _)| f)
-            .map(|(_, &h)| h)
-            .sum::<f64>()
-            + separator_height * above_count as f64;
-        let below_raw_h: f64 = above_flags.iter().zip(pane_heights.iter())
-            .filter(|(&f, _)| !f)
-            .map(|(_, &h)| h)
-            .sum::<f64>()
-            + separator_height * below_count as f64;
-
-        // Main chart height is reduced by sub-panes total (also exclude time scale)
         let available_height = chart_panel.height - time_scale_height;
 
-        let (main_chart_height, actual_available_for_subs, scaled_heights) = if let Some(max_id) = maximized_instance_id {
-            // Maximized: main chart keeps its normal height (rendered underneath).
-            // The maximized pane is drawn as an overlay covering the full
-            // available area.  Other panes get zero height (invisible).
-            // actual_available_for_subs stays normal so time_scale_y doesn't shift.
-            let min_main_chart = 80.0_f64;
-            let total_sub_panes_height = above_raw_h + below_raw_h;
-            let mch = (available_height - total_sub_panes_height).max(min_main_chart);
-            let afs = (available_height - mch).max(0.0);
-            // Maximized pane = full overlay (available_height), rest = 0.
-            let sh: Vec<f64> = sub_pane_instance_ids.iter().map(|&id| {
-                if id == max_id { available_height } else { 0.0 }
-            }).collect();
-            (mch, afs, sh)
+        // Sub-panes carve their share of `available_height` from uzor's
+        // root proportions. The first proportion belongs to the main chart;
+        // the remaining N parallel `sub_pane_instance_ids`. If the
+        // proportions slice is short/missing, fall back to uniform shares.
+        let min_main_chart = 80.0_f64;
+        let min_sub_pane = 30.0_f64;
+        let total_sub_props: f64 = sub_proportions.iter().take(sub_pane_count).copied().sum();
+        let main_share = if total_sub_props > 0.0 {
+            (1.0 - total_sub_props.min(0.95)).max(0.05)
         } else {
-            let total_sub_panes_height = above_raw_h + below_raw_h;
-            let min_main_chart = 80.0_f64;
-            let mch = (available_height - total_sub_panes_height).max(min_main_chart);
-
-            // Actual space available for sub-pane content (after clamping main chart).
-            let afs = (available_height - mch).max(0.0);
-            // Scale all pane heights proportionally if they exceed available space.
-            let raw_content_total: f64 = pane_heights.iter().sum::<f64>();
-            let content_budget =
-                (afs - separator_height * sub_pane_count as f64).max(0.0);
-            let scale_factor = if raw_content_total > 0.0 {
-                (content_budget / raw_content_total).min(1.0)
-            } else {
-                1.0
-            };
-            // Scale sub-pane heights, minimum 30px (enough for overlay button bar)
-            let min_sub_pane = 30.0_f64;
-            let sh: Vec<f64> = pane_heights
-                .iter()
-                .map(|&h| (h * scale_factor).max(min_sub_pane))
-                .collect();
-            (mch, afs, sh)
+            0.6
         };
+        let total_share = main_share + total_sub_props;
+        // Account for separator pixels before distributing.
+        let separator_budget = separator_height * sub_pane_count as f64;
+        let content_budget = (available_height - separator_budget).max(0.0);
+        let main_chart_height = ((main_share / total_share) * content_budget).max(min_main_chart);
+        let remaining = (content_budget - main_chart_height).max(0.0);
+
+        let scaled_heights: Vec<f64> = if total_sub_props > 0.0 {
+            sub_proportions
+                .iter()
+                .take(sub_pane_count)
+                .map(|&p| ((p / total_sub_props) * remaining).max(min_sub_pane))
+                .collect()
+        } else {
+            // No proportions yet -- uniform share.
+            let uniform = (remaining / sub_pane_count as f64).max(min_sub_pane);
+            vec![uniform; sub_pane_count]
+        };
+        let actual_available_for_subs: f64 =
+            scaled_heights.iter().sum::<f64>() + separator_budget;
 
         // Calculate chart and scale positions based on scale settings
         let (chart_x, price_scale_x) = match scale_settings.price_scale_position {
@@ -575,24 +588,18 @@ impl ExtendedFrameLayout {
             }
         };
 
-        // Compute total height consumed by above panes at their scaled sizes.
-        let above_total_scaled: f64 = above_flags.iter().zip(scaled_heights.iter())
-            .filter(|(&f, _)| f)
-            .map(|(_, &h)| h + separator_height)
-            .sum();
-
         let (chart_y, time_scale_y) = match scale_settings.time_scale_position {
             TimeScalePosition::Top => {
-                // Time scale on top: [time_scale][above_panes][chart][below_panes]
+                // Time scale on top: [time_scale][chart][below_panes]
                 (
-                    chart_panel.y + time_scale_height + above_total_scaled,
+                    chart_panel.y + time_scale_height,
                     chart_panel.y,
                 )
             }
             TimeScalePosition::Bottom | TimeScalePosition::Hidden => {
-                // Time scale on bottom or hidden: [above_panes][chart][below_panes][time_scale?]
+                // Time scale on bottom or hidden: [chart][below_panes][time_scale?]
                 (
-                    chart_panel.y + above_total_scaled,
+                    chart_panel.y,
                     chart_panel.y + main_chart_height + actual_available_for_subs,
                 )
             }
@@ -629,95 +636,40 @@ impl ExtendedFrameLayout {
         // Total chart height for positioning
         let total_chart_height = main_chart_height + actual_available_for_subs;
 
-        // Compute sub-pane layouts.
-        // Above panes are placed from chart_panel.y downward (before the main chart).
-        // Below panes are placed from chart_y + main_chart_height downward.
+        // Compute sub-pane layouts. All sub-panes go below the main chart
+        // in inner-docking tree order. Above-main is no longer supported
+        // (Phase 2 of the chart-container cut -- reintroduce later via
+        // uzor SplitTop if the feature is needed).
         let mut sub_panes = Vec::with_capacity(sub_pane_count);
-
-        // Separate y-cursors for above and below groups.
-        let above_start_y = match scale_settings.time_scale_position {
-            TimeScalePosition::Top => chart_panel.y + time_scale_height,
-            TimeScalePosition::Bottom | TimeScalePosition::Hidden => chart_panel.y,
-        };
-        let mut above_y = above_start_y;
         let mut below_y = chart_y + main_chart_height;
 
         for (i, &instance_id) in sub_pane_instance_ids.iter().enumerate() {
             let pane_h = scaled_heights[i];
-            let is_above = above_flags[i];
 
-            if maximized_instance_id == Some(instance_id) {
-                // This is the maximized pane: overlay from the top of the content area,
-                // spanning the full available height regardless of above/below placement.
-                let overlay_y = match scale_settings.time_scale_position {
-                    TimeScalePosition::Top => chart_panel.y + time_scale_height,
-                    TimeScalePosition::Bottom | TimeScalePosition::Hidden => chart_panel.y,
-                };
-                let separator = LayoutRect::new(chart_panel.x, overlay_y, chart_panel.width, 0.0);
-                let content = LayoutRect::new(chart_x, overlay_y, chart_width, available_height);
-                let pane_price_scale = LayoutRect::new(price_scale_x, overlay_y, price_scale_width, available_height);
-                sub_panes.push(SubPaneLayout {
-                    instance_id,
-                    separator,
-                    content,
-                    price_scale: pane_price_scale,
-                });
-            } else if maximized_instance_id.is_some() {
-                // Non-maximized panes when one is maximized: zero-height, invisible.
-                let ref_y = if is_above { above_y } else { below_y };
-                let separator = LayoutRect::new(chart_panel.x, ref_y, chart_panel.width, 0.0);
-                let content = LayoutRect::new(chart_x, ref_y, chart_width, 0.0);
-                let pane_price_scale = LayoutRect::new(price_scale_x, ref_y, price_scale_width, 0.0);
-                sub_panes.push(SubPaneLayout {
-                    instance_id,
-                    separator,
-                    content,
-                    price_scale: pane_price_scale,
-                });
-            } else if is_above {
-                // Above-main pane: placed before the main chart.
-                // Content comes first, separator at the bottom (between pane and main chart).
-                let content = LayoutRect::new(chart_x, above_y, chart_width, pane_h);
-                let pane_price_scale = LayoutRect::new(price_scale_x, above_y, price_scale_width, pane_h);
+            let separator = LayoutRect::new(
+                chart_panel.x,
+                below_y,
+                chart_panel.width,
+                separator_height,
+            );
+            below_y += separator_height;
 
-                above_y += pane_h;
+            let content = LayoutRect::new(chart_x, below_y, chart_width, pane_h);
+            let pane_price_scale = LayoutRect::new(
+                price_scale_x,
+                below_y,
+                price_scale_width,
+                pane_h,
+            );
 
-                let separator = LayoutRect::new(
-                    chart_panel.x,
-                    above_y,
-                    chart_panel.width,
-                    separator_height,
-                );
-                above_y += separator_height;
+            sub_panes.push(SubPaneLayout {
+                instance_id,
+                separator,
+                content,
+                price_scale: pane_price_scale,
+            });
 
-                sub_panes.push(SubPaneLayout {
-                    instance_id,
-                    separator,
-                    content,
-                    price_scale: pane_price_scale,
-                });
-            } else {
-                // Below-main pane: placed after the main chart.
-                let separator = LayoutRect::new(
-                    chart_panel.x,
-                    below_y,
-                    chart_panel.width,
-                    separator_height,
-                );
-                below_y += separator_height;
-
-                let content = LayoutRect::new(chart_x, below_y, chart_width, pane_h);
-                let pane_price_scale = LayoutRect::new(price_scale_x, below_y, price_scale_width, pane_h);
-
-                sub_panes.push(SubPaneLayout {
-                    instance_id,
-                    separator,
-                    content,
-                    price_scale: pane_price_scale,
-                });
-
-                below_y += pane_h;
-            }
+            below_y += pane_h;
         }
 
         Self {
@@ -727,84 +679,6 @@ impl ExtendedFrameLayout {
             total_chart_height,
         }
     }
-}
-
-/// Build a uniform `sub_pane_heights` slice where every pane gets `height` pixels.
-///
-/// Use this when per-pane sizes are unavailable (e.g. when only instance IDs are
-/// known but the corresponding [`SubPane`] list is not accessible).
-///
-/// [`SubPane`]: crate::SubPane
-pub fn default_sub_pane_heights(count: usize, height: f64) -> Vec<f64> {
-    vec![height; count]
-}
-
-/// Build a `sub_pane_heights` slice from a live [`SubPane`] list.
-///
-/// For each sub-pane, uses `height_ratio` to derive a pixel height from the
-/// total available vertical space (excluding separators).  Falls back to
-/// `default_height` (typically 100 px) when `height_ratio == 0.0`.
-///
-/// The caller should pass `available_height` as the full chart-panel height
-/// minus the time-scale height and any already-allocated space.  A simple
-/// conservative value — such as the current window height — is fine because
-/// `compute_from_chart_panel` will proportionally re-scale the heights anyway
-/// if they overflow.
-///
-/// [`SubPane`]: crate::SubPane
-pub fn sub_pane_heights_from_panes(
-    sub_panes: &[crate::state::SubPane],
-    available_height: f64,
-    default_height: f64,
-) -> Vec<f64> {
-    sub_panes
-        .iter()
-        .map(|p| {
-            if p.height_ratio > 0.0 {
-                (p.height_ratio as f64 * available_height).max(30.0)
-            } else {
-                default_height
-            }
-        })
-        .collect()
-}
-
-/// Build a `sub_pane_heights` slice from an inner uzor docking tree.
-///
-/// Walks the tree's root branch proportions and turns them into pixel heights
-/// keyed by sub-pane instance id. Returns one height per entry in
-/// `sub_pane_instance_ids`, in the same order. The first entry in
-/// `proportions` is treated as the main chart's share and skipped.
-///
-/// This is the Phase 2 of the chart-container cut: lets the existing
-/// `compute_from_chart_panel` keep its current shape while reading its
-/// height distribution from uzor's docking tree instead of the legacy
-/// `SubPane.height_ratio` field. Once `SubPane` Vec is retired in Phase 3,
-/// this helper becomes the only height source.
-pub fn sub_pane_heights_from_inner_docking<P: uzor::panels::DockPanel>(
-    inner_docking: &uzor::layout::DockState<P>,
-    available_height: f64,
-    default_height: f64,
-    sub_pane_count: usize,
-) -> Vec<f64> {
-    let root = inner_docking.tree().root();
-    // Root branch holds [main_chart, sub_pane_1, sub_pane_2, ...] in vertical
-    // SplitBottom order. Proportions Vec parallels children.
-    let proportions: &[f64] = &root.proportions;
-    if proportions.is_empty() || sub_pane_count == 0 {
-        return Vec::new();
-    }
-    // Skip the main chart slot (index 0). Remaining proportions are sub-panes.
-    let sub_props: Vec<f64> = proportions.iter().skip(1).copied().collect();
-    let total: f64 = sub_props.iter().sum();
-    if total <= 0.0 {
-        return vec![default_height; sub_pane_count];
-    }
-    sub_props
-        .into_iter()
-        .take(sub_pane_count)
-        .map(|p| ((p / total) * available_height * 0.4).max(30.0))
-        .collect()
 }
 
 #[cfg(test)]

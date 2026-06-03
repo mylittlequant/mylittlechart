@@ -657,10 +657,11 @@ pub struct ChartApp {
     ///
     /// `(instance_id, start_mouse_y, available_height)`.
     /// Active sub-pane separator drag:
-    /// `(instance_id, start_cursor_y, available_h, start_pane_h, start_neighbor_h, neighbor_id_opt)`.
-    /// The two start heights are snapshotted at drag-start so per-event `dy`
-    /// accumulation maps 1:1 to cursor travel without amplification from
-    /// stale `frame_layouts` cache reads.
+    /// `(instance_id, start_cursor_y, content_w, content_h, _, _)`.
+    /// All math goes through `ChartContainer::drag_sub_pane_separator_via_uzor`
+    /// which delegates to uzor's `inner_docking.drag_separator` -- the same
+    /// API the sidebar/agent/outer-grid separators already use. Last two
+    /// tuple slots are reserved for forward-compat and unused today.
     pub(crate) sub_pane_sep_drag: Option<(u64, f64, f64, f64, f64, Option<u64>)>,
 
     /// Active coordinator-routed panel drag (DOM, L2Tape, Footprint, BigTrades, LiquidityHeatmap, VolumeProfile).
@@ -2646,6 +2647,7 @@ impl ChartApp {
                     })
                     .collect();
 
+                let inner_proportions_vec: Vec<f64> = window.inner_docking.tree().root().proportions.clone();
                 let panel_data = ChartPanelRenderData {
                     state: &render_state,
                     config: &render_config,
@@ -2664,6 +2666,7 @@ impl ChartApp {
                     sub_pane_overlay_states: &window.sub_pane_overlay_states,
                     toolbar_config: &no_toolbar,
                     is_split: true,
+                    inner_proportions: &inner_proportions_vec,
                 };
 
                 let render_result = render_full_chart_panel(ctx, &leaf_rect, &panel_data);
@@ -2694,31 +2697,23 @@ impl ChartApp {
                             .map(|i| i.id)
                             .collect()
                     };
-                    // Build heights matching sub_pane_ids (visible only), not all sub_panes.
-                    let sub_pane_heights: Vec<f64> = sub_pane_ids.iter().map(|&id| {
-                        let ratio = window.sub_panes.iter()
-                            .find(|p| p.instance_id == id)
-                            .map(|p| p.height_ratio)
-                            .unwrap_or(0.0);
-                        if ratio > 0.0 { (ratio as f64 * leaf_rect.height).max(30.0) } else { 100.0 }
-                    }).collect();
-                    let maximized_instance_id: Option<u64> = window.sub_panes.iter()
-                        .find(|p| p.maximized && sub_pane_ids.contains(&p.instance_id))
-                        .map(|p| p.instance_id);
-                    let above_main_flags_sub: Vec<bool> = sub_pane_ids.iter().map(|&id| {
-                        window.sub_panes.iter()
-                            .find(|p| p.instance_id == id)
-                            .map(|p| p.above_main)
-                            .unwrap_or(false)
-                    }).collect();
-                    let extended = zengeld_chart::ExtendedFrameLayout::compute_from_chart_panel(
+                    // Sub-pane geometry comes from the container's inner uzor
+                    // tree's root proportions [main, sub_1, sub_2, ...].
+                    let sub_proportions: Vec<f64> = window
+                        .inner_docking
+                        .tree()
+                        .root()
+                        .proportions
+                        .iter()
+                        .skip(1)
+                        .copied()
+                        .collect();
+                    let extended = zengeld_chart::ExtendedFrameLayout::from_proportions(
                         &leaf_rect,
                         &sub_pane_ids,
+                        &sub_proportions,
                         &window.scale_settings,
-                        &sub_pane_heights,
                         1.0,
-                        maximized_instance_id,
-                        &above_main_flags_sub,
                     );
                     let main = &extended.main_chart;
                     let chart_area = LayoutRect {
@@ -3126,6 +3121,7 @@ impl ChartApp {
                     Some(&window.scale_settings.time_format),
                 );
 
+                let inner_proportions_vec: Vec<f64> = window.inner_docking.tree().root().proportions.clone();
                 let panel_data = ChartPanelRenderData {
                     state: &render_state,
                     config: &render_config,
@@ -3144,6 +3140,7 @@ impl ChartApp {
                     sub_pane_overlay_states: &window.sub_pane_overlay_states,
                     toolbar_config: &self.panel_app.toolbar_config,
                     is_split: false,
+                    inner_proportions: &inner_proportions_vec,
                 };
 
                 // Render chart into content_rect (shrunk by sidebar).
@@ -3181,31 +3178,21 @@ impl ChartApp {
                             .map(|i| i.id)
                             .collect()
                     };
-                    // Build heights matching sub_pane_ids (visible only), not all sub_panes.
-                    let sub_pane_heights: Vec<f64> = sub_pane_ids.iter().map(|&id| {
-                        let ratio = window.sub_panes.iter()
-                            .find(|p| p.instance_id == id)
-                            .map(|p| p.height_ratio)
-                            .unwrap_or(0.0);
-                        if ratio > 0.0 { (ratio as f64 * chart_render_rect.height).max(30.0) } else { 100.0 }
-                    }).collect();
-                    let maximized_instance_id: Option<u64> = window.sub_panes.iter()
-                        .find(|p| p.maximized && sub_pane_ids.contains(&p.instance_id))
-                        .map(|p| p.instance_id);
-                    let above_main_flags_sub: Vec<bool> = sub_pane_ids.iter().map(|&id| {
-                        window.sub_panes.iter()
-                            .find(|p| p.instance_id == id)
-                            .map(|p| p.above_main)
-                            .unwrap_or(false)
-                    }).collect();
-                    let extended = zengeld_chart::ExtendedFrameLayout::compute_from_chart_panel(
+                    let sub_proportions: Vec<f64> = window
+                        .inner_docking
+                        .tree()
+                        .root()
+                        .proportions
+                        .iter()
+                        .skip(1)
+                        .copied()
+                        .collect();
+                    let extended = zengeld_chart::ExtendedFrameLayout::from_proportions(
                         &chart_render_rect,
                         &sub_pane_ids,
+                        &sub_proportions,
                         &window.scale_settings,
-                        &sub_pane_heights,
                         1.0,
-                        maximized_instance_id,
-                        &above_main_flags_sub,
                     );
                     let main = &extended.main_chart;
                     let chart_area = LayoutRect {
@@ -5372,10 +5359,16 @@ impl ChartApp {
 
             // Phase 2: reconcile the inner uzor docking tree with the
             // canonical sub_panes Vec. Adds leaves for newly-spawned
-            // indicators, removes leaves for vanished ones, and pushes
-            // heights into proportions. Sub-pane render geometry will
-            // read from this tree once the render path is switched over.
+            // indicators, removes leaves for vanished ones.
             window.sync_inner_docking_from_sub_panes();
+
+            // If preset restore staged height ratios for this window,
+            // seed the inner tree's proportions from them so the renderer
+            // shows panes at their saved sizes. (Uzor's drag_separator
+            // takes over from there.)
+            if pending_ratios.is_some() {
+                window.seed_inner_proportions_from_sub_pane_ratios();
+            }
         }
 
         // Clear all pending restore state once applied (one-shot).
