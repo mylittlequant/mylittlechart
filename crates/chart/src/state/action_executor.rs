@@ -350,8 +350,11 @@ pub fn execute_chart_action(
             vec![ChartExternalEvent::NotHandled]
         }
         ChartAction::ClearMarkers => {
-            window.marker_manager.clear();
-            eprintln!("[Chart] Cleared all markers");
+            // Phase 4 S2.7.3a: marker_manager moved off ChartContainer into
+            // BranchMeta (dormant — no production read path). This handler
+            // is dead code today; left as a no-op stub for future routing.
+            let _ = window;
+            eprintln!("[Chart] Cleared all markers (no-op — marker_manager moved to BranchMeta)");
             vec![]
         }
 

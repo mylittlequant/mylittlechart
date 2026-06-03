@@ -19,8 +19,8 @@ use crate::{Bar, Viewport, PriceScale, TimeScale};
 use crate::chart::types::price_scale::ScaleMode;
 use crate::state::Timeframe;
 use crate::{Crosshair, CrosshairOptions, KineticState, DragMode};
-use crate::{GridOptions, Legend, Watermark, Tooltip, PriceLine, MarkerManager};
-use crate::drawing::{DrawingManager, SignalManager, TradeManager};
+use crate::{GridOptions, Legend, Watermark, Tooltip, PriceLine};
+use crate::drawing::DrawingManager;
 use crate::chart::{CompareOverlay, CompareSeries, get_compare_color};
 use crate::state::{SubPane, PaneManager, CommandHistory, Command};
 use crate::data_provider::{SharedDataProvider, NullDataProvider};
@@ -200,14 +200,8 @@ pub struct ChartContainer {
     // === Object Managers ===
     /// Drawing primitives (trend lines, rectangles, etc.)
     pub drawing_manager: DrawingManager,
-    /// Signal markers from strategies
-    pub signal_manager: SignalManager,
-    /// Trade visualization
-    pub trade_manager: TradeManager,
     /// Indicator data source (trait object - no direct IndicatorManager dependency)
     pub indicator_source: Box<dyn IndicatorSource>,
-    /// Chart markers
-    pub marker_manager: MarkerManager,
     /// Horizontal price lines
     pub price_lines: HashMap<String, PriceLine>,
 
@@ -269,9 +263,6 @@ pub struct ChartContainer {
     // === Previous Close ===
     /// Previous session close price (for prev close line)
     pub prev_close_price: Option<f64>,
-
-    /// Connection/data feed status
-    pub connection_status: ConnectionStatus,
 
     /// Sync group this window belongs to (set by TagManager during split/join/desync).
     pub group_id: Option<crate::tag_manager::SyncGroupId>,
@@ -392,10 +383,7 @@ impl ChartContainer {
             tooltip: Tooltip::default(),
             // Object managers
             drawing_manager,
-            signal_manager: SignalManager::new(),
-            trade_manager: TradeManager::new(),
             indicator_source: Box::new(NullIndicatorSource),
-            marker_manager: MarkerManager::new(),
             price_lines: HashMap::new(),
             // Compare overlay (per-window)
             compare_overlay: CompareOverlay::new(),
@@ -425,8 +413,6 @@ impl ChartContainer {
             toolbar_config: ToolbarConfig::standalone(),
             // Previous close
             prev_close_price: None,
-            // Connection status
-            connection_status: ConnectionStatus::Live,
             // Sync group (not yet assigned)
             group_id: None,
             pre_tag_indicator_ids: Vec::new(),
@@ -632,10 +618,7 @@ impl ChartContainer {
 
             // === Object Managers ===
             drawing_manager,
-            signal_manager: SignalManager::new(),
-            trade_manager: TradeManager::new(),
             indicator_source: Box::new(NullIndicatorSource), // Fresh (no indicators copied)
-            marker_manager: MarkerManager::new(),
             price_lines: self.price_lines.clone(),
 
             // === Compare Overlay (reset) ===
@@ -673,9 +656,6 @@ impl ChartContainer {
 
             // === Previous Close ===
             prev_close_price: self.prev_close_price,
-
-            // === Connection Status ===
-            connection_status: self.connection_status,
 
             // === Sync Group (NOT inherited — do_split assigns the correct group) ===
             group_id: None,
