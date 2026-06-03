@@ -580,11 +580,13 @@ impl ChartContainer {
                 let _ = self.ensure_indicator_leaf(pane.instance_id);
             }
         }
-
-        // Push heights into the tree's proportions so uzor's drag_separator
-        // and panel_rects() see the canonical sub-pane ratios. Single source
-        // of truth for inner-docking state.
-        self.push_sub_pane_ratios_to_inner_docking();
+        // NB: proportions push intentionally NOT called here. While the legacy
+        // `drag_pane_separator` path is still the source of truth for
+        // height_ratio, pushing on every sync tick fights with mid-drag
+        // updates -- the renderer reads from frame_layouts cache, not from
+        // height_ratio, so the push lands one tick later and amplifies the
+        // delta. Phase 3 retires the legacy path; the push moves into
+        // `ensure_indicator_leaf` then.
     }
 
     /// Push the canonical `sub_panes` Vec heights into the inner docking
