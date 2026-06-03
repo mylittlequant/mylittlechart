@@ -77,7 +77,14 @@ pub use action_executor::{
 };
 
 // ChartWindow - the main chart state aggregate
+// Phase 1 C1.3 of the chart-container cut introduces `ChartPanel` as the
+// canonical name for the candle-canvas leaf. `ChartWindow` stays as an
+// alias for one or more commits so the ~30 callsites in chart-app keep
+// compiling; new code should prefer `ChartPanel`. Final rename of the
+// underlying struct happens later in Phase 1 once container-level fields
+// have moved out.
 pub use chart_window::{ChartWindow, ChartId, ConnectionStatus, WindowRect, WINDOW_GAP, generate_chart_id, bump_chart_id_past, DEFAULT_SNAP_MARGIN};
+pub use chart_window::ChartWindow as ChartPanel;
 
 // Chart-internal split/expand system (uzor-panels integration)
 pub use sub_panel::ChartSubPanel;
