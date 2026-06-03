@@ -656,7 +656,12 @@ pub struct ChartApp {
     /// between two sub-panes).  Mirrors slot_sep_drag pattern.
     ///
     /// `(instance_id, start_mouse_y, available_height)`.
-    pub(crate) sub_pane_sep_drag: Option<(u64, f64, f64)>,
+    /// Active sub-pane separator drag:
+    /// `(instance_id, start_cursor_y, available_h, start_pane_h, start_neighbor_h, neighbor_id_opt)`.
+    /// The two start heights are snapshotted at drag-start so per-event `dy`
+    /// accumulation maps 1:1 to cursor travel without amplification from
+    /// stale `frame_layouts` cache reads.
+    pub(crate) sub_pane_sep_drag: Option<(u64, f64, f64, f64, f64, Option<u64>)>,
 
     /// Active coordinator-routed panel drag (DOM, L2Tape, Footprint, BigTrades, LiquidityHeatmap, VolumeProfile).
     ///

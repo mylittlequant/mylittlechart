@@ -2517,7 +2517,52 @@ impl ChartApp {
                     .and_then(|l| self.get_leaf_absolute_rect(l))
                     .map(|r| r.height)
                     .unwrap_or(1.0);
-                self.sub_pane_sep_drag = Some((instance_id, y, available_h));
+
+                // Snapshot rendered heights of this pane and the neighbor
+                // above it at drag-start so per-event accumulation can't
+                // drift. Read from the frame_layouts cache (post-clamp pixel
+                // heights) -- if missing, fall back to ratio*available_h.
+                let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
+                let rendered: std::collections::HashMap<u64, f64> = active_leaf
+                    .and_then(|leaf| self.frame_layouts.get(&leaf))
+                    .map(|ext| ext.sub_panes.iter()
+                        .map(|sp| (sp.instance_id, sp.content.height))
+                        .collect())
+                    .unwrap_or_default();
+                let (start_pane_h, start_neighbor_h, neighbor_id) = {
+                    let window = self.panel_app.panel_grid.active_container();
+                    let mut pane_h = 0.0_f64;
+                    let mut neigh_h = 0.0_f64;
+                    let mut neigh_id: Option<u64> = None;
+                    if let Some(w) = window {
+                        if let Some(pane_idx) = w.sub_panes.iter().position(|p| p.instance_id == instance_id) {
+                            let p = &w.sub_panes[pane_idx];
+                            pane_h = rendered.get(&instance_id).copied()
+                                .filter(|&h| h > 0.0)
+                                .unwrap_or_else(|| (p.height_ratio as f64 * available_h).max(80.0));
+                            if !p.above_main {
+                                // For below-main panes the neighbor is the
+                                // previous below-main pane (or main chart).
+                                if let Some(prev_idx) = w.sub_panes[..pane_idx]
+                                    .iter()
+                                    .rposition(|q| !q.above_main)
+                                {
+                                    let q = &w.sub_panes[prev_idx];
+                                    neigh_h = rendered.get(&q.instance_id).copied()
+                                        .filter(|&h| h > 0.0)
+                                        .unwrap_or_else(|| (q.height_ratio as f64 * available_h).max(80.0));
+                                    neigh_id = Some(q.instance_id);
+                                }
+                            }
+                        }
+                    }
+                    (pane_h, neigh_h, neigh_id)
+                };
+
+                self.sub_pane_sep_drag = Some((
+                    instance_id, y, available_h,
+                    start_pane_h, start_neighbor_h, neighbor_id,
+                ));
                 self.ui_drag_active = true;
                 return false;
             }
@@ -2568,21 +2613,71 @@ impl ChartApp {
         // event, but `dy` here is already the per-event delta, not cumulative
         // from start).  Apply it to the height_ratio directly each frame —
         // visually 1:1 with cursor.
-        if let Some((instance_id, _start_y, available_h)) = self.sub_pane_sep_drag {
-            let _ = y;
-            // Read rendered heights from the frame_layouts cache — these are
-            // the actual pixel heights the renderer allocated after
-            // compute_from_chart_panel's min_main_chart=30 clamp.  Using
-            // (ratio * available_h) directly bypasses that clamp and lets
-            // the sub-pane grow past the main-chart floor.
-            let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
-            let rendered_heights: std::collections::HashMap<u64, f64> = active_leaf
-                .and_then(|leaf| self.frame_layouts.get(&leaf))
-                .map(|ext| ext.sub_panes.iter()
-                    .map(|sp| (sp.instance_id, sp.content.height))
-                    .collect())
-                .unwrap_or_default();
-            self.panel_app.panel_grid.drag_pane_separator(instance_id, dy, available_h, &rendered_heights);
+        if let Some((instance_id, start_y, available_h, start_pane_h, start_neighbor_h, neighbor_id)) = self.sub_pane_sep_drag {
+            let _ = dy;
+            // Anchor: cursor-Y delta from drag start, not per-event dy.
+            // Per-event dy is fired by winit on every mouse step, but the
+            // legacy ChartPanelGrid::drag_pane_separator reads from
+            // frame_layouts cache which lags one frame -- so accumulating
+            // per-event dy and re-reading the cache amplifies the delta
+            // ~10x. Anchor to the snapshot taken at drag-start and feed
+            // an absolute new height into the legacy API by computing the
+            // equivalent single-shot dy needed to land the pane at that
+            // height starting from its rendered baseline.
+            let cumulative_dy = y - start_y;
+
+            // For below-main panes with a neighbor (= preceding below-main
+            // pane), uzor-style behaviour: shift the separator and split
+            // the total between the two siblings. For above-main or
+            // standalone below-main, just resize this pane against the
+            // main-chart slot.
+            //
+            // We bypass the cache-based drag_pane_separator() entirely and
+            // write height_ratio directly, anchored to the start snapshot.
+            let min_h = 80.0_f64;
+            let window = match self.panel_app.panel_grid.active_container_mut() {
+                Some(w) => w,
+                None => return,
+            };
+            let pane_idx = match window.sub_panes.iter().position(|p| p.instance_id == instance_id) {
+                Some(i) => i,
+                None => return,
+            };
+            let is_above = window.sub_panes[pane_idx].above_main;
+
+            if is_above {
+                // Above-main: drag down grows the pane.
+                let other_h: f64 = window.sub_panes.iter()
+                    .enumerate()
+                    .filter(|(i, _)| *i != pane_idx)
+                    .map(|(_, p)| (p.height_ratio as f64 * available_h).max(min_h))
+                    .sum();
+                let max_h = (available_h - min_h - other_h).max(min_h);
+                let new_h = (start_pane_h + cumulative_dy).clamp(min_h, max_h);
+                window.sub_panes[pane_idx].height_ratio = (new_h / available_h) as f32;
+            } else if let Some(nid) = neighbor_id {
+                // Below-main with neighbor: split total between this pane
+                // and the neighbor above it.
+                let total = start_pane_h + start_neighbor_h;
+                let new_above = (start_neighbor_h + cumulative_dy).clamp(min_h, total - min_h);
+                let new_below = total - new_above;
+                let neighbor_idx = window.sub_panes.iter().position(|p| p.instance_id == nid);
+                if let Some(ni) = neighbor_idx {
+                    window.sub_panes[ni].height_ratio = (new_above / available_h) as f32;
+                }
+                window.sub_panes[pane_idx].height_ratio = (new_below / available_h) as f32;
+            } else {
+                // First below-main pane: drag against main chart.
+                let other_h: f64 = window.sub_panes.iter()
+                    .enumerate()
+                    .filter(|(i, _)| *i != pane_idx)
+                    .map(|(_, p)| (p.height_ratio as f64 * available_h).max(min_h))
+                    .sum();
+                let max_h = (available_h - min_h - other_h).max(min_h);
+                // Drag up (negative cumulative_dy) grows the pane.
+                let new_h = (start_pane_h - cumulative_dy).clamp(min_h, max_h);
+                window.sub_panes[pane_idx].height_ratio = (new_h / available_h) as f32;
+            }
             return;
         }
         // ── Agent-panel separator resize drag ────────────────────────────────
