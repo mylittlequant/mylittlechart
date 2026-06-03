@@ -131,8 +131,19 @@ impl ChartApp {
                     }
                 };
                 if let Some(ct) = static_type {
-                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                        window.set_chart_type_with_undo(ct);
+                    let pid = self.panel_app.panel_grid
+                        .active_container_mut()
+                        .map(|window| {
+                            window.set_chart_type_with_undo(ct);
+                            window.chart_panel_id
+                        });
+                    // Phase 4 S2.6.A dual-write: mirror chart_type into panels_store.
+                    if let Some(chart_panel_id) = pid {
+                        crate::chart_panel_bridge::mirror_chart_type(
+                            &mut self.panels_store,
+                            chart_panel_id,
+                            ct,
+                        );
                     }
                     state_mutated = true;
                 }
@@ -715,6 +726,31 @@ impl ChartApp {
                                         chart_id,
                                         snap.stashed_command_history.clone(),
                                     );
+                                    // Phase 4 S2.6.A dual-write: mirror series-visibility flags.
+                                    // `window` is a local variable here — no panel_grid borrow
+                                    // conflict with self.panels_store.
+                                    {
+                                        let sv = crate::chart_panel_bridge::SeriesVisibilitySnapshot {
+                                            show_candles: window.show_candles,
+                                            show_bars: window.show_bars,
+                                            show_hollow_candles: window.show_hollow_candles,
+                                            show_heikin_ashi: window.show_heikin_ashi,
+                                            show_line: window.show_line,
+                                            show_step_line: window.show_step_line,
+                                            show_line_markers: window.show_line_markers,
+                                            show_area: window.show_area,
+                                            show_hlc_area: window.show_hlc_area,
+                                            show_histogram: window.show_histogram,
+                                            show_columns: window.show_columns,
+                                            show_baseline: window.show_baseline,
+                                            chart_type: window.chart_type,
+                                        };
+                                        crate::chart_panel_bridge::mirror_series_visibility(
+                                            &mut self.panels_store,
+                                            window.chart_panel_id,
+                                            sv,
+                                        );
+                                    }
 
                                     new_containers.insert(chart_id, window);
                                     new_leaf_to_chart.insert(leaf_id, chart_id);
@@ -760,6 +796,9 @@ impl ChartApp {
                     // Fallback: patch existing windows in-place (old presets)
                     // ----------------------------------------------------------------
                     if !layout_restored {
+                        // Collected (chart_panel_id, series-visibility) for S2.6.A dual-write
+                        // after the panel_grid mut borrow is dropped.
+                        let mut sv_patches: Vec<(zengeld_chart::state::ChartPanelId, crate::chart_panel_bridge::SeriesVisibilitySnapshot)> = Vec::new();
                         let windows = self.panel_app.panel_grid.containers_mut();
                         for snap in &preset.windows {
                             let chart_id = zengeld_chart::state::chart_container::ChartId(snap.window_id);
@@ -851,6 +890,24 @@ impl ChartApp {
                                 // Bars arrive asynchronously via BarsLoaded.
                                 window.pending_symbol_load = true;
 
+                                // Phase 4 S2.6.A: collect series-visibility snapshot for
+                                // dual-write after this panel_grid mut borrow is dropped.
+                                sv_patches.push((window.chart_panel_id, crate::chart_panel_bridge::SeriesVisibilitySnapshot {
+                                    show_candles: window.show_candles,
+                                    show_bars: window.show_bars,
+                                    show_hollow_candles: window.show_hollow_candles,
+                                    show_heikin_ashi: window.show_heikin_ashi,
+                                    show_line: window.show_line,
+                                    show_step_line: window.show_step_line,
+                                    show_line_markers: window.show_line_markers,
+                                    show_area: window.show_area,
+                                    show_hlc_area: window.show_hlc_area,
+                                    show_histogram: window.show_histogram,
+                                    show_columns: window.show_columns,
+                                    show_baseline: window.show_baseline,
+                                    chart_type: window.chart_type,
+                                }));
+
                                 eprintln!("[ChartApp] patched window {} в†’ {}/{} ({} drawings)",
                                     snap.window_id, snap.symbol, snap.timeframe.name,
                                     snap.drawings.primitives.len());
@@ -901,6 +958,15 @@ impl ChartApp {
                                     prims,
                                 );
                             }
+                        }
+                        // Phase 4 S2.6.A dual-write: mirror series-visibility flags
+                        // collected from the patch loop above (panel_grid borrow dropped).
+                        for (chart_panel_id, sv) in sv_patches {
+                            crate::chart_panel_bridge::mirror_series_visibility(
+                                &mut self.panels_store,
+                                chart_panel_id,
+                                sv,
+                            );
                         }
                     }
 

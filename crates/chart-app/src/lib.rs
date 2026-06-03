@@ -16,6 +16,7 @@
 
 pub mod agent;
 pub mod branch_meta_bridge;
+pub mod chart_panel_bridge;
 pub mod chart_panel_state;
 pub mod chart_state;
 pub mod frame_lifecycle;
