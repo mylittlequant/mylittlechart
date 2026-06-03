@@ -2504,6 +2504,7 @@ impl ChartApp {
                 return false;
             }
             ChartDragStartHit::SubPaneSeparator { instance_id } => {
+                eprintln!("[ChartApp] sub-pane sep drag START instance_id={}", instance_id);
                 // Ensure window.sub_panes is in sync with indicator_manager before
                 // the drag starts: the layout (used by hit-test) reads sub-pane ids
                 // straight from indicator_manager, but drag_pane_separator mutates
@@ -2574,11 +2575,13 @@ impl ChartApp {
         // visually 1:1 with cursor.
         if let Some((instance_id, _start_y, _content_w, content_h, _, _)) = self.sub_pane_sep_drag {
             let _ = y;
-            // Pure 1D vertical stack drag through ChartContainer's own
-            // InnerLayout math. Per-event dy maps 1:1 to pixel delta with
-            // the proportions clamped so neither slot drops below its min.
             if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                let _ = window.drag_sub_pane_separator(instance_id, dy, content_h);
+                let before = window.inner_layout.proportions.clone();
+                let ok = window.drag_sub_pane_separator(instance_id, dy, content_h);
+                eprintln!(
+                    "[ChartApp] sub-pane sep DRAG id={} dy={:.1} content_h={:.0} ok={} props {:?} -> {:?}",
+                    instance_id, dy, content_h, ok, before, window.inner_layout.proportions
+                );
             }
             return;
         }
@@ -8062,29 +8065,18 @@ impl ChartApp {
             }
         };
 
-        // Collect sub-pane instance IDs from the window's SubPane list,
-        // filtering by indicator_manager visibility (single source of truth).
-        let sub_pane_ids: Vec<u64> = self.panel_app.panel_grid
-            .active_container()
-            .map(|win| {
-                win.sub_panes.iter()
-                    .filter(|p| visible_set.contains(&p.instance_id))
-                    .map(|p| p.instance_id)
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        // Geometry from container's inner-layout proportions
-        // [main, sub_1, sub_2, ...].
-        let sub_proportions: Vec<f64> = self.panel_app.panel_grid
+        // Both order and proportions from the container's InnerLayout
+        // (single source of truth), filtered by indicator_manager visibility.
+        let (sub_pane_ids, sub_proportions): (Vec<u64>, Vec<f64>) = self.panel_app.panel_grid
             .active_container()
             .map(|win| {
                 win.inner_layout
-                    .proportions
+                    .sub_instance_ids
                     .iter()
-                    .skip(1)
-                    .copied()
-                    .collect()
+                    .zip(win.inner_layout.proportions.iter().skip(1))
+                    .filter(|(id, _)| visible_set.contains(id))
+                    .map(|(&id, &p)| (id, p))
+                    .unzip()
             })
             .unwrap_or_default();
         ExtendedFrameLayout::from_proportions(
@@ -8129,19 +8121,14 @@ impl ChartApp {
             }
         };
 
-        // Collect sub-pane IDs filtered by indicator_manager visibility.
-        let sub_pane_ids: Vec<u64> = window.sub_panes.iter()
-            .filter(|p| visible_set.contains(&p.instance_id))
-            .map(|p| p.instance_id)
-            .collect();
-
-        let sub_proportions: Vec<f64> = window
+        let (sub_pane_ids, sub_proportions): (Vec<u64>, Vec<f64>) = window
             .inner_layout
-            .proportions
+            .sub_instance_ids
             .iter()
-            .skip(1)
-            .copied()
-            .collect();
+            .zip(window.inner_layout.proportions.iter().skip(1))
+            .filter(|(id, _)| visible_set.contains(id))
+            .map(|(&id, &p)| (id, p))
+            .unzip();
         Some(ExtendedFrameLayout::from_proportions(
             leaf_rect,
             &sub_pane_ids,

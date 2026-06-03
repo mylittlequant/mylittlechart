@@ -2648,6 +2648,7 @@ impl ChartApp {
                     .collect();
 
                 let inner_proportions_vec: Vec<f64> = window.inner_layout.proportions.clone();
+                let inner_sub_ids_vec: Vec<u64> = window.inner_layout.sub_instance_ids.clone();
                 let panel_data = ChartPanelRenderData {
                     state: &render_state,
                     config: &render_config,
@@ -2667,6 +2668,7 @@ impl ChartApp {
                     toolbar_config: &no_toolbar,
                     is_split: true,
                     inner_proportions: &inner_proportions_vec,
+                    inner_sub_instance_ids: &inner_sub_ids_vec,
                 };
 
                 let render_result = render_full_chart_panel(ctx, &leaf_rect, &panel_data);
@@ -2682,7 +2684,10 @@ impl ChartApp {
                 // primitives and overlay indicators in this leaf.
                 let main_chart_y;
                 {
-                    let sub_pane_ids: Vec<u64> = if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
+                    // Sub-pane order + proportions both come from the
+                    // container's own InnerLayout -- single source of truth.
+                    // indicator_manager visibility is a filter applied on top.
+                    let visible_set: std::collections::HashSet<u64> = if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
                         self.indicator_manager
                             .get_instances_for_symbol_in_window(&window.symbol, chart_id.0)
                             .into_iter()
@@ -2697,15 +2702,14 @@ impl ChartApp {
                             .map(|i| i.id)
                             .collect()
                     };
-                    // Sub-pane geometry comes from the container's inner uzor
-                    // tree's root proportions [main, sub_1, sub_2, ...].
-                    let sub_proportions: Vec<f64> = window
+                    let (sub_pane_ids, sub_proportions): (Vec<u64>, Vec<f64>) = window
                         .inner_layout
-                        .proportions
+                        .sub_instance_ids
                         .iter()
-                        .skip(1)
-                        .copied()
-                        .collect();
+                        .zip(window.inner_layout.proportions.iter().skip(1))
+                        .filter(|(id, _)| visible_set.contains(id))
+                        .map(|(&id, &p)| (id, p))
+                        .unzip();
                     let extended = zengeld_chart::ExtendedFrameLayout::from_proportions(
                         &leaf_rect,
                         &sub_pane_ids,
@@ -3120,6 +3124,7 @@ impl ChartApp {
                 );
 
                 let inner_proportions_vec: Vec<f64> = window.inner_layout.proportions.clone();
+                let inner_sub_ids_vec: Vec<u64> = window.inner_layout.sub_instance_ids.clone();
                 let panel_data = ChartPanelRenderData {
                     state: &render_state,
                     config: &render_config,
@@ -3139,6 +3144,7 @@ impl ChartApp {
                     toolbar_config: &self.panel_app.toolbar_config,
                     is_split: false,
                     inner_proportions: &inner_proportions_vec,
+                    inner_sub_instance_ids: &inner_sub_ids_vec,
                 };
 
                 // Render chart into content_rect (shrunk by sidebar).
@@ -3161,7 +3167,7 @@ impl ChartApp {
                 {
                     // Compute the corrected chart area rect (same logic as
                     // render_full_chart_panel's internal ExtendedFrameLayout).
-                    let sub_pane_ids: Vec<u64> = if let Some(chart_id) = self.panel_app.panel_grid.active_container_id() {
+                    let visible_set: std::collections::HashSet<u64> = if let Some(chart_id) = self.panel_app.panel_grid.active_container_id() {
                         self.indicator_manager
                             .get_instances_for_symbol_in_window(&window.symbol, chart_id.0)
                             .into_iter()
@@ -3176,13 +3182,14 @@ impl ChartApp {
                             .map(|i| i.id)
                             .collect()
                     };
-                    let sub_proportions: Vec<f64> = window
+                    let (sub_pane_ids, sub_proportions): (Vec<u64>, Vec<f64>) = window
                         .inner_layout
-                        .proportions
+                        .sub_instance_ids
                         .iter()
-                        .skip(1)
-                        .copied()
-                        .collect();
+                        .zip(window.inner_layout.proportions.iter().skip(1))
+                        .filter(|(id, _)| visible_set.contains(id))
+                        .map(|(&id, &p)| (id, p))
+                        .unzip();
                     let extended = zengeld_chart::ExtendedFrameLayout::from_proportions(
                         &chart_render_rect,
                         &sub_pane_ids,

@@ -2932,12 +2932,14 @@ pub struct ChartPanelRenderData<'a> {
     /// Whether this leaf is rendered inside a multi-leaf split layout.
     /// When true, top/bottom frame borders are suppressed (the split separator handles them).
     pub is_split: bool,
-    /// Container inner-docking root proportions parallel to the sub-pane
-    /// instance ids list. First entry is the main chart's share; the rest
-    /// are sub-pane shares in tree order. Empty slice means "no proportions
-    /// available yet -- fall back to uniform shares" (e.g. first render
-    /// before sync_inner_docking_from_sub_panes ran).
+    /// Container's inner-layout root proportions [main, sub_0, sub_1, ...].
+    /// Empty -> uniform fallback.
     pub inner_proportions: &'a [f64],
+    /// Container's inner-layout sub-pane instance ids parallel to
+    /// `inner_proportions[1..]`. The renderer uses THIS list (not the
+    /// legacy `sub_panes` Vec) as the order and identity source for
+    /// sub-panes, intersected with `indicator_source` visibility.
+    pub inner_sub_instance_ids: &'a [u64],
 }
 
 /// Render a complete chart panel — background, grid, series, scales, indicators,
@@ -2975,22 +2977,14 @@ pub fn render_full_chart_panel(
         std::collections::HashSet::new()
     };
 
-    // Collect sub-pane instance IDs from the window's SubPane list (not indicator_manager)
-    // so that user-defined order and maximized state are respected.
-    // Visibility is determined by instance.visible (via visible_ids), not sub_pane.hidden.
-    let sub_pane_ids: Vec<u64> = if let Some(panes) = data.sub_panes {
-        // Check for a maximized pane first — only show that one.
-        if let Some(maximized) = panes.iter().find(|p| p.maximized && visible_ids.contains(&p.instance_id)) {
-            vec![maximized.instance_id]
-        } else {
-            panes.iter()
-                .filter(|p| visible_ids.contains(&p.instance_id))
-                .map(|p| p.instance_id)
-                .collect()
-        }
-    } else {
-        visible_ids.iter().copied().collect()
-    };
+    // Sub-pane order and identity come from the container's InnerLayout
+    // (single source of truth), intersected with indicator visibility.
+    let sub_pane_ids: Vec<u64> = data
+        .inner_sub_instance_ids
+        .iter()
+        .filter(|id| visible_ids.contains(id))
+        .copied()
+        .collect();
 
     // Compute the panel layout by carving toolbar rects from window_rect.
     // The content_rect is the area available for chart rendering after subtracting
@@ -3424,6 +3418,7 @@ pub fn render_chart_splits(
             toolbar_config: &window.toolbar_config,
             is_split: true,
             inner_proportions: &window.inner_layout.proportions,
+            inner_sub_instance_ids: &window.inner_layout.sub_instance_ids,
         };
 
         // sub_pane_ranges writeback is not performed here because render_chart_splits
