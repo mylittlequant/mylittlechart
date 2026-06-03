@@ -32,13 +32,7 @@ use crate::layout::SubPaneOverlayResult;
 use crate::layout::LayoutRect;
 use crate::chart::render::ChartRect;
 use crate::scale_settings::{PriceScalePosition, TimeScalePosition};
-use crate::state::{
-    ChartContainerLeaf,
-    ChartPanelId,
-    generate_chart_panel_id,
-};
-use uzor::layout::DockState;
-use uzor::panels::LeafId;
+use crate::state::inner_layout::InnerLayout;
 
 fn default_account_type_spot() -> String {
     "S".to_string()
@@ -335,19 +329,12 @@ pub struct ChartContainer {
     /// so mode is tightly coupled to viewport sync state.
     pub stashed_scale_mode: Option<ScaleMode>,
 
-    // === Inner docking (Phase 1 of chart-container cut) ===
-    /// Identity of the candle canvas leaf inside this container.
-    /// Distinct from `id` (which is the container id). Stable across
-    /// preset round-trips.
-    pub chart_panel_id: ChartPanelId,
-    /// Inner uzor docking tree holding the `MainChart` leaf and any
-    /// `IndicatorPanel` sub-panes. Phase 1 ships this with a single
-    /// seeded `MainChart` leaf; Phase 2 wires `split_leaf` / `remove_leaf`
-    /// on indicator add / remove and replaces the custom sub-pane
-    /// geometry path.
-    pub inner_docking: DockState<ChartContainerLeaf>,
-    /// Leaf id of the seeded `MainChart` inside `inner_docking`.
-    pub main_leaf_id: LeafId,
+    /// 1D vertical stack layout for `[main_chart, sub_pane_1, sub_pane_2,
+    /// ...]`. Owns its own math -- no uzor docking tree, no nested
+    /// branches. Single source of truth for sub-pane heights and
+    /// separator drag. Renderer reads `inner_layout.heights(content_h)`;
+    /// drag handler calls `inner_layout.drag_separator(sep_idx, dy, h)`.
+    pub inner_layout: InnerLayout,
 }
 
 /// Default number of empty bars shown to the right of the last candle
@@ -360,12 +347,6 @@ impl ChartContainer {
         let id = generate_chart_id();
         let mut drawing_manager = DrawingManager::new();
         drawing_manager.set_current_window(Some(id.0));
-
-        let chart_panel_id = generate_chart_panel_id();
-        let mut inner_docking: DockState<ChartContainerLeaf> = DockState::new();
-        let main_leaf_id = inner_docking
-            .tree_mut()
-            .add_leaf(ChartContainerLeaf::MainChart { chart_panel_id });
 
         let mut window = Self {
             id,
@@ -451,9 +432,7 @@ impl ChartContainer {
             stashed_scale_mode: None,
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
-            chart_panel_id,
-            inner_docking,
-            main_leaf_id,
+            inner_layout: InnerLayout::new(),
         };
         window.drawing_manager.set_current_symbol_key(&window.symbol, &window.exchange, &window.account_type);
         window
@@ -472,262 +451,51 @@ impl ChartContainer {
     }
 
     // =========================================================================
-    // Inner-docking helpers (Phase 2 of chart-container cut)
+    // Inner-layout helpers — thin wrappers over `InnerLayout` (1D math).
     // =========================================================================
 
-    /// Find the leaf id for an `IndicatorPanel { instance_id }` leaf in the
-    /// inner docking tree, if present.
-    pub fn indicator_leaf_id(&self, instance_id: u64) -> Option<uzor::panels::LeafId> {
-        use uzor::panels::PanelNode;
-        fn walk(node: &PanelNode<ChartContainerLeaf>, target: u64) -> Option<uzor::panels::LeafId> {
-            match node {
-                PanelNode::Leaf(l) => l
-                    .panels
-                    .iter()
-                    .find_map(|p| match p {
-                        ChartContainerLeaf::IndicatorPanel { instance_id } if *instance_id == target => Some(l.id),
-                        _ => None,
-                    }),
-                PanelNode::Branch(b) => b
-                    .children
-                    .iter()
-                    .find_map(|c| walk(c, target)),
-            }
-        }
-        {
-            let root = self.inner_docking.tree().root();
-            root.children.iter().find_map(|c| walk(c, instance_id))
-        }
+    /// Reconcile the inner-layout sub-pane list against the canonical
+    /// `sub_panes` Vec. Adds missing ids, removes vanished ids, preserves
+    /// existing shares.
+    pub fn sync_inner_layout_from_sub_panes(&mut self) {
+        let want_ids: Vec<u64> = self.sub_panes.iter().map(|p| p.instance_id).collect();
+        self.inner_layout.sync_with(&want_ids);
     }
 
-    /// Ensure the inner docking tree has an `IndicatorPanel` leaf for the
-    /// given indicator `instance_id`. Returns the leaf id (whether already
-    /// present or newly created).
-    pub fn ensure_indicator_leaf(&mut self, instance_id: u64) -> uzor::panels::LeafId {
-        if let Some(leaf) = self.indicator_leaf_id(instance_id) {
-            return leaf;
-        }
-        // Split the existing bottom-most leaf downward to host the new
-        // indicator panel. We anchor to `main_leaf_id` for the first
-        // indicator and to the last-added indicator leaf for subsequent
-        // ones so they stack predictably under the chart.
-        use uzor::panels::SplitKind;
-        let anchor = self.last_inner_leaf_id();
-        let new_leaf = self
-            .inner_docking
-            .tree_mut()
-            .split_leaf(anchor, SplitKind::SplitBottom, ChartContainerLeaf::IndicatorPanel { instance_id });
-        new_leaf.unwrap_or(self.main_leaf_id)
-    }
-
-    /// Remove an indicator panel leaf from the inner docking tree.
-    /// No-op if the leaf is not present.
-    pub fn remove_indicator_leaf(&mut self, instance_id: u64) {
-        if let Some(leaf) = self.indicator_leaf_id(instance_id) {
-            self.inner_docking.tree_mut().remove_leaf(leaf);
-        }
-    }
-
-    /// Reconcile the inner docking tree against the canonical sub-pane Vec:
-    /// add leaves for sub-panes that don't have one yet, remove leaves for
-    /// instance_ids that are no longer present.
-    pub fn sync_inner_docking_from_sub_panes(&mut self) {
-        // Collect the canonical instance ids from the sub_panes Vec.
-        let want: std::collections::HashSet<u64> =
-            self.sub_panes.iter().map(|p| p.instance_id).collect();
-
-        // Collect current indicator leaf ids in the tree.
-        let have: std::collections::HashMap<u64, uzor::panels::LeafId> = {
-            use uzor::panels::PanelNode;
-            let mut acc = std::collections::HashMap::new();
-            fn walk(
-                node: &PanelNode<ChartContainerLeaf>,
-                acc: &mut std::collections::HashMap<u64, uzor::panels::LeafId>,
-            ) {
-                match node {
-                    PanelNode::Leaf(l) => {
-                        for p in &l.panels {
-                            if let ChartContainerLeaf::IndicatorPanel { instance_id } = p {
-                                acc.insert(*instance_id, l.id);
-                            }
-                        }
-                    }
-                    PanelNode::Branch(b) => {
-                        for c in &b.children {
-                            walk(c, acc);
-                        }
-                    }
-                }
-            }
-            for c in &self.inner_docking.tree().root().children {
-                walk(c, &mut acc);
-            }
-            acc
-        };
-
-        // Remove leaves that are no longer wanted.
-        let to_remove: Vec<uzor::panels::LeafId> = have
-            .iter()
-            .filter_map(|(iid, leaf)| if want.contains(iid) { None } else { Some(*leaf) })
-            .collect();
-        for leaf in to_remove {
-            self.inner_docking.tree_mut().remove_leaf(leaf);
-        }
-
-        // Add leaves for sub-panes that don't have one yet.
-        for pane in &self.sub_panes.clone() {
-            if !have.contains_key(&pane.instance_id) {
-                let _ = self.ensure_indicator_leaf(pane.instance_id);
-            }
-        }
-        // NB: proportions push intentionally NOT called here. While the legacy
-        // `drag_pane_separator` path is still the source of truth for
-        // height_ratio, pushing on every sync tick fights with mid-drag
-        // updates -- the renderer reads from frame_layouts cache, not from
-        // height_ratio, so the push lands one tick later and amplifies the
-        // delta. Phase 3 retires the legacy path; the push moves into
-        // `ensure_indicator_leaf` then.
-    }
-
-    /// Seed the inner docking tree's root proportions from the
-    /// canonical `sub_panes` Vec's `height_ratio` values. Used on preset
-    /// restore -- the legacy preset format stores `sub_pane_height_ratios`
-    /// per indicator instance, and the restore path writes those into
-    /// `SubPane.height_ratio`. This helper turns that into uzor
-    /// proportions so the renderer reads them correctly.
-    ///
-    /// Idempotent. Has no effect when sub_panes is empty.
+    /// Seed inner-layout proportions from `(instance_id -> ratio)` map.
+    /// Used on preset restore where legacy `sub_pane_height_ratios` lives.
     pub fn seed_inner_proportions_from_sub_pane_ratios(&mut self) {
-        // We need a stable ordering: the inner docking tree's root children
-        // hold [main_chart, indicator_1, indicator_2, ...] in the same order
-        // they were added via `ensure_indicator_leaf`. The sub_panes Vec is
-        // kept in the same order by `sync_sub_panes_from_manager`.
-        let n = self.sub_panes.len();
-        if n == 0 {
+        if self.sub_panes.is_empty() {
             return;
         }
-        // Compute per-sub-pane share of available height.
-        let sub_total: f64 = self
+        let want_ids: Vec<u64> = self.sub_panes.iter().map(|p| p.instance_id).collect();
+        let ratios: std::collections::HashMap<u64, f32> = self
             .sub_panes
             .iter()
-            .map(|p| p.height_ratio.max(0.0) as f64)
-            .sum();
-        if sub_total <= 0.0 {
-            return;
-        }
-        let main_share = (1.0 - sub_total.min(0.95)).max(0.05);
-        let mut props: Vec<f64> = Vec::with_capacity(n + 1);
-        props.push(main_share);
-        for p in &self.sub_panes {
-            props.push((p.height_ratio.max(0.0) as f64).max(0.01));
-        }
-        // Normalize so the sum is 1.0.
-        let total: f64 = props.iter().sum();
-        if total > 0.0 {
-            for v in &mut props {
-                *v /= total;
-            }
-        }
-        let want_len = self.inner_docking.tree().root().children.len();
-        if props.len() == want_len {
-            self.inner_docking.tree_mut().set_proportions(props);
-        }
+            .map(|p| (p.instance_id, p.height_ratio))
+            .collect();
+        self.inner_layout.seed_from_ratios(&want_ids, &ratios);
     }
 
-    /// Drag the separator that bounds the sub-pane with the given
-    /// `instance_id` via the inner uzor docking tree, then mirror the
-    /// resulting proportions back into `SubPane.height_ratio` so the
-    /// legacy render path stays in sync.
-    ///
-    /// Returns `true` on success. `delta` is in pixels and follows uzor's
-    /// orientation convention (positive = drag down for a horizontal
-    /// separator between stacked panes).
-    ///
-    /// Phase 2.3: companion to `push_sub_pane_ratios_to_inner_docking`.
-    /// Once the render path switches off `compute_from_chart_panel` in
-    /// Phase 3, this becomes the only sep-drag path -- the custom
-    /// `ChartPanelGrid::drag_pane_separator` retires alongside `SubPane`.
-    pub fn drag_sub_pane_separator_via_uzor(
+    /// Apply a sub-pane separator drag through the inner 1D layout. The
+    /// separator above sub-pane `instance_id` is the one between root child
+    /// K and K+1 where K = sub_index + 1 (since index 0 is the main chart).
+    /// `delta_y` is per-event pixels (positive = drag down).
+    pub fn drag_sub_pane_separator(
         &mut self,
         instance_id: u64,
-        delta_y: f32,
-        content_width: f32,
-        content_height: f32,
+        delta_y: f64,
+        content_height: f64,
     ) -> bool {
-        // Find the inner-docking leaf hosting this indicator. Its position
-        // in the root branch's children Vec gives us the separator index:
-        // separator N sits between root.children[N] and root.children[N+1],
-        // so the separator above an indicator at position K is at index K-1.
-        let target_leaf = match self.indicator_leaf_id(instance_id) {
-            Some(l) => l,
+        let sub_idx = match self.inner_layout.sub_index(instance_id) {
+            Some(i) => i,
             None => return false,
         };
-        let child_idx = match self
-            .inner_docking
-            .tree()
-            .root()
-            .children
-            .iter()
-            .position(|c| match c {
-                uzor::panels::PanelNode::Leaf(l) => l.id == target_leaf,
-                _ => false,
-            }) {
-            Some(i) if i >= 1 => i,
-            _ => return false,
-        };
-
-        // Recompute layout so separator metadata is current.
-        let area = uzor::panels::PanelRect {
-            x: 0.0,
-            y: 0.0,
-            width: content_width,
-            height: content_height,
-        };
-        self.inner_docking.layout(area);
-
-        use uzor::panels::SeparatorOrientation;
-        let h_seps: Vec<usize> = self
-            .inner_docking
-            .separators()
-            .iter()
-            .enumerate()
-            .filter_map(|(i, s)| {
-                if matches!(s.orientation, SeparatorOrientation::Horizontal) {
-                    Some(i)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        // h_seps[K-1] is the separator above the K-th root child (K=child_idx).
-        let sep_idx = match h_seps.get(child_idx - 1) {
-            Some(i) => *i,
-            None => return false,
-        };
-
-        self.inner_docking
-            .drag_separator(sep_idx, delta_y, content_width, content_height)
-    }
-
-    /// Find the most recently added leaf in the inner docking tree.
-    /// Used as the split anchor for stacking new indicator panels.
-    fn last_inner_leaf_id(&self) -> uzor::panels::LeafId {
-        use uzor::panels::PanelNode;
-        fn last(node: &PanelNode<ChartContainerLeaf>) -> Option<uzor::panels::LeafId> {
-            match node {
-                PanelNode::Leaf(l) => Some(l.id),
-                PanelNode::Branch(b) => b.children.last().and_then(last),
-            }
-        }
-        self.inner_docking
-            .tree()
-            .root()
-            .children
-            .iter()
-            .rev()
-            .find_map(last)
-            .unwrap_or(self.main_leaf_id)
+        // The separator above sub-pane `sub_idx` is separator index `sub_idx`
+        // (separator 0 = between main and sub_0, separator 1 = between
+        // sub_0 and sub_1, ...).
+        self.inner_layout
+            .drag_separator(sub_idx, delta_y, content_height)
     }
 
     /// Update title based on current symbol and timeframe
@@ -795,15 +563,6 @@ impl ChartContainer {
             let synced = self.drawing_manager.clone_primitives_for_sync(new_chart_id.0);
             drawing_manager.add_synced_primitives(synced);
         }
-
-        // Each split child gets its own fresh inner-docking tree with one
-        // MainChart leaf. Sub-panes get added back in via the same path as
-        // the parent (sync_sub_panes_from_manager) once indicators wire up.
-        let chart_panel_id = generate_chart_panel_id();
-        let mut inner_docking: DockState<ChartContainerLeaf> = DockState::new();
-        let main_leaf_id = inner_docking
-            .tree_mut()
-            .add_leaf(ChartContainerLeaf::MainChart { chart_panel_id });
 
         Self {
             // New chart ID
@@ -930,9 +689,7 @@ impl ChartContainer {
             // Split child has no in-flight scroll fetch.
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
-            chart_panel_id,
-            inner_docking,
-            main_leaf_id,
+            inner_layout: InnerLayout::new(),
         }
     }
 

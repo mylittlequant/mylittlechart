@@ -3423,7 +3423,7 @@ pub fn render_chart_splits(
             // render_full_chart_panel computes layout from the full rect.
             toolbar_config: &window.toolbar_config,
             is_split: true,
-            inner_proportions: &window.inner_docking.tree().root().proportions,
+            inner_proportions: &window.inner_layout.proportions,
         };
 
         // sub_pane_ranges writeback is not performed here because render_chart_splits

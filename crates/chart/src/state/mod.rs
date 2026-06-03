@@ -27,6 +27,7 @@ pub mod chart_container;
 pub mod sub_panel;
 pub mod panel_grid;
 pub mod chart_container_leaf;
+pub mod inner_layout;
 
 // Core chart struct
 pub use chart::*;
@@ -103,6 +104,9 @@ pub use chart_container_leaf::{
     generate_chart_panel_id,
     bump_chart_panel_id_past,
 };
+
+// Inner 1D vertical stack layout (own math, no uzor docking).
+pub use inner_layout::InnerLayout;
 
 // Panel grid — input-aware layout manager
 pub use panel_grid::{ChartPanelGrid, ChartInputTarget, ChartRightClickHit, ChartDragStartHit, SplitHitResult, FreehandCompleteResult};

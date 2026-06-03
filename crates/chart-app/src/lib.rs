@@ -2647,7 +2647,7 @@ impl ChartApp {
                     })
                     .collect();
 
-                let inner_proportions_vec: Vec<f64> = window.inner_docking.tree().root().proportions.clone();
+                let inner_proportions_vec: Vec<f64> = window.inner_layout.proportions.clone();
                 let panel_data = ChartPanelRenderData {
                     state: &render_state,
                     config: &render_config,
@@ -2700,9 +2700,7 @@ impl ChartApp {
                     // Sub-pane geometry comes from the container's inner uzor
                     // tree's root proportions [main, sub_1, sub_2, ...].
                     let sub_proportions: Vec<f64> = window
-                        .inner_docking
-                        .tree()
-                        .root()
+                        .inner_layout
                         .proportions
                         .iter()
                         .skip(1)
@@ -3121,7 +3119,7 @@ impl ChartApp {
                     Some(&window.scale_settings.time_format),
                 );
 
-                let inner_proportions_vec: Vec<f64> = window.inner_docking.tree().root().proportions.clone();
+                let inner_proportions_vec: Vec<f64> = window.inner_layout.proportions.clone();
                 let panel_data = ChartPanelRenderData {
                     state: &render_state,
                     config: &render_config,
@@ -3179,9 +3177,7 @@ impl ChartApp {
                             .collect()
                     };
                     let sub_proportions: Vec<f64> = window
-                        .inner_docking
-                        .tree()
-                        .root()
+                        .inner_layout
                         .proportions
                         .iter()
                         .skip(1)
@@ -5360,7 +5356,7 @@ impl ChartApp {
             // Phase 2: reconcile the inner uzor docking tree with the
             // canonical sub_panes Vec. Adds leaves for newly-spawned
             // indicators, removes leaves for vanished ones.
-            window.sync_inner_docking_from_sub_panes();
+            window.sync_inner_layout_from_sub_panes();
 
             // If preset restore staged height ratios for this window,
             // seed the inner tree's proportions from them so the renderer

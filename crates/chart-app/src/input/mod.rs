@@ -2572,21 +2572,13 @@ impl ChartApp {
         // event, but `dy` here is already the per-event delta, not cumulative
         // from start).  Apply it to the height_ratio directly each frame —
         // visually 1:1 with cursor.
-        if let Some((instance_id, _start_y, content_w, content_h, _, _)) = self.sub_pane_sep_drag {
+        if let Some((instance_id, _start_y, _content_w, content_h, _, _)) = self.sub_pane_sep_drag {
             let _ = y;
-            // Delegate to the same uzor sep-drag API the sidebar / agent /
-            // outer-grid separators use. ChartContainer mirrors the new
-            // proportions back into SubPane.height_ratio so the renderer
-            // (which still reads from sub_panes Vec via
-            // compute_from_chart_panel) sees the result on the next frame.
-            // Per-event `dy` is the per-frame delta uzor expects.
+            // Pure 1D vertical stack drag through ChartContainer's own
+            // InnerLayout math. Per-event dy maps 1:1 to pixel delta with
+            // the proportions clamped so neither slot drops below its min.
             if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                let _ = window.drag_sub_pane_separator_via_uzor(
-                    instance_id,
-                    dy as f32,
-                    content_w as f32,
-                    content_h as f32,
-                );
+                let _ = window.drag_sub_pane_separator(instance_id, dy, content_h);
             }
             return;
         }
@@ -8082,14 +8074,12 @@ impl ChartApp {
             })
             .unwrap_or_default();
 
-        // Geometry from the container's inner uzor docking tree's
-        // proportions [main, sub_1, sub_2, ...].
+        // Geometry from container's inner-layout proportions
+        // [main, sub_1, sub_2, ...].
         let sub_proportions: Vec<f64> = self.panel_app.panel_grid
             .active_container()
             .map(|win| {
-                win.inner_docking
-                    .tree()
-                    .root()
+                win.inner_layout
                     .proportions
                     .iter()
                     .skip(1)
@@ -8146,9 +8136,7 @@ impl ChartApp {
             .collect();
 
         let sub_proportions: Vec<f64> = window
-            .inner_docking
-            .tree()
-            .root()
+            .inner_layout
             .proportions
             .iter()
             .skip(1)
