@@ -13,6 +13,9 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
+use crate::chart::annotations::markers::MarkerManager;
+use crate::drawing::SignalManager;
+use crate::drawing::TradeManager;
 use crate::state::chart_container_leaf::ChartPanelId;
 use crate::state::chart_container::ConnectionStatus;
 use crate::state::Timeframe;
@@ -305,6 +308,12 @@ pub struct BranchMeta {
     /// restored on desync. Phase 4 S2.4 mirror of
     /// `ChartContainer.stashed_command_history`.
     pub stashed_command_history: Option<CommandHistory>,
+    /// Phase 4 S2.5 mirror of `ChartContainer.signal_manager`.
+    pub signal_manager: SignalManager,
+    /// Phase 4 S2.5 mirror of `ChartContainer.trade_manager`.
+    pub trade_manager: TradeManager,
+    /// Phase 4 S2.5 mirror of `ChartContainer.marker_manager`.
+    pub marker_manager: MarkerManager,
 }
 
 impl BranchMeta {
@@ -328,6 +337,9 @@ impl BranchMeta {
             prev_close_price: None,
             pre_tag_indicator_ids: Vec::new(),
             stashed_command_history: None,
+            signal_manager: SignalManager::default(),
+            trade_manager: TradeManager::default(),
+            marker_manager: MarkerManager::default(),
         }
     }
 
@@ -346,6 +358,9 @@ impl BranchMeta {
             prev_close_price: None,
             pre_tag_indicator_ids: Vec::new(),
             stashed_command_history: None,
+            signal_manager: SignalManager::default(),
+            trade_manager: TradeManager::default(),
+            marker_manager: MarkerManager::default(),
         }
     }
 
@@ -364,6 +379,9 @@ impl BranchMeta {
             prev_close_price: None,
             pre_tag_indicator_ids: Vec::new(),
             stashed_command_history: None,
+            signal_manager: SignalManager::default(),
+            trade_manager: TradeManager::default(),
+            marker_manager: MarkerManager::default(),
         }
     }
 }

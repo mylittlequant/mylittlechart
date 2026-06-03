@@ -292,6 +292,7 @@ pub struct MarkerCoordinates {
 /// - Time-based sorting
 /// - Visible marker filtering
 /// - Text measurement caching
+#[derive(Clone, Debug)]
 pub struct MarkerManager {
     /// All markers
     markers: Vec<Marker>,

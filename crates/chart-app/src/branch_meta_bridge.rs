@@ -22,6 +22,8 @@ use std::collections::HashMap;
 
 use uzor::panels::BranchId;
 use zengeld_chart::drawing::primitives_v2::Primitive;
+use zengeld_chart::drawing::{SignalManager, TradeManager};
+use zengeld_chart::MarkerManager;
 use zengeld_chart::state::history::CommandHistory;
 use zengeld_chart::state::{BranchMeta, ChartId, ConnectionStatus, Timeframe};
 use zengeld_chart::tag_manager::SyncGroupId;
@@ -267,6 +269,46 @@ pub fn clear_stashed_primitives(
     stashed_primitives.remove(&branch_key_for_chart(chart_id));
 }
 
+// =============================================================================
+// Group O (S2.5) — signal_manager / trade_manager / marker_manager
+// =============================================================================
+//
+// These mirrors do NOT lazy-insert: same policy as Group M/N — the entry
+// MUST already exist (seeded at chart construction). Silent no-op on miss.
+
+/// Mirror signal_manager into branch_meta. Silent no-op if entry missing.
+pub fn mirror_signal_manager(
+    branch_meta: &mut std::collections::HashMap<BranchId, BranchMeta>,
+    chart_id: ChartId,
+    manager: SignalManager,
+) {
+    if let Some(entry) = branch_meta.get_mut(&branch_key_for_chart(chart_id)) {
+        entry.signal_manager = manager;
+    }
+}
+
+/// Mirror trade_manager into branch_meta. Silent no-op if entry missing.
+pub fn mirror_trade_manager(
+    branch_meta: &mut std::collections::HashMap<BranchId, BranchMeta>,
+    chart_id: ChartId,
+    manager: TradeManager,
+) {
+    if let Some(entry) = branch_meta.get_mut(&branch_key_for_chart(chart_id)) {
+        entry.trade_manager = manager;
+    }
+}
+
+/// Mirror marker_manager into branch_meta. Silent no-op if entry missing.
+pub fn mirror_marker_manager(
+    branch_meta: &mut std::collections::HashMap<BranchId, BranchMeta>,
+    chart_id: ChartId,
+    manager: MarkerManager,
+) {
+    if let Some(entry) = branch_meta.get_mut(&branch_key_for_chart(chart_id)) {
+        entry.marker_manager = manager;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -390,5 +432,56 @@ mod tests {
         let mut sp: HashMap<BranchId, Vec<Box<dyn Primitive>>> = HashMap::new();
         let taken = take_stashed_primitives(&mut sp, ChartId(123));
         assert!(taken.is_none());
+    }
+
+    // -------------------------------------------------------------------------
+    // Group O (S2.5) tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn mirror_signal_manager_round_trip() {
+        let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
+        mirror_instrument(&mut bm, ChartId(21), "BTC", tf(), "Binance", "S");
+        let mgr = SignalManager::default();
+        mirror_signal_manager(&mut bm, ChartId(21), mgr);
+        // Entry exists and has the default signal_manager value.
+        assert!(bm.contains_key(&branch_key_for_chart(ChartId(21))));
+    }
+
+    #[test]
+    fn mirror_signal_manager_no_lazy_insert_when_missing() {
+        let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
+        mirror_signal_manager(&mut bm, ChartId(99), SignalManager::default());
+        assert!(bm.is_empty());
+    }
+
+    #[test]
+    fn mirror_trade_manager_round_trip() {
+        let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
+        mirror_instrument(&mut bm, ChartId(23), "ETH", tf(), "Binance", "S");
+        mirror_trade_manager(&mut bm, ChartId(23), TradeManager::default());
+        assert!(bm.contains_key(&branch_key_for_chart(ChartId(23))));
+    }
+
+    #[test]
+    fn mirror_trade_manager_no_lazy_insert_when_missing() {
+        let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
+        mirror_trade_manager(&mut bm, ChartId(99), TradeManager::default());
+        assert!(bm.is_empty());
+    }
+
+    #[test]
+    fn mirror_marker_manager_round_trip() {
+        let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
+        mirror_instrument(&mut bm, ChartId(25), "SOL", tf(), "Binance", "S");
+        mirror_marker_manager(&mut bm, ChartId(25), MarkerManager::default());
+        assert!(bm.contains_key(&branch_key_for_chart(ChartId(25))));
+    }
+
+    #[test]
+    fn mirror_marker_manager_no_lazy_insert_when_missing() {
+        let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
+        mirror_marker_manager(&mut bm, ChartId(99), MarkerManager::default());
+        assert!(bm.is_empty());
     }
 }
