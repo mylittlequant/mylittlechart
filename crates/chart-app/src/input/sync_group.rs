@@ -184,7 +184,13 @@ impl ChartApp {
                 eprintln!("[sync_group] perform_desync: container_for_leaf({:?}) returned None — skipping desync", leaf_id);
                 return;
             };
-            let (symbol, timeframe) = (win.symbol.clone(), win.timeframe.clone());
+            // B1 S2.7.1d: read symbol/timeframe from branch_meta, fall back to struct.
+            let symbol = crate::branch_meta_bridge::read_symbol(&self.branch_meta, chart_id)
+                .map(String::from)
+                .unwrap_or_else(|| win.symbol.clone());
+            let timeframe = crate::branch_meta_bridge::read_timeframe(&self.branch_meta, chart_id)
+                .cloned()
+                .unwrap_or_else(|| win.timeframe.clone());
             // Auto groups get transparent color — never occupy palette slots
             let new_group_id = self.panel_app.tag_manager.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
             let _ = self.panel_app.tag_manager.connect_chart(chart_id, new_group_id);
@@ -237,8 +243,14 @@ impl ChartApp {
                     eprintln!("[sync_group] sync_join_color_group: container_for_leaf({:?}) returned None — skipping join", joining_leaf);
                     return;
                 };
-                let (symbol, tf) = (win.symbol.clone(), win.timeframe.clone());
-                self.panel_app.tag_manager.create_group(color, symbol, tf)
+                // B1 S2.7.1d: read symbol/timeframe from branch_meta, fall back to struct
+                let sym = crate::branch_meta_bridge::read_symbol(&self.branch_meta, chart_id)
+                    .map(String::from)
+                    .unwrap_or_else(|| win.symbol.clone());
+                let tf = crate::branch_meta_bridge::read_timeframe(&self.branch_meta, chart_id)
+                    .cloned()
+                    .unwrap_or_else(|| win.timeframe.clone());
+                self.panel_app.tag_manager.create_group(color, sym, tf)
             };
             let _ = self.panel_app.tag_manager.connect_chart(chart_id, group_id);
             eprintln!(
@@ -295,11 +307,23 @@ impl ChartApp {
                     ));
                 }
 
-                // Seed primitives into group (clone from stash).
-                let (prim_symbol, prim_exchange, prim_account_type) = self.panel_app.panel_grid
-                    .container_for_leaf(joining_leaf)
-                    .map(|w| (w.symbol.clone(), w.exchange.clone(), w.account_type.clone()))
-                    .unwrap_or_default();
+                // B1 S2.7.1d: read prim key from branch_meta for seed primitives.
+                let (prim_symbol, prim_exchange, prim_account_type) = {
+                    let cid = self.panel_app.panel_grid.container_id_for_leaf(joining_leaf);
+                    let sym = cid.and_then(|c| crate::branch_meta_bridge::read_symbol(&self.branch_meta, c))
+                        .map(String::from)
+                        .unwrap_or_else(|| self.panel_app.panel_grid.container_for_leaf(joining_leaf)
+                            .map(|w| w.symbol.clone()).unwrap_or_default());
+                    let exch = cid.and_then(|c| crate::branch_meta_bridge::read_exchange(&self.branch_meta, c))
+                        .map(String::from)
+                        .unwrap_or_else(|| self.panel_app.panel_grid.container_for_leaf(joining_leaf)
+                            .map(|w| w.exchange.clone()).unwrap_or_default());
+                    let at = cid.and_then(|c| crate::branch_meta_bridge::read_account_type(&self.branch_meta, c))
+                        .map(String::from)
+                        .unwrap_or_else(|| self.panel_app.panel_grid.container_for_leaf(joining_leaf)
+                            .map(|w| w.account_type.clone()).unwrap_or_default());
+                    (sym, exch, at)
+                };
                 let mut source_prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
                     self.panel_app.panel_grid.container_for_leaf(joining_leaf)
                         .map(|w| {
@@ -323,11 +347,23 @@ impl ChartApp {
                     group.primitives = source_prims;
                 }
 
-                // Seed indicator configs.
-                let (seed_symbol, seed_exchange, seed_account_type) = self.panel_app.panel_grid
-                    .container_for_leaf(joining_leaf)
-                    .map(|w| (w.symbol.clone(), w.exchange.clone(), w.account_type.clone()))
-                    .unwrap_or_default();
+                // B1 S2.7.1d: read indicator seed key from branch_meta.
+                let (seed_symbol, seed_exchange, seed_account_type) = {
+                    let cid = self.panel_app.panel_grid.container_id_for_leaf(joining_leaf);
+                    let sym = cid.and_then(|c| crate::branch_meta_bridge::read_symbol(&self.branch_meta, c))
+                        .map(String::from)
+                        .unwrap_or_else(|| self.panel_app.panel_grid.container_for_leaf(joining_leaf)
+                            .map(|w| w.symbol.clone()).unwrap_or_default());
+                    let exch = cid.and_then(|c| crate::branch_meta_bridge::read_exchange(&self.branch_meta, c))
+                        .map(String::from)
+                        .unwrap_or_else(|| self.panel_app.panel_grid.container_for_leaf(joining_leaf)
+                            .map(|w| w.exchange.clone()).unwrap_or_default());
+                    let at = cid.and_then(|c| crate::branch_meta_bridge::read_account_type(&self.branch_meta, c))
+                        .map(String::from)
+                        .unwrap_or_else(|| self.panel_app.panel_grid.container_for_leaf(joining_leaf)
+                            .map(|w| w.account_type.clone()).unwrap_or_default());
+                    (sym, exch, at)
+                };
                 let mut configs: Vec<zengeld_chart::tag_manager::IndicatorGroupConfig> = self
                     .indicator_manager
                     .instances_iter()
@@ -549,13 +585,21 @@ impl ChartApp {
                     eprintln!("[sync_group] split untagged: container_for_leaf({:?}) returned None — skipping new leaf", leaf_id);
                     continue;
                 };
-                let (symbol, timeframe) = (win.symbol.clone(), win.timeframe.clone());
+                // B1 S2.7.1d: read symbol/timeframe from branch_meta, fall back to struct.
+                let new_chart_id = self.panel_app.panel_grid.container_id_for_leaf(leaf_id);
+                let symbol = new_chart_id
+                    .and_then(|c| crate::branch_meta_bridge::read_symbol(&self.branch_meta, c))
+                    .map(String::from)
+                    .unwrap_or_else(|| win.symbol.clone());
+                let timeframe = new_chart_id
+                    .and_then(|c| crate::branch_meta_bridge::read_timeframe(&self.branch_meta, c))
+                    .cloned()
+                    .unwrap_or_else(|| win.timeframe.clone());
                 let gid = self.panel_app.tag_manager.create_group_auto(
                     [0.0, 0.0, 0.0, 0.0],
                     symbol,
                     timeframe,
                 );
-                let new_chart_id = self.panel_app.panel_grid.container_id_for_leaf(leaf_id);
                 if let Some(chart_id) = new_chart_id {
                     let _ = self.panel_app.tag_manager.connect_chart(chart_id, gid);
                 }
@@ -605,14 +649,22 @@ impl ChartApp {
                 eprintln!("[sync_group] split tagged: container_for_leaf({:?}) returned None — skipping split tag", new_leaves[0]);
                 return;
             }
+            // B1 S2.7.1d: pre-read first-leaf symbol/timeframe from branch_meta for group creation.
+            let first_leaf_chart_id = self.panel_app.panel_grid.container_id_for_leaf(new_leaves[0]);
+            let first_leaf_symbol = first_leaf_chart_id
+                .and_then(|c| crate::branch_meta_bridge::read_symbol(&self.branch_meta, c))
+                .map(String::from)
+                .unwrap_or_else(|| first_leaf_win.as_ref().map(|w| w.symbol.clone()).unwrap_or_default());
+            let first_leaf_timeframe = first_leaf_chart_id
+                .and_then(|c| crate::branch_meta_bridge::read_timeframe(&self.branch_meta, c))
+                .cloned()
+                .unwrap_or_else(|| first_leaf_win.as_ref().map(|w| w.timeframe.clone()).unwrap_or_default());
             let group_id = if let Some(existing_group) = pre_split_group_id {
                 if pre_split_is_auto {
                     // Was untagged (auto group) — split promotes to a real color tag.
                     // Create a NEW visible group with the first free color.
                     let color = self.panel_app.tag_manager.next_unused_color();
-                    let win = first_leaf_win.expect("checked above");
-                    let (symbol, timeframe) = (win.symbol.clone(), win.timeframe.clone());
-                    let gid = self.panel_app.tag_manager.create_group(color, symbol, timeframe);
+                    let gid = self.panel_app.tag_manager.create_group(color, first_leaf_symbol, first_leaf_timeframe);
                     eprintln!("[TagManager] Split promoted auto group to visible tag {:?}", gid);
                     gid
                 } else {
@@ -623,9 +675,7 @@ impl ChartApp {
                 // No existing group — pick color from TagManager's palette.
                 let color = pre_split_color
                     .unwrap_or_else(|| self.panel_app.tag_manager.next_unused_color());
-                let win = first_leaf_win.expect("checked above");
-                let (symbol, timeframe) = (win.symbol.clone(), win.timeframe.clone());
-                self.panel_app.tag_manager.create_group(color, symbol, timeframe)
+                self.panel_app.tag_manager.create_group(color, first_leaf_symbol, first_leaf_timeframe)
             };
 
             // --- Shared group path (user-tagged groups or brand-new groups) ---
@@ -742,10 +792,23 @@ impl ChartApp {
                 // Everything in the window at tag creation time becomes tag state.
 
                 // Primitives: clone source originals into the group.
-                let (prim_sym, prim_exch, prim_at) = self.panel_app.panel_grid
-                    .container_for_leaf(new_leaves[0])
-                    .map(|w| (w.symbol.clone(), w.exchange.clone(), w.account_type.clone()))
-                    .unwrap_or_default();
+                // B1 S2.7.1d: read prim key from branch_meta (first_leaf_chart_id already computed above).
+                let (prim_sym, prim_exch, prim_at) = {
+                    let cid = first_leaf_chart_id;
+                    let sym = cid.and_then(|c| crate::branch_meta_bridge::read_symbol(&self.branch_meta, c))
+                        .map(String::from)
+                        .unwrap_or_else(|| self.panel_app.panel_grid.container_for_leaf(new_leaves[0])
+                            .map(|w| w.symbol.clone()).unwrap_or_default());
+                    let exch = cid.and_then(|c| crate::branch_meta_bridge::read_exchange(&self.branch_meta, c))
+                        .map(String::from)
+                        .unwrap_or_else(|| self.panel_app.panel_grid.container_for_leaf(new_leaves[0])
+                            .map(|w| w.exchange.clone()).unwrap_or_default());
+                    let at = cid.and_then(|c| crate::branch_meta_bridge::read_account_type(&self.branch_meta, c))
+                        .map(String::from)
+                        .unwrap_or_else(|| self.panel_app.panel_grid.container_for_leaf(new_leaves[0])
+                            .map(|w| w.account_type.clone()).unwrap_or_default());
+                    (sym, exch, at)
+                };
                 let mut source_prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
                     self.panel_app.panel_grid
                         .container_for_leaf(new_leaves[0])
@@ -779,10 +842,26 @@ impl ChartApp {
 
                 // Indicators: snapshot source window's indicators into group configs.
                 if let Some(source_chart_id) = leaf_chart_ids.first().map(|(_, cid)| *cid) {
-                    let (source_symbol, source_exchange, source_account_type) = leaf_chart_ids.first()
-                        .and_then(|(lid, _)| self.panel_app.panel_grid.container_for_leaf(*lid))
-                        .map(|w| (w.symbol.clone(), w.exchange.clone(), w.account_type.clone()))
-                        .unwrap_or_default();
+                    // B1 S2.7.1d: read indicator seed key from branch_meta.
+                    let (source_symbol, source_exchange, source_account_type) = {
+                        let cid = first_leaf_chart_id;
+                        let sym = cid.and_then(|c| crate::branch_meta_bridge::read_symbol(&self.branch_meta, c))
+                            .map(String::from)
+                            .unwrap_or_else(|| leaf_chart_ids.first()
+                                .and_then(|(lid, _)| self.panel_app.panel_grid.container_for_leaf(*lid))
+                                .map(|w| w.symbol.clone()).unwrap_or_default());
+                        let exch = cid.and_then(|c| crate::branch_meta_bridge::read_exchange(&self.branch_meta, c))
+                            .map(String::from)
+                            .unwrap_or_else(|| leaf_chart_ids.first()
+                                .and_then(|(lid, _)| self.panel_app.panel_grid.container_for_leaf(*lid))
+                                .map(|w| w.exchange.clone()).unwrap_or_default());
+                        let at = cid.and_then(|c| crate::branch_meta_bridge::read_account_type(&self.branch_meta, c))
+                            .map(String::from)
+                            .unwrap_or_else(|| leaf_chart_ids.first()
+                                .and_then(|(lid, _)| self.panel_app.panel_grid.container_for_leaf(*lid))
+                                .map(|w| w.account_type.clone()).unwrap_or_default());
+                        (sym, exch, at)
+                    };
                     let mut configs: Vec<zengeld_chart::tag_manager::IndicatorGroupConfig> = self
                         .indicator_manager
                         .instances_iter()
@@ -920,15 +999,24 @@ impl ChartApp {
 
         // Collect (old_symbol, old_exchange, old_account_type, timeframe) for each peer BEFORE
         // mutating windows so we can restore drawings and request bars after the mutations.
+        // B1 S2.7.1d: read from branch_meta, fall back to struct field.
         let mut peer_info: Vec<(String, String, String, zengeld_chart::state::Timeframe)> = Vec::new();
         for leaf_id in &sync_leaves {
+            let cid = self.panel_app.panel_grid.container_id_for_leaf(*leaf_id);
             if let Some(window) = self.panel_app.panel_grid.container_for_leaf(*leaf_id) {
-                peer_info.push((
-                    window.symbol.clone(),
-                    window.exchange.clone(),
-                    window.account_type.clone(),
-                    window.timeframe.clone(),
-                ));
+                let sym = cid.and_then(|c| crate::branch_meta_bridge::read_symbol(&self.branch_meta, c))
+                    .map(String::from)
+                    .unwrap_or_else(|| window.symbol.clone());
+                let exch = cid.and_then(|c| crate::branch_meta_bridge::read_exchange(&self.branch_meta, c))
+                    .map(String::from)
+                    .unwrap_or_else(|| window.exchange.clone());
+                let at = cid.and_then(|c| crate::branch_meta_bridge::read_account_type(&self.branch_meta, c))
+                    .map(String::from)
+                    .unwrap_or_else(|| window.account_type.clone());
+                let tf = cid.and_then(|c| crate::branch_meta_bridge::read_timeframe(&self.branch_meta, c))
+                    .cloned()
+                    .unwrap_or_else(|| window.timeframe.clone());
+                peer_info.push((sym, exch, at, tf));
             }
         }
 
@@ -949,7 +1037,7 @@ impl ChartApp {
                 window.symbol = symbol_owned.clone();
                 window.exchange = exchange_owned.clone();
                 window.account_type = account_type_owned.clone();
-                window.drawing_manager.set_current_symbol_key(&window.symbol, &window.exchange, &window.account_type);
+                window.drawing_manager.set_current_symbol_key(&window.symbol, &window.exchange, &window.account_type); // B2-defer S2.7.3 target
                 window.bars.clear();
                 window.viewport.bar_count = 0;
                 window.viewport.view_start = 0.0;
@@ -1009,11 +1097,15 @@ impl ChartApp {
         // Also update the TagManager group's canonical instrument so the group
         // state stays consistent with the displayed windows.
         if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(source_leaf) {
-            // Collect exchange + account_type from the source window before TagManager borrow.
-            let (source_exchange, source_account_type) =
-                self.panel_app.panel_grid.container_for_leaf(source_leaf)
-                    .map(|w| (w.exchange.clone(), w.account_type.clone()))
-                    .unwrap_or_default();
+            // B1 S2.7.1d: read exchange + account_type from branch_meta for tag_manager update.
+            let source_exchange = crate::branch_meta_bridge::read_exchange(&self.branch_meta, chart_id)
+                .map(String::from)
+                .unwrap_or_else(|| self.panel_app.panel_grid.container_for_leaf(source_leaf)
+                    .map(|w| w.exchange.clone()).unwrap_or_default());
+            let source_account_type = crate::branch_meta_bridge::read_account_type(&self.branch_meta, chart_id)
+                .map(String::from)
+                .unwrap_or_else(|| self.panel_app.panel_grid.container_for_leaf(source_leaf)
+                    .map(|w| w.account_type.clone()).unwrap_or_default());
 
             let group_id = self.panel_app.panel_grid.container_id_for_leaf(source_leaf)
                 .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid));
@@ -1075,10 +1167,21 @@ impl ChartApp {
 
         // Collect (exchange_string, symbol, account_type) for each peer BEFORE mutating windows,
         // so we can call bridge.request_bars() after setting the new timeframe.
+        // B1 S2.7.1d: read from branch_meta, fall back to struct field.
         let mut peer_requests: Vec<(String, String, String)> = Vec::new();
         for leaf_id in &sync_leaves {
+            let cid = self.panel_app.panel_grid.container_id_for_leaf(*leaf_id);
             if let Some(window) = self.panel_app.panel_grid.container_for_leaf(*leaf_id) {
-                peer_requests.push((window.exchange.clone(), window.symbol.clone(), window.account_type.clone()));
+                let exch = cid.and_then(|c| crate::branch_meta_bridge::read_exchange(&self.branch_meta, c))
+                    .map(String::from)
+                    .unwrap_or_else(|| window.exchange.clone());
+                let sym = cid.and_then(|c| crate::branch_meta_bridge::read_symbol(&self.branch_meta, c))
+                    .map(String::from)
+                    .unwrap_or_else(|| window.symbol.clone());
+                let at = cid.and_then(|c| crate::branch_meta_bridge::read_account_type(&self.branch_meta, c))
+                    .map(String::from)
+                    .unwrap_or_else(|| window.account_type.clone());
+                peer_requests.push((exch, sym, at));
             }
         }
 
@@ -1458,12 +1561,23 @@ impl ChartApp {
 
         // Stamp the full instrument key (symbol, exchange, account_type) on the primitive
         // so per-instrument tracking works correctly across multi-exchange groups.
+        // B1 S2.7.1d: read from branch_meta, fall back to struct field.
         let mut prim = prim;
-        let (prim_symbol, prim_exchange, prim_account_type) = self.panel_app.panel_grid
-            .containers()
-            .get(&chart_id)
-            .map(|w| (w.symbol.clone(), w.exchange.clone(), w.account_type.clone()))
-            .unwrap_or_default();
+        let (prim_symbol, prim_exchange, prim_account_type) = {
+            let sym = crate::branch_meta_bridge::read_symbol(&self.branch_meta, chart_id)
+                .map(String::from)
+                .unwrap_or_else(|| self.panel_app.panel_grid.containers()
+                    .get(&chart_id).map(|w| w.symbol.clone()).unwrap_or_default());
+            let exch = crate::branch_meta_bridge::read_exchange(&self.branch_meta, chart_id)
+                .map(String::from)
+                .unwrap_or_else(|| self.panel_app.panel_grid.containers()
+                    .get(&chart_id).map(|w| w.exchange.clone()).unwrap_or_default());
+            let at = crate::branch_meta_bridge::read_account_type(&self.branch_meta, chart_id)
+                .map(String::from)
+                .unwrap_or_else(|| self.panel_app.panel_grid.containers()
+                    .get(&chart_id).map(|w| w.account_type.clone()).unwrap_or_default());
+            (sym, exch, at)
+        };
         {
             let d = prim.data_mut();
             d.symbol = prim_symbol;
