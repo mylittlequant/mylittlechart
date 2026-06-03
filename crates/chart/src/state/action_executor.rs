@@ -9,14 +9,14 @@
 //! actions (panel management, sidebar toggles, window layout, etc.).
 //!
 //! The standalone `execute_chart_action()` function operates directly on
-//! `ChartWindow` and returns `Vec<ChartExternalEvent>` for any actions that
+//! `ChartContainer` and returns `Vec<ChartExternalEvent>` for any actions that
 //! require terminal coordination (symbol change, theme change, etc.).
 
 use crate::engine::input::actions::ChartAction;
 use crate::ui::modal_state::{ModalState, OpenModal};
 use crate::layout::ToolbarState;
 use crate::drawing::DrawingManager;
-use crate::state::chart_window::ChartWindow;
+use crate::state::chart_container::ChartContainer;
 
 /// Result of executing a `ChartAction`.
 ///
@@ -66,7 +66,7 @@ pub enum OpenModalRequest {
     Compare,
 }
 
-/// Execute chart-domain actions operating directly on a `ChartWindow`.
+/// Execute chart-domain actions operating directly on a `ChartContainer`.
 ///
 /// Handles the full set of `ChartAction` variants that belong to the chart
 /// crate: series type, toggles, setters, zoom, drawing tool mutations.
@@ -81,7 +81,7 @@ pub enum OpenModalRequest {
 /// `vec![ChartExternalEvent::NotHandled]`.
 pub fn execute_chart_action(
     action: &ChartAction,
-    window: &mut ChartWindow,
+    window: &mut ChartContainer,
 ) -> Vec<ChartExternalEvent> {
     match action {
         // =====================================================================

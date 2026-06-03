@@ -12,7 +12,7 @@ impl ChartApp {
     pub(super) fn hide_crosshairs_outside_sync_group(&mut self, source_leaf: zengeld_chart::LeafId) {
         let source_color = self.panel_app.leaf_color_tags.get(&source_leaf).copied();
         let crosshair_sync_enabled = self.panel_app.panel_grid
-            .chart_id_for_leaf(source_leaf)
+            .container_id_for_leaf(source_leaf)
             .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
             .and_then(|gid| self.panel_app.tag_manager.group(gid))
             .map(|g| g.sync_flags.sync_crosshair)
@@ -30,7 +30,7 @@ impl ChartApp {
                     .map(|c| sync_colors_match(sc, c)))
                 .unwrap_or(false);
             if !(in_sync_group && crosshair_sync_enabled) {
-                if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(other_id) {
+                if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(other_id) {
                     window.crosshair.visible = false;
                 }
             }
@@ -68,21 +68,21 @@ impl ChartApp {
 
         // Snapshot group info BEFORE disconnect.
         let had_group_id = self.panel_app.panel_grid
-            .window_for_leaf(leaf_id)
+            .container_for_leaf(leaf_id)
             .and_then(|w| w.group_id)
             .is_some();
         // Pre-tag indicator ids — these survive desync (will be unhidden).
         let pre_tag_ids: Vec<u64> = self.panel_app.panel_grid
-            .window_for_leaf(leaf_id)
+            .container_for_leaf(leaf_id)
             .map(|w| w.pre_tag_indicator_ids.clone())
             .unwrap_or_default();
         // Has stashed primitives? (window joined an existing tag)
         let has_stash = self.panel_app.panel_grid
-            .window_for_leaf(leaf_id)
+            .container_for_leaf(leaf_id)
             .is_some_and(|w| !w.stashed_primitives.is_empty());
 
         // 1b. Disconnect from TagManager group.
-        if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(leaf_id) {
+        if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
             if let Some(old_group_id) = self.panel_app.tag_manager.disconnect_chart(chart_id) {
                 eprintln!(
                     "[TagManager] Disconnected chart {:?} from group {:?}",
@@ -96,8 +96,8 @@ impl ChartApp {
         }
 
         // 2. Restore window's own state: primitives and indicators.
-        if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(leaf_id) {
-            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
+        if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
+            if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
                 if had_group_id {
                     // Clear tag primitives (pre-render sync fills these from group).
                     window.drawing_manager.clear_all_primitives();
@@ -169,16 +169,16 @@ impl ChartApp {
 
         // 4. Create a new auto_created group for the desynced window.
         // Every window must always be in a group — standalone path is dead.
-        if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(leaf_id) {
-            let Some(win) = self.panel_app.panel_grid.window_for_leaf(leaf_id) else {
-                eprintln!("[sync_group] perform_desync: window_for_leaf({:?}) returned None — skipping desync", leaf_id);
+        if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
+            let Some(win) = self.panel_app.panel_grid.container_for_leaf(leaf_id) else {
+                eprintln!("[sync_group] perform_desync: container_for_leaf({:?}) returned None — skipping desync", leaf_id);
                 return;
             };
             let (symbol, timeframe) = (win.symbol.clone(), win.timeframe.clone());
             // Auto groups get transparent color — never occupy palette slots
             let new_group_id = self.panel_app.tag_manager.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
             let _ = self.panel_app.tag_manager.connect_chart(chart_id, new_group_id);
-            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
+            if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
                 window.group_id = Some(new_group_id);
                 // Rebind to the fresh auto-group's style store.  The desynced window
                 // is now independent; its DM must not share the old group's Arc.
@@ -191,7 +191,7 @@ impl ChartApp {
             }
             // Move restored primitives from drawing_manager into the new group.
             let dm_prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
-                self.panel_app.panel_grid.window_for_leaf(leaf_id)
+                self.panel_app.panel_grid.container_for_leaf(leaf_id)
                     .map(|w| w.drawing_manager.primitives().iter().map(|p| p.clone_box()).collect())
                     .unwrap_or_default();
             if !dm_prims.is_empty() {
@@ -215,14 +215,14 @@ impl ChartApp {
         // Connect the joining leaf's chart to the TagManager group for this color.
         // Find-or-create the group so TagManager stays consistent regardless of
         // whether this is the first leaf in the group or a later joiner.
-        if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(joining_leaf) {
+        if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(joining_leaf) {
             let existing_group = self.panel_app.tag_manager.find_group_by_color(color);
             let is_new_group = existing_group.is_none();
             let group_id = if let Some(gid) = existing_group {
                 gid
             } else {
-                let Some(win) = self.panel_app.panel_grid.window_for_leaf(joining_leaf) else {
-                    eprintln!("[sync_group] sync_join_color_group: window_for_leaf({:?}) returned None — skipping join", joining_leaf);
+                let Some(win) = self.panel_app.panel_grid.container_for_leaf(joining_leaf) else {
+                    eprintln!("[sync_group] sync_join_color_group: container_for_leaf({:?}) returned None — skipping join", joining_leaf);
                     return;
                 };
                 let (symbol, tf) = (win.symbol.clone(), win.timeframe.clone());
@@ -240,7 +240,7 @@ impl ChartApp {
                 .group(group_id)
                 .map(|g| g.last_used_style.clone())
             {
-                if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(joining_leaf) {
+                if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(joining_leaf) {
                     window.drawing_manager.bind_style_store(style_arc);
                 }
             }
@@ -260,13 +260,13 @@ impl ChartApp {
                 // Seed group.scale_mode from the creating window's current mode so the
                 // group starts with the correct A/M/F and any later joiners inherit it.
                 let seed_mode = self.panel_app.panel_grid
-                    .window_for_leaf(joining_leaf)
+                    .container_for_leaf(joining_leaf)
                     .map(|w| w.price_scale.scale_mode);
                 if let (Some(mode), Some(group)) = (seed_mode, self.panel_app.tag_manager.group_mut(group_id)) {
                     group.scale_mode = mode;
                 }
 
-                if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(joining_leaf) {
+                if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(joining_leaf) {
                     window.group_id = Some(group_id);
                     window.pre_tag_indicator_ids = pre_tag_ids;
                     // Stash window's own primitives (for restore on desync).
@@ -285,11 +285,11 @@ impl ChartApp {
 
                 // Seed primitives into group (clone from stash).
                 let (prim_symbol, prim_exchange, prim_account_type) = self.panel_app.panel_grid
-                    .window_for_leaf(joining_leaf)
+                    .container_for_leaf(joining_leaf)
                     .map(|w| (w.symbol.clone(), w.exchange.clone(), w.account_type.clone()))
                     .unwrap_or_default();
                 let mut source_prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
-                    self.panel_app.panel_grid.window_for_leaf(joining_leaf)
+                    self.panel_app.panel_grid.container_for_leaf(joining_leaf)
                         .map(|w| {
                             w.stashed_primitives.iter()
                                 .map(|p| p.clone_box())
@@ -313,7 +313,7 @@ impl ChartApp {
 
                 // Seed indicator configs.
                 let (seed_symbol, seed_exchange, seed_account_type) = self.panel_app.panel_grid
-                    .window_for_leaf(joining_leaf)
+                    .container_for_leaf(joining_leaf)
                     .map(|w| (w.symbol.clone(), w.exchange.clone(), w.account_type.clone()))
                     .unwrap_or_default();
                 let mut configs: Vec<zengeld_chart::tag_manager::IndicatorGroupConfig> = self
@@ -358,7 +358,7 @@ impl ChartApp {
                     .map(|g| g.scale_mode);
                 if let (Some(group_mode), Some(window)) = (
                     group_mode,
-                    self.panel_app.panel_grid.window_for_leaf_mut(joining_leaf),
+                    self.panel_app.panel_grid.container_for_leaf_mut(joining_leaf),
                 ) {
                     if window.stashed_scale_mode.is_none() {
                         window.stashed_scale_mode = Some(window.price_scale.scale_mode);
@@ -375,7 +375,7 @@ impl ChartApp {
             }
 
             // Stash primitives: move window's own primitives into stashed_primitives.
-            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(joining_leaf) {
+            if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(joining_leaf) {
                 let own_prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
                     window.drawing_manager.primitives().iter()
                         .filter(|p| p.data().origin_id.is_none())
@@ -422,10 +422,10 @@ impl ChartApp {
         let pre_split_color = active_leaf
             .and_then(|lid| self.panel_app.leaf_color_tags.remove(&lid));
         let pre_split_group_id = active_leaf
-            .and_then(|lid| self.panel_app.panel_grid.window_for_leaf(lid))
+            .and_then(|lid| self.panel_app.panel_grid.container_for_leaf(lid))
             .and_then(|w| w.group_id);
         let pre_split_chart_id = active_leaf
-            .and_then(|lid| self.panel_app.panel_grid.chart_id_for_leaf(lid));
+            .and_then(|lid| self.panel_app.panel_grid.container_id_for_leaf(lid));
 
         let new_leaves = self.panel_app.panel_grid.split_active(kind);
         self.propagate_crosshair_after_split(&new_leaves);
@@ -439,7 +439,7 @@ impl ChartApp {
             // the TagManager link rather than assuming old_cid is still valid.
             if let Some(mother_leaf) = new_leaves.first().copied() {
                 if let (Some(old_cid), Some(old_gid)) = (pre_split_chart_id, pre_split_group_id) {
-                    if let Some(new_cid) = self.panel_app.panel_grid.chart_id_for_leaf(mother_leaf) {
+                    if let Some(new_cid) = self.panel_app.panel_grid.container_id_for_leaf(mother_leaf) {
                         if new_cid != old_cid {
                             // The chart got a new ID after the split — connect the new one.
                             let _ = self.panel_app.tag_manager.connect_chart(new_cid, old_gid);
@@ -447,7 +447,7 @@ impl ChartApp {
                         }
                         // else: same chart_id survived the split, TagManager link is intact.
                     }
-                    if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(mother_leaf) {
+                    if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(mother_leaf) {
                         window.group_id = Some(old_gid);
                     }
                     // Restore the mother's color tag that was snapshotted before the split.
@@ -460,8 +460,8 @@ impl ChartApp {
 
             // Give each NEW (non-mother) leaf its own fresh auto_created group.
             for &leaf_id in new_leaves.iter().skip(1) {
-                let Some(win) = self.panel_app.panel_grid.window_for_leaf(leaf_id) else {
-                    eprintln!("[sync_group] split untagged: window_for_leaf({:?}) returned None — skipping new leaf", leaf_id);
+                let Some(win) = self.panel_app.panel_grid.container_for_leaf(leaf_id) else {
+                    eprintln!("[sync_group] split untagged: container_for_leaf({:?}) returned None — skipping new leaf", leaf_id);
                     continue;
                 };
                 let (symbol, timeframe) = (win.symbol.clone(), win.timeframe.clone());
@@ -470,10 +470,10 @@ impl ChartApp {
                     symbol,
                     timeframe,
                 );
-                if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(leaf_id) {
+                if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
                     let _ = self.panel_app.tag_manager.connect_chart(chart_id, gid);
                 }
-                if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
+                if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
                     window.group_id = Some(gid);
                 }
                 self.panel_app.leaf_color_tags.remove(&leaf_id);
@@ -510,9 +510,9 @@ impl ChartApp {
             }
 
             // Resolve first-leaf window once — needed by both auto-promote and no-group branches.
-            let first_leaf_win = self.panel_app.panel_grid.window_for_leaf(new_leaves[0]);
+            let first_leaf_win = self.panel_app.panel_grid.container_for_leaf(new_leaves[0]);
             if first_leaf_win.is_none() {
-                eprintln!("[sync_group] split tagged: window_for_leaf({:?}) returned None — skipping split tag", new_leaves[0]);
+                eprintln!("[sync_group] split tagged: container_for_leaf({:?}) returned None — skipping split tag", new_leaves[0]);
                 return;
             }
             let group_id = if let Some(existing_group) = pre_split_group_id {
@@ -554,7 +554,7 @@ impl ChartApp {
             let leaf_chart_ids: Vec<(zengeld_chart::LeafId, zengeld_chart::ChartId)> = new_leaves
                 .iter()
                 .filter_map(|&leaf_id| {
-                    self.panel_app.panel_grid.chart_id_for_leaf(leaf_id)
+                    self.panel_app.panel_grid.container_id_for_leaf(leaf_id)
                         .map(|cid| (leaf_id, cid))
                 })
                 .collect();
@@ -566,7 +566,7 @@ impl ChartApp {
                 .group(group_id)
                 .map(|g| g.last_used_style.clone());
             for &(leaf_id, _) in &leaf_chart_ids {
-                if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
+                if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
                     window.group_id = Some(group_id);
                     if let Some(ref arc) = style_arc {
                         window.drawing_manager.bind_style_store(arc.clone());
@@ -583,7 +583,7 @@ impl ChartApp {
                         .filter(|i| i.window_id == Some(source_cid.0) && i.origin_id.is_none())
                         .map(|i| i.id)
                         .collect();
-                    if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(source_leaf) {
+                    if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(source_leaf) {
                         window.pre_tag_indicator_ids = pre_tag_ids;
                         // Stash source window's primitives for restore on desync.
                         let own_prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
@@ -613,7 +613,7 @@ impl ChartApp {
             // the group each frame.  The source (first) leaf keeps its originals
             // since they'll be seeded into the group below.
             for &(leaf_id, _) in leaf_chart_ids.iter().skip(1) {
-                if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
+                if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
                     window.drawing_manager.clear_all_primitives();
                 }
             }
@@ -630,12 +630,12 @@ impl ChartApp {
 
                 // Primitives: clone source originals into the group.
                 let (prim_sym, prim_exch, prim_at) = self.panel_app.panel_grid
-                    .window_for_leaf(new_leaves[0])
+                    .container_for_leaf(new_leaves[0])
                     .map(|w| (w.symbol.clone(), w.exchange.clone(), w.account_type.clone()))
                     .unwrap_or_default();
                 let mut source_prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
                     self.panel_app.panel_grid
-                        .window_for_leaf(new_leaves[0])
+                        .container_for_leaf(new_leaves[0])
                         .map(|w| {
                             w.drawing_manager.primitives().iter()
                                 .filter(|p| p.data().origin_id.is_none())
@@ -667,7 +667,7 @@ impl ChartApp {
                 // Indicators: snapshot source window's indicators into group configs.
                 if let Some(source_chart_id) = leaf_chart_ids.first().map(|(_, cid)| *cid) {
                     let (source_symbol, source_exchange, source_account_type) = leaf_chart_ids.first()
-                        .and_then(|(lid, _)| self.panel_app.panel_grid.window_for_leaf(*lid))
+                        .and_then(|(lid, _)| self.panel_app.panel_grid.container_for_leaf(*lid))
                         .map(|w| (w.symbol.clone(), w.exchange.clone(), w.account_type.clone()))
                         .unwrap_or_default();
                     let mut configs: Vec<zengeld_chart::tag_manager::IndicatorGroupConfig> = self
@@ -726,7 +726,7 @@ impl ChartApp {
         let source_leaf = new_leaves[0];
         // Read crosshair + viewport state from source window.
         let (timestamp, price, visible, pane_index, view_start, bar_spacing) =
-            match self.panel_app.panel_grid.window_for_leaf(source_leaf) {
+            match self.panel_app.panel_grid.container_for_leaf(source_leaf) {
                 Some(w) => {
                     let bar_f64 = w.crosshair.bar_f64;
                     let bar_idx = bar_f64 as usize;
@@ -772,7 +772,7 @@ impl ChartApp {
         exchange: &str,
         account_type: &str,
     ) {
-        let should_sync = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf)
+        let should_sync = self.panel_app.panel_grid.container_id_for_leaf(source_leaf)
             .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
             .and_then(|gid| self.panel_app.tag_manager.group(gid))
             .map(|g| g.sync_flags.sync_symbol)
@@ -781,14 +781,14 @@ impl ChartApp {
 
         // Enumerate peer leaves via TagManager group membership (not leaf_color_tags).
         // This makes propagation work for untagged (auto-created) groups too.
-        let source_chart_id_for_peers = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf);
+        let source_chart_id_for_peers = self.panel_app.panel_grid.container_id_for_leaf(source_leaf);
         let group_id_for_peers = source_chart_id_for_peers
             .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid));
         let sync_leaves: Vec<zengeld_chart::LeafId> = if let Some(gid) = group_id_for_peers {
             self.panel_app.tag_manager
                 .chart_members(gid)
                 .into_iter()
-                .filter_map(|cid| self.panel_app.panel_grid.leaf_for_chart_id(cid))
+                .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
                 .filter(|&lid| lid != source_leaf)
                 .collect()
         } else {
@@ -809,7 +809,7 @@ impl ChartApp {
         // mutating windows so we can restore drawings and request bars after the mutations.
         let mut peer_info: Vec<(String, String, String, zengeld_chart::state::Timeframe)> = Vec::new();
         for leaf_id in &sync_leaves {
-            if let Some(window) = self.panel_app.panel_grid.window_for_leaf(*leaf_id) {
+            if let Some(window) = self.panel_app.panel_grid.container_for_leaf(*leaf_id) {
                 peer_info.push((
                     window.symbol.clone(),
                     window.exchange.clone(),
@@ -822,7 +822,7 @@ impl ChartApp {
         // Apply the full instrument key change (symbol + exchange + account_type) to each peer
         // window directly, bypassing change_symbol() which uses NullDataProvider and always fails.
         for (leaf_id, (old_symbol, old_exchange, old_account_type, _)) in sync_leaves.iter().zip(peer_info.iter()) {
-            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(*leaf_id) {
+            if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(*leaf_id) {
                 window.snapshot_drawings_for_symbol(old_symbol, old_exchange, old_account_type);
                 window.symbol = symbol_owned.clone();
                 window.exchange = exchange_owned.clone();
@@ -868,14 +868,14 @@ impl ChartApp {
 
         // Also update the TagManager group's canonical instrument so the group
         // state stays consistent with the displayed windows.
-        if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf) {
+        if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(source_leaf) {
             // Collect exchange + account_type from the source window before TagManager borrow.
             let (source_exchange, source_account_type) =
-                self.panel_app.panel_grid.window_for_leaf(source_leaf)
+                self.panel_app.panel_grid.container_for_leaf(source_leaf)
                     .map(|w| (w.exchange.clone(), w.account_type.clone()))
                     .unwrap_or_default();
 
-            let group_id = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf)
+            let group_id = self.panel_app.panel_grid.container_id_for_leaf(source_leaf)
                 .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid));
 
             let member = zengeld_chart::tag_manager::SyncMemberId::Chart(chart_id.0);
@@ -905,7 +905,7 @@ impl ChartApp {
         source_leaf: zengeld_chart::LeafId,
         tf: zengeld_chart::state::Timeframe,
     ) {
-        let should_sync = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf)
+        let should_sync = self.panel_app.panel_grid.container_id_for_leaf(source_leaf)
             .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
             .and_then(|gid| self.panel_app.tag_manager.group(gid))
             .map(|g| g.sync_flags.sync_timeframe)
@@ -913,14 +913,14 @@ impl ChartApp {
         if !should_sync { return; }
 
         // Enumerate peer leaves via TagManager group membership (not leaf_color_tags).
-        let source_chart_id_for_tf = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf);
+        let source_chart_id_for_tf = self.panel_app.panel_grid.container_id_for_leaf(source_leaf);
         let group_id_for_tf = source_chart_id_for_tf
             .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid));
         let sync_leaves: Vec<zengeld_chart::LeafId> = if let Some(gid) = group_id_for_tf {
             self.panel_app.tag_manager
                 .chart_members(gid)
                 .into_iter()
-                .filter_map(|cid| self.panel_app.panel_grid.leaf_for_chart_id(cid))
+                .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
                 .filter(|&lid| lid != source_leaf)
                 .collect()
         } else {
@@ -937,7 +937,7 @@ impl ChartApp {
         // so we can call bridge.request_bars() after setting the new timeframe.
         let mut peer_requests: Vec<(String, String, String)> = Vec::new();
         for leaf_id in &sync_leaves {
-            if let Some(window) = self.panel_app.panel_grid.window_for_leaf(*leaf_id) {
+            if let Some(window) = self.panel_app.panel_grid.container_for_leaf(*leaf_id) {
                 peer_requests.push((window.exchange.clone(), window.symbol.clone(), window.account_type.clone()));
             }
         }
@@ -945,7 +945,7 @@ impl ChartApp {
         // Set timeframe and clear stale bars on each peer window directly,
         // bypassing change_timeframe() which uses NullDataProvider and fails.
         for leaf_id in &sync_leaves {
-            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(*leaf_id) {
+            if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(*leaf_id) {
                 window.timeframe = tf.clone();
                 window.bars.clear();
                 window.viewport.bar_count = 0;
@@ -984,7 +984,7 @@ impl ChartApp {
 
         // Also update the TagManager group's canonical timeframe so the group
         // state stays consistent with the displayed windows.
-        if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf) {
+        if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(source_leaf) {
             self.panel_app.tag_manager.set_timeframe(chart_id, tf.clone());
             eprintln!(
                 "[TagManager] Updated group timeframe to {:?} via chart {:?}",
@@ -1018,7 +1018,7 @@ impl ChartApp {
         }
 
         // Get the chart ID for the source leaf, then read the new primitive's ID.
-        let source_chart_id = match self.panel_app.panel_grid.chart_id_for_leaf(source_leaf) {
+        let source_chart_id = match self.panel_app.panel_grid.container_id_for_leaf(source_leaf) {
             Some(id) => id,
             None => return,
         };
@@ -1026,7 +1026,7 @@ impl ChartApp {
         // If the source window is in a TagManager group, primitives are shared via the
         // group — no clone-based propagation is needed.
         if self.panel_app.panel_grid
-            .windows()
+            .containers()
             .get(&source_chart_id)
             .map(|w| w.group_id.is_some())
             .unwrap_or(false)
@@ -1035,7 +1035,7 @@ impl ChartApp {
         }
 
         let prim_id = match self.panel_app.panel_grid
-            .windows()
+            .containers()
             .get(&source_chart_id)
             .and_then(|w| w.drawing_manager.last_original_id())
         {
@@ -1045,14 +1045,14 @@ impl ChartApp {
 
         // For each peer leaf, clone the primitive into its drawing manager.
         for peer_leaf in peer_leaves {
-            let peer_chart_id = match self.panel_app.panel_grid.chart_id_for_leaf(peer_leaf) {
+            let peer_chart_id = match self.panel_app.panel_grid.container_id_for_leaf(peer_leaf) {
                 Some(id) => id,
                 None => continue,
             };
 
             // Clone the primitive from the source window.
             let cloned = match self.panel_app.panel_grid
-                .windows()
+                .containers()
                 .get(&source_chart_id)
                 .and_then(|w| w.drawing_manager.clone_primitive_for_sync(prim_id, peer_chart_id.0))
             {
@@ -1061,7 +1061,7 @@ impl ChartApp {
             };
 
             // Insert the clone into the peer window.
-            if let Some(peer_window) = self.panel_app.panel_grid.windows_mut().get_mut(&peer_chart_id) {
+            if let Some(peer_window) = self.panel_app.panel_grid.containers_mut().get_mut(&peer_chart_id) {
                 peer_window.drawing_manager.add_synced_primitives(vec![cloned]);
                 eprintln!("[ChartApp] Synced primitive {} to peer chart {:?}", prim_id, peer_chart_id);
             }
@@ -1072,7 +1072,7 @@ impl ChartApp {
     ///
     /// `source_leaf` is the leaf whose crosshair was just updated.
     /// All other leaves sharing the same color tag receive a matching position
-    /// via [`ChartWindow::set_crosshair_from_timestamp`], which converts the
+    /// via [`ChartContainer::set_crosshair_from_timestamp`], which converts the
     /// universal timestamp to each peer's local fractional bar index.
     pub(super) fn propagate_crosshair_to_sync_group(
         &mut self,
@@ -1082,7 +1082,7 @@ impl ChartApp {
         visible: bool,
         pane_index: Option<usize>,
     ) {
-        let source_chart_id = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf);
+        let source_chart_id = self.panel_app.panel_grid.container_id_for_leaf(source_leaf);
         let group_id = source_chart_id
             .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid));
 
@@ -1101,12 +1101,12 @@ impl ChartApp {
             self.panel_app.tag_manager
                 .chart_members(gid)
                 .into_iter()
-                .filter_map(|cid| self.panel_app.panel_grid.leaf_for_chart_id(cid))
+                .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
                 .filter(|&lid| lid != source_leaf)
                 .collect::<Vec<_>>()
                 .into_iter()
                 .filter(|&lid| {
-                    let peer_chart_id = self.panel_app.panel_grid.chart_id_for_leaf(lid);
+                    let peer_chart_id = self.panel_app.panel_grid.container_id_for_leaf(lid);
                     let peer_should_sync = group_id
                         .zip(peer_chart_id)
                         .and_then(|(gid2, cid)| {
@@ -1130,7 +1130,7 @@ impl ChartApp {
             }
         };
         for leaf_id in sync_leaves {
-            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
+            if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
                 window.set_crosshair_from_timestamp(timestamp, price, visible, pane_index);
             }
         }
@@ -1178,7 +1178,7 @@ impl ChartApp {
         // on the `leaf_color_tags` map which can include windows from different groups
         // that happen to share the same color value.
         let group_id = self.panel_app.panel_grid
-            .chart_id_for_leaf(source_leaf)
+            .container_id_for_leaf(source_leaf)
             .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid));
 
         let should_sync = group_id
@@ -1193,7 +1193,7 @@ impl ChartApp {
             self.panel_app.tag_manager
                 .chart_members(gid)
                 .into_iter()
-                .filter_map(|cid| self.panel_app.panel_grid.leaf_for_chart_id(cid))
+                .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
                 .filter(|&lid| lid != source_leaf)
                 .collect()
         } else {
@@ -1215,7 +1215,7 @@ impl ChartApp {
         // Read the current drawing state from the source window.
         // We extract tool_id and points so we can release the borrow before
         // mutating peer windows.
-        let (tool_id, points) = match self.panel_app.panel_grid.window_for_leaf(source_leaf) {
+        let (tool_id, points) = match self.panel_app.panel_grid.container_for_leaf(source_leaf) {
             Some(w) => match w.drawing_manager.drawing_state() {
                 zengeld_chart::drawing::DrawingState::Creating { tool_id, points } => {
                     (Some(tool_id.clone()), points.clone())
@@ -1227,7 +1227,7 @@ impl ChartApp {
 
         // Apply to every peer leaf.
         for peer_leaf in peer_leaves {
-            if let Some(peer_window) = self.panel_app.panel_grid.window_for_leaf_mut(peer_leaf) {
+            if let Some(peer_window) = self.panel_app.panel_grid.container_for_leaf_mut(peer_leaf) {
                 peer_window.drawing_manager.set_synced_drawing_state(tool_id.clone(), points.clone());
             }
         }
@@ -1244,9 +1244,9 @@ impl ChartApp {
     /// Returns `true` when a primitive was transferred to the group.
     pub(super) fn intercept_completed_primitive_to_group(&mut self) -> bool {
         // Check if the active window is in a TagManager group.
-        let (chart_id, group_id) = match self.panel_app.panel_grid.active_window() {
+        let (chart_id, group_id) = match self.panel_app.panel_grid.active_container() {
             Some(w) if w.group_id.is_some() => {
-                let cid = match self.panel_app.panel_grid.active_chart_id() {
+                let cid = match self.panel_app.panel_grid.active_container_id() {
                     Some(id) => id,
                     None => return false,
                 };
@@ -1276,7 +1276,7 @@ impl ChartApp {
 
         // Pop the last primitive from the window's drawing_manager.
         let prim = {
-            let window = match self.panel_app.panel_grid.windows_mut().get_mut(&chart_id) {
+            let window = match self.panel_app.panel_grid.containers_mut().get_mut(&chart_id) {
                 Some(w) => w,
                 None => return false,
             };
@@ -1294,7 +1294,7 @@ impl ChartApp {
         // so per-instrument tracking works correctly across multi-exchange groups.
         let mut prim = prim;
         let (prim_symbol, prim_exchange, prim_account_type) = self.panel_app.panel_grid
-            .windows()
+            .containers()
             .get(&chart_id)
             .map(|w| (w.symbol.clone(), w.exchange.clone(), w.account_type.clone()))
             .unwrap_or_default();
@@ -1316,7 +1316,7 @@ impl ChartApp {
             true
         } else {
             // Group disappeared — put the primitive back into drawing_manager.
-            if let Some(window) = self.panel_app.panel_grid.windows_mut().get_mut(&chart_id) {
+            if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&chart_id) {
                 window.drawing_manager.add_synced_primitives(vec![prim]);
             }
             false
@@ -1330,11 +1330,11 @@ impl ChartApp {
     /// creating a new auto group. It does NOT purge cloned primitives/indicators —
     /// for a full desync use `perform_desync` instead.
     pub(super) fn disconnect_from_current_group(&mut self, leaf_id: zengeld_chart::LeafId) {
-        let chart_id = match self.panel_app.panel_grid.chart_id_for_leaf(leaf_id) {
+        let chart_id = match self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
             Some(id) => id,
             None => return,
         };
-        let old_gid = match self.panel_app.panel_grid.window_for_leaf(leaf_id)
+        let old_gid = match self.panel_app.panel_grid.container_for_leaf(leaf_id)
             .and_then(|w| w.group_id)
         {
             Some(gid) => gid,
@@ -1358,11 +1358,11 @@ impl ChartApp {
     /// `leaf_id` back into its sync group.  Callers that mutate a specific
     /// non-active window should use this variant so the correct window is read.
     pub(super) fn sync_drawing_back_to_group_for(&mut self, leaf_id: zengeld_chart::LeafId) {
-        let chart_id = match self.panel_app.panel_grid.chart_id_for_leaf(leaf_id) {
+        let chart_id = match self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
             Some(cid) => cid,
             None => return,
         };
-        let group_id = match self.panel_app.panel_grid.windows().get(&chart_id)
+        let group_id = match self.panel_app.panel_grid.containers().get(&chart_id)
             .and_then(|w| w.group_id)
         {
             Some(gid) => gid,
@@ -1375,7 +1375,7 @@ impl ChartApp {
             }
         }
         let new_prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
-            self.panel_app.panel_grid.windows().get(&chart_id)
+            self.panel_app.panel_grid.containers().get(&chart_id)
                 .map(|w| w.drawing_manager.primitives().iter().map(|p| p.clone_box()).collect())
                 .unwrap_or_default();
         if let Some(group) = self.panel_app.tag_manager.group_mut(group_id) {
@@ -1443,7 +1443,7 @@ impl ChartApp {
 
             // Calculate indicators with this window's bars.
             let bars: Option<Vec<zengeld_chart::Bar>> = self.panel_app.panel_grid
-                .window_for_leaf(leaf_id)
+                .container_for_leaf(leaf_id)
                 .map(|w| w.bars.clone());
             if let Some(bars) = bars {
                 self.indicator_manager.calculate_all_for_window(chart_id.0, &bars);
@@ -1473,7 +1473,7 @@ impl ChartApp {
 
         // Collect peer chart_ids (excluding source). Symbol no longer matters
         // — each peer recalculates indicators against its own bars.
-        let source_chart_id = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf);
+        let source_chart_id = self.panel_app.panel_grid.container_id_for_leaf(source_leaf);
         let peer_cids: Vec<zengeld_chart::ChartId> = self.panel_app.tag_manager
             .chart_members(group_id)
             .into_iter()
@@ -1488,7 +1488,7 @@ impl ChartApp {
                 }
                 // Calculate with peer's bars.
                 let bars: Option<Vec<zengeld_chart::Bar>> = self.panel_app.panel_grid
-                    .windows().get(&peer_cid)
+                    .containers().get(&peer_cid)
                     .map(|w| w.bars.clone());
                 if let Some(bars) = bars {
                     self.indicator_manager.calculate_all_for_window(peer_cid.0, &bars);

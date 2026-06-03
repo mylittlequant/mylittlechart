@@ -15,7 +15,7 @@ use crate::layout::LayoutRect;
 use crate::layout::{ChartAreaLayout, ChartRenderConfig, ScaleCornerState, render_chart_window, ExtendedFrameLayout, FrameTheme};
 use crate::chart::render::ScaleTheme;
 use crate::chart::render::{ChartRenderState, ChartTheme, ChartRect};
-use crate::state::{ChartPanelGrid, ChartWindow, Timeframe};
+use crate::state::{ChartPanelGrid, ChartContainer, Timeframe};
 use crate::scale_settings::ScaleSettings;
 use crate::toolbar;
 use crate::ui::toolbar_render::{
@@ -2363,7 +2363,7 @@ pub struct ChartPanelApp {
     pub active_modal: ChartOpenModal,
     /// Chart data and split layout manager.
     ///
-    /// Holds all ChartWindow instances (one per split leaf) and the
+    /// Holds all ChartContainer instances (one per split leaf) and the
     /// DockingManager that computes each sub-chart's rectangle.
     pub panel_grid: ChartPanelGrid,
     /// Chart's local theme manager — subordinate to terminal's ThemeManager.
@@ -2446,7 +2446,7 @@ pub struct ChartPanelApp {
 
 impl ChartPanelApp {
     pub fn new(title: &str) -> Self {
-        let initial_window = ChartWindow::new(title, Timeframe::h1());
+        let initial_window = ChartContainer::new(title, Timeframe::h1());
         Self {
             toolbar_state: ChartToolbarState::new(),
             title: title.to_string(),
@@ -2730,7 +2730,7 @@ impl ChartPanelApp {
         let toolbar_theme = self.toolbar_theme_for_render();
         let dropdown_theme = self.dropdown_theme_for_render();
         // Get sync flags for the active window's group (used to show toggle state in layout_menu)
-        let active_gid = self.panel_grid.active_window().and_then(|w| w.group_id);
+        let active_gid = self.panel_grid.active_container().and_then(|w| w.group_id);
         let sync_flags = active_gid.and_then(|gid| self.tag_manager.group(gid)).map(|g| &g.sync_flags);
         let is_mono_group = active_gid.and_then(|gid| self.tag_manager.group(gid)).map(|g| g.members.len() <= 1).unwrap_or(true);
         let is_expanded = self.panel_grid.is_expanded();
@@ -3380,7 +3380,7 @@ impl ChartPanelApp {
     ///
     /// The method:
     /// 1. Computes sub-chart rectangles via the split manager.
-    /// 2. For each leaf, builds `ChartRenderState` from its `ChartWindow`.
+    /// 2. For each leaf, builds `ChartRenderState` from its `ChartContainer`.
     /// 3. Calls `render_chart_window` for each sub-chart.
     pub fn render_chart_content(
         &mut self,
@@ -3407,7 +3407,7 @@ impl ChartPanelApp {
             .collect();
 
         for (leaf_id, sub_rect) in leaf_rects {
-            let window = match self.panel_grid.window_for_leaf(leaf_id) {
+            let window = match self.panel_grid.container_for_leaf(leaf_id) {
                 Some(w) => w,
                 None => continue,
             };

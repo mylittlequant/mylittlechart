@@ -12,7 +12,7 @@ impl ChartApp {
     pub fn is_drawing(&self) -> bool {
         self.panel_app
             .panel_grid
-            .active_window()
+            .active_container()
             .map(|w| w.drawing_manager.is_drawing())
             .unwrap_or(false)
     }
@@ -23,7 +23,7 @@ impl ChartApp {
     pub fn has_click_drawing_tool(&self) -> bool {
         self.panel_app
             .panel_grid
-            .active_window()
+            .active_container()
             .map(|w| {
                 w.drawing_manager.current_tool().is_some()
                     && !w.drawing_manager.is_freehand_tool()
@@ -52,7 +52,7 @@ impl ChartApp {
         // X-axis is shared across all panes — always convert using main chart origin.
         let local_x = screen_x - chart_x;
 
-        let Some(window) = self.panel_app.panel_grid.active_window() else {
+        let Some(window) = self.panel_app.panel_grid.active_container() else {
             return (screen_x, screen_y);
         };
         // Snap to bar center (matching crosshair coordinate system).

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 /// A member in a sync group — either a chart window or a trading panel.
 ///
 /// The raw `u64` inside each variant is the ID from the respective ID space:
-/// - `Chart(id)` — corresponds to `ChartId(id)` from `chart_window`
+/// - `Chart(id)` — corresponds to `ChartId(id)` from `chart_container`
 /// - `Panel(id)` — corresponds to `PanelId(id)` from `sidebar-content`
 ///
 /// Adapters (`From<ChartId>` and `From<PanelId>`) live in `chart-app` to

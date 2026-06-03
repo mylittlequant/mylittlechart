@@ -66,13 +66,13 @@ impl App<'_> {
             // Build leaf→ChartId map for layout tree.
             let leaf_to_chart: StdHashMap<uzor::panels::LeafId, zengeld_chart::ChartId> =
                 pw.chart.panel_app.panel_grid
-                    .iter_windows()
+                    .iter_containers()
                     .map(|(lid, w)| (lid, w.id))
                     .collect();
 
             // Charts
             let charts: Vec<ChartSnapshot> = pw.chart.panel_app.panel_grid
-                .iter_windows()
+                .iter_containers()
                 .map(|(leaf_id, cw)| {
                     let viewport = &cw.viewport;
                     let bars_visible = if viewport.bar_spacing > 0.0 {
@@ -167,7 +167,7 @@ impl App<'_> {
                 .chart
                 .panel_app
                 .panel_grid
-                .windows()
+                .containers()
                 .iter()
                 .map(|(cid, cw)| (cid.0, cw.symbol.clone()))
                 .collect();

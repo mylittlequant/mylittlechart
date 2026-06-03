@@ -20,7 +20,7 @@ impl App<'_> {
                     window_id, chart_id, view_start, bar_spacing, mode,
                 } => {
                     if let Some(pw) = self.windows.values_mut().find(|pw| pw.window_id == window_id) {
-                        if let Some(cw) = pw.chart.panel_app.panel_grid.windows_mut().values_mut()
+                        if let Some(cw) = pw.chart.panel_app.panel_grid.containers_mut().values_mut()
                             .find(|cw| cw.id.0 == chart_id)
                         {
                             if let Some(mode_str) = &mode {
@@ -72,7 +72,7 @@ impl App<'_> {
                     window_id, chart_id, type_id, params, agent_id: _,
                 } => {
                     if let Some(pw) = self.windows.values_mut().find(|pw| pw.window_id == window_id) {
-                        let bars: Vec<zengeld_chart::Bar> = pw.chart.panel_app.panel_grid.windows()
+                        let bars: Vec<zengeld_chart::Bar> = pw.chart.panel_app.panel_grid.containers()
                             .values().find(|cw| cw.id.0 == chart_id)
                             .map(|cw| cw.bars.clone())
                             .unwrap_or_default();
@@ -133,7 +133,7 @@ impl App<'_> {
                             let wid = inst.window_id;
                             // Get bars from the window this indicator is bound to.
                             let bars: Vec<zengeld_chart::Bar> = wid
-                                .and_then(|w| pw.chart.panel_app.panel_grid.windows()
+                                .and_then(|w| pw.chart.panel_app.panel_grid.containers()
                                     .values().find(|cw| cw.id.0 == w)
                                     .map(|cw| cw.bars.clone()))
                                 .unwrap_or_default();
@@ -177,7 +177,7 @@ impl App<'_> {
                             };
                             prim.data_mut().width = style.width;
                             drop(registry);
-                            let cw = pw.chart.panel_app.panel_grid.windows_mut().values_mut()
+                            let cw = pw.chart.panel_app.panel_grid.containers_mut().values_mut()
                                 .find(|cw| cw.id.0 == chart_id);
                             if let Some(cw) = cw {
                                 cw.drawing_manager.add_external_primitive(prim);
@@ -198,7 +198,7 @@ impl App<'_> {
                     window_id, chart_id, primitive_id, points, style, agent_id: _,
                 } => {
                     if let Some(pw) = self.windows.values_mut().find(|pw| pw.window_id == window_id) {
-                        let cw = pw.chart.panel_app.panel_grid.windows_mut().values_mut()
+                        let cw = pw.chart.panel_app.panel_grid.containers_mut().values_mut()
                             .find(|cw| cw.id.0 == chart_id);
                         if let Some(cw) = cw {
                             let prim = cw.drawing_manager.primitives_mut()
@@ -232,7 +232,7 @@ impl App<'_> {
                 } => {
                     if let Some(pw) = self.windows.values_mut().find(|pw| pw.window_id == window_id) {
                         let removed = {
-                            let cw = pw.chart.panel_app.panel_grid.windows_mut().values_mut()
+                            let cw = pw.chart.panel_app.panel_grid.containers_mut().values_mut()
                                 .find(|cw| cw.id.0 == chart_id);
                             if let Some(cw) = cw {
                                 let idx = cw.drawing_manager.primitives()

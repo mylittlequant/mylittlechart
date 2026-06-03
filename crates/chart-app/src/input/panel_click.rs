@@ -300,26 +300,26 @@ impl ChartApp {
                         .copied()
                         .unwrap_or(self.active_exchange);
 
-                    let prev_symbol = self.panel_app.panel_grid.active_window()
+                    let prev_symbol = self.panel_app.panel_grid.active_container()
                         .map(|w| w.symbol.clone());
-                    let prev_exchange = self.panel_app.panel_grid.active_window()
+                    let prev_exchange = self.panel_app.panel_grid.active_container()
                         .map(|w| w.exchange.clone());
-                    let prev_account_type = self.panel_app.panel_grid.active_window()
+                    let prev_account_type = self.panel_app.panel_grid.active_container()
                         .map(|w| w.account_type.clone());
                     if prev_symbol.as_deref() != Some(&symbol) || prev_exchange.as_deref() != Some(&item_exchange) || prev_account_type.as_deref() != Some(&item_account_type) {
                         // Capture old trade-stream identity BEFORE mutating window state.
                         let old_trade_exchange = self.active_exchange;
-                        let old_trade_symbol = self.panel_app.panel_grid.active_window()
+                        let old_trade_symbol = self.panel_app.panel_grid.active_container()
                             .map(|w| w.symbol.clone())
                             .unwrap_or_default();
-                        let old_trade_at = self.panel_app.panel_grid.active_window()
+                        let old_trade_at = self.panel_app.panel_grid.active_container()
                             .map(|w| crate::account_type_from_label(&w.account_type))
                             .unwrap_or(digdigdig3::AccountType::Spot);
-                        let timeframe = self.panel_app.panel_grid.active_window()
+                        let timeframe = self.panel_app.panel_grid.active_container()
                             .map(|w| w.timeframe.clone())
                             .unwrap_or_default();
                         let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
-                        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                             let old_sym = window.symbol.clone();
                             let old_exchange = window.exchange.clone();
                             let old_account_type = window.account_type.clone();
@@ -1149,13 +1149,13 @@ impl ChartApp {
                             SlotSourceMode::Tagged => SymbolSource::HyperFocus,
                             SlotSourceMode::Untagged => {
                                 // Frozen snapshot of active chart key at spawn time.
-                                let sym = self.panel_app.panel_grid.active_window()
+                                let sym = self.panel_app.panel_grid.active_container()
                                     .map(|w| w.symbol.clone())
                                     .unwrap_or_default();
-                                let exch = self.panel_app.panel_grid.active_window()
+                                let exch = self.panel_app.panel_grid.active_container()
                                     .map(|w| w.exchange.clone())
                                     .unwrap_or_else(|| self.active_exchange.as_str().to_string());
-                                let at = self.panel_app.panel_grid.active_window()
+                                let at = self.panel_app.panel_grid.active_container()
                                     .map(|w| w.account_type.clone())
                                     .unwrap_or_else(|| digdigdig3::AccountType::Spot.short_label().to_string());
                                 SymbolSource::Fixed { symbol: sym, exchange: exch, account_type: at }
@@ -1163,7 +1163,7 @@ impl ChartApp {
                         };
 
                         // Resolve immediately to get the concrete symbol for initial setup.
-                        let active_resolved = self.panel_app.panel_grid.active_window().map(|w| {
+                        let active_resolved = self.panel_app.panel_grid.active_container().map(|w| {
                             zengeld_panels::trading::ResolvedSymbol {
                                 symbol: w.symbol.clone(),
                                 exchange: w.exchange.clone(),
@@ -1172,7 +1172,7 @@ impl ChartApp {
                         });
                         let resolve_leaf = |lid: u64| -> Option<zengeld_panels::trading::ResolvedSymbol> {
                             let leaf = zengeld_chart::LeafId(lid);
-                            self.panel_app.panel_grid.window_for_leaf(leaf).map(|w| {
+                            self.panel_app.panel_grid.container_for_leaf(leaf).map(|w| {
                                 zengeld_panels::trading::ResolvedSymbol {
                                     symbol: w.symbol.clone(),
                                     exchange: w.exchange.clone(),
@@ -1426,7 +1426,7 @@ impl ChartApp {
                                         let group_id = self.panel_app.tag_manager.active_chart_group
                                             .or_else(|| {
                                                 self.panel_app.panel_grid
-                                                    .active_chart_id()
+                                                    .active_container_id()
                                                     .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
                                             });
                                         if let Some(gid) = group_id {
@@ -1444,7 +1444,7 @@ impl ChartApp {
                                                             .into_iter()
                                                             .collect();
                                                     for cid in chart_member_ids {
-                                                        if let Some(leaf) = self.panel_app.panel_grid.leaf_for_chart_id(cid) {
+                                                        if let Some(leaf) = self.panel_app.panel_grid.leaf_for_container_id(cid) {
                                                             self.panel_app.leaf_color_tags.insert(leaf, new_color);
                                                         }
                                                     }
@@ -1455,7 +1455,7 @@ impl ChartApp {
                                     }
                                     sidebar_content::state::SlotSourceMode::Untagged => {
                                         // Spawn panel into its own 1-member auto-created group.
-                                        let tf = self.panel_app.panel_grid.active_window()
+                                        let tf = self.panel_app.panel_grid.active_container()
                                             .map(|w| w.timeframe.clone())
                                             .unwrap_or_else(zengeld_chart::state::Timeframe::h1);
                                         let solo_gid = self.panel_app.tag_manager.create_group_auto(
@@ -1612,13 +1612,13 @@ impl ChartApp {
                                         if let Some(item) = item_opt {
                                             use zengeld_panels::trading::SymbolSource;
                                             use sidebar_content::free_slot::FreeItem;
-                                            let symbol = self.panel_app.panel_grid.active_window()
+                                            let symbol = self.panel_app.panel_grid.active_container()
                                                 .map(|w| w.symbol.clone())
                                                 .unwrap_or_default();
-                                            let exchange = self.panel_app.panel_grid.active_window()
+                                            let exchange = self.panel_app.panel_grid.active_container()
                                                 .map(|w| w.exchange.clone())
                                                 .unwrap_or_default();
-                                            let account_type = self.panel_app.panel_grid.active_window()
+                                            let account_type = self.panel_app.panel_grid.active_container()
                                                 .map(|w| w.account_type.clone())
                                                 .unwrap_or_default();
                                             let src = SymbolSource::Fixed { symbol, exchange, account_type };
@@ -2248,13 +2248,13 @@ impl ChartApp {
                                     let new_source = match current_source {
                                         Some(SymbolSource::HyperFocus) => {
                                             // Pin to current active chart symbol/exchange/account_type.
-                                            let symbol = self.panel_app.panel_grid.active_window()
+                                            let symbol = self.panel_app.panel_grid.active_container()
                                                 .map(|w| w.symbol.clone())
                                                 .unwrap_or_default();
-                                            let exchange = self.panel_app.panel_grid.active_window()
+                                            let exchange = self.panel_app.panel_grid.active_container()
                                                 .map(|w| w.exchange.clone())
                                                 .unwrap_or_default();
-                                            let account_type = self.panel_app.panel_grid.active_window()
+                                            let account_type = self.panel_app.panel_grid.active_container()
                                                 .map(|w| w.account_type.clone())
                                                 .unwrap_or_default();
                                             Some(SymbolSource::Fixed { symbol, exchange, account_type })
@@ -2439,11 +2439,11 @@ impl ChartApp {
         }
         // Pattern: "alert_add_button" — open alert settings modal for new alert
         if widget_id == "alert_add_button" {
-            let price = self.panel_app.panel_grid.active_window()
+            let price = self.panel_app.panel_grid.active_container()
                 .and_then(|w| w.bars.last())
                 .map(|b| b.close)
                 .unwrap_or(0.0);
-            let symbol = self.panel_app.panel_grid.active_window()
+            let symbol = self.panel_app.panel_grid.active_container()
                 .map(|w| w.symbol.clone())
                 .unwrap_or_else(|| "BTCUSD".to_string());
             let source = alerts::AlertSource::Price { symbol: symbol.clone() };
@@ -2462,7 +2462,7 @@ impl ChartApp {
                 // Navigate to the window that created this alert, if known.
                 if let Some(wid) = window_id_hint {
                     let chart_id = zengeld_chart::ChartId(wid);
-                    if let Some(leaf_id) = self.panel_app.panel_grid.leaf_for_chart_id(chart_id) {
+                    if let Some(leaf_id) = self.panel_app.panel_grid.leaf_for_container_id(chart_id) {
                         self.panel_app.panel_grid.set_active_leaf(leaf_id);
                         eprintln!("[Sidebar] Alert {}: navigated to window {} (leaf {:?})", alert_id, wid, leaf_id);
                     }
@@ -2496,7 +2496,7 @@ impl ChartApp {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 // 1. Try active drawing_manager first (handles Active + WindowOtherKey).
                 let removed_from_dm = self.panel_app.panel_grid
-                    .active_window_mut()
+                    .active_container_mut()
                     .and_then(|w| {
                         w.drawing_manager.find_index_by_id(id).map(|idx| {
                             w.drawing_manager.remove(idx);
@@ -2515,7 +2515,7 @@ impl ChartApp {
 
                 // 2. Try stashed_primitives (WindowStash).
                 let removed_from_stash = self.panel_app.panel_grid
-                    .active_window_mut()
+                    .active_container_mut()
                     .map(|w| {
                         let before = w.stashed_primitives.len();
                         w.stashed_primitives.retain(|p| p.data().id != id);
@@ -2532,7 +2532,7 @@ impl ChartApp {
 
                 // 3. Try group.primitives (GroupOtherKey).
                 let group_id = self.panel_app.panel_grid
-                    .active_window()
+                    .active_container()
                     .and_then(|w| w.group_id);
                 if let Some(gid) = group_id {
                     if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
@@ -2562,7 +2562,7 @@ impl ChartApp {
 
                 // Fall through: try group.indicator_configs (GroupIndicatorOtherKey).
                 let group_id = self.panel_app.panel_grid
-                    .active_window()
+                    .active_container()
                     .and_then(|w| w.group_id);
                 if let Some(gid) = group_id {
                     if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
@@ -2581,7 +2581,7 @@ impl ChartApp {
         // --- Drawing settings ---
         if widget_id.contains("_drw_settings_") || widget_id.starts_with("drw_settings_") {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
-                if let Some(window) = self.panel_app.panel_grid.active_window() {
+                if let Some(window) = self.panel_app.panel_grid.active_container() {
                     if let Some(idx) = window.drawing_manager.find_index_by_id(id) {
                         self.panel_app.primitive_settings_state.open(idx);
                         eprintln!("[Sidebar] Primitive settings opened: {} (idx={})", id, idx);
@@ -2601,7 +2601,7 @@ impl ChartApp {
         // --- Drawing visibility ---
         if widget_id.contains("_drw_vis_") || widget_id.starts_with("drw_vis_") {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
-                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     if let Some(idx) = window.drawing_manager.find_index_by_id(id) {
                         let v = window.drawing_manager.primitives_mut()[idx].data().visible;
                         window.drawing_manager.primitives_mut()[idx].data_mut().visible = !v;
@@ -2624,7 +2624,7 @@ impl ChartApp {
         // --- Drawing lock ---
         if widget_id.contains("_drw_lock_") || widget_id.starts_with("drw_lock_") {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
-                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     if let Some(idx) = window.drawing_manager.find_index_by_id(id) {
                         let l = window.drawing_manager.primitives_mut()[idx].data().locked;
                         window.drawing_manager.primitives_mut()[idx].data_mut().locked = !l;
@@ -2646,7 +2646,7 @@ impl ChartApp {
         // --- Compare delete ---
         if widget_id.starts_with("cmp_delete_") {
             if let Some(idx) = widget_id.strip_prefix("cmp_delete_").and_then(|s| s.parse::<usize>().ok()) {
-                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     if let Some(symbol) = window.compare_overlay.remove_series(idx) {
                         eprintln!("[Sidebar] Compare series removed: {} (idx={})", symbol, idx);
                     }
@@ -2657,7 +2657,7 @@ impl ChartApp {
         // --- Compare visibility toggle ---
         if widget_id.starts_with("cmp_vis_") {
             if let Some(idx) = widget_id.strip_prefix("cmp_vis_").and_then(|s| s.parse::<usize>().ok()) {
-                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     let new_vis = window.compare_overlay.toggle_visibility(idx);
                     eprintln!("[Sidebar] Compare visibility toggled: idx={} -> visible={}", idx, new_vis);
                 }
@@ -2689,12 +2689,12 @@ impl ChartApp {
         // --- Drawing alert button ---
         if widget_id.contains("_drw_alert_") || widget_id.starts_with("drw_alert_") {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
-                let mut price = self.panel_app.panel_grid.active_window()
+                let mut price = self.panel_app.panel_grid.active_container()
                     .and_then(|w| w.bars.last())
                     .map(|b| b.close)
                     .unwrap_or(0.0);
                 let mut source_name = format!("Drawing {}", id);
-                if let Some(window) = self.panel_app.panel_grid.active_window() {
+                if let Some(window) = self.panel_app.panel_grid.active_container() {
                     if let Some(idx) = window.drawing_manager.find_index_by_id(id) {
                         let prim = &window.drawing_manager.primitives()[idx];
                         source_name = localize_primitive_name(prim.type_id(), prim.display_name());
@@ -2704,7 +2704,7 @@ impl ChartApp {
                         }
                     }
                 }
-                let symbol = self.panel_app.panel_grid.active_window()
+                let symbol = self.panel_app.panel_grid.active_container()
                     .map(|w| w.symbol.clone())
                     .unwrap_or_else(|| "BTCUSD".to_string());
                 let source = alerts::AlertSource::Drawing { primitive_id: id, label: source_name.clone() };
@@ -2719,14 +2719,14 @@ impl ChartApp {
         // --- Indicator alert button ---
         if widget_id.contains("_ind_alert_") || widget_id.starts_with("ind_alert_") {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
-                let price = self.panel_app.panel_grid.active_window()
+                let price = self.panel_app.panel_grid.active_container()
                     .and_then(|w| w.bars.last())
                     .map(|b| b.close)
                     .unwrap_or(0.0);
                 let source_name = self.indicator_manager.get_instance(id)
                     .map(|inst| inst.name.clone())
                     .unwrap_or_else(|| format!("Indicator {}", id));
-                let symbol = self.panel_app.panel_grid.active_window()
+                let symbol = self.panel_app.panel_grid.active_container()
                     .map(|w| w.symbol.clone())
                     .unwrap_or_else(|| "BTCUSD".to_string());
                 let source = alerts::AlertSource::Signal {
@@ -2812,7 +2812,7 @@ impl ChartApp {
                     // Click-to-center: if a drawing row was clicked, scroll the
                     // viewport so the drawing's midpoint is horizontally centred.
                     if is_drw_row {
-                        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                             let center_bar = window.drawing_manager.primitives()
                                 .iter()
                                 .find(|p| p.data().id == id)
@@ -2846,7 +2846,7 @@ impl ChartApp {
             let parts: Vec<&str> = widget_id.strip_prefix("signal_").unwrap_or("").splitn(2, '_').collect();
             if parts.len() == 2 {
                 if let Ok(bar_index) = parts[1].parse::<i64>() {
-                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         let visible_bars = window.viewport.chart_width / window.viewport.bar_spacing;
                         window.viewport.view_start = (bar_index as f64 - visible_bars / 2.0).max(0.0);
                         if window.price_scale.scale_mode.is_auto_y() {
@@ -2929,7 +2929,7 @@ impl ChartApp {
 
             // Undo/Redo — intercept before handle_toolbar_click_with_chart() which
             // returns Consumed without executing the command.  Command history lives
-            // on ChartWindow, so we extract the command here and apply it.
+            // on ChartContainer, so we extract the command here and apply it.
             if item_id == "undo" {
                 self.perform_undo();
                 return;
@@ -2972,9 +2972,9 @@ impl ChartApp {
 
             // Split borrows: toolbar_state and panel_grid are separate fields of panel_app.
             // We can't split-borrow through panel_app, so we use a raw pointer for window.
-            let window_ptr: *mut _ = self.panel_app.panel_grid.active_window_mut()
+            let window_ptr: *mut _ = self.panel_app.panel_grid.active_container_mut()
                 .map(|w| w as *mut _)
-                .unwrap_or(std::ptr::null_mut::<zengeld_chart::ChartWindow>());
+                .unwrap_or(std::ptr::null_mut::<zengeld_chart::ChartContainer>());
 
             if !window_ptr.is_null() {
                 // SAFETY: toolbar_state does not access panel_grid.
@@ -3013,9 +3013,9 @@ impl ChartApp {
                 let dropdown_id = dropdown_id.to_string();
                 let item_id = item_id.to_string();
 
-                let window_ptr: *mut _ = self.panel_app.panel_grid.active_window_mut()
+                let window_ptr: *mut _ = self.panel_app.panel_grid.active_container_mut()
                     .map(|w| w as *mut _)
-                    .unwrap_or(std::ptr::null_mut::<zengeld_chart::ChartWindow>());
+                    .unwrap_or(std::ptr::null_mut::<zengeld_chart::ChartContainer>());
 
                 if !window_ptr.is_null() {
                     // SAFETY: toolbar_state does not access panel_grid.
@@ -3423,20 +3423,20 @@ impl ChartApp {
         }
         if let Some(item) = widget_id.strip_prefix("clock_popup:") {
             if item == "clock:use_24h" {
-                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     window.scale_settings.time_format.use_24h =
                         !window.scale_settings.time_format.use_24h;
                 }
                 // keep popup open when toggling 24h
             } else if item == "show_utc" {
-                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     window.scale_settings.time_format.show_utc_prefix =
                         !window.scale_settings.time_format.show_utc_prefix;
                 }
                 // keep popup open
             } else if let Some(off) = item.strip_prefix("tz:") {
                 if let Ok(offset) = off.parse::<i32>() {
-                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         window.scale_settings.time_format.timezone_offset_hours = offset;
                     }
                 }

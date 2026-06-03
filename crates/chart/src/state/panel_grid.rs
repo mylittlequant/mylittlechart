@@ -12,7 +12,7 @@ use uzor::layout::DockState;
 type DockingManager<P> = DockState<P>;
 
 use crate::ChartHitTester;
-use crate::state::{ChartWindow, ChartId, Timeframe};
+use crate::state::{ChartContainer, ChartId, Timeframe};
 use crate::state::generate_chart_id;
 use super::sub_panel::ChartSubPanel;
 
@@ -85,8 +85,8 @@ pub enum SplitHitResult {
 pub struct ChartPanelGrid {
     /// Panel tree (geometry + panel metadata).
     docking: DockingManager<ChartSubPanel>,
-    /// All chart windows keyed by their `ChartId`.
-    windows: HashMap<ChartId, ChartWindow>,
+    /// All chart containers keyed by their `ChartId`.
+    containers: HashMap<ChartId, ChartContainer>,
     /// Leaf-to-ChartId mapping (mirrors the tree's leaves).
     leaf_to_chart: HashMap<LeafId, ChartId>,
     /// Whether expand mode is active (all but active leaf hidden).
@@ -106,9 +106,9 @@ impl ChartPanelGrid {
     /// Create a panel grid from an initial chart window.
     ///
     /// The window becomes the single visible leaf.
-    pub fn new(initial_window: ChartWindow) -> Self {
-        let chart_id = initial_window.id;
-        let title = initial_window.title.clone();
+    pub fn new(initial_container: ChartContainer) -> Self {
+        let chart_id = initial_container.id;
+        let title = initial_container.title.clone();
 
         let panel = ChartSubPanel::new(chart_id, title);
         let docking = DockingManager::with_panel(panel);
@@ -118,15 +118,15 @@ impl ChartPanelGrid {
             .active_leaf()
             .expect("DockingManager::with_panel always sets an active leaf");
 
-        let mut windows = HashMap::new();
-        windows.insert(chart_id, initial_window);
+        let mut containers = HashMap::new();
+        containers.insert(chart_id, initial_container);
 
         let mut leaf_to_chart = HashMap::new();
         leaf_to_chart.insert(leaf_id, chart_id);
 
         Self {
             docking,
-            windows,
+            containers,
             leaf_to_chart,
             expanded: false,
             leaf_min_widths: HashMap::new(),
@@ -136,7 +136,7 @@ impl ChartPanelGrid {
     /// Minimal grid used as temporary stand-in during `mem::replace` in preset cache swaps.
     pub fn placeholder() -> Self {
         use crate::state::Timeframe;
-        Self::new(ChartWindow::new("PLACEHOLDER", Timeframe::h1()))
+        Self::new(ChartContainer::new("PLACEHOLDER", Timeframe::h1()))
     }
 
     // =========================================================================
@@ -153,71 +153,71 @@ impl ChartPanelGrid {
         self.expanded
     }
 
-    /// Immutable reference to the active (focused) `ChartWindow`.
+    /// Immutable reference to the active (focused) `ChartContainer`.
     ///
     /// Falls back to an arbitrary window if the active leaf is not mapped
     /// (should not happen in normal usage).
-    pub fn active_window(&self) -> Option<&ChartWindow> {
-        let chart_id = self.active_chart_id()?;
-        self.windows.get(&chart_id)
+    pub fn active_container(&self) -> Option<&ChartContainer> {
+        let chart_id = self.active_container_id()?;
+        self.containers.get(&chart_id)
     }
 
-    /// Mutable reference to the active (focused) `ChartWindow`.
-    pub fn active_window_mut(&mut self) -> Option<&mut ChartWindow> {
-        let chart_id = self.active_chart_id()?;
-        self.windows.get_mut(&chart_id)
+    /// Mutable reference to the active (focused) `ChartContainer`.
+    pub fn active_container_mut(&mut self) -> Option<&mut ChartContainer> {
+        let chart_id = self.active_container_id()?;
+        self.containers.get_mut(&chart_id)
     }
 
     /// `ChartId` of the active window, or `None` if no active leaf exists.
-    pub fn active_chart_id(&self) -> Option<ChartId> {
+    pub fn active_container_id(&self) -> Option<ChartId> {
         let leaf_id = self.docking.active_leaf()?;
         self.leaf_to_chart.get(&leaf_id).copied()
     }
 
     /// Immutable reference to a window by leaf ID.
-    pub fn window_for_leaf(&self, leaf_id: LeafId) -> Option<&ChartWindow> {
+    pub fn container_for_leaf(&self, leaf_id: LeafId) -> Option<&ChartContainer> {
         let chart_id = self.leaf_to_chart.get(&leaf_id)?;
-        self.windows.get(chart_id)
+        self.containers.get(chart_id)
     }
 
     /// Mutable reference to a window by leaf ID.
-    pub fn window_for_leaf_mut(&mut self, leaf_id: LeafId) -> Option<&mut ChartWindow> {
+    pub fn container_for_leaf_mut(&mut self, leaf_id: LeafId) -> Option<&mut ChartContainer> {
         let chart_id = *self.leaf_to_chart.get(&leaf_id)?;
-        self.windows.get_mut(&chart_id)
+        self.containers.get_mut(&chart_id)
     }
 
-    /// Iterate over all `(LeafId, &ChartWindow)` pairs in insertion order.
-    pub fn iter_windows(&self) -> impl Iterator<Item = (LeafId, &ChartWindow)> {
+    /// Iterate over all `(LeafId, &ChartContainer)` pairs in insertion order.
+    pub fn iter_containers(&self) -> impl Iterator<Item = (LeafId, &ChartContainer)> {
         self.leaf_to_chart
             .iter()
             .filter_map(move |(&leaf_id, chart_id)| {
-                self.windows.get(chart_id).map(|w| (leaf_id, w))
+                self.containers.get(chart_id).map(|w| (leaf_id, w))
             })
     }
 
-    /// Immutable reference to the underlying windows map.
-    pub fn windows(&self) -> &HashMap<ChartId, ChartWindow> {
-        &self.windows
+    /// Immutable reference to the underlying containers map.
+    pub fn containers(&self) -> &HashMap<ChartId, ChartContainer> {
+        &self.containers
     }
 
-    /// Mutable reference to the underlying windows map.
+    /// Mutable reference to the underlying containers map.
     ///
-    /// Callers can iterate or look up windows by `ChartId`.  This is the
-    /// recommended pattern when mutable access to all sub-windows is needed,
-    /// because returning a combined `(LeafId, &mut ChartWindow)` iterator
-    /// would require simultaneous borrows of both `leaf_to_chart` and
-    /// `windows`, which the borrow checker disallows.
-    pub fn windows_mut(&mut self) -> &mut HashMap<ChartId, ChartWindow> {
-        &mut self.windows
+    /// Callers can iterate or look up containers by `ChartId`.  This is the
+    /// recommended pattern when mutable access to all sub-containers is
+    /// needed, because returning a combined `(LeafId, &mut ChartContainer)`
+    /// iterator would require simultaneous borrows of both `leaf_to_chart`
+    /// and `containers`, which the borrow checker disallows.
+    pub fn containers_mut(&mut self) -> &mut HashMap<ChartId, ChartContainer> {
+        &mut self.containers
     }
 
     /// Resolve a `LeafId` to its associated `ChartId`, if any.
-    pub fn chart_id_for_leaf(&self, leaf_id: LeafId) -> Option<ChartId> {
+    pub fn container_id_for_leaf(&self, leaf_id: LeafId) -> Option<ChartId> {
         self.leaf_to_chart.get(&leaf_id).copied()
     }
 
     /// Resolve a `ChartId` to the `LeafId` that hosts it, if any.
-    pub fn leaf_for_chart_id(&self, chart_id: ChartId) -> Option<LeafId> {
+    pub fn leaf_for_container_id(&self, chart_id: ChartId) -> Option<LeafId> {
         self.leaf_to_chart
             .iter()
             .find_map(|(&leaf, &cid)| if cid == chart_id { Some(leaf) } else { None })
@@ -254,7 +254,7 @@ impl ChartPanelGrid {
                 let scale_w = self
                     .leaf_to_chart
                     .get(&l.id)
-                    .and_then(|cid| self.windows.get(cid))
+                    .and_then(|cid| self.containers.get(cid))
                     .map(|w| w.scale_settings.effective_price_scale_width())
                     .unwrap_or(crate::scale_settings::DEFAULT_PRICE_SCALE_WIDTH);
                 ((scale_w + CHART_AREA_MIN) as f32).max(Self::LEAF_MIN_WIDTH)
@@ -324,7 +324,7 @@ impl ChartPanelGrid {
         const CHART_AREA_MIN: f64 = 10.0;
         for (&leaf_id, &chart_id) in &self.leaf_to_chart {
             let scale_w = self
-                .windows
+                .containers
                 .get(&chart_id)
                 .map(|w| w.scale_settings.effective_price_scale_width())
                 .unwrap_or(crate::scale_settings::DEFAULT_PRICE_SCALE_WIDTH);
@@ -381,12 +381,12 @@ impl ChartPanelGrid {
         self.docking = DockingManager::from_tree(tree);
     }
 
-    /// Replace the entire windows map with the given one.
+    /// Replace the entire containers map with the given one.
     ///
     /// Used during preset restore.  The caller is responsible for ensuring the
     /// new map is consistent with the docking tree and `leaf_to_chart`.
-    pub fn replace_windows(&mut self, windows: HashMap<ChartId, ChartWindow>) {
-        self.windows = windows;
+    pub fn replace_containers(&mut self, containers: HashMap<ChartId, ChartContainer>) {
+        self.containers = containers;
     }
 
     /// Replace the leaf-to-chart mapping with the given one.
@@ -408,9 +408,9 @@ impl ChartPanelGrid {
             None => return,
         };
         let new_chart_id = generate_chart_id();
-        if let Some(mut window) = self.windows.remove(&old_chart_id) {
+        if let Some(mut window) = self.containers.remove(&old_chart_id) {
             window.id = new_chart_id;
-            self.windows.insert(new_chart_id, window);
+            self.containers.insert(new_chart_id, window);
         }
         self.leaf_to_chart.insert(active_leaf, new_chart_id);
     }
@@ -469,7 +469,7 @@ impl ChartPanelGrid {
         const CHART_AREA_MIN: f64 = 10.0;
         for (&leaf_id, &chart_id) in &self.leaf_to_chart {
             let scale_w = self
-                .windows
+                .containers
                 .get(&chart_id)
                 .map(|w| w.scale_settings.effective_price_scale_width())
                 .unwrap_or(crate::scale_settings::DEFAULT_PRICE_SCALE_WIDTH);
@@ -727,7 +727,7 @@ impl ChartPanelGrid {
 
     /// Split the active leaf with the given `SplitKind`.
     ///
-    /// Creates a cloned `ChartWindow` for each new leaf produced by the split.
+    /// Creates a cloned `ChartContainer` for each new leaf produced by the split.
     /// The original window remains associated with the first new leaf.
     ///
     /// Returns the `LeafId`s of the newly created leaves, or an empty `Vec`
@@ -746,7 +746,7 @@ impl ChartPanelGrid {
 
         // Snapshot source title before any mutation.
         let source_title = self
-            .windows
+            .containers
             .get(&source_chart_id)
             .map(|w| w.title.clone())
             .unwrap_or_default();
@@ -764,7 +764,7 @@ impl ChartPanelGrid {
                 // Build the panel for the new sibling before calling split_leaf.
                 let new_chart_id = generate_chart_id();
                 let new_panel = {
-                    let src = match self.windows.get(&source_chart_id) {
+                    let src = match self.containers.get(&source_chart_id) {
                         Some(w) => w,
                         None => return Vec::new(),
                     };
@@ -773,7 +773,7 @@ impl ChartPanelGrid {
                 };
 
                 // Clone the window now (before tree mutation borrows self).
-                let cloned_window = match self.windows.get(&source_chart_id) {
+                let cloned_window = match self.containers.get(&source_chart_id) {
                     Some(w) => w.clone_for_split(new_chart_id, true),
                     None => return Vec::new(),
                 };
@@ -789,7 +789,7 @@ impl ChartPanelGrid {
                 };
 
                 // Register the new window and leaf.
-                self.windows.insert(new_chart_id, cloned_window);
+                self.containers.insert(new_chart_id, cloned_window);
                 self.leaf_to_chart.insert(new_leaf_id, new_chart_id);
 
                 // Update the panel title stored inside the new leaf.
@@ -844,12 +844,12 @@ impl ChartPanelGrid {
                 // Sibling leaves (new_ids[1..]) get fresh clones.
                 for &leaf_id in new_leaf_ids.iter().skip(1) {
                     let new_chart_id = generate_chart_id();
-                    let cloned = match self.windows.get(&source_chart_id) {
+                    let cloned = match self.containers.get(&source_chart_id) {
                         Some(w) => w.clone_for_split(new_chart_id, true),
                         None => continue,
                     };
                     let cloned_title = cloned.title.clone();
-                    self.windows.insert(new_chart_id, cloned);
+                    self.containers.insert(new_chart_id, cloned);
                     self.leaf_to_chart.insert(leaf_id, new_chart_id);
                     if let Some(leaf) = self.docking.tree_mut().leaf_mut(leaf_id) {
                         if let Some(panel) = leaf.active_panel_mut() {
@@ -881,12 +881,12 @@ impl ChartPanelGrid {
             None => return false,
         };
 
-        self.windows.remove(&chart_id);
+        self.containers.remove(&chart_id);
         self.docking.tree_mut().remove_leaf(leaf_id);
 
         // DockingTree::remove_leaf reassigns its own active_leaf when the
         // removed leaf was active.  DockState::active_leaf is a separate field
-        // that doesn't get updated automatically — sync it so active_window()
+        // that doesn't get updated automatically — sync it so active_container()
         // doesn't return None and blank the renderer.
         if let Some(new_active) = self.docking.tree().active_leaf_id() {
             self.docking.set_active_leaf(new_active);
@@ -1163,14 +1163,14 @@ impl ChartPanelGrid {
         self.docking.set_active_leaf(leaf_id);
     }
 
-    /// Set the active leaf and return a mutable reference to its `ChartWindow`.
+    /// Set the active leaf and return a mutable reference to its `ChartContainer`.
     ///
     /// Updates the docking manager's focus and looks up the window associated
     /// with the given leaf.  Returns `None` if the leaf is not mapped.
-    pub fn activate_leaf(&mut self, leaf_id: LeafId) -> Option<&mut ChartWindow> {
+    pub fn activate_leaf(&mut self, leaf_id: LeafId) -> Option<&mut ChartContainer> {
         self.docking.set_active_leaf(leaf_id);
         let chart_id = *self.leaf_to_chart.get(&leaf_id)?;
-        self.windows.get_mut(&chart_id)
+        self.containers.get_mut(&chart_id)
     }
 
     // =========================================================================
@@ -1223,7 +1223,7 @@ impl ChartPanelGrid {
             }
 
             // This leaf was hit — resolve scale settings for sub-area layout.
-            let window = match self.window_for_leaf(leaf_id) {
+            let window = match self.container_for_leaf(leaf_id) {
                 Some(w) => w,
                 // No window mapped: treat the whole leaf as the chart canvas.
                 None => return ChartInputTarget::Chart { leaf_id },
@@ -1361,7 +1361,7 @@ impl ChartPanelGrid {
                 && main_local_y >= 0.0
                 && main_local_y <= chart_rect.height
             {
-                if let Some(window) = self.active_window() {
+                if let Some(window) = self.active_container() {
                     let mut corrected_vp = window.viewport.clone();
                     corrected_vp.chart_width = chart_rect.width;
                     corrected_vp.chart_height = chart_rect.height;
@@ -1393,7 +1393,7 @@ impl ChartPanelGrid {
                     }
                     let instance_id = pane_layout.instance_id;
                     let (price_min, price_max) = self
-                        .active_window()
+                        .active_container()
                         .and_then(|w| {
                             w.sub_panes
                                 .iter()
@@ -1403,13 +1403,13 @@ impl ChartPanelGrid {
                         .unwrap_or((0.0, 100.0));
                     let sub_price_scale =
                         crate::PriceScale::new(price_min, price_max);
-                    let sub_viewport = self.active_window().map(|w| {
+                    let sub_viewport = self.active_container().map(|w| {
                         let mut vp = w.viewport.clone();
                         vp.chart_height = content.height;
                         vp
                     });
                     if let (Some(sub_viewport), Some(window)) =
-                        (sub_viewport, self.active_window())
+                        (sub_viewport, self.active_container())
                     {
                         if let Some(prim_idx) = window.drawing_manager.hit_test_in_pane(
                             plx,
@@ -1420,7 +1420,7 @@ impl ChartPanelGrid {
                             &sub_price_scale,
                         ) {
                             // Record active pane so context-menu actions know which pane is active.
-                            if let Some(win) = self.active_window_mut() {
+                            if let Some(win) = self.active_container_mut() {
                                 win.drawing_manager.set_current_pane(Some(instance_id));
                             }
                             sub_hit = Some(prim_idx);
@@ -1580,27 +1580,27 @@ impl ChartPanelGrid {
         // begin near a separator edge should draw, not resize panes.
         // ----------------------------------------------------------------
         let is_freehand = self
-            .active_window()
+            .active_container()
             .map(|w| w.drawing_manager.is_freehand_tool())
             .unwrap_or(false);
         if is_freehand {
             // 0a: freehand on main chart canvas.
             if in_main {
                 let (price_min, price_max) = self
-                    .active_window()
+                    .active_container()
                     .map(|w| (w.price_scale.price_min, w.price_scale.price_max))
                     .unwrap_or((0.0, 1.0));
                 let bar_f = self
-                    .active_window()
+                    .active_container()
                     .map(|w| w.viewport.x_to_bar_f64(local_x))
                     .unwrap_or(0.0);
                 let ts_ms = self
-                    .active_window()
+                    .active_container()
                     .map(|w| crate::bar_f64_to_timestamp_ms(&w.bars, bar_f))
                     .unwrap_or(0);
                 let price =
                     price_max - (local_y / chart_rect.height) * (price_max - price_min);
-                if let Some(window) = self.active_window_mut() {
+                if let Some(window) = self.active_container_mut() {
                     window.drawing_manager.set_current_pane(None);
                     window.drawing_manager.start_freehand(ts_ms, price);
                 }
@@ -1617,7 +1617,7 @@ impl ChartPanelGrid {
                 }
                 let instance_id = pane_layout.instance_id;
                 let (price_min, price_max) = self
-                    .active_window()
+                    .active_container()
                     .and_then(|w| {
                         w.sub_panes
                             .iter()
@@ -1626,16 +1626,16 @@ impl ChartPanelGrid {
                     })
                     .unwrap_or((0.0, 100.0));
                 let bar_f = self
-                    .active_window()
+                    .active_container()
                     .map(|w| w.viewport.x_to_bar_f64(plx))
                     .unwrap_or(0.0);
                 let ts_ms = self
-                    .active_window()
+                    .active_container()
                     .map(|w| crate::bar_f64_to_timestamp_ms(&w.bars, bar_f))
                     .unwrap_or(0);
                 let price =
                     price_max - (ply / content.height) * (price_max - price_min);
-                if let Some(window) = self.active_window_mut() {
+                if let Some(window) = self.active_container_mut() {
                     window.drawing_manager.set_current_pane(Some(instance_id));
                     window.drawing_manager.start_freehand(ts_ms, price);
                 }
@@ -1655,7 +1655,7 @@ impl ChartPanelGrid {
         // Steps 2 & 3: main chart primitive / control-point hit-test
         // ----------------------------------------------------------------
         if in_main {
-            if let Some(window) = self.active_window() {
+            if let Some(window) = self.active_container() {
                 let mut corrected_vp = window.viewport.clone();
                 corrected_vp.chart_width = chart_rect.width;
                 corrected_vp.chart_height = chart_rect.height;
@@ -1715,7 +1715,7 @@ impl ChartPanelGrid {
             }
             let instance_id = pane_layout.instance_id;
             let (price_min, price_max) = self
-                .active_window()
+                .active_container()
                 .and_then(|w| {
                     w.sub_panes
                         .iter()
@@ -1724,14 +1724,14 @@ impl ChartPanelGrid {
                 })
                 .unwrap_or((0.0, 100.0));
             let sub_price_scale = crate::PriceScale::new(price_min, price_max);
-            let sub_viewport = self.active_window().map(|w| {
+            let sub_viewport = self.active_container().map(|w| {
                 let mut vp = w.viewport.clone();
                 vp.chart_height = content.height;
                 vp
             });
 
             if let Some(sub_viewport) = sub_viewport {
-                if let Some(window) = self.active_window() {
+                if let Some(window) = self.active_container() {
                     // Control points first.
                     if let Some(cp_type) = window.drawing_manager.hit_test_control_point_in_pane(
                         plx,
@@ -1827,7 +1827,7 @@ impl ChartPanelGrid {
 
         if drawing_active {
             // Unclamped crosshair — preview must extend beyond chart area.
-            let current_pane = self.active_window()
+            let current_pane = self.active_container()
                 .and_then(|w| w.drawing_manager.current_pane());
 
             match current_pane {
@@ -1840,14 +1840,14 @@ impl ChartPanelGrid {
                         let pane_height = sp_layout.content.height;
                         let pane_idx = extended.sub_panes.iter()
                             .position(|sp| sp.instance_id == instance_id);
-                        let (price_min, price_max) = self.active_window()
+                        let (price_min, price_max) = self.active_container()
                             .and_then(|w| {
                                 w.sub_panes.iter()
                                     .find(|sp| sp.instance_id == instance_id)
                                     .map(|sp| (sp.price_min, sp.price_max))
                             })
                             .unwrap_or((0.0, 100.0));
-                        if let Some(window) = self.active_window_mut() {
+                        if let Some(window) = self.active_container_mut() {
                             let bar_f64 = window.viewport.x_to_bar_f64(local_x);
                             let bar_idx = window.viewport.x_to_bar(local_x);
                             let price_range = price_max - price_min;
@@ -1872,7 +1872,7 @@ impl ChartPanelGrid {
                     let chart_rect = extended.main_chart.chart;
                     let local_x = x - chart_rect.x;
                     let local_y = y - chart_rect.y;
-                    if let Some(window) = self.active_window_mut() {
+                    if let Some(window) = self.active_container_mut() {
                         let bar_f64 = window.viewport.x_to_bar_f64(local_x);
                         let bar_idx = window.viewport.x_to_bar(local_x);
                         let price_range = window.price_scale.price_max - window.price_scale.price_min;
@@ -1905,7 +1905,7 @@ impl ChartPanelGrid {
             // Resolve pane-lock from drag mode (same logic for drag-move and hover).
             let primitive_drag_pane: Option<Option<usize>> = match drag_mode {
                 DragMode::Primitive { id } => {
-                    let pane_id = self.active_window()
+                    let pane_id = self.active_container()
                         .and_then(|w| w.drawing_manager.primitives().iter()
                             .find(|p| p.data().id == id)
                             .and_then(|p| p.data().pane_id));
@@ -1915,7 +1915,7 @@ impl ChartPanelGrid {
                     Some(pane_index)
                 }
                 DragMode::ControlPoint { primitive_id, .. } => {
-                    let pane_id = self.active_window()
+                    let pane_id = self.active_container()
                         .and_then(|w| w.drawing_manager.primitives().iter()
                             .find(|p| p.data().id == primitive_id)
                             .and_then(|p| p.data().pane_id));
@@ -1947,16 +1947,16 @@ impl ChartPanelGrid {
             );
 
             if is_over_separator {
-                if let Some(window) = self.active_window_mut() {
+                if let Some(window) = self.active_container_mut() {
                     window.crosshair.visible = false;
                 }
-            } else if let Some(window) = self.active_window_mut() {
+            } else if let Some(window) = self.active_container_mut() {
                 window.update_crosshair_from_global(x, y, extended, drag_pane);
             }
         }
 
         // Collect crosshair state for the caller to propagate to sync peers.
-        self.active_window().map(|w| {
+        self.active_container().map(|w| {
             let bar_f64 = w.crosshair.bar_f64;
             let bar_idx = bar_f64 as usize;
             let timestamp = if bar_idx < w.bars.len() {
@@ -2000,14 +2000,14 @@ impl ChartPanelGrid {
         );
 
         if is_over_sub_separator {
-            if let Some(window) = self.window_for_leaf_mut(leaf_id) {
+            if let Some(window) = self.container_for_leaf_mut(leaf_id) {
                 window.crosshair.visible = false;
             }
-        } else if let Some(window) = self.window_for_leaf_mut(leaf_id) {
+        } else if let Some(window) = self.container_for_leaf_mut(leaf_id) {
             window.update_crosshair_from_global(x, y, extended, None);
         }
 
-        self.window_for_leaf(leaf_id).map(|w| {
+        self.container_for_leaf(leaf_id).map(|w| {
             let bar_f64 = w.crosshair.bar_f64;
             let bar_idx = bar_f64 as usize;
             let timestamp = if bar_idx < w.bars.len() {
@@ -2059,7 +2059,7 @@ impl ChartPanelGrid {
         extended: &crate::layout::ExtendedFrameLayout,
     ) -> bool {
         let (is_active, current_pane) = self
-            .active_window()
+            .active_container()
             .map(|w| (
                 w.drawing_manager.is_drawing() && w.drawing_manager.is_freehand_tool(),
                 w.drawing_manager.current_pane(),
@@ -2081,7 +2081,7 @@ impl ChartPanelGrid {
             };
             let content = pane_layout.content;
             let (price_min, price_max) = self
-                .active_window()
+                .active_container()
                 .and_then(|w| {
                     w.sub_panes
                         .iter()
@@ -2092,7 +2092,7 @@ impl ChartPanelGrid {
             let local_x = screen_x - content.x;
             let local_y = screen_y - content.y;
             let bar_f = self
-                .active_window()
+                .active_container()
                 .map(|w| w.viewport.x_to_bar_f64(local_x))
                 .unwrap_or(0.0);
             let price = if content.height > 0.0 {
@@ -2100,7 +2100,7 @@ impl ChartPanelGrid {
             } else {
                 price_min
             };
-            if let Some(window) = self.active_window_mut() {
+            if let Some(window) = self.active_container_mut() {
                 let ts_ms = crate::bar_f64_to_timestamp_ms(&window.bars, bar_f);
                 let bar_interval_ms = crate::bar_interval_seconds(&window.bars) * 1000;
                 window.drawing_manager.add_freehand_point(ts_ms, price, bar_interval_ms);
@@ -2114,18 +2114,18 @@ impl ChartPanelGrid {
         let local_y = screen_y - chart_rect.y;
 
         let (price_min, price_max) = self
-            .active_window()
+            .active_container()
             .map(|w| (w.price_scale.price_min, w.price_scale.price_max))
             .unwrap_or((0.0, 1.0));
 
         let bar_f = self
-            .active_window()
+            .active_container()
             .map(|w| w.viewport.x_to_bar_f64(local_x))
             .unwrap_or(0.0);
 
         let price = price_max - (local_y / chart_rect.height) * (price_max - price_min);
 
-        if let Some(window) = self.active_window_mut() {
+        if let Some(window) = self.active_container_mut() {
             let ts_ms = crate::bar_f64_to_timestamp_ms(&window.bars, bar_f);
             let bar_interval_ms = crate::bar_interval_seconds(&window.bars) * 1000;
             window.drawing_manager.add_freehand_point(ts_ms, price, bar_interval_ms);
@@ -2143,7 +2143,7 @@ impl ChartPanelGrid {
     /// Returns `None` when no freehand stroke was active.
     pub fn complete_freehand(&mut self) -> Option<FreehandCompleteResult> {
         let is_active = self
-            .active_window()
+            .active_container()
             .map(|w| w.drawing_manager.is_drawing() && w.drawing_manager.is_freehand_tool())
             .unwrap_or(false);
 
@@ -2151,11 +2151,11 @@ impl ChartPanelGrid {
             return None;
         }
 
-        if let Some(window) = self.active_window_mut() {
+        if let Some(window) = self.active_container_mut() {
             window.drawing_manager.complete_freehand();
         }
 
-        let result = self.active_window().and_then(|window| {
+        let result = self.active_container().and_then(|window| {
             let idx = window.drawing_manager.last_index()?;
             let type_id = window.drawing_manager.get_type_id_at(idx)?;
             let points = window.drawing_manager.get_points_at(idx)?;
@@ -2184,7 +2184,7 @@ impl ChartPanelGrid {
         const DEFAULT_H: f64 = 100.0;
         let min_h = 80.0_f64;
 
-        let window = match self.active_window_mut() {
+        let window = match self.active_container_mut() {
             Some(w) => w,
             None => return,
         };
@@ -2272,7 +2272,7 @@ impl ChartPanelGrid {
         use crate::ui::modal_settings::SubPaneButton;
 
         let mut hide_crosshair = false;
-        if let Some(window) = self.active_window_mut() {
+        if let Some(window) = self.active_container_mut() {
             // Hide all overlays first.
             for state in window.sub_pane_overlay_states.iter_mut() {
                 state.visible = false;
@@ -2342,7 +2342,7 @@ impl ChartPanelGrid {
 
 impl Default for ChartPanelGrid {
     fn default() -> Self {
-        let window = ChartWindow::new("BTCUSD", Timeframe::h1());
+        let window = ChartContainer::new("BTCUSD", Timeframe::h1());
         Self::new(window)
     }
 }

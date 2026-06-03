@@ -47,7 +47,7 @@ impl ChartApp {
         match action {
             _ if action.starts_with("vis:") => {
                 if let Ok(idx) = action["vis:".len()..].parse::<usize>() {
-                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         let new_vis = window.compare_overlay.toggle_visibility(idx);
                         eprintln!("[ChartApp] cmp_overlay vis toggled: idx={} -> visible={}", idx, new_vis);
                     }
@@ -55,7 +55,7 @@ impl ChartApp {
             }
             _ if action.starts_with("delete:") => {
                 if let Ok(idx) = action["delete:".len()..].parse::<usize>() {
-                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         if let Some(symbol) = window.compare_overlay.remove_series(idx) {
                             eprintln!("[ChartApp] cmp_overlay deleted: idx={} symbol={}", idx, symbol);
                         }
@@ -64,7 +64,7 @@ impl ChartApp {
             }
             _ if action.starts_with("settings:") => {
                 if let Ok(idx) = action["settings:".len()..].parse::<usize>() {
-                    if let Some(window) = self.panel_app.panel_grid.active_window() {
+                    if let Some(window) = self.panel_app.panel_grid.active_container() {
                         if let Some(series) = window.compare_overlay.series.get(idx) {
                             self.panel_app.compare_settings_state.open(
                                 idx,
@@ -89,14 +89,14 @@ impl ChartApp {
             }
             _ if action.starts_with("alert:") => {
                 if let Ok(idx) = action["alert:".len()..].parse::<usize>() {
-                    let price = self.panel_app.panel_grid.active_window()
+                    let price = self.panel_app.panel_grid.active_container()
                         .and_then(|w| w.bars.last())
                         .map(|b| b.close)
                         .unwrap_or(0.0);
-                    let symbol = self.panel_app.panel_grid.active_window()
+                    let symbol = self.panel_app.panel_grid.active_container()
                         .map(|w| w.symbol.clone())
                         .unwrap_or_else(|| "BTCUSD".to_string());
-                    let source_name = self.panel_app.panel_grid.active_window()
+                    let source_name = self.panel_app.panel_grid.active_container()
                         .and_then(|w| w.compare_overlay.series.get(idx))
                         .map(|s| format!("Compare: {}", s.symbol))
                         .unwrap_or_else(|| format!("Compare series {}", idx));
@@ -125,7 +125,7 @@ impl ChartApp {
         match action {
             _ if action.starts_with("vis:") => {
                 if let Ok(idx) = action["vis:".len()..].parse::<usize>() {
-                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         let new_vis = window.compare_overlay.toggle_visibility(idx);
                         eprintln!("[ChartApp] cmp_overlay leaf {} vis toggled: idx={} -> visible={}", leaf_id.0, idx, new_vis);
                     }
@@ -133,7 +133,7 @@ impl ChartApp {
             }
             _ if action.starts_with("delete:") => {
                 if let Ok(idx) = action["delete:".len()..].parse::<usize>() {
-                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         if let Some(symbol) = window.compare_overlay.remove_series(idx) {
                             eprintln!("[ChartApp] cmp_overlay leaf {} deleted: idx={} symbol={}", leaf_id.0, idx, symbol);
                         }
@@ -142,7 +142,7 @@ impl ChartApp {
             }
             _ if action.starts_with("settings:") => {
                 if let Ok(idx) = action["settings:".len()..].parse::<usize>() {
-                    if let Some(window) = self.panel_app.panel_grid.active_window() {
+                    if let Some(window) = self.panel_app.panel_grid.active_container() {
                         if let Some(series) = window.compare_overlay.series.get(idx) {
                             self.panel_app.compare_settings_state.open(
                                 idx,
@@ -167,14 +167,14 @@ impl ChartApp {
             }
             _ if action.starts_with("alert:") => {
                 if let Ok(idx) = action["alert:".len()..].parse::<usize>() {
-                    let price = self.panel_app.panel_grid.active_window()
+                    let price = self.panel_app.panel_grid.active_container()
                         .and_then(|w| w.bars.last())
                         .map(|b| b.close)
                         .unwrap_or(0.0);
-                    let symbol = self.panel_app.panel_grid.active_window()
+                    let symbol = self.panel_app.panel_grid.active_container()
                         .map(|w| w.symbol.clone())
                         .unwrap_or_else(|| "BTCUSD".to_string());
-                    let source_name = self.panel_app.panel_grid.active_window()
+                    let source_name = self.panel_app.panel_grid.active_container()
                         .and_then(|w| w.compare_overlay.series.get(idx))
                         .map(|s| format!("Compare: {}", s.symbol))
                         .unwrap_or_else(|| format!("Compare series {}", idx));
@@ -226,7 +226,7 @@ impl ChartApp {
                 let orig_width = self.panel_app.compare_settings_state.original_line_width;
                 let orig_style = self.panel_app.compare_settings_state.original_line_style.clone();
                 let orig_tf = self.panel_app.compare_settings_state.original_timeframe_visibility.clone();
-                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     window.compare_overlay.set_series_color_by_index(idx, &orig_color);
                     window.compare_overlay.set_series_line_width_by_index(idx, orig_width);
                     window.compare_overlay.set_series_line_style_by_index(idx, &orig_style);
@@ -295,7 +295,7 @@ impl ChartApp {
             }
             "toggle_visible" => {
                 let idx = self.panel_app.compare_settings_state.series_index;
-                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     let new_vis = window.compare_overlay.toggle_visibility(idx);
                     self.panel_app.compare_settings_state.cached_visible = new_vis;
                     eprintln!("[ChartApp] cmp_settings toggle_visible: idx={} -> visible={}", idx, new_vis);
@@ -313,7 +313,7 @@ impl ChartApp {
                 let idx = self.panel_app.compare_settings_state.series_index;
                 self.panel_app.compare_settings_state.cached_line_style = style.to_string();
                 self.panel_app.compare_settings_state.line_style_dropdown_open = false;
-                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     window.compare_overlay.set_series_line_style_by_index(idx, style);
                 }
                 self.autosave_snapshot();
@@ -444,7 +444,7 @@ impl ChartApp {
                 self.panel_app.compare_settings_state.cached_line_width = defaults.line_width;
                 self.panel_app.compare_settings_state.cached_line_style = defaults.line_style.clone();
                 let idx = self.panel_app.compare_settings_state.series_index;
-                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     window.compare_overlay.set_series_color_by_index(idx, &defaults.color);
                     window.compare_overlay.set_series_line_width_by_index(idx, defaults.line_width);
                     window.compare_overlay.set_series_line_style_by_index(idx, &defaults.line_style);
@@ -474,7 +474,7 @@ impl ChartApp {
                     self.panel_app.compare_settings_state.cached_color = tmpl.color.clone();
                     self.panel_app.compare_settings_state.cached_line_width = tmpl.line_width;
                     self.panel_app.compare_settings_state.cached_line_style = tmpl.line_style.clone();
-                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         window.compare_overlay.set_series_color_by_index(idx, &tmpl.color);
                         window.compare_overlay.set_series_line_width_by_index(idx, tmpl.line_width);
                         window.compare_overlay.set_series_line_style_by_index(idx, &tmpl.line_style);
@@ -512,7 +512,7 @@ impl ChartApp {
         }
 
         self.panel_app.compare_settings_state.cached_timeframe_visibility = Some(tf_config.clone());
-        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
             window.compare_overlay.set_series_timeframe_visibility(series_idx, tf_config);
         }
         self.autosave_snapshot();
@@ -587,7 +587,7 @@ impl ChartApp {
         }
 
         self.panel_app.compare_settings_state.cached_timeframe_visibility = Some(tf_config.clone());
-        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
             window.compare_overlay.set_series_timeframe_visibility(series_idx, tf_config);
         }
         self.autosave_snapshot();
@@ -662,14 +662,14 @@ impl ChartApp {
             _ if action.starts_with("alert:") => {
                 if let Some(id_str) = action.strip_prefix("alert:") {
                     if let Ok(id) = id_str.parse::<u64>() {
-                        let price = self.panel_app.panel_grid.active_window()
+                        let price = self.panel_app.panel_grid.active_container()
                             .and_then(|w| w.bars.last())
                             .map(|b| b.close)
                             .unwrap_or(0.0);
                         let label = self.indicator_manager.get_instance(id)
                             .map(|inst| inst.name.clone())
                             .unwrap_or_else(|| format!("Indicator {}", id));
-                        let symbol = self.panel_app.panel_grid.active_window()
+                        let symbol = self.panel_app.panel_grid.active_container()
                             .map(|w| w.symbol.clone())
                             .unwrap_or_else(|| "BTCUSD".to_string());
                         let source = alerts::AlertSource::Signal {
@@ -726,14 +726,14 @@ impl ChartApp {
             _ if action.starts_with("alert:") => {
                 if let Some(id_str) = action.strip_prefix("alert:") {
                     if let Ok(id) = id_str.parse::<u64>() {
-                        let price = self.panel_app.panel_grid.active_window()
+                        let price = self.panel_app.panel_grid.active_container()
                             .and_then(|w| w.bars.last())
                             .map(|b| b.close)
                             .unwrap_or(0.0);
                         let label = self.indicator_manager.get_instance(id)
                             .map(|inst| inst.name.clone())
                             .unwrap_or_else(|| format!("Indicator {}", id));
-                        let symbol = self.panel_app.panel_grid.active_window()
+                        let symbol = self.panel_app.panel_grid.active_container()
                             .map(|w| w.symbol.clone())
                             .unwrap_or_else(|| "BTCUSD".to_string());
                         let source = alerts::AlertSource::Signal {
@@ -781,7 +781,7 @@ impl ChartApp {
         // Collect group members for the active window (empty vec if no group).
         let group_members: Vec<u64> = self.panel_app.panel_grid.docking()
             .active_leaf()
-            .and_then(|leaf| self.panel_app.panel_grid.chart_id_for_leaf(leaf))
+            .and_then(|leaf| self.panel_app.panel_grid.container_id_for_leaf(leaf))
             .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
             .and_then(|gid| self.panel_app.tag_manager.group(gid))
             .map(|g| g.members.iter().filter_map(|m| m.as_chart()).collect())
@@ -791,7 +791,7 @@ impl ChartApp {
         // Using retain-all would incorrectly delete configs for duplicate indicators
         // of the same type (e.g. two "ac" indicators on the same window).
         if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
-            if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(active_leaf) {
+            if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(active_leaf) {
                 if let Some(group_id) = self.panel_app.tag_manager.group_for_window(chart_id) {
                     if let Some(group) = self.panel_app.tag_manager.group_mut(group_id) {
                         if let Some(pos) = group.indicator_configs.iter().position(|c| c.type_id == type_id) {
@@ -836,7 +836,7 @@ impl ChartApp {
 
         // Remove stale entries from every window's pre_tag_indicator_ids so the
         // Object Tree does not show phantom items for deleted indicators.
-        for window in self.panel_app.panel_grid.windows_mut().values_mut() {
+        for window in self.panel_app.panel_grid.containers_mut().values_mut() {
             window.pre_tag_indicator_ids.retain(|iid| !all_to_remove.contains(iid));
         }
 

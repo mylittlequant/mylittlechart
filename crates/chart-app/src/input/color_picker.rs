@@ -586,7 +586,7 @@ impl ChartApp {
             Some(i) => i,
             None => return,
         };
-        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
             if let Some(mut data) = window.drawing_manager.get_data_at(idx) {
                 match field.as_str() {
                     "stroke_color" => {
@@ -653,7 +653,7 @@ impl ChartApp {
     pub(super) fn apply_chart_settings_color(&mut self, field: &str, color: &str) {
         match field {
             "crosshair_line_color" => {
-                if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                     w.crosshair_options.vert_line.color = color.to_string();
                     w.crosshair_options.horz_line.color = color.to_string();
                     eprintln!("[ChartApp] applied crosshair_line_color: {}", color);
@@ -684,7 +684,7 @@ impl ChartApp {
                 eprintln!("[ChartApp] applied wick_down_color: {}", color);
             }
             "watermark_color" => {
-                if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                     if let Some(ref mut watermark) = w.watermark {
                         if let Some(line) = watermark.lines.first_mut() {
                             line.color = color.to_string();
@@ -715,7 +715,7 @@ impl ChartApp {
     pub(super) fn apply_compare_color(&mut self, color: &str) {
         let idx = self.panel_app.compare_settings_state.series_index;
         self.panel_app.compare_settings_state.cached_color = color.to_string();
-        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
             window.compare_overlay.set_series_color_by_index(idx, color);
         }
         eprintln!("[ChartApp] cmp_settings color applied: idx={} color={}", idx, color);

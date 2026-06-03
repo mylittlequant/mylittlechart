@@ -23,11 +23,10 @@ pub mod command;
 pub mod history;
 pub mod app_state;
 pub mod action_executor;
-pub mod chart_window;
+pub mod chart_container;
 pub mod sub_panel;
 pub mod panel_grid;
 pub mod chart_container_leaf;
-pub mod chart_container;
 
 // Core chart struct
 pub use chart::*;
@@ -76,15 +75,20 @@ pub use action_executor::{
     OpenModalRequest,
 };
 
-// ChartWindow - the main chart state aggregate
-// Phase 1 C1.3 of the chart-container cut introduces `ChartPanel` as the
-// canonical name for the candle-canvas leaf. `ChartWindow` stays as an
-// alias for one or more commits so the ~30 callsites in chart-app keep
-// compiling; new code should prefer `ChartPanel`. Final rename of the
-// underlying struct happens later in Phase 1 once container-level fields
-// have moved out.
-pub use chart_window::{ChartWindow, ChartId, ConnectionStatus, WindowRect, WINDOW_GAP, generate_chart_id, bump_chart_id_past, DEFAULT_SNAP_MARGIN};
-pub use chart_window::ChartWindow as ChartPanel;
+// Phase 1 hardcut of the chart-container cut: the former `ChartWindow` is
+// renamed in place to `ChartContainer`. It currently still owns ALL fields
+// (canvas + container-level + sub-panes); Phase 2 carves a thin `ChartPanel`
+// out of it for the canvas-only fields.
+pub use chart_container::{
+    ChartContainer,
+    ChartId,
+    ConnectionStatus,
+    WindowRect,
+    WINDOW_GAP,
+    generate_chart_id,
+    bump_chart_id_past,
+    DEFAULT_SNAP_MARGIN,
+};
 
 // Chart-internal split/expand system (uzor-panels integration)
 pub use sub_panel::ChartSubPanel;
@@ -99,7 +103,6 @@ pub use chart_container_leaf::{
     generate_chart_panel_id,
     bump_chart_panel_id_past,
 };
-pub use chart_container::ChartContainer;
 
 // Panel grid — input-aware layout manager
 pub use panel_grid::{ChartPanelGrid, ChartInputTarget, ChartRightClickHit, ChartDragStartHit, SplitHitResult, FreehandCompleteResult};

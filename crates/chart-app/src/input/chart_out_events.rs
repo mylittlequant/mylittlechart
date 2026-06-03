@@ -39,7 +39,7 @@ impl ChartApp {
                 };
                 if let Some(tf) = timeframe {
                     // Capture previous timeframe and active leaf BEFORE changing.
-                    let previous_timeframe = self.panel_app.panel_grid.active_window()
+                    let previous_timeframe = self.panel_app.panel_grid.active_container()
                         .map(|w| w.timeframe.clone());
                     let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
                     // Extract whether timeframe actually changed before mutating.
@@ -59,13 +59,13 @@ impl ChartApp {
                     };
                     // Set timeframe, clear bars, and request new data asynchronously.
                     // (change_timeframe tries a sync cache lookup which fails for live data.)
-                    let symbol = self.panel_app.panel_grid.active_window()
+                    let symbol = self.panel_app.panel_grid.active_container()
                         .map(|w| w.symbol.clone())
                         .unwrap_or_default();
-                    let at_label_tf = self.panel_app.panel_grid.active_window()
+                    let at_label_tf = self.panel_app.panel_grid.active_container()
                         .map(|w| w.account_type.clone())
                         .unwrap_or_else(|| "S".to_string());
-                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         window.timeframe = tf.clone();
                         window.update_title();
                         window.bars.clear();
@@ -95,7 +95,7 @@ impl ChartApp {
             }
             ChartOutEvent::ChangeChartType { chart_type } => {
                 eprintln!("[ChartApp] ChangeChartType: {}", chart_type);
-                // Map the incoming String to a &'static str used by ChartWindow.
+                // Map the incoming String to a &'static str used by ChartContainer.
                 let static_type: Option<&'static str> = match chart_type.as_str() {
                     "candles"       => Some("candles"),
                     "hollow_candles" => Some("hollow_candles"),
@@ -115,7 +115,7 @@ impl ChartApp {
                     }
                 };
                 if let Some(ct) = static_type {
-                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         window.set_chart_type_with_undo(ct);
                     }
                     state_mutated = true;
@@ -158,14 +158,14 @@ impl ChartApp {
             // Quick-settings toggles from the settings gear dropdown.
             ChartOutEvent::ToggleGrid => {
                 // Read new value from active, then broadcast to all windows
-                let new_val = if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                let new_val = if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                     w.toggle_grid();
                     let v = w.grid_options.vert_lines.visible;
                     let h = w.grid_options.horz_lines.visible;
                     Some((v, h))
                 } else { None };
                 if let Some((v, h)) = new_val {
-                    for w in self.panel_app.panel_grid.windows_mut().values_mut() {
+                    for w in self.panel_app.panel_grid.containers_mut().values_mut() {
                         w.grid_options.vert_lines.visible = v;
                         w.grid_options.horz_lines.visible = h;
                     }
@@ -174,12 +174,12 @@ impl ChartApp {
                 state_mutated = true;
             }
             ChartOutEvent::ToggleCrosshair => {
-                let new_val = if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                let new_val = if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                     w.toggle_crosshair();
                     Some(w.crosshair.enabled)
                 } else { None };
                 if let Some(val) = new_val {
-                    for w in self.panel_app.panel_grid.windows_mut().values_mut() {
+                    for w in self.panel_app.panel_grid.containers_mut().values_mut() {
                         w.crosshair.enabled = val;
                     }
                 }
@@ -187,19 +187,19 @@ impl ChartApp {
                 state_mutated = true;
             }
             ChartOutEvent::ToggleLegend => {
-                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     window.toggle_legend();
                     eprintln!("[ChartApp] legend toggled");
                 }
                 state_mutated = true;
             }
             ChartOutEvent::ToggleWatermark => {
-                let new_val = if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                let new_val = if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                     w.toggle_watermark();
                     w.watermark.as_ref().map(|wm| wm.visible)
                 } else { None };
                 if let Some(val) = new_val {
-                    for w in self.panel_app.panel_grid.windows_mut().values_mut() {
+                    for w in self.panel_app.panel_grid.containers_mut().values_mut() {
                         if let Some(ref mut wm) = w.watermark {
                             wm.visible = val;
                         }
@@ -329,12 +329,12 @@ impl ChartApp {
                 state_mutated = true;
             }
             ChartOutEvent::ToggleGridVertical => {
-                let new_val = if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                let new_val = if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                     w.toggle_grid_vertical();
                     Some(w.grid_options.vert_lines.visible)
                 } else { None };
                 if let Some(val) = new_val {
-                    for w in self.panel_app.panel_grid.windows_mut().values_mut() {
+                    for w in self.panel_app.panel_grid.containers_mut().values_mut() {
                         w.grid_options.vert_lines.visible = val;
                     }
                 }
@@ -342,12 +342,12 @@ impl ChartApp {
                 state_mutated = true;
             }
             ChartOutEvent::ToggleGridHorizontal => {
-                let new_val = if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                let new_val = if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                     w.toggle_grid_horizontal();
                     Some(w.grid_options.horz_lines.visible)
                 } else { None };
                 if let Some(val) = new_val {
-                    for w in self.panel_app.panel_grid.windows_mut().values_mut() {
+                    for w in self.panel_app.panel_grid.containers_mut().values_mut() {
                         w.grid_options.horz_lines.visible = val;
                     }
                 }
@@ -355,33 +355,33 @@ impl ChartApp {
                 state_mutated = true;
             }
             ChartOutEvent::ToggleLegendOHLC => {
-                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     window.toggle_legend_ohlc();
                     eprintln!("[ChartApp] legend OHLC toggled -> {}", window.legend.show_ohlc);
                 }
                 state_mutated = true;
             }
             ChartOutEvent::ToggleLegendChange => {
-                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     window.toggle_legend_change();
                     eprintln!("[ChartApp] legend change toggled -> {}", window.legend.show_change);
                 }
                 state_mutated = true;
             }
             ChartOutEvent::ToggleLegendPercent => {
-                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     window.toggle_legend_percent();
                     eprintln!("[ChartApp] legend percent toggled -> {}", window.legend.show_percent);
                 }
                 state_mutated = true;
             }
             ChartOutEvent::ToggleTooltip => {
-                let new_val = if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                let new_val = if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                     w.toggle_tooltip();
                     Some(w.tooltip.visible)
                 } else { None };
                 if let Some(val) = new_val {
-                    for w in self.panel_app.panel_grid.windows_mut().values_mut() {
+                    for w in self.panel_app.panel_grid.containers_mut().values_mut() {
                         w.tooltip.visible = val;
                     }
                 }
@@ -389,12 +389,12 @@ impl ChartApp {
                 state_mutated = true;
             }
             ChartOutEvent::ToggleTooltipFollow => {
-                let new_val = if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                let new_val = if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                     w.toggle_tooltip_follow();
                     Some(w.tooltip.follow_cursor)
                 } else { None };
                 if let Some(val) = new_val {
-                    for w in self.panel_app.panel_grid.windows_mut().values_mut() {
+                    for w in self.panel_app.panel_grid.containers_mut().values_mut() {
                         w.tooltip.follow_cursor = val;
                     }
                 }
@@ -402,7 +402,7 @@ impl ChartApp {
                 state_mutated = true;
             }
             ChartOutEvent::SetWatermarkText(text) => {
-                for w in self.panel_app.panel_grid.windows_mut().values_mut() {
+                for w in self.panel_app.panel_grid.containers_mut().values_mut() {
                     w.set_watermark_text(text);
                 }
                 eprintln!("[ChartApp] watermark text set to {} (all windows)", text);
@@ -418,7 +418,7 @@ impl ChartApp {
                     "top_right"    => (HorzAlign::Right,  VertAlign::Top),
                     _              => (HorzAlign::Left,   VertAlign::Bottom),
                 };
-                for w in self.panel_app.panel_grid.windows_mut().values_mut() {
+                for w in self.panel_app.panel_grid.containers_mut().values_mut() {
                     w.set_watermark_position(horz, vert);
                 }
                 eprintln!("[ChartApp] watermark position set to {} (all windows)", pos);
@@ -482,7 +482,7 @@ impl ChartApp {
                     let window_bar_data: Vec<(String, String, zengeld_chart::state::Timeframe, String)> = self
                         .panel_app
                         .panel_grid
-                        .iter_windows()
+                        .iter_containers()
                         .map(|(_, w)| (w.symbol.clone(), w.exchange.clone(), w.timeframe.clone(), w.account_type.clone()))
                         .collect();
                     let mut bars_requested: usize = 0;
@@ -514,7 +514,7 @@ impl ChartApp {
                     let old_subscriptions: std::collections::HashSet<(digdigdig3::ExchangeId, String)> = self
                         .panel_app
                         .panel_grid
-                        .iter_windows()
+                        .iter_containers()
                         .filter_map(|(_, w)| {
                             digdigdig3::ExchangeId::from_str(&w.exchange)
                                 .map(|eid| (eid, w.symbol.clone()))
@@ -530,14 +530,14 @@ impl ChartApp {
                         match serde_json::from_value::<uzor::panels::serialize::LayoutSnapshot>(preset.layout.clone()) {
                             Ok(layout_snap) => {
                                 // Step 2: Build new windows + leaf_to_chart from snapshot
-                                let mut new_windows = std::collections::HashMap::new();
+                                let mut new_containers = std::collections::HashMap::new();
                                 let mut new_leaf_to_chart = std::collections::HashMap::new();
 
                                 for snap in &preset.windows {
                                     let leaf_id = zengeld_chart::LeafId(snap.leaf_id);
-                                    let chart_id = zengeld_chart::state::chart_window::ChartId(snap.window_id);
+                                    let chart_id = zengeld_chart::state::chart_container::ChartId(snap.window_id);
 
-                                    let mut window = zengeld_chart::state::chart_window::ChartWindow::with_id(
+                                    let mut window = zengeld_chart::state::chart_container::ChartContainer::with_id(
                                         chart_id,
                                         &snap.symbol,
                                         snap.timeframe.clone(),
@@ -662,7 +662,7 @@ impl ChartApp {
                                         snap.drawings.primitives.len()
                                     );
 
-                                    new_windows.insert(chart_id, window);
+                                    new_containers.insert(chart_id, window);
                                     new_leaf_to_chart.insert(leaf_id, chart_id);
                                 }
 
@@ -674,14 +674,14 @@ impl ChartApp {
                                 // Step 3: Restore the docking tree
                                 match layout_snap.restore_tree(|_type_id| {
                                     Some(zengeld_chart::state::sub_panel::ChartSubPanel::new(
-                                        zengeld_chart::state::chart_window::ChartId(0),
+                                        zengeld_chart::state::chart_container::ChartId(0),
                                         "",
                                     ))
                                 }) {
                                     Ok(restored_tree) => {
                                         // Step 4: Replace panel grid state
                                         self.panel_app.panel_grid.replace_docking(restored_tree);
-                                        self.panel_app.panel_grid.replace_windows(new_windows);
+                                        self.panel_app.panel_grid.replace_containers(new_containers);
                                         self.panel_app.panel_grid.replace_leaf_to_chart(new_leaf_to_chart);
                                         eprintln!("[ChartApp] layout topology restored");
                                         true
@@ -706,9 +706,9 @@ impl ChartApp {
                     // Fallback: patch existing windows in-place (old presets)
                     // ----------------------------------------------------------------
                     if !layout_restored {
-                        let windows = self.panel_app.panel_grid.windows_mut();
+                        let windows = self.panel_app.panel_grid.containers_mut();
                         for snap in &preset.windows {
-                            let chart_id = zengeld_chart::state::chart_window::ChartId(snap.window_id);
+                            let chart_id = zengeld_chart::state::chart_container::ChartId(snap.window_id);
                             if let Some(window) = windows.get_mut(&chart_id) {
                                 window.symbol = snap.symbol.clone();
                                 window.exchange = snap.exchange.clone();
@@ -850,7 +850,7 @@ impl ChartApp {
                     {
                         // Collect (chart_id, group_id) pairs without holding borrow.
                         let rebind_info: Vec<(zengeld_chart::ChartId, zengeld_chart::tag_manager::SyncGroupId)> =
-                            self.panel_app.panel_grid.windows().iter()
+                            self.panel_app.panel_grid.containers().iter()
                                 .filter_map(|(&cid, w)| w.group_id.map(|gid| (cid, gid)))
                                 .collect();
                         for (chart_id, group_id) in rebind_info {
@@ -858,7 +858,7 @@ impl ChartApp {
                                 .group(group_id)
                                 .map(|g| g.last_used_style.clone())
                             {
-                                if let Some(window) = self.panel_app.panel_grid.windows_mut()
+                                if let Some(window) = self.panel_app.panel_grid.containers_mut()
                                     .get_mut(&chart_id)
                                 {
                                     window.drawing_manager.bind_style_store(style_arc);
@@ -876,7 +876,7 @@ impl ChartApp {
                     // Seed the global primitive ID counter so future allocations
                     // never collide with any ID loaded from disk.
                     {
-                        let max_id = self.panel_app.panel_grid.windows().values()
+                        let max_id = self.panel_app.panel_grid.containers().values()
                             .flat_map(|w| {
                                 w.drawing_manager.primitives().iter()
                                     .chain(w.stashed_primitives.iter())
@@ -900,7 +900,7 @@ impl ChartApp {
                         // Phase 1: collect (window_key, group_id, set_of_group_prim_ids)
                         // using immutable borrows only.
                         let collision_info: Vec<(zengeld_chart::ChartId, zengeld_chart::tag_manager::SyncGroupId, std::collections::HashSet<u64>)> =
-                            self.panel_app.panel_grid.windows().values()
+                            self.panel_app.panel_grid.containers().values()
                                 .filter_map(|w| {
                                     let gid = w.group_id?;
                                     let group_ids: std::collections::HashSet<u64> =
@@ -913,7 +913,7 @@ impl ChartApp {
 
                         // Phase 2: mutably iterate windows and re-ID colliding stash entries.
                         for (chart_id, _gid, group_ids) in &collision_info {
-                            if let Some(window) = self.panel_app.panel_grid.windows_mut().values_mut()
+                            if let Some(window) = self.panel_app.panel_grid.containers_mut().values_mut()
                                 .find(|w| &w.id == chart_id)
                             {
                                 let mut reid_count = 0u32;
@@ -956,17 +956,17 @@ impl ChartApp {
 
                     // Step 5b: If no sync groups exist but windows do, auto-create
                     // a default group so primitives always use the grouped path.
-                    if preset.sync_groups.is_empty() && !self.panel_app.panel_grid.windows().is_empty() {
+                    if preset.sync_groups.is_empty() && !self.panel_app.panel_grid.containers().is_empty() {
                         // Auto groups get transparent color вЂ” never occupy palette slots
-                        let Some((_, first_win)) = self.panel_app.panel_grid.iter_windows().next() else {
-                            eprintln!("[sync_group] preset restore step 5b: iter_windows empty despite non-empty guard - skipping auto group");
+                        let Some((_, first_win)) = self.panel_app.panel_grid.iter_containers().next() else {
+                            eprintln!("[sync_group] preset restore step 5b: iter_containers empty despite non-empty guard - skipping auto group");
                             return;
                         };
                         let symbol = first_win.symbol.clone();
                         let timeframe = first_win.timeframe.clone();
                         let group_id = self.panel_app.tag_manager.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
                         let leaf_chart_ids: Vec<(zengeld_chart::LeafId, zengeld_chart::ChartId)> =
-                            self.panel_app.panel_grid.iter_windows()
+                            self.panel_app.panel_grid.iter_containers()
                                 .map(|(leaf_id, w)| (leaf_id, w.id))
                                 .collect();
                         let style_arc = self.panel_app.tag_manager
@@ -974,7 +974,7 @@ impl ChartApp {
                             .map(|g| g.last_used_style.clone());
                         for &(leaf_id, chart_id) in &leaf_chart_ids {
                             let _ = self.panel_app.tag_manager.connect_chart(chart_id, group_id);
-                            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
+                            if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
                                 window.group_id = Some(group_id);
                                 if let Some(ref arc) = style_arc {
                                     window.drawing_manager.bind_style_store(arc.clone());
@@ -1042,7 +1042,7 @@ impl ChartApp {
                     let window_bar_data: Vec<(u64, Vec<zengeld_chart::Bar>)> = self
                         .panel_app
                         .panel_grid
-                        .iter_windows()
+                        .iter_containers()
                         .filter(|(_, w)| !w.bars.is_empty())
                         .map(|(_, w)| (w.id.0, w.bars.clone()))
                         .collect();
@@ -1502,7 +1502,7 @@ impl ChartApp {
                     let new_subscriptions: std::collections::HashSet<(digdigdig3::ExchangeId, String)> = self
                         .panel_app
                         .panel_grid
-                        .iter_windows()
+                        .iter_containers()
                         .filter_map(|(_, w)| {
                             digdigdig3::ExchangeId::from_str(&w.exchange)
                                 .map(|eid| (eid, w.symbol.clone()))
@@ -1527,7 +1527,7 @@ impl ChartApp {
                     let window_bar_data: Vec<(String, String, zengeld_chart::state::Timeframe, String)> = self
                         .panel_app
                         .panel_grid
-                        .iter_windows()
+                        .iter_containers()
                         .map(|(_, w)| (w.symbol.clone(), w.exchange.clone(), w.timeframe.clone(), w.account_type.clone()))
                         .collect();
                     for (sym, exch, tf, at_label) in &window_bar_data {
@@ -1803,7 +1803,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::InternalToggleSyncSymbol => {
-                let gid = self.panel_app.panel_grid.active_window().and_then(|w| w.group_id);
+                let gid = self.panel_app.panel_grid.active_container().and_then(|w| w.group_id);
                 let mut newly_enabled = false;
                 if let Some(gid) = gid {
                     if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
@@ -1817,7 +1817,7 @@ impl ChartApp {
                 // When sync is turned ON, immediately propagate active leaf's instrument key to peers
                 if newly_enabled {
                     if let Some(leaf) = self.panel_app.panel_grid.docking().active_leaf() {
-                        let (symbol, exchange, account_type) = self.panel_app.panel_grid.active_window()
+                        let (symbol, exchange, account_type) = self.panel_app.panel_grid.active_container()
                             .map(|w| (w.symbol.clone(), w.exchange.clone(), w.account_type.clone()))
                             .unwrap_or_default();
                         if !symbol.is_empty() {
@@ -1829,7 +1829,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::InternalToggleSyncTimeframe => {
-                let gid = self.panel_app.panel_grid.active_window().and_then(|w| w.group_id);
+                let gid = self.panel_app.panel_grid.active_container().and_then(|w| w.group_id);
                 let mut newly_enabled = false;
                 if let Some(gid) = gid {
                     if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
@@ -1843,7 +1843,7 @@ impl ChartApp {
                 // When sync is turned ON, immediately propagate active leaf's TF to peers
                 if newly_enabled {
                     if let Some(leaf) = self.panel_app.panel_grid.docking().active_leaf() {
-                        let tf = self.panel_app.panel_grid.active_window()
+                        let tf = self.panel_app.panel_grid.active_container()
                             .map(|w| w.timeframe.clone());
                         if let Some(tf) = tf {
                             self.propagate_timeframe_to_sync_group(leaf, tf);
@@ -1854,7 +1854,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::InternalToggleSyncCrosshair => {
-                let gid = self.panel_app.panel_grid.active_window().and_then(|w| w.group_id);
+                let gid = self.panel_app.panel_grid.active_container().and_then(|w| w.group_id);
                 let mut newly_enabled = false;
                 if let Some(gid) = gid {
                     if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
@@ -1871,7 +1871,7 @@ impl ChartApp {
                     if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
                         let (timestamp, price, crosshair_visible, pane_index) = self.panel_app
                             .panel_grid
-                            .active_window()
+                            .active_container()
                             .map(|w| {
                                 let bar_f64 = w.crosshair.bar_f64;
                                 let bar_idx = bar_f64 as usize;
@@ -1898,7 +1898,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::InternalToggleSyncViewport => {
-                let gid = self.panel_app.panel_grid.active_window().and_then(|w| w.group_id);
+                let gid = self.panel_app.panel_grid.active_container().and_then(|w| w.group_id);
                 let mut newly_enabled = false;
                 let mut newly_disabled = false;
                 if let Some(gid) = gid {
@@ -1919,7 +1919,7 @@ impl ChartApp {
                     if let Some(active_leaf) = active_leaf {
                         // Capture the active window's current scale_mode as the new group mode.
                         let active_mode = self.panel_app.panel_grid
-                            .active_window()
+                            .active_container()
                             .map(|w| w.price_scale.scale_mode);
                         if let Some(mode) = active_mode {
                             if let Some(gid) = gid {
@@ -1935,11 +1935,11 @@ impl ChartApp {
                             let peer_leaves: Vec<zengeld_chart::LeafId> =
                                 self.panel_app.tag_manager.chart_members(gid)
                                     .into_iter()
-                                    .filter_map(|cid| self.panel_app.panel_grid.leaf_for_chart_id(cid))
+                                    .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
                                     .filter(|&lid| lid != active_leaf)
                                     .collect();
                             for peer_leaf in peer_leaves {
-                                if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(peer_leaf) {
+                                if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(peer_leaf) {
                                     // Stash existing mode if not already stashed (preserve
                                     // the window's pre-join mode across multiple sync toggles).
                                     if window.stashed_scale_mode.is_none() {
@@ -1950,7 +1950,7 @@ impl ChartApp {
                         }
                         let viewport_state = self.panel_app
                             .panel_grid
-                            .active_window()
+                            .active_container()
                             .map(|w| (w.viewport.view_start, w.viewport.bar_spacing));
                         if let Some((view_start, bar_spacing)) = viewport_state {
                             self.propagate_viewport_to_sync_group(
@@ -1967,10 +1967,10 @@ impl ChartApp {
                         let all_leaves: Vec<zengeld_chart::LeafId> =
                             self.panel_app.tag_manager.chart_members(gid)
                                 .into_iter()
-                                .filter_map(|cid| self.panel_app.panel_grid.leaf_for_chart_id(cid))
+                                .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
                                 .collect();
                         for leaf in all_leaves {
-                            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf) {
+                            if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf) {
                                 window.stashed_scale_mode = None;
                             }
                         }
@@ -1980,8 +1980,8 @@ impl ChartApp {
             }
 
             ChartOutEvent::InternalToggleSyncDrawings => {
-                let gid = self.panel_app.panel_grid.active_window().and_then(|w| w.group_id);
-                let chart_id = self.panel_app.panel_grid.active_window().map(|w| w.id);
+                let gid = self.panel_app.panel_grid.active_container().and_then(|w| w.group_id);
+                let chart_id = self.panel_app.panel_grid.active_container().map(|w| w.id);
                 if let Some(gid) = gid {
                     // Toggle the flag and capture the new value.
                     let new_sync = if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
@@ -2002,7 +2002,7 @@ impl ChartApp {
                             .map(|g| g.primitives.iter().map(|p| p.data().id).collect())
                             .unwrap_or_default();
 
-                        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                             // Drain all primitives from the manager, partition into local vs synced.
                             let all: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
                                 std::mem::take(window.drawing_manager.primitives_mut());
@@ -2026,7 +2026,7 @@ impl ChartApp {
                         }
                     } else {
                         // ON в†’ OFF: restore stashed window-local primitives.
-                        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                             let restored: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
                                 std::mem::take(&mut window.stashed_primitives);
                             let count = restored.len();
@@ -2045,8 +2045,8 @@ impl ChartApp {
             }
 
             ChartOutEvent::InternalToggleSyncIndicators => {
-                let gid = self.panel_app.panel_grid.active_window().and_then(|w| w.group_id);
-                let chart_id = self.panel_app.panel_grid.active_window().map(|w| w.id);
+                let gid = self.panel_app.panel_grid.active_container().and_then(|w| w.group_id);
+                let chart_id = self.panel_app.panel_grid.active_container().map(|w| w.id);
                 if let (Some(gid), Some(chart_id)) = (gid, chart_id) {
                     // Toggle the flag and capture the new value.
                     let new_sync = if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
@@ -2060,7 +2060,7 @@ impl ChartApp {
                     let pre_tag_ids: Vec<u64> = self
                         .panel_app
                         .panel_grid
-                        .active_window()
+                        .active_container()
                         .map(|w| w.pre_tag_indicator_ids.clone())
                         .unwrap_or_default();
 

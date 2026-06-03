@@ -104,7 +104,7 @@ impl App<'_> {
                     // shows the latest bars.  Manual mode keeps user's position.
                     if pw.was_minimized {
                         pw.was_minimized = false;
-                        for window in pw.chart.panel_app.panel_grid.windows_mut().values_mut() {
+                        for window in pw.chart.panel_app.panel_grid.containers_mut().values_mut() {
                             if !window.bars.is_empty()
                                 && (window.price_scale.scale_mode.is_follow()
                                     || window.price_scale.scale_mode == zengeld_chart::ScaleMode::Auto)

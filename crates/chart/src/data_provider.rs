@@ -1,6 +1,6 @@
 //! Data Provider Trait
 //!
-//! Abstracts data loading for ChartWindow, allowing different data sources
+//! Abstracts data loading for ChartContainer, allowing different data sources
 //! (demo, live exchange, historical files) to be plugged in without coupling
 //! the chart state to any specific data source.
 
@@ -9,7 +9,7 @@ use crate::{Bar, state::Timeframe};
 
 /// Trait for loading OHLC data for symbols and timeframes.
 ///
-/// This trait allows `ChartWindow` to be decoupled from specific data sources.
+/// This trait allows `ChartContainer` to be decoupled from specific data sources.
 /// Implementations can provide demo data, live exchange data, or historical files.
 ///
 /// # Example
@@ -17,12 +17,12 @@ use crate::{Bar, state::Timeframe};
 /// ```ignore
 /// // Demo data provider
 /// let provider = Arc::new(DemoDataProvider);
-/// let mut window = ChartWindow::new_with_provider(provider);
+/// let mut window = ChartContainer::new_with_provider(provider);
 /// window.change_symbol("BTCUSD"); // Uses provider to load data
 ///
 /// // Live exchange provider
 /// let provider = Arc::new(ExchangeDataProvider::new(api_client));
-/// let mut window = ChartWindow::new_with_provider(provider);
+/// let mut window = ChartContainer::new_with_provider(provider);
 /// ```
 pub trait DataProvider: Send + Sync {
     /// Load bars for a given symbol and timeframe.

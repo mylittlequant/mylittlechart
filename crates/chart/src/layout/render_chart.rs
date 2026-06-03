@@ -3355,7 +3355,7 @@ pub fn render_chart_splits(
         .collect();
 
     for (leaf_id, sub_rect) in leaf_rects {
-        let window = match panel_grid.window_for_leaf(leaf_id) {
+        let window = match panel_grid.container_for_leaf(leaf_id) {
             Some(w) => w,
             None => continue,
         };
@@ -3376,7 +3376,7 @@ pub fn render_chart_splits(
         ctx.rect(available.x, available.y, available.width, available.height);
         ctx.clip();
 
-        // Build a minimal ChartRenderState from the ChartWindow's data.
+        // Build a minimal ChartRenderState from the ChartContainer's data.
         // render_full_chart_panel will correct the viewport dimensions and
         // chart_rect internally, so we pass the raw values here.
         let render_state = ChartRenderState {

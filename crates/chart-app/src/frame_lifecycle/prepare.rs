@@ -165,7 +165,7 @@ impl ChartApp {
         // chart_width values (see below).
         if !self.panel_app.panel_grid.is_split() {
             let mut snapped_windows: Vec<(ChartId, f64, f64)> = Vec::new(); // (chart_id, view_start, bar_spacing)
-            for (&chart_id, window) in self.panel_app.panel_grid.windows_mut().iter_mut() {
+            for (&chart_id, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                 if window.needs_auto_scale_after_bars && !window.bars.is_empty() && window.viewport.chart_width > 0.0 {
                     window.needs_auto_scale_after_bars = false;
                     // Snap to end with standard margin.
@@ -187,7 +187,7 @@ impl ChartApp {
             // Propagate viewport snap to sync-group peers so all synced windows
             // align to the same TIME position after bar load (not just user pan/zoom).
             for (chart_id, view_start, bar_spacing) in snapped_windows {
-                if let Some(leaf_id) = self.panel_app.panel_grid.leaf_for_chart_id(chart_id) {
+                if let Some(leaf_id) = self.panel_app.panel_grid.leaf_for_container_id(chart_id) {
                     self.propagate_viewport_to_sync_group(leaf_id, view_start, bar_spacing, None);
                 }
             }
@@ -208,7 +208,7 @@ impl ChartApp {
             // When the active chart changes, reassign all Synced panels to the new
             // chart's group and apply the group's instrument key to their states.
             if let Some(new_active_group) = self.panel_app.panel_grid
-                .active_chart_id()
+                .active_container_id()
                 .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
             {
                 // Sync the group's full instrument key from the new active window.
@@ -216,7 +216,7 @@ impl ChartApp {
                 // group.symbol from the prior session and apply_key_to_panels_in_group
                 // overwrites panel state.symbol with that stale value on the very
                 // first frame (when last_active_leaf=None ≠ current_leaf).
-                if let Some(w) = self.panel_app.panel_grid.active_window() {
+                if let Some(w) = self.panel_app.panel_grid.active_container() {
                     let sym = w.symbol.clone();
                     let exch = w.exchange.clone();
                     let at = w.account_type.clone();
@@ -236,7 +236,7 @@ impl ChartApp {
             // --- ObjectTree: drawing primitives + indicators ---
             self.sidebar_state.object_tree_items.clear();
 
-            let active_cid = self.panel_app.panel_grid.active_chart_id();
+            let active_cid = self.panel_app.panel_grid.active_container_id();
 
             // Determine whether the active window is in a real (non-auto_created) tag group.
             let tagged_group = active_cid
@@ -255,7 +255,7 @@ impl ChartApp {
 
             // Collect active window key fields before any borrows.
             let (active_window_sym, active_window_exchange, active_window_account_type) =
-                self.panel_app.panel_grid.active_window()
+                self.panel_app.panel_grid.active_container()
                     .map(|w| (w.symbol.clone(), w.exchange.clone(), w.account_type.clone()))
                     .unwrap_or_default();
 
@@ -340,11 +340,11 @@ impl ChartApp {
                 }
 
                 // --- Section "Window": window-local stashed primitives ---
-                // Collect stashed primitive data first so we don't hold an active_window borrow
+                // Collect stashed primitive data first so we don't hold an active_container borrow
                 // while also needing indicator_manager (which is not behind the same ref).
                 // Stashed primitives are always shown regardless of sync_drawings state —
                 // they represent objects that were on the window before joining the tag group.
-                let stashed_prim_data: Vec<_> = self.panel_app.panel_grid.active_window()
+                let stashed_prim_data: Vec<_> = self.panel_app.panel_grid.active_container()
                     .map(|w| w.stashed_primitives.iter()
                         .map(|p| {
                             let data = p.data();
@@ -356,7 +356,7 @@ impl ChartApp {
                     .unwrap_or_default();
 
                 // Collect window-local indicator IDs before releasing the window borrow.
-                let pre_tag_ids: Vec<u64> = self.panel_app.panel_grid.active_window()
+                let pre_tag_ids: Vec<u64> = self.panel_app.panel_grid.active_container()
                     .map(|w| w.pre_tag_indicator_ids.clone())
                     .unwrap_or_default();
 
@@ -403,7 +403,7 @@ impl ChartApp {
                 // ----------------------------------------------------------------
 
                 // Primitives from window-local drawing_manager — all symbols, annotated by state.
-                let local_prims: Vec<_> = self.panel_app.panel_grid.active_window()
+                let local_prims: Vec<_> = self.panel_app.panel_grid.active_container()
                     .map(|w| w.drawing_manager.primitives().iter()
                         .map(|p| {
                             let data = p.data();
@@ -489,7 +489,7 @@ impl ChartApp {
             });
 
             // --- ObjectTree: compare overlay series ---
-            if let Some(window) = self.panel_app.panel_grid.active_window() {
+            if let Some(window) = self.panel_app.panel_grid.active_container() {
                 for (i, series) in window.compare_overlay.series.iter().enumerate() {
                     let item = sidebar_content::types::ObjectTreeItem::new(
                         i as u64,
@@ -566,7 +566,7 @@ impl ChartApp {
                     .unwrap_or_default();
 
                 for (sym_name, sym_exchange, sym_account_type) in &watchlist_entries {
-                    let price_data = self.panel_app.panel_grid.iter_windows()
+                    let price_data = self.panel_app.panel_grid.iter_containers()
                         .find(|(_, w)| w.symbol == *sym_name && w.exchange == *sym_exchange && w.account_type == *sym_account_type)
                         .and_then(|(_, w)| w.bars.last())
                         .map(|bar| (bar.close, bar.open, bar.high, bar.low, bar.volume));
@@ -826,7 +826,7 @@ impl ChartApp {
                 .collect();
 
             for (leaf_id, new_chart_w, new_chart_h) in leaf_dims {
-                if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
+                if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
                     let old_w = window.viewport.chart_width;
                     // Skip bar_shift when window hasn't been snapped yet (still has
                     // placeholder chart_width from Viewport::default).  The deferred
@@ -848,7 +848,7 @@ impl ChartApp {
             // Deferred viewport snap for split mode: now chart_width is real.
             {
                 let mut snapped_windows: Vec<(ChartId, f64, f64)> = Vec::new();
-                for (&chart_id, window) in self.panel_app.panel_grid.windows_mut().iter_mut() {
+                for (&chart_id, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                     if window.needs_auto_scale_after_bars && !window.bars.is_empty() && window.viewport.chart_width > 0.0 {
                         window.needs_auto_scale_after_bars = false;
                         // Snap to end with standard margin,
@@ -863,7 +863,7 @@ impl ChartApp {
                 }
                 // (diagnostic logging removed — snap-to-end confirmed working)
                 for (chart_id, view_start, bar_spacing) in snapped_windows {
-                    if let Some(leaf_id) = self.panel_app.panel_grid.leaf_for_chart_id(chart_id) {
+                    if let Some(leaf_id) = self.panel_app.panel_grid.leaf_for_container_id(chart_id) {
                         self.propagate_viewport_to_sync_group(leaf_id, view_start, bar_spacing, None);
                     }
                 }
@@ -875,13 +875,13 @@ impl ChartApp {
             let group_prim_sync: Vec<(zengeld_chart::ChartId, Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>>)> = {
                 let mut syncs = Vec::new();
                 for &(leaf_id, _) in &leaf_rects {
-                    if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(leaf_id) {
+                    if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
                         let window_symbol = self.panel_app.panel_grid
-                            .window_for_leaf(leaf_id)
+                            .container_for_leaf(leaf_id)
                             .map(|w| w.symbol.clone())
                             .unwrap_or_default();
                         if let Some(group_id) = self.panel_app.panel_grid
-                            .window_for_leaf(leaf_id)
+                            .container_for_leaf(leaf_id)
                             .and_then(|w| w.group_id)
                         {
                             if let Some(group) = self.panel_app.tag_manager.group(group_id) {
@@ -908,7 +908,7 @@ impl ChartApp {
                 syncs
             };
             for (chart_id, cloned_prims) in group_prim_sync {
-                if let Some(window) = self.panel_app.panel_grid.windows_mut().get_mut(&chart_id) {
+                if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&chart_id) {
                     if !window.drawing_manager.is_dragging() {
                         window.drawing_manager.sync_from_group_primitives(&cloned_prims);
                     }
@@ -917,13 +917,13 @@ impl ChartApp {
 
             // Sync indicator overlay visibility per leaf.
             for &(leaf_id, _) in &leaf_rects {
-                let symbol = self.panel_app.panel_grid.window_for_leaf(leaf_id)
+                let symbol = self.panel_app.panel_grid.container_for_leaf(leaf_id)
                     .map(|w| w.symbol.clone())
                     .unwrap_or_default();
-                let has_compare = self.panel_app.panel_grid.window_for_leaf(leaf_id)
+                let has_compare = self.panel_app.panel_grid.container_for_leaf(leaf_id)
                     .map(|w| !w.compare_overlay.series.is_empty())
                     .unwrap_or(false);
-                let has_indicators = if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(leaf_id) {
+                let has_indicators = if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
                     !self.indicator_manager.get_instances_for_symbol_in_window(&symbol, chart_id.0).is_empty()
                 } else {
                     !self.indicator_manager.get_instances_for_symbol(&symbol).is_empty()
@@ -933,10 +933,10 @@ impl ChartApp {
             }
         } else {
             // Single pane: sync group primitives.
-            if let Some(active_window) = self.panel_app.panel_grid.active_window() {
-                let group_id_opt = active_window.group_id;
-                let is_dragging = active_window.drawing_manager.is_dragging();
-                let chart_id_opt = self.panel_app.panel_grid.active_chart_id();
+            if let Some(active_container) = self.panel_app.panel_grid.active_container() {
+                let group_id_opt = active_container.group_id;
+                let is_dragging = active_container.drawing_manager.is_dragging();
+                let chart_id_opt = self.panel_app.panel_grid.active_container_id();
                 if let (Some(group_id), Some(chart_id)) = (group_id_opt, chart_id_opt) {
                     if !is_dragging {
                         // Respect the sync_drawings flag — skip forward sync if disabled.
@@ -953,7 +953,7 @@ impl ChartApp {
                             // primitives — stale drawings from the previous symbol
                             // must not be re-injected by the forward sync.
                             let window_symbol = self.panel_app.panel_grid
-                                .windows()
+                                .containers()
                                 .get(&chart_id)
                                 .map(|w| w.symbol.clone())
                                 .unwrap_or_default();
@@ -968,7 +968,7 @@ impl ChartApp {
                                         .map(|p| p.clone_box())
                                         .collect())
                                     .unwrap_or_default();
-                            if let Some(window) = self.panel_app.panel_grid.windows_mut().get_mut(&chart_id) {
+                            if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&chart_id) {
                                 window.drawing_manager.sync_from_group_primitives(&cloned);
                             }
                         }
@@ -977,10 +977,10 @@ impl ChartApp {
             }
 
             // Single pane: sync indicator overlay visibility.
-            let (symbol, has_compare) = self.panel_app.panel_grid.active_window()
+            let (symbol, has_compare) = self.panel_app.panel_grid.active_container()
                 .map(|w| (w.symbol.clone(), !w.compare_overlay.series.is_empty()))
                 .unwrap_or_default();
-            let has_indicators = if let Some(chart_id) = self.panel_app.panel_grid.active_chart_id() {
+            let has_indicators = if let Some(chart_id) = self.panel_app.panel_grid.active_container_id() {
                 !self.indicator_manager.get_instances_for_symbol_in_window(&symbol, chart_id.0).is_empty()
             } else {
                 !self.indicator_manager.get_instances_for_symbol(&symbol).is_empty()

@@ -1,7 +1,7 @@
 //! chart-app — standalone chart application crate
 //!
 //! A minimal, self-contained chart application that owns one `ChartPanelApp`
-//! (which itself holds one `ChartWindow` via `ChartPanelGrid`) plus an
+//! (which itself holds one `ChartContainer` via `ChartPanelGrid`) plus an
 //! `InputCoordinator` for widget routing and a `DefaultChartInputHandler`
 //! for chart canvas input.
 //!
@@ -188,13 +188,13 @@ struct MiniTickerData {
 
 /// Standalone chart application.
 ///
-/// Owns a single `ChartPanelApp` (which holds exactly one `ChartWindow` and
+/// Owns a single `ChartPanelApp` (which holds exactly one `ChartContainer` and
 /// its own modal state structs), an `InputCoordinator` for widget routing,
 /// and a `DefaultChartInputHandler` for chart canvas input.
 ///
 /// There is no sync bridge — with only one window the state flows directly.
 pub struct ChartApp {
-    /// The chart panel — owns ChartWindow, toolbar state, split grid, and modal state.
+    /// The chart panel — owns ChartContainer, toolbar state, split grid, and modal state.
     pub panel_app: ChartPanelApp,
 
     /// Central widget router — registers hit-zones each frame, processes clicks.
@@ -1066,7 +1066,7 @@ impl ChartApp {
         if has_saved_preset {
             // ── Restore from saved preset ───────────────────────────────
             // Attach data_provider to the initial window so LoadPreset can clone it.
-            if let Some(window) = app.panel_app.panel_grid.active_window_mut() {
+            if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
                 window.data_provider = data_provider.clone();
                 window.toolbar_config = ToolbarConfig::standalone();
             }
@@ -1083,11 +1083,11 @@ impl ChartApp {
             let window_data: Vec<(String, String, zengeld_chart::state::Timeframe, String)> = app
                 .panel_app
                 .panel_grid
-                .iter_windows()
+                .iter_containers()
                 .map(|(_, w)| (w.symbol.clone(), w.exchange.clone(), w.timeframe.clone(), w.account_type.clone()))
                 .collect();
 
-            for window in app.panel_app.panel_grid.windows_mut().values_mut() {
+            for window in app.panel_app.panel_grid.containers_mut().values_mut() {
                 let win_exchange_id = digdigdig3::ExchangeId::from_str(&window.exchange)
                     .unwrap_or(digdigdig3::ExchangeId::Binance);
                 let win_exchange_name = win_exchange_id.as_str().to_string();
@@ -1100,7 +1100,7 @@ impl ChartApp {
             }
 
             // Set active_exchange from the active window's exchange.
-            if let Some(active_win) = app.panel_app.panel_grid.active_window() {
+            if let Some(active_win) = app.panel_app.panel_grid.active_container() {
                 app.active_exchange = digdigdig3::ExchangeId::from_str(&active_win.exchange)
                     .unwrap_or(digdigdig3::ExchangeId::Binance);
             }
@@ -1122,7 +1122,7 @@ impl ChartApp {
             // Preset restored successfully.
         } else {
             // ── Fresh state — Binance default ──────────────────────────────
-            if let Some(window) = app.panel_app.panel_grid.active_window_mut() {
+            if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
                 window.data_provider = data_provider.clone();
                 window.exchange = exchange_name.clone();
                 window.toolbar_config = ToolbarConfig::standalone();
@@ -1349,7 +1349,7 @@ impl ChartApp {
             LiveDataProvider::new(exchange_id, exchange_name.clone(), digdigdig3::AccountType::Spot, bridge.clone()),
         );
 
-        if let Some(window) = app.panel_app.panel_grid.active_window_mut() {
+        if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
             window.data_provider = data_provider.clone();
             window.exchange = exchange_name.clone();
             window.toolbar_config = ToolbarConfig::standalone();
@@ -1637,7 +1637,7 @@ impl ChartApp {
         if skeleton {
             // Skeleton is a pure loading screen — no presets, no connectors,
             // no data providers.  Everything happens after promote_skeleton().
-            if let Some(window) = app.panel_app.panel_grid.active_window_mut() {
+            if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
                 window.data_provider = data_provider.clone();
                 window.toolbar_config = ToolbarConfig::standalone();
             }
@@ -1647,7 +1647,7 @@ impl ChartApp {
 
             if has_saved_preset {
                 // Restore from saved preset.
-                if let Some(window) = app.panel_app.panel_grid.active_window_mut() {
+                if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
                     window.data_provider = data_provider.clone();
                     window.toolbar_config = ToolbarConfig::standalone();
                 }
@@ -1664,11 +1664,11 @@ impl ChartApp {
 
                 // Ensure all windows have data_provider and toolbar config.
                 let window_data: Vec<(String, String, zengeld_chart::state::Timeframe, String)> = app
-                    .panel_app.panel_grid.iter_windows()
+                    .panel_app.panel_grid.iter_containers()
                     .map(|(_, w)| (w.symbol.clone(), w.exchange.clone(), w.timeframe.clone(), w.account_type.clone()))
                     .collect();
 
-                for window in app.panel_app.panel_grid.windows_mut().values_mut() {
+                for window in app.panel_app.panel_grid.containers_mut().values_mut() {
                     let win_exchange_id = digdigdig3::ExchangeId::from_str(&window.exchange)
                         .unwrap_or(digdigdig3::ExchangeId::Binance);
                     let win_exchange_name = win_exchange_id.as_str().to_string();
@@ -1680,7 +1680,7 @@ impl ChartApp {
                     window.toolbar_config = ToolbarConfig::standalone();
                 }
 
-                if let Some(active_win) = app.panel_app.panel_grid.active_window() {
+                if let Some(active_win) = app.panel_app.panel_grid.active_container() {
                     app.active_exchange = digdigdig3::ExchangeId::from_str(&active_win.exchange)
                         .unwrap_or(digdigdig3::ExchangeId::Binance);
                 }
@@ -1699,7 +1699,7 @@ impl ChartApp {
                 app.needs_initial_viewport_fit = true;
             } else {
                 // Fresh state — Binance default.
-                if let Some(window) = app.panel_app.panel_grid.active_window_mut() {
+                if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
                     window.data_provider = data_provider.clone();
                     window.exchange = exchange_name.clone();
                     window.toolbar_config = ToolbarConfig::standalone();
@@ -2002,10 +2002,10 @@ impl ChartApp {
         }
         // Capture old trade-stream identity BEFORE updating active_exchange or window state.
         let old_trade_exchange = self.active_exchange;
-        let old_trade_symbol = self.panel_app.panel_grid.active_window()
+        let old_trade_symbol = self.panel_app.panel_grid.active_container()
             .map(|w| w.symbol.clone())
             .unwrap_or_default();
-        let old_trade_at = self.panel_app.panel_grid.active_window()
+        let old_trade_at = self.panel_app.panel_grid.active_container()
             .map(|w| account_type_from_label(&w.account_type))
             .unwrap_or(digdigdig3::AccountType::Spot);
 
@@ -2019,7 +2019,7 @@ impl ChartApp {
         let exchange_name = exchange_id.as_str().to_string();
 
         // Use the active window's account_type for the new provider.
-        let switch_at = self.panel_app.panel_grid.active_window()
+        let switch_at = self.panel_app.panel_grid.active_container()
             .map(|w| account_type_from_label(&w.account_type))
             .unwrap_or(digdigdig3::AccountType::Spot);
 
@@ -2039,7 +2039,7 @@ impl ChartApp {
         }
 
         // Attach the provider to the active window and request paginated bars.
-        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
             window.data_provider = provider;
             window.exchange = exchange_name;
             let symbol = window.symbol.clone();
@@ -2145,7 +2145,7 @@ impl ChartApp {
         // right margin (set_bars() couldn't do this because chart_width was 0).
         if self.needs_initial_viewport_fit {
             self.needs_initial_viewport_fit = false;
-            for window in self.panel_app.panel_grid.windows_mut().values_mut() {
+            for window in self.panel_app.panel_grid.containers_mut().values_mut() {
                 // Only snap if chart dimensions are valid and bars are loaded.
                 if window.viewport.chart_width > 0.0 && window.viewport.bar_spacing > 0.0 && !window.bars.is_empty() {
                     window.snap_to_end(zengeld_chart::DEFAULT_SNAP_MARGIN);
@@ -2177,12 +2177,12 @@ impl ChartApp {
         // Prefer the frame-cached layout; fall back to building on demand so
         // that resize() (called outside prepare_frame, where active_frame_layout
         // may be stale/None) always uses fresh geometry.  Clone to end the
-        // immutable borrow before the mutable windows_mut() call below.
+        // immutable borrow before the mutable containers_mut() call below.
         let extended = self.active_frame_layout.clone()
             .unwrap_or_else(|| self.build_extended_layout());
         let new_width = extended.main_chart.chart.width;
         let new_height = extended.main_chart.chart.height;
-        for window in self.panel_app.panel_grid.windows_mut().values_mut() {
+        for window in self.panel_app.panel_grid.containers_mut().values_mut() {
             let old_width = window.viewport.chart_width;
             // Pin right edge: shift view_start so the last visible bars stay
             // anchored when the window is resized, matching terminal behavior.
@@ -2224,7 +2224,7 @@ impl ChartApp {
     /// Call sites must check the debounce guard (`last_backfill_time`) before
     /// invoking this method.
     fn trigger_backfill_after_lag(&self) {
-        for window in self.panel_app.panel_grid.windows().values() {
+        for window in self.panel_app.panel_grid.containers().values() {
             if window.symbol.is_empty() {
                 continue;
             }
@@ -2254,7 +2254,7 @@ impl ChartApp {
         let matching_ids: Vec<u64> = self
             .panel_app
             .panel_grid
-            .windows()
+            .containers()
             .iter()
             .filter(|(_id, w)| w.symbol == symbol)
             .map(|(id, _w)| id.0)
@@ -2264,7 +2264,7 @@ impl ChartApp {
         // distinct fields, so Rust allows simultaneous borrows of both.
         for window_id in matching_ids {
             let chart_id = ChartId(window_id);
-            if let Some(w) = self.panel_app.panel_grid.windows().get(&chart_id) {
+            if let Some(w) = self.panel_app.panel_grid.containers().get(&chart_id) {
                 self.indicator_manager.calculate_for_window(window_id, &w.bars);
             }
         }
@@ -2314,7 +2314,7 @@ impl ChartApp {
                     Some(l) => l,
                     None => continue,
                 };
-                let window = match self.panel_app.panel_grid.window_for_leaf(leaf_id) {
+                let window = match self.panel_app.panel_grid.container_for_leaf(leaf_id) {
                     Some(w) => w,
                     None => continue,
                 };
@@ -2361,10 +2361,10 @@ impl ChartApp {
             // Get the active leaf window.
             let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
             let window = active_leaf
-                .and_then(|lid| self.panel_app.panel_grid.window_for_leaf(lid))
+                .and_then(|lid| self.panel_app.panel_grid.container_for_leaf(lid))
                 .or_else(|| {
                     // Fallback: first window in the grid
-                    self.panel_app.panel_grid.windows().values().next()
+                    self.panel_app.panel_grid.containers().values().next()
                 });
             let window = match window {
                 Some(w) => w,
@@ -2470,7 +2470,7 @@ impl ChartApp {
         // Submenu state update from toolbar dropdown rendering.
         let mut out_open_submenu_update: Option<Option<String>> = None;
         // Sub-pane range writebacks: render computes symmetrized+padded ranges,
-        // applied by apply_render_output() via window_for_leaf_mut.
+        // applied by apply_render_output() via container_for_leaf_mut.
         let mut out_sub_pane_range_writebacks: Vec<(zengeld_chart::LeafId, usize, f64, f64)> = Vec::new();
         // Sub-pane overlay result writebacks: cached per-window for hit testing.
         let mut out_sub_pane_overlay_writebacks: Vec<(zengeld_chart::LeafId, Vec<zengeld_chart::SubPaneOverlayResult>)> = Vec::new();
@@ -2541,7 +2541,7 @@ impl ChartApp {
             let drawing_points_cache: std::collections::HashMap<
                 zengeld_chart::ChartId,
                 Vec<(u64, Vec<(f64, f64)>, alerts::DrawingExtendMode)>,
-            > = self.panel_app.panel_grid.windows()
+            > = self.panel_app.panel_grid.containers()
                 .iter()
                 .map(|(&chart_id, w)| {
                     let bars = &w.bars;
@@ -2568,7 +2568,7 @@ impl ChartApp {
             let mut split_corner_zones: Vec<(zengeld_chart::LeafId, ScaleCornerHitZones)> = Vec::new();
 
             for (leaf_id, sub_rect) in leaf_rects {
-                let window = match self.panel_app.panel_grid.window_for_leaf(leaf_id) {
+                let window = match self.panel_app.panel_grid.container_for_leaf(leaf_id) {
                     Some(w) => w,
                     None => continue,
                 };
@@ -2607,7 +2607,7 @@ impl ChartApp {
 
                 // Scope indicator queries to this window so each split pane only
                 // renders the indicators that belong to it.
-                if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(leaf_id) {
+                if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
                     self.indicator_manager.current_render_window_id.set(Some(chart_id.0));
                 }
 
@@ -2615,7 +2615,7 @@ impl ChartApp {
                 // Look up pre-built drawing points from cache (computed once per
                 // chart window before this loop to avoid per-leaf reallocation).
                 let empty_pts: Vec<(u64, Vec<(f64, f64)>, alerts::DrawingExtendMode)> = Vec::new();
-                let chart_id_for_cache = self.panel_app.panel_grid.chart_id_for_leaf(leaf_id);
+                let chart_id_for_cache = self.panel_app.panel_grid.container_id_for_leaf(leaf_id);
                 let alert_drawing_points: &Vec<(u64, Vec<(f64, f64)>, alerts::DrawingExtendMode)> =
                     chart_id_for_cache
                         .and_then(|cid| drawing_points_cache.get(&cid))
@@ -2674,7 +2674,7 @@ impl ChartApp {
                 // primitives and overlay indicators in this leaf.
                 let main_chart_y;
                 {
-                    let sub_pane_ids: Vec<u64> = if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(leaf_id) {
+                    let sub_pane_ids: Vec<u64> = if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
                         self.indicator_manager
                             .get_instances_for_symbol_in_window(&window.symbol, chart_id.0)
                             .into_iter()
@@ -2727,7 +2727,7 @@ impl ChartApp {
                     corrected_vp.chart_height = main.chart.height;
 
                     let window_id = self.panel_app.panel_grid
-                        .chart_id_for_leaf(leaf_id)
+                        .container_id_for_leaf(leaf_id)
                         .map(|cid| cid.0);
 
                     let bells = Self::draw_alert_bell_icons(
@@ -2835,7 +2835,7 @@ impl ChartApp {
                         .iter()
                         .map(|s| (s.symbol.clone(), s.visible, s.color.clone()))
                         .collect();
-                    let instances = if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(leaf_id) {
+                    let instances = if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
                         self.indicator_manager.get_instances_for_symbol_in_window(&symbol, chart_id.0)
                     } else {
                         self.indicator_manager.get_instances_for_symbol(&symbol)
@@ -3021,10 +3021,10 @@ impl ChartApp {
 
             split_corner_zones.into_iter().collect::<std::collections::HashMap<_, _>>()
         } else {
-            let scale_corner_state = self.panel_app.panel_grid.active_window()
+            let scale_corner_state = self.panel_app.panel_grid.active_container()
                 .map(|w| w.to_corner_state())
                 .unwrap_or_default();
-            let active_chart_type = self.panel_app.panel_grid.active_window()
+            let active_chart_type = self.panel_app.panel_grid.active_container()
                 .map(|w| w.chart_type)
                 .unwrap_or("candles");
             let crosshair_config = if self.pending_alert_screenshot {
@@ -3043,17 +3043,17 @@ impl ChartApp {
 
             // Snapshot symbol/timeframe/exchange/account_type before the window borrow for the overlay tab.
             let single_window_info: Option<(String, String, String, String)> = self.panel_app.panel_grid
-                .active_window()
+                .active_container()
                 .map(|w| (w.symbol.clone(), w.timeframe.name.clone(), w.exchange.clone(), w.account_type.clone()));
 
             // Scope indicator queries to the active window for single-window mode.
-            if let Some(chart_id) = self.panel_app.panel_grid.active_chart_id() {
+            if let Some(chart_id) = self.panel_app.panel_grid.active_container_id() {
                 self.indicator_manager.current_render_window_id.set(Some(chart_id.0));
             }
 
             // Group primitive sync was done in prepare_frame; use the already-synced drawing_manager here.
 
-            let (single_alert_current_bar, single_alert_drawing_points) = if let Some(window) = self.panel_app.panel_grid.active_window() {
+            let (single_alert_current_bar, single_alert_drawing_points) = if let Some(window) = self.panel_app.panel_grid.active_container() {
                 let cb = window.bars.len().saturating_sub(1) as f64;
                 let bars = &window.bars;
                 let pts: Vec<(u64, Vec<(f64, f64)>, alerts::DrawingExtendMode)> = window
@@ -3105,7 +3105,7 @@ impl ChartApp {
             let mut single_sub_pane_ranges: Vec<(usize, f64, f64)> = Vec::new();
             let mut single_sub_pane_overlays: Vec<zengeld_chart::SubPaneOverlayResult> = Vec::new();
 
-            let window_opt = self.panel_app.panel_grid.active_window();
+            let window_opt = self.panel_app.panel_grid.active_container();
             let corner_zones_single = if let Some(window) = window_opt {
                 use zengeld_chart::chart::render::ChartRect;
                 let chart_rect = ChartRect::new(
@@ -3161,7 +3161,7 @@ impl ChartApp {
                 {
                     // Compute the corrected chart area rect (same logic as
                     // render_full_chart_panel's internal ExtendedFrameLayout).
-                    let sub_pane_ids: Vec<u64> = if let Some(chart_id) = self.panel_app.panel_grid.active_chart_id() {
+                    let sub_pane_ids: Vec<u64> = if let Some(chart_id) = self.panel_app.panel_grid.active_container_id() {
                         self.indicator_manager
                             .get_instances_for_symbol_in_window(&window.symbol, chart_id.0)
                             .into_iter()
@@ -3215,7 +3215,7 @@ impl ChartApp {
                     corrected_vp.chart_height = main.chart.height;
 
                     let window_id = self.panel_app.panel_grid
-                        .active_chart_id()
+                        .active_container_id()
                         .map(|cid| cid.0);
 
                     let bells = Self::draw_alert_bell_icons(
@@ -3381,7 +3381,7 @@ impl ChartApp {
         let selected_config: Option<zengeld_chart::state::selected_config::SelectedPrimitiveConfig> =
             self.panel_app
                 .panel_grid
-                .active_window()
+                .active_container()
                 .and_then(|w| w.drawing_manager.get_selected_config());
 
         // Generate clock time from active window's timezone settings
@@ -3391,7 +3391,7 @@ impl ChartApp {
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0);
 
-            if let Some(window) = self.panel_app.panel_grid.active_window() {
+            if let Some(window) = self.panel_app.panel_grid.active_container() {
                 let time_fmt = &window.scale_settings.time_format;
                 let time = time_fmt.format_clock_time(utc_secs);
                 if !time_fmt.show_utc_prefix {
@@ -3419,7 +3419,7 @@ impl ChartApp {
             let overlay_state = &self.panel_app.indicator_overlay_state;
             if overlay_state.visible || overlay_state.is_open {
                 let (symbol, compare_series): (String, Vec<(String, bool, String)>) =
-                    self.panel_app.panel_grid.active_window()
+                    self.panel_app.panel_grid.active_container()
                         .map(|w| {
                             let cs = w.compare_overlay.series.iter()
                                 .map(|s| (s.symbol.clone(), s.visible, s.color.clone()))
@@ -3428,7 +3428,7 @@ impl ChartApp {
                         })
                         .unwrap_or_default();
 
-                let instances = if let Some(chart_id) = self.panel_app.panel_grid.active_chart_id() {
+                let instances = if let Some(chart_id) = self.panel_app.panel_grid.active_container_id() {
                     self.indicator_manager.get_instances_for_symbol_in_window(&symbol, chart_id.0)
                 } else {
                     self.indicator_manager.get_instances_for_symbol(&symbol)
@@ -3567,7 +3567,7 @@ impl ChartApp {
         // re-register hit zones from the cached `last_toolbar_result` instead.
         // The caller composites the previously-built toolbar scene on top.
         let out_last_toolbar_result: Option<zengeld_chart::ChartToolbarRenderResult> = if !skip_toolbar_draw {
-            let (active_sym_str, active_tf_str) = self.panel_app.panel_grid.active_window()
+            let (active_sym_str, active_tf_str) = self.panel_app.panel_grid.active_container()
                 .map(|w| (w.symbol.clone(), w.timeframe.name.clone()))
                 .unwrap_or_default();
             let toolbar_result = self.panel_app.render_toolbars_with_theme(
@@ -4056,7 +4056,7 @@ impl ChartApp {
         }
         // Write back render-computed sub-pane ranges (symmetrization + padding already applied).
         for (leaf_id, pane_idx, min, max) in output.sub_pane_range_writebacks {
-            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
+            if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
                 if let Some(sp) = window.sub_panes.get_mut(pane_idx) {
                     if sp.auto_scale {
                         sp.price_min = min;
@@ -4067,7 +4067,7 @@ impl ChartApp {
         }
         // Write back sub-pane overlay button rects for next frame's hit testing.
         for (leaf_id, overlays) in output.sub_pane_overlay_writebacks {
-            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
+            if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
                 window.sub_pane_overlay_results = overlays;
             }
         }
@@ -4197,7 +4197,7 @@ impl ChartApp {
         let selected_config: Option<zengeld_chart::state::selected_config::SelectedPrimitiveConfig> =
             self.panel_app
                 .panel_grid
-                .active_window()
+                .active_container()
                 .and_then(|w| w.drawing_manager.get_selected_config());
 
         let clock_time = {
@@ -4205,7 +4205,7 @@ impl ChartApp {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0);
-            if let Some(window) = self.panel_app.panel_grid.active_window() {
+            if let Some(window) = self.panel_app.panel_grid.active_container() {
                 let time_fmt = &window.scale_settings.time_format;
                 let time = time_fmt.format_clock_time(utc_secs);
                 if !time_fmt.show_utc_prefix {
@@ -4223,7 +4223,7 @@ impl ChartApp {
             }
         };
 
-        let (active_sym_str, active_tf_str) = self.panel_app.panel_grid.active_window()
+        let (active_sym_str, active_tf_str) = self.panel_app.panel_grid.active_container()
             .map(|w| (w.symbol.clone(), w.timeframe.name.clone()))
             .unwrap_or_default();
 
@@ -4654,7 +4654,7 @@ impl ChartApp {
         // panel_app modal state but also needs &window.drawing_manager (panel_grid).
         // Both fields are independent — no actual aliasing occurs.
         let dm_ptr: *const zengeld_chart::drawing::DrawingManager = self.panel_app.panel_grid
-            .active_window()
+            .active_container()
             .map(|w| &w.drawing_manager as *const _)
             .unwrap_or(std::ptr::null::<zengeld_chart::drawing::DrawingManager>());
         // SAFETY: dm_ptr points into panel_grid which render_modals does not mutate.
@@ -4838,7 +4838,7 @@ impl ChartApp {
         // 8d. Clock popup (timezone selector + 24h toggle)
         if self.panel_app.clock_popup_state.is_open {
             let bottom_toolbar_y = h - panel_layout.bottom_toolbar_rect.height;
-            let (active_offset, use_24h, show_utc) = self.panel_app.panel_grid.active_window()
+            let (active_offset, use_24h, show_utc) = self.panel_app.panel_grid.active_container()
                 .map(|w| (
                     w.scale_settings.time_format.timezone_offset_hours,
                     w.scale_settings.time_format.use_24h,
@@ -5202,8 +5202,8 @@ impl ChartApp {
 
     /// Synchronise `window.sub_panes` with the external `IndicatorManager`.
     ///
-    /// `ChartWindow.indicator_source` is always `NullIndicatorSource`, so the
-    /// built-in `ChartWindow::sync_sub_panes()` always produces an empty list.
+    /// `ChartContainer.indicator_source` is always `NullIndicatorSource`, so the
+    /// built-in `ChartContainer::sync_sub_panes()` always produces an empty list.
     /// This method replicates that logic but reads from `self.indicator_manager`
     /// (the real source of truth) instead.
     ///
@@ -5215,12 +5215,12 @@ impl ChartApp {
         let window_data: Vec<(zengeld_chart::LeafId, u64, String, usize, usize)> = self
             .panel_app
             .panel_grid
-            .iter_windows()
+            .iter_containers()
             .map(|(leaf_id, window)| {
                 let chart_id_val = self
                     .panel_app
                     .panel_grid
-                    .chart_id_for_leaf(leaf_id)
+                    .container_id_for_leaf(leaf_id)
                     .map(|cid| cid.0)
                     .unwrap_or(0);
                 let (vs, ve) = window.viewport.visible_range();
@@ -5252,7 +5252,7 @@ impl ChartApp {
                 .collect();
 
             // Step 3: apply to the window — no borrow on indicator_manager remains.
-            let window = match self.panel_app.panel_grid.window_for_leaf_mut(*leaf_id) {
+            let window = match self.panel_app.panel_grid.container_for_leaf_mut(*leaf_id) {
                 Some(w) => w,
                 None => continue,
             };
@@ -5412,7 +5412,7 @@ impl ChartApp {
 
         // Phase 2: apply geometry to sub_panes using &mut self.
         for (leaf_id, extended) in &extended_layouts {
-            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(*leaf_id) {
+            if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(*leaf_id) {
                 for layout_sp in &extended.sub_panes {
                     if let Some(sp) = window
                         .sub_panes
@@ -5537,12 +5537,12 @@ impl ChartApp {
         Self::build_symbol_search_results(query, watchlist_manager, exchange_symbols)
     }
 
-    /// Apply `ChartOutputAction` results to the active `ChartWindow`.
+    /// Apply `ChartOutputAction` results to the active `ChartContainer`.
     ///
     /// Mirrors `TerminalApp::process_output_actions` but simplified:
     /// no multi-window panel manager, no frame layout offset.
     pub(crate) fn process_output_actions(&mut self, actions: Vec<ChartOutputAction>) {
-        fn calc_visible_price_range(window: &mut zengeld_chart::ChartWindow) {
+        fn calc_visible_price_range(window: &mut zengeld_chart::ChartContainer) {
             window.calc_auto_scale();
         }
 
@@ -5567,7 +5567,7 @@ impl ChartApp {
                     // This ensures accidental micro-drags don't move the chart,
                     // keeping mouse release position close enough for click detection.
                     if self.has_click_drawing_tool() { continue; }
-                    let Some(window) = self.panel_app.panel_grid.active_window_mut() else { continue; };
+                    let Some(window) = self.panel_app.panel_grid.active_container_mut() else { continue; };
                     let bar_delta_bars = bar_delta / window.viewport.bar_spacing;
                     window.viewport.pan(bar_delta_bars);
                     if let zengeld_chart::engine::input::DragMode::SubPaneChart { pane_index } = drag_mode {
@@ -5601,7 +5601,7 @@ impl ChartApp {
                 ChartOutputAction::Zoom { center_x, factor_x, factor_y, .. } => {
                     // Convert screen-absolute center_x to chart-local
                     let local_center_x = center_x - chart_x;
-                    let Some(window) = self.panel_app.panel_grid.active_window_mut() else { continue; };
+                    let Some(window) = self.panel_app.panel_grid.active_container_mut() else { continue; };
                     if factor_x != 1.0 {
                         window.viewport.zoom_at(local_center_x, factor_x);
                         if window.price_scale.scale_mode.is_auto_y() {
@@ -5632,7 +5632,7 @@ impl ChartApp {
                         let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
                         if let Some(active_leaf) = active_leaf_opt {
                             let viewport_sync_on = self.panel_app.panel_grid
-                                .chart_id_for_leaf(active_leaf)
+                                .container_id_for_leaf(active_leaf)
                                 .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
                                 .and_then(|gid| {
                                     self.panel_app.tag_manager.group_mut(gid).map(|g| {
@@ -5653,7 +5653,7 @@ impl ChartApp {
                     }
                 }
                 ChartOutputAction::ResetPriceScale => {
-                    let Some(window) = self.panel_app.panel_grid.active_window_mut() else { continue; };
+                    let Some(window) = self.panel_app.panel_grid.active_container_mut() else { continue; };
                     if let zengeld_chart::engine::input::DragMode::SubPanePriceScale { pane_index } = drag_mode {
                         if let Some(sub_pane) = window.sub_panes.get_mut(pane_index) {
                             sub_pane.auto_scale = true;
@@ -5678,13 +5678,13 @@ impl ChartApp {
                     }
                 }
                 ChartOutputAction::ResetTimeScale => {
-                    let Some(window) = self.panel_app.panel_grid.active_window_mut() else { continue; };
+                    let Some(window) = self.panel_app.panel_grid.active_container_mut() else { continue; };
                     window.viewport.reset_to_default();
                     window.price_scale.scale_mode = ScaleMode::Auto;
                     calc_visible_price_range(window);
                 }
                 ChartOutputAction::TogglePriceScaleMode => {
-                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         window.price_scale.toggle_mode();
                     }
                 }
@@ -5696,7 +5696,7 @@ impl ChartApp {
                     // that logic and produce wrong crosshair positions in sub-panes.
                 }
                 ChartOutputAction::HideCrosshair => {
-                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         window.crosshair.visible = false;
                     }
                 }
@@ -5751,7 +5751,7 @@ impl ChartApp {
                             // Extract it before mutably borrowing the window.
                             let snapshot = self.panel_app
                                 .panel_grid
-                                .active_window()
+                                .active_container()
                                 .and_then(|w| {
                                     let type_id = w.drawing_manager.get_type_id_at(index)?;
                                     let points = w.drawing_manager.get_points_at(index)?;
@@ -5780,7 +5780,7 @@ impl ChartApp {
 
                 // ── Drawing interaction ─────────────────────────────────────
                 ChartOutputAction::SelectPrimitive { id } => {
-                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         match id {
                             Some(primitive_id) => {
                                 if let Some(idx) = window.drawing_manager.find_index_by_id(primitive_id) {
@@ -5798,7 +5798,7 @@ impl ChartApp {
                     // Look up the primitive's pane_id to choose the right coordinate system.
                     // For main-chart primitives use chart_x/chart_y/chart_h;
                     // for sub-pane primitives use the sub-pane content rect and price range.
-                    let primitive_pane_id = self.panel_app.panel_grid.active_window()
+                    let primitive_pane_id = self.panel_app.panel_grid.active_container()
                         .and_then(|w| {
                             let idx = w.drawing_manager.find_index_by_id(id)?;
                             w.drawing_manager.get_data_at(idx).map(|d| d.pane_id)
@@ -5815,7 +5815,7 @@ impl ChartApp {
                     // Apply magnet snap for main-pane primitives when magnet is active.
                     // Call calculate_magnet_snap() directly, like the terminal does.
                     let data_price = if primitive_pane_id.is_none() {
-                        if let Some(w) = self.panel_app.panel_grid.active_window() {
+                        if let Some(w) = self.panel_app.panel_grid.active_container() {
                             if w.crosshair.is_magnet() {
                                 let local_x = screen_x - chart_x;
                                 let bar_idx = w.viewport.x_to_bar(local_x);
@@ -5836,7 +5836,7 @@ impl ChartApp {
 
                     // Capture the primitive's points BEFORE drag so EndPrimitiveDrag
                     // can record a MovePrimitive command with before/after points.
-                    let pre_drag = self.panel_app.panel_grid.active_window()
+                    let pre_drag = self.panel_app.panel_grid.active_container()
                         .and_then(|w| {
                             let idx = w.drawing_manager.find_index_by_id(id)?;
                             let pts = w.drawing_manager.get_points_at(idx)?;
@@ -5844,7 +5844,7 @@ impl ChartApp {
                         });
                     self.drag_start_points = pre_drag;
 
-                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         if let Some(idx) = window.drawing_manager.find_index_by_id(id) {
                             let drag_ts_ms = zengeld_chart::bar_f64_to_timestamp_ms(&window.bars, data_bar);
                             window.drawing_manager.start_drag(idx, drag_ts_ms, data_price);
@@ -5853,7 +5853,7 @@ impl ChartApp {
                 }
                 ChartOutputAction::StartControlPointDrag { primitive_id, control_point, bar: screen_x, price: screen_y } => {
                     // Look up the primitive's pane_id to choose the right coordinate system.
-                    let primitive_pane_id = self.panel_app.panel_grid.active_window()
+                    let primitive_pane_id = self.panel_app.panel_grid.active_container()
                         .and_then(|w| {
                             let idx = w.drawing_manager.find_index_by_id(primitive_id)?;
                             w.drawing_manager.get_data_at(idx).map(|d| d.pane_id)
@@ -5870,7 +5870,7 @@ impl ChartApp {
                     // Apply magnet snap for main-pane primitives when magnet is active.
                     // Call calculate_magnet_snap() directly, like the terminal does.
                     let data_price = if primitive_pane_id.is_none() {
-                        if let Some(w) = self.panel_app.panel_grid.active_window() {
+                        if let Some(w) = self.panel_app.panel_grid.active_container() {
                             if w.crosshair.is_magnet() {
                                 let local_x = screen_x - chart_x;
                                 let bar_idx = w.viewport.x_to_bar(local_x);
@@ -5890,7 +5890,7 @@ impl ChartApp {
                     };
 
                     // Capture points before control-point reshape too.
-                    let pre_drag = self.panel_app.panel_grid.active_window()
+                    let pre_drag = self.panel_app.panel_grid.active_container()
                         .and_then(|w| {
                             let idx = w.drawing_manager.find_index_by_id(primitive_id)?;
                             let pts = w.drawing_manager.get_points_at(idx)?;
@@ -5901,7 +5901,7 @@ impl ChartApp {
                     // Use start_control_point_drag (not start_drag) so DragType is
                     // ControlPoint — this makes update_drag resize the primitive
                     // instead of moving it.
-                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         if let Some(idx) = window.drawing_manager.find_index_by_id(primitive_id) {
                             let cp_ts_ms = zengeld_chart::bar_f64_to_timestamp_ms(&window.bars, data_bar);
                             window.drawing_manager.start_control_point_drag(idx, control_point, cp_ts_ms, data_price);
@@ -5910,7 +5910,7 @@ impl ChartApp {
                 }
                 ChartOutputAction::UpdatePrimitiveDrag { bar: screen_x, price: screen_y } => {
                     // Use the dragging primitive's pane_id for coordinate conversion.
-                    let primitive_pane_id = self.panel_app.panel_grid.active_window()
+                    let primitive_pane_id = self.panel_app.panel_grid.active_container()
                         .and_then(|w| {
                             let idx = w.drawing_manager.dragging()?;
                             w.drawing_manager.get_data_at(idx).map(|d| d.pane_id)
@@ -5927,7 +5927,7 @@ impl ChartApp {
                     // Apply magnet snap for main-pane primitives when magnet is active.
                     // Call calculate_magnet_snap() directly on every drag update, like the terminal does.
                     let data_price = if primitive_pane_id.is_none() {
-                        if let Some(w) = self.panel_app.panel_grid.active_window() {
+                        if let Some(w) = self.panel_app.panel_grid.active_container() {
                             if w.crosshair.is_magnet() {
                                 let local_x = screen_x - chart_x;
                                 let bar_idx = w.viewport.x_to_bar(local_x);
@@ -5947,10 +5947,10 @@ impl ChartApp {
                     };
 
                     // Get the dragged primitive id BEFORE update_drag (id doesn't change).
-                    let dragged_id = self.panel_app.panel_grid.active_window()
+                    let dragged_id = self.panel_app.panel_grid.active_container()
                         .and_then(|w| w.drawing_manager.dragging_primitive_id());
 
-                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         let drag_ts_ms = zengeld_chart::bar_f64_to_timestamp_ms(&window.bars, data_bar);
                         window.drawing_manager.update_drag(drag_ts_ms, data_price);
                     }
@@ -5967,13 +5967,13 @@ impl ChartApp {
                 }
                 ChartOutputAction::EndPrimitiveDrag => {
                     // Snapshot the dragged primitive's id BEFORE end_drag() clears it.
-                    let dragged_prim_id = self.panel_app.panel_grid.active_window()
+                    let dragged_prim_id = self.panel_app.panel_grid.active_container()
                         .and_then(|w| w.drawing_manager.dragging_primitive_id());
 
                     // Collect move data BEFORE ending the drag, while we still
                     // know which primitive was being dragged.
                     let move_cmd = if let Some((idx, ref previous_points)) = self.drag_start_points {
-                        self.panel_app.panel_grid.active_window()
+                        self.panel_app.panel_grid.active_container()
                             .and_then(|w| w.drawing_manager.get_points_at(idx))
                             .and_then(|new_points| {
                                 if new_points != *previous_points {
@@ -5991,7 +5991,7 @@ impl ChartApp {
                     };
                     self.drag_start_points = None;
 
-                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         window.drawing_manager.end_drag();
                     }
                     if let Some(cmd) = move_cmd {
@@ -6012,20 +6012,20 @@ impl ChartApp {
                 }
                 ChartOutputAction::FinishMultipointDrawing => {
                     // Record CreatePrimitive if finish_multipoint creates a new primitive.
-                    let prev_count = self.panel_app.panel_grid.active_window()
+                    let prev_count = self.panel_app.panel_grid.active_container()
                         .map(|w| w.drawing_manager.count())
                         .unwrap_or(0);
 
-                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         window.drawing_manager.finish_multipoint();
                     }
 
-                    let new_count = self.panel_app.panel_grid.active_window()
+                    let new_count = self.panel_app.panel_grid.active_container()
                         .map(|w| w.drawing_manager.count())
                         .unwrap_or(0);
 
                     if new_count > prev_count {
-                        let snapshot = self.panel_app.panel_grid.active_window()
+                        let snapshot = self.panel_app.panel_grid.active_container()
                             .and_then(|w| {
                                 let idx = w.drawing_manager.last_index()?;
                                 let type_id = w.drawing_manager.get_type_id_at(idx)?;
@@ -6046,23 +6046,23 @@ impl ChartApp {
                 }
                 ChartOutputAction::DrawingClick { bar, price, .. } => {
                     // Record CreatePrimitive if the click completes a new primitive.
-                    let prev_count = self.panel_app.panel_grid.active_window()
+                    let prev_count = self.panel_app.panel_grid.active_container()
                         .map(|w| w.drawing_manager.count())
                         .unwrap_or(0);
 
-                    let click_ts_ms = self.panel_app.panel_grid.active_window()
+                    let click_ts_ms = self.panel_app.panel_grid.active_container()
                         .map(|w| zengeld_chart::bar_f64_to_timestamp_ms(&w.bars, bar))
                         .unwrap_or(0);
-                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         window.drawing_manager.on_click(click_ts_ms, price);
                     }
 
-                    let new_count = self.panel_app.panel_grid.active_window()
+                    let new_count = self.panel_app.panel_grid.active_container()
                         .map(|w| w.drawing_manager.count())
                         .unwrap_or(0);
 
                     if new_count > prev_count {
-                        let snapshot = self.panel_app.panel_grid.active_window()
+                        let snapshot = self.panel_app.panel_grid.active_container()
                             .and_then(|w| {
                                 let idx = w.drawing_manager.last_index()?;
                                 let type_id = w.drawing_manager.get_type_id_at(idx)?;
@@ -6083,7 +6083,7 @@ impl ChartApp {
                 }
 
                 ChartOutputAction::ZoomSubPane { pane_index, delta_y } => {
-                    let Some(window) = self.panel_app.panel_grid.active_window_mut() else { continue; };
+                    let Some(window) = self.panel_app.panel_grid.active_container_mut() else { continue; };
                     if let Some(sub_pane) = window.sub_panes.get_mut(pane_index) {
                         sub_pane.auto_scale = false;
                         let pane_h = sub_pane.height as f64;
@@ -6144,7 +6144,7 @@ impl ChartApp {
         primitive_id: u64,
     ) -> bool {
         let group_id = self.panel_app.panel_grid
-            .window_for_leaf(source_leaf)
+            .container_for_leaf(source_leaf)
             .and_then(|w| w.group_id);
         let group_id = match group_id {
             Some(gid) => gid,
@@ -6159,12 +6159,12 @@ impl ChartApp {
         }
 
         // Clone the updated primitive from the window's drawing_manager.
-        let chart_id = match self.panel_app.panel_grid.chart_id_for_leaf(source_leaf) {
+        let chart_id = match self.panel_app.panel_grid.container_id_for_leaf(source_leaf) {
             Some(id) => id,
             None => return false,
         };
         let updated_prim = self.panel_app.panel_grid
-            .windows()
+            .containers()
             .get(&chart_id)
             .and_then(|w| {
                 w.drawing_manager.primitives().iter()
@@ -6211,12 +6211,12 @@ impl ChartApp {
         }
 
         // Phase 1: read the current points from the source window (immutable borrow).
-        let source_chart_id = match self.panel_app.panel_grid.chart_id_for_leaf(source_leaf) {
+        let source_chart_id = match self.panel_app.panel_grid.container_id_for_leaf(source_leaf) {
             Some(id) => id,
             None => return,
         };
         let new_points: Vec<(i64, f64)> = match self.panel_app.panel_grid
-            .windows()
+            .containers()
             .get(&source_chart_id)
             .and_then(|w| w.drawing_manager.get_points_by_id(primitive_id))
         {
@@ -6226,11 +6226,11 @@ impl ChartApp {
 
         // Phase 2: update each peer window's synced clone (mutable borrows, one at a time).
         for peer_leaf in peer_leaves {
-            let peer_chart_id = match self.panel_app.panel_grid.chart_id_for_leaf(peer_leaf) {
+            let peer_chart_id = match self.panel_app.panel_grid.container_id_for_leaf(peer_leaf) {
                 Some(id) => id,
                 None => continue,
             };
-            if let Some(peer_window) = self.panel_app.panel_grid.windows_mut().get_mut(&peer_chart_id) {
+            if let Some(peer_window) = self.panel_app.panel_grid.containers_mut().get_mut(&peer_chart_id) {
                 peer_window.drawing_manager.update_synced_primitive_points(primitive_id, &new_points);
             }
         }
@@ -6251,7 +6251,7 @@ impl ChartApp {
         bar_spacing: f64,
         scale_mode: Option<zengeld_chart::ScaleMode>,
     ) {
-        let should_sync = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf)
+        let should_sync = self.panel_app.panel_grid.container_id_for_leaf(source_leaf)
             .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
             .and_then(|gid| self.panel_app.tag_manager.group(gid))
             .map(|g| g.sync_flags.sync_viewport)
@@ -6259,7 +6259,7 @@ impl ChartApp {
         if !should_sync { return; }
 
         // Compute source visible bar count — the metric we actually sync.
-        let (source_chart_width, anchor_ts, frac) = match self.panel_app.panel_grid.window_for_leaf(source_leaf) {
+        let (source_chart_width, anchor_ts, frac) = match self.panel_app.panel_grid.container_for_leaf(source_leaf) {
             Some(w) => {
                 let ts = if w.bars.is_empty() {
                     None
@@ -6274,14 +6274,14 @@ impl ChartApp {
         let visible_bars = if bar_spacing > 0.0 { source_chart_width / bar_spacing } else { 100.0 };
 
         // Enumerate peers via TagManager group membership so untagged groups propagate too.
-        let source_chart_id_vp = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf);
+        let source_chart_id_vp = self.panel_app.panel_grid.container_id_for_leaf(source_leaf);
         let group_id_vp = source_chart_id_vp
             .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid));
         let sync_leaves: Vec<zengeld_chart::LeafId> = if let Some(gid) = group_id_vp {
             self.panel_app.tag_manager
                 .chart_members(gid)
                 .into_iter()
-                .filter_map(|cid| self.panel_app.panel_grid.leaf_for_chart_id(cid))
+                .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
                 .filter(|&lid| lid != source_leaf)
                 .collect()
         } else {
@@ -6294,7 +6294,7 @@ impl ChartApp {
             }
         };
         for leaf_id in sync_leaves {
-            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
+            if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
                 // Apply scale_mode BEFORE the auto-scale check so the new mode takes effect.
                 if let Some(mode) = scale_mode {
                     window.price_scale.scale_mode = mode;
@@ -6424,7 +6424,7 @@ impl ChartApp {
              tooltip_visible, tooltip_follow_cursor) =
             self.panel_app
             .panel_grid
-            .active_window()
+            .active_container()
             .map(|w| {
                 let tf = &w.scale_settings.time_format;
                 (
@@ -6479,19 +6479,19 @@ impl ChartApp {
                 date_format_label: date_fmt_label.clone(),
                 show_day_of_week: time_fmt_show_dow,
                 show_bar_countdown: self.panel_app.panel_grid
-                    .active_window()
+                    .active_container()
                     .map(|w| w.scale_settings.show_bar_countdown)
                     .unwrap_or(true),
                 price_tick_style: self.panel_app.panel_grid
-                    .active_window()
+                    .active_container()
                     .map(|w| w.scale_settings.price_tick_style.clone())
                     .unwrap_or_else(|| "dotted".to_string()),
                 price_tick_extend_right: self.panel_app.panel_grid
-                    .active_window()
+                    .active_container()
                     .map(|w| w.scale_settings.price_tick_extend_right)
                     .unwrap_or(true),
                 price_tick_extend_left: self.panel_app.panel_grid
-                    .active_window()
+                    .active_container()
                     .map(|w| w.scale_settings.price_tick_extend_left)
                     .unwrap_or(true),
             },
@@ -6544,7 +6544,7 @@ impl ChartApp {
     ///
     /// `idx` is the index of the primitive in the active window's drawing manager.
     pub fn snapshot_primitive_settings_to_user_manager(&mut self, idx: usize) {
-        if let Some(data) = self.panel_app.panel_grid.active_window()
+        if let Some(data) = self.panel_app.panel_grid.active_container()
             .and_then(|w| w.drawing_manager.get_data_at(idx))
         {
             let type_id = data.type_id.clone();
@@ -6556,7 +6556,7 @@ impl ChartApp {
             }
             // Remember this style (including extended style_properties) so the next
             // primitive of the same type is pre-populated with these settings.
-            if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+            if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                 window.drawing_manager.save_last_style_at_index(idx);
                 // Persist the last-used style globally so it survives app restarts.
                 if let Some(style) = window.drawing_manager.last_style_for(&type_id) {
@@ -6588,7 +6588,7 @@ impl ChartApp {
     /// the app-level snapshot store.
     pub fn snapshot_compare_settings_to_user_manager(&mut self) {
         let idx = self.panel_app.compare_settings_state.series_index;
-        if let Some(series) = self.panel_app.panel_grid.active_window()
+        if let Some(series) = self.panel_app.panel_grid.active_container()
             .and_then(|w| w.compare_overlay.series.get(idx))
         {
             if let Ok(val) = serde_json::to_value(series) {

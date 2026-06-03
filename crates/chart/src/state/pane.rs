@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 // =============================================================================
 
 /// Stable identifier for a sub-pane independent of its position inside a
-/// `ChartWindow.sub_panes` Vec.  Used internally for tab-style navigation
+/// `ChartContainer.sub_panes` Vec.  Used internally for tab-style navigation
 /// among sub-panes within a chart and for save/restore key stability.
 ///
 /// SubPane is NOT a standalone docking-leaf payload — standalone indicator
@@ -417,7 +417,7 @@ pub struct SubPane {
 
 /// Manual `Clone` — generates a FRESH `SubPaneId` for the clone instead of
 /// duplicating the original's id.  Preserves global uniqueness when
-/// `ChartWindow::clone_for_split` (or any other path) copies a chart with
+/// `ChartContainer::clone_for_split` (or any other path) copies a chart with
 /// its sub-panes.  All other fields are copied verbatim.
 impl Clone for SubPane {
     fn clone(&self) -> Self {

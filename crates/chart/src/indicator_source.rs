@@ -13,7 +13,7 @@ use crate::ui::modal_settings::IndicatorDisplayInfo;
 use crate::drawing::TimeframeVisibilityConfig;
 
 // =============================================================================
-// Minimal indicator info (used by ChartWindow for sub-pane layout)
+// Minimal indicator info (used by ChartContainer for sub-pane layout)
 // =============================================================================
 
 /// Minimal indicator info needed by chart window for layout purposes
@@ -221,7 +221,7 @@ pub struct IndicatorSettingsData {
 
 /// Trait for providing indicator data to chart rendering functions
 pub trait IndicatorSource {
-    // --- Layout-level methods (used by ChartWindow for sub-pane layout) ---
+    // --- Layout-level methods (used by ChartContainer for sub-pane layout) ---
 
     /// Get minimal indicator info for all instances assigned to a symbol.
     /// Used by layout engine to determine sub-pane count and order.

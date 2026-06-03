@@ -9,14 +9,14 @@ use crate::state::ChartId;
 
 /// A sub-panel slot inside the chart's internal split layout.
 ///
-/// Each slot corresponds to exactly one [`ChartWindow`] identified by
+/// Each slot corresponds to exactly one [`ChartContainer`] identified by
 /// its [`ChartId`].  The docking engine only needs the title and minimum
 /// size — all chart-specific state lives in `ChartPanelGrid`'s window map.
 #[derive(Clone, Debug)]
 pub struct ChartSubPanel {
-    /// Identifies which `ChartWindow` this slot belongs to.
+    /// Identifies which `ChartContainer` this slot belongs to.
     pub chart_id: ChartId,
-    /// Display title shown in the panel header (mirrors `ChartWindow::title`).
+    /// Display title shown in the panel header (mirrors `ChartContainer::title`).
     pub title: String,
 }
 

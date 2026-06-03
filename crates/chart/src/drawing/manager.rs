@@ -211,7 +211,7 @@ pub struct DrawingManager {
     /// `DrawingManager`, and changing that would cascade into all render
     /// function signatures.  Interior mutability is safe here because
     /// `DrawingManager` is never shared across threads (it lives inside
-    /// `ChartWindow`, not inside an `Arc`).
+    /// `ChartContainer`, not inside an `Arc`).
     ///
     /// `None` when no preview has been built yet, when the drawing state is
     /// `Idle`, or after an explicit invalidation (tool change, style bind,
@@ -2383,7 +2383,7 @@ impl DrawingManager {
     // =========================================================================
 
     /// DEPRECATED: Legacy clone-based sync. TagManager uses group-owned primitives instead.
-    /// Still used by `clone_for_split` in chart_window.rs — will be removed when split
+    /// Still used by `clone_for_split` in chart_container.rs — will be removed when split
     /// no longer pre-populates cloned primitives (they get cleared for grouped windows anyway).
     pub fn clone_primitives_for_sync(&self, new_window_id: u64) -> Vec<Box<dyn Primitive>> {
         self.primitives.iter().map(|p| {

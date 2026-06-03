@@ -41,7 +41,7 @@ impl ChartApp {
 
         // Scales tab sliders
         if field_id.starts_with("scales:") {
-            let Some(window) = self.panel_app.panel_grid.active_window_mut() else { return; };
+            let Some(window) = self.panel_app.panel_grid.active_container_mut() else { return; };
             match field_id {
                 "scales:price_width_slider" => {
                     window.scale_settings.price_scale_width = value;
@@ -63,11 +63,11 @@ impl ChartApp {
         let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx else { return; };
 
         if field_id == "stroke_width" {
-            let data_opt = self.panel_app.panel_grid.active_window()
+            let data_opt = self.panel_app.panel_grid.active_container()
                 .and_then(|w| w.drawing_manager.get_data_at(idx))
                 .map(|mut d| { d.width = value; d });
             if let Some(data) = data_opt {
-                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     window.drawing_manager.set_data_at(idx, &data);
                 }
             }
@@ -80,7 +80,7 @@ impl ChartApp {
         if let Some(prop_id) = field_id.strip_prefix("style_prop:") {
             use zengeld_chart::drawing::primitives_v2::config::PropertyValue;
             let new_val = PropertyValue::Number(value);
-            if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+            if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                 window.drawing_manager.apply_style_property(idx, prop_id, new_val);
             }
             self.sync_drawing_back_to_group();
@@ -91,7 +91,7 @@ impl ChartApp {
         if let Some(prop_id) = field_id.strip_prefix("text_prop:") {
             use zengeld_chart::drawing::primitives_v2::config::PropertyValue;
             let new_val = PropertyValue::Number(value);
-            if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+            if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                 window.drawing_manager.apply_text_property(idx, prop_id, new_val);
             }
             self.autosave_snapshot();
@@ -105,7 +105,7 @@ impl ChartApp {
     pub(crate) fn apply_dual_slider_value(&mut self, field_id: &str, value: u32, handle: DualSliderHandle) {
         let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx else { return; };
 
-        let Some(data) = self.panel_app.panel_grid.active_window()
+        let Some(data) = self.panel_app.panel_grid.active_container()
             .and_then(|w| w.drawing_manager.get_data_at(idx)) else { return; };
 
         if let Some(tf_idx) = field_id.strip_prefix("tf_")
@@ -142,7 +142,7 @@ impl ChartApp {
             }
 
             new_data.timeframe_visibility = Some(tf_config);
-            if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+            if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                 window.drawing_manager.set_data_at(idx, &new_data);
             }
             self.sync_drawing_back_to_group();
@@ -362,7 +362,7 @@ impl ChartApp {
 
         self.panel_app.compare_settings_state.cached_timeframe_visibility = Some(tf_config.clone());
 
-        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
             window.compare_overlay.set_series_timeframe_visibility(series_idx, tf_config);
         }
 
@@ -389,7 +389,7 @@ impl ChartApp {
     /// Apply a new minimum value for the timeframe range at `tf_idx` on primitive `prim_idx`.
     pub(crate) fn apply_tf_min_value(&mut self, prim_idx: usize, tf_idx: usize, val: u32) {
         use zengeld_chart::drawing::TimeframeVisibilityConfig;
-        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
             if let Some(mut data) = window.drawing_manager.get_data_at(prim_idx) {
                 let mut tf = data.timeframe_visibility.clone()
                     .unwrap_or_else(TimeframeVisibilityConfig::all);
@@ -412,7 +412,7 @@ impl ChartApp {
     /// Apply a new maximum value for the timeframe range at `tf_idx` on primitive `prim_idx`.
     pub(crate) fn apply_tf_max_value(&mut self, prim_idx: usize, tf_idx: usize, val: u32) {
         use zengeld_chart::drawing::TimeframeVisibilityConfig;
-        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
             if let Some(mut data) = window.drawing_manager.get_data_at(prim_idx) {
                 let mut tf = data.timeframe_visibility.clone()
                     .unwrap_or_else(TimeframeVisibilityConfig::all);

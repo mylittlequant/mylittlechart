@@ -1067,7 +1067,7 @@ impl App<'_> {
         chart.panel_app.user_manager.snapshots = self.app_state.snapshots.clone();
         // Apply persisted last-used drawing styles to all DrawingManagers in this new window.
         let drawing_styles = &self.app_state.snapshots.last_used_drawing_styles;
-        for w in chart.panel_app.panel_grid.windows_mut().values_mut() {
+        for w in chart.panel_app.panel_grid.containers_mut().values_mut() {
             w.drawing_manager.load_last_styles(drawing_styles);
         }
         chart.panel_app.template_manager = self.app_state.template_manager.clone();
@@ -3540,7 +3540,7 @@ impl ApplicationHandler for App<'_> {
                         self.app_state.snapshots.clone();
                     // Apply persisted last-used drawing styles to every DrawingManager
                     // so new primitives of each type inherit the user's last-used style.
-                    for w in pw.chart.panel_app.panel_grid.windows_mut().values_mut() {
+                    for w in pw.chart.panel_app.panel_grid.containers_mut().values_mut() {
                         w.drawing_manager.load_last_styles(drawing_styles);
                     }
                 }
@@ -3584,7 +3584,7 @@ impl ApplicationHandler for App<'_> {
 
                 // Collect window info before borrowing bridge.
                 let (symbol, exchange, account_type, timeframe, bar_count) =
-                    if let Some(window) = pw.chart.panel_app.panel_grid.active_window() {
+                    if let Some(window) = pw.chart.panel_app.panel_grid.active_container() {
                         (
                             window.symbol.clone(),
                             window.exchange.clone(),
@@ -3600,7 +3600,7 @@ impl ApplicationHandler for App<'_> {
                 let _ = delete_storage;
 
                 // Clear bars on the window and mark pending load.
-                if let Some(window) = pw.chart.panel_app.panel_grid.active_window_mut() {
+                if let Some(window) = pw.chart.panel_app.panel_grid.active_container_mut() {
                     window.bars.clear();
                     window.viewport.bar_count = 0;
                     window.viewport.view_start = 0.0;
@@ -3609,10 +3609,10 @@ impl ApplicationHandler for App<'_> {
 
                 // Reset all other windows in the same sync group that share
                 // the same symbol key, when sync_symbol is enabled.
-                let active_cid = pw.chart.panel_app.panel_grid.active_chart_id();
+                let active_cid = pw.chart.panel_app.panel_grid.active_container_id();
                 let group_info = active_cid
                     .and_then(|cid| {
-                        let w = pw.chart.panel_app.panel_grid.active_window()?;
+                        let w = pw.chart.panel_app.panel_grid.active_container()?;
                         let gid = w.group_id?;
                         Some((cid, gid))
                     });
@@ -3628,7 +3628,7 @@ impl ApplicationHandler for App<'_> {
                             .filter(|&m| m != active_cid)
                             .collect();
                         for peer_id in peer_ids {
-                            if let Some(peer_window) = pw.chart.panel_app.panel_grid.windows_mut().get_mut(&peer_id) {
+                            if let Some(peer_window) = pw.chart.panel_app.panel_grid.containers_mut().get_mut(&peer_id) {
                                 if peer_window.symbol == symbol
                                     && peer_window.exchange == exchange
                                     && peer_window.account_type == account_type
@@ -3668,7 +3668,7 @@ impl ApplicationHandler for App<'_> {
             .and_then(|id| self.windows.get(&id))
             .or_else(|| self.windows.values().next())
         {
-            if let Some(w) = pw.chart.panel_app.panel_grid.active_window() {
+            if let Some(w) = pw.chart.panel_app.panel_grid.active_container() {
                 self.app_state.scale_mode = w.price_scale.scale_mode;
             }
         }
@@ -3722,7 +3722,7 @@ impl ApplicationHandler for App<'_> {
             let gpu_render_us = self.cached_gpu_us;
 
             for pw in self.windows.values_mut() {
-                let total_bars: usize = pw.chart.panel_app.panel_grid.windows()
+                let total_bars: usize = pw.chart.panel_app.panel_grid.containers()
                     .values()
                     .map(|w| w.bars.len())
                     .sum();
@@ -3963,7 +3963,7 @@ impl ApplicationHandler for App<'_> {
                         || pw.chart
                             .panel_app
                             .panel_grid
-                            .active_window()
+                            .active_container()
                             .map(|w| w.has_data())
                             .unwrap_or(false)
                         || pw.created_at.elapsed() >= std::time::Duration::from_secs(4);

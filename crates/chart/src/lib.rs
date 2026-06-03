@@ -335,9 +335,10 @@ pub use state::{
     PropertyValue, Position, CommandHistory,
     // Timeframe visibility for object tree
     TimeframeVisibility,
-    // ChartWindow - the main chart state aggregate
-    ChartWindow, ChartId, ConnectionStatus, WindowRect, WINDOW_GAP,
-    // Snap-to-end constant (canonical margin used by ChartWindow::snap_to_end)
+    // ChartContainer - the main chart state aggregate (formerly ChartWindow,
+    // renamed in Phase 1 of the chart-container cut)
+    ChartContainer, ChartId, ConnectionStatus, WindowRect, WINDOW_GAP,
+    // Snap-to-end constant (canonical margin used by ChartContainer::snap_to_end)
     DEFAULT_SNAP_MARGIN,
     // Chart-internal split/expand system
     ChartPanelGrid, ChartSubPanel, SplitHitResult, ChartInputTarget, ChartRightClickHit,

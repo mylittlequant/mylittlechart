@@ -16,7 +16,7 @@ use crate::chart::types::price_scale::ScaleMode;
 use crate::drawing::primitives_v2::Primitive;
 use crate::drawing::primitives_v2::config::TimeframeVisibilityConfig;
 use crate::drawing::DrawingManager;
-use crate::state::chart_window::ChartWindow;
+use crate::state::chart_container::ChartContainer;
 use crate::state::history::CommandHistory;
 use crate::state::Timeframe;
 use crate::tag_manager::{IndicatorGroupConfig, SyncFlags, SyncGroup, SyncMemberId};
@@ -82,7 +82,7 @@ impl DrawingSnapshot {
 // ChartWindowSnapshot
 // =============================================================================
 
-/// Serializable snapshot of a [`ChartWindow`]'s configurable state.
+/// Serializable snapshot of a [`ChartContainer`]'s configurable state.
 ///
 /// Runtime-only fields (bars, computed MAs, drag state, etc.) are excluded.
 /// Reconstruct a live window by deserializing this and then rehydrating the
@@ -202,11 +202,11 @@ pub struct ChartWindowSnapshot {
 }
 
 impl ChartWindowSnapshot {
-    /// Capture a full snapshot from a live [`ChartWindow`].
+    /// Capture a full snapshot from a live [`ChartContainer`].
     ///
     /// `leaf_id` is the docking-tree leaf slot this window occupies; it is
     /// stored so that presets can restore windows to the correct panel slot.
-    pub fn from_window(window: &ChartWindow, leaf_id: u64) -> Self {
+    pub fn from_window(window: &ChartContainer, leaf_id: u64) -> Self {
         let drawings = DrawingSnapshot::from_manager(window.id.0, &window.drawing_manager);
 
         // Save full viewport — chart_width, bar_spacing, bar_count are all valid

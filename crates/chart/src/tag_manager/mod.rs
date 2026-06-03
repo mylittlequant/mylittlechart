@@ -1,6 +1,6 @@
 //! TagManager — synchronization group manager for chart panels.
 //!
-//! Manages `SyncGroup`s that bind multiple `ChartWindow`s together so they
+//! Manages `SyncGroup`s that bind multiple `ChartContainer`s together so they
 //! share primitives, indicator configs, symbol, timeframe, and crosshair state.
 
 pub mod member_id;
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::chart::types::price_scale::ScaleMode;
 use crate::drawing::primitives_v2::config::TemplateStyle;
-use crate::state::chart_window::ChartId;
+use crate::state::chart_container::ChartId;
 use crate::state::{CommandHistory, Timeframe};
 
 // =============================================================================

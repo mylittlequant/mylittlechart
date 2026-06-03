@@ -112,7 +112,7 @@ impl ChartApp {
                 Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
                     self.lag_event_count += 1;
                     crate::dlog!("[ChartApp:{}] broadcast LAGGED — skipped {} messages (total lag events: {})",
-                        self.panel_app.panel_grid.windows().values().next()
+                        self.panel_app.panel_grid.containers().values().next()
                             .map(|w| w.symbol.as_str()).unwrap_or("?"),
                         n, self.lag_event_count);
                     // Always trigger backfill — the receiver has jumped forward
@@ -182,7 +182,7 @@ impl ChartApp {
                         use std::sync::{Arc, RwLock};
                         let period_secs = loaded_tf.as_ref().map_or(60, |tf| tf.minutes as i64) * 60;
                         let bs_key = bar_service::BarSeriesKey::new(exchange_id, account_type, symbol.clone(), tf_name.clone());
-                        let matched_cids: Vec<u64> = self.panel_app.panel_grid.windows().iter()
+                        let matched_cids: Vec<u64> = self.panel_app.panel_grid.containers().iter()
                             .filter(|(_cid, window)| {
                                 window.symbol == symbol
                                     && window.exchange == exchange_id.as_str()
@@ -209,9 +209,9 @@ impl ChartApp {
                     let mut any_matched = false;
                     // Collect (symbol, timeframe, account_type) for windows that received
                     // an initial load so we can trigger background backfill after the loop
-                    // (can't borrow self.bridge while windows_mut() is held).
+                    // (can't borrow self.bridge while containers_mut() is held).
                     let mut backfill_requests: Vec<(String, zengeld_chart::state::Timeframe, digdigdig3::AccountType)> = Vec::new();
-                    for window in self.panel_app.panel_grid.windows_mut().values_mut() {
+                    for window in self.panel_app.panel_grid.containers_mut().values_mut() {
                         let tf_matches = window.timeframe.name == tf_name;
                         let matched = window.symbol == symbol
                             && window.exchange == exchange_id.as_str()
@@ -276,7 +276,7 @@ impl ChartApp {
                     // Populate data_provider cache so future LoadPreset calls
                     // can serve bars synchronously via get_bars().
                     if any_matched {
-                        if let Some(w) = self.panel_app.panel_grid.windows().values()
+                        if let Some(w) = self.panel_app.panel_grid.containers().values()
                             .find(|w| w.symbol == symbol && w.exchange == exchange_id.as_str() && w.timeframe.name == tf_name && w.account_type == account_type.short_label())
                         {
                             w.data_provider.insert_bars(&symbol, &tf_name, bars.clone());
@@ -291,7 +291,7 @@ impl ChartApp {
                     let matched_ids: Vec<(u64, Vec<zengeld_chart::Bar>)> = self
                         .panel_app
                         .panel_grid
-                        .windows()
+                        .containers()
                         .iter()
                         .filter(|(_, w)| {
                             w.symbol == symbol
@@ -318,7 +318,7 @@ impl ChartApp {
                 }
                 LiveUpdate::BackfillComplete { exchange_id, account_type, symbol, timeframe: tf_name, bars } => {
                     crate::dlog!("[ChartApp] BackfillComplete: {} {} tf={} bars={}", exchange_id.as_str(), symbol, tf_name, bars.len());
-                    for window in self.panel_app.panel_grid.windows_mut().values_mut() {
+                    for window in self.panel_app.panel_grid.containers_mut().values_mut() {
                         let tf_matches = window.timeframe.name == tf_name;
                         if !(window.symbol == symbol
                             && window.exchange == exchange_id.as_str()
@@ -338,7 +338,7 @@ impl ChartApp {
                     let matched_ids: Vec<(u64, Vec<zengeld_chart::Bar>)> = self
                         .panel_app
                         .panel_grid
-                        .windows()
+                        .containers()
                         .iter()
                         .filter(|(_, w)| {
                             w.symbol == symbol
@@ -361,7 +361,7 @@ impl ChartApp {
                     let at_label = account_type.short_label();
                     let mut any_matched = false;
 
-                    for window in self.panel_app.panel_grid.windows_mut().values_mut() {
+                    for window in self.panel_app.panel_grid.containers_mut().values_mut() {
                         let tf_matches = window.timeframe.name == tf_name;
                         if !(window.symbol == symbol
                             && window.exchange == exchange_id.as_str()
@@ -398,7 +398,7 @@ impl ChartApp {
                         let matched_ids: Vec<(u64, Vec<zengeld_chart::Bar>)> = self
                             .panel_app
                             .panel_grid
-                            .windows()
+                            .containers()
                             .iter()
                             .filter(|(_, w)| {
                                 w.symbol == symbol
@@ -431,7 +431,7 @@ impl ChartApp {
                     let _bar_apply_start = std::time::Instant::now();
 
                     // Update the last bar of every window matching this symbol.
-                    for window in self.panel_app.panel_grid.windows_mut().values_mut() {
+                    for window in self.panel_app.panel_grid.containers_mut().values_mut() {
                         if window.pending_symbol_load {
                             // Skip trade updates while waiting for initial bars —
                             // otherwise a stray bar inserted here would cause BarsLoaded
@@ -525,7 +525,7 @@ impl ChartApp {
                     if needs_backfill {
                         crate::dlog!("[ChartApp] Multi-bar gap detected for {} — requesting REST backfill", symbol);
                         let bridge = self.bridge.clone();
-                        for window in self.panel_app.panel_grid.windows().values() {
+                        for window in self.panel_app.panel_grid.containers().values() {
                             if window.symbol == symbol && window.account_type == account_type.short_label() {
                                 let at = account_type_from_label(&window.account_type);
                                 bridge.request_bars(exchange_id, &window.symbol, &window.timeframe, at, None, None, false);
@@ -701,7 +701,7 @@ impl ChartApp {
                     // Backfill bars for ALL windows on this exchange (covers reconnect gaps).
                     // force=true bypasses the cache_is_fresh guard so a reconnect always
                     // fetches fresh data even if the last cached bar is recent.
-                    for window in self.panel_app.panel_grid.windows().values() {
+                    for window in self.panel_app.panel_grid.containers().values() {
                         if window.symbol.is_empty() { continue; }
                         let win_eid = digdigdig3::ExchangeId::from_str(&window.exchange)
                             .unwrap_or(digdigdig3::ExchangeId::Binance);
@@ -899,7 +899,7 @@ impl ChartApp {
                 current_bar: f64,
                 drawing_points: Vec<(u64, Vec<(f64, f64)>, alerts::DrawingExtendMode)>,
             }
-            let window_data: Vec<WindowAlertData> = self.panel_app.panel_grid.windows()
+            let window_data: Vec<WindowAlertData> = self.panel_app.panel_grid.containers()
                 .values()
                 .filter_map(|window| {
                     let triple = (window.symbol.clone(), window.exchange.clone(), window.account_type.clone());
@@ -991,14 +991,14 @@ impl ChartApp {
             let triggered_ids = all_triggered_ids;
 
             // Use the active window's price for delivery event messages.
-            let current_price = self.panel_app.panel_grid.active_window()
+            let current_price = self.panel_app.panel_grid.active_container()
                 .and_then(|w| w.bars.last())
                 .map(|b| b.close)
                 .unwrap_or(0.0);
 
             // Build delivery events for triggered alerts.
             if !triggered_ids.is_empty() {
-                let symbol = self.panel_app.panel_grid.active_window()
+                let symbol = self.panel_app.panel_grid.active_container()
                     .map(|w| w.symbol.clone())
                     .unwrap_or_default();
                 let now = std::time::SystemTime::now()
@@ -1046,7 +1046,7 @@ impl ChartApp {
                 let matching_ids: Vec<u64> = self
                     .panel_app
                     .panel_grid
-                    .windows()
+                    .containers()
                     .iter()
                     .filter(|(_id, w)| w.symbol == *symbol)
                     .map(|(id, _w)| id.0)
@@ -1056,7 +1056,7 @@ impl ChartApp {
                 // are distinct struct fields, so both can be used simultaneously.
                 for window_id in matching_ids {
                     let chart_id = ChartId(window_id);
-                    if let Some(w) = self.panel_app.panel_grid.windows().get(&chart_id) {
+                    if let Some(w) = self.panel_app.panel_grid.containers().get(&chart_id) {
                         self.indicator_manager.calculate_for_window(window_id, &w.bars);
                     }
                 }
@@ -1096,7 +1096,7 @@ impl ChartApp {
 
             let max_loaded = self.panel_app.user_manager.profile.data_load.max_loaded_bars;
 
-            for window in self.panel_app.panel_grid.windows_mut().values_mut() {
+            for window in self.panel_app.panel_grid.containers_mut().values_mut() {
                 if window.scroll_fetch_in_flight {
                     if let Some(started) = window.scroll_fetch_started {
                         if started.elapsed() > std::time::Duration::from_secs(10) {
@@ -1127,7 +1127,7 @@ impl ChartApp {
             }
 
             for (symbol, exchange, tf_name, at_label) in scroll_requests {
-                let oldest_ts = self.panel_app.panel_grid.windows()
+                let oldest_ts = self.panel_app.panel_grid.containers()
                     .values()
                     .find(|w| {
                         w.symbol == symbol
@@ -1228,7 +1228,7 @@ impl ChartApp {
                 n_connector, n_symbols, n_symbols_total, symbols_insert_us,
                 self.last_tick_us, self.last_event_process_us, _drain_count,
                 self.live_update_rx.len(),
-                self.panel_app.panel_grid.windows().is_empty(),
+                self.panel_app.panel_grid.containers().is_empty(),
             );
         }
     }

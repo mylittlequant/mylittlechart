@@ -12,7 +12,7 @@ use super::SubPane;
 
 /// Base chart structure - contains all core chart functionality
 ///
-/// Terminal extends this with ChartWindow which adds:
+/// Terminal extends this with ChartContainer which adds:
 /// - Window management (id, title, is_active)
 /// - Symbol/timeframe handling
 /// - Indicators, alerts, signals, trades
