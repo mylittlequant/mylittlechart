@@ -132,6 +132,30 @@ impl App<'_> {
                 let y = position.y;
                 pw.last_mouse_pos = (x, y);
 
+                // While a chart drag is active, route the move event STRAIGHT
+                // to on_drag_move and bypass chrome / chart_y < 0 early
+                // returns below -- the user may legitimately drag the cursor
+                // above CHROME_HEIGHT (e.g. dragging a sub-pane separator up
+                // past the top of the chart). Without this, those events
+                // silently never reach `on_drag_move`'s `sub_pane_sep_drag`
+                // branch and the drag stalls.
+                if pw.mouse_pressed {
+                    if let Some((last_x, last_y)) = pw.last_drag_pos {
+                        let dx = x - last_x;
+                        let dy = y - last_y;
+                        let chart_y = y - chrome::CHROME_HEIGHT;
+                        pw.chart.on_drag_move(x, chart_y, dx, dy);
+                        if pw.chart.is_sidebar_separator_dragging() {
+                            pw.sidebar_dirty_scene = true;
+                            pw.toolbar_dirty = true;
+                        }
+                        pw.overlay_dirty = true;
+                        pw.chart_dirty = true;
+                    }
+                    pw.last_drag_pos = Some((x, y));
+                    return;
+                }
+
                 // Update context menu hover
                 if pw.chrome_state.context_menu.open {
                     chrome::context_menu_hover(&mut pw.chrome_state.context_menu, x, y);
