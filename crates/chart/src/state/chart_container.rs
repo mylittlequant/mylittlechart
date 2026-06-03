@@ -582,6 +582,49 @@ impl ChartContainer {
         }
     }
 
+    /// Push the canonical `sub_panes` Vec heights into the inner docking
+    /// tree's root proportions. The main chart's slot gets the remainder.
+    ///
+    /// Phase 2 of the chart-container cut: after Phase 3 retires the
+    /// `SubPane` Vec, the inner docking tree is the only height source --
+    /// this helper bridges the gap during the transition.
+    pub fn push_sub_pane_ratios_to_inner_docking(&mut self) {
+        // We need a stable ordering: the inner docking tree's root children
+        // hold [main_chart, indicator_1, indicator_2, ...] in the same order
+        // they were added via `ensure_indicator_leaf`. The sub_panes Vec is
+        // kept in the same order by `sync_sub_panes_from_manager`.
+        let n = self.sub_panes.len();
+        if n == 0 {
+            return;
+        }
+        // Compute per-sub-pane share of available height.
+        let sub_total: f64 = self
+            .sub_panes
+            .iter()
+            .map(|p| p.height_ratio.max(0.0) as f64)
+            .sum();
+        if sub_total <= 0.0 {
+            return;
+        }
+        let main_share = (1.0 - sub_total.min(0.95)).max(0.05);
+        let mut props: Vec<f64> = Vec::with_capacity(n + 1);
+        props.push(main_share);
+        for p in &self.sub_panes {
+            props.push((p.height_ratio.max(0.0) as f64).max(0.01));
+        }
+        // Normalize so the sum is 1.0.
+        let total: f64 = props.iter().sum();
+        if total > 0.0 {
+            for v in &mut props {
+                *v /= total;
+            }
+        }
+        let want_len = self.inner_docking.tree().root().children.len();
+        if props.len() == want_len {
+            self.inner_docking.tree_mut().set_proportions(props);
+        }
+    }
+
     /// Find the most recently added leaf in the inner docking tree.
     /// Used as the split anchor for stacking new indicator panels.
     fn last_inner_leaf_id(&self) -> uzor::panels::LeafId {

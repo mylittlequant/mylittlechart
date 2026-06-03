@@ -769,6 +769,44 @@ pub fn sub_pane_heights_from_panes(
         .collect()
 }
 
+/// Build a `sub_pane_heights` slice from an inner uzor docking tree.
+///
+/// Walks the tree's root branch proportions and turns them into pixel heights
+/// keyed by sub-pane instance id. Returns one height per entry in
+/// `sub_pane_instance_ids`, in the same order. The first entry in
+/// `proportions` is treated as the main chart's share and skipped.
+///
+/// This is the Phase 2 of the chart-container cut: lets the existing
+/// `compute_from_chart_panel` keep its current shape while reading its
+/// height distribution from uzor's docking tree instead of the legacy
+/// `SubPane.height_ratio` field. Once `SubPane` Vec is retired in Phase 3,
+/// this helper becomes the only height source.
+pub fn sub_pane_heights_from_inner_docking<P: uzor::panels::DockPanel>(
+    inner_docking: &uzor::layout::DockState<P>,
+    available_height: f64,
+    default_height: f64,
+    sub_pane_count: usize,
+) -> Vec<f64> {
+    let root = inner_docking.tree().root();
+    // Root branch holds [main_chart, sub_pane_1, sub_pane_2, ...] in vertical
+    // SplitBottom order. Proportions Vec parallels children.
+    let proportions: &[f64] = &root.proportions;
+    if proportions.is_empty() || sub_pane_count == 0 {
+        return Vec::new();
+    }
+    // Skip the main chart slot (index 0). Remaining proportions are sub-panes.
+    let sub_props: Vec<f64> = proportions.iter().skip(1).copied().collect();
+    let total: f64 = sub_props.iter().sum();
+    if total <= 0.0 {
+        return vec![default_height; sub_pane_count];
+    }
+    sub_props
+        .into_iter()
+        .take(sub_pane_count)
+        .map(|p| ((p / total) * available_height * 0.4).max(30.0))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
