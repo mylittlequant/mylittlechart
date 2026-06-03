@@ -38,9 +38,13 @@ impl ChartApp {
                     }
                 };
                 if let Some(tf) = timeframe {
+                    // Phase 4 S2.2: capture chart_id BEFORE mutating block.
+                    // Phase 4 S2.7.1c: reads via branch_meta (B1 flip).
+                    let active_chart_id = self.panel_app.panel_grid.active_container_id();
                     // Capture previous timeframe and active leaf BEFORE changing.
-                    let previous_timeframe = self.panel_app.panel_grid.active_container()
-                        .map(|w| w.timeframe.clone());
+                    let previous_timeframe = active_chart_id
+                        .and_then(|cid| crate::branch_meta_bridge::read_timeframe(&self.branch_meta, cid))
+                        .cloned();
                     let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
                     // Extract whether timeframe actually changed before mutating.
                     // prev_tf_opt: Some(prev) means there was a window; None means no window.
@@ -59,16 +63,17 @@ impl ChartApp {
                     };
                     // Set timeframe, clear bars, and request new data asynchronously.
                     // (change_timeframe tries a sync cache lookup which fails for live data.)
-                    let symbol = self.panel_app.panel_grid.active_container()
-                        .map(|w| w.symbol.clone())
+                    let symbol = active_chart_id
+                        .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                        .map(String::from)
                         .unwrap_or_default();
-                    let at_label_tf = self.panel_app.panel_grid.active_container()
-                        .map(|w| w.account_type.clone())
+                    let at_label_tf = active_chart_id
+                        .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid))
+                        .map(String::from)
                         .unwrap_or_else(|| "S".to_string());
-                    // Phase 4 S2.2: capture chart_id + current exchange BEFORE mutating block.
-                    let active_chart_id = self.panel_app.panel_grid.active_container_id();
-                    let exchange_seed = self.panel_app.panel_grid.active_container()
-                        .map(|w| w.exchange.clone())
+                    let exchange_seed = active_chart_id
+                        .and_then(|cid| crate::branch_meta_bridge::read_exchange(&self.branch_meta, cid))
+                        .map(String::from)
                         .unwrap_or_default();
                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         window.timeframe = tf.clone();
@@ -506,11 +511,23 @@ impl ChartApp {
                     // Cure: request 300 fresh bars for every window so gaps are
                     // healed, stale data is refreshed, and bar store is updated.
                     let bar_count = self.panel_app.user_manager.profile.bar_count as usize;
+                    // Phase 4 S2.7.1c: read via branch_meta (B6 tuple-collect flip).
                     let window_bar_data: Vec<(String, String, zengeld_chart::state::Timeframe, String)> = self
                         .panel_app
                         .panel_grid
                         .iter_containers()
-                        .map(|(_, w)| (w.symbol.clone(), w.exchange.clone(), w.timeframe.clone(), w.account_type.clone()))
+                        .map(|(_, w)| {
+                            let cid = w.id;
+                            let sym = crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid)
+                                .map(String::from).unwrap_or_default();
+                            let exch = crate::branch_meta_bridge::read_exchange(&self.branch_meta, cid)
+                                .map(String::from).unwrap_or_default();
+                            let tf = crate::branch_meta_bridge::read_timeframe(&self.branch_meta, cid)
+                                .cloned().unwrap_or_else(zengeld_chart::state::Timeframe::h1);
+                            let at = crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid)
+                                .map(String::from).unwrap_or_default();
+                            (sym, exch, tf, at)
+                        })
                         .collect();
                     let mut bars_requested: usize = 0;
                     for (sym, exch, tf, at_label) in &window_bar_data {
@@ -538,13 +555,17 @@ impl ChartApp {
                     // Collect current (exchange_id, symbol) pairs before switching.
                     // Used after the preset is loaded to unsubscribe stale trade actors.
                     // ----------------------------------------------------------------
+                    // Phase 4 S2.7.1c: read via branch_meta (B1 flip).
                     let old_subscriptions: std::collections::HashSet<(digdigdig3::ExchangeId, String)> = self
                         .panel_app
                         .panel_grid
                         .iter_containers()
                         .filter_map(|(_, w)| {
-                            digdigdig3::ExchangeId::from_str(&w.exchange)
-                                .map(|eid| (eid, w.symbol.clone()))
+                            let cid = w.id;
+                            let exch = crate::branch_meta_bridge::read_exchange(&self.branch_meta, cid)?;
+                            let sym = crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid)
+                                .map(String::from).unwrap_or_default();
+                            digdigdig3::ExchangeId::from_str(exch).map(|eid| (eid, sym))
                         })
                         .collect();
 
@@ -824,6 +845,8 @@ impl ChartApp {
                                 window.symbol = snap.symbol.clone();
                                 window.exchange = snap.exchange.clone();
                                 window.account_type = snap.account_type.clone();
+                                // B2-defer S2.7.3 target: reads window.symbol/exchange/account_type
+                                // immediately after writing from snap.*; inside containers_mut block.
                                 window.drawing_manager.set_current_symbol_key(&window.symbol, &window.exchange, &window.account_type);
                                 // Rebuild data_provider for this window's (possibly new) exchange.
                                 let patch_exchange_id = digdigdig3::ExchangeId::from_str(&snap.exchange)
@@ -1164,8 +1187,12 @@ impl ChartApp {
                             eprintln!("[sync_group] preset restore step 5b: iter_containers empty despite non-empty guard - skipping auto group");
                             return;
                         };
-                        let symbol = first_win.symbol.clone();
-                        let timeframe = first_win.timeframe.clone();
+                        // Phase 4 S2.7.1c: read via branch_meta (B6 capture flip).
+                        let first_cid = first_win.id;
+                        let symbol = crate::branch_meta_bridge::read_symbol(&self.branch_meta, first_cid)
+                            .map(String::from).unwrap_or_default();
+                        let timeframe = crate::branch_meta_bridge::read_timeframe(&self.branch_meta, first_cid)
+                            .cloned().unwrap_or_else(zengeld_chart::state::Timeframe::h1);
                         let group_id = self.panel_app.tag_manager.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
                         let leaf_chart_ids: Vec<(zengeld_chart::LeafId, zengeld_chart::ChartId)> =
                             self.panel_app.panel_grid.iter_containers()
@@ -1705,13 +1732,17 @@ impl ChartApp {
                     // unsubscribe_trades() with a 30-second grace period so symbols
                     // that appear in both old and new presets are not disrupted.
                     // ----------------------------------------------------------------
+                    // Phase 4 S2.7.1c: read via branch_meta (B1 flip).
                     let new_subscriptions: std::collections::HashSet<(digdigdig3::ExchangeId, String)> = self
                         .panel_app
                         .panel_grid
                         .iter_containers()
                         .filter_map(|(_, w)| {
-                            digdigdig3::ExchangeId::from_str(&w.exchange)
-                                .map(|eid| (eid, w.symbol.clone()))
+                            let cid = w.id;
+                            let exch = crate::branch_meta_bridge::read_exchange(&self.branch_meta, cid)?;
+                            let sym = crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid)
+                                .map(String::from).unwrap_or_default();
+                            digdigdig3::ExchangeId::from_str(exch).map(|eid| (eid, sym))
                         })
                         .collect();
 
@@ -1730,11 +1761,23 @@ impl ChartApp {
                     // ----------------------------------------------------------------
                     let bar_count = self.panel_app.user_manager.profile.bar_count as usize;
                     let mut bars_requested: usize = 0;
+                    // Phase 4 S2.7.1c: read via branch_meta (B6 tuple-collect flip).
                     let window_bar_data: Vec<(String, String, zengeld_chart::state::Timeframe, String)> = self
                         .panel_app
                         .panel_grid
                         .iter_containers()
-                        .map(|(_, w)| (w.symbol.clone(), w.exchange.clone(), w.timeframe.clone(), w.account_type.clone()))
+                        .map(|(_, w)| {
+                            let cid = w.id;
+                            let sym = crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid)
+                                .map(String::from).unwrap_or_default();
+                            let exch = crate::branch_meta_bridge::read_exchange(&self.branch_meta, cid)
+                                .map(String::from).unwrap_or_default();
+                            let tf = crate::branch_meta_bridge::read_timeframe(&self.branch_meta, cid)
+                                .cloned().unwrap_or_else(zengeld_chart::state::Timeframe::h1);
+                            let at = crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid)
+                                .map(String::from).unwrap_or_default();
+                            (sym, exch, tf, at)
+                        })
                         .collect();
                     for (sym, exch, tf, at_label) in &window_bar_data {
                         let eid = digdigdig3::ExchangeId::from_str(exch)
@@ -2020,11 +2063,22 @@ impl ChartApp {
                 } else {
                     eprintln!("[ChartApp] InternalToggleSyncSymbol: no active group");
                 }
-                // When sync is turned ON, immediately propagate active leaf's instrument key to peers
+                // When sync is turned ON, immediately propagate active leaf's instrument key to peers.
+                // Phase 4 S2.7.1c: read via branch_meta (B1 flip).
                 if newly_enabled {
                     if let Some(leaf) = self.panel_app.panel_grid.docking().active_leaf() {
-                        let (symbol, exchange, account_type) = self.panel_app.panel_grid.active_container()
-                            .map(|w| (w.symbol.clone(), w.exchange.clone(), w.account_type.clone()))
+                        let active_cid = self.panel_app.panel_grid.active_container_id();
+                        let symbol = active_cid
+                            .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                            .map(String::from)
+                            .unwrap_or_default();
+                        let exchange = active_cid
+                            .and_then(|cid| crate::branch_meta_bridge::read_exchange(&self.branch_meta, cid))
+                            .map(String::from)
+                            .unwrap_or_default();
+                        let account_type = active_cid
+                            .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid))
+                            .map(String::from)
                             .unwrap_or_default();
                         if !symbol.is_empty() {
                             self.propagate_symbol_to_sync_group(leaf, &symbol, &exchange, &account_type);
@@ -2046,11 +2100,13 @@ impl ChartApp {
                 } else {
                     eprintln!("[ChartApp] InternalToggleSyncTimeframe: no active group");
                 }
-                // When sync is turned ON, immediately propagate active leaf's TF to peers
+                // When sync is turned ON, immediately propagate active leaf's TF to peers.
+                // Phase 4 S2.7.1c: read via branch_meta (B1 flip).
                 if newly_enabled {
                     if let Some(leaf) = self.panel_app.panel_grid.docking().active_leaf() {
-                        let tf = self.panel_app.panel_grid.active_container()
-                            .map(|w| w.timeframe.clone());
+                        let tf = self.panel_app.panel_grid.active_container_id()
+                            .and_then(|cid| crate::branch_meta_bridge::read_timeframe(&self.branch_meta, cid))
+                            .cloned();
                         if let Some(tf) = tf {
                             self.propagate_timeframe_to_sync_group(leaf, tf);
                         }
