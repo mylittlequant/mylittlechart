@@ -32,6 +32,13 @@ use crate::layout::SubPaneOverlayResult;
 use crate::layout::LayoutRect;
 use crate::chart::render::ChartRect;
 use crate::scale_settings::{PriceScalePosition, TimeScalePosition};
+use crate::state::{
+    ChartContainerLeaf,
+    ChartPanelId,
+    generate_chart_panel_id,
+};
+use uzor::layout::DockState;
+use uzor::panels::LeafId;
 
 fn default_account_type_spot() -> String {
     "S".to_string()
@@ -327,6 +334,20 @@ pub struct ChartContainer {
     /// returns to its own A/M/F choice. F (Focus) implies a pinned viewport,
     /// so mode is tightly coupled to viewport sync state.
     pub stashed_scale_mode: Option<ScaleMode>,
+
+    // === Inner docking (Phase 1 of chart-container cut) ===
+    /// Identity of the candle canvas leaf inside this container.
+    /// Distinct from `id` (which is the container id). Stable across
+    /// preset round-trips.
+    pub chart_panel_id: ChartPanelId,
+    /// Inner uzor docking tree holding the `MainChart` leaf and any
+    /// `IndicatorPanel` sub-panes. Phase 1 ships this with a single
+    /// seeded `MainChart` leaf; Phase 2 wires `split_leaf` / `remove_leaf`
+    /// on indicator add / remove and replaces the custom sub-pane
+    /// geometry path.
+    pub inner_docking: DockState<ChartContainerLeaf>,
+    /// Leaf id of the seeded `MainChart` inside `inner_docking`.
+    pub main_leaf_id: LeafId,
 }
 
 /// Default number of empty bars shown to the right of the last candle
@@ -339,6 +360,12 @@ impl ChartContainer {
         let id = generate_chart_id();
         let mut drawing_manager = DrawingManager::new();
         drawing_manager.set_current_window(Some(id.0));
+
+        let chart_panel_id = generate_chart_panel_id();
+        let mut inner_docking: DockState<ChartContainerLeaf> = DockState::new();
+        let main_leaf_id = inner_docking
+            .tree_mut()
+            .add_leaf(ChartContainerLeaf::MainChart { chart_panel_id });
 
         let mut window = Self {
             id,
@@ -424,6 +451,9 @@ impl ChartContainer {
             stashed_scale_mode: None,
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
+            chart_panel_id,
+            inner_docking,
+            main_leaf_id,
         };
         window.drawing_manager.set_current_symbol_key(&window.symbol, &window.exchange, &window.account_type);
         window
@@ -506,6 +536,15 @@ impl ChartContainer {
             let synced = self.drawing_manager.clone_primitives_for_sync(new_chart_id.0);
             drawing_manager.add_synced_primitives(synced);
         }
+
+        // Each split child gets its own fresh inner-docking tree with one
+        // MainChart leaf. Sub-panes get added back in via the same path as
+        // the parent (sync_sub_panes_from_manager) once indicators wire up.
+        let chart_panel_id = generate_chart_panel_id();
+        let mut inner_docking: DockState<ChartContainerLeaf> = DockState::new();
+        let main_leaf_id = inner_docking
+            .tree_mut()
+            .add_leaf(ChartContainerLeaf::MainChart { chart_panel_id });
 
         Self {
             // New chart ID
@@ -632,6 +671,9 @@ impl ChartContainer {
             // Split child has no in-flight scroll fetch.
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
+            chart_panel_id,
+            inner_docking,
+            main_leaf_id,
         }
     }
 
