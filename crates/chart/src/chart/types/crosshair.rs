@@ -137,8 +137,21 @@ pub struct Crosshair {
     pub snapped_y: f64,
     /// Magnet-snapped price (OHLC value in Magnet mode)
     pub snapped_price: f64,
-    /// Which pane the crosshair is in: None = main chart, Some(n) = sub-pane n
+    /// Which pane the crosshair is in: None = main chart, Some(n) = sub-pane n.
+    ///
+    /// Legacy field: indexes into `ChartContainer.sub_panes` Vec. Stable only
+    /// within one container at one frame. Sync propagation across containers
+    /// uses `pane_instance_id` instead, which is stable per indicator instance.
     pub pane_index: Option<usize>,
+    /// Indicator instance id of the sub-pane under the crosshair, or `None`
+    /// for the main chart.
+    ///
+    /// Phase 2 of the chart-container cut introduces this as the canonical
+    /// pane identifier for crosshair propagation -- it survives preset
+    /// reload, sub-pane reorder, and container moves where `pane_index`
+    /// silently breaks. Renderers should prefer this; `pane_index` stays
+    /// for backward compatibility until Phase 3 finishes the cleanup.
+    pub pane_instance_id: Option<u64>,
     /// True when crosshair position was set via sync (not local mouse).
     /// Renderer should skip horizontal line since Y is not meaningful.
     pub synced: bool,
@@ -158,6 +171,7 @@ impl Default for Crosshair {
             snapped_y: 0.0,
             snapped_price: 0.0,
             pane_index: None,
+            pane_instance_id: None,
             synced: false,
         }
     }
