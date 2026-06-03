@@ -17,6 +17,7 @@
 //! ends and pass it here (split-block pattern matching S2.2..S2.5).
 
 use zengeld_chart::state::ChartPanelId;
+use zengeld_chart::{CrosshairOptions, GridOptions, Legend, Tooltip, Watermark};
 
 use crate::chart_panel_state::ChartPanelState;
 use crate::panels_store::TradingPanelsStore;
@@ -106,6 +107,45 @@ pub fn mirror_chart_type(
 ) {
     let entry = ensure_chart_panel_state(panels_store, chart_panel_id);
     entry.chart_type = chart_type;
+}
+
+// =============================================================================
+// DisplayOptionsSnapshot — owned transfer struct for the 5 display-option fields
+// =============================================================================
+
+/// Snapshot of the 5 display-option fields that can be built inside a mutating
+/// block and passed to [`mirror_display_options`] after the panel-grid borrow
+/// is released (split-block pattern matching S2.6.A).
+///
+/// All 5 inner types derive `Clone`.
+#[derive(Debug, Clone)]
+pub struct DisplayOptionsSnapshot {
+    pub grid_options: GridOptions,
+    pub crosshair_options: CrosshairOptions,
+    pub legend: Legend,
+    pub watermark: Option<Watermark>,
+    pub tooltip: Tooltip,
+}
+
+// =============================================================================
+// mirror_display_options — bulk mirror
+// =============================================================================
+
+/// Mirror all 5 display-option fields from `src` into
+/// `panels_store.chart_panel[chart_panel_id]`. Lazy-inserts the entry if
+/// missing (e.g. first-time preset restore before any display-option user
+/// action).
+pub fn mirror_display_options(
+    panels_store: &mut TradingPanelsStore,
+    chart_panel_id: ChartPanelId,
+    src: DisplayOptionsSnapshot,
+) {
+    let entry = ensure_chart_panel_state(panels_store, chart_panel_id);
+    entry.grid_options = src.grid_options;
+    entry.crosshair_options = src.crosshair_options;
+    entry.legend = src.legend;
+    entry.watermark = src.watermark;
+    entry.tooltip = src.tooltip;
 }
 
 // =============================================================================
@@ -204,5 +244,47 @@ mod tests {
         assert!(entry.show_hollow_candles);
         assert_eq!(entry.chart_type, "hollow_candles");
         assert!(!entry.show_candles, "show_candles updated from snap");
+    }
+
+    // -------------------------------------------------------------------------
+    // S2.6.B — DisplayOptionsSnapshot tests
+    // -------------------------------------------------------------------------
+
+    fn display_opts_snap() -> DisplayOptionsSnapshot {
+        use zengeld_chart::{CrosshairOptions, GridOptions, Legend, Tooltip, Watermark};
+        DisplayOptionsSnapshot {
+            grid_options: GridOptions::default(),
+            crosshair_options: CrosshairOptions::default(),
+            legend: Legend::default(),
+            watermark: Some(Watermark::default()),
+            tooltip: Tooltip::default(),
+        }
+    }
+
+    #[test]
+    fn mirror_display_options_lazy_inserts() {
+        let mut s = store();
+        // Entry does NOT exist yet.
+        assert!(s.chart_panel.get(&pid(10)).is_none());
+        mirror_display_options(&mut s, pid(10), display_opts_snap());
+        let entry = s.chart_panel.get(&pid(10)).expect("entry must exist after lazy-insert");
+        // Watermark was set to Some(default).
+        assert!(entry.watermark.is_some());
+        // Series defaults preserved by lazy-insert.
+        assert!(entry.show_candles, "lazy-insert preserves show_candles default");
+    }
+
+    #[test]
+    fn mirror_display_options_idempotent_update() {
+        let mut s = store();
+        // Seed entry with explicit visibility mutation so we can verify it's
+        // preserved after a display-options mirror (disjoint fields).
+        ensure_chart_panel_state(&mut s, pid(11)).show_bars = true;
+        mirror_display_options(&mut s, pid(11), display_opts_snap());
+        let entry = s.chart_panel.get(&pid(11)).expect("entry must exist");
+        // show_bars should still be true — mirror_display_options doesn't touch it.
+        assert!(entry.show_bars, "series visibility must not be disturbed by display-options mirror");
+        // Watermark replaced.
+        assert!(entry.watermark.is_some());
     }
 }

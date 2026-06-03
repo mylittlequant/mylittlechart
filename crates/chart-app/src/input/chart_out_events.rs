@@ -751,6 +751,21 @@ impl ChartApp {
                                             sv,
                                         );
                                     }
+                                    // Phase 4 S2.6.B dual-write: mirror display-option fields.
+                                    {
+                                        let do_snap = crate::chart_panel_bridge::DisplayOptionsSnapshot {
+                                            grid_options: window.grid_options.clone(),
+                                            crosshair_options: window.crosshair_options.clone(),
+                                            legend: window.legend.clone(),
+                                            watermark: window.watermark.clone(),
+                                            tooltip: window.tooltip.clone(),
+                                        };
+                                        crate::chart_panel_bridge::mirror_display_options(
+                                            &mut self.panels_store,
+                                            window.chart_panel_id,
+                                            do_snap,
+                                        );
+                                    }
 
                                     new_containers.insert(chart_id, window);
                                     new_leaf_to_chart.insert(leaf_id, chart_id);
@@ -799,6 +814,9 @@ impl ChartApp {
                         // Collected (chart_panel_id, series-visibility) for S2.6.A dual-write
                         // after the panel_grid mut borrow is dropped.
                         let mut sv_patches: Vec<(zengeld_chart::state::ChartPanelId, crate::chart_panel_bridge::SeriesVisibilitySnapshot)> = Vec::new();
+                        // Collected (chart_panel_id, display-options) for S2.6.B dual-write
+                        // after the panel_grid mut borrow is dropped.
+                        let mut do_patches: Vec<(zengeld_chart::state::ChartPanelId, crate::chart_panel_bridge::DisplayOptionsSnapshot)> = Vec::new();
                         let windows = self.panel_app.panel_grid.containers_mut();
                         for snap in &preset.windows {
                             let chart_id = zengeld_chart::state::chart_container::ChartId(snap.window_id);
@@ -907,6 +925,15 @@ impl ChartApp {
                                     show_baseline: window.show_baseline,
                                     chart_type: window.chart_type,
                                 }));
+                                // Phase 4 S2.6.B: collect display-options snapshot for
+                                // dual-write after this panel_grid mut borrow is dropped.
+                                do_patches.push((window.chart_panel_id, crate::chart_panel_bridge::DisplayOptionsSnapshot {
+                                    grid_options: window.grid_options.clone(),
+                                    crosshair_options: window.crosshair_options.clone(),
+                                    legend: window.legend.clone(),
+                                    watermark: window.watermark.clone(),
+                                    tooltip: window.tooltip.clone(),
+                                }));
 
                                 eprintln!("[ChartApp] patched window {} в†’ {}/{} ({} drawings)",
                                     snap.window_id, snap.symbol, snap.timeframe.name,
@@ -966,6 +993,15 @@ impl ChartApp {
                                 &mut self.panels_store,
                                 chart_panel_id,
                                 sv,
+                            );
+                        }
+                        // Phase 4 S2.6.B dual-write: mirror display-option fields
+                        // collected from the patch loop above (panel_grid borrow dropped).
+                        for (chart_panel_id, do_snap) in do_patches {
+                            crate::chart_panel_bridge::mirror_display_options(
+                                &mut self.panels_store,
+                                chart_panel_id,
+                                do_snap,
                             );
                         }
                     }
