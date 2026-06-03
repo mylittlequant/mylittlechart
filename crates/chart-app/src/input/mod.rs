@@ -2504,9 +2504,20 @@ impl ChartApp {
                 return false;
             }
             ChartDragStartHit::SubPaneSeparator { instance_id } => {
-                // Sub-pane separator drag — set DragMode so on_drag_move
-                // routes to drag_pane_separator. No output action needed.
-                self.input_handler.state.drag_mode = DragMode::PaneSeparator { instance_id };
+                // Ensure window.sub_panes is in sync with indicator_manager before
+                // the drag starts: the layout (used by hit-test) reads sub-pane ids
+                // straight from indicator_manager, but drag_pane_separator mutates
+                // window.sub_panes — they can drift if sync hasn't happened since
+                // the last indicator add/remove.
+                self.sync_sub_panes_from_manager();
+                // Mirror slot_sep_drag pattern: dedicated Option field on
+                // ChartApp consumed at the TOP of on_drag_move, before any
+                // other drag-handling branches that could swallow the event.
+                let available_h = self.panel_app.panel_grid.docking().active_leaf()
+                    .and_then(|l| self.get_leaf_absolute_rect(l))
+                    .map(|r| r.height)
+                    .unwrap_or(1.0);
+                self.sub_pane_sep_drag = Some((instance_id, y, available_h));
                 self.ui_drag_active = true;
                 return false;
             }
@@ -2547,6 +2558,33 @@ impl ChartApp {
 
     /// Handle drag move to `(x, y)` with deltas `(dx, dy)`.
     pub fn on_drag_move(&mut self, x: f64, y: f64, dx: f64, dy: f64) {
+        let _ = (x, dx);
+        // ── Sub-pane separator resize drag (mirrors slot_sep_drag) ───────────
+        // MUST run BEFORE any other drag-handling branch so the event isn't
+        // swallowed by panel-content drag, freehand-extend, or other
+        // intermediate handlers.
+        //
+        // Use incremental dy per frame (winit fires drag move on every mouse
+        // event, but `dy` here is already the per-event delta, not cumulative
+        // from start).  Apply it to the height_ratio directly each frame —
+        // visually 1:1 with cursor.
+        if let Some((instance_id, _start_y, available_h)) = self.sub_pane_sep_drag {
+            let _ = y;
+            // Read rendered heights from the frame_layouts cache — these are
+            // the actual pixel heights the renderer allocated after
+            // compute_from_chart_panel's min_main_chart=30 clamp.  Using
+            // (ratio * available_h) directly bypasses that clamp and lets
+            // the sub-pane grow past the main-chart floor.
+            let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
+            let rendered_heights: std::collections::HashMap<u64, f64> = active_leaf
+                .and_then(|leaf| self.frame_layouts.get(&leaf))
+                .map(|ext| ext.sub_panes.iter()
+                    .map(|sp| (sp.instance_id, sp.content.height))
+                    .collect())
+                .unwrap_or_default();
+            self.panel_app.panel_grid.drag_pane_separator(instance_id, dy, available_h, &rendered_heights);
+            return;
+        }
         // ── Agent-panel separator resize drag ────────────────────────────────
         if let Some((sep_idx, start_pos, _total_size)) = self.agent_sep_drag {
             // Read orientation and area with a scoped borrow, then drop before mutable call.
@@ -3491,41 +3529,6 @@ impl ChartApp {
 
         let drag_mode = self.input_handler.state.drag_mode;
 
-        // Handle pane separator drag: resize the sub-pane above and below the
-        // separator by the vertical delta.  This updates height_ratio on the
-        // sub-pane so that compute_from_chart_panel picks it up next frame.
-        if let zengeld_chart::engine::input::DragMode::PaneSeparator { instance_id } = drag_mode {
-            // Pre-compute layout data that requires &self methods before taking &mut self.
-            let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
-            if let Some(leaf) = active_leaf {
-                if let Some(leaf_rect) = self.get_leaf_absolute_rect(leaf) {
-                    let available_h = leaf_rect.height.max(1.0);
-                    let rendered_heights: std::collections::HashMap<u64, f64> =
-                        match self.frame_layouts.get(&leaf)
-                            .map(|e| e as &zengeld_chart::ExtendedFrameLayout)
-                            .or_else(|| None)
-                        {
-                            Some(ext) => ext.sub_panes.iter()
-                                .map(|sp| (sp.instance_id, sp.content.height))
-                                .collect(),
-                            None => match self.build_extended_layout_for_leaf(leaf, &leaf_rect) {
-                                Some(ext) => ext.sub_panes.iter()
-                                    .map(|sp| (sp.instance_id, sp.content.height))
-                                    .collect(),
-                                None => std::collections::HashMap::new(),
-                            },
-                        };
-                    self.panel_app.panel_grid.drag_pane_separator(
-                        instance_id,
-                        dy,
-                        available_h,
-                        &rendered_heights,
-                    );
-                }
-            }
-            return;
-        }
-
         // Use the frame-cached layout; fall back to building on demand.
         let _fallback_dm;
         let extended = match self.active_frame_layout.as_ref() {
@@ -3663,11 +3666,10 @@ impl ChartApp {
             return;
         }
 
-        // End pane separator drag: persist the new height ratios.
-        if let zengeld_chart::engine::input::DragMode::PaneSeparator { .. } = self.input_handler.state.drag_mode {
-            self.input_handler.state.drag_mode = zengeld_chart::engine::input::DragMode::None;
+        // End sub-pane separator drag: clear the dedicated field + persist.
+        if self.sub_pane_sep_drag.is_some() {
+            self.sub_pane_sep_drag = None;
             self.persist_profile();
-            eprintln!("[ChartApp] PaneSeparator drag ended — sub-pane heights persisted");
             return;
         }
 
@@ -4864,8 +4866,8 @@ impl ChartApp {
             .map(|w| w.drawing_manager.is_drawing())
             .unwrap_or(false);
 
-        // Hide crosshair during separator drag — resize cursor is sufficient feedback.
-        if matches!(self.input_handler.state.drag_mode, DragMode::PaneSeparator { .. }) {
+        // Hide crosshair during sub-pane separator drag — resize cursor is enough.
+        if self.sub_pane_sep_drag.is_some() {
             self.hide_crosshair();
             return;
         }
