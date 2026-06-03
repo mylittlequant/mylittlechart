@@ -630,6 +630,98 @@ impl ChartContainer {
         }
     }
 
+    /// Drag the separator that bounds the sub-pane with the given
+    /// `instance_id` via the inner uzor docking tree, then mirror the
+    /// resulting proportions back into `SubPane.height_ratio` so the
+    /// legacy render path stays in sync.
+    ///
+    /// Returns `true` on success. `delta` is in pixels and follows uzor's
+    /// orientation convention (positive = drag down for a horizontal
+    /// separator between stacked panes).
+    ///
+    /// Phase 2.3: companion to `push_sub_pane_ratios_to_inner_docking`.
+    /// Once the render path switches off `compute_from_chart_panel` in
+    /// Phase 3, this becomes the only sep-drag path -- the custom
+    /// `ChartPanelGrid::drag_pane_separator` retires alongside `SubPane`.
+    pub fn drag_sub_pane_separator_via_uzor(
+        &mut self,
+        instance_id: u64,
+        delta_y: f32,
+        content_width: f32,
+        content_height: f32,
+    ) -> bool {
+        // Locate the sub-pane index in the canonical Vec.
+        let pane_idx = match self.sub_panes.iter().position(|p| p.instance_id == instance_id) {
+            Some(i) => i,
+            None => return false,
+        };
+
+        // Recompute layout so separator metadata is current.
+        let area = uzor::panels::PanelRect {
+            x: 0.0,
+            y: 0.0,
+            width: content_width,
+            height: content_height,
+        };
+        self.inner_docking.layout(area);
+
+        // The inner root branch holds [main_chart, sub_1, sub_2, ...] in
+        // SplitBottom order. Horizontal separators between siblings of the
+        // root correspond to gaps between these children, ordered top->bottom.
+        // The separator above sub-pane `pane_idx` is at uzor separator
+        // index `pane_idx` (sep 0 = between main and sub_1, sep 1 = between
+        // sub_1 and sub_2, etc.).
+        //
+        // Filter the separator list to horizontal-only (vertical separators
+        // would mean the inner tree got nested branches from something not
+        // ChartContainer-owned -- defensive guard).
+        use uzor::panels::SeparatorOrientation;
+        let h_seps: Vec<usize> = self
+            .inner_docking
+            .separators()
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| {
+                if matches!(s.orientation, SeparatorOrientation::Horizontal) {
+                    Some(i)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let sep_idx = match h_seps.get(pane_idx) {
+            Some(i) => *i,
+            None => return false,
+        };
+
+        let ok = self
+            .inner_docking
+            .drag_separator(sep_idx, delta_y, content_width, content_height);
+        if !ok {
+            return false;
+        }
+
+        // Mirror the new proportions back into the SubPane Vec so the
+        // legacy render path picks them up on the next frame.
+        let proportions: Vec<f64> = self
+            .inner_docking
+            .tree()
+            .root()
+            .proportions
+            .iter()
+            .copied()
+            .collect();
+        if proportions.len() == self.sub_panes.len() + 1 {
+            for (i, p) in self.sub_panes.iter_mut().enumerate() {
+                if let Some(&prop) = proportions.get(i + 1) {
+                    p.height_ratio = prop as f32;
+                }
+            }
+        }
+        true
+    }
+
     /// Find the most recently added leaf in the inner docking tree.
     /// Used as the split anchor for stacking new indicator panels.
     fn last_inner_leaf_id(&self) -> uzor::panels::LeafId {
