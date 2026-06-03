@@ -8487,6 +8487,8 @@ impl ChartApp {
                         window.drawing_manager.bind_style_store(style_arc);
                     }
                 }
+                // Phase 4 S2.3 dual-write: mirror new_pane's auto group_id.
+                crate::branch_meta_bridge::mirror_group_id(&mut self.branch_meta, chart_id, Some(group_id));
                 eprintln!("[ChartApp] Auto-created invisible sync group {:?} for new chart", group_id);
             }
         }

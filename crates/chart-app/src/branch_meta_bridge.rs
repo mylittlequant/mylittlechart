@@ -21,7 +21,8 @@
 use std::collections::HashMap;
 
 use uzor::panels::BranchId;
-use zengeld_chart::state::{BranchMeta, ChartId, Timeframe};
+use zengeld_chart::state::{BranchMeta, ChartId, ConnectionStatus, Timeframe};
+use zengeld_chart::tag_manager::SyncGroupId;
 
 /// Map a `ChartId` to the temporary `BranchId` used by S2 (per S2.G6 the
 /// keys are `BranchId(chart_id.0)` until S3 wires real uzor branch ids).
@@ -156,6 +157,52 @@ pub fn mirror_account_type(
     entry.account_type = Some(account_type.to_string());
 }
 
+// =============================================================================
+// Group M (S2.3) — group_id / prev_close_price / connection_status
+// =============================================================================
+//
+// These mirrors do NOT lazy-insert: the entry MUST already exist when a
+// group_id / prev_close_price / connection_status write fires (all such
+// writes happen on charts that S2.2 already seeded). A miss is logged
+// (silent-skip) rather than synthesized so callers don't accidentally
+// create a half-shaped entry without instrument context.
+
+/// Mirror the sync `group_id` for a chart's branch into branch_meta.
+/// Silent no-op if the entry is missing (entry should exist post-S2.2).
+pub fn mirror_group_id(
+    branch_meta: &mut std::collections::HashMap<BranchId, BranchMeta>,
+    chart_id: ChartId,
+    group_id: Option<SyncGroupId>,
+) {
+    if let Some(entry) = branch_meta.get_mut(&branch_key_for_chart(chart_id)) {
+        entry.group_id = group_id;
+    }
+}
+
+/// Mirror the previous-close price (derived from `bars[0].open`) into
+/// branch_meta. Silent no-op if the entry is missing.
+pub fn mirror_prev_close_price(
+    branch_meta: &mut std::collections::HashMap<BranchId, BranchMeta>,
+    chart_id: ChartId,
+    prev_close_price: Option<f64>,
+) {
+    if let Some(entry) = branch_meta.get_mut(&branch_key_for_chart(chart_id)) {
+        entry.prev_close_price = prev_close_price;
+    }
+}
+
+/// Mirror the connection status into branch_meta. Silent no-op if the
+/// entry is missing.
+pub fn mirror_connection_status(
+    branch_meta: &mut std::collections::HashMap<BranchId, BranchMeta>,
+    chart_id: ChartId,
+    status: ConnectionStatus,
+) {
+    if let Some(entry) = branch_meta.get_mut(&branch_key_for_chart(chart_id)) {
+        entry.connection_status = Some(status);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,5 +247,40 @@ mod tests {
         let entry = bm.get(&branch_key_for_chart(ChartId(1))).unwrap();
         assert_eq!(entry.symbol.as_deref(), Some("ETHUSDT"));
         assert_eq!(entry.exchange.as_deref(), Some("Binance"));
+    }
+
+    #[test]
+    fn mirror_group_id_no_lazy_insert_when_missing() {
+        let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
+        // Entry not seeded — mirror should be silent no-op.
+        mirror_group_id(&mut bm, ChartId(99), Some(SyncGroupId(7)));
+        assert!(bm.is_empty());
+    }
+
+    #[test]
+    fn mirror_group_id_writes_on_existing_entry() {
+        let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
+        mirror_instrument(&mut bm, ChartId(5), "BTC", tf(), "Binance", "S");
+        mirror_group_id(&mut bm, ChartId(5), Some(SyncGroupId(42)));
+        let entry = bm.get(&branch_key_for_chart(ChartId(5))).unwrap();
+        assert_eq!(entry.group_id, Some(SyncGroupId(42)));
+    }
+
+    #[test]
+    fn mirror_prev_close_price_writes_on_existing_entry() {
+        let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
+        mirror_instrument(&mut bm, ChartId(11), "BTC", tf(), "Binance", "S");
+        mirror_prev_close_price(&mut bm, ChartId(11), Some(50_000.0));
+        let entry = bm.get(&branch_key_for_chart(ChartId(11))).unwrap();
+        assert_eq!(entry.prev_close_price, Some(50_000.0));
+    }
+
+    #[test]
+    fn mirror_connection_status_writes_on_existing_entry() {
+        let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
+        mirror_instrument(&mut bm, ChartId(13), "BTC", tf(), "Binance", "S");
+        mirror_connection_status(&mut bm, ChartId(13), ConnectionStatus::Delayed);
+        let entry = bm.get(&branch_key_for_chart(ChartId(13))).unwrap();
+        assert_eq!(entry.connection_status, Some(ConnectionStatus::Delayed));
     }
 }

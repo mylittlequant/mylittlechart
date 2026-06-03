@@ -14,6 +14,7 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use crate::state::chart_container_leaf::ChartPanelId;
+use crate::state::chart_container::ConnectionStatus;
 use crate::state::Timeframe;
 use crate::tag_manager::SyncGroupId;
 
@@ -285,6 +286,15 @@ pub struct BranchMeta {
     pub account_type: Option<String>,
     /// Display label.
     pub label: Option<String>,
+    /// Live/delayed/disconnected status for this chart window.
+    /// Phase 4 S2.3 mirror of `ChartContainer.connection_status`; `None`
+    /// until first write.
+    pub connection_status: Option<ConnectionStatus>,
+    /// Previous session close price (first bar's open), used for the
+    /// prev-close horizontal line. Phase 4 S2.3 mirror of
+    /// `ChartContainer.prev_close_price`; re-derived on every
+    /// `set_bars` / `update_bars`.
+    pub prev_close_price: Option<f64>,
 }
 
 impl BranchMeta {
@@ -304,6 +314,8 @@ impl BranchMeta {
             exchange: Some(exchange.into()),
             account_type: Some(account_type.into()),
             label: None,
+            connection_status: None,
+            prev_close_price: None,
         }
     }
 
@@ -318,6 +330,8 @@ impl BranchMeta {
             exchange: None,
             account_type: None,
             label: Some(label.into()),
+            connection_status: None,
+            prev_close_price: None,
         }
     }
 
@@ -332,6 +346,8 @@ impl BranchMeta {
             exchange: None,
             account_type: None,
             label,
+            connection_status: None,
+            prev_close_price: None,
         }
     }
 }

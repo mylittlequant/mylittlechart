@@ -138,6 +138,11 @@ impl ChartApp {
                     eprintln!("[TagManager] Desync: restored stashed scale mode {:?}", prev_mode);
                 }
             }
+            // Phase 4 S2.3 dual-write: mirror the (temporary) None clear into
+            // branch_meta. The real group_id is reassigned below; mirror that
+            // write too. This intermediate mirror keeps branch_meta consistent
+            // if anything reads between the two writes.
+            crate::branch_meta_bridge::mirror_group_id(&mut self.branch_meta, chart_id, None);
 
             // Remove tag indicators: all indicators for this window EXCEPT pre-tag ones.
             // Then unhide pre-tag indicators.
@@ -189,6 +194,8 @@ impl ChartApp {
                     window.drawing_manager.bind_style_store(style_arc);
                 }
             }
+            // Phase 4 S2.3 dual-write: mirror new auto_created group_id.
+            crate::branch_meta_bridge::mirror_group_id(&mut self.branch_meta, chart_id, Some(new_group_id));
             // Move restored primitives from drawing_manager into the new group.
             let dm_prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
                 self.panel_app.panel_grid.container_for_leaf(leaf_id)
@@ -341,6 +348,8 @@ impl ChartApp {
                     );
                     group.indicator_configs = configs;
                 }
+                // Phase 4 S2.3 dual-write: mirror new group_id (new group path).
+                crate::branch_meta_bridge::mirror_group_id(&mut self.branch_meta, chart_id, Some(group_id));
                 return;
             }
 
@@ -393,6 +402,8 @@ impl ChartApp {
                 ));
                 eprintln!("[TagManager] Stashed {} window primitives before joining existing group", stash_count);
             }
+            // Phase 4 S2.3 dual-write: mirror new group_id (existing group path).
+            crate::branch_meta_bridge::mirror_group_id(&mut self.branch_meta, chart_id, Some(group_id));
 
             // Hide pre-tag indicators by setting visible=false.
             for &id in &pre_tag_ids {
@@ -482,6 +493,10 @@ impl ChartApp {
                     if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(mother_leaf) {
                         window.group_id = Some(old_gid);
                     }
+                    // Phase 4 S2.3 dual-write: mirror mother's restored group_id.
+                    if let Some(mother_cid) = self.panel_app.panel_grid.container_id_for_leaf(mother_leaf) {
+                        crate::branch_meta_bridge::mirror_group_id(&mut self.branch_meta, mother_cid, Some(old_gid));
+                    }
                     // Restore the mother's color tag that was snapshotted before the split.
                     if let Some(color) = pre_split_color {
                         self.panel_app.leaf_color_tags.insert(mother_leaf, color);
@@ -502,11 +517,16 @@ impl ChartApp {
                     symbol,
                     timeframe,
                 );
-                if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
+                let new_chart_id = self.panel_app.panel_grid.container_id_for_leaf(leaf_id);
+                if let Some(chart_id) = new_chart_id {
                     let _ = self.panel_app.tag_manager.connect_chart(chart_id, gid);
                 }
                 if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
                     window.group_id = Some(gid);
+                }
+                // Phase 4 S2.3 dual-write: mirror new leaf's fresh auto group_id.
+                if let Some(chart_id) = new_chart_id {
+                    crate::branch_meta_bridge::mirror_group_id(&mut self.branch_meta, chart_id, Some(gid));
                 }
                 self.panel_app.leaf_color_tags.remove(&leaf_id);
                 eprintln!("[TagManager] (SplitUntagged) Created auto group {:?} for new leaf {:?}", gid, leaf_id);
@@ -604,6 +624,10 @@ impl ChartApp {
                         window.drawing_manager.bind_style_store(arc.clone());
                     }
                 }
+            }
+            // Phase 4 S2.3 dual-write: mirror new group_id for every split leaf.
+            for &(_, chart_id) in &leaf_chart_ids {
+                crate::branch_meta_bridge::mirror_group_id(&mut self.branch_meta, chart_id, Some(group_id));
             }
 
             // For new groups: snapshot source window's current indicator and primitive ids as pre-tag.

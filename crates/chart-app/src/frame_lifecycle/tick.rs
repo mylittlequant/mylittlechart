@@ -211,7 +211,11 @@ impl ChartApp {
                     // an initial load so we can trigger background backfill after the loop
                     // (can't borrow self.bridge while containers_mut() is held).
                     let mut backfill_requests: Vec<(String, zengeld_chart::state::Timeframe, digdigdig3::AccountType)> = Vec::new();
-                    for window in self.panel_app.panel_grid.containers_mut().values_mut() {
+                    // Phase 4 S2.3: collect (chart_id, prev_close_price) for matched
+                    // windows so we can mirror into branch_meta after the panel_grid
+                    // mut borrow drops.
+                    let mut prev_close_mirrors: Vec<(zengeld_chart::state::ChartId, Option<f64>)> = Vec::new();
+                    for (chart_id_key, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         let tf_matches = window.timeframe.name == tf_name;
                         let matched = window.symbol == symbol
                             && window.exchange == exchange_id.as_str()
@@ -262,7 +266,18 @@ impl ChartApp {
                             }
                             crate::dlog!("[BarsLoaded] after set_bars: view_start={} chart_width={} bar_spacing={}",
                                 window.viewport.view_start, window.viewport.chart_width, window.viewport.bar_spacing);
+                            // Phase 4 S2.3: capture freshly-derived prev_close_price
+                            // for branch_meta mirror after the panel_grid borrow drops.
+                            prev_close_mirrors.push((*chart_id_key, window.prev_close_price));
                         }
+                    }
+                    // Phase 4 S2.3 dual-write: mirror prev_close_price into branch_meta.
+                    for (chart_id, prev_close) in prev_close_mirrors {
+                        crate::branch_meta_bridge::mirror_prev_close_price(
+                            &mut self.branch_meta,
+                            chart_id,
+                            prev_close,
+                        );
                     }
 
                     // Trigger Layer 2 background backfill for initial loads.
@@ -318,7 +333,9 @@ impl ChartApp {
                 }
                 LiveUpdate::BackfillComplete { exchange_id, account_type, symbol, timeframe: tf_name, bars } => {
                     crate::dlog!("[ChartApp] BackfillComplete: {} {} tf={} bars={}", exchange_id.as_str(), symbol, tf_name, bars.len());
-                    for window in self.panel_app.panel_grid.containers_mut().values_mut() {
+                    // Phase 4 S2.3: collect prev_close_price mirrors after the loop.
+                    let mut prev_close_mirrors: Vec<(zengeld_chart::state::ChartId, Option<f64>)> = Vec::new();
+                    for (chart_id_key, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         let tf_matches = window.timeframe.name == tf_name;
                         if !(window.symbol == symbol
                             && window.exchange == exchange_id.as_str()
@@ -332,6 +349,14 @@ impl ChartApp {
                         if window.price_scale.scale_mode.is_auto_y() {
                             window.calc_auto_scale();
                         }
+                        prev_close_mirrors.push((*chart_id_key, window.prev_close_price));
+                    }
+                    for (chart_id, prev_close) in prev_close_mirrors {
+                        crate::branch_meta_bridge::mirror_prev_close_price(
+                            &mut self.branch_meta,
+                            chart_id,
+                            prev_close,
+                        );
                     }
 
                     // Recalculate indicators for matched windows.
@@ -360,8 +385,10 @@ impl ChartApp {
 
                     let at_label = account_type.short_label();
                     let mut any_matched = false;
+                    // Phase 4 S2.3: collect prev_close_price mirrors after the loop.
+                    let mut prev_close_mirrors: Vec<(zengeld_chart::state::ChartId, Option<f64>)> = Vec::new();
 
-                    for window in self.panel_app.panel_grid.containers_mut().values_mut() {
+                    for (chart_id_key, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         let tf_matches = window.timeframe.name == tf_name;
                         if !(window.symbol == symbol
                             && window.exchange == exchange_id.as_str()
@@ -392,6 +419,14 @@ impl ChartApp {
                         if window.price_scale.scale_mode.is_auto_y() {
                             window.calc_auto_scale();
                         }
+                        prev_close_mirrors.push((*chart_id_key, window.prev_close_price));
+                    }
+                    for (chart_id, prev_close) in prev_close_mirrors {
+                        crate::branch_meta_bridge::mirror_prev_close_price(
+                            &mut self.branch_meta,
+                            chart_id,
+                            prev_close,
+                        );
                     }
 
                     if any_matched {

@@ -689,6 +689,12 @@ impl ChartApp {
                                         &snap.exchange,
                                         &snap.account_type,
                                     );
+                                    // Phase 4 S2.3 dual-write: mirror restored group_id.
+                                    crate::branch_meta_bridge::mirror_group_id(
+                                        &mut self.branch_meta,
+                                        chart_id,
+                                        snap.group_id.map(zengeld_chart::tag_manager::SyncGroupId),
+                                    );
 
                                     new_containers.insert(chart_id, window);
                                     new_leaf_to_chart.insert(leaf_id, chart_id);
@@ -1022,6 +1028,10 @@ impl ChartApp {
                                     window.drawing_manager.bind_style_store(arc.clone());
                                 }
                             }
+                        }
+                        // Phase 4 S2.3 dual-write: mirror auto-group_id for orphan windows.
+                        for &(_, chart_id) in &leaf_chart_ids {
+                            crate::branch_meta_bridge::mirror_group_id(&mut self.branch_meta, chart_id, Some(group_id));
                         }
                         eprintln!("[ChartApp] Auto-created invisible sync group {:?} for {} orphaned windows", group_id, leaf_chart_ids.len());
                     }
