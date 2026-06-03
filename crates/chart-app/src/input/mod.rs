@@ -2573,8 +2573,20 @@ impl ChartApp {
         // event, but `dy` here is already the per-event delta, not cumulative
         // from start).  Apply it to the height_ratio directly each frame —
         // visually 1:1 with cursor.
-        if let Some((instance_id, _start_y, _content_w, content_h, _, _)) = self.sub_pane_sep_drag {
+        if let Some((instance_id, _start_y, _content_w, _content_h, _, _)) = self.sub_pane_sep_drag {
             let _ = y;
+            // Pull a fresh content_h from the renderer's frame_layouts cache
+            // (last rendered total chart height) instead of the stale value
+            // snapshotted at drag-start. content_h = main + all sub-panes +
+            // separators -- the slice the inner stack actually owns.
+            let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
+            let content_h: f64 = active_leaf
+                .and_then(|leaf| self.frame_layouts.get(&leaf))
+                .map(|ext| {
+                    ext.main_chart.chart.height
+                        + ext.sub_panes.iter().map(|p| p.content.height + p.separator.height).sum::<f64>()
+                })
+                .unwrap_or(0.0);
             if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                 let before = window.inner_layout.proportions.clone();
                 let ok = window.drag_sub_pane_separator(instance_id, dy, content_h);

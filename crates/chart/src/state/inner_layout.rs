@@ -150,16 +150,27 @@ impl InnerLayout {
         ratios: &std::collections::HashMap<u64, f32>,
     ) {
         self.sub_instance_ids = want_ids.to_vec();
-        let sub_total: f64 = want_ids
+        // Cap any single ratio at 0.4 -- legacy presets sometimes stored
+        // 1.0 / huge values that would collapse the main chart on restore.
+        // Cap total sub_share at 0.7 so the main chart keeps >= 30 %.
+        let raw_subs: Vec<f64> = want_ids
             .iter()
-            .map(|id| ratios.get(id).copied().unwrap_or(0.15) as f64)
-            .sum();
-        let main_share = (1.0 - sub_total.min(0.95)).max(0.05);
+            .map(|id| {
+                let r = ratios.get(id).copied().unwrap_or(0.15) as f64;
+                r.clamp(0.05, 0.4)
+            })
+            .collect();
+        let sub_total: f64 = raw_subs.iter().sum::<f64>().min(0.7);
+        let scale = if raw_subs.iter().sum::<f64>() > sub_total && !raw_subs.is_empty() {
+            sub_total / raw_subs.iter().sum::<f64>()
+        } else {
+            1.0
+        };
+        let main_share = (1.0 - sub_total).max(0.05);
         let mut props = Vec::with_capacity(want_ids.len() + 1);
         props.push(main_share);
-        for id in want_ids {
-            let r = ratios.get(id).copied().unwrap_or(0.15) as f64;
-            props.push(r.max(0.01));
+        for r in raw_subs {
+            props.push((r * scale).max(0.01));
         }
         self.proportions = props;
         self.normalize();
