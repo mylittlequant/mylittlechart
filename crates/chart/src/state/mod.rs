@@ -108,13 +108,8 @@ pub use chart_container_leaf::{
 // Inner 1D vertical stack layout (own math, no uzor docking).
 pub use inner_layout::InnerLayout;
 
-// Phase 4 — Branch-as-Group payload + sidecar metadata (stubs in S1).
-// ChartPanelId / generate_chart_panel_id / bump_chart_panel_id_past are
-// re-exported above via chart_container_leaf — Phase 4 reuses them.
+// Branch-level docking payload types.
 pub use branch::{
-    AcceptPolicy,
-    BranchKind,
-    BranchMeta,
     InstanceId,
     PanelLeaf,
     PanelLeafKind,

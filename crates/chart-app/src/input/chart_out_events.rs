@@ -43,7 +43,7 @@ impl ChartApp {
                     let active_chart_id = self.panel_app.panel_grid.active_container_id();
                     // Capture previous timeframe and active leaf BEFORE changing.
                     let previous_timeframe = active_chart_id
-                        .and_then(|cid| crate::branch_meta_bridge::read_timeframe(&self.panel_app.tag_manager, cid))
+                        .and_then(|cid| self.panel_app.tag_manager.timeframe_for_chart(cid))
                         .cloned();
                     let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
                     // Extract whether timeframe actually changed before mutating.
@@ -64,33 +64,24 @@ impl ChartApp {
                     // Set timeframe, clear bars, and request new data asynchronously.
                     // (change_timeframe tries a sync cache lookup which fails for live data.)
                     let symbol = active_chart_id
-                        .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, cid))
+                        .and_then(|cid| self.panel_app.tag_manager.symbol_for_chart(cid))
                         .map(String::from)
                         .unwrap_or_default();
                     let at_label_tf = active_chart_id
-                        .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.panel_app.tag_manager, cid))
+                        .and_then(|cid| self.panel_app.tag_manager.account_type_for_chart(cid))
                         .map(String::from)
                         .unwrap_or_else(|| "S".to_string());
-                    let exchange_seed = active_chart_id
-                        .and_then(|cid| crate::branch_meta_bridge::read_exchange(&self.panel_app.tag_manager, cid))
-                        .map(String::from)
-                        .unwrap_or_default();
                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         window.bars.clear();
                         window.viewport.bar_count = 0;
                         window.viewport.view_start = 0.0;
                     }
-                    // Phase 1.2: dual-write timeframe into branch_meta + bubble.
                     if let Some(chart_id) = active_chart_id {
-                        crate::branch_meta_bridge::mirror_timeframe(
-                            &mut self.branch_meta,
-                            &mut self.panel_app.tag_manager,
-                            chart_id,
-                            tf.clone(),
-                            &symbol,
-                            &exchange_seed,
-                            &at_label_tf,
-                        );
+                        if let Some(bid) = self.panel_app.tag_manager.bubble_for_chart(chart_id) {
+                            if let Some(bubble) = self.panel_app.tag_manager.bubble_mut(bid) {
+                                bubble.timeframe = tf.clone();
+                            }
+                        }
                     }
                     // Fetch bars for new timeframe. Trade stream stays alive вЂ” trades
                     // build bars regardless of timeframe and the symbol has not changed.
@@ -562,13 +553,13 @@ impl ChartApp {
                         .iter_containers()
                         .map(|(_, w)| {
                             let cid = w.id;
-                            let sym = crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, cid)
+                            let sym = self.panel_app.tag_manager.symbol_for_chart(cid)
                                 .map(String::from).unwrap_or_default();
-                            let exch = crate::branch_meta_bridge::read_exchange(&self.panel_app.tag_manager, cid)
+                            let exch = self.panel_app.tag_manager.exchange_for_chart(cid)
                                 .map(String::from).unwrap_or_default();
-                            let tf = crate::branch_meta_bridge::read_timeframe(&self.panel_app.tag_manager, cid)
+                            let tf = self.panel_app.tag_manager.timeframe_for_chart(cid)
                                 .cloned().unwrap_or_else(zengeld_chart::state::Timeframe::h1);
-                            let at = crate::branch_meta_bridge::read_account_type(&self.panel_app.tag_manager, cid)
+                            let at = self.panel_app.tag_manager.account_type_for_chart(cid)
                                 .map(String::from).unwrap_or_default();
                             (sym, exch, tf, at)
                         })
@@ -606,8 +597,8 @@ impl ChartApp {
                         .iter_containers()
                         .filter_map(|(_, w)| {
                             let cid = w.id;
-                            let exch = crate::branch_meta_bridge::read_exchange(&self.panel_app.tag_manager, cid)?;
-                            let sym = crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, cid)
+                            let exch = self.panel_app.tag_manager.exchange_for_chart(cid)?;
+                            let sym = self.panel_app.tag_manager.symbol_for_chart(cid)
                                 .map(String::from).unwrap_or_default();
                             digdigdig3::ExchangeId::from_str(exch).map(|eid| (eid, sym))
                         })
@@ -710,14 +701,14 @@ impl ChartApp {
                                     }
 
                                     // Restore stashed primitives (pre-tag drawings)
-                                    crate::branch_meta_bridge::clear_stashed_primitives(
+                                    crate::stash::clear_stashed_primitives(
                                         &mut self.stashed_primitives, chart_id,
                                     );
                                     if !snap.stashed_primitives.is_empty() {
                                         if let Ok(reg) = zengeld_chart::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
                                             for prim_snap in &snap.stashed_primitives {
                                                 if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
-                                                    crate::branch_meta_bridge::push_stashed_primitive(
+                                                    crate::stash::push_stashed_primitive(
                                                         &mut self.stashed_primitives, chart_id, prim,
                                                     );
                                                 }
@@ -752,28 +743,20 @@ impl ChartApp {
                                         snap.drawings.primitives.len()
                                     );
 
-                                    // Phase 1.2: dual-write instrument into branch_meta + bubble.
-                                    crate::branch_meta_bridge::mirror_instrument(
-                                        &mut self.branch_meta,
-                                        &mut self.panel_app.tag_manager,
-                                        chart_id,
-                                        &snap.symbol,
-                                        snap.timeframe.clone(),
-                                        &snap.exchange,
-                                        &snap.account_type,
-                                    );
-                                    // Phase 4 S2.4 dual-write: pre_tag_ids, stashed_command_history.
-                                    // stashed_primitives already written above via push_stashed_primitive().
-                                    crate::branch_meta_bridge::mirror_pre_tag_ids(
-                                        &mut self.branch_meta,
-                                        chart_id,
-                                        snap.pre_tag_indicator_ids.clone(),
-                                    );
-                                    crate::branch_meta_bridge::mirror_stashed_command_history(
-                                        &mut self.branch_meta,
-                                        chart_id,
-                                        snap.stashed_command_history.clone(),
-                                    );
+                                    if let Some(bid) = self.panel_app.tag_manager.bubble_for_chart(chart_id) {
+                                        if let Some(bubble) = self.panel_app.tag_manager.bubble_mut(bid) {
+                                            bubble.symbol = snap.symbol.clone();
+                                            bubble.timeframe = snap.timeframe.clone();
+                                            bubble.exchange = snap.exchange.clone();
+                                            bubble.account_type = snap.account_type.clone();
+                                        }
+                                    }
+                                    self.pre_tag_ids_by_chart.insert(chart_id, snap.pre_tag_indicator_ids.clone());
+                                    if let Some(h) = snap.stashed_command_history.clone() {
+                                        self.stashed_command_history_by_chart.insert(chart_id, h);
+                                    } else {
+                                        self.stashed_command_history_by_chart.remove(&chart_id);
+                                    }
                                     // Phase 4 C: panel state already written above.
 
                                     new_containers.insert(chart_id, window);
@@ -865,14 +848,14 @@ impl ChartApp {
                                     }
 
                                     // Restore stashed primitives (pre-tag drawings)
-                                    crate::branch_meta_bridge::clear_stashed_primitives(
+                                    crate::stash::clear_stashed_primitives(
                                         &mut self.stashed_primitives, chart_id,
                                     );
                                     if !snap.stashed_primitives.is_empty() {
                                         if let Ok(reg) = zengeld_chart::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
                                             for prim_snap in &snap.stashed_primitives {
                                                 if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
-                                                    crate::branch_meta_bridge::push_stashed_primitive(
+                                                    crate::stash::push_stashed_primitive(
                                                         &mut self.stashed_primitives, chart_id, prim,
                                                     );
                                                 }
@@ -953,26 +936,20 @@ impl ChartApp {
                         // Phase 1.2: dual-write instrument into branch_meta + bubble.
                         for snap in &preset.windows {
                             let chart_id = zengeld_chart::state::chart_container::ChartId(snap.window_id);
-                            crate::branch_meta_bridge::mirror_instrument(
-                                &mut self.branch_meta,
-                                &mut self.panel_app.tag_manager,
-                                chart_id,
-                                &snap.symbol,
-                                snap.timeframe.clone(),
-                                &snap.exchange,
-                                &snap.account_type,
-                            );
-                            // Phase 4 S2.4 dual-write: pre_tag_ids + stashed_command_history.
-                            crate::branch_meta_bridge::mirror_pre_tag_ids(
-                                &mut self.branch_meta,
-                                chart_id,
-                                snap.pre_tag_indicator_ids.clone(),
-                            );
-                            crate::branch_meta_bridge::mirror_stashed_command_history(
-                                &mut self.branch_meta,
-                                chart_id,
-                                snap.stashed_command_history.clone(),
-                            );
+                            if let Some(bid) = self.panel_app.tag_manager.bubble_for_chart(chart_id) {
+                                if let Some(bubble) = self.panel_app.tag_manager.bubble_mut(bid) {
+                                    bubble.symbol = snap.symbol.clone();
+                                    bubble.timeframe = snap.timeframe.clone();
+                                    bubble.exchange = snap.exchange.clone();
+                                    bubble.account_type = snap.account_type.clone();
+                                }
+                            }
+                            self.pre_tag_ids_by_chart.insert(chart_id, snap.pre_tag_indicator_ids.clone());
+                            if let Some(h) = snap.stashed_command_history.clone() {
+                                self.stashed_command_history_by_chart.insert(chart_id, h);
+                            } else {
+                                self.stashed_command_history_by_chart.remove(&chart_id);
+                            }
                         }
                         // Phase 4 C: write panel states (panel_grid borrow is dropped above).
                         for (chart_panel_id, ps) in panel_patches {
@@ -1029,7 +1006,7 @@ impl ChartApp {
                             self.panel_app.panel_grid.containers().keys()
                                 .copied()
                                 .filter_map(|cid| {
-                                    crate::branch_meta_bridge::read_group_id(&self.panel_app.tag_manager, cid)
+                                    self.panel_app.tag_manager.bubble_for_chart(cid)
                                         .map(|gid| (cid, gid))
                                 })
                                 .collect();
@@ -1065,10 +1042,6 @@ impl ChartApp {
                                     .collect::<Vec<_>>())
                                 .unwrap_or_default())
                             .chain(
-                                self.stashed_primitives.values()
-                                    .flat_map(|v| v.iter())
-                            )
-                            .chain(
                                 self.panel_app.tag_manager.bubbles()
                                     .flat_map(|g| g.primitives.iter())
                             )
@@ -1091,7 +1064,7 @@ impl ChartApp {
                         let collision_info: Vec<(zengeld_chart::ChartId, zengeld_chart::tag_manager::BubbleId, std::collections::HashSet<u64>)> =
                             container_ids.into_iter()
                                 .filter_map(|cid| {
-                                    let gid = crate::branch_meta_bridge::read_group_id(&self.panel_app.tag_manager, cid)?;
+                                    let gid = self.panel_app.tag_manager.bubble_for_chart(cid)?;
                                     let group_ids: std::collections::HashSet<u64> =
                                         self.panel_app.tag_manager.bubble(gid)
                                             .map(|g| g.primitives.iter().map(|p| p.data().id).collect())
@@ -1103,7 +1076,7 @@ impl ChartApp {
                         // Phase 2: mutably iterate stash entries and re-ID colliding ones.
                         for (chart_id, _gid, group_ids) in &collision_info {
                             let mut reid_count = 0u32;
-                            if let Some(v) = crate::branch_meta_bridge::stashed_primitives_mut(
+                            if let Some(v) = crate::stash::stashed_primitives_mut(
                                 &mut self.stashed_primitives, *chart_id,
                             ) {
                                 for p in v.iter_mut() {
@@ -1153,9 +1126,9 @@ impl ChartApp {
                         };
                         // Phase 4 S2.7.1c: read via branch_meta (B6 capture flip).
                         let first_cid = first_win.id;
-                        let symbol = crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, first_cid)
+                        let symbol = self.panel_app.tag_manager.symbol_for_chart(first_cid)
                             .map(String::from).unwrap_or_default();
-                        let timeframe = crate::branch_meta_bridge::read_timeframe(&self.panel_app.tag_manager, first_cid)
+                        let timeframe = self.panel_app.tag_manager.timeframe_for_chart(first_cid)
                             .cloned().unwrap_or_else(zengeld_chart::state::Timeframe::h1);
                         let group_id = self.panel_app.tag_manager.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
                         let leaf_chart_ids: Vec<(zengeld_chart::LeafId, zengeld_chart::ChartId)> =
@@ -1705,8 +1678,8 @@ impl ChartApp {
                         .iter_containers()
                         .filter_map(|(_, w)| {
                             let cid = w.id;
-                            let exch = crate::branch_meta_bridge::read_exchange(&self.panel_app.tag_manager, cid)?;
-                            let sym = crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, cid)
+                            let exch = self.panel_app.tag_manager.exchange_for_chart(cid)?;
+                            let sym = self.panel_app.tag_manager.symbol_for_chart(cid)
                                 .map(String::from).unwrap_or_default();
                             digdigdig3::ExchangeId::from_str(exch).map(|eid| (eid, sym))
                         })
@@ -1734,13 +1707,13 @@ impl ChartApp {
                         .iter_containers()
                         .map(|(_, w)| {
                             let cid = w.id;
-                            let sym = crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, cid)
+                            let sym = self.panel_app.tag_manager.symbol_for_chart(cid)
                                 .map(String::from).unwrap_or_default();
-                            let exch = crate::branch_meta_bridge::read_exchange(&self.panel_app.tag_manager, cid)
+                            let exch = self.panel_app.tag_manager.exchange_for_chart(cid)
                                 .map(String::from).unwrap_or_default();
-                            let tf = crate::branch_meta_bridge::read_timeframe(&self.panel_app.tag_manager, cid)
+                            let tf = self.panel_app.tag_manager.timeframe_for_chart(cid)
                                 .cloned().unwrap_or_else(zengeld_chart::state::Timeframe::h1);
-                            let at = crate::branch_meta_bridge::read_account_type(&self.panel_app.tag_manager, cid)
+                            let at = self.panel_app.tag_manager.account_type_for_chart(cid)
                                 .map(String::from).unwrap_or_default();
                             (sym, exch, tf, at)
                         })
@@ -2018,7 +1991,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::InternalToggleSyncSymbol => {
-                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.panel_app.tag_manager, cid));
+                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid));
                 let mut newly_enabled = false;
                 if let Some(gid) = gid {
                     if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
@@ -2035,15 +2008,15 @@ impl ChartApp {
                     if let Some(leaf) = self.panel_app.panel_grid.docking().active_leaf() {
                         let active_cid = self.panel_app.panel_grid.active_container_id();
                         let symbol = active_cid
-                            .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, cid))
+                            .and_then(|cid| self.panel_app.tag_manager.symbol_for_chart(cid))
                             .map(String::from)
                             .unwrap_or_default();
                         let exchange = active_cid
-                            .and_then(|cid| crate::branch_meta_bridge::read_exchange(&self.panel_app.tag_manager, cid))
+                            .and_then(|cid| self.panel_app.tag_manager.exchange_for_chart(cid))
                             .map(String::from)
                             .unwrap_or_default();
                         let account_type = active_cid
-                            .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.panel_app.tag_manager, cid))
+                            .and_then(|cid| self.panel_app.tag_manager.account_type_for_chart(cid))
                             .map(String::from)
                             .unwrap_or_default();
                         if !symbol.is_empty() {
@@ -2055,7 +2028,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::InternalToggleSyncTimeframe => {
-                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.panel_app.tag_manager, cid));
+                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid));
                 let mut newly_enabled = false;
                 if let Some(gid) = gid {
                     if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
@@ -2071,7 +2044,7 @@ impl ChartApp {
                 if newly_enabled {
                     if let Some(leaf) = self.panel_app.panel_grid.docking().active_leaf() {
                         let tf = self.panel_app.panel_grid.active_container_id()
-                            .and_then(|cid| crate::branch_meta_bridge::read_timeframe(&self.panel_app.tag_manager, cid))
+                            .and_then(|cid| self.panel_app.tag_manager.timeframe_for_chart(cid))
                             .cloned();
                         if let Some(tf) = tf {
                             self.propagate_timeframe_to_sync_group(leaf, tf);
@@ -2082,7 +2055,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::InternalToggleSyncCrosshair => {
-                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.panel_app.tag_manager, cid));
+                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid));
                 let mut newly_enabled = false;
                 if let Some(gid) = gid {
                     if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
@@ -2126,7 +2099,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::InternalToggleSyncViewport => {
-                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.panel_app.tag_manager, cid));
+                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid));
                 let mut newly_enabled = false;
                 let mut newly_disabled = false;
                 if let Some(gid) = gid {
@@ -2208,7 +2181,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::InternalToggleSyncDrawings => {
-                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.panel_app.tag_manager, cid));
+                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid));
                 let chart_id = self.panel_app.panel_grid.active_container().map(|w| w.id);
                 if let Some(gid) = gid {
                     // Toggle the flag and capture the new value.
@@ -2257,7 +2230,7 @@ impl ChartApp {
                             };
                         if let (Some(cid), Some(local)) = (chart_id, local_prims_opt) {
                             let stash_count = local.len();
-                            crate::branch_meta_bridge::extend_stashed_primitives(
+                            crate::stash::extend_stashed_primitives(
                                 &mut self.stashed_primitives, cid, local,
                             );
                             eprintln!(
@@ -2269,7 +2242,7 @@ impl ChartApp {
                         // ON → OFF: restore stashed window-local primitives.
                         let active_pid2 = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                         if let (Some(cid), Some(pid)) = (chart_id, active_pid2) {
-                            let restored = crate::branch_meta_bridge::take_stashed_primitives(
+                            let restored = crate::stash::take_stashed_primitives(
                                 &mut self.stashed_primitives, cid,
                             ).unwrap_or_default();
                             let count = restored.len();
@@ -2290,7 +2263,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::InternalToggleSyncIndicators => {
-                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.panel_app.tag_manager, cid));
+                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid));
                 let chart_id = self.panel_app.panel_grid.active_container().map(|w| w.id);
                 if let (Some(gid), Some(chart_id)) = (gid, chart_id) {
                     // Toggle the flag and capture the new value.
@@ -2302,7 +2275,8 @@ impl ChartApp {
                         return;
                     };
 
-                    let pre_tag_ids: Vec<u64> = crate::branch_meta_bridge::read_pre_tag_ids(&self.branch_meta, chart_id)
+                    let pre_tag_ids: Vec<u64> = self.pre_tag_ids_by_chart
+                        .get(&chart_id)
                         .cloned()
                         .unwrap_or_default();
 

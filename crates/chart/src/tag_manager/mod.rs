@@ -479,6 +479,48 @@ impl BubbleStore {
     }
 
     // =========================================================================
+    // Instrument read helpers — convenience wrappers that replace read_* bridge fns
+    // =========================================================================
+
+    /// Symbol of the bubble that contains `chart_id`. `None` when no bubble or empty.
+    pub fn symbol_for_chart(&self, chart_id: ChartId) -> Option<&str> {
+        self.bubble_for_chart(chart_id)
+            .and_then(|bid| self.bubble(bid))
+            .map(|b| b.symbol.as_str())
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Timeframe of the bubble that contains `chart_id`. `None` when no bubble.
+    pub fn timeframe_for_chart(&self, chart_id: ChartId) -> Option<&Timeframe> {
+        self.bubble_for_chart(chart_id)
+            .and_then(|bid| self.bubble(bid))
+            .map(|b| &b.timeframe)
+    }
+
+    /// Exchange of the bubble that contains `chart_id`. `None` when no bubble or empty.
+    pub fn exchange_for_chart(&self, chart_id: ChartId) -> Option<&str> {
+        self.bubble_for_chart(chart_id)
+            .and_then(|bid| self.bubble(bid))
+            .map(|b| b.exchange.as_str())
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Account type of the bubble that contains `chart_id`. `None` when no bubble or empty.
+    pub fn account_type_for_chart(&self, chart_id: ChartId) -> Option<&str> {
+        self.bubble_for_chart(chart_id)
+            .and_then(|bid| self.bubble(bid))
+            .map(|b| b.account_type.as_str())
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Previous close price of the bubble that contains `chart_id`. `None` when no bubble or unset.
+    pub fn prev_close_price_for_chart(&self, chart_id: ChartId) -> Option<f64> {
+        self.bubble_for_chart(chart_id)
+            .and_then(|bid| self.bubble(bid))
+            .and_then(|b| b.prev_close_price)
+    }
+
+    // =========================================================================
     // Membership — query helpers
     // =========================================================================
 

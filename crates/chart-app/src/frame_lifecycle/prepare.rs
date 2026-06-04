@@ -217,11 +217,11 @@ impl ChartApp {
                 // overwrites panel state.symbol with that stale value on the very
                 // first frame (when last_active_leaf=None ≠ current_leaf).
                 if let Some(active_cid_sync) = self.panel_app.panel_grid.active_container_id() {
-                    let sym = crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, active_cid_sync)
+                    let sym = self.panel_app.tag_manager.symbol_for_chart(active_cid_sync)
                         .map(String::from).unwrap_or_default();
-                    let exch = crate::branch_meta_bridge::read_exchange(&self.panel_app.tag_manager, active_cid_sync)
+                    let exch = self.panel_app.tag_manager.exchange_for_chart(active_cid_sync)
                         .map(String::from).unwrap_or_default();
-                    let at = crate::branch_meta_bridge::read_account_type(&self.panel_app.tag_manager, active_cid_sync)
+                    let at = self.panel_app.tag_manager.account_type_for_chart(active_cid_sync)
                         .map(String::from).unwrap_or_else(|| "S".to_string());
                     if let Some(g) = self.panel_app.tag_manager.bubble_mut(new_active_group) {
                         g.symbol = sym;
@@ -260,13 +260,13 @@ impl ChartApp {
             let active_cid_obj = self.panel_app.panel_grid.active_container_id();
             let (active_window_sym, active_window_exchange, active_window_account_type) = {
                 let sym = active_cid_obj
-                    .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, cid))
+                    .and_then(|cid| self.panel_app.tag_manager.symbol_for_chart(cid))
                     .map(String::from).unwrap_or_default();
                 let exch = active_cid_obj
-                    .and_then(|cid| crate::branch_meta_bridge::read_exchange(&self.panel_app.tag_manager, cid))
+                    .and_then(|cid| self.panel_app.tag_manager.exchange_for_chart(cid))
                     .map(String::from).unwrap_or_default();
                 let at = active_cid_obj
-                    .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.panel_app.tag_manager, cid))
+                    .and_then(|cid| self.panel_app.tag_manager.account_type_for_chart(cid))
                     .map(String::from).unwrap_or_else(|| "S".to_string());
                 (sym, exch, at)
             };
@@ -357,7 +357,7 @@ impl ChartApp {
                 // Stashed primitives are always shown regardless of sync_drawings state —
                 // they represent objects that were on the window before joining the tag group.
                 let stashed_prim_data: Vec<_> = active_cid
-                    .and_then(|cid| crate::branch_meta_bridge::read_stashed_primitives(
+                    .and_then(|cid| crate::stash::read_stashed_primitives(
                         &self.stashed_primitives, cid,
                     ))
                     .map(|v| v.iter()
@@ -372,7 +372,7 @@ impl ChartApp {
 
                 // Collect window-local indicator IDs before releasing the window borrow.
                 let pre_tag_ids: Vec<u64> = active_cid
-                    .and_then(|cid| crate::branch_meta_bridge::read_pre_tag_ids(&self.branch_meta, cid))
+                    .and_then(|cid| self.pre_tag_ids_by_chart.get(&cid))
                     .cloned()
                     .unwrap_or_default();
 
@@ -585,11 +585,11 @@ impl ChartApp {
                 for (sym_name, sym_exchange, sym_account_type) in &watchlist_entries {
                     let price_data = self.panel_app.panel_grid.containers().iter()
                         .find(|(cid, _)| {
-                            crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, **cid)
+                            self.panel_app.tag_manager.symbol_for_chart(**cid)
                                 .map_or(false, |s| s == sym_name)
-                            && crate::branch_meta_bridge::read_exchange(&self.panel_app.tag_manager, **cid)
+                            && self.panel_app.tag_manager.exchange_for_chart(**cid)
                                 .map_or(false, |e| e == sym_exchange)
-                            && crate::branch_meta_bridge::read_account_type(&self.panel_app.tag_manager, **cid)
+                            && self.panel_app.tag_manager.account_type_for_chart(**cid)
                                 .map_or(false, |a| a == sym_account_type)
                         })
                         .and_then(|(_, w)| w.bars.last())
@@ -900,12 +900,12 @@ impl ChartApp {
                 let mut syncs = Vec::new();
                 for &(leaf_id, _) in &leaf_rects {
                     if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
-                        let window_symbol = crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, chart_id)
+                        let window_symbol = self.panel_app.tag_manager.symbol_for_chart(chart_id)
                             .map(String::from)
                             .unwrap_or_default();
                         if let Some(group_id) = self.panel_app.panel_grid
                             .container_id_for_leaf(leaf_id)
-                            .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.panel_app.tag_manager, cid))
+                            .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid))
                         {
                             if let Some(group) = self.panel_app.tag_manager.bubble(group_id) {
                                 // Skip sync only for auto-created solo groups — their primitives
@@ -944,7 +944,7 @@ impl ChartApp {
             // Sync indicator overlay visibility per leaf.
             for &(leaf_id, _) in &leaf_rects {
                 let symbol = self.panel_app.panel_grid.container_id_for_leaf(leaf_id)
-                    .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, cid))
+                    .and_then(|cid| self.panel_app.tag_manager.symbol_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_default();
                 let has_compare = self.panel_app.panel_grid.container_for_leaf(leaf_id)
@@ -967,7 +967,7 @@ impl ChartApp {
                     .unwrap_or(false);
                 let chart_id_opt = self.panel_app.panel_grid.active_container_id();
                 let group_id_opt = chart_id_opt
-                    .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.panel_app.tag_manager, cid));
+                    .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid));
                 if let (Some(group_id), Some(chart_id)) = (group_id_opt, chart_id_opt) {
                     if !is_dragging {
                         // Respect the sync_drawings flag — skip forward sync if disabled.
@@ -983,7 +983,7 @@ impl ChartApp {
                             // Capture the window's current symbol so we can filter
                             // primitives — stale drawings from the previous symbol
                             // must not be re-injected by the forward sync.
-                            let window_symbol = crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, chart_id)
+                            let window_symbol = self.panel_app.tag_manager.symbol_for_chart(chart_id)
                                 .map(String::from)
                                 .unwrap_or_default();
                             let cloned: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
@@ -1011,7 +1011,7 @@ impl ChartApp {
             // Single pane: sync indicator overlay visibility.
             let active_cid_single = self.panel_app.panel_grid.active_container_id();
             let symbol = active_cid_single
-                .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, cid))
+                .and_then(|cid| self.panel_app.tag_manager.symbol_for_chart(cid))
                 .map(String::from)
                 .unwrap_or_default();
             let has_compare = self.panel_app.panel_grid.active_container()

@@ -112,8 +112,10 @@ impl ChartApp {
                 Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
                     self.lag_event_count += 1;
                     crate::dlog!("[ChartApp:{}] broadcast LAGGED — skipped {} messages (total lag events: {})",
-                        self.branch_meta.values().next()
-                            .and_then(|m| m.symbol.as_deref()).unwrap_or("?"),
+                        self.panel_app.tag_manager.bubbles()
+                            .find(|b| !b.symbol.is_empty())
+                            .map(|b| b.symbol.as_str())
+                            .unwrap_or("?"),
                         n, self.lag_event_count);
                     // Always trigger backfill — the receiver has jumped forward
                     // and missed Trade updates are permanently lost.
@@ -184,11 +186,11 @@ impl ChartApp {
                         let bs_key = bar_service::BarSeriesKey::new(exchange_id, account_type, symbol.clone(), tf_name.clone());
                         let matched_cids: Vec<u64> = self.panel_app.panel_grid.containers().iter()
                             .filter(|(cid, _window)| {
-                                use crate::branch_meta_bridge::{read_symbol, read_exchange, read_timeframe, read_account_type};
-                                read_symbol(&self.panel_app.tag_manager, **cid).map_or(false, |s| s == symbol)
-                                    && read_exchange(&self.panel_app.tag_manager, **cid).map_or(false, |e| e == exchange_id.as_str())
-                                    && read_timeframe(&self.panel_app.tag_manager, **cid).map_or(false, |tf| tf.name == tf_name)
-                                    && read_account_type(&self.panel_app.tag_manager, **cid).map_or(false, |at| at == account_type.short_label())
+                
+                                self.panel_app.tag_manager.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
+                                    && self.panel_app.tag_manager.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
+                                    && self.panel_app.tag_manager.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
+                                    && self.panel_app.tag_manager.account_type_for_chart(**cid).map_or(false, |at| at == account_type.short_label())
                             })
                             .map(|(cid, _window)| cid.0)
                             .collect();
@@ -220,15 +222,13 @@ impl ChartApp {
                     // read symbol/tf/exchange/account_type inside the containers_mut() loop
                     // (branch_meta can't be borrowed concurrently with the mut borrow).
                     let instrument_by_cid: std::collections::HashMap<zengeld_chart::state::ChartId, (String, zengeld_chart::state::Timeframe, String, String)> = {
-                        use crate::branch_meta_bridge::{branch_key_for_chart, read_symbol, read_timeframe, read_exchange, read_account_type};
                         self.panel_app.panel_grid.containers().keys()
                             .filter_map(|cid| {
-                                let sym = read_symbol(&self.panel_app.tag_manager, *cid).map(String::from)?;
-                                let tf = read_timeframe(&self.panel_app.tag_manager, *cid).cloned()?;
-                                let exch = read_exchange(&self.panel_app.tag_manager, *cid).map(String::from)?;
-                                let at = read_account_type(&self.panel_app.tag_manager, *cid).map(String::from)?;
-                                let _ = branch_key_for_chart(*cid);
-                                Some((*cid, (sym, tf, exch, at)))
+                                let sym = self.panel_app.tag_manager.symbol_for_chart(*cid).map(String::from)?;
+                                let tf = self.panel_app.tag_manager.timeframe_for_chart(*cid).cloned()?;
+                                let exch = self.panel_app.tag_manager.exchange_for_chart(*cid).map(String::from)?;
+                                let at = self.panel_app.tag_manager.account_type_for_chart(*cid).map(String::from)?;
+                                                                Some((*cid, (sym, tf, exch, at)))
                             })
                             .collect()
                     };
@@ -281,14 +281,12 @@ impl ChartApp {
                             prev_close_mirrors.push((*chart_id_key, window.bars.first().map(|b| b.open)));
                         }
                     }
-                    // Phase 1.2: dual-write prev_close_price into branch_meta + bubble.
                     for (chart_id, prev_close) in prev_close_mirrors {
-                        crate::branch_meta_bridge::mirror_prev_close_price(
-                            &mut self.branch_meta,
-                            &mut self.panel_app.tag_manager,
-                            chart_id,
-                            prev_close,
-                        );
+                        if let Some(bid) = self.panel_app.tag_manager.bubble_for_chart(chart_id) {
+                            if let Some(bubble) = self.panel_app.tag_manager.bubble_mut(bid) {
+                                bubble.prev_close_price = prev_close;
+                            }
+                        }
                     }
 
                     // Trigger Layer 2 background backfill for initial loads.
@@ -304,11 +302,11 @@ impl ChartApp {
                     if any_matched {
                         if let Some(w) = self.panel_app.panel_grid.containers().iter()
                             .find(|(cid, _w)| {
-                                use crate::branch_meta_bridge::{read_symbol, read_exchange, read_timeframe, read_account_type};
-                                read_symbol(&self.panel_app.tag_manager, **cid).map_or(false, |s| s == symbol)
-                                    && read_exchange(&self.panel_app.tag_manager, **cid).map_or(false, |e| e == exchange_id.as_str())
-                                    && read_timeframe(&self.panel_app.tag_manager, **cid).map_or(false, |tf| tf.name == tf_name)
-                                    && read_account_type(&self.panel_app.tag_manager, **cid).map_or(false, |at| at == account_type.short_label())
+                
+                                self.panel_app.tag_manager.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
+                                    && self.panel_app.tag_manager.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
+                                    && self.panel_app.tag_manager.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
+                                    && self.panel_app.tag_manager.account_type_for_chart(**cid).map_or(false, |at| at == account_type.short_label())
                             })
                             .map(|(_cid, w)| w)
                         {
@@ -327,11 +325,11 @@ impl ChartApp {
                         .containers()
                         .iter()
                         .filter(|(cid, _w)| {
-                            use crate::branch_meta_bridge::{read_symbol, read_exchange, read_timeframe, read_account_type};
-                            read_symbol(&self.panel_app.tag_manager, **cid).map_or(false, |s| s == symbol)
-                                && read_exchange(&self.panel_app.tag_manager, **cid).map_or(false, |e| e == exchange_id.as_str())
-                                && read_timeframe(&self.panel_app.tag_manager, **cid).map_or(false, |tf| tf.name == tf_name)
-                                && read_account_type(&self.panel_app.tag_manager, **cid).map_or(false, |at| at == account_type.short_label())
+            
+                            self.panel_app.tag_manager.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
+                                && self.panel_app.tag_manager.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
+                                && self.panel_app.tag_manager.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
+                                && self.panel_app.tag_manager.account_type_for_chart(**cid).map_or(false, |at| at == account_type.short_label())
                         })
                         .map(|(cid, w)| (cid.0, w.bars.clone()))
                         .collect();
@@ -357,15 +355,13 @@ impl ChartApp {
 
                     // Phase 4 B: pre-collect instrument map from branch_meta.
                     let instrument_by_cid_bc: std::collections::HashMap<zengeld_chart::state::ChartId, (String, zengeld_chart::state::Timeframe, String, String)> = {
-                        use crate::branch_meta_bridge::{branch_key_for_chart, read_symbol, read_timeframe, read_exchange, read_account_type};
                         self.panel_app.panel_grid.containers().keys()
                             .filter_map(|cid| {
-                                let sym = read_symbol(&self.panel_app.tag_manager, *cid).map(String::from)?;
-                                let tf = read_timeframe(&self.panel_app.tag_manager, *cid).cloned()?;
-                                let exch = read_exchange(&self.panel_app.tag_manager, *cid).map(String::from)?;
-                                let at = read_account_type(&self.panel_app.tag_manager, *cid).map(String::from)?;
-                                let _ = branch_key_for_chart(*cid);
-                                Some((*cid, (sym, tf, exch, at)))
+                                let sym = self.panel_app.tag_manager.symbol_for_chart(*cid).map(String::from)?;
+                                let tf = self.panel_app.tag_manager.timeframe_for_chart(*cid).cloned()?;
+                                let exch = self.panel_app.tag_manager.exchange_for_chart(*cid).map(String::from)?;
+                                let at = self.panel_app.tag_manager.account_type_for_chart(*cid).map(String::from)?;
+                                                                Some((*cid, (sym, tf, exch, at)))
                             })
                             .collect()
                     };
@@ -389,14 +385,12 @@ impl ChartApp {
                         }
                         prev_close_mirrors.push((*chart_id_key, window.bars.first().map(|b| b.open)));
                     }
-                    // Phase 1.2: dual-write prev_close_price into branch_meta + bubble.
                     for (chart_id, prev_close) in prev_close_mirrors {
-                        crate::branch_meta_bridge::mirror_prev_close_price(
-                            &mut self.branch_meta,
-                            &mut self.panel_app.tag_manager,
-                            chart_id,
-                            prev_close,
-                        );
+                        if let Some(bid) = self.panel_app.tag_manager.bubble_for_chart(chart_id) {
+                            if let Some(bubble) = self.panel_app.tag_manager.bubble_mut(bid) {
+                                bubble.prev_close_price = prev_close;
+                            }
+                        }
                     }
 
                     // Recalculate indicators for matched windows.
@@ -406,11 +400,11 @@ impl ChartApp {
                         .containers()
                         .iter()
                         .filter(|(cid, _w)| {
-                            use crate::branch_meta_bridge::{read_symbol, read_exchange, read_timeframe, read_account_type};
-                            read_symbol(&self.panel_app.tag_manager, **cid).map_or(false, |s| s == symbol)
-                                && read_exchange(&self.panel_app.tag_manager, **cid).map_or(false, |e| e == exchange_id.as_str())
-                                && read_timeframe(&self.panel_app.tag_manager, **cid).map_or(false, |tf| tf.name == tf_name)
-                                && read_account_type(&self.panel_app.tag_manager, **cid).map_or(false, |at| at == account_type.short_label())
+            
+                            self.panel_app.tag_manager.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
+                                && self.panel_app.tag_manager.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
+                                && self.panel_app.tag_manager.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
+                                && self.panel_app.tag_manager.account_type_for_chart(**cid).map_or(false, |at| at == account_type.short_label())
                         })
                         .map(|(cid, w)| (cid.0, w.bars.clone()))
                         .collect();
@@ -431,15 +425,13 @@ impl ChartApp {
 
                     // Phase 4 B: pre-collect instrument map from branch_meta.
                     let instrument_by_cid_sb: std::collections::HashMap<zengeld_chart::state::ChartId, (String, zengeld_chart::state::Timeframe, String, String)> = {
-                        use crate::branch_meta_bridge::{branch_key_for_chart, read_symbol, read_timeframe, read_exchange, read_account_type};
                         self.panel_app.panel_grid.containers().keys()
                             .filter_map(|cid| {
-                                let sym = read_symbol(&self.panel_app.tag_manager, *cid).map(String::from)?;
-                                let tf = read_timeframe(&self.panel_app.tag_manager, *cid).cloned()?;
-                                let exch = read_exchange(&self.panel_app.tag_manager, *cid).map(String::from)?;
-                                let at = read_account_type(&self.panel_app.tag_manager, *cid).map(String::from)?;
-                                let _ = branch_key_for_chart(*cid);
-                                Some((*cid, (sym, tf, exch, at)))
+                                let sym = self.panel_app.tag_manager.symbol_for_chart(*cid).map(String::from)?;
+                                let tf = self.panel_app.tag_manager.timeframe_for_chart(*cid).cloned()?;
+                                let exch = self.panel_app.tag_manager.exchange_for_chart(*cid).map(String::from)?;
+                                let at = self.panel_app.tag_manager.account_type_for_chart(*cid).map(String::from)?;
+                                                                Some((*cid, (sym, tf, exch, at)))
                             })
                             .collect()
                     };
@@ -481,14 +473,12 @@ impl ChartApp {
                         }
                         prev_close_mirrors.push((*chart_id_key, window.bars.first().map(|b| b.open)));
                     }
-                    // Phase 1.2: dual-write prev_close_price into branch_meta + bubble.
                     for (chart_id, prev_close) in prev_close_mirrors {
-                        crate::branch_meta_bridge::mirror_prev_close_price(
-                            &mut self.branch_meta,
-                            &mut self.panel_app.tag_manager,
-                            chart_id,
-                            prev_close,
-                        );
+                        if let Some(bid) = self.panel_app.tag_manager.bubble_for_chart(chart_id) {
+                            if let Some(bubble) = self.panel_app.tag_manager.bubble_mut(bid) {
+                                bubble.prev_close_price = prev_close;
+                            }
+                        }
                     }
 
                     if any_matched {
@@ -498,10 +488,9 @@ impl ChartApp {
                             .containers()
                             .iter()
                             .filter(|(cid, _w)| {
-                                use crate::branch_meta_bridge::{read_symbol, read_exchange, read_timeframe};
-                                read_symbol(&self.panel_app.tag_manager, **cid).map_or(false, |s| s == symbol)
-                                    && read_exchange(&self.panel_app.tag_manager, **cid).map_or(false, |e| e == exchange_id.as_str())
-                                    && read_timeframe(&self.panel_app.tag_manager, **cid).map_or(false, |tf| tf.name == tf_name)
+                                self.panel_app.tag_manager.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
+                                    && self.panel_app.tag_manager.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
+                                    && self.panel_app.tag_manager.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
                             })
                             .map(|(cid, w)| (cid.0, w.bars.clone()))
                             .collect();
@@ -530,15 +519,13 @@ impl ChartApp {
 
                     // Phase 4 B: pre-collect instrument map from branch_meta for TradeUpdate.
                     let instrument_by_cid_tu: std::collections::HashMap<zengeld_chart::state::ChartId, (String, zengeld_chart::state::Timeframe, String, String)> = {
-                        use crate::branch_meta_bridge::{branch_key_for_chart, read_symbol, read_timeframe, read_exchange, read_account_type};
                         self.panel_app.panel_grid.containers().keys()
                             .filter_map(|cid| {
-                                let sym = read_symbol(&self.panel_app.tag_manager, *cid).map(String::from)?;
-                                let tf = read_timeframe(&self.panel_app.tag_manager, *cid).cloned()?;
-                                let exch = read_exchange(&self.panel_app.tag_manager, *cid).map(String::from)?;
-                                let at = read_account_type(&self.panel_app.tag_manager, *cid).map(String::from)?;
-                                let _ = branch_key_for_chart(*cid);
-                                Some((*cid, (sym, tf, exch, at)))
+                                let sym = self.panel_app.tag_manager.symbol_for_chart(*cid).map(String::from)?;
+                                let tf = self.panel_app.tag_manager.timeframe_for_chart(*cid).cloned()?;
+                                let exch = self.panel_app.tag_manager.exchange_for_chart(*cid).map(String::from)?;
+                                let at = self.panel_app.tag_manager.account_type_for_chart(*cid).map(String::from)?;
+                                                                Some((*cid, (sym, tf, exch, at)))
                             })
                             .collect()
                     };
@@ -640,14 +627,13 @@ impl ChartApp {
                         crate::dlog!("[ChartApp] Multi-bar gap detected for {} — requesting REST backfill", symbol);
                         let bridge = self.bridge.clone();
                         for cid in self.panel_app.panel_grid.containers().keys() {
-                            use crate::branch_meta_bridge::{read_symbol, read_account_type, read_timeframe};
-                            let sym_match = read_symbol(&self.panel_app.tag_manager, *cid).map_or(false, |s| s == symbol);
-                            let at_match = read_account_type(&self.panel_app.tag_manager, *cid).map_or(false, |at| at == account_type.short_label());
+                            let sym_match = self.panel_app.tag_manager.symbol_for_chart(*cid).map_or(false, |s| s == symbol);
+                            let at_match = self.panel_app.tag_manager.account_type_for_chart(*cid).map_or(false, |at| at == account_type.short_label());
                             if sym_match && at_match {
                                 let at = account_type_from_label(
-                                    read_account_type(&self.panel_app.tag_manager, *cid).unwrap_or("")
+                                    self.panel_app.tag_manager.account_type_for_chart(*cid).unwrap_or("")
                                 );
-                                if let Some(tf) = read_timeframe(&self.panel_app.tag_manager, *cid) {
+                                if let Some(tf) = self.panel_app.tag_manager.timeframe_for_chart(*cid) {
                                     bridge.request_bars(exchange_id, &symbol, tf, at, None, None, false);
                                 }
                             }
@@ -823,17 +809,16 @@ impl ChartApp {
                     // force=true bypasses the cache_is_fresh guard so a reconnect always
                     // fetches fresh data even if the last cached bar is recent.
                     for (cid, _window) in self.panel_app.panel_grid.containers().iter() {
-                        use crate::branch_meta_bridge::{read_symbol, read_exchange, read_account_type, read_timeframe};
-                        let sym = read_symbol(&self.panel_app.tag_manager, *cid).unwrap_or("");
+                        let sym = self.panel_app.tag_manager.symbol_for_chart(*cid).unwrap_or("");
                         if sym.is_empty() { continue; }
-                        let exch = read_exchange(&self.panel_app.tag_manager, *cid).unwrap_or("");
+                        let exch = self.panel_app.tag_manager.exchange_for_chart(*cid).unwrap_or("");
                         let win_eid = digdigdig3::ExchangeId::from_str(exch)
                             .unwrap_or(digdigdig3::ExchangeId::Binance);
                         if win_eid == exchange_id {
                             let at = account_type_from_label(
-                                read_account_type(&self.panel_app.tag_manager, *cid).unwrap_or("")
+                                self.panel_app.tag_manager.account_type_for_chart(*cid).unwrap_or("")
                             );
-                            if let Some(tf) = read_timeframe(&self.panel_app.tag_manager, *cid) {
+                            if let Some(tf) = self.panel_app.tag_manager.timeframe_for_chart(*cid) {
                                 bridge.request_bars(exchange_id, sym, tf, at, None, None, true);
                             }
                         }
@@ -1030,10 +1015,9 @@ impl ChartApp {
             let window_data: Vec<WindowAlertData> = self.panel_app.panel_grid.containers()
                 .iter()
                 .filter_map(|(cid, window)| {
-                    use crate::branch_meta_bridge::{read_symbol, read_exchange, read_account_type};
-                    let sym = read_symbol(&self.panel_app.tag_manager, *cid).unwrap_or("").to_string();
-                    let exch = read_exchange(&self.panel_app.tag_manager, *cid).unwrap_or("").to_string();
-                    let at = read_account_type(&self.panel_app.tag_manager, *cid).unwrap_or("").to_string();
+                    let sym = self.panel_app.tag_manager.symbol_for_chart(*cid).unwrap_or("").to_string();
+                    let exch = self.panel_app.tag_manager.exchange_for_chart(*cid).unwrap_or("").to_string();
+                    let at = self.panel_app.tag_manager.account_type_for_chart(*cid).unwrap_or("").to_string();
                     let triple = (sym.clone(), exch.clone(), at.clone());
                     if seen_pairs.contains(&triple) {
                         return None;
@@ -1131,7 +1115,7 @@ impl ChartApp {
             // Build delivery events for triggered alerts.
             if !triggered_ids.is_empty() {
                 let symbol = self.panel_app.panel_grid.active_container_id()
-                    .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, cid))
+                    .and_then(|cid| self.panel_app.tag_manager.symbol_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_default();
                 let now = std::time::SystemTime::now()
@@ -1181,7 +1165,7 @@ impl ChartApp {
                     .panel_grid
                     .containers()
                     .keys()
-                    .filter(|cid| crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, **cid)
+                    .filter(|cid| self.panel_app.tag_manager.symbol_for_chart(**cid)
                         .map_or(false, |s| s == *symbol))
                     .map(|cid| cid.0)
                     .collect();
@@ -1227,15 +1211,13 @@ impl ChartApp {
 
             // Phase 4 B: pre-collect instrument map from branch_meta.
             let instrument_by_cid_scroll: std::collections::HashMap<zengeld_chart::state::ChartId, (String, zengeld_chart::state::Timeframe, String, String)> = {
-                use crate::branch_meta_bridge::{branch_key_for_chart, read_symbol, read_timeframe, read_exchange, read_account_type};
                 self.panel_app.panel_grid.containers().keys()
                     .filter_map(|cid| {
-                        let sym = read_symbol(&self.panel_app.tag_manager, *cid).map(String::from)?;
-                        let tf = read_timeframe(&self.panel_app.tag_manager, *cid).cloned()?;
-                        let exch = read_exchange(&self.panel_app.tag_manager, *cid).map(String::from)?;
-                        let at = read_account_type(&self.panel_app.tag_manager, *cid).map(String::from)?;
-                        let _ = branch_key_for_chart(*cid);
-                        Some((*cid, (sym, tf, exch, at)))
+                        let sym = self.panel_app.tag_manager.symbol_for_chart(*cid).map(String::from)?;
+                        let tf = self.panel_app.tag_manager.timeframe_for_chart(*cid).cloned()?;
+                        let exch = self.panel_app.tag_manager.exchange_for_chart(*cid).map(String::from)?;
+                        let at = self.panel_app.tag_manager.account_type_for_chart(*cid).map(String::from)?;
+                                                Some((*cid, (sym, tf, exch, at)))
                     })
                     .collect()
             };

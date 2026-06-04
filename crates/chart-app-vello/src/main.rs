@@ -3582,21 +3582,19 @@ impl ApplicationHandler for App<'_> {
                 pw.chart.pending_reset_cache = false;
                 pw.chart.pending_reset_storage = false;
 
-                // Collect window info from branch_meta (Phase 4 B).
                 let active_cid_rc = pw.chart.panel_app.panel_grid.active_container_id();
                 let (symbol, exchange, account_type, timeframe, bar_count) = {
-                    use chart_app::branch_meta_bridge::{read_symbol, read_exchange, read_account_type, read_timeframe};
                     let sym = active_cid_rc
-                        .and_then(|cid| read_symbol(&pw.chart.panel_app.tag_manager, cid))
+                        .and_then(|cid| pw.chart.panel_app.tag_manager.symbol_for_chart(cid))
                         .map(String::from).unwrap_or_default();
                     let exch = active_cid_rc
-                        .and_then(|cid| read_exchange(&pw.chart.panel_app.tag_manager, cid))
+                        .and_then(|cid| pw.chart.panel_app.tag_manager.exchange_for_chart(cid))
                         .map(String::from).unwrap_or_default();
                     let at = active_cid_rc
-                        .and_then(|cid| read_account_type(&pw.chart.panel_app.tag_manager, cid))
+                        .and_then(|cid| pw.chart.panel_app.tag_manager.account_type_for_chart(cid))
                         .map(String::from).unwrap_or_else(|| "S".to_string());
                     let tf = active_cid_rc
-                        .and_then(|cid| read_timeframe(&pw.chart.panel_app.tag_manager, cid))
+                        .and_then(|cid| pw.chart.panel_app.tag_manager.timeframe_for_chart(cid))
                         .cloned()
                         .unwrap_or_else(zengeld_chart::state::Timeframe::h1);
                     if sym.is_empty() && active_cid_rc.is_none() {
@@ -3620,7 +3618,7 @@ impl ApplicationHandler for App<'_> {
                 // the same symbol key, when sync_symbol is enabled.
                 let group_info = active_cid_rc
                     .and_then(|cid| {
-                        let gid = chart_app::branch_meta_bridge::read_group_id(&pw.chart.panel_app.tag_manager, cid)?;
+                        let gid = pw.chart.panel_app.tag_manager.bubble_for_chart(cid)?;
                         Some((cid, gid))
                     });
                 if let Some((active_cid, group_id)) = group_info {
@@ -3629,19 +3627,17 @@ impl ApplicationHandler for App<'_> {
                         .map(|g| g.sync_flags.sync_symbol)
                         .unwrap_or(false);
                     if sync_symbol_on {
-                        // Pre-collect peer instrument info from branch_meta.
                         let peer_ids: Vec<zengeld_chart::ChartId> = pw.chart.panel_app.tag_manager
                             .chart_member_ids(group_id)
                             .into_iter()
                             .filter(|&m| m != active_cid)
                             .collect();
                         let peers_matching: Vec<zengeld_chart::ChartId> = {
-                            use chart_app::branch_meta_bridge::{read_symbol, read_exchange, read_account_type};
                             peer_ids.iter()
                                 .filter(|&&pid| {
-                                    read_symbol(&pw.chart.panel_app.tag_manager, pid).map_or(false, |s| s == symbol)
-                                    && read_exchange(&pw.chart.panel_app.tag_manager, pid).map_or(false, |e| e == exchange)
-                                    && read_account_type(&pw.chart.panel_app.tag_manager, pid).map_or(false, |a| a == account_type)
+                                    pw.chart.panel_app.tag_manager.symbol_for_chart(pid).map_or(false, |s| s == symbol)
+                                    && pw.chart.panel_app.tag_manager.exchange_for_chart(pid).map_or(false, |e| e == exchange)
+                                    && pw.chart.panel_app.tag_manager.account_type_for_chart(pid).map_or(false, |a| a == account_type)
                                 })
                                 .copied()
                                 .collect()

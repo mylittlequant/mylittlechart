@@ -1,26 +1,13 @@
-//! Phase 4 — Branch-as-Group model.
+//! Branch-level docking payload types.
 //!
-//! Defines the unified docking payload (`PanelLeaf`) and the sidecar
-//! metadata (`BranchMeta`) that consumers attach to a uzor Branch by
-//! `BranchId`.
-//!
-//! See `docs/plans/phase4-branch-as-group-2026-06-04.md` for the full
-//! design rationale.  These types are **stubs** in S1: they compile,
-//! they are typed correctly, they are not yet consumed by any caller.
-//! Wiring happens in S2 onward.
-
-use std::collections::HashSet;
+//! Defines `PanelLeaf` (unified docking payload), `PanelLeafKind`
+//! (discriminant), and `InstanceId`.  `BranchMeta`, `BranchKind`, and
+//! `AcceptPolicy` were deleted in Phase 1.4a of the DataBubble
+//! migration — their data now lives on `DataBubble`.
 
 use serde::{Deserialize, Serialize};
 
-use crate::chart::annotations::markers::MarkerManager;
-use crate::drawing::SignalManager;
-use crate::drawing::TradeManager;
 use crate::state::chart_container_leaf::ChartPanelId;
-use crate::state::chart_container::ConnectionStatus;
-use crate::state::Timeframe;
-use crate::tag_manager::BubbleId;
-use crate::state::history::CommandHistory;
 
 // =============================================================================
 // Identifiers
@@ -208,183 +195,6 @@ impl PanelLeafKind {
     }
 }
 
-// =============================================================================
-// BranchMeta — sidecar metadata attached to a uzor Branch
-// =============================================================================
-
-/// Semantic kind of a branch.  Distinct from `WindowLayout` (which is
-/// the geometric arrangement uzor cares about); this is the consumer's
-/// classification of *what the branch represents*.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum BranchKind {
-    /// Chart container — holds exactly one `ChartPanel` + N
-    /// `IndicatorPanel` leaves.  Symbol / timeframe / indicator source
-    /// are shared across all children.
-    ChartContainer,
-    /// Trading container — accepts any panel kind, supports nested
-    /// branches.  No shared symbol at the branch level; each leaf
-    /// carries its own.
-    TradingContainer,
-    /// Tag group — visual grouping with sync semantics but no panel
-    /// kind restrictions.  Single-leaf tag-groups are normal.
-    TagGroup,
-    /// Plain group — no semantic meaning, default for branches uzor
-    /// creates implicitly during `split_leaf` without a consumer-side
-    /// classification.
-    Plain,
-}
-
-impl BranchKind {
-    /// When true the branch MUST be marked
-    /// `tree.set_branch_preserve_if_empty(true)` after creation, so
-    /// that its `BranchMeta` survives transient single-child states.
-    pub fn needs_preservation(&self) -> bool {
-        !matches!(self, BranchKind::Plain)
-    }
-}
-
-/// Acceptance policy on drop.  Consumers check this before calling
-/// uzor's `apply_panel_drop` / `dock_floating` — uzor does not enforce
-/// it natively.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum AcceptPolicy {
-    /// Only the listed leaf kinds may be dropped into this branch.
-    Only(HashSet<PanelLeafKind>),
-    /// Any leaf kind allowed.
-    Any,
-}
-
-impl AcceptPolicy {
-    pub fn accepts(&self, kind: PanelLeafKind) -> bool {
-        match self {
-            AcceptPolicy::Only(s) => s.contains(&kind),
-            AcceptPolicy::Any => true,
-        }
-    }
-
-    /// Convenience constructor: ChartContainer's policy.
-    pub fn chart_container() -> Self {
-        let mut s = HashSet::with_capacity(2);
-        s.insert(PanelLeafKind::ChartPanel);
-        s.insert(PanelLeafKind::IndicatorPanel);
-        AcceptPolicy::Only(s)
-    }
-}
-
-/// Sidecar metadata attached to one uzor Branch.
-///
-/// Lives in the app's `HashMap<BranchId, BranchMeta>` map.  Branches
-/// without an entry are treated as `Plain` with `AcceptPolicy::Any`
-/// — backwards compatible with implicit branches uzor creates during
-/// split.
-#[derive(Clone, Debug)]
-pub struct BranchMeta {
-    pub kind: BranchKind,
-    pub accepts: AcceptPolicy,
-    /// Sync group this branch belongs to.
-    pub group_id: Option<BubbleId>,
-    /// Symbol context for chart-kind branches.  None for non-chart.
-    pub symbol: Option<String>,
-    pub timeframe: Option<Timeframe>,
-    pub exchange: Option<String>,
-    pub account_type: Option<String>,
-    /// Display label.
-    pub label: Option<String>,
-    /// Live/delayed/disconnected status for this chart window.
-    /// Phase 4 S2.3 mirror of `ChartContainer.connection_status`; `None`
-    /// until first write.
-    pub connection_status: Option<ConnectionStatus>,
-    /// Previous session close price (first bar's open), used for the
-    /// prev-close horizontal line. Phase 4 S2.3 mirror of
-    /// `ChartContainer.prev_close_price`; re-derived on every
-    /// `set_bars` / `update_bars`.
-    pub prev_close_price: Option<f64>,
-    /// Indicator instance IDs that existed BEFORE this window joined a
-    /// sync group. Restored on desync so window-local indicators
-    /// survive a join/leave cycle. Phase 4 S2.4 mirror of
-    /// `ChartContainer.pre_tag_indicator_ids`.
-    pub pre_tag_indicator_ids: Vec<u64>,
-    /// Window-local undo history stashed at sync-group join time,
-    /// restored on desync. Phase 4 S2.4 mirror of
-    /// `ChartContainer.stashed_command_history`.
-    pub stashed_command_history: Option<CommandHistory>,
-    /// Phase 4 S2.5 mirror of `ChartContainer.signal_manager`.
-    pub signal_manager: SignalManager,
-    /// Phase 4 S2.5 mirror of `ChartContainer.trade_manager`.
-    pub trade_manager: TradeManager,
-    /// Phase 4 S2.5 mirror of `ChartContainer.marker_manager`.
-    pub marker_manager: MarkerManager,
-}
-
-impl BranchMeta {
-    /// Build a ChartContainer-flavored metadata entry.
-    pub fn chart_container(
-        symbol: impl Into<String>,
-        timeframe: Timeframe,
-        exchange: impl Into<String>,
-        account_type: impl Into<String>,
-    ) -> Self {
-        Self {
-            kind: BranchKind::ChartContainer,
-            accepts: AcceptPolicy::chart_container(),
-            group_id: None,
-            symbol: Some(symbol.into()),
-            timeframe: Some(timeframe),
-            exchange: Some(exchange.into()),
-            account_type: Some(account_type.into()),
-            label: None,
-            connection_status: None,
-            prev_close_price: None,
-            pre_tag_indicator_ids: Vec::new(),
-            stashed_command_history: None,
-            signal_manager: SignalManager::default(),
-            trade_manager: TradeManager::default(),
-            marker_manager: MarkerManager::default(),
-        }
-    }
-
-    /// Build a TradingContainer-flavored metadata entry.
-    pub fn trading_container(label: impl Into<String>) -> Self {
-        Self {
-            kind: BranchKind::TradingContainer,
-            accepts: AcceptPolicy::Any,
-            group_id: None,
-            symbol: None,
-            timeframe: None,
-            exchange: None,
-            account_type: None,
-            label: Some(label.into()),
-            connection_status: None,
-            prev_close_price: None,
-            pre_tag_indicator_ids: Vec::new(),
-            stashed_command_history: None,
-            signal_manager: SignalManager::default(),
-            trade_manager: TradeManager::default(),
-            marker_manager: MarkerManager::default(),
-        }
-    }
-
-    /// Build a TagGroup-flavored metadata entry.
-    pub fn tag_group(group_id: BubbleId, label: Option<String>) -> Self {
-        Self {
-            kind: BranchKind::TagGroup,
-            accepts: AcceptPolicy::Any,
-            group_id: Some(group_id),
-            symbol: None,
-            timeframe: None,
-            exchange: None,
-            account_type: None,
-            label,
-            connection_status: None,
-            prev_close_price: None,
-            pre_tag_indicator_ids: Vec::new(),
-            stashed_command_history: None,
-            signal_manager: SignalManager::default(),
-            trade_manager: TradeManager::default(),
-            marker_manager: MarkerManager::default(),
-        }
-    }
-}
 
 // =============================================================================
 // Tests
@@ -404,34 +214,6 @@ mod tests {
             PanelLeaf::IndicatorPanel(InstanceId(7)).kind_str(),
             "indicator_panel"
         );
-    }
-
-    #[test]
-    fn accept_policy_only() {
-        let chart = AcceptPolicy::chart_container();
-        assert!(chart.accepts(PanelLeafKind::ChartPanel));
-        assert!(chart.accepts(PanelLeafKind::IndicatorPanel));
-        assert!(!chart.accepts(PanelLeafKind::Dom));
-    }
-
-    #[test]
-    fn accept_policy_any() {
-        let any = AcceptPolicy::Any;
-        for k in [
-            PanelLeafKind::ChartPanel,
-            PanelLeafKind::Dom,
-            PanelLeafKind::OrderEntry,
-        ] {
-            assert!(any.accepts(k));
-        }
-    }
-
-    #[test]
-    fn branch_kind_preservation() {
-        assert!(BranchKind::ChartContainer.needs_preservation());
-        assert!(BranchKind::TradingContainer.needs_preservation());
-        assert!(BranchKind::TagGroup.needs_preservation());
-        assert!(!BranchKind::Plain.needs_preservation());
     }
 
     #[test]
