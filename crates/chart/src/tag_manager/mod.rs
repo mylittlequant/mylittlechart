@@ -11,9 +11,11 @@ use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
 
+use crate::chart::annotations::markers::MarkerManager;
 use crate::chart::types::price_scale::ScaleMode;
 use crate::drawing::primitives_v2::config::TemplateStyle;
-use crate::state::chart_container::ChartId;
+use crate::drawing::{SignalManager, TradeManager};
+use crate::state::chart_container::{ChartId, ConnectionStatus};
 use crate::state::{CommandHistory, Timeframe};
 
 // =============================================================================
@@ -159,6 +161,23 @@ pub struct DataBubble {
     /// peers (fixes bugs B1 + D1).  The `Arc` handle in the DM is rebounded
     /// whenever a window joins or leaves this bubble.
     pub last_used_style: Arc<RwLock<HashMap<String, TemplateStyle>>>,
+
+    /// Previous session close price for this bubble's instrument (`bars[0].open`).
+    /// Populated by `BarsLoaded` handlers; read by the renderer for the
+    /// price-change badge.
+    pub prev_close_price: Option<f64>,
+
+    /// Live / Delayed / Disconnected indicator for this bubble's data feed.
+    pub connection_status: ConnectionStatus,
+
+    /// Trade signal annotations rendered on every member chart.
+    pub signal_manager: SignalManager,
+
+    /// Trade fill / position overlays rendered on every member chart.
+    pub trade_manager: TradeManager,
+
+    /// Price / time marker annotations rendered on every member chart.
+    pub marker_manager: MarkerManager,
 }
 
 
@@ -202,6 +221,11 @@ impl Clone for DataBubble {
             auto_created: self.auto_created,
             // Clone the Arc — both copies point to the same shared store.
             last_used_style: Arc::clone(&self.last_used_style),
+            prev_close_price: self.prev_close_price,
+            connection_status: self.connection_status,
+            signal_manager: self.signal_manager.clone(),
+            trade_manager: self.trade_manager.clone(),
+            marker_manager: self.marker_manager.clone(),
         }
     }
 }
@@ -311,6 +335,11 @@ impl BubbleStore {
             command_history: CommandHistory::new(250),
             auto_created: false,
             last_used_style: Arc::new(RwLock::new(HashMap::new())),
+            prev_close_price: None,
+            connection_status: ConnectionStatus::default(),
+            signal_manager: SignalManager::default(),
+            trade_manager: TradeManager::default(),
+            marker_manager: MarkerManager::default(),
         };
         self.bubbles.insert(id, bubble);
         id
@@ -340,6 +369,11 @@ impl BubbleStore {
             command_history: CommandHistory::new(250),
             auto_created: true,
             last_used_style: Arc::new(RwLock::new(HashMap::new())),
+            prev_close_price: None,
+            connection_status: ConnectionStatus::default(),
+            signal_manager: SignalManager::default(),
+            trade_manager: TradeManager::default(),
+            marker_manager: MarkerManager::default(),
         };
         self.bubbles.insert(id, bubble);
         id
@@ -876,6 +910,11 @@ impl BubbleStore {
             command_history: snap.command_history.clone().unwrap_or_else(|| CommandHistory::new(250)),
             auto_created: snap.auto_created,
             last_used_style: Arc::new(RwLock::new(style_map)),
+            prev_close_price: None,
+            connection_status: ConnectionStatus::default(),
+            signal_manager: SignalManager::default(),
+            trade_manager: TradeManager::default(),
+            marker_manager: MarkerManager::default(),
         }
     }
 }
