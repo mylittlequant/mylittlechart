@@ -5518,7 +5518,6 @@ impl ChartApp {
     /// indicator values (init, tick, indicator create/delete).
     pub fn sync_sub_panes_from_manager(&mut self) {
         use zengeld_chart::state::chart_container::collect_inner_instance_ids;
-        use uzor::layout::docking::SplitKind;
         use zengeld_chart::state::chart_container_leaf::ChartContainerLeaf;
 
         // Step 1: collect window-level read-only data before taking mutable borrows.
@@ -5601,16 +5600,18 @@ impl ChartApp {
                     .map(|l| (l.id, l.hidden));
                 match existing_leaf {
                     None => {
-                        // New indicator: add a leaf via split_leaf from the last child.
+                        // New indicator: append as a flat sibling under the root branch.
+                        // split_leaf would nest the new leaf inside a fresh sub-branch,
+                        // breaking the [MainChart, SubPane1, SubPane2..] sibling list
+                        // that the render path's collect_inner_* helpers depend on.
                         let last_leaf_id = window.inner_docking.tree().root().children
                             .last()
                             .and_then(|n| if let uzor::panels::PanelNode::Leaf(l) = n { Some(l.id) } else { None })
                             .or(main_leaf_id);
                         if let Some(anchor) = last_leaf_id {
-                            window.inner_docking.tree_mut().split_leaf(
-                                anchor,
-                                SplitKind::SplitBottom,
+                            window.inner_docking.tree_mut().add_leaf_near(
                                 ChartContainerLeaf::IndicatorPanel { instance_id: iid },
+                                anchor,
                             );
                         }
                         // Seed y_state for the new pane.
