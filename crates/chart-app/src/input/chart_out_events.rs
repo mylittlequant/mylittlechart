@@ -134,19 +134,17 @@ impl ChartApp {
                     }
                 };
                 if let Some(ct) = static_type {
+                    // Capture chart_panel_id before borrow.
                     let pid = self.panel_app.panel_grid
-                        .active_container_mut()
-                        .map(|window| {
-                            window.set_chart_type_with_undo(ct);
-                            window.chart_panel_id
-                        });
-                    // Phase 4 S2.6.A dual-write: mirror chart_type into panels_store.
+                        .active_container()
+                        .map(|w| w.chart_panel_id);
                     if let Some(chart_panel_id) = pid {
-                        crate::chart_panel_bridge::mirror_chart_type(
-                            &mut self.panels_store,
-                            chart_panel_id,
-                            ct,
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(
+                            &mut self.panels_store, chart_panel_id,
                         );
+                        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                            window.set_chart_type_with_undo(panel, ct);
+                        }
                     }
                     state_mutated = true;
                 }
@@ -187,17 +185,28 @@ impl ChartApp {
 
             // Quick-settings toggles from the settings gear dropdown.
             ChartOutEvent::ToggleGrid => {
-                // Read new value from active, then broadcast to all windows
-                let new_val = if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                    w.toggle_grid();
-                    let v = w.grid_options.vert_lines.visible;
-                    let h = w.grid_options.horz_lines.visible;
-                    Some((v, h))
+                // Collect active panel id — drops grid borrow before panels_store borrow.
+                let active_pid = self.panel_app.panel_grid.active_container()
+                    .map(|w| w.chart_panel_id);
+                let new_val = if let Some(pid) = active_pid {
+                    let panel = crate::chart_panel_bridge::ensure_chart_panel_state(
+                        &mut self.panels_store, pid,
+                    );
+                    let v = !panel.grid_options.vert_lines.visible;
+                    panel.grid_options.vert_lines.visible = v;
+                    panel.grid_options.horz_lines.visible = v;
+                    Some((v, v))
                 } else { None };
                 if let Some((v, h)) = new_val {
-                    for w in self.panel_app.panel_grid.containers_mut().values_mut() {
-                        w.grid_options.vert_lines.visible = v;
-                        w.grid_options.horz_lines.visible = h;
+                    // Broadcast to all panel states.
+                    let all_pids: Vec<_> = self.panel_app.panel_grid.containers()
+                        .values().map(|w| w.chart_panel_id).collect();
+                    for pid in all_pids {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(
+                            &mut self.panels_store, pid,
+                        );
+                        panel.grid_options.vert_lines.visible = v;
+                        panel.grid_options.horz_lines.visible = h;
                     }
                 }
                 eprintln!("[ChartApp] grid toggled (all windows)");
@@ -217,22 +226,28 @@ impl ChartApp {
                 state_mutated = true;
             }
             ChartOutEvent::ToggleLegend => {
-                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                    window.toggle_legend();
-                    eprintln!("[ChartApp] legend toggled");
+                let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                if let Some(pid) = pid {
+                    let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                    panel.legend.visible = !panel.legend.visible;
+                    eprintln!("[ChartApp] legend toggled -> {}", panel.legend.visible);
                 }
                 state_mutated = true;
             }
             ChartOutEvent::ToggleWatermark => {
-                let new_val = if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                    w.toggle_watermark();
-                    w.watermark.as_ref().map(|wm| wm.visible)
+                let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                let new_val = if let Some(pid) = active_pid {
+                    let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                    match &mut panel.watermark {
+                        Some(wm) => { wm.visible = !wm.visible; Some(wm.visible) }
+                        None => { panel.watermark = Some(zengeld_chart::Watermark::default()); Some(true) }
+                    }
                 } else { None };
                 if let Some(val) = new_val {
-                    for w in self.panel_app.panel_grid.containers_mut().values_mut() {
-                        if let Some(ref mut wm) = w.watermark {
-                            wm.visible = val;
-                        }
+                    let all_pids: Vec<_> = self.panel_app.panel_grid.containers().values().map(|w| w.chart_panel_id).collect();
+                    for pid in all_pids {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        if let Some(ref mut wm) = panel.watermark { wm.visible = val; }
                     }
                 }
                 eprintln!("[ChartApp] watermark toggled (all windows)");
@@ -359,88 +374,113 @@ impl ChartApp {
                 state_mutated = true;
             }
             ChartOutEvent::ToggleGridVertical => {
-                let new_val = if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                    w.toggle_grid_vertical();
-                    Some(w.grid_options.vert_lines.visible)
+                let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                let new_val = if let Some(pid) = active_pid {
+                    let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                    panel.grid_options.vert_lines.visible = !panel.grid_options.vert_lines.visible;
+                    Some(panel.grid_options.vert_lines.visible)
                 } else { None };
                 if let Some(val) = new_val {
-                    for w in self.panel_app.panel_grid.containers_mut().values_mut() {
-                        w.grid_options.vert_lines.visible = val;
+                    let all_pids: Vec<_> = self.panel_app.panel_grid.containers().values().map(|w| w.chart_panel_id).collect();
+                    for pid in all_pids {
+                        crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid)
+                            .grid_options.vert_lines.visible = val;
                     }
                 }
                 eprintln!("[ChartApp] grid vertical toggled (all windows)");
                 state_mutated = true;
             }
             ChartOutEvent::ToggleGridHorizontal => {
-                let new_val = if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                    w.toggle_grid_horizontal();
-                    Some(w.grid_options.horz_lines.visible)
+                let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                let new_val = if let Some(pid) = active_pid {
+                    let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                    panel.grid_options.horz_lines.visible = !panel.grid_options.horz_lines.visible;
+                    Some(panel.grid_options.horz_lines.visible)
                 } else { None };
                 if let Some(val) = new_val {
-                    for w in self.panel_app.panel_grid.containers_mut().values_mut() {
-                        w.grid_options.horz_lines.visible = val;
+                    let all_pids: Vec<_> = self.panel_app.panel_grid.containers().values().map(|w| w.chart_panel_id).collect();
+                    for pid in all_pids {
+                        crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid)
+                            .grid_options.horz_lines.visible = val;
                     }
                 }
                 eprintln!("[ChartApp] grid horizontal toggled (all windows)");
                 state_mutated = true;
             }
             ChartOutEvent::ToggleLegendOHLC => {
-                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                    window.toggle_legend_ohlc();
-                    eprintln!("[ChartApp] legend OHLC toggled -> {}", window.legend.show_ohlc);
+                let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                if let Some(pid) = pid {
+                    let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                    panel.legend.show_ohlc = !panel.legend.show_ohlc;
+                    eprintln!("[ChartApp] legend OHLC toggled -> {}", panel.legend.show_ohlc);
                 }
                 state_mutated = true;
             }
             ChartOutEvent::ToggleLegendChange => {
-                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                    window.toggle_legend_change();
-                    eprintln!("[ChartApp] legend change toggled -> {}", window.legend.show_change);
+                let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                if let Some(pid) = pid {
+                    let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                    panel.legend.show_change = !panel.legend.show_change;
+                    eprintln!("[ChartApp] legend change toggled -> {}", panel.legend.show_change);
                 }
                 state_mutated = true;
             }
             ChartOutEvent::ToggleLegendPercent => {
-                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                    window.toggle_legend_percent();
-                    eprintln!("[ChartApp] legend percent toggled -> {}", window.legend.show_percent);
+                let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                if let Some(pid) = pid {
+                    let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                    panel.legend.show_percent = !panel.legend.show_percent;
+                    eprintln!("[ChartApp] legend percent toggled -> {}", panel.legend.show_percent);
                 }
                 state_mutated = true;
             }
             ChartOutEvent::ToggleTooltip => {
-                let new_val = if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                    w.toggle_tooltip();
-                    Some(w.tooltip.visible)
+                let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                let new_val = if let Some(pid) = active_pid {
+                    let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                    panel.tooltip.visible = !panel.tooltip.visible;
+                    Some(panel.tooltip.visible)
                 } else { None };
                 if let Some(val) = new_val {
-                    for w in self.panel_app.panel_grid.containers_mut().values_mut() {
-                        w.tooltip.visible = val;
+                    let all_pids: Vec<_> = self.panel_app.panel_grid.containers().values().map(|w| w.chart_panel_id).collect();
+                    for pid in all_pids {
+                        crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid).tooltip.visible = val;
                     }
                 }
                 eprintln!("[ChartApp] tooltip toggled (all windows)");
                 state_mutated = true;
             }
             ChartOutEvent::ToggleTooltipFollow => {
-                let new_val = if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                    w.toggle_tooltip_follow();
-                    Some(w.tooltip.follow_cursor)
+                let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                let new_val = if let Some(pid) = active_pid {
+                    let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                    panel.tooltip.follow_cursor = !panel.tooltip.follow_cursor;
+                    Some(panel.tooltip.follow_cursor)
                 } else { None };
                 if let Some(val) = new_val {
-                    for w in self.panel_app.panel_grid.containers_mut().values_mut() {
-                        w.tooltip.follow_cursor = val;
+                    let all_pids: Vec<_> = self.panel_app.panel_grid.containers().values().map(|w| w.chart_panel_id).collect();
+                    for pid in all_pids {
+                        crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid).tooltip.follow_cursor = val;
                     }
                 }
                 eprintln!("[ChartApp] tooltip follow toggled (all windows)");
                 state_mutated = true;
             }
             ChartOutEvent::SetWatermarkText(text) => {
-                for w in self.panel_app.panel_grid.containers_mut().values_mut() {
-                    w.set_watermark_text(text);
+                let all_pids: Vec<_> = self.panel_app.panel_grid.containers().values().map(|w| w.chart_panel_id).collect();
+                for pid in all_pids {
+                    let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                    match &mut panel.watermark {
+                        Some(wm) => wm.set_text(text.to_string()),
+                        None => { let mut wm = zengeld_chart::Watermark::default(); wm.set_text(text.to_string()); panel.watermark = Some(wm); }
+                    }
                 }
                 eprintln!("[ChartApp] watermark text set to {} (all windows)", text);
                 state_mutated = true;
             }
             ChartOutEvent::SetWatermarkPosition(pos) => {
                 use zengeld_chart::{HorzAlign, VertAlign};
-                let (horz, vert) = match pos {
+                let (horz, vert) = match pos.as_ref() {
                     "center"       => (HorzAlign::Center, VertAlign::Center),
                     "bottom_left"  => (HorzAlign::Left,   VertAlign::Bottom),
                     "bottom_right" => (HorzAlign::Right,  VertAlign::Bottom),
@@ -448,8 +488,13 @@ impl ChartApp {
                     "top_right"    => (HorzAlign::Right,  VertAlign::Top),
                     _              => (HorzAlign::Left,   VertAlign::Bottom),
                 };
-                for w in self.panel_app.panel_grid.containers_mut().values_mut() {
-                    w.set_watermark_position(horz, vert);
+                let all_pids: Vec<_> = self.panel_app.panel_grid.containers().values().map(|w| w.chart_panel_id).collect();
+                for pid in all_pids {
+                    let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                    match &mut panel.watermark {
+                        Some(wm) => { wm.horz_align = horz; wm.vert_align = vert; }
+                        None => { panel.watermark = Some(zengeld_chart::Watermark { horz_align: horz, vert_align: vert, ..zengeld_chart::Watermark::default() }); }
+                    }
                 }
                 eprintln!("[ChartApp] watermark position set to {} (all windows)", pos);
                 state_mutated = true;
@@ -608,40 +653,45 @@ impl ChartApp {
                                     );
                                     window.viewport = snap.viewport.clone();
                                     window.price_scale = snap.price_scale.clone();
-                                    window.grid_options = snap.grid_options.clone();
-                                    window.crosshair_options = snap.crosshair_options.clone();
-                                    window.legend = snap.legend.clone();
-                                    window.watermark = snap.watermark.clone();
-                                    window.tooltip = snap.tooltip.clone();
-                                    window.show_candles = snap.show_candles;
-                                    window.show_bars = snap.show_bars;
-                                    window.show_hollow_candles = snap.show_hollow_candles;
-                                    window.show_heikin_ashi = snap.show_heikin_ashi;
-                                    window.show_line = snap.show_line;
-                                    window.show_step_line = snap.show_step_line;
-                                    window.show_line_markers = snap.show_line_markers;
-                                    window.show_area = snap.show_area;
-                                    window.show_hlc_area = snap.show_hlc_area;
-                                    window.show_histogram = snap.show_histogram;
-                                    window.show_columns = snap.show_columns;
-                                    window.show_baseline = snap.show_baseline;
                                     window.scale_settings = snap.scale_settings.clone();
 
-                                    // chart_type: snapshot stores String, window holds &'static str
-                                    window.chart_type = match snap.chart_type.as_str() {
-                                        "bars"           => "bars",
-                                        "hollow_candles" => "hollow_candles",
-                                        "heikin_ashi"    => "heikin_ashi",
-                                        "line"           => "line",
-                                        "step_line"      => "step_line",
-                                        "line_markers"   => "line_markers",
-                                        "area"           => "area",
-                                        "hlc_area"       => "hlc_area",
-                                        "baseline"       => "baseline",
-                                        "histogram"      => "histogram",
-                                        "columns"        => "columns",
-                                        _                => "candles",
-                                    };
+                                    // Phase 4 C: restore 18 display/series fields into panel state.
+                                    {
+                                        let static_ct: &'static str = match snap.chart_type.as_str() {
+                                            "bars"           => "bars",
+                                            "hollow_candles" => "hollow_candles",
+                                            "heikin_ashi"    => "heikin_ashi",
+                                            "line"           => "line",
+                                            "step_line"      => "step_line",
+                                            "line_markers"   => "line_markers",
+                                            "area"           => "area",
+                                            "hlc_area"       => "hlc_area",
+                                            "baseline"       => "baseline",
+                                            "histogram"      => "histogram",
+                                            "columns"        => "columns",
+                                            _                => "candles",
+                                        };
+                                        let mut panel_state = zengeld_chart::ChartPanelState::new(window.chart_panel_id);
+                                        panel_state.grid_options = snap.grid_options.clone();
+                                        panel_state.crosshair_options = snap.crosshair_options.clone();
+                                        panel_state.legend = snap.legend.clone();
+                                        panel_state.watermark = snap.watermark.clone();
+                                        panel_state.tooltip = snap.tooltip.clone();
+                                        panel_state.show_candles = snap.show_candles;
+                                        panel_state.show_bars = snap.show_bars;
+                                        panel_state.show_hollow_candles = snap.show_hollow_candles;
+                                        panel_state.show_heikin_ashi = snap.show_heikin_ashi;
+                                        panel_state.show_line = snap.show_line;
+                                        panel_state.show_step_line = snap.show_step_line;
+                                        panel_state.show_line_markers = snap.show_line_markers;
+                                        panel_state.show_area = snap.show_area;
+                                        panel_state.show_hlc_area = snap.show_hlc_area;
+                                        panel_state.show_histogram = snap.show_histogram;
+                                        panel_state.show_columns = snap.show_columns;
+                                        panel_state.show_baseline = snap.show_baseline;
+                                        panel_state.chart_type = static_ct;
+                                        self.panels_store.chart_panel.insert(window.chart_panel_id, panel_state);
+                                    }
 
                                     // Restore local drawings
                                     window.drawing_manager.clear_all_primitives();
@@ -733,46 +783,7 @@ impl ChartApp {
                                         chart_id,
                                         snap.stashed_command_history.clone(),
                                     );
-                                    // Phase 4 S2.6.A dual-write: mirror series-visibility flags.
-                                    // `window` is a local variable here — no panel_grid borrow
-                                    // conflict with self.panels_store.
-                                    {
-                                        let sv = crate::chart_panel_bridge::SeriesVisibilitySnapshot {
-                                            show_candles: window.show_candles,
-                                            show_bars: window.show_bars,
-                                            show_hollow_candles: window.show_hollow_candles,
-                                            show_heikin_ashi: window.show_heikin_ashi,
-                                            show_line: window.show_line,
-                                            show_step_line: window.show_step_line,
-                                            show_line_markers: window.show_line_markers,
-                                            show_area: window.show_area,
-                                            show_hlc_area: window.show_hlc_area,
-                                            show_histogram: window.show_histogram,
-                                            show_columns: window.show_columns,
-                                            show_baseline: window.show_baseline,
-                                            chart_type: window.chart_type,
-                                        };
-                                        crate::chart_panel_bridge::mirror_series_visibility(
-                                            &mut self.panels_store,
-                                            window.chart_panel_id,
-                                            sv,
-                                        );
-                                    }
-                                    // Phase 4 S2.6.B dual-write: mirror display-option fields.
-                                    {
-                                        let do_snap = crate::chart_panel_bridge::DisplayOptionsSnapshot {
-                                            grid_options: window.grid_options.clone(),
-                                            crosshair_options: window.crosshair_options.clone(),
-                                            legend: window.legend.clone(),
-                                            watermark: window.watermark.clone(),
-                                            tooltip: window.tooltip.clone(),
-                                        };
-                                        crate::chart_panel_bridge::mirror_display_options(
-                                            &mut self.panels_store,
-                                            window.chart_panel_id,
-                                            do_snap,
-                                        );
-                                    }
+                                    // Phase 4 C: panel state already written above.
 
                                     new_containers.insert(chart_id, window);
                                     new_leaf_to_chart.insert(leaf_id, chart_id);
@@ -818,134 +829,123 @@ impl ChartApp {
                     // Fallback: patch existing windows in-place (old presets)
                     // ----------------------------------------------------------------
                     if !layout_restored {
-                        // Collected (chart_panel_id, series-visibility) for S2.6.A dual-write
-                        // after the panel_grid mut borrow is dropped.
-                        let mut sv_patches: Vec<(zengeld_chart::state::ChartPanelId, crate::chart_panel_bridge::SeriesVisibilitySnapshot)> = Vec::new();
-                        // Collected (chart_panel_id, display-options) for S2.6.B dual-write
-                        // after the panel_grid mut borrow is dropped.
-                        let mut do_patches: Vec<(zengeld_chart::state::ChartPanelId, crate::chart_panel_bridge::DisplayOptionsSnapshot)> = Vec::new();
-                        let windows = self.panel_app.panel_grid.containers_mut();
-                        for snap in &preset.windows {
-                            let chart_id = zengeld_chart::state::chart_container::ChartId(snap.window_id);
-                            if let Some(window) = windows.get_mut(&chart_id) {
-                                window.drawing_manager.set_current_symbol_key(
-                                    &snap.symbol, &snap.exchange, &snap.account_type,
-                                );
-                                // Rebuild data_provider for this window's (possibly new) exchange.
-                                let patch_exchange_id = digdigdig3::ExchangeId::from_str(&snap.exchange)
-                                    .unwrap_or(digdigdig3::ExchangeId::Binance);
-                                let patch_at = crate::account_type_from_label(&snap.account_type);
-                                window.data_provider = std::sync::Arc::new(
-                                    live_data::LiveDataProvider::new(
-                                        patch_exchange_id,
-                                        patch_exchange_id.as_str().to_string(),
-                                        patch_at,
-                                        std::sync::Arc::clone(&self.bridge),
-                                    ),
-                                );
-                                window.viewport = snap.viewport.clone();
-                                window.price_scale = snap.price_scale.clone();
-                                window.grid_options = snap.grid_options.clone();
-                                window.crosshair_options = snap.crosshair_options.clone();
-                                window.legend = snap.legend.clone();
-                                window.watermark = snap.watermark.clone();
-                                window.tooltip = snap.tooltip.clone();
-                                window.show_candles = snap.show_candles;
-                                window.show_bars = snap.show_bars;
-                                window.show_hollow_candles = snap.show_hollow_candles;
-                                window.show_heikin_ashi = snap.show_heikin_ashi;
-                                window.show_line = snap.show_line;
-                                window.show_step_line = snap.show_step_line;
-                                window.show_line_markers = snap.show_line_markers;
-                                window.show_area = snap.show_area;
-                                window.show_hlc_area = snap.show_hlc_area;
-                                window.show_histogram = snap.show_histogram;
-                                window.show_columns = snap.show_columns;
-                                window.show_baseline = snap.show_baseline;
-                                window.scale_settings = snap.scale_settings.clone();
+                        // Collect (chart_panel_id, display/series state) from windows
+                        // before the panel_grid mut borrow; apply to panels_store after.
+                        let mut panel_patches: Vec<(zengeld_chart::state::ChartPanelId, zengeld_chart::ChartPanelState)> = Vec::new();
+                        {
+                            let windows = self.panel_app.panel_grid.containers_mut();
+                            for snap in &preset.windows {
+                                let chart_id = zengeld_chart::state::chart_container::ChartId(snap.window_id);
+                                if let Some(window) = windows.get_mut(&chart_id) {
+                                    window.drawing_manager.set_current_symbol_key(
+                                        &snap.symbol, &snap.exchange, &snap.account_type,
+                                    );
+                                    // Rebuild data_provider for this window’s (possibly new) exchange.
+                                    let patch_exchange_id = digdigdig3::ExchangeId::from_str(&snap.exchange)
+                                        .unwrap_or(digdigdig3::ExchangeId::Binance);
+                                    let patch_at = crate::account_type_from_label(&snap.account_type);
+                                    window.data_provider = std::sync::Arc::new(
+                                        live_data::LiveDataProvider::new(
+                                            patch_exchange_id,
+                                            patch_exchange_id.as_str().to_string(),
+                                            patch_at,
+                                            std::sync::Arc::clone(&self.bridge),
+                                        ),
+                                    );
+                                    window.viewport = snap.viewport.clone();
+                                    window.price_scale = snap.price_scale.clone();
+                                    window.scale_settings = snap.scale_settings.clone();
 
-                                // Restore drawings
-                                window.drawing_manager.clear_all_primitives();
-                                if let Ok(reg) = zengeld_chart::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
-                                    for prim_snap in &snap.drawings.primitives {
-                                        if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
-                                            window.drawing_manager.add_external_primitive(prim);
-                                        }
-                                    }
-                                }
-                                window.drawing_manager.migrate_all_legacy_timestamps();
-
-                                // Restore command history
-                                if let Some(history) = &snap.command_history {
-                                    window.command_history = history.clone();
-                                }
-
-                                // Restore stashed primitives (pre-tag drawings)
-                                crate::branch_meta_bridge::clear_stashed_primitives(
-                                    &mut self.stashed_primitives, chart_id,
-                                );
-                                if !snap.stashed_primitives.is_empty() {
+                                    // Restore drawings
+                                    window.drawing_manager.clear_all_primitives();
                                     if let Ok(reg) = zengeld_chart::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
-                                        for prim_snap in &snap.stashed_primitives {
+                                        for prim_snap in &snap.drawings.primitives {
                                             if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
-                                                crate::branch_meta_bridge::push_stashed_primitive(
-                                                    &mut self.stashed_primitives, chart_id, prim,
-                                                );
+                                                window.drawing_manager.add_external_primitive(prim);
                                             }
                                         }
                                     }
+                                    window.drawing_manager.migrate_all_legacy_timestamps();
+
+                                    // Restore command history
+                                    if let Some(history) = &snap.command_history {
+                                        window.command_history = history.clone();
+                                    }
+
+                                    // Restore stashed primitives (pre-tag drawings)
+                                    crate::branch_meta_bridge::clear_stashed_primitives(
+                                        &mut self.stashed_primitives, chart_id,
+                                    );
+                                    if !snap.stashed_primitives.is_empty() {
+                                        if let Ok(reg) = zengeld_chart::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
+                                            for prim_snap in &snap.stashed_primitives {
+                                                if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
+                                                    crate::branch_meta_bridge::push_stashed_primitive(
+                                                        &mut self.stashed_primitives, chart_id, prim,
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Restore per-symbol drawing cache
+                                    window.symbol_drawings = snap.symbol_drawings_snapshots.clone();
+
+                                    // Restore stashed scale mode (pre-join A/M/F, restored on desync).
+                                    window.stashed_scale_mode = snap.stashed_scale_mode;
+
+                                    // Restore bar_spacing (user’s zoom level).
+                                    if snap.viewport.bar_spacing > 0.0 {
+                                        window.viewport.bar_spacing = snap.viewport.bar_spacing;
+                                    }
+                                    window.restore_scale_mode = Some(snap.price_scale.scale_mode);
+
+                                    // Bars arrive asynchronously via BarsLoaded.
+                                    window.pending_symbol_load = true;
+
+                                    // Collect panel state for post-borrow write to panels_store.
+                                    let static_ct: &'static str = match snap.chart_type.as_str() {
+                                        "bars"           => "bars",
+                                        "hollow_candles" => "hollow_candles",
+                                        "heikin_ashi"    => "heikin_ashi",
+                                        "line"           => "line",
+                                        "step_line"      => "step_line",
+                                        "line_markers"   => "line_markers",
+                                        "area"           => "area",
+                                        "hlc_area"       => "hlc_area",
+                                        "baseline"       => "baseline",
+                                        "histogram"      => "histogram",
+                                        "columns"        => "columns",
+                                        _                => "candles",
+                                    };
+                                    let mut ps = zengeld_chart::ChartPanelState::new(window.chart_panel_id);
+                                    ps.grid_options = snap.grid_options.clone();
+                                    ps.crosshair_options = snap.crosshair_options.clone();
+                                    ps.legend = snap.legend.clone();
+                                    ps.watermark = snap.watermark.clone();
+                                    ps.tooltip = snap.tooltip.clone();
+                                    ps.show_candles = snap.show_candles;
+                                    ps.show_bars = snap.show_bars;
+                                    ps.show_hollow_candles = snap.show_hollow_candles;
+                                    ps.show_heikin_ashi = snap.show_heikin_ashi;
+                                    ps.show_line = snap.show_line;
+                                    ps.show_step_line = snap.show_step_line;
+                                    ps.show_line_markers = snap.show_line_markers;
+                                    ps.show_area = snap.show_area;
+                                    ps.show_hlc_area = snap.show_hlc_area;
+                                    ps.show_histogram = snap.show_histogram;
+                                    ps.show_columns = snap.show_columns;
+                                    ps.show_baseline = snap.show_baseline;
+                                    ps.chart_type = static_ct;
+                                    panel_patches.push((window.chart_panel_id, ps));
+
+                                    eprintln!("[ChartApp] patched window {} в†’ {}/{} ({} drawings)",
+                                        snap.window_id, snap.symbol, snap.timeframe.name,
+                                        snap.drawings.primitives.len());
                                 }
-
-                                // Restore per-symbol drawing cache
-                                window.symbol_drawings = snap.symbol_drawings_snapshots.clone();
-
-                                // Restore stashed scale mode (pre-join A/M/F, restored on desync).
-                                window.stashed_scale_mode = snap.stashed_scale_mode;
-
-                                // Restore bar_spacing (user's zoom level).
-                                if snap.viewport.bar_spacing > 0.0 {
-                                    window.viewport.bar_spacing = snap.viewport.bar_spacing;
-                                }
-                                window.restore_scale_mode = Some(snap.price_scale.scale_mode);
-
-                                // Bars arrive asynchronously via BarsLoaded.
-                                window.pending_symbol_load = true;
-
-                                // Phase 4 S2.6.A: collect series-visibility snapshot for
-                                // dual-write after this panel_grid mut borrow is dropped.
-                                sv_patches.push((window.chart_panel_id, crate::chart_panel_bridge::SeriesVisibilitySnapshot {
-                                    show_candles: window.show_candles,
-                                    show_bars: window.show_bars,
-                                    show_hollow_candles: window.show_hollow_candles,
-                                    show_heikin_ashi: window.show_heikin_ashi,
-                                    show_line: window.show_line,
-                                    show_step_line: window.show_step_line,
-                                    show_line_markers: window.show_line_markers,
-                                    show_area: window.show_area,
-                                    show_hlc_area: window.show_hlc_area,
-                                    show_histogram: window.show_histogram,
-                                    show_columns: window.show_columns,
-                                    show_baseline: window.show_baseline,
-                                    chart_type: window.chart_type,
-                                }));
-                                // Phase 4 S2.6.B: collect display-options snapshot for
-                                // dual-write after this panel_grid mut borrow is dropped.
-                                do_patches.push((window.chart_panel_id, crate::chart_panel_bridge::DisplayOptionsSnapshot {
-                                    grid_options: window.grid_options.clone(),
-                                    crosshair_options: window.crosshair_options.clone(),
-                                    legend: window.legend.clone(),
-                                    watermark: window.watermark.clone(),
-                                    tooltip: window.tooltip.clone(),
-                                }));
-
-                                eprintln!("[ChartApp] patched window {} в†’ {}/{} ({} drawings)",
-                                    snap.window_id, snap.symbol, snap.timeframe.name,
-                                    snap.drawings.primitives.len());
                             }
-                        }
-                        // Phase 4 S2.2 dual-write: mirror restored instrument into
-                        // branch_meta. `windows` (panel_grid mut borrow) is dropped
-                        // here; this second loop is over the read-only preset slice.
+                        } // windows (panel_grid borrow) dropped here
+                        // Phase 4 S2.2 dual-write: mirror restored instrument into branch_meta.
                         for snap in &preset.windows {
                             let chart_id = zengeld_chart::state::chart_container::ChartId(snap.window_id);
                             crate::branch_meta_bridge::mirror_instrument(
@@ -963,7 +963,6 @@ impl ChartApp {
                                 snap.group_id.map(zengeld_chart::tag_manager::SyncGroupId),
                             );
                             // Phase 4 S2.4 dual-write: pre_tag_ids + stashed_command_history.
-                            // stashed_primitives already written above via push_stashed_primitive().
                             crate::branch_meta_bridge::mirror_pre_tag_ids(
                                 &mut self.branch_meta,
                                 chart_id,
@@ -975,23 +974,9 @@ impl ChartApp {
                                 snap.stashed_command_history.clone(),
                             );
                         }
-                        // Phase 4 S2.6.A dual-write: mirror series-visibility flags
-                        // collected from the patch loop above (panel_grid borrow dropped).
-                        for (chart_panel_id, sv) in sv_patches {
-                            crate::chart_panel_bridge::mirror_series_visibility(
-                                &mut self.panels_store,
-                                chart_panel_id,
-                                sv,
-                            );
-                        }
-                        // Phase 4 S2.6.B dual-write: mirror display-option fields
-                        // collected from the patch loop above (panel_grid borrow dropped).
-                        for (chart_panel_id, do_snap) in do_patches {
-                            crate::chart_panel_bridge::mirror_display_options(
-                                &mut self.panels_store,
-                                chart_panel_id,
-                                do_snap,
-                            );
+                        // Phase 4 C: write panel states (panel_grid borrow is dropped above).
+                        for (chart_panel_id, ps) in panel_patches {
+                            self.panels_store.chart_panel.insert(chart_panel_id, ps);
                         }
                     }
 

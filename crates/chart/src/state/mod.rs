@@ -29,6 +29,7 @@ pub mod panel_grid;
 pub mod chart_container_leaf;
 pub mod inner_layout;
 pub mod branch;
+pub mod chart_panel_state;
 
 // Core chart struct
 pub use chart::*;
@@ -123,3 +124,6 @@ pub use branch::{
 
 // Panel grid — input-aware layout manager
 pub use panel_grid::{ChartPanelGrid, ChartInputTarget, ChartRightClickHit, ChartDragStartHit, SplitHitResult, FreehandCompleteResult};
+
+// Phase 4 S2.7 — per-canvas display-option + series-visibility state
+pub use chart_panel_state::ChartPanelState;

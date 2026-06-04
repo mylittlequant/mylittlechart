@@ -653,9 +653,11 @@ impl ChartApp {
     pub(super) fn apply_chart_settings_color(&mut self, field: &str, color: &str) {
         match field {
             "crosshair_line_color" => {
-                if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                    w.crosshair_options.vert_line.color = color.to_string();
-                    w.crosshair_options.horz_line.color = color.to_string();
+                let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                if let Some(pid) = pid {
+                    let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                    panel.crosshair_options.vert_line.color = color.to_string();
+                    panel.crosshair_options.horz_line.color = color.to_string();
                     eprintln!("[ChartApp] applied crosshair_line_color: {}", color);
                 }
             }
@@ -684,8 +686,10 @@ impl ChartApp {
                 eprintln!("[ChartApp] applied wick_down_color: {}", color);
             }
             "watermark_color" => {
-                if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                    if let Some(ref mut watermark) = w.watermark {
+                let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                if let Some(pid) = pid {
+                    let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                    if let Some(ref mut watermark) = panel.watermark {
                         if let Some(line) = watermark.lines.first_mut() {
                             line.color = color.to_string();
                             eprintln!("[ChartApp] applied watermark_color: {}", color);

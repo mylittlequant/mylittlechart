@@ -17,9 +17,8 @@
 //! ends and pass it here (split-block pattern matching S2.2..S2.5).
 
 use zengeld_chart::state::ChartPanelId;
-use zengeld_chart::{CrosshairOptions, GridOptions, Legend, Tooltip, Watermark};
+use zengeld_chart::{CrosshairOptions, GridOptions, Legend, Tooltip, Watermark, ChartPanelState};
 
-use crate::chart_panel_state::ChartPanelState;
 use crate::panels_store::TradingPanelsStore;
 
 // =============================================================================

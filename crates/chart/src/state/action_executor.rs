@@ -17,6 +17,7 @@ use crate::ui::modal_state::{ModalState, OpenModal};
 use crate::layout::ToolbarState;
 use crate::drawing::DrawingManager;
 use crate::state::chart_container::ChartContainer;
+use crate::state::chart_panel_state::ChartPanelState;
 
 /// Result of executing a `ChartAction`.
 ///
@@ -82,6 +83,7 @@ pub enum OpenModalRequest {
 pub fn execute_chart_action(
     action: &ChartAction,
     window: &mut ChartContainer,
+    panel: &mut ChartPanelState,
 ) -> Vec<ChartExternalEvent> {
     match action {
         // =====================================================================
@@ -89,33 +91,33 @@ pub fn execute_chart_action(
         // =====================================================================
         ChartAction::SetChartType(ct) => {
             let type_name = ct.to_string();
-            window.set_chart_type_with_undo(ct);
+            window.set_chart_type_with_undo(panel, ct);
             eprintln!("[Chart] Chart type set to {}", ct);
             vec![ChartExternalEvent::ChartTypeChanged(type_name)]
         }
 
         ChartAction::ToggleCandles => {
-            window.set_chart_type_with_undo("candles");
+            window.set_chart_type_with_undo(panel, "candles");
             eprintln!("[Chart] Chart type -> candles");
             vec![ChartExternalEvent::ChartTypeChanged("candles".to_string())]
         }
         ChartAction::ToggleLine => {
-            window.set_chart_type_with_undo("line");
+            window.set_chart_type_with_undo(panel, "line");
             eprintln!("[Chart] Chart type -> line");
             vec![ChartExternalEvent::ChartTypeChanged("line".to_string())]
         }
         ChartAction::ToggleArea => {
-            window.set_chart_type_with_undo("area");
+            window.set_chart_type_with_undo(panel, "area");
             eprintln!("[Chart] Chart type -> area");
             vec![ChartExternalEvent::ChartTypeChanged("area".to_string())]
         }
         ChartAction::ToggleHistogram => {
-            window.set_chart_type_with_undo("histogram");
+            window.set_chart_type_with_undo(panel, "histogram");
             eprintln!("[Chart] Chart type -> histogram");
             vec![ChartExternalEvent::ChartTypeChanged("histogram".to_string())]
         }
         ChartAction::ToggleBaseline => {
-            window.set_chart_type_with_undo("baseline");
+            window.set_chart_type_with_undo(panel, "baseline");
             eprintln!("[Chart] Chart type -> baseline");
             vec![ChartExternalEvent::ChartTypeChanged("baseline".to_string())]
         }
@@ -124,12 +126,12 @@ pub fn execute_chart_action(
         // Overlay Toggles
         // =====================================================================
         ChartAction::ToggleLegend => {
-            window.toggle_legend();
-            eprintln!("[Chart] Legend toggled -> {}", window.legend.visible);
+            window.toggle_legend(panel);
+            eprintln!("[Chart] Legend toggled -> {}", panel.legend.visible);
             vec![]
         }
         ChartAction::ToggleGrid => {
-            window.toggle_grid();
+            window.toggle_grid(panel);
             eprintln!("[Chart] Grid toggled");
             vec![]
         }
@@ -144,69 +146,69 @@ pub fn execute_chart_action(
             vec![]
         }
         ChartAction::ToggleWatermark => {
-            window.toggle_watermark();
+            window.toggle_watermark(panel);
             eprintln!("[Chart] Watermark toggled");
             vec![]
         }
         ChartAction::ToggleGridVertical => {
-            window.toggle_grid_vertical();
-            eprintln!("[Chart] Grid vertical toggled -> {}", window.grid_options.vert_lines.visible);
+            window.toggle_grid_vertical(panel);
+            eprintln!("[Chart] Grid vertical toggled -> {}", panel.grid_options.vert_lines.visible);
             vec![]
         }
         ChartAction::ToggleGridHorizontal => {
-            window.toggle_grid_horizontal();
-            eprintln!("[Chart] Grid horizontal toggled -> {}", window.grid_options.horz_lines.visible);
+            window.toggle_grid_horizontal(panel);
+            eprintln!("[Chart] Grid horizontal toggled -> {}", panel.grid_options.horz_lines.visible);
             vec![]
         }
         ChartAction::ToggleTooltip => {
-            window.toggle_tooltip();
-            eprintln!("[Chart] Tooltip toggled -> {}", window.tooltip.visible);
+            window.toggle_tooltip(panel);
+            eprintln!("[Chart] Tooltip toggled -> {}", panel.tooltip.visible);
             vec![]
         }
         ChartAction::ToggleTooltipFollow => {
-            window.toggle_tooltip_follow();
-            eprintln!("[Chart] Tooltip follow toggled -> {}", window.tooltip.follow_cursor);
+            window.toggle_tooltip_follow(panel);
+            eprintln!("[Chart] Tooltip follow toggled -> {}", panel.tooltip.follow_cursor);
             vec![]
         }
         ChartAction::ToggleCrosshairVertLine => {
-            window.toggle_crosshair_vert_line();
+            window.toggle_crosshair_vert_line(panel);
             eprintln!("[Chart] Crosshair vert line toggled");
             vec![]
         }
         ChartAction::ToggleCrosshairHorzLine => {
-            window.toggle_crosshair_horz_line();
+            window.toggle_crosshair_horz_line(panel);
             eprintln!("[Chart] Crosshair horz line toggled");
             vec![]
         }
         ChartAction::ToggleLegendOHLC => {
-            window.toggle_legend_ohlc();
-            eprintln!("[Chart] Legend OHLC toggled -> {}", window.legend.show_ohlc);
+            window.toggle_legend_ohlc(panel);
+            eprintln!("[Chart] Legend OHLC toggled -> {}", panel.legend.show_ohlc);
             vec![]
         }
         ChartAction::ToggleLegendChange => {
-            window.toggle_legend_change();
-            eprintln!("[Chart] Legend change toggled -> {}", window.legend.show_change);
+            window.toggle_legend_change(panel);
+            eprintln!("[Chart] Legend change toggled -> {}", panel.legend.show_change);
             vec![]
         }
         ChartAction::ToggleLegendPercent => {
-            window.toggle_legend_percent();
-            eprintln!("[Chart] Legend percent toggled -> {}", window.legend.show_percent);
+            window.toggle_legend_percent(panel);
+            eprintln!("[Chart] Legend percent toggled -> {}", panel.legend.show_percent);
             vec![]
         }
 
         // Crosshair label toggles — toggle the options flags directly.
         ChartAction::ToggleCrosshairVertLabel => {
-            window.crosshair_options.vert_line.label_visible =
-                !window.crosshair_options.vert_line.label_visible;
+            panel.crosshair_options.vert_line.label_visible =
+                !panel.crosshair_options.vert_line.label_visible;
             eprintln!("[Chart] Crosshair vert label toggled -> {}",
-                window.crosshair_options.vert_line.label_visible);
+                panel.crosshair_options.vert_line.label_visible);
             vec![]
         }
         ChartAction::ToggleCrosshairHorzLabel => {
-            window.crosshair_options.horz_line.label_visible =
-                !window.crosshair_options.horz_line.label_visible;
+            panel.crosshair_options.horz_line.label_visible =
+                !panel.crosshair_options.horz_line.label_visible;
             eprintln!("[Chart] Crosshair horz label toggled -> {}",
-                window.crosshair_options.horz_line.label_visible);
+                panel.crosshair_options.horz_line.label_visible);
             vec![]
         }
 
@@ -214,12 +216,12 @@ pub fn execute_chart_action(
         // Grid Visibility Setters
         // =====================================================================
         ChartAction::SetGridHorzVisible(v) => {
-            window.grid_options.horz_lines.visible = *v;
+            panel.grid_options.horz_lines.visible = *v;
             eprintln!("[Chart] Grid horz visible -> {}", v);
             vec![]
         }
         ChartAction::SetGridVertVisible(v) => {
-            window.grid_options.vert_lines.visible = *v;
+            panel.grid_options.vert_lines.visible = *v;
             eprintln!("[Chart] Grid vert visible -> {}", v);
             vec![]
         }
@@ -228,37 +230,37 @@ pub fn execute_chart_action(
         // Setters
         // =====================================================================
         ChartAction::SetGridStyle(s) => {
-            window.set_grid_style(*s);
+            window.set_grid_style(panel, *s);
             eprintln!("[Chart] Grid style set");
             vec![]
         }
         ChartAction::SetCrosshairMode(m) => {
-            window.set_crosshair_mode(*m);
+            window.set_crosshair_mode(panel, *m);
             eprintln!("[Chart] Crosshair mode set to {:?}", m);
             vec![]
         }
         ChartAction::SetCrosshairStyle(s) => {
-            window.set_crosshair_style(*s);
+            window.set_crosshair_style(panel, *s);
             eprintln!("[Chart] Crosshair style set");
             vec![]
         }
         ChartAction::SetLegendPosition(p) => {
-            window.set_legend_position(*p);
+            window.set_legend_position(panel, *p);
             eprintln!("[Chart] Legend position set to {:?}", p);
             vec![]
         }
         ChartAction::SetWatermarkPosition(h, v) => {
-            window.set_watermark_position(*h, *v);
+            window.set_watermark_position(panel, *h, *v);
             eprintln!("[Chart] Watermark position set");
             vec![]
         }
         ChartAction::SetWatermarkColor(c) => {
-            window.set_watermark_color(c);
+            window.set_watermark_color(panel, c);
             eprintln!("[Chart] Watermark color set to {}", c);
             vec![]
         }
         ChartAction::SetWatermarkText(t) => {
-            window.set_watermark_text(t);
+            window.set_watermark_text(panel, t);
             eprintln!("[Chart] Watermark text set to {}", t);
             vec![]
         }

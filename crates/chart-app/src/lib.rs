@@ -2497,17 +2497,25 @@ impl ChartApp {
                     layout.main_chart.chart.width,
                     layout.main_chart.chart.height,
                 );
+                // Phase 4 C: get panel state (grid/legend/chart_type/tooltip from panels_store).
+                let overlay_panel_id = window.chart_panel_id;
+                let overlay_default_panel = zengeld_chart::ChartPanelState::new(overlay_panel_id);
+                let overlay_panel = self.panels_store.chart_panel
+                    .get(&overlay_panel_id)
+                    .unwrap_or(&overlay_default_panel);
                 let render_state = window.to_render_state(
                     chart_rect,
                     &chart_theme,
                     Some(overlay_tf_name.as_str()),
                     Some(&window.scale_settings.time_format),
                     overlay_tf_minutes,
+                    &overlay_panel.grid_options,
+                    &overlay_panel.legend,
                 );
                 let crosshair_config = zengeld_chart::chart::CrosshairConfig::default();
                 let render_config = ChartRenderConfig {
                     scale_theme: self.panel_app.scale_theme_for_render(),
-                    chart_type: window.chart_type,
+                    chart_type: overlay_panel.chart_type,
                     crosshair_config,
                     ..ChartRenderConfig::default()
                 };
@@ -2519,7 +2527,7 @@ impl ChartApp {
                     &render_config,
                     None, // sub_pane_ranges not cached here; callers needing accurate labels cache from RenderOutput
                     Some(&window.drawing_manager),
-                    Some(&window.tooltip),
+                    Some(&overlay_panel.tooltip),
                     Some(overlay_symbol.as_str()),
                     &overlay_tf_name,
                 );
@@ -2560,17 +2568,25 @@ impl ChartApp {
                 layout.main_chart.chart.width,
                 layout.main_chart.chart.height,
             );
+            // Phase 4 C: panel state for single-window overlay.
+            let single_pid = window.chart_panel_id;
+            let single_default_panel = zengeld_chart::ChartPanelState::new(single_pid);
+            let single_panel = self.panels_store.chart_panel
+                .get(&single_pid)
+                .unwrap_or(&single_default_panel);
             let render_state = window.to_render_state(
                 chart_rect,
                 &chart_theme,
                 Some(single_overlay_tf_name.as_str()),
                 Some(&window.scale_settings.time_format),
                 single_overlay_tf_minutes,
+                &single_panel.grid_options,
+                &single_panel.legend,
             );
             let crosshair_config = zengeld_chart::chart::CrosshairConfig::default();
             let render_config = ChartRenderConfig {
                 scale_theme: self.panel_app.scale_theme_for_render(),
-                chart_type: window.chart_type,
+                chart_type: single_panel.chart_type,
                 crosshair_config,
                 ..ChartRenderConfig::default()
             };
@@ -2582,7 +2598,7 @@ impl ChartApp {
                 &render_config,
                 None,
                 Some(&window.drawing_manager),
-                Some(&window.tooltip),
+                Some(&single_panel.tooltip),
                 Some(single_overlay_symbol.as_str()),
                 &single_overlay_tf_name,
             );
@@ -2790,6 +2806,12 @@ impl ChartApp {
                     leaf_rect.x, leaf_rect.y,
                     leaf_rect.width, leaf_rect.height,
                 );
+                // Phase 4 C: get panel state from panels_store.
+                let split_pid = window.chart_panel_id;
+                let split_default_panel = zengeld_chart::ChartPanelState::new(split_pid);
+                let split_panel = self.panels_store.chart_panel
+                    .get(&split_pid)
+                    .unwrap_or(&split_default_panel);
                 let scale_corner_state = window.to_corner_state();
                 let render_state = window.to_render_state(
                     chart_rect,
@@ -2797,6 +2819,8 @@ impl ChartApp {
                     Some(split_tf_name.as_str()),
                     Some(&window.scale_settings.time_format),
                     split_tf_minutes,
+                    &split_panel.grid_options,
+                    &split_panel.legend,
                 );
                 let crosshair_config = if self.pending_alert_screenshot {
                     zengeld_chart::chart::CrosshairConfig { vert_visible: false, horz_visible: false, ..Default::default() }
@@ -2805,7 +2829,7 @@ impl ChartApp {
                 };
                 let render_config = ChartRenderConfig {
                     scale_theme: self.panel_app.scale_theme_for_render(),
-                    chart_type: window.chart_type,
+                    chart_type: split_panel.chart_type,
                     crosshair_config,
                     ..ChartRenderConfig::default()
                 };
@@ -2857,8 +2881,8 @@ impl ChartApp {
                     symbol: Some(split_symbol.as_str()),
                     sub_panes: Some(&window.sub_panes),
                     compare_overlay: Some(&window.compare_overlay),
-                    watermark: window.watermark.as_ref(),
-                    tooltip: Some(&window.tooltip),
+                    watermark: split_panel.watermark.as_ref(),
+                    tooltip: Some(&split_panel.tooltip),
                     alert_render_data: &alert_render_data,
                     scale_settings: &window.scale_settings,
                     selected_indicator_id: self.selected_indicator_id,
@@ -3227,8 +3251,10 @@ impl ChartApp {
             let scale_corner_state = self.panel_app.panel_grid.active_container()
                 .map(|w| w.to_corner_state())
                 .unwrap_or_default();
-            let active_chart_type = self.panel_app.panel_grid.active_container()
-                .map(|w| w.chart_type)
+            let active_pid_for_ct = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+            let active_chart_type = active_pid_for_ct
+                .and_then(|pid| self.panels_store.chart_panel.get(&pid))
+                .map(|p| p.chart_type)
                 .unwrap_or("candles");
             let crosshair_config = if self.pending_alert_screenshot {
                 zengeld_chart::chart::CrosshairConfig { vert_visible: false, horz_visible: false, ..Default::default() }
@@ -3329,6 +3355,17 @@ impl ChartApp {
                 .map(|(s, tf, e, at)| (s.as_str(), tf.as_str(), e.as_str(), at.as_str()))
                 .unwrap_or(("", "", "", ""));
 
+            // Phase 4 C: get single-window panel state before borrowing window.
+            let single_window_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+            let single_default_panel2 = single_window_pid.map(zengeld_chart::ChartPanelState::new);
+            let single_window_panel: &zengeld_chart::ChartPanelState = single_window_pid
+                .and_then(|pid| self.panels_store.chart_panel.get(&pid))
+                .or(single_default_panel2.as_ref())
+                .unwrap_or_else(|| {
+                    // Safety: this path is unreachable when window_opt is Some
+                    static FALLBACK: std::sync::OnceLock<zengeld_chart::ChartPanelState> = std::sync::OnceLock::new();
+                    FALLBACK.get_or_init(|| zengeld_chart::ChartPanelState::new(zengeld_chart::state::ChartPanelId(0)))
+                });
             let window_opt = self.panel_app.panel_grid.active_container();
             let corner_zones_single = if let Some(window) = window_opt {
                 use zengeld_chart::chart::render::ChartRect;
@@ -3344,6 +3381,8 @@ impl ChartApp {
                     Some(single_tf_name),
                     Some(&window.scale_settings.time_format),
                     single_tf_minutes,
+                    &single_window_panel.grid_options,
+                    &single_window_panel.legend,
                 );
 
                 let inner_proportions_vec: Vec<f64> = window.inner_layout.proportions.clone();
@@ -3357,8 +3396,8 @@ impl ChartApp {
                     symbol: Some(single_sym),
                     sub_panes: Some(&window.sub_panes),
                     compare_overlay: Some(&window.compare_overlay),
-                    watermark: window.watermark.as_ref(),
-                    tooltip: Some(&window.tooltip),
+                    watermark: single_window_panel.watermark.as_ref(),
+                    tooltip: Some(&single_window_panel.tooltip),
                     alert_render_data: &single_alert_render_data,
                     scale_settings: &window.scale_settings,
                     selected_indicator_id: self.selected_indicator_id,
@@ -6675,11 +6714,11 @@ impl ChartApp {
         let rt = self.panel_app.theme_manager.current();
         let series = &rt.series;
 
-        let (auto_scale, vert_lines, horz_lines,
+        // Phase 4 C: collect window-only fields first, then panel fields separately.
+        let settings_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+        let (auto_scale,
              price_scale_width, time_scale_height,
-             time_fmt_use_24h, time_fmt_show_dow, time_fmt_show_utc, tz_label, date_fmt_label, precision_lbl,
-             legend_show_ohlc, legend_show_change, legend_show_percent,
-             tooltip_visible, tooltip_follow_cursor) =
+             time_fmt_use_24h, time_fmt_show_dow, time_fmt_show_utc, tz_label, date_fmt_label, precision_lbl) =
             self.panel_app
             .panel_grid
             .active_container()
@@ -6687,8 +6726,6 @@ impl ChartApp {
                 let tf = &w.scale_settings.time_format;
                 (
                     w.price_scale.scale_mode.is_auto_y(),
-                    w.grid_options.vert_lines.visible,
-                    w.grid_options.horz_lines.visible,
                     w.scale_settings.price_scale_width,
                     w.scale_settings.time_scale_height,
                     tf.use_24h,
@@ -6699,22 +6736,32 @@ impl ChartApp {
                     zengeld_chart::scale_settings::precision_label(
                         w.scale_settings.user_precision,
                     ).to_string(),
-                    w.legend.show_ohlc,
-                    w.legend.show_change,
-                    w.legend.show_percent,
-                    w.tooltip.visible,
-                    w.tooltip.follow_cursor,
                 )
             })
             .unwrap_or_else(|| (
-                true, true, true, 70.0, 30.0,
+                true, 70.0, 30.0,
                 true, false, true,
                 "(UTC+0) Лондон".to_string(),
                 "21.01.2026".to_string(),
                 "Авто".to_string(),
-                true, true, true,
-                false, false,
             ));
+        // Panel-owned display fields.
+        let settings_default_panel = settings_pid.map(zengeld_chart::ChartPanelState::new);
+        let settings_panel = settings_pid
+            .and_then(|pid| self.panels_store.chart_panel.get(&pid))
+            .or(settings_default_panel.as_ref());
+        let (vert_lines, horz_lines, legend_show_ohlc, legend_show_change, legend_show_percent,
+             tooltip_visible, tooltip_follow_cursor) = settings_panel
+            .map(|p| (
+                p.grid_options.vert_lines.visible,
+                p.grid_options.horz_lines.visible,
+                p.legend.show_ohlc,
+                p.legend.show_change,
+                p.legend.show_percent,
+                p.tooltip.visible,
+                p.tooltip.follow_cursor,
+            ))
+            .unwrap_or((true, true, true, true, true, false, false));
 
         let css = &self.panel_app.chart_settings_state;
 

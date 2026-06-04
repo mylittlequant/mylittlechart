@@ -12,8 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use sidebar_content::free_slot::PanelId;
 use trading_manager::SharedTradingSnapshot;
 use zengeld_chart::state::ChartPanelId;
-
-use crate::chart_panel_state::ChartPanelState;
+use zengeld_chart::ChartPanelState;
 
 use zengeld_panels::panel_trait::TradingPanel;
 use zengeld_panels::trading::order_flow::{

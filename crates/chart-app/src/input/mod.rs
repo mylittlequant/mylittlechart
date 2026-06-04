@@ -6992,8 +6992,10 @@ impl ChartApp {
                     let field = editing.field_id.clone();
                     self.panel_app.chart_settings_state.editing_text = None;
                     if field == "status:watermark_text" {
-                        if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                            if let Some(ref mut watermark) = w.watermark {
+                        let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                        if let Some(pid) = pid {
+                            let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                            if let Some(ref mut watermark) = panel.watermark {
                                 if let Some(line) = watermark.lines.first_mut() {
                                     line.text = text.clone();
                                 }
@@ -7910,10 +7912,12 @@ impl ChartApp {
                 }
             }
             Command::ChangeChartType { new_type, .. } => {
-                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                    // chart_type is &'static str; leak the string to produce a 'static reference.
+                // chart_type is now in ChartPanelState; leak the string to produce a 'static ref.
+                let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                if let Some(pid) = pid {
                     let static_str: &'static str = Box::leak(new_type.clone().into_boxed_str());
-                    window.chart_type = static_str;
+                    crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid)
+                        .chart_type = static_str;
                 }
             }
             Command::ChangeSymbol { new_symbol, .. } => {
@@ -8643,8 +8647,13 @@ impl ChartApp {
                 let snap_account_type = crate::branch_meta_bridge::read_account_type(&self.branch_meta, chart_id)
                     .map(String::from)
                     .unwrap_or_else(|| "S".to_string());
+                // Phase 4 C: panel state (18 display/series fields) is in panels_store.
+                let snap_default_panel = zengeld_chart::ChartPanelState::new(window.chart_panel_id);
+                let snap_panel_state = self.panels_store.chart_panel
+                    .get(&window.chart_panel_id)
+                    .unwrap_or(&snap_default_panel);
                 preset.windows.push(ChartWindowSnapshot::from_window(
-                    window, leaf_id.0, gid, ptids, stashed_ch, stashed_prims_snap,
+                    window, snap_panel_state, leaf_id.0, gid, ptids, stashed_ch, stashed_prims_snap,
                     snap_symbol, snap_timeframe, snap_exchange, snap_account_type,
                 ));
             }

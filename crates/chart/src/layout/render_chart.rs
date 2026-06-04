@@ -3324,6 +3324,7 @@ pub fn render_chart_splits(
     theme: &ChartTheme,
     config: &ChartRenderConfig,
     frame_theme: &FrameTheme,
+    chart_panels: &std::collections::HashMap<crate::state::ChartPanelId, crate::ChartPanelState>,
 ) {
     // Snapshot leaf → rect pairs (uses pre-computed rects from last layout() call).
     let leaf_rects: Vec<_> = panel_grid
@@ -3337,6 +3338,12 @@ pub fn render_chart_splits(
             Some(w) => w,
             None => continue,
         };
+
+        // Resolve panel state for this window — fall back to default on miss.
+        let default_panel = crate::ChartPanelState::new(window.chart_panel_id);
+        let panel = chart_panels
+            .get(&window.chart_panel_id)
+            .unwrap_or(&default_panel);
 
         // Convert sub_rect (f32, 0,0-based relative) to absolute LayoutRect (f64)
         // by adding the content area offset so rendering hits the correct screen position.
@@ -3362,9 +3369,9 @@ pub fn render_chart_splits(
             price_scale: &window.price_scale,
             time_scale: &window.time_scale,
             bars: &window.bars,
-            grid: &window.grid_options,
+            grid: &panel.grid_options,
             crosshair: &window.crosshair,
-            legend: &window.legend,
+            legend: &panel.legend,
             chart_rect: ChartRect {
                 x: available.x,
                 y: available.y,
@@ -3388,7 +3395,7 @@ pub fn render_chart_splits(
         // All other config values (scale_theme, scale_config, crosshair_config)
         // come from the caller's config so colors match the main rendering path.
         let leaf_config = ChartRenderConfig {
-            chart_type: window.chart_type,
+            chart_type: panel.chart_type,
             ..config.clone()
         };
 

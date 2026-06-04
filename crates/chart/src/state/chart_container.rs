@@ -19,7 +19,8 @@ use crate::{Bar, Viewport, PriceScale, TimeScale};
 use crate::chart::types::price_scale::ScaleMode;
 use crate::state::Timeframe;
 use crate::{Crosshair, CrosshairOptions, KineticState, DragMode};
-use crate::{GridOptions, Legend, Watermark, Tooltip, PriceLine};
+use crate::{GridOptions, Legend, Watermark, PriceLine};
+use crate::state::chart_panel_state::ChartPanelState;
 use crate::drawing::DrawingManager;
 use crate::chart::{CompareOverlay, CompareSeries, get_compare_color};
 use crate::state::{SubPane, CommandHistory, Command};
@@ -157,18 +158,6 @@ pub struct ChartContainer {
     /// Drag start price max
     pub drag_start_price_max: f64,
 
-    // === Display Options ===
-    /// Grid display options
-    pub grid_options: GridOptions,
-    /// Crosshair display options
-    pub crosshair_options: CrosshairOptions,
-    /// Legend display state
-    pub legend: Legend,
-    /// Watermark display
-    pub watermark: Option<Watermark>,
-    /// Tooltip display state and config
-    pub tooltip: Tooltip,
-
     // === Object Managers ===
     /// Drawing primitives (trend lines, rectangles, etc.)
     pub drawing_manager: DrawingManager,
@@ -186,34 +175,6 @@ pub struct ChartContainer {
     // === Data Provider ===
     /// Data provider for loading bars (demo, exchange, etc.)
     pub data_provider: SharedDataProvider,
-
-    // === Series Visibility ===
-    /// Show candlesticks
-    pub show_candles: bool,
-    /// Show OHLC bars with ticks
-    pub show_bars: bool,
-    /// Show hollow candles (bullish=outline, bearish=filled)
-    pub show_hollow_candles: bool,
-    /// Show Heikin Ashi smoothed candles
-    pub show_heikin_ashi: bool,
-    /// Show line series
-    pub show_line: bool,
-    /// Show step line (staircase)
-    pub show_step_line: bool,
-    /// Show line with dot markers
-    pub show_line_markers: bool,
-    /// Show area series
-    pub show_area: bool,
-    /// Show HLC area (high-low-close)
-    pub show_hlc_area: bool,
-    /// Show histogram
-    pub show_histogram: bool,
-    /// Show columns (vertical bars from baseline)
-    pub show_columns: bool,
-    /// Show baseline
-    pub show_baseline: bool,
-    /// Active chart type name (e.g. "candles", "bars", "line", "area")
-    pub chart_type: &'static str,
 
     // === Scale Settings ===
     /// Scale display settings (positioning, dimensions, visibility)
@@ -320,12 +281,6 @@ impl ChartContainer {
             drag_start_spacing: 0.0,
             drag_start_price_min: 0.0,
             drag_start_price_max: 0.0,
-            // Display options
-            grid_options: GridOptions::default(),
-            crosshair_options: CrosshairOptions::default(),
-            legend: Legend::default(),
-            watermark: Some(Watermark::default()),
-            tooltip: Tooltip::default(),
             // Object managers
             drawing_manager,
             price_lines: HashMap::new(),
@@ -335,20 +290,6 @@ impl ChartContainer {
             command_history: CommandHistory::new(250),
             // Data provider
             data_provider,
-            // Series visibility
-            show_candles: true,
-            show_bars: false,
-            show_hollow_candles: false,
-            show_heikin_ashi: false,
-            show_line: false,
-            show_step_line: false,
-            show_line_markers: false,
-            show_area: false,
-            show_hlc_area: false,
-            show_histogram: false,
-            show_columns: false,
-            show_baseline: false,
-            chart_type: "candles",
             // Scale settings
             scale_settings: ScaleSettings::default(),
             // Toolbar state
@@ -465,9 +406,9 @@ impl ChartContainer {
         }
     }
 
-    /// Store the active chart type so the chart can read it without TerminalApp.
-    pub fn set_chart_type(&mut self, chart_type: &'static str) {
-        self.chart_type = chart_type;
+    /// Store the active chart type in the panel state.
+    pub fn set_chart_type(&mut self, panel: &mut ChartPanelState, chart_type: &'static str) {
+        panel.chart_type = chart_type;
     }
 
     /// Create a clone of this chart window for split operation.
@@ -537,13 +478,6 @@ impl ChartContainer {
             drag_start_price_min: 0.0,
             drag_start_price_max: 0.0,
 
-            // === Display Options (cloned) ===
-            grid_options: self.grid_options.clone(),
-            crosshair_options: self.crosshair_options.clone(),
-            legend: self.legend.clone(),
-            watermark: self.watermark.clone(),
-            tooltip: self.tooltip.clone(),
-
             // === Object Managers ===
             drawing_manager,
             price_lines: self.price_lines.clone(),
@@ -556,21 +490,6 @@ impl ChartContainer {
 
             // === Data Provider (shared) ===
             data_provider: self.data_provider.clone(),
-
-            // === Series Visibility (cloned) ===
-            show_candles: self.show_candles,
-            show_bars: self.show_bars,
-            show_hollow_candles: self.show_hollow_candles,
-            show_heikin_ashi: self.show_heikin_ashi,
-            show_line: self.show_line,
-            show_step_line: self.show_step_line,
-            show_line_markers: self.show_line_markers,
-            show_area: self.show_area,
-            show_hlc_area: self.show_hlc_area,
-            show_histogram: self.show_histogram,
-            show_columns: self.show_columns,
-            show_baseline: self.show_baseline,
-            chart_type: self.chart_type,
 
             // === Scale Settings (cloned) ===
             scale_settings: self.scale_settings.clone(),
@@ -612,13 +531,13 @@ impl ChartContainer {
     }
 
     /// Legend state for rendering (respects render flag).
-    pub fn legend_for_render(&self, render_legend: bool) -> Legend {
+    pub fn legend_for_render(legend: &Legend, render_legend: bool) -> Legend {
         if render_legend {
-            self.legend.clone()
+            legend.clone()
         } else {
-            let mut legend = self.legend.clone();
-            legend.visible = false;
-            legend
+            let mut l = legend.clone();
+            l.visible = false;
+            l
         }
     }
 
@@ -730,15 +649,6 @@ impl ChartContainer {
         self.viewport = source.viewport.clone();
         self.price_scale = source.price_scale.clone();
 
-        self.grid_options = source.grid_options.clone();
-        self.show_candles = source.show_candles;
-        self.show_bars = source.show_bars;
-        self.show_hollow_candles = source.show_hollow_candles;
-        self.show_heikin_ashi = source.show_heikin_ashi;
-        self.show_line = source.show_line;
-        self.show_area = source.show_area;
-        self.show_baseline = source.show_baseline;
-
         self.scale_settings = source.scale_settings.clone();
         self.price_scale.user_precision = self.scale_settings.user_precision;
 
@@ -746,6 +656,9 @@ impl ChartContainer {
     }
 
     /// Create ChartRenderState from this window's data.
+    ///
+    /// `grid` and `legend` are supplied by the caller from `ChartPanelState`
+    /// (they were removed from `ChartContainer` in Phase 4 C).
     ///
     /// `timeframe_minutes` is provided by the caller from `branch_meta` via
     /// `read_timeframe(...).map(|t| t.minutes)` — the field was removed from
@@ -757,15 +670,17 @@ impl ChartContainer {
         current_timeframe: Option<&'a str>,
         time_format_settings: Option<&'a crate::TimeFormatSettings>,
         timeframe_minutes: Option<u32>,
+        grid: &'a GridOptions,
+        legend: &'a Legend,
     ) -> crate::chart::render::ChartRenderState<'a> {
         crate::chart::render::ChartRenderState {
             viewport: &self.viewport,
             price_scale: &self.price_scale,
             time_scale: &self.time_scale,
             bars: &self.bars,
-            grid: &self.grid_options,
+            grid,
             crosshair: &self.crosshair,
-            legend: &self.legend,
+            legend,
             chart_rect,
             theme,
             time_ticks: None,
@@ -782,30 +697,33 @@ impl ChartContainer {
     }
 
     /// Create ChartRenderConfig from this window's options and render flags.
+    ///
+    /// `crosshair_options` and `chart_type` are supplied by the caller from
+    /// `ChartPanelState` (removed from `ChartContainer` in Phase 4 C).
     pub fn to_render_config(
         &self,
         scale_theme: crate::chart::render::ScaleTheme,
         render_crosshair: bool,
+        crosshair_options: &CrosshairOptions,
         chart_type: &'static str,
     ) -> crate::layout::ChartRenderConfig {
-        let crosshair_opts = &self.crosshair_options;
         let crosshair_config = if render_crosshair {
             crate::chart::render::CrosshairConfig {
-                vert_visible: crosshair_opts.vert_line.visible,
-                vert_width: crosshair_opts.vert_line.width,
-                vert_style: crosshair_opts.vert_line.style,
-                horz_visible: crosshair_opts.horz_line.visible,
-                horz_width: crosshair_opts.horz_line.width,
-                horz_style: crosshair_opts.horz_line.style,
+                vert_visible: crosshair_options.vert_line.visible,
+                vert_width: crosshair_options.vert_line.width,
+                vert_style: crosshair_options.vert_line.style,
+                horz_visible: crosshair_options.horz_line.visible,
+                horz_width: crosshair_options.horz_line.width,
+                horz_style: crosshair_options.horz_line.style,
             }
         } else {
             crate::chart::render::CrosshairConfig {
                 vert_visible: false,
-                vert_width: crosshair_opts.vert_line.width,
-                vert_style: crosshair_opts.vert_line.style,
+                vert_width: crosshair_options.vert_line.width,
+                vert_style: crosshair_options.vert_line.style,
                 horz_visible: false,
-                horz_width: crosshair_opts.horz_line.width,
-                horz_style: crosshair_opts.horz_line.style,
+                horz_width: crosshair_options.horz_line.width,
+                horz_style: crosshair_options.horz_line.style,
             }
         };
 
@@ -1267,10 +1185,10 @@ impl ChartContainer {
     // Chart Type
     // =========================================================================
 
-    /// Set chart type and record in undo history.
-    pub fn set_chart_type_with_undo(&mut self, chart_type: &'static str) {
-        let previous_type = self.chart_type.to_string();
-        self.chart_type = chart_type;
+    /// Set chart type in panel state and record in undo history.
+    pub fn set_chart_type_with_undo(&mut self, panel: &mut ChartPanelState, chart_type: &'static str) {
+        let previous_type = panel.chart_type.to_string();
+        panel.chart_type = chart_type;
         self.command_history.push(Command::ChangeChartType {
             previous_type,
             new_type: chart_type.to_string(),
@@ -1282,15 +1200,15 @@ impl ChartContainer {
     // =========================================================================
 
     /// Toggle the legend visibility.
-    pub fn toggle_legend(&mut self) {
-        self.legend.visible = !self.legend.visible;
+    pub fn toggle_legend(&self, panel: &mut ChartPanelState) {
+        panel.legend.visible = !panel.legend.visible;
     }
 
     /// Toggle both grid lines (vertical and horizontal) together.
-    pub fn toggle_grid(&mut self) {
-        let new_visible = !self.grid_options.vert_lines.visible;
-        self.grid_options.vert_lines.visible = new_visible;
-        self.grid_options.horz_lines.visible = new_visible;
+    pub fn toggle_grid(&self, panel: &mut ChartPanelState) {
+        let new_visible = !panel.grid_options.vert_lines.visible;
+        panel.grid_options.vert_lines.visible = new_visible;
+        panel.grid_options.horz_lines.visible = new_visible;
     }
 
     /// Toggle crosshair enabled state.
@@ -1299,58 +1217,58 @@ impl ChartContainer {
     }
 
     /// Toggle watermark visibility. Creates a default watermark if none exists.
-    pub fn toggle_watermark(&mut self) {
-        match &mut self.watermark {
+    pub fn toggle_watermark(&self, panel: &mut ChartPanelState) {
+        match &mut panel.watermark {
             Some(wm) => wm.visible = !wm.visible,
             None => {
-                self.watermark = Some(Watermark::default());
+                panel.watermark = Some(Watermark::default());
             }
         }
     }
 
     /// Toggle vertical grid lines visibility.
-    pub fn toggle_grid_vertical(&mut self) {
-        self.grid_options.vert_lines.visible = !self.grid_options.vert_lines.visible;
+    pub fn toggle_grid_vertical(&self, panel: &mut ChartPanelState) {
+        panel.grid_options.vert_lines.visible = !panel.grid_options.vert_lines.visible;
     }
 
     /// Toggle horizontal grid lines visibility.
-    pub fn toggle_grid_horizontal(&mut self) {
-        self.grid_options.horz_lines.visible = !self.grid_options.horz_lines.visible;
+    pub fn toggle_grid_horizontal(&self, panel: &mut ChartPanelState) {
+        panel.grid_options.horz_lines.visible = !panel.grid_options.horz_lines.visible;
     }
 
     /// Toggle tooltip visibility.
-    pub fn toggle_tooltip(&mut self) {
-        self.tooltip.visible = !self.tooltip.visible;
+    pub fn toggle_tooltip(&self, panel: &mut ChartPanelState) {
+        panel.tooltip.visible = !panel.tooltip.visible;
     }
 
     /// Toggle tooltip follow-cursor mode.
-    pub fn toggle_tooltip_follow(&mut self) {
-        self.tooltip.follow_cursor = !self.tooltip.follow_cursor;
+    pub fn toggle_tooltip_follow(&self, panel: &mut ChartPanelState) {
+        panel.tooltip.follow_cursor = !panel.tooltip.follow_cursor;
     }
 
     /// Toggle crosshair vertical line visibility.
-    pub fn toggle_crosshair_vert_line(&mut self) {
-        self.crosshair_options.vert_line.visible = !self.crosshair_options.vert_line.visible;
+    pub fn toggle_crosshair_vert_line(&self, panel: &mut ChartPanelState) {
+        panel.crosshair_options.vert_line.visible = !panel.crosshair_options.vert_line.visible;
     }
 
     /// Toggle crosshair horizontal line visibility.
-    pub fn toggle_crosshair_horz_line(&mut self) {
-        self.crosshair_options.horz_line.visible = !self.crosshair_options.horz_line.visible;
+    pub fn toggle_crosshair_horz_line(&self, panel: &mut ChartPanelState) {
+        panel.crosshair_options.horz_line.visible = !panel.crosshair_options.horz_line.visible;
     }
 
     /// Toggle legend OHLC display.
-    pub fn toggle_legend_ohlc(&mut self) {
-        self.legend.show_ohlc = !self.legend.show_ohlc;
+    pub fn toggle_legend_ohlc(&self, panel: &mut ChartPanelState) {
+        panel.legend.show_ohlc = !panel.legend.show_ohlc;
     }
 
     /// Toggle legend change display.
-    pub fn toggle_legend_change(&mut self) {
-        self.legend.show_change = !self.legend.show_change;
+    pub fn toggle_legend_change(&self, panel: &mut ChartPanelState) {
+        panel.legend.show_change = !panel.legend.show_change;
     }
 
     /// Toggle legend percent display.
-    pub fn toggle_legend_percent(&mut self) {
-        self.legend.show_percent = !self.legend.show_percent;
+    pub fn toggle_legend_percent(&self, panel: &mut ChartPanelState) {
+        panel.legend.show_percent = !panel.legend.show_percent;
     }
 
     // =========================================================================
@@ -1358,37 +1276,37 @@ impl ChartContainer {
     // =========================================================================
 
     /// Set grid line style for both vertical and horizontal lines.
-    pub fn set_grid_style(&mut self, style: crate::drawing::LineStyle) {
-        self.grid_options.vert_lines.style = style;
-        self.grid_options.horz_lines.style = style;
+    pub fn set_grid_style(&self, panel: &mut ChartPanelState, style: crate::drawing::LineStyle) {
+        panel.grid_options.vert_lines.style = style;
+        panel.grid_options.horz_lines.style = style;
     }
 
     /// Set crosshair mode on both crosshair state and crosshair options.
-    pub fn set_crosshair_mode(&mut self, mode: crate::CrosshairMode) {
+    pub fn set_crosshair_mode(&mut self, panel: &mut ChartPanelState, mode: crate::CrosshairMode) {
         self.crosshair.mode = mode;
-        self.crosshair_options.mode = mode;
+        panel.crosshair_options.mode = mode;
     }
 
     /// Set crosshair line style for both vertical and horizontal lines.
-    pub fn set_crosshair_style(&mut self, style: crate::drawing::LineStyle) {
-        self.crosshair_options.vert_line.style = style;
-        self.crosshair_options.horz_line.style = style;
+    pub fn set_crosshair_style(&self, panel: &mut ChartPanelState, style: crate::drawing::LineStyle) {
+        panel.crosshair_options.vert_line.style = style;
+        panel.crosshair_options.horz_line.style = style;
     }
 
     /// Set legend position.
-    pub fn set_legend_position(&mut self, pos: crate::LegendPosition) {
-        self.legend.position = pos;
+    pub fn set_legend_position(&self, panel: &mut ChartPanelState, pos: crate::LegendPosition) {
+        panel.legend.position = pos;
     }
 
     /// Set watermark position. Creates a default watermark if none exists.
-    pub fn set_watermark_position(&mut self, horz: crate::HorzAlign, vert: crate::VertAlign) {
-        match &mut self.watermark {
+    pub fn set_watermark_position(&self, panel: &mut ChartPanelState, horz: crate::HorzAlign, vert: crate::VertAlign) {
+        match &mut panel.watermark {
             Some(wm) => {
                 wm.horz_align = horz;
                 wm.vert_align = vert;
             }
             None => {
-                self.watermark = Some(Watermark {
+                panel.watermark = Some(Watermark {
                     horz_align: horz,
                     vert_align: vert,
                     ..Watermark::default()
@@ -1398,25 +1316,25 @@ impl ChartContainer {
     }
 
     /// Set watermark color. Creates a default watermark if none exists.
-    pub fn set_watermark_color(&mut self, color: &str) {
-        match &mut self.watermark {
+    pub fn set_watermark_color(&self, panel: &mut ChartPanelState, color: &str) {
+        match &mut panel.watermark {
             Some(wm) => wm.set_color(color),
             None => {
                 let mut wm = Watermark::default();
                 wm.set_color(color);
-                self.watermark = Some(wm);
+                panel.watermark = Some(wm);
             }
         }
     }
 
     /// Set watermark text. Creates a default watermark if none exists.
-    pub fn set_watermark_text(&mut self, text: &str) {
-        match &mut self.watermark {
+    pub fn set_watermark_text(&self, panel: &mut ChartPanelState, text: &str) {
+        match &mut panel.watermark {
             Some(wm) => wm.set_text(text),
             None => {
                 let mut wm = Watermark::default();
                 wm.set_text(text);
-                self.watermark = Some(wm);
+                panel.watermark = Some(wm);
             }
         }
     }
@@ -1531,43 +1449,43 @@ impl ChartContainer {
     // Action Dispatch
     // =========================================================================
 
-    /// Execute a chart action, mutating chart state directly.
+    /// Execute a chart action, mutating chart state and panel display state.
     ///
     /// Returns `true` if the action was handled by this window, `false` if it
     /// requires app-level handling.
-    pub fn execute_chart_action(&mut self, action: &crate::ChartAction) -> bool {
+    pub fn execute_chart_action(&mut self, panel: &mut ChartPanelState, action: &crate::ChartAction) -> bool {
         use crate::ChartAction;
         match action {
             // === Series / Chart Type ===
             ChartAction::SetChartType(ct) => {
-                self.set_chart_type_with_undo(ct);
+                self.set_chart_type_with_undo(panel, ct);
                 true
             }
 
             // === Toggles ===
-            ChartAction::ToggleLegend => { self.toggle_legend(); true }
-            ChartAction::ToggleGrid => { self.toggle_grid(); true }
+            ChartAction::ToggleLegend => { self.toggle_legend(panel); true }
+            ChartAction::ToggleGrid => { self.toggle_grid(panel); true }
             ChartAction::ToggleCrosshair => { self.toggle_crosshair(); true }
             ChartAction::ToggleMagnet => { self.crosshair.toggle_magnet(); true }
-            ChartAction::ToggleWatermark => { self.toggle_watermark(); true }
-            ChartAction::ToggleGridVertical => { self.toggle_grid_vertical(); true }
-            ChartAction::ToggleGridHorizontal => { self.toggle_grid_horizontal(); true }
-            ChartAction::ToggleTooltip => { self.toggle_tooltip(); true }
-            ChartAction::ToggleTooltipFollow => { self.toggle_tooltip_follow(); true }
-            ChartAction::ToggleCrosshairVertLine => { self.toggle_crosshair_vert_line(); true }
-            ChartAction::ToggleCrosshairHorzLine => { self.toggle_crosshair_horz_line(); true }
-            ChartAction::ToggleLegendOHLC => { self.toggle_legend_ohlc(); true }
-            ChartAction::ToggleLegendChange => { self.toggle_legend_change(); true }
-            ChartAction::ToggleLegendPercent => { self.toggle_legend_percent(); true }
+            ChartAction::ToggleWatermark => { self.toggle_watermark(panel); true }
+            ChartAction::ToggleGridVertical => { self.toggle_grid_vertical(panel); true }
+            ChartAction::ToggleGridHorizontal => { self.toggle_grid_horizontal(panel); true }
+            ChartAction::ToggleTooltip => { self.toggle_tooltip(panel); true }
+            ChartAction::ToggleTooltipFollow => { self.toggle_tooltip_follow(panel); true }
+            ChartAction::ToggleCrosshairVertLine => { self.toggle_crosshair_vert_line(panel); true }
+            ChartAction::ToggleCrosshairHorzLine => { self.toggle_crosshair_horz_line(panel); true }
+            ChartAction::ToggleLegendOHLC => { self.toggle_legend_ohlc(panel); true }
+            ChartAction::ToggleLegendChange => { self.toggle_legend_change(panel); true }
+            ChartAction::ToggleLegendPercent => { self.toggle_legend_percent(panel); true }
 
             // === Setters ===
-            ChartAction::SetGridStyle(s) => { self.set_grid_style(*s); true }
-            ChartAction::SetCrosshairMode(m) => { self.set_crosshair_mode(*m); true }
-            ChartAction::SetCrosshairStyle(s) => { self.set_crosshair_style(*s); true }
-            ChartAction::SetLegendPosition(p) => { self.set_legend_position(*p); true }
-            ChartAction::SetWatermarkPosition(h, v) => { self.set_watermark_position(*h, *v); true }
-            ChartAction::SetWatermarkColor(c) => { self.set_watermark_color(c); true }
-            ChartAction::SetWatermarkText(t) => { self.set_watermark_text(t); true }
+            ChartAction::SetGridStyle(s) => { self.set_grid_style(panel, *s); true }
+            ChartAction::SetCrosshairMode(m) => { self.set_crosshair_mode(panel, *m); true }
+            ChartAction::SetCrosshairStyle(s) => { self.set_crosshair_style(panel, *s); true }
+            ChartAction::SetLegendPosition(p) => { self.set_legend_position(panel, *p); true }
+            ChartAction::SetWatermarkPosition(h, v) => { self.set_watermark_position(panel, *h, *v); true }
+            ChartAction::SetWatermarkColor(c) => { self.set_watermark_color(panel, c); true }
+            ChartAction::SetWatermarkText(t) => { self.set_watermark_text(panel, t); true }
 
             // === Zoom ===
             ChartAction::ZoomIn => { self.zoom_in(); true }

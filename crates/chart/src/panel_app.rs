@@ -15,7 +15,7 @@ use crate::layout::LayoutRect;
 use crate::layout::{ChartAreaLayout, ChartRenderConfig, ScaleCornerState, render_chart_window, ExtendedFrameLayout, FrameTheme};
 use crate::chart::render::ScaleTheme;
 use crate::chart::render::{ChartRenderState, ChartTheme, ChartRect};
-use crate::state::{ChartPanelGrid, ChartContainer, Timeframe};
+use crate::state::{ChartPanelGrid, ChartContainer, ChartPanelState, Timeframe};
 use crate::scale_settings::ScaleSettings;
 use crate::toolbar;
 use crate::ui::toolbar_render::{
@@ -3383,6 +3383,7 @@ impl ChartPanelApp {
         &mut self,
         ctx: &mut dyn crate::render::RenderContext,
         area: LayoutRect,
+        chart_panels: &std::collections::HashMap<crate::state::chart_container_leaf::ChartPanelId, ChartPanelState>,
     ) {
         // Convert LayoutRect (f64) to uzor::panels::PanelRect (f32).
         let split_rect = uzor::panels::PanelRect {
@@ -3408,6 +3409,13 @@ impl ChartPanelApp {
                 Some(w) => w,
                 None => continue,
             };
+
+            // Resolve the panel state for this leaf — fall back to a temporary
+            // default if the entry is missing (e.g. first frame before seed).
+            let default_panel = ChartPanelState::new(window.chart_panel_id);
+            let panel = chart_panels
+                .get(&window.chart_panel_id)
+                .unwrap_or(&default_panel);
 
             // Convert sub_rect (f32, 0,0-based relative) to absolute LayoutRect (f64)
             // by adding the content area offset so rendering hits the correct screen position.
@@ -3453,9 +3461,9 @@ impl ChartPanelApp {
                 price_scale: &window.price_scale,
                 time_scale: &window.time_scale,
                 bars: &window.bars,
-                grid: &window.grid_options,
+                grid: &panel.grid_options,
                 crosshair: &window.crosshair,
-                legend: &window.legend,
+                legend: &panel.legend,
                 chart_rect,
                 theme: &chart_theme,
                 time_ticks: None,
@@ -3471,7 +3479,7 @@ impl ChartPanelApp {
             };
 
             let render_config = ChartRenderConfig {
-                chart_type: window.chart_type,
+                chart_type: panel.chart_type,
                 scale_theme: self.scale_theme_for_render(),
                 ..ChartRenderConfig::default()
             };

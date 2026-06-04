@@ -17,6 +17,7 @@ use crate::drawing::primitives_v2::Primitive;
 use crate::drawing::primitives_v2::config::TimeframeVisibilityConfig;
 use crate::drawing::DrawingManager;
 use crate::state::chart_container::ChartContainer;
+use crate::state::chart_panel_state::ChartPanelState;
 use crate::state::history::CommandHistory;
 use crate::state::Timeframe;
 use crate::tag_manager::{IndicatorGroupConfig, SyncFlags, SyncGroup, SyncMemberId};
@@ -212,6 +213,7 @@ impl ChartWindowSnapshot {
     /// `ChartContainer`).
     pub fn from_window(
         window: &ChartContainer,
+        panel: &ChartPanelState,
         leaf_id: u64,
         group_id: Option<u64>,
         pre_tag_indicator_ids: Vec<u64>,
@@ -246,24 +248,24 @@ impl ChartWindowSnapshot {
             viewport: saved_viewport,
             price_scale: saved_price_scale,
             group_id,
-            grid_options: window.grid_options.clone(),
-            crosshair_options: window.crosshair_options.clone(),
-            legend: window.legend.clone(),
-            watermark: window.watermark.clone(),
-            tooltip: window.tooltip.clone(),
-            chart_type: window.chart_type.to_string(),
-            show_candles: window.show_candles,
-            show_bars: window.show_bars,
-            show_hollow_candles: window.show_hollow_candles,
-            show_heikin_ashi: window.show_heikin_ashi,
-            show_line: window.show_line,
-            show_step_line: window.show_step_line,
-            show_line_markers: window.show_line_markers,
-            show_area: window.show_area,
-            show_hlc_area: window.show_hlc_area,
-            show_histogram: window.show_histogram,
-            show_columns: window.show_columns,
-            show_baseline: window.show_baseline,
+            grid_options: panel.grid_options.clone(),
+            crosshair_options: panel.crosshair_options.clone(),
+            legend: panel.legend.clone(),
+            watermark: panel.watermark.clone(),
+            tooltip: panel.tooltip.clone(),
+            chart_type: panel.chart_type.to_string(),
+            show_candles: panel.show_candles,
+            show_bars: panel.show_bars,
+            show_hollow_candles: panel.show_hollow_candles,
+            show_heikin_ashi: panel.show_heikin_ashi,
+            show_line: panel.show_line,
+            show_step_line: panel.show_step_line,
+            show_line_markers: panel.show_line_markers,
+            show_area: panel.show_area,
+            show_hlc_area: panel.show_hlc_area,
+            show_histogram: panel.show_histogram,
+            show_columns: panel.show_columns,
+            show_baseline: panel.show_baseline,
             scale_settings: window.scale_settings.clone(),
             drawings,
             command_history: Some(window.command_history.clone()),

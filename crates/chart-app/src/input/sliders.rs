@@ -41,17 +41,24 @@ impl ChartApp {
 
         // Scales tab sliders
         if field_id.starts_with("scales:") {
-            let Some(window) = self.panel_app.panel_grid.active_container_mut() else { return; };
             match field_id {
                 "scales:price_width_slider" => {
-                    window.scale_settings.price_scale_width = value;
+                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
+                        w.scale_settings.price_scale_width = value;
+                    }
                 }
                 "scales:time_height_slider" => {
-                    window.scale_settings.time_scale_height = value;
+                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
+                        w.scale_settings.time_scale_height = value;
+                    }
                 }
                 "scales:crosshair_line_width" => {
-                    window.crosshair_options.vert_line.width = value;
-                    window.crosshair_options.horz_line.width = value;
+                    let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                    if let Some(pid) = pid {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.crosshair_options.vert_line.width = value;
+                        panel.crosshair_options.horz_line.width = value;
+                    }
                 }
                 _ => eprintln!("[ChartApp] apply_slider_value: unknown scales field: {}", field_id),
             }

@@ -172,8 +172,10 @@ impl ChartApp {
             None => return,
         };
         if field == "status:watermark_text" {
-            if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                if let Some(ref mut watermark) = w.watermark {
+            let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+            if let Some(pid) = pid {
+                let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                if let Some(ref mut watermark) = panel.watermark {
                     if let Some(line) = watermark.lines.first_mut() {
                         line.text = text.clone();
                     }
@@ -213,9 +215,13 @@ impl ChartApp {
 
         // ── Scales & Lines settings ───────────────────────────────────────────
         if let Ok(scales) = serde_json::from_value::<ScalesLinesSettings>(tmpl.scales.clone()) {
+            let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+            if let Some(pid) = active_pid {
+                let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                panel.grid_options.vert_lines.visible = scales.vert_lines;
+                panel.grid_options.horz_lines.visible = scales.horz_lines;
+            }
             if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                w.grid_options.vert_lines.visible = scales.vert_lines;
-                w.grid_options.horz_lines.visible = scales.horz_lines;
                 w.scale_settings.price_scale_width  = scales.price_scale_width;
                 w.scale_settings.time_scale_height  = scales.time_scale_height;
                 if scales.auto_scale {
@@ -347,23 +353,29 @@ impl ChartApp {
         if let Some(field) = item_id.strip_prefix("scales:") {
             match field {
                 "show_grid" => {
-                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                        let current = w.grid_options.vert_lines.visible && w.grid_options.horz_lines.visible;
-                        w.grid_options.vert_lines.visible = !current;
-                        w.grid_options.horz_lines.visible = !current;
+                    let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                    if let Some(pid) = pid {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        let current = panel.grid_options.vert_lines.visible && panel.grid_options.horz_lines.visible;
+                        panel.grid_options.vert_lines.visible = !current;
+                        panel.grid_options.horz_lines.visible = !current;
                         eprintln!("[ChartApp] scales:show_grid = {}", !current);
                     }
                 }
                 "vert_lines" => {
-                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                        w.grid_options.vert_lines.visible = !w.grid_options.vert_lines.visible;
-                        eprintln!("[ChartApp] scales:vert_lines = {}", w.grid_options.vert_lines.visible);
+                    let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                    if let Some(pid) = pid {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.grid_options.vert_lines.visible = !panel.grid_options.vert_lines.visible;
+                        eprintln!("[ChartApp] scales:vert_lines = {}", panel.grid_options.vert_lines.visible);
                     }
                 }
                 "horz_lines" => {
-                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                        w.grid_options.horz_lines.visible = !w.grid_options.horz_lines.visible;
-                        eprintln!("[ChartApp] scales:horz_lines = {}", w.grid_options.horz_lines.visible);
+                    let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                    if let Some(pid) = pid {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.grid_options.horz_lines.visible = !panel.grid_options.horz_lines.visible;
+                        eprintln!("[ChartApp] scales:horz_lines = {}", panel.grid_options.horz_lines.visible);
                     }
                 }
                 "price_scale_right" => {
@@ -440,8 +452,10 @@ impl ChartApp {
                     }
                 }
                 "crosshair_line_color" => {
-                    let current_color: Option<String> = self.panel_app.panel_grid.active_container()
-                        .map(|w| w.crosshair_options.vert_line.color.clone());
+                    let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                    let current_color: Option<String> = pid
+                        .and_then(|pid| self.panels_store.chart_panel.get(&pid))
+                        .map(|p| p.crosshair_options.vert_line.color.clone());
                     let widget_id_str = format!("chart_settings:item:{}", item_id);
                     let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId::from(widget_id_str));
                     let (ax, ay, aw, ah) = rect.map(|r| (r.x, r.y, r.width, r.height)).unwrap_or((0.0, 0.0, 0.0, 0.0));
@@ -498,22 +512,26 @@ impl ChartApp {
         if let Some(field) = item_id.strip_prefix("status:") {
             match field {
                 "dropdown_cycle:legend_position" => {
-                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                        w.legend.position = match w.legend.position {
+                    let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                    if let Some(pid) = pid {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.legend.position = match panel.legend.position {
                             LegendPosition::TopLeft    => LegendPosition::TopRight,
                             LegendPosition::TopRight   => LegendPosition::BottomRight,
                             LegendPosition::BottomRight => LegendPosition::BottomLeft,
                             LegendPosition::BottomLeft  => LegendPosition::TopLeft,
                         };
-                        eprintln!("[ChartApp] legend position cycled: {:?}", w.legend.position);
+                        eprintln!("[ChartApp] legend position cycled: {:?}", panel.legend.position);
                     }
                 }
                 "dropdown_menu:legend_position" => {
                     self.panel_app.chart_settings_state.toggle_dropdown("legend_position");
                 }
                 "legend_position" => {
-                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                        w.legend.position = match w.legend.position {
+                    let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                    if let Some(pid) = pid {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.legend.position = match panel.legend.position {
                             LegendPosition::TopLeft    => LegendPosition::TopRight,
                             LegendPosition::TopRight   => LegendPosition::BottomLeft,
                             LegendPosition::BottomLeft  => LegendPosition::BottomRight,
@@ -522,38 +540,50 @@ impl ChartApp {
                     }
                 }
                 "legend_show_ohlc" => {
-                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                        w.legend.show_ohlc = !w.legend.show_ohlc;
-                        eprintln!("[ChartApp] legend_show_ohlc = {}", w.legend.show_ohlc);
+                    let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                    if let Some(pid) = pid {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.legend.show_ohlc = !panel.legend.show_ohlc;
+                        eprintln!("[ChartApp] legend_show_ohlc = {}", panel.legend.show_ohlc);
                     }
                 }
                 "legend_show_change" => {
-                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                        w.legend.show_change = !w.legend.show_change;
-                        eprintln!("[ChartApp] legend_show_change = {}", w.legend.show_change);
+                    let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                    if let Some(pid) = pid {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.legend.show_change = !panel.legend.show_change;
+                        eprintln!("[ChartApp] legend_show_change = {}", panel.legend.show_change);
                     }
                 }
                 "legend_show_percent" => {
-                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                        w.legend.show_percent = !w.legend.show_percent;
-                        eprintln!("[ChartApp] legend_show_percent = {}", w.legend.show_percent);
+                    let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                    if let Some(pid) = pid {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.legend.show_percent = !panel.legend.show_percent;
+                        eprintln!("[ChartApp] legend_show_percent = {}", panel.legend.show_percent);
                     }
                 }
                 "tooltip_visible" => {
-                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                        w.tooltip.visible = !w.tooltip.visible;
-                        eprintln!("[ChartApp] tooltip_visible = {}", w.tooltip.visible);
+                    let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                    if let Some(pid) = pid {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.tooltip.visible = !panel.tooltip.visible;
+                        eprintln!("[ChartApp] tooltip_visible = {}", panel.tooltip.visible);
                     }
                 }
                 "tooltip_follow" => {
-                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                        w.tooltip.follow_cursor = !w.tooltip.follow_cursor;
-                        eprintln!("[ChartApp] tooltip_follow = {}", w.tooltip.follow_cursor);
+                    let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                    if let Some(pid) = pid {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.tooltip.follow_cursor = !panel.tooltip.follow_cursor;
+                        eprintln!("[ChartApp] tooltip_follow = {}", panel.tooltip.follow_cursor);
                     }
                 }
                 "dropdown_cycle:watermark_position" => {
-                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                        if let Some(ref mut watermark) = w.watermark {
+                    let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                    if let Some(pid) = pid {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        if let Some(ref mut watermark) = panel.watermark {
                             match (watermark.horz_align, watermark.vert_align) {
                                 (HorzAlign::Left, VertAlign::Top) => { watermark.horz_align = HorzAlign::Right; watermark.vert_align = VertAlign::Top; }
                                 (HorzAlign::Right, VertAlign::Top) => { watermark.horz_align = HorzAlign::Right; watermark.vert_align = VertAlign::Bottom; }
@@ -569,8 +599,10 @@ impl ChartApp {
                     self.panel_app.chart_settings_state.toggle_dropdown("watermark_position");
                 }
                 "watermark_position" => {
-                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                        if let Some(ref mut watermark) = w.watermark {
+                    let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                    if let Some(pid) = pid {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        if let Some(ref mut watermark) = panel.watermark {
                             match (watermark.horz_align, watermark.vert_align) {
                                 (HorzAlign::Left, VertAlign::Top) => { watermark.horz_align = HorzAlign::Right; watermark.vert_align = VertAlign::Top; }
                                 (HorzAlign::Right, VertAlign::Top) => { watermark.horz_align = HorzAlign::Left; watermark.vert_align = VertAlign::Bottom; }
@@ -582,16 +614,20 @@ impl ChartApp {
                     }
                 }
                 "watermark_visible" => {
-                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                        if let Some(ref mut watermark) = w.watermark {
+                    let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                    if let Some(pid) = pid {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        if let Some(ref mut watermark) = panel.watermark {
                             watermark.visible = !watermark.visible;
                             eprintln!("[ChartApp] watermark_visible = {}", watermark.visible);
                         }
                     }
                 }
                 "watermark_color" => {
-                    let current_color: Option<String> = self.panel_app.panel_grid.active_container()
-                        .and_then(|w| w.watermark.as_ref())
+                    let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                    let current_color: Option<String> = pid
+                        .and_then(|pid| self.panels_store.chart_panel.get(&pid))
+                        .and_then(|p| p.watermark.as_ref())
                         .and_then(|wm| wm.lines.first())
                         .map(|line| line.color.clone());
                     let widget_id_str = format!("chart_settings:item:{}", item_id);
@@ -604,8 +640,10 @@ impl ChartApp {
                 }
                 "watermark_text" => {
                     use zengeld_chart::ui::modal_settings::TextEditingState;
-                    let current_text = self.panel_app.panel_grid.active_container()
-                        .and_then(|w| w.watermark.as_ref())
+                    let pid2 = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                    let current_text = pid2
+                        .and_then(|pid| self.panels_store.chart_panel.get(&pid))
+                        .and_then(|p| p.watermark.as_ref())
                         .and_then(|wm| wm.lines.first())
                         .map(|line| line.text.clone())
                         .unwrap_or_default();
@@ -701,9 +739,11 @@ impl ChartApp {
                         "SparseDotted" => LineStyle::SparseDotted,
                         _ => LineStyle::Solid,
                     };
-                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                        w.crosshair_options.vert_line.style = new_style;
-                        w.crosshair_options.horz_line.style = new_style;
+                    let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                    if let Some(pid) = pid {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.crosshair_options.vert_line.style = new_style;
+                        panel.crosshair_options.horz_line.style = new_style;
                     }
                     eprintln!("[ChartApp] crosshair_line_style = {:?}", new_style);
                 }
@@ -758,8 +798,9 @@ impl ChartApp {
                         "bottom_right" => LegendPosition::BottomRight,
                         _ => LegendPosition::TopLeft,
                     };
-                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                        w.legend.position = new_pos;
+                    let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                    if let Some(pid) = pid {
+                        crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid).legend.position = new_pos;
                     }
                     eprintln!("[ChartApp] legend_position = {:?}", new_pos);
                 }
@@ -772,8 +813,10 @@ impl ChartApp {
                         "center"       => (HorzAlign::Center, VertAlign::Center),
                         _ => (HorzAlign::Left, VertAlign::Top),
                     };
-                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                        if let Some(ref mut watermark) = w.watermark {
+                    let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                    if let Some(pid) = pid {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        if let Some(ref mut watermark) = panel.watermark {
                             watermark.horz_align = horz;
                             watermark.vert_align = vert;
                             eprintln!("[ChartApp] watermark_position = {:?} {:?}", horz, vert);
@@ -818,16 +861,18 @@ impl ChartApp {
                 }
                 "crosshair_line_style" => {
                     use zengeld_chart::drawing::primitives_v2::LineStyle;
-                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                        let new_style = match w.crosshair_options.vert_line.style {
+                    let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                    if let Some(pid) = pid {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        let new_style = match panel.crosshair_options.vert_line.style {
                             LineStyle::Solid       => LineStyle::Dashed,
                             LineStyle::Dashed      => LineStyle::Dotted,
                             LineStyle::Dotted      => LineStyle::LargeDashed,
                             LineStyle::LargeDashed => LineStyle::SparseDotted,
                             LineStyle::SparseDotted => LineStyle::Solid,
                         };
-                        w.crosshair_options.vert_line.style = new_style;
-                        w.crosshair_options.horz_line.style = new_style;
+                        panel.crosshair_options.vert_line.style = new_style;
+                        panel.crosshair_options.horz_line.style = new_style;
                         eprintln!("[ChartApp] crosshair_line_style cycled: {:?}", new_style);
                     }
                 }

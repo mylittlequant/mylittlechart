@@ -336,6 +336,8 @@ pub use state::{
     // ChartContainer - the main chart state aggregate (formerly ChartWindow,
     // renamed in Phase 1 of the chart-container cut)
     ChartContainer, ChartId, ConnectionStatus, WindowRect, WINDOW_GAP,
+    // Phase 4 S2.7 — per-canvas display-option + series-visibility state
+    ChartPanelState,
     // Snap-to-end constant (canonical margin used by ChartContainer::snap_to_end)
     DEFAULT_SNAP_MARGIN,
     // Chart-internal split/expand system
