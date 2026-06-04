@@ -76,8 +76,7 @@ pub enum PanelLeaf {
 }
 
 impl PanelLeaf {
-    /// Discriminant — useful for `AcceptPolicy` checks and rendering
-    /// dispatch tables.
+    /// Discriminant — useful for rendering dispatch tables.
     pub fn kind(&self) -> PanelLeafKind {
         match self {
             PanelLeaf::ChartPanel(_) => PanelLeafKind::ChartPanel,

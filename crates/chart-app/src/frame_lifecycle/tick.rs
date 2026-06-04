@@ -213,14 +213,13 @@ impl ChartApp {
                     // Collect (symbol, timeframe, account_type) for windows that received
                     // an initial load so we can trigger background backfill after the loop.
                     let mut backfill_requests: Vec<(String, zengeld_chart::state::Timeframe, digdigdig3::AccountType)> = Vec::new();
-                    // Phase 4 S2.3: collect (chart_id, prev_close_price) for matched
-                    // windows so we can mirror into branch_meta after the panel_grid
-                    // mut borrow drops.
+                    // Collect (chart_id, prev_close_price) for matched windows so we can
+                    // write to the bubble after the panel_grid mut borrow drops.
                     let mut prev_close_mirrors: Vec<(zengeld_chart::state::ChartId, Option<f64>)> = Vec::new();
 
-                    // Phase 4 B: pre-collect instrument map from branch_meta so we can
-                    // read symbol/tf/exchange/account_type inside the containers_mut() loop
-                    // (branch_meta can't be borrowed concurrently with the mut borrow).
+                    // Pre-collect instrument map from BubbleStore so symbol/tf/exchange/
+                    // account_type are available inside the containers_mut() loop without
+                    // an extra borrow.
                     let instrument_by_cid: std::collections::HashMap<zengeld_chart::state::ChartId, (String, zengeld_chart::state::Timeframe, String, String)> = {
                         self.panel_app.panel_grid.containers().keys()
                             .filter_map(|cid| {
@@ -350,10 +349,8 @@ impl ChartApp {
                 }
                 LiveUpdate::BackfillComplete { exchange_id, account_type, symbol, timeframe: tf_name, bars } => {
                     crate::dlog!("[ChartApp] BackfillComplete: {} {} tf={} bars={}", exchange_id.as_str(), symbol, tf_name, bars.len());
-                    // Phase 4 S2.3: collect prev_close_price mirrors after the loop.
                     let mut prev_close_mirrors: Vec<(zengeld_chart::state::ChartId, Option<f64>)> = Vec::new();
 
-                    // Phase 4 B: pre-collect instrument map from branch_meta.
                     let instrument_by_cid_bc: std::collections::HashMap<zengeld_chart::state::ChartId, (String, zengeld_chart::state::Timeframe, String, String)> = {
                         self.panel_app.panel_grid.containers().keys()
                             .filter_map(|cid| {
@@ -420,10 +417,8 @@ impl ChartApp {
 
                     let at_label = account_type.short_label();
                     let mut any_matched = false;
-                    // Phase 4 S2.3: collect prev_close_price mirrors after the loop.
                     let mut prev_close_mirrors: Vec<(zengeld_chart::state::ChartId, Option<f64>)> = Vec::new();
 
-                    // Phase 4 B: pre-collect instrument map from branch_meta.
                     let instrument_by_cid_sb: std::collections::HashMap<zengeld_chart::state::ChartId, (String, zengeld_chart::state::Timeframe, String, String)> = {
                         self.panel_app.panel_grid.containers().keys()
                             .filter_map(|cid| {
