@@ -2229,7 +2229,7 @@ impl ChartApp {
                     // Toggle the flag and capture the new value.
                     let new_sync = if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
                         group.sync_flags.sync_drawings = !group.sync_flags.sync_drawings;
-                        eprintln!("[TagManager] sync_drawings toggled to {}", group.sync_flags.sync_drawings);
+                        eprintln!("[BubbleStore] sync_drawings toggled to {}", group.sync_flags.sync_drawings);
                         group.sync_flags.sync_drawings
                     } else {
                         return;
@@ -2276,7 +2276,7 @@ impl ChartApp {
                                 &mut self.stashed_primitives, cid, local,
                             );
                             eprintln!(
-                                "[TagManager] sync_drawings ON: stashed {} window-local primitives",
+                                "[BubbleStore] sync_drawings ON: stashed {} window-local primitives",
                                 stash_count
                             );
                         }
@@ -2292,7 +2292,7 @@ impl ChartApp {
                                 panel.drawing_manager.add_synced_primitives(restored);
                             }
                             eprintln!(
-                                "[TagManager] sync_drawings OFF: restored {} stashed primitives",
+                                "[BubbleStore] sync_drawings OFF: restored {} stashed primitives",
                                 count
                             );
                         }
@@ -2311,7 +2311,7 @@ impl ChartApp {
                     // Toggle the flag and capture the new value.
                     let new_sync = if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
                         group.sync_flags.sync_indicators = !group.sync_flags.sync_indicators;
-                        eprintln!("[TagManager] sync_indicators toggled to {}", group.sync_flags.sync_indicators);
+                        eprintln!("[BubbleStore] sync_indicators toggled to {}", group.sync_flags.sync_indicators);
                         group.sync_flags.sync_indicators
                     } else {
                         return;
@@ -2348,7 +2348,7 @@ impl ChartApp {
                             }
                         }
                         eprintln!(
-                            "[TagManager] sync_indicators ON: hid {} window-local indicators",
+                            "[BubbleStore] sync_indicators ON: hid {} window-local indicators",
                             to_hide.len()
                         );
                     } else {
@@ -2370,7 +2370,7 @@ impl ChartApp {
                             }
                         }
                         eprintln!(
-                            "[TagManager] sync_indicators OFF: unhid {} window-local indicators",
+                            "[BubbleStore] sync_indicators OFF: unhid {} window-local indicators",
                             to_show.len()
                         );
                     }

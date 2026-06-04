@@ -801,7 +801,7 @@ impl ChartApp {
                         if let Some(pos) = group.indicator_configs.iter().position(|c| c.type_id == type_id) {
                             group.indicator_configs.remove(pos);
                             eprintln!(
-                                "[TagManager] Removed 1 indicator config with type_id={} from group {:?}",
+                                "[BubbleStore] Removed 1 indicator config with type_id={} from group {:?}",
                                 type_id,
                                 group_id,
                             );

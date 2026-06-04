@@ -1036,7 +1036,7 @@ impl ChartApp {
                                                 },
                                             );
                                             eprintln!(
-                                                "[TagManager] Added indicator config id={} '{}' to group {:?}",
+                                                "[BubbleStore] Added indicator config id={} '{}' to group {:?}",
                                                 new_id, item_id, group_id
                                             );
                                         }
@@ -1055,7 +1055,7 @@ impl ChartApp {
                                                 new_id,
                                             );
                                             eprintln!(
-                                                "[TagManager] sync_indicators=off: recorded id={} in pre_tag_indicator_ids for leaf {:?}",
+                                                "[BubbleStore] sync_indicators=off: recorded id={} in pre_tag_indicator_ids for leaf {:?}",
                                                 new_id, active_leaf
                                             );
                                         }

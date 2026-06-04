@@ -86,13 +86,13 @@ impl ChartApp {
         if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
             if let Some(old_group_id) = self.panel_app.tag_manager.detach_chart_from_bubble(chart_id) {
                 eprintln!(
-                    "[TagManager] Disconnected chart {:?} from group {:?}",
+                    "[BubbleStore] Disconnected chart {:?} from group {:?}",
                     chart_id, old_group_id
                 );
                 let remaining = self.panel_app.tag_manager
                     .members(old_group_id)
                     .map_or(0, |m| m.len());
-                eprintln!("[TagManager] Group {:?} has {} remaining members", old_group_id, remaining);
+                eprintln!("[BubbleStore] Group {:?} has {} remaining members", old_group_id, remaining);
             }
         }
 
@@ -112,9 +112,9 @@ impl ChartApp {
                                 ).unwrap_or_default();
                                 let count = restored.len();
                                 panel.drawing_manager.add_synced_primitives(restored);
-                                eprintln!("[TagManager] Desync: restored {} stashed primitives", count);
+                                eprintln!("[BubbleStore] Desync: restored {} stashed primitives", count);
                             } else {
-                                eprintln!("[TagManager] Desync: no stashed primitives (split child or seed source)");
+                                eprintln!("[BubbleStore] Desync: no stashed primitives (split child or seed source)");
                             }
                         }
                     }
@@ -126,7 +126,7 @@ impl ChartApp {
                 // Restore the window-local command history stashed at join time.
                 if let Some(stashed) = crate::branch_meta_bridge::take_stashed_command_history(&mut self.branch_meta, chart_id) {
                     window.command_history = stashed;
-                    eprintln!("[TagManager] Desync: restored stashed command history");
+                    eprintln!("[BubbleStore] Desync: restored stashed command history");
                 }
 
                 // Restore the window's pre-join scale mode. The stash is populated
@@ -141,7 +141,7 @@ impl ChartApp {
                     if is_auto {
                         window.calc_auto_scale();
                     }
-                    eprintln!("[TagManager] Desync: restored stashed scale mode {:?}", prev_mode);
+                    eprintln!("[BubbleStore] Desync: restored stashed scale mode {:?}", prev_mode);
                 }
             }
             // Phase 4 S2.3 dual-write: mirror the (temporary) None clear into
@@ -175,7 +175,7 @@ impl ChartApp {
                         inst.visible = true;
                     }
                 }
-                eprintln!("[TagManager] Desync: removed {} tag indicators, unhid {} pre-tag",
+                eprintln!("[BubbleStore] Desync: removed {} tag indicators, unhid {} pre-tag",
                     count, pre_tag_ids.len());
             } else {
                 self.indicator_manager.purge_synced_instances_for_window(chart_id.0);
@@ -224,7 +224,7 @@ impl ChartApp {
                     g.primitives = dm_prims;
                 }
             }
-            eprintln!("[TagManager] Desync: created new auto group {:?} for desynced window", new_group_id);
+            eprintln!("[BubbleStore] Desync: created new auto group {:?} for desynced window", new_group_id);
         }
 
         // 5. Recalculate sub-panes so indicator panels stay in sync.
@@ -260,7 +260,7 @@ impl ChartApp {
             };
             let _ = self.panel_app.tag_manager.attach_chart_to_bubble(chart_id, group_id);
             eprintln!(
-                "[TagManager] Connected chart {:?} to group {:?} (new={})",
+                "[BubbleStore] Connected chart {:?} to group {:?} (new={})",
                 chart_id, group_id, is_new_group
             );
 
@@ -386,7 +386,7 @@ impl ChartApp {
                 configs.sort_by_key(|c| c.id);
                 if let Some(group) = self.panel_app.tag_manager.bubble_mut(group_id) {
                     eprintln!(
-                        "[TagManager] Seeded new tag {:?} with {} primitives, {} indicators",
+                        "[BubbleStore] Seeded new tag {:?} with {} primitives, {} indicators",
                         group_id, group.primitives.len(), configs.len()
                     );
                     group.indicator_configs = configs;
@@ -452,7 +452,7 @@ impl ChartApp {
                     &mut window.command_history,
                     zengeld_chart::CommandHistory::new(250),
                 );
-                eprintln!("[TagManager] Stashed {} window primitives before joining existing group", stash_count);
+                eprintln!("[BubbleStore] Stashed {} window primitives before joining existing group", stash_count);
                 Some(old_history)
             } else {
                 None
@@ -470,14 +470,14 @@ impl ChartApp {
                     inst.visible = false;
                 }
             }
-            eprintln!("[TagManager] Hid {} pre-tag indicators", pre_tag_ids.len());
+            eprintln!("[BubbleStore] Hid {} pre-tag indicators", pre_tag_ids.len());
 
             // Sync tag indicators to joining window.
             let leaf_chart_ids = vec![(joining_leaf, chart_id)];
             self.sync_group_indicators_to_new_members(group_id, &leaf_chart_ids);
             self.sync_sub_panes_from_manager();
             self.sidebar_data_dirty = true;
-            eprintln!("[TagManager] Join existing group: stashed own state, synced tag content");
+            eprintln!("[BubbleStore] Join existing group: stashed own state, synced tag content");
         }
 
         // Dead fallback removed — TagManager handles all sync join logic above.
@@ -554,7 +554,7 @@ impl ChartApp {
                         if new_cid != old_cid {
                             // The chart got a new ID after the split — connect the new one.
                             let _ = self.panel_app.tag_manager.attach_chart_to_bubble(new_cid, old_gid);
-                            eprintln!("[TagManager] (SplitUntagged) Mother re-connected new cid {:?} → group {:?}", new_cid, old_gid);
+                            eprintln!("[BubbleStore] (SplitUntagged) Mother re-connected new cid {:?} → group {:?}", new_cid, old_gid);
                         }
                         // else: same chart_id survived the split, TagManager link is intact.
                     }
@@ -566,7 +566,7 @@ impl ChartApp {
                     if let Some(color) = pre_split_color {
                         self.panel_app.leaf_color_tags.insert(mother_leaf, color);
                     }
-                    eprintln!("[TagManager] (SplitUntagged) Mother leaf {:?} keeps group {:?}", mother_leaf, old_gid);
+                    eprintln!("[BubbleStore] (SplitUntagged) Mother leaf {:?} keeps group {:?}", mother_leaf, old_gid);
                 }
             }
 
@@ -598,7 +598,7 @@ impl ChartApp {
                     crate::branch_meta_bridge::mirror_group_id(&mut self.branch_meta, chart_id, Some(gid));
                 }
                 self.panel_app.leaf_color_tags.remove(&leaf_id);
-                eprintln!("[TagManager] (SplitUntagged) Created auto group {:?} for new leaf {:?}", gid, leaf_id);
+                eprintln!("[BubbleStore] (SplitUntagged) Created auto group {:?} for new leaf {:?}", gid, leaf_id);
             }
             self.sync_sub_panes_from_manager();
             return;
@@ -620,12 +620,12 @@ impl ChartApp {
             // Disconnect the old chart from its group (leaf destroyed by split).
             if let (Some(old_cid), Some(old_gid)) = (pre_split_chart_id, pre_split_group_id) {
                 let _ = self.panel_app.tag_manager.detach_chart_from_bubble(old_cid);
-                eprintln!("[TagManager] Disconnected destroyed chart {:?} from group {:?}", old_cid, old_gid);
+                eprintln!("[BubbleStore] Disconnected destroyed chart {:?} from group {:?}", old_cid, old_gid);
                 // Bug C fix: remove the old group if it became empty and was auto-created.
                 if let Some(g) = self.panel_app.tag_manager.bubble(old_gid) {
                     if g.auto_created && g.members.is_empty() {
                         self.panel_app.tag_manager.remove_group(old_gid);
-                        eprintln!("[TagManager] Removed empty auto group {:?} after split", old_gid);
+                        eprintln!("[BubbleStore] Removed empty auto group {:?} after split", old_gid);
                     }
                 }
             }
@@ -652,7 +652,7 @@ impl ChartApp {
                     // Create a NEW visible group with the first free color.
                     let color = self.panel_app.tag_manager.next_unused_color();
                     let gid = self.panel_app.tag_manager.create_group(color, first_leaf_symbol, first_leaf_timeframe);
-                    eprintln!("[TagManager] Split promoted auto group to visible tag {:?}", gid);
+                    eprintln!("[BubbleStore] Split promoted auto group to visible tag {:?}", gid);
                     gid
                 } else {
                     // User-tagged group: all split windows intentionally share it.
@@ -743,7 +743,7 @@ impl ChartApp {
                 }
             }
             eprintln!(
-                "[TagManager] {} {:?} with {} members after split",
+                "[BubbleStore] {} {:?} with {} members after split",
                 if is_new_group { "Created group" } else { "Joined existing group" },
                 group_id,
                 new_leaves.len()
@@ -812,7 +812,7 @@ impl ChartApp {
                     if let Some(group) = self.panel_app.tag_manager.bubble_mut(group_id) {
                         group.primitives = source_prims;
                         eprintln!(
-                            "[TagManager] Seeded group {:?} with {} primitives",
+                            "[BubbleStore] Seeded group {:?} with {} primitives",
                             group_id, group.primitives.len()
                         );
                     }
@@ -858,7 +858,7 @@ impl ChartApp {
                         let count = configs.len();
                         group.indicator_configs = configs;
                         eprintln!(
-                            "[TagManager] Seeded group {:?} with {} indicator configs",
+                            "[BubbleStore] Seeded group {:?} with {} indicator configs",
                             group_id, count
                         );
                     }
@@ -1060,7 +1060,7 @@ impl ChartApp {
             self.bridge.ensure_connector(resolved_exchange);
             self.bridge.request_bars(resolved_exchange, &symbol_owned, &timeframe, at, None, Some(bar_count), false);
             eprintln!(
-                "[TagManager] Requested bars for peer {} @ {} tf={:?} (symbol propagation)",
+                "[BubbleStore] Requested bars for peer {} @ {} tf={:?} (symbol propagation)",
                 symbol_owned, eid_str, timeframe
             );
         }
@@ -1086,7 +1086,7 @@ impl ChartApp {
                 source_account_type,
             );
             eprintln!(
-                "[TagManager] Updated group symbol to '{}' via chart {:?}",
+                "[BubbleStore] Updated group symbol to '{}' via chart {:?}",
                 symbol, chart_id
             );
 
@@ -1211,7 +1211,7 @@ impl ChartApp {
             self.bridge.ensure_connector(resolved_exchange);
             self.bridge.request_bars(resolved_exchange, &symbol, &tf, at, None, Some(bar_count), true);
             eprintln!(
-                "[TagManager] Requested bars for peer {} @ {} tf={:?} (timeframe propagation)",
+                "[BubbleStore] Requested bars for peer {} @ {} tf={:?} (timeframe propagation)",
                 symbol, eid_str, tf
             );
         }
@@ -1221,7 +1221,7 @@ impl ChartApp {
         if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(source_leaf) {
             self.panel_app.tag_manager.set_timeframe(chart_id, tf.clone());
             eprintln!(
-                "[TagManager] Updated group timeframe to {:?} via chart {:?}",
+                "[BubbleStore] Updated group timeframe to {:?} via chart {:?}",
                 tf, chart_id
             );
         }
@@ -1546,7 +1546,7 @@ impl ChartApp {
         if let Some(group) = self.panel_app.tag_manager.bubble_mut(group_id) {
             group.primitives.push(prim);
             eprintln!(
-                "[TagManager] Moved completed primitive into group {:?} (now {} primitives)",
+                "[BubbleStore] Moved completed primitive into group {:?} (now {} primitives)",
                 group_id,
                 group.primitives.len()
             );
@@ -1582,7 +1582,7 @@ impl ChartApp {
         if let Some(g) = self.panel_app.tag_manager.bubble(old_gid) {
             if g.auto_created && g.members.is_empty() {
                 self.panel_app.tag_manager.remove_group(old_gid);
-                eprintln!("[TagManager] Removed empty auto group {:?}", old_gid);
+                eprintln!("[BubbleStore] Removed empty auto group {:?}", old_gid);
             }
         }
     }
@@ -1671,7 +1671,7 @@ impl ChartApp {
                 if let Some(new_id) = self.indicator_manager.create_instance(type_id) {
                     self.indicator_manager.assign_window(new_id, Some(chart_id.0));
                     eprintln!(
-                        "[TagManager] Split sync: created indicator '{}' (id={}) for chart {:?}",
+                        "[BubbleStore] Split sync: created indicator '{}' (id={}) for chart {:?}",
                         name, new_id, chart_id
                     );
                 }
@@ -1687,7 +1687,7 @@ impl ChartApp {
         }
         self.sync_sub_panes_from_manager();
         eprintln!(
-            "[TagManager] Synced {} indicator configs to {} new members",
+            "[BubbleStore] Synced {} indicator configs to {} new members",
             configs.len(), new_leaf_chart_ids.len()
         );
     }
@@ -1730,7 +1730,7 @@ impl ChartApp {
                     self.indicator_manager.calculate_all_for_window(peer_cid.0, &bars);
                 }
                 eprintln!(
-                    "[TagManager] Synced indicator '{}' (id={}) to peer chart {:?}",
+                    "[BubbleStore] Synced indicator '{}' (id={}) to peer chart {:?}",
                     type_id, new_id, peer_cid
                 );
             }

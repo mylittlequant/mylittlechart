@@ -5484,7 +5484,7 @@ impl ChartApp {
             let old_at = crate::account_type_from_label(old_at_label);
             self.bridge.unsubscribe_depth(old_eid, old_sym, old_at);
             dlog!(
-                "[TagManager] unsubscribed depth for panel group {} ← {} @ {} ({})",
+                "[BubbleStore] unsubscribed depth for panel group {} ← {} @ {} ({})",
                 group_id.0, old_sym, old_exch, old_at_label
             );
         }
@@ -5500,7 +5500,7 @@ impl ChartApp {
             let at = crate::account_type_from_label(&account_type);
             self.bridge.subscribe_depth(eid, &symbol, at);
             dlog!(
-                "[TagManager] subscribed depth for panel group {} → {} @ {} ({})",
+                "[BubbleStore] subscribed depth for panel group {} → {} @ {} ({})",
                 group_id.0, symbol, exchange, account_type
             );
         }
