@@ -94,7 +94,7 @@ impl ChartApp {
                         .map(|b| b.close)
                         .unwrap_or(0.0);
                     let symbol = self.panel_app.panel_grid.active_container_id()
-                        .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                        .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, cid))
                         .map(String::from)
                         .unwrap_or_else(|| "BTCUSD".to_string());
                     let source_name = self.panel_app.panel_grid.active_container()
@@ -173,7 +173,7 @@ impl ChartApp {
                         .map(|b| b.close)
                         .unwrap_or(0.0);
                     let symbol = self.panel_app.panel_grid.active_container_id()
-                        .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                        .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, cid))
                         .map(String::from)
                         .unwrap_or_else(|| "BTCUSD".to_string());
                     let source_name = self.panel_app.panel_grid.active_container()
@@ -672,7 +672,7 @@ impl ChartApp {
                             .map(|inst| inst.name.clone())
                             .unwrap_or_else(|| format!("Indicator {}", id));
                         let symbol = self.panel_app.panel_grid.active_container_id()
-                            .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                            .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, cid))
                             .map(String::from)
                             .unwrap_or_else(|| "BTCUSD".to_string());
                         let source = alerts::AlertSource::Signal {
@@ -737,7 +737,7 @@ impl ChartApp {
                             .map(|inst| inst.name.clone())
                             .unwrap_or_else(|| format!("Indicator {}", id));
                         let symbol = self.panel_app.panel_grid.active_container_id()
-                            .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                            .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, cid))
                             .map(String::from)
                             .unwrap_or_else(|| "BTCUSD".to_string());
                         let source = alerts::AlertSource::Signal {

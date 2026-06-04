@@ -2328,15 +2328,15 @@ impl ChartApp {
                         // Stamp scoping fields from branch_meta / active window id.
                         let active_cid = self.panel_app.panel_grid.active_container_id();
                         let active_exchange = active_cid
-                            .and_then(|cid| crate::branch_meta_bridge::read_exchange(&self.branch_meta, cid))
+                            .and_then(|cid| crate::branch_meta_bridge::read_exchange(&self.panel_app.tag_manager, cid))
                             .map(String::from)
                             .unwrap_or_default();
                         let active_tf_name = active_cid
-                            .and_then(|cid| crate::branch_meta_bridge::read_timeframe(&self.branch_meta, cid))
+                            .and_then(|cid| crate::branch_meta_bridge::read_timeframe(&self.panel_app.tag_manager, cid))
                             .map(|tf| tf.name.clone())
                             .unwrap_or_default();
                         let active_sym = active_cid
-                            .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                            .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, cid))
                             .map(String::from)
                             .unwrap_or_default();
                         if let Some(window) = self.panel_app.panel_grid.active_container() {
@@ -2344,7 +2344,7 @@ impl ChartApp {
                             alert.timeframe = active_tf_name;
                             alert.window_id_hint = Some(window.id.0);
                             alert.group_id = active_cid
-                                .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid))
+                                .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.panel_app.tag_manager, cid))
                                 .map(|g| g.0);
                             if !matches!(alert.source, alerts::AlertSource::Price { .. }) {
                                 alert.set_symbol(active_sym);

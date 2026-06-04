@@ -3587,16 +3587,16 @@ impl ApplicationHandler for App<'_> {
                 let (symbol, exchange, account_type, timeframe, bar_count) = {
                     use chart_app::branch_meta_bridge::{read_symbol, read_exchange, read_account_type, read_timeframe};
                     let sym = active_cid_rc
-                        .and_then(|cid| read_symbol(&pw.chart.branch_meta, cid))
+                        .and_then(|cid| read_symbol(&pw.chart.panel_app.tag_manager, cid))
                         .map(String::from).unwrap_or_default();
                     let exch = active_cid_rc
-                        .and_then(|cid| read_exchange(&pw.chart.branch_meta, cid))
+                        .and_then(|cid| read_exchange(&pw.chart.panel_app.tag_manager, cid))
                         .map(String::from).unwrap_or_default();
                     let at = active_cid_rc
-                        .and_then(|cid| read_account_type(&pw.chart.branch_meta, cid))
+                        .and_then(|cid| read_account_type(&pw.chart.panel_app.tag_manager, cid))
                         .map(String::from).unwrap_or_else(|| "S".to_string());
                     let tf = active_cid_rc
-                        .and_then(|cid| read_timeframe(&pw.chart.branch_meta, cid))
+                        .and_then(|cid| read_timeframe(&pw.chart.panel_app.tag_manager, cid))
                         .cloned()
                         .unwrap_or_else(zengeld_chart::state::Timeframe::h1);
                     if sym.is_empty() && active_cid_rc.is_none() {
@@ -3620,7 +3620,7 @@ impl ApplicationHandler for App<'_> {
                 // the same symbol key, when sync_symbol is enabled.
                 let group_info = active_cid_rc
                     .and_then(|cid| {
-                        let gid = chart_app::branch_meta_bridge::read_group_id(&pw.chart.branch_meta, cid)?;
+                        let gid = chart_app::branch_meta_bridge::read_group_id(&pw.chart.panel_app.tag_manager, cid)?;
                         Some((cid, gid))
                     });
                 if let Some((active_cid, group_id)) = group_info {
@@ -3639,9 +3639,9 @@ impl ApplicationHandler for App<'_> {
                             use chart_app::branch_meta_bridge::{read_symbol, read_exchange, read_account_type};
                             peer_ids.iter()
                                 .filter(|&&pid| {
-                                    read_symbol(&pw.chart.branch_meta, pid).map_or(false, |s| s == symbol)
-                                    && read_exchange(&pw.chart.branch_meta, pid).map_or(false, |e| e == exchange)
-                                    && read_account_type(&pw.chart.branch_meta, pid).map_or(false, |a| a == account_type)
+                                    read_symbol(&pw.chart.panel_app.tag_manager, pid).map_or(false, |s| s == symbol)
+                                    && read_exchange(&pw.chart.panel_app.tag_manager, pid).map_or(false, |e| e == exchange)
+                                    && read_account_type(&pw.chart.panel_app.tag_manager, pid).map_or(false, |a| a == account_type)
                                 })
                                 .copied()
                                 .collect()

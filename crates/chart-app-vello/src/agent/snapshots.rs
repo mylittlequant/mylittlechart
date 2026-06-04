@@ -87,11 +87,11 @@ impl App<'_> {
                     };
 
                     use chart_app::branch_meta_bridge::{read_symbol, read_exchange, read_timeframe};
-                    let symbol = read_symbol(&pw.chart.branch_meta, *chart_id)
+                    let symbol = read_symbol(&pw.chart.panel_app.tag_manager, *chart_id)
                         .map(String::from).unwrap_or_default();
-                    let exchange = read_exchange(&pw.chart.branch_meta, *chart_id)
+                    let exchange = read_exchange(&pw.chart.panel_app.tag_manager, *chart_id)
                         .map(String::from).unwrap_or_default();
-                    let tf_name = read_timeframe(&pw.chart.branch_meta, *chart_id)
+                    let tf_name = read_timeframe(&pw.chart.panel_app.tag_manager, *chart_id)
                         .map(|tf| tf.name.clone()).unwrap_or_default();
 
                     let indicators: Vec<IndicatorSummary> = pw.chart.indicator_manager
@@ -184,7 +184,7 @@ impl App<'_> {
                 .containers()
                 .keys()
                 .map(|cid| {
-                    let sym = chart_app::branch_meta_bridge::read_symbol(&pw.chart.branch_meta, *cid)
+                    let sym = chart_app::branch_meta_bridge::read_symbol(&pw.chart.panel_app.tag_manager, *cid)
                         .map(String::from).unwrap_or_default();
                     (cid.0, sym)
                 })

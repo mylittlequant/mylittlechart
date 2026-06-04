@@ -43,7 +43,7 @@ impl ChartApp {
                     let active_chart_id = self.panel_app.panel_grid.active_container_id();
                     // Capture previous timeframe and active leaf BEFORE changing.
                     let previous_timeframe = active_chart_id
-                        .and_then(|cid| crate::branch_meta_bridge::read_timeframe(&self.branch_meta, cid))
+                        .and_then(|cid| crate::branch_meta_bridge::read_timeframe(&self.panel_app.tag_manager, cid))
                         .cloned();
                     let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
                     // Extract whether timeframe actually changed before mutating.
@@ -64,15 +64,15 @@ impl ChartApp {
                     // Set timeframe, clear bars, and request new data asynchronously.
                     // (change_timeframe tries a sync cache lookup which fails for live data.)
                     let symbol = active_chart_id
-                        .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                        .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, cid))
                         .map(String::from)
                         .unwrap_or_default();
                     let at_label_tf = active_chart_id
-                        .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid))
+                        .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.panel_app.tag_manager, cid))
                         .map(String::from)
                         .unwrap_or_else(|| "S".to_string());
                     let exchange_seed = active_chart_id
-                        .and_then(|cid| crate::branch_meta_bridge::read_exchange(&self.branch_meta, cid))
+                        .and_then(|cid| crate::branch_meta_bridge::read_exchange(&self.panel_app.tag_manager, cid))
                         .map(String::from)
                         .unwrap_or_default();
                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
@@ -562,13 +562,13 @@ impl ChartApp {
                         .iter_containers()
                         .map(|(_, w)| {
                             let cid = w.id;
-                            let sym = crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid)
+                            let sym = crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, cid)
                                 .map(String::from).unwrap_or_default();
-                            let exch = crate::branch_meta_bridge::read_exchange(&self.branch_meta, cid)
+                            let exch = crate::branch_meta_bridge::read_exchange(&self.panel_app.tag_manager, cid)
                                 .map(String::from).unwrap_or_default();
-                            let tf = crate::branch_meta_bridge::read_timeframe(&self.branch_meta, cid)
+                            let tf = crate::branch_meta_bridge::read_timeframe(&self.panel_app.tag_manager, cid)
                                 .cloned().unwrap_or_else(zengeld_chart::state::Timeframe::h1);
-                            let at = crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid)
+                            let at = crate::branch_meta_bridge::read_account_type(&self.panel_app.tag_manager, cid)
                                 .map(String::from).unwrap_or_default();
                             (sym, exch, tf, at)
                         })
@@ -606,8 +606,8 @@ impl ChartApp {
                         .iter_containers()
                         .filter_map(|(_, w)| {
                             let cid = w.id;
-                            let exch = crate::branch_meta_bridge::read_exchange(&self.branch_meta, cid)?;
-                            let sym = crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid)
+                            let exch = crate::branch_meta_bridge::read_exchange(&self.panel_app.tag_manager, cid)?;
+                            let sym = crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, cid)
                                 .map(String::from).unwrap_or_default();
                             digdigdig3::ExchangeId::from_str(exch).map(|eid| (eid, sym))
                         })
@@ -1029,7 +1029,7 @@ impl ChartApp {
                             self.panel_app.panel_grid.containers().keys()
                                 .copied()
                                 .filter_map(|cid| {
-                                    crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid)
+                                    crate::branch_meta_bridge::read_group_id(&self.panel_app.tag_manager, cid)
                                         .map(|gid| (cid, gid))
                                 })
                                 .collect();
@@ -1091,7 +1091,7 @@ impl ChartApp {
                         let collision_info: Vec<(zengeld_chart::ChartId, zengeld_chart::tag_manager::BubbleId, std::collections::HashSet<u64>)> =
                             container_ids.into_iter()
                                 .filter_map(|cid| {
-                                    let gid = crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid)?;
+                                    let gid = crate::branch_meta_bridge::read_group_id(&self.panel_app.tag_manager, cid)?;
                                     let group_ids: std::collections::HashSet<u64> =
                                         self.panel_app.tag_manager.bubble(gid)
                                             .map(|g| g.primitives.iter().map(|p| p.data().id).collect())
@@ -1153,9 +1153,9 @@ impl ChartApp {
                         };
                         // Phase 4 S2.7.1c: read via branch_meta (B6 capture flip).
                         let first_cid = first_win.id;
-                        let symbol = crate::branch_meta_bridge::read_symbol(&self.branch_meta, first_cid)
+                        let symbol = crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, first_cid)
                             .map(String::from).unwrap_or_default();
-                        let timeframe = crate::branch_meta_bridge::read_timeframe(&self.branch_meta, first_cid)
+                        let timeframe = crate::branch_meta_bridge::read_timeframe(&self.panel_app.tag_manager, first_cid)
                             .cloned().unwrap_or_else(zengeld_chart::state::Timeframe::h1);
                         let group_id = self.panel_app.tag_manager.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
                         let leaf_chart_ids: Vec<(zengeld_chart::LeafId, zengeld_chart::ChartId)> =
@@ -1705,8 +1705,8 @@ impl ChartApp {
                         .iter_containers()
                         .filter_map(|(_, w)| {
                             let cid = w.id;
-                            let exch = crate::branch_meta_bridge::read_exchange(&self.branch_meta, cid)?;
-                            let sym = crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid)
+                            let exch = crate::branch_meta_bridge::read_exchange(&self.panel_app.tag_manager, cid)?;
+                            let sym = crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, cid)
                                 .map(String::from).unwrap_or_default();
                             digdigdig3::ExchangeId::from_str(exch).map(|eid| (eid, sym))
                         })
@@ -1734,13 +1734,13 @@ impl ChartApp {
                         .iter_containers()
                         .map(|(_, w)| {
                             let cid = w.id;
-                            let sym = crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid)
+                            let sym = crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, cid)
                                 .map(String::from).unwrap_or_default();
-                            let exch = crate::branch_meta_bridge::read_exchange(&self.branch_meta, cid)
+                            let exch = crate::branch_meta_bridge::read_exchange(&self.panel_app.tag_manager, cid)
                                 .map(String::from).unwrap_or_default();
-                            let tf = crate::branch_meta_bridge::read_timeframe(&self.branch_meta, cid)
+                            let tf = crate::branch_meta_bridge::read_timeframe(&self.panel_app.tag_manager, cid)
                                 .cloned().unwrap_or_else(zengeld_chart::state::Timeframe::h1);
-                            let at = crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid)
+                            let at = crate::branch_meta_bridge::read_account_type(&self.panel_app.tag_manager, cid)
                                 .map(String::from).unwrap_or_default();
                             (sym, exch, tf, at)
                         })
@@ -2018,7 +2018,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::InternalToggleSyncSymbol => {
-                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
+                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.panel_app.tag_manager, cid));
                 let mut newly_enabled = false;
                 if let Some(gid) = gid {
                     if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
@@ -2035,15 +2035,15 @@ impl ChartApp {
                     if let Some(leaf) = self.panel_app.panel_grid.docking().active_leaf() {
                         let active_cid = self.panel_app.panel_grid.active_container_id();
                         let symbol = active_cid
-                            .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                            .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, cid))
                             .map(String::from)
                             .unwrap_or_default();
                         let exchange = active_cid
-                            .and_then(|cid| crate::branch_meta_bridge::read_exchange(&self.branch_meta, cid))
+                            .and_then(|cid| crate::branch_meta_bridge::read_exchange(&self.panel_app.tag_manager, cid))
                             .map(String::from)
                             .unwrap_or_default();
                         let account_type = active_cid
-                            .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid))
+                            .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.panel_app.tag_manager, cid))
                             .map(String::from)
                             .unwrap_or_default();
                         if !symbol.is_empty() {
@@ -2055,7 +2055,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::InternalToggleSyncTimeframe => {
-                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
+                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.panel_app.tag_manager, cid));
                 let mut newly_enabled = false;
                 if let Some(gid) = gid {
                     if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
@@ -2071,7 +2071,7 @@ impl ChartApp {
                 if newly_enabled {
                     if let Some(leaf) = self.panel_app.panel_grid.docking().active_leaf() {
                         let tf = self.panel_app.panel_grid.active_container_id()
-                            .and_then(|cid| crate::branch_meta_bridge::read_timeframe(&self.branch_meta, cid))
+                            .and_then(|cid| crate::branch_meta_bridge::read_timeframe(&self.panel_app.tag_manager, cid))
                             .cloned();
                         if let Some(tf) = tf {
                             self.propagate_timeframe_to_sync_group(leaf, tf);
@@ -2082,7 +2082,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::InternalToggleSyncCrosshair => {
-                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
+                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.panel_app.tag_manager, cid));
                 let mut newly_enabled = false;
                 if let Some(gid) = gid {
                     if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
@@ -2126,7 +2126,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::InternalToggleSyncViewport => {
-                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
+                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.panel_app.tag_manager, cid));
                 let mut newly_enabled = false;
                 let mut newly_disabled = false;
                 if let Some(gid) = gid {
@@ -2208,7 +2208,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::InternalToggleSyncDrawings => {
-                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
+                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.panel_app.tag_manager, cid));
                 let chart_id = self.panel_app.panel_grid.active_container().map(|w| w.id);
                 if let Some(gid) = gid {
                     // Toggle the flag and capture the new value.
@@ -2290,7 +2290,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::InternalToggleSyncIndicators => {
-                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
+                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.panel_app.tag_manager, cid));
                 let chart_id = self.panel_app.panel_grid.active_container().map(|w| w.id);
                 if let (Some(gid), Some(chart_id)) = (gid, chart_id) {
                     // Toggle the flag and capture the new value.

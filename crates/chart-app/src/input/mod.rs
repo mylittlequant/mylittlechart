@@ -541,7 +541,7 @@ impl ChartApp {
         // S2.7.1e: read symbol via branch_meta (B6 — closure capture).
         let active_cid_rc = self.panel_app.panel_grid.active_container_id();
         let symbol: String = active_cid_rc
-            .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+            .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, cid))
             .map(String::from)
             .unwrap_or_default();
         let (viewport, price_scale, sub_pane_ranges) = {
@@ -4276,7 +4276,7 @@ impl ChartApp {
             } else {
                 // Grouped path — record undo for the freehand primitive placed into the group.
                 let group_create_cmd = self.panel_app.panel_grid.active_container_id()
-                    .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid))
+                    .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.panel_app.tag_manager, cid))
                     .and_then(|gid| {
                         let group = self.panel_app.tag_manager.bubble(gid)?;
                         let idx = group.primitives.len().saturating_sub(1);
@@ -7857,7 +7857,7 @@ impl ChartApp {
         // Determine up front whether we are operating in grouped or standalone mode.
         // We must not hold a borrow on panel_grid across the mutable tag_manager calls below.
         let group_id = self.panel_app.panel_grid.active_container_id()
-            .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
+            .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.panel_app.tag_manager, cid));
         let active_pid_cmd = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
 
         match cmd {
@@ -8018,11 +8018,11 @@ impl ChartApp {
                 // request bars and update branch_meta with new symbol + exchange.
                 let active_chart_id = self.panel_app.panel_grid.active_container_id();
                 let cur_tf = active_chart_id
-                    .and_then(|cid| crate::branch_meta_bridge::read_timeframe(&self.branch_meta, cid))
+                    .and_then(|cid| crate::branch_meta_bridge::read_timeframe(&self.panel_app.tag_manager, cid))
                     .cloned()
                     .unwrap_or_else(zengeld_chart::state::Timeframe::h1);
                 let cur_at_label = active_chart_id
-                    .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid))
+                    .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.panel_app.tag_manager, cid))
                     .map(String::from)
                     .unwrap_or_else(|| "S".to_string());
                 let mut new_exch: Option<String> = None;
@@ -8055,15 +8055,15 @@ impl ChartApp {
                 // Phase 4 B: instrument fields removed from ChartContainer.
                 let active_chart_id = self.panel_app.panel_grid.active_container_id();
                 let cur_sym = active_chart_id
-                    .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                    .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, cid))
                     .map(String::from)
                     .unwrap_or_default();
                 let cur_exch = active_chart_id
-                    .and_then(|cid| crate::branch_meta_bridge::read_exchange(&self.branch_meta, cid))
+                    .and_then(|cid| crate::branch_meta_bridge::read_exchange(&self.panel_app.tag_manager, cid))
                     .map(String::from)
                     .unwrap_or_default();
                 let cur_at_label = active_chart_id
-                    .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid))
+                    .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.panel_app.tag_manager, cid))
                     .map(String::from)
                     .unwrap_or_else(|| "S".to_string());
                 let mut changed = false;
@@ -8235,7 +8235,7 @@ impl ChartApp {
         let visible_set: std::collections::HashSet<u64> = {
             let active_chart_id = self.panel_app.panel_grid.active_container_id();
             let symbol: String = active_chart_id
-                .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, cid))
                 .map(String::from)
                 .unwrap_or_default();
             let chart_id = active_chart_id.map(|cid| cid.0);
@@ -8298,7 +8298,7 @@ impl ChartApp {
         let visible_set: std::collections::HashSet<u64> = {
             let chart_id = self.panel_app.panel_grid.container_id_for_leaf(leaf_id);
             let symbol: String = chart_id
-                .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, cid))
                 .map(String::from)
                 .unwrap_or_default();
             if let Some(cid) = chart_id {
@@ -8382,7 +8382,7 @@ impl ChartApp {
     fn perform_undo_with_group(&mut self) {
         // Extract group_id before any mutable borrows.
         let group_id = self.panel_app.panel_grid.active_container_id()
-            .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
+            .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.panel_app.tag_manager, cid));
 
         if let Some(gid) = group_id {
             // Try group history first (shared: primitives, indicators).
@@ -8418,7 +8418,7 @@ impl ChartApp {
     fn perform_redo_with_group(&mut self) {
         // Extract group_id before any mutable borrows.
         let group_id = self.panel_app.panel_grid.active_container_id()
-            .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
+            .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.panel_app.tag_manager, cid));
 
         if let Some(gid) = group_id {
             // Try group history first (shared: primitives, indicators).
@@ -8469,11 +8469,11 @@ impl ChartApp {
                 if let Some(leaf) = self.panel_app.panel_grid.docking().active_leaf() {
                     let active_cid_prop = self.panel_app.panel_grid.active_container_id();
                     let exchange: String = active_cid_prop
-                        .and_then(|cid| crate::branch_meta_bridge::read_exchange(&self.branch_meta, cid))
+                        .and_then(|cid| crate::branch_meta_bridge::read_exchange(&self.panel_app.tag_manager, cid))
                         .map(String::from)
                         .unwrap_or_default();
                     let account_type: String = active_cid_prop
-                        .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid))
+                        .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.panel_app.tag_manager, cid))
                         .map(String::from)
                         .unwrap_or_default();
                     self.propagate_symbol_to_sync_group(leaf, new_symbol, &exchange, &account_type);
@@ -8551,7 +8551,7 @@ impl ChartApp {
 
         let group_id = if is_shared {
             self.panel_app.panel_grid.active_container_id()
-                .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid))
+                .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.panel_app.tag_manager, cid))
         } else {
             None
         };
@@ -8643,10 +8643,10 @@ impl ChartApp {
                     eprintln!("[sync_group] new_pane: container_for_leaf({:?}) returned None — skipping auto group", active_leaf);
                     return;
                 }
-                let symbol: String = crate::branch_meta_bridge::read_symbol(&self.branch_meta, chart_id)
+                let symbol: String = crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, chart_id)
                     .map(String::from)
                     .unwrap_or_default();
-                let timeframe = crate::branch_meta_bridge::read_timeframe(&self.branch_meta, chart_id)
+                let timeframe = crate::branch_meta_bridge::read_timeframe(&self.panel_app.tag_manager, chart_id)
                     .cloned()
                     .unwrap_or_default();
                 let group_id = self.panel_app.tag_manager.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
@@ -8721,7 +8721,7 @@ impl ChartApp {
             .collect();
         for (leaf_id, chart_id) in snapshot_pairs {
             if let Some(window) = self.panel_app.panel_grid.container_for_leaf(leaf_id) {
-                let gid = crate::branch_meta_bridge::read_group_id(&self.branch_meta, chart_id)
+                let gid = crate::branch_meta_bridge::read_group_id(&self.panel_app.tag_manager, chart_id)
                     .map(|g| g.0);
                 let ptids = crate::branch_meta_bridge::read_pre_tag_ids(&self.branch_meta, chart_id)
                     .cloned()
@@ -8734,14 +8734,14 @@ impl ChartApp {
                             .collect())
                         .unwrap_or_default();
                 // Phase 4 B: read instrument fields from branch_meta for snapshot.
-                let snap_symbol = crate::branch_meta_bridge::read_symbol(&self.branch_meta, chart_id)
+                let snap_symbol = crate::branch_meta_bridge::read_symbol(&self.panel_app.tag_manager, chart_id)
                     .map(String::from).unwrap_or_default();
-                let snap_timeframe = crate::branch_meta_bridge::read_timeframe(&self.branch_meta, chart_id)
+                let snap_timeframe = crate::branch_meta_bridge::read_timeframe(&self.panel_app.tag_manager, chart_id)
                     .cloned()
                     .unwrap_or_else(zengeld_chart::state::Timeframe::h1);
-                let snap_exchange = crate::branch_meta_bridge::read_exchange(&self.branch_meta, chart_id)
+                let snap_exchange = crate::branch_meta_bridge::read_exchange(&self.panel_app.tag_manager, chart_id)
                     .map(String::from).unwrap_or_default();
-                let snap_account_type = crate::branch_meta_bridge::read_account_type(&self.branch_meta, chart_id)
+                let snap_account_type = crate::branch_meta_bridge::read_account_type(&self.panel_app.tag_manager, chart_id)
                     .map(String::from)
                     .unwrap_or_else(|| "S".to_string());
                 // Phase 4 C: panel state (18 display/series fields) is in panels_store.

@@ -3,12 +3,12 @@
 //! Free helpers used by every write site that mutates the four instrument
 //! fields (`symbol`/`exchange`/`account_type`/`timeframe`) on a
 //! [`zengeld_chart::state::ChartContainer`]. Each helper dual-writes the new
-//! value into both `ChartApp.branch_meta` (still authoritative for reads in
-//! Phase 1.2) AND `BubbleStore.bubble_mut(bid)` via
+//! value into both `ChartApp.branch_meta` (dead-write in Phase 1.3; deleted in
+//! Phase 1.4) AND `BubbleStore.bubble_mut(bid)` via
 //! `bubble_store.bubble_for_chart(chart_id)`.
 //!
-//! Phase 1.3 will flip the read helpers to read from bubble only; Phase 1.4
-//! deletes branch_meta entirely.
+//! Phase 1.3: read helpers now read from BubbleStore; branch_meta is a
+//! dead-write (still written, never read). Phase 1.4 deletes it entirely.
 
 use std::collections::HashMap;
 
@@ -134,77 +134,85 @@ pub fn mirror_exchange(
 }
 
 // =============================================================================
-// Read accessors (S2.7.1) — flip reads from `ChartContainer.field` to
-// `branch_meta`. These are the post-cutover canonical reads.
-// Phase 1.3 will flip the bodies to read from bubble instead.
+// Read accessors — Phase 1.3: all reads are sourced from BubbleStore.
+// branch_meta receives dual-writes but is never read (dead-writes until 1.4).
+//
+// Convention: return `Option<&T>` (or `Option<T>` for Copy types).
+// `None` when no bubble found for the chart, or when the field is empty.
+// Callers detach lifetimes via `.map(String::from)` / `.copied()` before
+// taking a mutable borrow on the same BubbleStore.
 // =============================================================================
-//
-// Convention: read helpers return `Option<&T>` (or `Option<T>` for Copy
-// types) referring into the branch_meta entry. Callers fall back via
-// `.unwrap_or("")` / `.unwrap_or_default()` as appropriate.
-//
-// Lifetime: borrows the `branch_meta` map for the lifetime of the read.
-// Callers that need to mutate `branch_meta` afterwards must drop the
-// borrow first (use `.map(String::from)` or `.copied()` to detach).
 
 #[inline]
 pub fn read_symbol<'a>(
-    branch_meta: &'a HashMap<BranchId, BranchMeta>,
+    bubble_store: &'a BubbleStore,
     chart_id: ChartId,
 ) -> Option<&'a str> {
-    branch_meta
-        .get(&branch_key_for_chart(chart_id))
-        .and_then(|m| m.symbol.as_deref())
+    bubble_store
+        .bubble_for_chart(chart_id)
+        .and_then(|bid| bubble_store.bubble(bid))
+        .map(|b| b.symbol.as_str())
+        .filter(|s| !s.is_empty())
 }
 
 #[inline]
 pub fn read_timeframe<'a>(
-    branch_meta: &'a HashMap<BranchId, BranchMeta>,
+    bubble_store: &'a BubbleStore,
     chart_id: ChartId,
 ) -> Option<&'a Timeframe> {
-    branch_meta
-        .get(&branch_key_for_chart(chart_id))
-        .and_then(|m| m.timeframe.as_ref())
+    bubble_store
+        .bubble_for_chart(chart_id)
+        .and_then(|bid| bubble_store.bubble(bid))
+        .map(|b| &b.timeframe)
 }
 
 #[inline]
 pub fn read_exchange<'a>(
-    branch_meta: &'a HashMap<BranchId, BranchMeta>,
+    bubble_store: &'a BubbleStore,
     chart_id: ChartId,
 ) -> Option<&'a str> {
-    branch_meta
-        .get(&branch_key_for_chart(chart_id))
-        .and_then(|m| m.exchange.as_deref())
+    bubble_store
+        .bubble_for_chart(chart_id)
+        .and_then(|bid| bubble_store.bubble(bid))
+        .map(|b| b.exchange.as_str())
+        .filter(|s| !s.is_empty())
 }
 
 #[inline]
 pub fn read_account_type<'a>(
-    branch_meta: &'a HashMap<BranchId, BranchMeta>,
+    bubble_store: &'a BubbleStore,
     chart_id: ChartId,
 ) -> Option<&'a str> {
-    branch_meta
-        .get(&branch_key_for_chart(chart_id))
-        .and_then(|m| m.account_type.as_deref())
+    bubble_store
+        .bubble_for_chart(chart_id)
+        .and_then(|bid| bubble_store.bubble(bid))
+        .map(|b| b.account_type.as_str())
+        .filter(|s| !s.is_empty())
 }
 
+/// Returns the bubble the chart is currently a member of.
+/// This replaces the old `group_id` field on BranchMeta — the membership
+/// is now the canonical source: `BubbleStore.member_to_bubble`.
 #[inline]
 pub fn read_group_id(
-    branch_meta: &HashMap<BranchId, BranchMeta>,
+    bubble_store: &BubbleStore,
     chart_id: ChartId,
 ) -> Option<BubbleId> {
-    branch_meta
-        .get(&branch_key_for_chart(chart_id))
-        .and_then(|m| m.group_id)
+    bubble_store.bubble_for_chart(chart_id)
 }
 
+/// Returns the previous-close price stored on the bubble.
+/// Zero call sites in Phase 1.3 — included for signature completeness;
+/// Phase 1.4 deletes this function together with the bridge module.
 #[inline]
 pub fn read_prev_close_price(
-    branch_meta: &HashMap<BranchId, BranchMeta>,
+    bubble_store: &BubbleStore,
     chart_id: ChartId,
 ) -> Option<f64> {
-    branch_meta
-        .get(&branch_key_for_chart(chart_id))
-        .and_then(|m| m.prev_close_price)
+    bubble_store
+        .bubble_for_chart(chart_id)
+        .and_then(|bid| bubble_store.bubble(bid))
+        .and_then(|b| b.prev_close_price)
 }
 
 // =============================================================================
