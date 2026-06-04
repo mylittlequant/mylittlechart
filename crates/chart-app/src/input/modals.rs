@@ -965,8 +965,8 @@ impl ChartApp {
                                 // If this window is in a sync group and indicators are synced,
                                 // track the config in the group and push to peers.
                                 if let Some(group_id) = self.panel_app.panel_grid
-                                    .container_for_leaf(active_leaf)
-                                    .and_then(|w| w.group_id)
+                                    .container_id_for_leaf(active_leaf)
+                                    .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid))
                                 {
                                     let sync_on = self.panel_app.tag_manager.group(group_id)
                                         .map(|g| g.sync_flags.sync_indicators)
@@ -1455,8 +1455,8 @@ impl ChartApp {
                     } else {
                         // Grouped path — record undo for the primitive placed into the group,
                         // then clear the in-progress preview on peers.
-                        let group_create_cmd = self.panel_app.panel_grid.active_container()
-                            .and_then(|w| w.group_id)
+                        let group_create_cmd = self.panel_app.panel_grid.active_container_id()
+                            .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid))
                             .and_then(|gid| {
                                 let group = self.panel_app.tag_manager.group(gid)?;
                                 let idx = group.primitives.len().saturating_sub(1);
@@ -1581,8 +1581,8 @@ impl ChartApp {
                     } else {
                         // Grouped path — record undo for the primitive placed into the group,
                         // then clear the in-progress preview on peers.
-                        let group_create_cmd = self.panel_app.panel_grid.active_container()
-                            .and_then(|w| w.group_id)
+                        let group_create_cmd = self.panel_app.panel_grid.active_container_id()
+                            .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid))
                             .and_then(|gid| {
                                 let group = self.panel_app.tag_manager.group(gid)?;
                                 let idx = group.primitives.len().saturating_sub(1);

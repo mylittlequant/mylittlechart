@@ -881,8 +881,8 @@ impl ChartApp {
                             .map(|w| w.symbol.clone())
                             .unwrap_or_default();
                         if let Some(group_id) = self.panel_app.panel_grid
-                            .container_for_leaf(leaf_id)
-                            .and_then(|w| w.group_id)
+                            .container_id_for_leaf(leaf_id)
+                            .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid))
                         {
                             if let Some(group) = self.panel_app.tag_manager.group(group_id) {
                                 // Skip sync only for auto-created solo groups — their primitives
@@ -934,9 +934,10 @@ impl ChartApp {
         } else {
             // Single pane: sync group primitives.
             if let Some(active_container) = self.panel_app.panel_grid.active_container() {
-                let group_id_opt = active_container.group_id;
                 let is_dragging = active_container.drawing_manager.is_dragging();
                 let chart_id_opt = self.panel_app.panel_grid.active_container_id();
+                let group_id_opt = chart_id_opt
+                    .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
                 if let (Some(group_id), Some(chart_id)) = (group_id_opt, chart_id_opt) {
                     if !is_dragging {
                         // Respect the sync_drawings flag — skip forward sync if disabled.

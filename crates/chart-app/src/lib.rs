@@ -3749,7 +3749,7 @@ impl ChartApp {
         // The caller composites the previously-built toolbar scene on top.
         let out_last_toolbar_result: Option<zengeld_chart::ChartToolbarRenderResult> = if !skip_toolbar_draw {
             // S2.7.1: read active symbol/timeframe from branch_meta.
-            let (active_sym_str, active_tf_str) = {
+            let (active_sym_str, active_tf_str, active_gid) = {
                 let cid = self.panel_app.panel_grid.active_container_id();
                 let sym = cid.and_then(|c| crate::branch_meta_bridge::read_symbol(&self.branch_meta, c))
                     .map(String::from).unwrap_or_default();
@@ -3758,7 +3758,8 @@ impl ChartApp {
                     .or_else(|| self.panel_app.panel_grid.active_container()
                         .map(|w| w.timeframe.name.clone()))
                     .unwrap_or_default();
-                (sym, tf)
+                let gid = cid.and_then(|c| crate::branch_meta_bridge::read_group_id(&self.branch_meta, c));
+                (sym, tf, gid)
             };
             let toolbar_result = self.panel_app.render_toolbars_with_theme(
                 ctx,
@@ -3769,6 +3770,7 @@ impl ChartApp {
                 Some(active_sym_str.as_str()),
                 Some(active_tf_str.as_str()),
                 sidebar_w,
+                active_gid,
             );
             Some(toolbar_result)
         } else {
@@ -4414,7 +4416,7 @@ impl ChartApp {
         };
 
         // S2.7.1: read active symbol/timeframe from branch_meta.
-        let (active_sym_str, active_tf_str) = {
+        let (active_sym_str, active_tf_str, active_gid) = {
             let cid = self.panel_app.panel_grid.active_container_id();
             let sym = cid.and_then(|c| crate::branch_meta_bridge::read_symbol(&self.branch_meta, c))
                 .map(String::from).unwrap_or_default();
@@ -4423,7 +4425,8 @@ impl ChartApp {
                 .or_else(|| self.panel_app.panel_grid.active_container()
                     .map(|w| w.timeframe.name.clone()))
                 .unwrap_or_default();
-            (sym, tf)
+            let gid = cid.and_then(|c| crate::branch_meta_bridge::read_group_id(&self.branch_meta, c));
+            (sym, tf, gid)
         };
 
         let toolbar_result = self.panel_app.render_toolbars_with_theme(
@@ -4435,6 +4438,7 @@ impl ChartApp {
             Some(active_sym_str.as_str()),
             Some(active_tf_str.as_str()),
             sidebar_w,
+            active_gid,
         );
 
         self.last_toolbar_result = Some(toolbar_result);
@@ -6360,8 +6364,8 @@ impl ChartApp {
         primitive_id: u64,
     ) -> bool {
         let group_id = self.panel_app.panel_grid
-            .container_for_leaf(source_leaf)
-            .and_then(|w| w.group_id);
+            .container_id_for_leaf(source_leaf)
+            .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
         let group_id = match group_id {
             Some(gid) => gid,
             None => return false,

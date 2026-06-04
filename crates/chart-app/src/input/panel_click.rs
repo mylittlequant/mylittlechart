@@ -2591,8 +2591,8 @@ impl ChartApp {
 
                 // 3. Try group.primitives (GroupOtherKey).
                 let group_id = self.panel_app.panel_grid
-                    .active_container()
-                    .and_then(|w| w.group_id);
+                    .active_container_id()
+                    .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
                 if let Some(gid) = group_id {
                     if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
                         let before = group.primitives.len();
@@ -2621,8 +2621,8 @@ impl ChartApp {
 
                 // Fall through: try group.indicator_configs (GroupIndicatorOtherKey).
                 let group_id = self.panel_app.panel_grid
-                    .active_container()
-                    .and_then(|w| w.group_id);
+                    .active_container_id()
+                    .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
                 if let Some(gid) = group_id {
                     if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
                         let before = group.indicator_configs.len();

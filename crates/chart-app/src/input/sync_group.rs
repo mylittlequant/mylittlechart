@@ -68,8 +68,8 @@ impl ChartApp {
 
         // Snapshot group info BEFORE disconnect.
         let had_group_id = self.panel_app.panel_grid
-            .container_for_leaf(leaf_id)
-            .and_then(|w| w.group_id)
+            .container_id_for_leaf(leaf_id)
+            .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid))
             .is_some();
         // Pre-tag indicator ids — these survive desync (will be unhidden).
         let pre_tag_ids: Vec<u64> = self.panel_app.panel_grid
@@ -115,7 +115,6 @@ impl ChartApp {
                 } else {
                     window.drawing_manager.purge_synced_primitives();
                 }
-                window.group_id = None; // temporary, set properly below
                 window.pre_tag_indicator_ids.clear();
                 window.stashed_primitives.clear();
                 // Restore the window-local command history stashed at join time.
@@ -195,7 +194,6 @@ impl ChartApp {
             let new_group_id = self.panel_app.tag_manager.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
             let _ = self.panel_app.tag_manager.connect_chart(chart_id, new_group_id);
             if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
-                window.group_id = Some(new_group_id);
                 // Rebind to the fresh auto-group's style store.  The desynced window
                 // is now independent; its DM must not share the old group's Arc.
                 if let Some(style_arc) = self.panel_app.tag_manager
@@ -291,7 +289,6 @@ impl ChartApp {
                 }
 
                 if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(joining_leaf) {
-                    window.group_id = Some(group_id);
                     window.pre_tag_indicator_ids = pre_tag_ids;
                     // Stash window's own primitives (for restore on desync).
                     let own_prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
@@ -453,7 +450,6 @@ impl ChartApp {
                 let stash_count = own_prims.len();
                 window.stashed_primitives = own_prims;
                 window.drawing_manager.clear_all_primitives();
-                window.group_id = Some(group_id);
                 window.pre_tag_indicator_ids = pre_tag_ids.clone();
                 // Stash window's command history — shared ops will go to group history.
                 window.stashed_command_history = Some(std::mem::replace(
@@ -507,8 +503,8 @@ impl ChartApp {
         let pre_split_color = active_leaf
             .and_then(|lid| self.panel_app.leaf_color_tags.remove(&lid));
         let pre_split_group_id = active_leaf
-            .and_then(|lid| self.panel_app.panel_grid.container_for_leaf(lid))
-            .and_then(|w| w.group_id);
+            .and_then(|lid| self.panel_app.panel_grid.container_id_for_leaf(lid))
+            .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
         let pre_split_chart_id = active_leaf
             .and_then(|lid| self.panel_app.panel_grid.container_id_for_leaf(lid));
 
@@ -564,9 +560,6 @@ impl ChartApp {
                         }
                         // else: same chart_id survived the split, TagManager link is intact.
                     }
-                    if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(mother_leaf) {
-                        window.group_id = Some(old_gid);
-                    }
                     // Phase 4 S2.3 dual-write: mirror mother's restored group_id.
                     if let Some(mother_cid) = self.panel_app.panel_grid.container_id_for_leaf(mother_leaf) {
                         crate::branch_meta_bridge::mirror_group_id(&mut self.branch_meta, mother_cid, Some(old_gid));
@@ -602,9 +595,6 @@ impl ChartApp {
                 );
                 if let Some(chart_id) = new_chart_id {
                     let _ = self.panel_app.tag_manager.connect_chart(chart_id, gid);
-                }
-                if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
-                    window.group_id = Some(gid);
                 }
                 // Phase 4 S2.3 dual-write: mirror new leaf's fresh auto group_id.
                 if let Some(chart_id) = new_chart_id {
@@ -707,7 +697,6 @@ impl ChartApp {
                 .map(|g| g.last_used_style.clone());
             for &(leaf_id, _) in &leaf_chart_ids {
                 if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
-                    window.group_id = Some(group_id);
                     if let Some(ref arc) = style_arc {
                         window.drawing_manager.bind_style_store(arc.clone());
                     }
@@ -1294,12 +1283,7 @@ impl ChartApp {
 
         // If the source window is in a TagManager group, primitives are shared via the
         // group — no clone-based propagation is needed.
-        if self.panel_app.panel_grid
-            .containers()
-            .get(&source_chart_id)
-            .map(|w| w.group_id.is_some())
-            .unwrap_or(false)
-        {
+        if crate::branch_meta_bridge::read_group_id(&self.branch_meta, source_chart_id).is_some() {
             return;
         }
 
@@ -1513,15 +1497,13 @@ impl ChartApp {
     /// Returns `true` when a primitive was transferred to the group.
     pub(super) fn intercept_completed_primitive_to_group(&mut self) -> bool {
         // Check if the active window is in a TagManager group.
-        let (chart_id, group_id) = match self.panel_app.panel_grid.active_container() {
-            Some(w) if w.group_id.is_some() => {
-                let cid = match self.panel_app.panel_grid.active_container_id() {
-                    Some(id) => id,
-                    None => return false,
-                };
-                (cid, w.group_id.unwrap())
-            }
-            _ => return false,
+        let chart_id = match self.panel_app.panel_grid.active_container_id() {
+            Some(id) => id,
+            None => return false,
+        };
+        let group_id = match crate::branch_meta_bridge::read_group_id(&self.branch_meta, chart_id) {
+            Some(gid) => gid,
+            None => return false,
         };
 
         // If sync_drawings is OFF for this group, leave the primitive in the
@@ -1614,9 +1596,7 @@ impl ChartApp {
             Some(id) => id,
             None => return,
         };
-        let old_gid = match self.panel_app.panel_grid.container_for_leaf(leaf_id)
-            .and_then(|w| w.group_id)
-        {
+        let old_gid = match crate::branch_meta_bridge::read_group_id(&self.branch_meta, chart_id) {
             Some(gid) => gid,
             None => return,
         };
@@ -1642,9 +1622,7 @@ impl ChartApp {
             Some(cid) => cid,
             None => return,
         };
-        let group_id = match self.panel_app.panel_grid.containers().get(&chart_id)
-            .and_then(|w| w.group_id)
-        {
+        let group_id = match crate::branch_meta_bridge::read_group_id(&self.branch_meta, chart_id) {
             Some(gid) => gid,
             None => return,
         };

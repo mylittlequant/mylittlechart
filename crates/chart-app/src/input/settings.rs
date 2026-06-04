@@ -2221,7 +2221,9 @@ impl ChartApp {
                             alert.exchange = window.exchange.clone();
                             alert.timeframe = window.timeframe.name.clone();
                             alert.window_id_hint = Some(window.id.0);
-                            alert.group_id = window.group_id.map(|g| g.0);
+                            alert.group_id = self.panel_app.panel_grid.active_container_id()
+                                .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid))
+                                .map(|g| g.0);
                             // Drawing/Indicator alerts need symbol stamped explicitly —
                             // Price alerts carry it inside AlertSource::Price { symbol }.
                             if !matches!(alert.source, alerts::AlertSource::Price { .. }) {

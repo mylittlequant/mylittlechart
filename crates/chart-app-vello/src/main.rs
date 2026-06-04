@@ -3612,8 +3612,7 @@ impl ApplicationHandler for App<'_> {
                 let active_cid = pw.chart.panel_app.panel_grid.active_container_id();
                 let group_info = active_cid
                     .and_then(|cid| {
-                        let w = pw.chart.panel_app.panel_grid.active_container()?;
-                        let gid = w.group_id?;
+                        let gid = chart_app::branch_meta_bridge::read_group_id(&pw.chart.branch_meta, cid)?;
                         Some((cid, gid))
                     });
                 if let Some((active_cid, group_id)) = group_info {

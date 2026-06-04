@@ -4232,8 +4232,8 @@ impl ChartApp {
                 }
             } else {
                 // Grouped path — record undo for the freehand primitive placed into the group.
-                let group_create_cmd = self.panel_app.panel_grid.active_container()
-                    .and_then(|w| w.group_id)
+                let group_create_cmd = self.panel_app.panel_grid.active_container_id()
+                    .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid))
                     .and_then(|gid| {
                         let group = self.panel_app.tag_manager.group(gid)?;
                         let idx = group.primitives.len().saturating_sub(1);
@@ -7777,7 +7777,8 @@ impl ChartApp {
 
         // Determine up front whether we are operating in grouped or standalone mode.
         // We must not hold a borrow on panel_grid across the mutable tag_manager calls below.
-        let group_id = self.panel_app.panel_grid.active_container().and_then(|w| w.group_id);
+        let group_id = self.panel_app.panel_grid.active_container_id()
+            .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
 
         match cmd {
             Command::CreatePrimitive { index, type_id, points, data } => {
@@ -8260,8 +8261,8 @@ impl ChartApp {
     /// Priority: group history first (shared ops), then window-local history.
     fn perform_undo_with_group(&mut self) {
         // Extract group_id before any mutable borrows.
-        let group_id = self.panel_app.panel_grid.active_container()
-            .and_then(|w| w.group_id);
+        let group_id = self.panel_app.panel_grid.active_container_id()
+            .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
 
         if let Some(gid) = group_id {
             // Try group history first (shared: primitives, indicators).
@@ -8296,8 +8297,8 @@ impl ChartApp {
     /// operations when the active window is in a sync group.
     fn perform_redo_with_group(&mut self) {
         // Extract group_id before any mutable borrows.
-        let group_id = self.panel_app.panel_grid.active_container()
-            .and_then(|w| w.group_id);
+        let group_id = self.panel_app.panel_grid.active_container_id()
+            .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
 
         if let Some(gid) = group_id {
             // Try group history first (shared: primitives, indicators).
@@ -8429,7 +8430,8 @@ impl ChartApp {
         );
 
         let group_id = if is_shared {
-            self.panel_app.panel_grid.active_container().and_then(|w| w.group_id)
+            self.panel_app.panel_grid.active_container_id()
+                .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid))
         } else {
             None
         };
@@ -8530,7 +8532,6 @@ impl ChartApp {
                 let group_id = self.panel_app.tag_manager.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
                 let _ = self.panel_app.tag_manager.connect_chart(chart_id, group_id);
                 if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(active_leaf) {
-                    window.group_id = Some(group_id);
                     if let Some(style_arc) = self.panel_app.tag_manager
                         .group(group_id)
                         .map(|g| g.last_used_style.clone())
@@ -8597,8 +8598,16 @@ impl ChartApp {
         }
 
         // Snapshot windows
-        for (leaf_id, window) in self.panel_app.panel_grid.iter_containers() {
-            preset.windows.push(ChartWindowSnapshot::from_window(window, leaf_id.0));
+        let snapshot_pairs: Vec<(zengeld_chart::LeafId, zengeld_chart::ChartId)> = self.panel_app.panel_grid
+            .iter_containers()
+            .map(|(lid, w)| (lid, w.id))
+            .collect();
+        for (leaf_id, chart_id) in snapshot_pairs {
+            if let Some(window) = self.panel_app.panel_grid.container_for_leaf(leaf_id) {
+                let gid = crate::branch_meta_bridge::read_group_id(&self.branch_meta, chart_id)
+                    .map(|g| g.0);
+                preset.windows.push(ChartWindowSnapshot::from_window(window, leaf_id.0, gid));
+            }
         }
 
         // Snapshot sync groups (with synced_panels cross-reference so each

@@ -644,9 +644,6 @@ impl ChartApp {
                                         _                => "candles",
                                     };
 
-                                    // Restore sync group membership
-                                    window.group_id = snap.group_id.map(zengeld_chart::tag_manager::SyncGroupId);
-
                                     // Restore local drawings
                                     window.drawing_manager.clear_all_primitives();
                                     if let Ok(reg) = zengeld_chart::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
@@ -1075,8 +1072,12 @@ impl ChartApp {
                     {
                         // Collect (chart_id, group_id) pairs without holding borrow.
                         let rebind_info: Vec<(zengeld_chart::ChartId, zengeld_chart::tag_manager::SyncGroupId)> =
-                            self.panel_app.panel_grid.containers().iter()
-                                .filter_map(|(&cid, w)| w.group_id.map(|gid| (cid, gid)))
+                            self.panel_app.panel_grid.containers().keys()
+                                .copied()
+                                .filter_map(|cid| {
+                                    crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid)
+                                        .map(|gid| (cid, gid))
+                                })
                                 .collect();
                         for (chart_id, group_id) in rebind_info {
                             if let Some(style_arc) = self.panel_app.tag_manager
@@ -1124,15 +1125,17 @@ impl ChartApp {
                     {
                         // Phase 1: collect (window_key, group_id, set_of_group_prim_ids)
                         // using immutable borrows only.
+                        let container_ids: Vec<zengeld_chart::ChartId> =
+                            self.panel_app.panel_grid.containers().keys().copied().collect();
                         let collision_info: Vec<(zengeld_chart::ChartId, zengeld_chart::tag_manager::SyncGroupId, std::collections::HashSet<u64>)> =
-                            self.panel_app.panel_grid.containers().values()
-                                .filter_map(|w| {
-                                    let gid = w.group_id?;
+                            container_ids.into_iter()
+                                .filter_map(|cid| {
+                                    let gid = crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid)?;
                                     let group_ids: std::collections::HashSet<u64> =
                                         self.panel_app.tag_manager.group(gid)
                                             .map(|g| g.primitives.iter().map(|p| p.data().id).collect())
                                             .unwrap_or_default();
-                                    Some((w.id, gid, group_ids))
+                                    Some((cid, gid, group_ids))
                                 })
                                 .collect();
 
@@ -1204,7 +1207,6 @@ impl ChartApp {
                         for &(leaf_id, chart_id) in &leaf_chart_ids {
                             let _ = self.panel_app.tag_manager.connect_chart(chart_id, group_id);
                             if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
-                                window.group_id = Some(group_id);
                                 if let Some(ref arc) = style_arc {
                                     window.drawing_manager.bind_style_store(arc.clone());
                                 }
@@ -2052,7 +2054,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::InternalToggleSyncSymbol => {
-                let gid = self.panel_app.panel_grid.active_container().and_then(|w| w.group_id);
+                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
                 let mut newly_enabled = false;
                 if let Some(gid) = gid {
                     if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
@@ -2089,7 +2091,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::InternalToggleSyncTimeframe => {
-                let gid = self.panel_app.panel_grid.active_container().and_then(|w| w.group_id);
+                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
                 let mut newly_enabled = false;
                 if let Some(gid) = gid {
                     if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
@@ -2116,7 +2118,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::InternalToggleSyncCrosshair => {
-                let gid = self.panel_app.panel_grid.active_container().and_then(|w| w.group_id);
+                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
                 let mut newly_enabled = false;
                 if let Some(gid) = gid {
                     if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
@@ -2160,7 +2162,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::InternalToggleSyncViewport => {
-                let gid = self.panel_app.panel_grid.active_container().and_then(|w| w.group_id);
+                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
                 let mut newly_enabled = false;
                 let mut newly_disabled = false;
                 if let Some(gid) = gid {
@@ -2242,7 +2244,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::InternalToggleSyncDrawings => {
-                let gid = self.panel_app.panel_grid.active_container().and_then(|w| w.group_id);
+                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
                 let chart_id = self.panel_app.panel_grid.active_container().map(|w| w.id);
                 if let Some(gid) = gid {
                     // Toggle the flag and capture the new value.
@@ -2326,7 +2328,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::InternalToggleSyncIndicators => {
-                let gid = self.panel_app.panel_grid.active_container().and_then(|w| w.group_id);
+                let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
                 let chart_id = self.panel_app.panel_grid.active_container().map(|w| w.id);
                 if let (Some(gid), Some(chart_id)) = (gid, chart_id) {
                     // Toggle the flag and capture the new value.

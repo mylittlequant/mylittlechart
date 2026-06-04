@@ -248,9 +248,6 @@ pub struct ChartContainer {
     /// their full rect is available as chart content.
     pub toolbar_config: ToolbarConfig,
 
-    /// Sync group this window belongs to (set by TagManager during split/join/desync).
-    pub group_id: Option<crate::tag_manager::SyncGroupId>,
-
     /// Indicator instance IDs that existed on this window BEFORE it joined a tag.
     /// On desync, only indicators NOT in this set are removed (they came from the tag).
     /// Empty for split children (they had nothing before the tag).
@@ -391,8 +388,6 @@ impl ChartContainer {
             chart_toolbar: ChartToolbarState::default(),
             // Toolbar config (DEBUG: standalone mode with all 4 toolbars)
             toolbar_config: ToolbarConfig::standalone(),
-            // Sync group (not yet assigned)
-            group_id: None,
             pre_tag_indicator_ids: Vec::new(),
             stashed_primitives: Vec::new(),
             stashed_command_history: None,
@@ -628,8 +623,6 @@ impl ChartContainer {
             // === Toolbar Config (sub-windows have no toolbar — parent owns it) ===
             toolbar_config: ToolbarConfig::minimal(),
 
-            // === Sync Group (NOT inherited — do_split assigns the correct group) ===
-            group_id: None,
             // Split child has no pre-tag state — everything comes from the tag.
             pre_tag_indicator_ids: Vec::new(),
             stashed_primitives: Vec::new(),

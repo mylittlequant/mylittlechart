@@ -2722,11 +2722,12 @@ impl ChartPanelApp {
         active_symbol: Option<&str>,
         active_timeframe: Option<&str>,
         sidebar_w: f64,
+        active_group_id: Option<crate::tag_manager::SyncGroupId>,
     ) -> ChartToolbarRenderResult {
         let toolbar_theme = self.toolbar_theme_for_render();
         let dropdown_theme = self.dropdown_theme_for_render();
         // Get sync flags for the active window's group (used to show toggle state in layout_menu)
-        let active_gid = self.panel_grid.active_container().and_then(|w| w.group_id);
+        let active_gid = active_group_id;
         let sync_flags = active_gid.and_then(|gid| self.tag_manager.group(gid)).map(|g| &g.sync_flags);
         let is_mono_group = active_gid.and_then(|gid| self.tag_manager.group(gid)).map(|g| g.members.len() <= 1).unwrap_or(true);
         let is_expanded = self.panel_grid.is_expanded();
