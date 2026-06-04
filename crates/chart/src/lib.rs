@@ -341,7 +341,7 @@ pub use state::{
     // Snap-to-end constant (canonical margin used by ChartContainer::snap_to_end)
     DEFAULT_SNAP_MARGIN,
     // Chart-internal split/expand system
-    ChartPanelGrid, ChartSubPanel, SplitHitResult, ChartInputTarget, ChartRightClickHit,
+    ChartPanelGrid, SplitHitResult, ChartInputTarget, ChartRightClickHit,
     ChartDragStartHit, FreehandCompleteResult,
     // ChartId for the chart crate's ChartWindow
     generate_chart_id, bump_chart_id_past,

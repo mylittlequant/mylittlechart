@@ -18,8 +18,9 @@ use crate::ui::widgets::{
 use crate::ui::Icon;
 use crate::ui::z_order::ZLayer;
 use crate::render::{TextAlign, TextBaseline};
+use uzor::panels::DockPanel;
 use crate::state::panel_grid::ChartPanelGrid;
-use crate::state::sub_panel::ChartSubPanel;
+use crate::state::branch::PanelLeaf;
 use crate::theme::ThemeManager;
 use uzor::types::Rect as WidgetRect;
 use uzor::input::Sense;
@@ -52,7 +53,7 @@ pub struct OverlaySettingsResult {
 // Helper: count tree nodes recursively
 // =============================================================================
 
-fn count_nodes(children: &[PanelNode<ChartSubPanel>]) -> usize {
+fn count_nodes(children: &[PanelNode<PanelLeaf>]) -> usize {
     let mut count = 0;
     for child in children {
         count += 1;
@@ -70,7 +71,7 @@ fn count_nodes(children: &[PanelNode<ChartSubPanel>]) -> usize {
 #[allow(clippy::too_many_arguments)]
 fn render_tree_nodes(
     ctx: &mut dyn RenderContext,
-    children: &[PanelNode<ChartSubPanel>],
+    children: &[PanelNode<PanelLeaf>],
     content_left: f64,
     row_y: &mut f64,
     row_height: f64,
@@ -109,7 +110,7 @@ fn render_tree_nodes(
         // Label
         let label = match child {
             PanelNode::Leaf(l) => {
-                let title = l.active_panel().map(|p| p.title.clone()).unwrap_or_else(|| "Empty".to_string());
+                let title = l.active_panel().map(|p| p.title().to_string()).unwrap_or_else(|| "Empty".to_string());
                 let short = if title.chars().count() > 30 {
                     format!("{}...", &title[..title.char_indices().nth(27).map(|(b, _)| b).unwrap_or(title.len())])
                 } else {
@@ -269,8 +270,8 @@ pub fn render_overlay_settings_modal(
     // Data gathering
     // =========================================================================
     let tree = panel_grid.docking().tree();
-    let all_leaves: Vec<&Leaf<ChartSubPanel>> = tree.leaves();
-    let hidden_leaves: Vec<&Leaf<ChartSubPanel>> = all_leaves.iter()
+    let all_leaves: Vec<&Leaf<PanelLeaf>> = tree.leaves();
+    let hidden_leaves: Vec<&Leaf<PanelLeaf>> = all_leaves.iter()
         .filter(|l| l.hidden)
         .copied()
         .collect();
@@ -499,7 +500,7 @@ pub fn render_overlay_settings_modal(
 
             for leaf in &all_leaves {
                 let leaf_id_val = leaf.id.0;
-                let title = leaf.active_panel().map(|p| p.title.clone()).unwrap_or_else(|| "Empty".to_string());
+                let title = leaf.active_panel().map(|p| p.title().to_string()).unwrap_or_else(|| "Empty".to_string());
                 let short = if title.chars().count() > 25 {
                     format!("{}...", &title[..title.char_indices().nth(22).map(|(b, _)| b).unwrap_or(title.len())])
                 } else {
@@ -574,7 +575,7 @@ pub fn render_overlay_settings_modal(
             } else {
                 for leaf in &hidden_leaves {
                     let leaf_id_val = leaf.id.0;
-                    let title = leaf.active_panel().map(|p| p.title.clone()).unwrap_or_else(|| "Empty".to_string());
+                    let title = leaf.active_panel().map(|p| p.title().to_string()).unwrap_or_else(|| "Empty".to_string());
                     let short = if title.chars().count() > 25 {
                         format!("{}...", &title[..title.char_indices().nth(22).map(|(b, _)| b).unwrap_or(title.len())])
                     } else {
@@ -768,7 +769,7 @@ pub fn render_overlay_settings_modal(
                         let can_hide    = tree.visible_leaf_count() > 1 || is_hidden;
 
                         // Info row
-                        let title = leaf.active_panel().map(|p| p.title.clone()).unwrap_or_else(|| "—".to_string());
+                        let title = leaf.active_panel().map(|p| p.title().to_string()).unwrap_or_else(|| "—".to_string());
                         let short = if title.chars().count() > 30 {
                             format!("{}...", &title[..title.char_indices().nth(27).map(|(b, _)| b).unwrap_or(title.len())])
                         } else {

@@ -24,7 +24,6 @@ pub mod history;
 pub mod app_state;
 pub mod action_executor;
 pub mod chart_container;
-pub mod sub_panel;
 pub mod panel_grid;
 pub mod chart_container_leaf;
 pub mod inner_layout;
@@ -93,8 +92,6 @@ pub use chart_container::{
     DEFAULT_SNAP_MARGIN,
 };
 
-// Chart-internal split/expand system (uzor-panels integration)
-pub use sub_panel::ChartSubPanel;
 
 // Inner-docking leaf payload for ChartContainer (Phase 1 of chart-container cut).
 // `ChartContainerId` is an alias for `ChartId` (plan D1); the canvas gets its

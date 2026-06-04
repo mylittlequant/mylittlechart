@@ -791,14 +791,29 @@ impl ChartApp {
                                     zengeld_chart::bump_chart_id_past(snap.window_id);
                                 }
 
-                                // Step 3: Restore the docking tree
+                                // Step 3: Restore the docking tree.
+                                //
+                                // The factory returns a placeholder PanelLeaf — actual
+                                // ChartPanelId for each leaf is patched below by walking
+                                // the restored tree and matching its LeafId against
+                                // `new_leaf_to_chart` → `new_containers.chart_panel_id`.
                                 match layout_snap.restore_tree(|_type_id| {
-                                    Some(zengeld_chart::state::sub_panel::ChartSubPanel::new(
-                                        zengeld_chart::state::chart_container::ChartId(0),
-                                        "",
+                                    Some(zengeld_chart::state::PanelLeaf::ChartPanel(
+                                        zengeld_chart::state::ChartPanelId(0),
                                     ))
                                 }) {
-                                    Ok(restored_tree) => {
+                                    Ok(mut restored_tree) => {
+                                        for (&leaf_id, &chart_id) in &new_leaf_to_chart {
+                                            let Some(panel_id) = new_containers
+                                                .get(&chart_id)
+                                                .map(|w| w.chart_panel_id)
+                                            else { continue };
+                                            if let Some(leaf) = restored_tree.leaf_mut(leaf_id) {
+                                                if let Some(panel) = leaf.active_panel_mut() {
+                                                    *panel = zengeld_chart::state::PanelLeaf::ChartPanel(panel_id);
+                                                }
+                                            }
+                                        }
                                         // Step 4: Replace panel grid state
                                         self.panel_app.panel_grid.replace_docking(restored_tree);
                                         self.panel_app.panel_grid.replace_containers(new_containers);

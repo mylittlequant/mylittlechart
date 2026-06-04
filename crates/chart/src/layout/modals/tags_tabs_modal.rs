@@ -24,8 +24,9 @@ use crate::ui::widgets::types::WidgetTheme;
 use crate::ui::Icon;
 use crate::ui::z_order::ZLayer;
 use uzor::panels::{LeafId, BranchId, PanelNode, Leaf};
+use uzor::panels::DockPanel;
 use crate::state::panel_grid::ChartPanelGrid;
-use crate::state::sub_panel::ChartSubPanel;
+use crate::state::branch::PanelLeaf;
 use crate::i18n::{ModalKey, TextKey, t_modal, t_text};
 
 // =============================================================================
@@ -369,7 +370,7 @@ pub fn render_tags_tabs_modal(
 // Helper: count tree nodes recursively
 // =============================================================================
 
-fn count_nodes(children: &[PanelNode<ChartSubPanel>]) -> usize {
+fn count_nodes(children: &[PanelNode<PanelLeaf>]) -> usize {
     let mut count = 0;
     for child in children {
         count += 1;
@@ -387,7 +388,7 @@ fn count_nodes(children: &[PanelNode<ChartSubPanel>]) -> usize {
 #[allow(clippy::too_many_arguments)]
 fn render_tree_nodes(
     ctx: &mut dyn RenderContext,
-    children: &[PanelNode<ChartSubPanel>],
+    children: &[PanelNode<PanelLeaf>],
     content_left: f64,
     row_y: &mut f64,
     row_height: f64,
@@ -429,7 +430,7 @@ fn render_tree_nodes(
         // Icon + Label
         let (label, node_icon) = match child {
             PanelNode::Leaf(l) => {
-                let title = l.active_panel().map(|p| p.title.clone()).unwrap_or_else(|| "Empty".to_string());
+                let title = l.active_panel().map(|p| p.title().to_string()).unwrap_or_else(|| "Empty".to_string());
                 let short = if title.chars().count() > 30 {
                     format!("{}...", &title[..title.char_indices().nth(27).map(|(b, _)| b).unwrap_or(title.len())])
                 } else {
@@ -650,8 +651,8 @@ fn render_tabs_section(
     // Data gathering from panel_grid
     // =========================================================================
     let tree = panel_grid.docking().tree();
-    let all_leaves: Vec<&Leaf<ChartSubPanel>> = tree.leaves();
-    let hidden_leaves: Vec<&Leaf<ChartSubPanel>> = all_leaves.iter()
+    let all_leaves: Vec<&Leaf<PanelLeaf>> = tree.leaves();
+    let hidden_leaves: Vec<&Leaf<PanelLeaf>> = all_leaves.iter()
         .filter(|l| l.hidden)
         .copied()
         .collect();
@@ -732,7 +733,7 @@ fn render_tabs_section(
 
             for leaf in &all_leaves {
                 let leaf_id_val = leaf.id.0;
-                let title = leaf.active_panel().map(|p| p.title.clone()).unwrap_or_else(|| "Empty".to_string());
+                let title = leaf.active_panel().map(|p| p.title().to_string()).unwrap_or_else(|| "Empty".to_string());
                 let short = if title.chars().count() > 25 {
                     format!("{}...", &title[..title.char_indices().nth(22).map(|(b, _)| b).unwrap_or(title.len())])
                 } else {
@@ -810,7 +811,7 @@ fn render_tabs_section(
             } else {
                 for leaf in &hidden_leaves {
                     let leaf_id_val = leaf.id.0;
-                    let title = leaf.active_panel().map(|p| p.title.clone()).unwrap_or_else(|| "Empty".to_string());
+                    let title = leaf.active_panel().map(|p| p.title().to_string()).unwrap_or_else(|| "Empty".to_string());
                     let short = if title.chars().count() > 25 {
                         format!("{}...", &title[..title.char_indices().nth(22).map(|(b, _)| b).unwrap_or(title.len())])
                     } else {
@@ -933,7 +934,7 @@ fn render_map_section(
     let mut row_y = content_y + MODAL_PADDING;
 
     let tree = panel_grid.docking().tree();
-    let all_leaves: Vec<&Leaf<ChartSubPanel>> = tree.leaves();
+    let all_leaves: Vec<&Leaf<PanelLeaf>> = tree.leaves();
     let expanded_leaf_id: Option<LeafId> = if panel_grid.is_expanded() {
         panel_grid.docking().active_leaf()
     } else {
@@ -1108,7 +1109,7 @@ fn render_map_section(
         }
 
         // ── Hidden panels list ──────────────────────────────────────────────
-        let hidden_leaves_map: Vec<&Leaf<ChartSubPanel>> = all_leaves.iter()
+        let hidden_leaves_map: Vec<&Leaf<PanelLeaf>> = all_leaves.iter()
             .filter(|l| l.hidden)
             .copied()
             .collect();
@@ -1122,7 +1123,7 @@ fn render_map_section(
 
             for leaf in &hidden_leaves_map {
                 let leaf_id_val = leaf.id.0;
-                let title = leaf.active_panel().map(|p| p.title.clone()).unwrap_or_else(|| "Empty".to_string());
+                let title = leaf.active_panel().map(|p| p.title().to_string()).unwrap_or_else(|| "Empty".to_string());
                 let short = if title.chars().count() > 20 {
                     format!("{}...", &title[..title.char_indices().nth(17).map(|(b, _)| b).unwrap_or(title.len())])
                 } else {
@@ -1175,7 +1176,7 @@ fn render_map_section(
                 let can_hide        = tree.visible_leaf_count() > 1 || is_hidden;
 
                 // Info row
-                let title = leaf.active_panel().map(|p| p.title.clone()).unwrap_or_else(|| "-".to_string());
+                let title = leaf.active_panel().map(|p| p.title().to_string()).unwrap_or_else(|| "-".to_string());
                 let short = if title.chars().count() > 30 {
                     format!("{}...", &title[..title.char_indices().nth(27).map(|(b, _)| b).unwrap_or(title.len())])
                 } else {
