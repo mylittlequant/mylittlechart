@@ -786,8 +786,8 @@ impl ChartApp {
         let group_members: Vec<u64> = self.panel_app.panel_grid.docking()
             .active_leaf()
             .and_then(|leaf| self.panel_app.panel_grid.container_id_for_leaf(leaf))
-            .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
-            .and_then(|gid| self.panel_app.tag_manager.group(gid))
+            .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid))
+            .and_then(|gid| self.panel_app.tag_manager.bubble(gid))
             .map(|g| g.members.iter().filter_map(|m| m.as_chart()).collect())
             .unwrap_or_default();
 
@@ -796,8 +796,8 @@ impl ChartApp {
         // of the same type (e.g. two "ac" indicators on the same window).
         if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
             if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(active_leaf) {
-                if let Some(group_id) = self.panel_app.tag_manager.group_for_window(chart_id) {
-                    if let Some(group) = self.panel_app.tag_manager.group_mut(group_id) {
+                if let Some(group_id) = self.panel_app.tag_manager.bubble_for_chart(chart_id) {
+                    if let Some(group) = self.panel_app.tag_manager.bubble_mut(group_id) {
                         if let Some(pos) = group.indicator_configs.iter().position(|c| c.type_id == type_id) {
                             group.indicator_configs.remove(pos);
                             eprintln!(

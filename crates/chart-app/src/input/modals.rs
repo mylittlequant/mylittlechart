@@ -1009,7 +1009,7 @@ impl ChartApp {
                                     .container_id_for_leaf(active_leaf)
                                     .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid))
                                 {
-                                    let sync_on = self.panel_app.tag_manager.group(group_id)
+                                    let sync_on = self.panel_app.tag_manager.bubble(group_id)
                                         .map(|g| g.sync_flags.sync_indicators)
                                         .unwrap_or(true);
                                     if sync_on {
@@ -1021,7 +1021,7 @@ impl ChartApp {
                                             .get_instance(new_id)
                                             .map(|i| i.name.clone())
                                             .unwrap_or_else(|| item_id.to_string());
-                                        if let Some(group) = self.panel_app.tag_manager.group_mut(group_id) {
+                                        if let Some(group) = self.panel_app.tag_manager.bubble_mut(group_id) {
                                             group.indicator_configs.push(
                                                 zengeld_chart::tag_manager::IndicatorGroupConfig {
                                                     id: new_id,
@@ -1143,9 +1143,9 @@ impl ChartApp {
                     // remembers the mode for new joiners.
                     let viewport_sync_on = self.panel_app.panel_grid
                         .container_id_for_leaf(hit_leaf_id)
-                        .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
+                        .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid))
                         .and_then(|gid| {
-                            self.panel_app.tag_manager.group_mut(gid).map(|g| {
+                            self.panel_app.tag_manager.bubble_mut(gid).map(|g| {
                                 g.scale_mode = next_mode;
                                 g.sync_flags.sync_viewport
                             })
@@ -1412,7 +1412,7 @@ impl ChartApp {
                         let group_create_cmd = self.panel_app.panel_grid.active_container_id()
                             .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid))
                             .and_then(|gid| {
-                                let group = self.panel_app.tag_manager.group(gid)?;
+                                let group = self.panel_app.tag_manager.bubble(gid)?;
                                 let idx = group.primitives.len().saturating_sub(1);
                                 let prim = group.primitives.get(idx)?;
                                 Some(zengeld_chart::Command::CreatePrimitive {
@@ -1544,7 +1544,7 @@ impl ChartApp {
                         let group_create_cmd = self.panel_app.panel_grid.active_container_id()
                             .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid))
                             .and_then(|gid| {
-                                let group = self.panel_app.tag_manager.group(gid)?;
+                                let group = self.panel_app.tag_manager.bubble(gid)?;
                                 let idx = group.primitives.len().saturating_sub(1);
                                 let prim = group.primitives.get(idx)?;
                                 Some(zengeld_chart::Command::CreatePrimitive {

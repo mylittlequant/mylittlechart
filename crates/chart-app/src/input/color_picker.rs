@@ -537,7 +537,7 @@ impl ChartApp {
                         let member = SyncMemberId::Panel(panel_id);
                         let old_color = self.panel_app.tag_manager
                             .group_for_member(member)
-                            .and_then(|gid| self.panel_app.tag_manager.group(gid))
+                            .and_then(|gid| self.panel_app.tag_manager.bubble(gid))
                             .filter(|g| !g.auto_created)
                             .map(|g| g.color);
                         let same_color = old_color.is_some_and(|oc|

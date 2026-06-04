@@ -209,7 +209,7 @@ impl ChartApp {
             // chart's group and apply the group's instrument key to their states.
             if let Some(new_active_group) = self.panel_app.panel_grid
                 .active_container_id()
-                .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
+                .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid))
             {
                 // Sync the group's full instrument key from the new active window.
                 // symbol included — without this, restored groups carry stale
@@ -223,7 +223,7 @@ impl ChartApp {
                         .map(String::from).unwrap_or_default();
                     let at = crate::branch_meta_bridge::read_account_type(&self.branch_meta, active_cid_sync)
                         .map(String::from).unwrap_or_else(|| "S".to_string());
-                    if let Some(g) = self.panel_app.tag_manager.group_mut(new_active_group) {
+                    if let Some(g) = self.panel_app.tag_manager.bubble_mut(new_active_group) {
                         g.symbol = sym;
                         g.exchange = exch;
                         g.account_type = at;
@@ -243,8 +243,8 @@ impl ChartApp {
 
             // Determine whether the active window is in a real (non-auto_created) tag group.
             let tagged_group = active_cid
-                .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
-                .and_then(|gid| self.panel_app.tag_manager.group(gid))
+                .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid))
+                .and_then(|gid| self.panel_app.tag_manager.bubble(gid))
                 .filter(|g| !g.auto_created);
 
             // Helper: convert a PrimitiveKind into an ObjectCategory.
@@ -907,7 +907,7 @@ impl ChartApp {
                             .container_id_for_leaf(leaf_id)
                             .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid))
                         {
-                            if let Some(group) = self.panel_app.tag_manager.group(group_id) {
+                            if let Some(group) = self.panel_app.tag_manager.bubble(group_id) {
                                 // Skip sync only for auto-created solo groups — their primitives
                                 // live directly in drawing_manager (intercept returns false for them).
                                 // Non-auto tagged groups with a single member still need the forward
@@ -976,7 +976,7 @@ impl ChartApp {
                         // still need the forward sync (group.primitives → drawing_manager) so
                         // drawings loaded from a preset are visible on the canvas.
                         let (drawings_on, is_auto_mono) = self.panel_app.tag_manager
-                            .group(group_id)
+                            .bubble(group_id)
                             .map(|g| (g.sync_flags.sync_drawings, g.auto_created && g.members.len() <= 1))
                             .unwrap_or((true, false));
                         if drawings_on && !is_auto_mono {
@@ -988,7 +988,7 @@ impl ChartApp {
                                 .unwrap_or_default();
                             let cloned: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
                                 self.panel_app.tag_manager
-                                    .group(group_id)
+                                    .bubble(group_id)
                                     .map(|g| g.primitives.iter()
                                         .filter(|p| {
                                             let sym = &p.data().symbol;

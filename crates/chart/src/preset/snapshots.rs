@@ -20,7 +20,7 @@ use crate::state::chart_container::ChartContainer;
 use crate::state::chart_panel_state::ChartPanelState;
 use crate::state::history::CommandHistory;
 use crate::state::Timeframe;
-use crate::tag_manager::{IndicatorGroupConfig, SyncFlags, SyncGroup, SyncMemberId};
+use crate::tag_manager::{DataBubble, IndicatorGroupConfig, SyncFlags, SyncMemberId};
 use crate::{CompareOverlay, CrosshairOptions, GridOptions, Legend, PriceScale, Tooltip, Viewport, Watermark};
 
 // =============================================================================
@@ -472,7 +472,7 @@ impl SyncGroupSnapshot {
     /// flagged "follow active chart"). We persist only those panel ids that
     /// are also members of THIS group so that on restore each group recovers
     /// its own follow-list.
-    pub fn from_group(group: &SyncGroup, synced_panels: &[SyncMemberId]) -> Self {
+    pub fn from_group(group: &DataBubble, synced_panels: &[SyncMemberId]) -> Self {
         let primitives = group
             .primitives
             .iter()

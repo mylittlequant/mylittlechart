@@ -423,9 +423,9 @@ impl ChartApp {
                             // group remembers the mode for new joiners.
                             let viewport_sync_on = self.panel_app.panel_grid
                                 .container_id_for_leaf(leaf_id)
-                                .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
+                                .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid))
                                 .and_then(|gid| {
-                                    self.panel_app.tag_manager.group_mut(gid).map(|g| {
+                                    self.panel_app.tag_manager.bubble_mut(gid).map(|g| {
                                         g.scale_mode = next_mode;
                                         g.sync_flags.sync_viewport
                                     })
@@ -4278,7 +4278,7 @@ impl ChartApp {
                 let group_create_cmd = self.panel_app.panel_grid.active_container_id()
                     .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid))
                     .and_then(|gid| {
-                        let group = self.panel_app.tag_manager.group(gid)?;
+                        let group = self.panel_app.tag_manager.bubble(gid)?;
                         let idx = group.primitives.len().saturating_sub(1);
                         let prim = group.primitives.get(idx)?;
                         Some(zengeld_chart::Command::CreatePrimitive {
@@ -7867,7 +7867,7 @@ impl ChartApp {
                     if let Ok(reg) = zengeld_chart::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
                         if let Some(mut prim) = reg.create(type_id, points, Some(&data.color.stroke)) {
                             *prim.data_mut() = data.clone();
-                            if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                            if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
                                 let insert_pos = (*index).min(group.primitives.len());
                                 group.primitives.insert(insert_pos, prim);
                             }
@@ -7881,7 +7881,7 @@ impl ChartApp {
             }
             Command::DeletePrimitive { index, .. } => {
                 if let Some(gid) = group_id {
-                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                    if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
                         if *index < group.primitives.len() {
                             group.primitives.remove(*index);
                         }
@@ -7894,7 +7894,7 @@ impl ChartApp {
             }
             Command::DeleteAllPrimitives { .. } => {
                 if let Some(gid) = group_id {
-                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                    if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
                         group.primitives.clear();
                     }
                 } else if let Some(pid) = active_pid_cmd {
@@ -7906,7 +7906,7 @@ impl ChartApp {
             Command::RestoreAllPrimitives { primitives } => {
                 if let Some(gid) = group_id {
                     if let Ok(reg) = zengeld_chart::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
-                        if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                        if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
                             group.primitives.clear();
                             for (type_id, points, data) in primitives {
                                 if let Some(mut prim) = reg.create(type_id, points, Some(&data.color.stroke)) {
@@ -7927,7 +7927,7 @@ impl ChartApp {
             }
             Command::MovePrimitive { index, new_points, .. } => {
                 if let Some(gid) = group_id {
-                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                    if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
                         if let Some(prim) = group.primitives.get_mut(*index) {
                             prim.set_points(new_points);
                         }
@@ -7940,7 +7940,7 @@ impl ChartApp {
             }
             Command::SetPrimitiveVisibility { index, visible, .. } => {
                 if let Some(gid) = group_id {
-                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                    if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
                         if let Some(prim) = group.primitives.get_mut(*index) {
                             prim.data_mut().visible = *visible;
                         }
@@ -7953,7 +7953,7 @@ impl ChartApp {
             }
             Command::SetPrimitiveLock { index, locked, .. } => {
                 if let Some(gid) = group_id {
-                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                    if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
                         if let Some(prim) = group.primitives.get_mut(*index) {
                             prim.data_mut().locked = *locked;
                         }
@@ -7966,7 +7966,7 @@ impl ChartApp {
             }
             Command::ModifyPrimitiveData { index, new_data, .. } => {
                 if let Some(gid) = group_id {
-                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                    if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
                         if let Some(prim) = group.primitives.get_mut(*index) {
                             *prim.data_mut() = new_data.clone();
                         }
@@ -7980,7 +7980,7 @@ impl ChartApp {
             }
             Command::ReorderPrimitive { old_index, new_index } => {
                 if let Some(gid) = group_id {
-                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                    if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
                         if *old_index < group.primitives.len() {
                             let prim = group.primitives.remove(*old_index);
                             let insert_pos = (*new_index).min(group.primitives.len());
@@ -8385,7 +8385,7 @@ impl ChartApp {
         if let Some(gid) = group_id {
             // Try group history first (shared: primitives, indicators).
             let group_cmd = self.panel_app.tag_manager
-                .group_mut(gid)
+                .bubble_mut(gid)
                 .and_then(|g| g.command_history.undo());
             if let Some(cmd) = group_cmd {
                 let desc = cmd.description();
@@ -8421,7 +8421,7 @@ impl ChartApp {
         if let Some(gid) = group_id {
             // Try group history first (shared: primitives, indicators).
             let group_cmd = self.panel_app.tag_manager
-                .group_mut(gid)
+                .bubble_mut(gid)
                 .and_then(|g| g.command_history.redo());
             if let Some(cmd) = group_cmd {
                 let desc = cmd.description();
@@ -8555,7 +8555,7 @@ impl ChartApp {
         };
 
         if let Some(gid) = group_id {
-            if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+            if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
                 group.command_history.push(cmd);
                 return;
             }
@@ -8648,8 +8648,8 @@ impl ChartApp {
                     .cloned()
                     .unwrap_or_default();
                 let group_id = self.panel_app.tag_manager.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
-                let _ = self.panel_app.tag_manager.connect_chart(chart_id, group_id);
-                if let Some(style_arc) = self.panel_app.tag_manager.group(group_id).map(|g| g.last_used_style.clone()) {
+                let _ = self.panel_app.tag_manager.attach_chart_to_bubble(chart_id, group_id);
+                if let Some(style_arc) = self.panel_app.tag_manager.bubble(group_id).map(|g| g.last_used_style.clone()) {
                     if let Some(pid) = self.panel_app.panel_grid.container_for_leaf(active_leaf).map(|w| w.chart_panel_id) {
                         if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
                             panel.drawing_manager.bind_style_store(style_arc);
@@ -8759,7 +8759,7 @@ impl ChartApp {
         // Snapshot sync groups (with synced_panels cross-reference so each
         // group's persisted synced_panel_ids list survives restore).
         let synced_snapshot = self.panel_app.tag_manager.synced_panels_snapshot();
-        for group in self.panel_app.tag_manager.groups() {
+        for group in self.panel_app.tag_manager.bubbles() {
             preset.sync_groups.push(SyncGroupSnapshot::from_group(group, &synced_snapshot));
         }
 

@@ -26,7 +26,7 @@ use zengeld_chart::drawing::{SignalManager, TradeManager};
 use zengeld_chart::MarkerManager;
 use zengeld_chart::state::history::CommandHistory;
 use zengeld_chart::state::{BranchMeta, ChartId, ConnectionStatus, Timeframe};
-use zengeld_chart::tag_manager::SyncGroupId;
+use zengeld_chart::tag_manager::BubbleId;
 
 /// Map a `ChartId` to the temporary `BranchId` used by S2 (per S2.G6 the
 /// keys are `BranchId(chart_id.0)` until S3 wires real uzor branch ids).
@@ -218,7 +218,7 @@ pub fn read_account_type<'a>(
 pub fn read_group_id(
     branch_meta: &HashMap<BranchId, BranchMeta>,
     chart_id: ChartId,
-) -> Option<SyncGroupId> {
+) -> Option<BubbleId> {
     branch_meta
         .get(&branch_key_for_chart(chart_id))
         .and_then(|m| m.group_id)
@@ -249,7 +249,7 @@ pub fn read_prev_close_price(
 pub fn mirror_group_id(
     branch_meta: &mut std::collections::HashMap<BranchId, BranchMeta>,
     chart_id: ChartId,
-    group_id: Option<SyncGroupId>,
+    group_id: Option<BubbleId>,
 ) {
     if let Some(entry) = branch_meta.get_mut(&branch_key_for_chart(chart_id)) {
         entry.group_id = group_id;
@@ -574,7 +574,7 @@ mod tests {
     fn mirror_group_id_no_lazy_insert_when_missing() {
         let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
         // Entry not seeded — mirror should be silent no-op.
-        mirror_group_id(&mut bm, ChartId(99), Some(SyncGroupId(7)));
+        mirror_group_id(&mut bm, ChartId(99), Some(BubbleId(7)));
         assert!(bm.is_empty());
     }
 
@@ -582,9 +582,9 @@ mod tests {
     fn mirror_group_id_writes_on_existing_entry() {
         let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
         mirror_instrument(&mut bm, ChartId(5), "BTC", tf(), "Binance", "S");
-        mirror_group_id(&mut bm, ChartId(5), Some(SyncGroupId(42)));
+        mirror_group_id(&mut bm, ChartId(5), Some(BubbleId(42)));
         let entry = bm.get(&branch_key_for_chart(ChartId(5))).unwrap();
-        assert_eq!(entry.group_id, Some(SyncGroupId(42)));
+        assert_eq!(entry.group_id, Some(BubbleId(42)));
     }
 
     #[test]

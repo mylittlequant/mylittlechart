@@ -1465,15 +1465,15 @@ impl ChartApp {
                                         // visible color tag so the panel-chart pair shows a
                                         // shared color marker — this is the moment a 1-member
                                         // untagged group becomes a 2+-member tagged one.
-                                        let group_id = self.panel_app.tag_manager.active_chart_group
+                                        let group_id = self.panel_app.tag_manager.active_chart_bubble
                                             .or_else(|| {
                                                 self.panel_app.panel_grid
                                                     .active_container_id()
-                                                    .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
+                                                    .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid))
                                             });
                                         if let Some(gid) = group_id {
                                             // Promote if currently auto-created.
-                                            let was_auto = self.panel_app.tag_manager.group(gid)
+                                            let was_auto = self.panel_app.tag_manager.bubble(gid)
                                                 .map(|g| g.auto_created)
                                                 .unwrap_or(false);
                                             if was_auto {
@@ -1482,7 +1482,7 @@ impl ChartApp {
                                                     // chart member of this group so chart leaf
                                                     // headers also show the new color marker.
                                                     let chart_member_ids: Vec<zengeld_chart::ChartId> =
-                                                        self.panel_app.tag_manager.chart_members(gid)
+                                                        self.panel_app.tag_manager.chart_member_ids(gid)
                                                             .into_iter()
                                                             .collect();
                                                     for cid in chart_member_ids {
@@ -1510,7 +1510,7 @@ impl ChartApp {
                                         self.panel_app.tag_manager.set_auto_group(member, solo_gid);
                                         // Seed exchange/account_type on the new group so apply_key
                                         // picks them up next frame.
-                                        if let Some(g) = self.panel_app.tag_manager.group_mut(solo_gid) {
+                                        if let Some(g) = self.panel_app.tag_manager.bubble_mut(solo_gid) {
                                             g.exchange = exchange_str.clone();
                                             g.account_type = account_type_str.clone();
                                         }
@@ -1880,7 +1880,7 @@ impl ChartApp {
                                     let member = SyncMemberId::Panel(item.panel_id().0);
                                     let is_untagged = self.panel_app.tag_manager
                                         .group_for_member(member)
-                                        .and_then(|gid| self.panel_app.tag_manager.group(gid))
+                                        .and_then(|gid| self.panel_app.tag_manager.bubble(gid))
                                         .map(|g| g.auto_created)
                                         .unwrap_or(true);
                                     self.sidebar_state.slot_source_mode = if is_untagged {
@@ -2448,7 +2448,7 @@ impl ChartApp {
                                         let member = SyncMemberId::Panel(item.panel_id().0);
                                         let is_untagged = self.panel_app.tag_manager
                                             .group_for_member(member)
-                                            .and_then(|gid| self.panel_app.tag_manager.group(gid))
+                                            .and_then(|gid| self.panel_app.tag_manager.bubble(gid))
                                             .map(|g| g.auto_created)
                                             .unwrap_or(true);
                                         self.sidebar_state.slot_source_mode = if is_untagged {
@@ -2594,7 +2594,7 @@ impl ChartApp {
                     .active_container_id()
                     .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
                 if let Some(gid) = group_id {
-                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                    if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
                         let before = group.primitives.len();
                         group.primitives.retain(|p| p.data().id != id);
                         if group.primitives.len() < before {
@@ -2624,7 +2624,7 @@ impl ChartApp {
                     .active_container_id()
                     .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
                 if let Some(gid) = group_id {
-                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                    if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
                         let before = group.indicator_configs.len();
                         group.indicator_configs.retain(|cfg| cfg.id != id);
                         if group.indicator_configs.len() < before {
@@ -3260,7 +3260,7 @@ impl ChartApp {
         // === Tags & Tabs modal clicks ===
         if let Some(rest) = widget_id.strip_prefix("tags_tabs:") {
             use zengeld_chart::ui::modal_settings::{TagsTabsSidebar, TagsTabsTagsTab};
-            use zengeld_chart::tag_manager::SyncGroupId;
+            use zengeld_chart::tag_manager::BubbleId;
             match rest {
                 "close" => {
                     self.panel_app.close_tags_tabs();
@@ -3299,14 +3299,14 @@ impl ChartApp {
                 }
                 id if id.starts_with("tags:select_group:") => {
                     if let Ok(gid_val) = id["tags:select_group:".len()..].parse::<u64>() {
-                        self.panel_app.tags_tabs_state.selected_group_id = Some(SyncGroupId(gid_val));
+                        self.panel_app.tags_tabs_state.selected_group_id = Some(BubbleId(gid_val));
                         self.panel_app.tags_tabs_state.set_tags_tab(TagsTabsTagsTab::Details);
                         eprintln!("[TagsTabs] Selected group {}", gid_val);
                     }
                 }
                 id if id.starts_with("tags:delete_group:") => {
                     if let Ok(gid_val) = id["tags:delete_group:".len()..].parse::<u64>() {
-                        let gid = SyncGroupId(gid_val);
+                        let gid = BubbleId(gid_val);
                         self.panel_app.tag_manager.remove_group(gid);
                         // Clear selection if we deleted the selected group.
                         if self.panel_app.tags_tabs_state.selected_group_id == Some(gid) {
@@ -3323,8 +3323,8 @@ impl ChartApp {
                         let gid_str  = &suffix[..colon_pos];
                         let flag_str = &suffix[colon_pos + 1..];
                         if let Ok(gid_val) = gid_str.parse::<u64>() {
-                            let gid = SyncGroupId(gid_val);
-                            if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                            let gid = BubbleId(gid_val);
+                            if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
                                 match flag_str {
                                     "sync_crosshair"  => group.sync_flags.sync_crosshair  = !group.sync_flags.sync_crosshair,
                                     "sync_viewport"   => group.sync_flags.sync_viewport   = !group.sync_flags.sync_viewport,

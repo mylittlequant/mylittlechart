@@ -3625,13 +3625,13 @@ impl ApplicationHandler for App<'_> {
                     });
                 if let Some((active_cid, group_id)) = group_info {
                     let sync_symbol_on = pw.chart.panel_app.tag_manager
-                        .group(group_id)
+                        .bubble(group_id)
                         .map(|g| g.sync_flags.sync_symbol)
                         .unwrap_or(false);
                     if sync_symbol_on {
                         // Pre-collect peer instrument info from branch_meta.
                         let peer_ids: Vec<zengeld_chart::ChartId> = pw.chart.panel_app.tag_manager
-                            .chart_members(group_id)
+                            .chart_member_ids(group_id)
                             .into_iter()
                             .filter(|&m| m != active_cid)
                             .collect();

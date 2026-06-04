@@ -174,7 +174,7 @@ impl ChartApp {
             ),
             tag_manager: std::mem::replace(
                 &mut self.panel_app.tag_manager,
-                zengeld_chart::tag_manager::TagManager::new(),
+                zengeld_chart::tag_manager::BubbleStore::new(),
             ),
             indicator_manager: std::mem::replace(
                 &mut self.indicator_manager,

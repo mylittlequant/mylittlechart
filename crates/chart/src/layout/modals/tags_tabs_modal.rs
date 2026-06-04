@@ -13,7 +13,7 @@ use crate::engine::render::RenderContext;
 use crate::engine::render::draw_svg_icon;
 use crate::layout::render_chart::FrameTheme;
 use crate::render::{TextAlign, TextBaseline};
-use crate::tag_manager::TagManager;
+use crate::tag_manager::BubbleStore;
 use crate::theme::ThemeManager;
 use crate::ui::modal_settings::{OverlaySettingsState, TagsTabsState, TagsTabsSidebar, TagsTabsTagsTab};
 use crate::ui::scroll_state::ScrollState;
@@ -90,7 +90,7 @@ pub fn render_tags_tabs_modal(
     frame_theme: &FrameTheme,
     toolbar_theme: &ToolbarTheme,
     panel_grid: &ChartPanelGrid,
-    tag_manager: &TagManager,
+    tag_manager: &BubbleStore,
     _leaf_color_tags: &HashMap<LeafId, [f32; 4]>,
     screen_w: f64,
     screen_h: f64,
@@ -914,7 +914,7 @@ fn render_map_section(
     toolbar_theme: &ToolbarTheme,
     theme_manager: &ThemeManager,
     panel_grid: &ChartPanelGrid,
-    tag_manager: &TagManager,
+    tag_manager: &BubbleStore,
     leaf_color_tags: &HashMap<LeafId, [f32; 4]>,
     chart_area_w: f64,
     chart_area_h: f64,
@@ -1080,7 +1080,7 @@ fn render_map_section(
         row_y += minimap_h + MODAL_PADDING;
 
         // ── Legend — show group colors ────────────────────────────────────
-        let mut groups: Vec<_> = tag_manager.groups().collect();
+        let mut groups: Vec<_> = tag_manager.bubbles().collect();
         groups.sort_by_key(|g| g.id.0);
         if !groups.is_empty() {
             ctx.set_font("11px sans-serif");
@@ -1439,7 +1439,7 @@ fn render_tags_section(
     frame_theme: &FrameTheme,
     toolbar_theme: &ToolbarTheme,
     theme_manager: &ThemeManager,
-    tag_manager: &TagManager,
+    tag_manager: &BubbleStore,
     content_x: f64,
     content_y: f64,
     content_width: f64,
@@ -1522,7 +1522,7 @@ fn render_tags_section(
         // ------------------------------------------------------------------ //
         TagsTabsTagsTab::Groups => {
             // Collect groups — sort by id for stable ordering
-            let mut groups: Vec<_> = tag_manager.groups().collect();
+            let mut groups: Vec<_> = tag_manager.bubbles().collect();
             groups.sort_by_key(|g| g.id.0);
 
             if groups.is_empty() {
@@ -1658,7 +1658,7 @@ fn render_tags_section(
         // ------------------------------------------------------------------ //
         TagsTabsTagsTab::Details => {
             if let Some(group_id) = state.selected_group_id {
-                if let Some(group) = tag_manager.group(group_id) {
+                if let Some(group) = tag_manager.bubble(group_id) {
 
                     // Group title + color swatch
                     let [r, g, b, a] = group.color;

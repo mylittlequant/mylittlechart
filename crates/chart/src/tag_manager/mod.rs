@@ -1,6 +1,6 @@
-//! TagManager — synchronization group manager for chart panels.
+//! BubbleStore — synchronization group manager for chart panels.
 //!
-//! Manages `SyncGroup`s that bind multiple `ChartContainer`s together so they
+//! Manages `DataBubble`s that bind multiple `ChartContainer`s together so they
 //! share primitives, indicator configs, symbol, timeframe, and crosshair state.
 
 pub mod member_id;
@@ -17,35 +17,36 @@ use crate::state::chart_container::ChartId;
 use crate::state::{CommandHistory, Timeframe};
 
 // =============================================================================
-// SyncGroupId
+// BubbleId
 // =============================================================================
 
-/// Unique identifier for a synchronization group.
+/// Unique identifier for a data bubble (synchronization group).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct SyncGroupId(pub u64);
+pub struct BubbleId(pub u64);
 
-static NEXT_SYNC_GROUP_ID: std::sync::atomic::AtomicU64 =
+static NEXT_BUBBLE_ID: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(1);
 
-impl SyncGroupId {
-    /// Generate a new unique `SyncGroupId`.
+impl BubbleId {
+    /// Generate a new unique `BubbleId`.
     pub fn generate() -> Self {
-        SyncGroupId(NEXT_SYNC_GROUP_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst))
+        BubbleId(NEXT_BUBBLE_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst))
     }
 
     /// Advance the counter past `raw` so future `generate()` calls never
     /// collide with restored preset IDs.
     pub fn bump_past(raw: u64) {
         let next = raw + 1;
-        NEXT_SYNC_GROUP_ID.fetch_max(next, std::sync::atomic::Ordering::SeqCst);
+        NEXT_BUBBLE_ID.fetch_max(next, std::sync::atomic::Ordering::SeqCst);
     }
 }
+
 
 // =============================================================================
 // SyncFlags
 // =============================================================================
 
-/// Controls which properties are synchronized across windows in a `SyncGroup`.
+/// Controls which properties are synchronized across windows in a `DataBubble`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SyncFlags {
     pub sync_crosshair: bool,
@@ -73,9 +74,9 @@ impl Default for SyncFlags {
 // IndicatorGroupConfig
 // =============================================================================
 
-/// Configuration for an indicator that belongs to a sync group.
+/// Configuration for an indicator that belongs to a data bubble.
 ///
-/// Bound to the *group* (its windows), NOT to an instrument. Each peer window
+/// Bound to the *bubble* (its windows), NOT to an instrument. Each peer window
 /// recalculates the indicator against whatever bars its current symbol
 /// produces — switching symbol/exchange/account_type does not migrate the
 /// indicator.
@@ -105,13 +106,13 @@ pub struct IndicatorGroupConfig {
 }
 
 // =============================================================================
-// SyncGroup
+// DataBubble
 // =============================================================================
 
 /// A group of chart windows and trading panels that synchronize shared state.
-pub struct SyncGroup {
-    pub id: SyncGroupId,
-    /// Display color used in the UI to identify this group.
+pub struct DataBubble {
+    pub id: BubbleId,
+    /// Display color used in the UI to identify this bubble.
     pub color: [f32; 4],
 
     // Owned state shared across all member windows
@@ -127,7 +128,7 @@ pub struct SyncGroup {
     /// Which properties are synchronized.
     pub sync_flags: SyncFlags,
 
-    /// Group-persisted price-scale corner mode (Auto / Manual / Focus).
+    /// Bubble-persisted price-scale corner mode (Auto / Manual / Focus).
     ///
     /// Authoritative when `sync_flags.sync_viewport = true`. All members
     /// display this mode; clicking A/M/F on any peer updates it here and
@@ -135,10 +136,10 @@ pub struct SyncGroup {
     /// When `sync_viewport = false` each window manages its own mode independently.
     pub scale_mode: ScaleMode,
 
-    /// All members of this group: charts AND trading panels.
+    /// All members of this bubble: charts AND trading panels.
     pub members: std::collections::HashSet<SyncMemberId>,
 
-    /// Per-member flag overrides. Absent = use group defaults.
+    /// Per-member flag overrides. Absent = use bubble defaults.
     pub member_overrides: std::collections::HashMap<SyncMemberId, MemberSyncOverride>,
 
     /// Shared undo/redo history for operations that affect all members
@@ -147,23 +148,24 @@ pub struct SyncGroup {
     /// `command_history` instead.
     pub command_history: CommandHistory,
 
-    /// Invisible default group — auto-created so every window has a group.
+    /// Invisible default bubble — auto-created so every window has a bubble.
     /// No color tag shown in UI. Set to false when user manually tags.
     pub auto_created: bool,
 
-    /// Group-level last-used drawing style per tool type.
+    /// Bubble-level last-used drawing style per tool type.
     ///
     /// Shared via `Arc` with every member window's `DrawingManager` so that a
-    /// style change in *any* window of the group is immediately visible in all
+    /// style change in *any* window of the bubble is immediately visible in all
     /// peers (fixes bugs B1 + D1).  The `Arc` handle in the DM is rebounded
-    /// whenever a window joins or leaves this group.
+    /// whenever a window joins or leaves this bubble.
     pub last_used_style: Arc<RwLock<HashMap<String, TemplateStyle>>>,
 }
 
-impl SyncGroup {
+
+impl DataBubble {
     /// Effective `sync_symbol` for a specific member.
     ///
-    /// The per-member override (if present) wins over the group-level flag.
+    /// The per-member override (if present) wins over the bubble-level flag.
     pub fn effective_sync_symbol(&self, member: SyncMemberId) -> bool {
         self.member_overrides
             .get(&member)
@@ -181,7 +183,7 @@ impl SyncGroup {
 
 }
 
-impl Clone for SyncGroup {
+impl Clone for DataBubble {
     fn clone(&self) -> Self {
         Self {
             id: self.id,
@@ -204,9 +206,9 @@ impl Clone for SyncGroup {
     }
 }
 
-impl std::fmt::Debug for SyncGroup {
+impl std::fmt::Debug for DataBubble {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SyncGroup")
+        f.debug_struct("DataBubble")
             .field("id", &self.id)
             .field("color", &self.color)
             .field("primitives_count", &self.primitives.len())
@@ -223,75 +225,77 @@ impl std::fmt::Debug for SyncGroup {
 }
 
 // =============================================================================
-// TagManagerError
+// BubbleStoreError
 // =============================================================================
 
-/// Errors returned by `TagManager` operations.
+/// Errors returned by `BubbleStore` operations.
 #[derive(Debug)]
-pub enum TagManagerError {
-    /// The given member is not registered in any sync group.
+pub enum BubbleStoreError {
+    /// The given member is not registered in any data bubble.
     MemberNotInGroup(SyncMemberId),
-    GroupNotFound(SyncGroupId),
+    GroupNotFound(BubbleId),
     PrimitiveNotFound(u64),
 }
 
-impl std::fmt::Display for TagManagerError {
+
+impl std::fmt::Display for BubbleStoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::MemberNotInGroup(id) => write!(f, "member {:?} is not in any sync group", id),
-            Self::GroupNotFound(id) => write!(f, "group {:?} does not exist", id),
-            Self::PrimitiveNotFound(id) => write!(f, "primitive {} not found in group", id),
+            Self::MemberNotInGroup(id) => write!(f, "member {:?} is not in any data bubble", id),
+            Self::GroupNotFound(id) => write!(f, "bubble {:?} does not exist", id),
+            Self::PrimitiveNotFound(id) => write!(f, "primitive {} not found in bubble", id),
         }
     }
 }
 
-impl std::error::Error for TagManagerError {}
+impl std::error::Error for BubbleStoreError {}
 
 // =============================================================================
-// TagManager
+// BubbleStore
 // =============================================================================
 
-/// Manages synchronization groups that bind multiple chart windows and panels.
-pub struct TagManager {
-    groups: std::collections::HashMap<SyncGroupId, SyncGroup>,
-    /// Reverse index: member → group.
-    member_to_group: std::collections::HashMap<SyncMemberId, SyncGroupId>,
+/// Manages data bubbles that bind multiple chart windows and panels.
+pub struct BubbleStore {
+    bubbles: std::collections::HashMap<BubbleId, DataBubble>,
+    /// Reverse index: member → bubble.
+    member_to_bubble: std::collections::HashMap<SyncMemberId, BubbleId>,
     next_indicator_config_id: u64,
-    /// The group that the currently-active chart belongs to.
+    /// The bubble that the currently-active chart belongs to.
     /// Updated whenever the active chart changes.
-    pub active_chart_group: Option<SyncGroupId>,
+    pub active_chart_bubble: Option<BubbleId>,
     /// Panel members currently in Synced state.
-    /// Their group membership is dynamic — reassigned when the active chart changes.
+    /// Their bubble membership is dynamic — reassigned when the active chart changes.
     synced_panels: std::collections::HashSet<SyncMemberId>,
 }
 
-impl TagManager {
-    /// Create an empty `TagManager`.
+
+impl BubbleStore {
+    /// Create an empty `BubbleStore`.
     pub fn new() -> Self {
         Self {
-            groups: std::collections::HashMap::new(),
-            member_to_group: std::collections::HashMap::new(),
+            bubbles: std::collections::HashMap::new(),
+            member_to_bubble: std::collections::HashMap::new(),
             next_indicator_config_id: 1,
-            active_chart_group: None,
+            active_chart_bubble: None,
             synced_panels: std::collections::HashSet::new(),
         }
     }
 
     // =========================================================================
-    // Group lifecycle
+    // Bubble lifecycle
     // =========================================================================
 
-    /// Create a new sync group with the given color, symbol, and timeframe.
+    /// Create a new data bubble with the given color, symbol, and timeframe.
     ///
-    /// Returns the id of the newly created group.
+    /// Returns the id of the newly created bubble.
     pub fn create_group(
         &mut self,
         color: [f32; 4],
         symbol: String,
         timeframe: Timeframe,
-    ) -> SyncGroupId {
-        let id = SyncGroupId::generate();
-        let group = SyncGroup {
+    ) -> BubbleId {
+        let id = BubbleId::generate();
+        let bubble = DataBubble {
             id,
             color,
             primitives: Vec::new(),
@@ -308,19 +312,19 @@ impl TagManager {
             auto_created: false,
             last_used_style: Arc::new(RwLock::new(HashMap::new())),
         };
-        self.groups.insert(id, group);
+        self.bubbles.insert(id, bubble);
         id
     }
 
-    /// Create an invisible default group (no color tag in UI).
+    /// Create an invisible default bubble (no color tag in UI).
     pub fn create_group_auto(
         &mut self,
         color: [f32; 4],
         symbol: String,
         timeframe: Timeframe,
-    ) -> SyncGroupId {
-        let id = SyncGroupId::generate();
-        let group = SyncGroup {
+    ) -> BubbleId {
+        let id = BubbleId::generate();
+        let bubble = DataBubble {
             id,
             color,
             primitives: Vec::new(),
@@ -337,106 +341,106 @@ impl TagManager {
             auto_created: true,
             last_used_style: Arc::new(RwLock::new(HashMap::new())),
         };
-        self.groups.insert(id, group);
+        self.bubbles.insert(id, bubble);
         id
     }
 
-    /// Remove a sync group and unmap all its members.
-    pub fn remove_group(&mut self, id: SyncGroupId) {
-        if let Some(group) = self.groups.remove(&id) {
-            for member_id in &group.members {
-                self.member_to_group.remove(member_id);
+    /// Remove a data bubble and unmap all its members.
+    pub fn remove_group(&mut self, id: BubbleId) {
+        if let Some(bubble) = self.bubbles.remove(&id) {
+            for member_id in &bubble.members {
+                self.member_to_bubble.remove(member_id);
             }
         }
     }
 
-    /// Get an immutable reference to a group by id.
-    pub fn group(&self, id: SyncGroupId) -> Option<&SyncGroup> {
-        self.groups.get(&id)
+    /// Get an immutable reference to a bubble by id.
+    pub fn bubble(&self, id: BubbleId) -> Option<&DataBubble> {
+        self.bubbles.get(&id)
     }
 
-    /// Get a mutable reference to a group by id.
-    pub fn group_mut(&mut self, id: SyncGroupId) -> Option<&mut SyncGroup> {
-        self.groups.get_mut(&id)
+    /// Get a mutable reference to a bubble by id.
+    pub fn bubble_mut(&mut self, id: BubbleId) -> Option<&mut DataBubble> {
+        self.bubbles.get_mut(&id)
     }
 
-    /// Iterate over all sync groups.
-    pub fn groups(&self) -> impl Iterator<Item = &SyncGroup> {
-        self.groups.values()
+    /// Iterate over all data bubbles.
+    pub fn bubbles(&self) -> impl Iterator<Item = &DataBubble> {
+        self.bubbles.values()
     }
 
-    /// Iterate over all sync groups mutably.
-    pub fn groups_mut(&mut self) -> impl Iterator<Item = &mut SyncGroup> {
-        self.groups.values_mut()
+    /// Iterate over all data bubbles mutably.
+    pub fn bubbles_mut(&mut self) -> impl Iterator<Item = &mut DataBubble> {
+        self.bubbles.values_mut()
     }
 
     // =========================================================================
     // Membership — generic API
     // =========================================================================
 
-    /// Connect any sync member to a sync group.
+    /// Connect any sync member to a data bubble.
     ///
-    /// If the member is already in another group it is disconnected first.
+    /// If the member is already in another bubble it is disconnected first.
     pub fn connect(
         &mut self,
         member: SyncMemberId,
-        group_id: SyncGroupId,
-    ) -> Result<(), TagManagerError> {
-        // Disconnect from current group first (ignore if not in any group)
+        bubble_id: BubbleId,
+    ) -> Result<(), BubbleStoreError> {
+        // Disconnect from current bubble first (ignore if not in any bubble)
         self.disconnect(member);
 
-        let group = self
-            .groups
-            .get_mut(&group_id)
-            .ok_or(TagManagerError::GroupNotFound(group_id))?;
-        group.members.insert(member);
-        self.member_to_group.insert(member, group_id);
+        let bubble = self
+            .bubbles
+            .get_mut(&bubble_id)
+            .ok_or(BubbleStoreError::GroupNotFound(bubble_id))?;
+        bubble.members.insert(member);
+        self.member_to_bubble.insert(member, bubble_id);
         Ok(())
     }
 
-    /// Disconnect a member from its current sync group.
+    /// Disconnect a member from its current data bubble.
     ///
-    /// Returns the group id the member was removed from, or `None` if not
-    /// in any group.
-    pub fn disconnect(&mut self, member: SyncMemberId) -> Option<SyncGroupId> {
-        if let Some(group_id) = self.member_to_group.remove(&member) {
-            if let Some(group) = self.groups.get_mut(&group_id) {
-                group.members.remove(&member);
+    /// Returns the bubble id the member was removed from, or `None` if not
+    /// in any bubble.
+    pub fn disconnect(&mut self, member: SyncMemberId) -> Option<BubbleId> {
+        if let Some(bubble_id) = self.member_to_bubble.remove(&member) {
+            if let Some(bubble) = self.bubbles.get_mut(&bubble_id) {
+                bubble.members.remove(&member);
             }
-            Some(group_id)
+            Some(bubble_id)
         } else {
             None
         }
     }
 
-    /// Return the sync group that contains the given member, if any.
-    pub fn group_for_member(&self, member: SyncMemberId) -> Option<SyncGroupId> {
-        self.member_to_group.get(&member).copied()
+    /// Return the data bubble that contains the given member, if any.
+    pub fn group_for_member(&self, member: SyncMemberId) -> Option<BubbleId> {
+        self.member_to_bubble.get(&member).copied()
     }
 
     // =========================================================================
     // Membership — chart forwarding helpers (backward compat)
     // =========================================================================
 
-    /// Connect a chart window to a sync group.
+    /// Connect a chart window to a data bubble.
     ///
     /// Wraps `connect(SyncMemberId::Chart(...))` — all existing chart
     /// call sites compile unchanged.
-    pub fn connect_chart(
+    pub fn attach_chart_to_bubble(
         &mut self,
         chart_id: ChartId,
-        group_id: SyncGroupId,
-    ) -> Result<(), TagManagerError> {
-        self.connect(SyncMemberId::Chart(chart_id.0), group_id)
+        bubble_id: BubbleId,
+    ) -> Result<(), BubbleStoreError> {
+        self.connect(SyncMemberId::Chart(chart_id.0), bubble_id)
     }
 
-    /// Disconnect a chart window from its current sync group.
-    pub fn disconnect_chart(&mut self, chart_id: ChartId) -> Option<SyncGroupId> {
+    /// Disconnect a chart window from its current data bubble.
+    pub fn detach_chart_from_bubble(&mut self, chart_id: ChartId) -> Option<BubbleId> {
         self.disconnect(SyncMemberId::Chart(chart_id.0))
     }
 
-    /// Return the sync group that contains the given chart window, if any.
-    pub fn group_for_window(&self, chart_id: ChartId) -> Option<SyncGroupId> {
+    /// Return the data bubble that contains the given chart window, if any.
+    pub fn bubble_for_chart(&self, chart_id: ChartId) -> Option<BubbleId> {
         self.group_for_member(SyncMemberId::Chart(chart_id.0))
     }
 
@@ -444,12 +448,12 @@ impl TagManager {
     // Membership — query helpers
     // =========================================================================
 
-    /// Return all chart members of a group as `ChartId` values.
-    pub fn chart_members(&self, group_id: SyncGroupId) -> Vec<ChartId> {
-        self.groups
-            .get(&group_id)
-            .map(|g| {
-                g.members
+    /// Return all chart members of a bubble as `ChartId` values.
+    pub fn chart_member_ids(&self, bubble_id: BubbleId) -> Vec<ChartId> {
+        self.bubbles
+            .get(&bubble_id)
+            .map(|b| {
+                b.members
                     .iter()
                     .filter_map(|m| m.as_chart().map(ChartId))
                     .collect()
@@ -457,29 +461,29 @@ impl TagManager {
             .unwrap_or_default()
     }
 
-    /// Return all panel member IDs of a group.
-    pub fn panel_members(&self, group_id: SyncGroupId) -> Vec<u64> {
-        self.groups
-            .get(&group_id)
-            .map(|g| g.members.iter().filter_map(|m| m.as_panel()).collect())
+    /// Return all panel member IDs of a bubble.
+    pub fn panel_members(&self, bubble_id: BubbleId) -> Vec<u64> {
+        self.bubbles
+            .get(&bubble_id)
+            .map(|b| b.members.iter().filter_map(|m| m.as_panel()).collect())
             .unwrap_or_default()
     }
 
-    /// Return the set of all member `SyncMemberId`s in a group, or `None` if
-    /// the group does not exist.
+    /// Return the set of all member `SyncMemberId`s in a bubble, or `None` if
+    /// the bubble does not exist.
     pub fn members(
         &self,
-        group_id: SyncGroupId,
+        bubble_id: BubbleId,
     ) -> Option<&std::collections::HashSet<SyncMemberId>> {
-        self.groups.get(&group_id).map(|g| &g.members)
+        self.bubbles.get(&bubble_id).map(|b| &b.members)
     }
 
     /// Return all peer chart windows of the given chart (every chart member except itself).
     pub fn peers(&self, chart_id: ChartId) -> Vec<ChartId> {
         let member = SyncMemberId::Chart(chart_id.0);
-        if let Some(&group_id) = self.member_to_group.get(&member) {
-            if let Some(group) = self.groups.get(&group_id) {
-                return group
+        if let Some(&bubble_id) = self.member_to_bubble.get(&member) {
+            if let Some(bubble) = self.bubbles.get(&bubble_id) {
+                return bubble
                     .members
                     .iter()
                     .filter_map(|m| m.as_chart().map(ChartId))
@@ -495,17 +499,17 @@ impl TagManager {
     // =========================================================================
 
     /// Put a panel in Synced state: register in `synced_panels` and connect to
-    /// the given group.
-    pub fn set_synced(&mut self, panel: SyncMemberId, group_id: SyncGroupId) {
+    /// the given bubble.
+    pub fn set_synced(&mut self, panel: SyncMemberId, bubble_id: BubbleId) {
         self.synced_panels.insert(panel);
-        let _ = self.connect(panel, group_id);
+        let _ = self.connect(panel, bubble_id);
     }
 
-    /// Put a panel in auto-created group state: remove from `synced_panels`
-    /// and connect to its own private auto-created group.
-    pub fn set_auto_group(&mut self, panel: SyncMemberId, private_group_id: SyncGroupId) {
+    /// Put a panel in auto-created bubble state: remove from `synced_panels`
+    /// and connect to its own private auto-created bubble.
+    pub fn set_auto_group(&mut self, panel: SyncMemberId, private_bubble_id: BubbleId) {
         self.synced_panels.remove(&panel);
-        let _ = self.connect(panel, private_group_id);
+        let _ = self.connect(panel, private_bubble_id);
     }
 
     /// Returns `true` if the panel is currently in Synced state.
@@ -518,81 +522,81 @@ impl TagManager {
         self.synced_panels.iter().copied().collect()
     }
 
-    /// Remove a member from `synced_panels` without affecting group membership.
+    /// Remove a member from `synced_panels` without affecting bubble membership.
     ///
     /// Call this when permanently removing a panel (e.g. user closes the panel).
-    /// Pair with `disconnect` to fully deregister a panel from the tag system.
+    /// Pair with `disconnect` to fully deregister a panel from the bubble system.
     pub fn synced_panels_remove(&mut self, member: SyncMemberId) {
         self.synced_panels.remove(&member);
     }
 
     /// Called when the active chart changes.
     ///
-    /// Moves all Synced panels to the new group so they follow the active chart.
-    pub fn reassign_synced_panels(&mut self, new_group_id: SyncGroupId) {
+    /// Moves all Synced panels to the new bubble so they follow the active chart.
+    pub fn reassign_synced_panels(&mut self, new_bubble_id: BubbleId) {
         let panels: Vec<SyncMemberId> = self.synced_panels.iter().copied().collect();
         for member in panels {
             self.disconnect(member);
-            let _ = self.connect(member, new_group_id);
+            let _ = self.connect(member, new_bubble_id);
         }
-        self.active_chart_group = Some(new_group_id);
+        self.active_chart_bubble = Some(new_bubble_id);
     }
 
     // =========================================================================
     // Primitive operations
     // =========================================================================
 
-    /// Return the primitives owned by the sync group that contains the window.
+    /// Return the primitives owned by the data bubble that contains the window.
     pub fn primitives_for_window(
         &self,
         chart_id: ChartId,
     ) -> Option<&[Box<dyn crate::drawing::primitives_v2::Primitive>]> {
         let member = SyncMemberId::Chart(chart_id.0);
-        let group_id = self.member_to_group.get(&member)?;
-        let group = self.groups.get(group_id)?;
-        Some(&group.primitives)
+        let bubble_id = self.member_to_bubble.get(&member)?;
+        let bubble = self.bubbles.get(bubble_id)?;
+        Some(&bubble.primitives)
     }
 
-    /// Add a primitive to the sync group that contains the given window.
+    /// Add a primitive to the data bubble that contains the given window.
     pub fn add_primitive(
         &mut self,
         chart_id: ChartId,
         prim: Box<dyn crate::drawing::primitives_v2::Primitive>,
-    ) -> Result<(), TagManagerError> {
+    ) -> Result<(), BubbleStoreError> {
         let member = SyncMemberId::Chart(chart_id.0);
-        let group_id = self
-            .member_to_group
+        let bubble_id = self
+            .member_to_bubble
             .get(&member)
             .copied()
-            .ok_or(TagManagerError::MemberNotInGroup(member))?;
-        let group = self
-            .groups
-            .get_mut(&group_id)
-            .ok_or(TagManagerError::GroupNotFound(group_id))?;
-        group.primitives.push(prim);
+            .ok_or(BubbleStoreError::MemberNotInGroup(member))?;
+        let bubble = self
+            .bubbles
+            .get_mut(&bubble_id)
+            .ok_or(BubbleStoreError::GroupNotFound(bubble_id))?;
+        bubble.primitives.push(prim);
         Ok(())
     }
 
-    /// Remove a primitive by id from the sync group that contains the given window.
+    /// Remove a primitive by id from the data bubble that contains the given window.
     pub fn remove_primitive(
         &mut self,
         chart_id: ChartId,
         prim_id: u64,
-    ) -> Result<(), TagManagerError> {
+    ) -> Result<(), BubbleStoreError> {
         let member = SyncMemberId::Chart(chart_id.0);
-        let group_id = self
-            .member_to_group
+        let bubble_id = self
+            .member_to_bubble
             .get(&member)
             .copied()
-            .ok_or(TagManagerError::MemberNotInGroup(member))?;
-        let group = self
-            .groups
-            .get_mut(&group_id)
-            .ok_or(TagManagerError::GroupNotFound(group_id))?;
-        let len_before = group.primitives.len();
-        group.primitives.retain(|p| p.data().id != prim_id);
-        if group.primitives.len() == len_before {
-            return Err(TagManagerError::PrimitiveNotFound(prim_id));
+            .ok_or(BubbleStoreError::MemberNotInGroup(member))?;
+        let bubble = self
+            .bubbles
+            .get_mut(&bubble_id)
+            .ok_or(BubbleStoreError::GroupNotFound(bubble_id))?;
+        let len_before = bubble.primitives.len();
+        bubble.primitives.retain(|p| p.data().id != prim_id);
+        if bubble.primitives.len() == len_before {
+            return Err(BubbleStoreError::PrimitiveNotFound(prim_id));
         }
         Ok(())
     }
@@ -601,7 +605,7 @@ impl TagManager {
     // Indicator config operations
     // =========================================================================
 
-    /// Add an indicator config to the sync group that contains the given window.
+    /// Add an indicator config to the data bubble that contains the given window.
     ///
     /// Returns the newly assigned config id.
     pub fn add_indicator_config(
@@ -610,20 +614,20 @@ impl TagManager {
         type_id: &str,
         name: &str,
         pane: u32,
-    ) -> Result<u64, TagManagerError> {
+    ) -> Result<u64, BubbleStoreError> {
         let member = SyncMemberId::Chart(chart_id.0);
-        let group_id = self
-            .member_to_group
+        let bubble_id = self
+            .member_to_bubble
             .get(&member)
             .copied()
-            .ok_or(TagManagerError::MemberNotInGroup(member))?;
-        let group = self
-            .groups
-            .get_mut(&group_id)
-            .ok_or(TagManagerError::GroupNotFound(group_id))?;
+            .ok_or(BubbleStoreError::MemberNotInGroup(member))?;
+        let bubble = self
+            .bubbles
+            .get_mut(&bubble_id)
+            .ok_or(BubbleStoreError::GroupNotFound(bubble_id))?;
         let config_id = self.next_indicator_config_id;
         self.next_indicator_config_id += 1;
-        group.indicator_configs.push(IndicatorGroupConfig {
+        bubble.indicator_configs.push(IndicatorGroupConfig {
             id: config_id,
             type_id: type_id.to_string(),
             name: name.to_string(),
@@ -637,63 +641,63 @@ impl TagManager {
         Ok(config_id)
     }
 
-    /// Remove an indicator config from the sync group that contains the given window.
+    /// Remove an indicator config from the data bubble that contains the given window.
     pub fn remove_indicator_config(
         &mut self,
         chart_id: ChartId,
         config_id: u64,
-    ) -> Result<(), TagManagerError> {
+    ) -> Result<(), BubbleStoreError> {
         let member = SyncMemberId::Chart(chart_id.0);
-        let group_id = self
-            .member_to_group
+        let bubble_id = self
+            .member_to_bubble
             .get(&member)
             .copied()
-            .ok_or(TagManagerError::MemberNotInGroup(member))?;
-        let group = self
-            .groups
-            .get_mut(&group_id)
-            .ok_or(TagManagerError::GroupNotFound(group_id))?;
-        group.indicator_configs.retain(|c| c.id != config_id);
+            .ok_or(BubbleStoreError::MemberNotInGroup(member))?;
+        let bubble = self
+            .bubbles
+            .get_mut(&bubble_id)
+            .ok_or(BubbleStoreError::GroupNotFound(bubble_id))?;
+        bubble.indicator_configs.retain(|c| c.id != config_id);
         Ok(())
     }
 
-    /// Return the indicator configs for the sync group that contains the window.
+    /// Return the indicator configs for the data bubble that contains the window.
     pub fn indicator_configs_for_window(
         &self,
         chart_id: ChartId,
     ) -> Option<&[IndicatorGroupConfig]> {
         let member = SyncMemberId::Chart(chart_id.0);
-        let group_id = self.member_to_group.get(&member)?;
-        let group = self.groups.get(group_id)?;
-        Some(&group.indicator_configs)
+        let bubble_id = self.member_to_bubble.get(&member)?;
+        let bubble = self.bubbles.get(bubble_id)?;
+        Some(&bubble.indicator_configs)
     }
 
     // =========================================================================
     // Symbol / Timeframe / Instrument
     // =========================================================================
 
-    /// Update the symbol for the sync group that contains the given window.
+    /// Update the symbol for the data bubble that contains the given window.
     ///
-    /// Returns a reference to the updated group, or `None` if the window is
-    /// not in any group.
-    pub fn set_symbol(&mut self, chart_id: ChartId, symbol: String) -> Option<&SyncGroup> {
+    /// Returns a reference to the updated bubble, or `None` if the window is
+    /// not in any bubble.
+    pub fn set_symbol(&mut self, chart_id: ChartId, symbol: String) -> Option<&DataBubble> {
         let member = SyncMemberId::Chart(chart_id.0);
-        let group_id = self.member_to_group.get(&member).copied()?;
-        let group = self.groups.get_mut(&group_id)?;
-        group.symbol = symbol;
-        Some(group)
+        let bubble_id = self.member_to_bubble.get(&member).copied()?;
+        let bubble = self.bubbles.get_mut(&bubble_id)?;
+        bubble.symbol = symbol;
+        Some(bubble)
     }
 
-    /// Update the timeframe for the sync group that contains the given window.
-    pub fn set_timeframe(&mut self, chart_id: ChartId, tf: Timeframe) -> Option<&SyncGroup> {
+    /// Update the timeframe for the data bubble that contains the given window.
+    pub fn set_timeframe(&mut self, chart_id: ChartId, tf: Timeframe) -> Option<&DataBubble> {
         let member = SyncMemberId::Chart(chart_id.0);
-        let group_id = self.member_to_group.get(&member).copied()?;
-        let group = self.groups.get_mut(&group_id)?;
-        group.timeframe = tf;
-        Some(group)
+        let bubble_id = self.member_to_bubble.get(&member).copied()?;
+        let bubble = self.bubbles.get_mut(&bubble_id)?;
+        bubble.timeframe = tf;
+        Some(bubble)
     }
 
-    /// Update symbol, exchange, and account_type for the sync group that
+    /// Update symbol, exchange, and account_type for the data bubble that
     /// contains the given member.
     pub fn set_instrument(
         &mut self,
@@ -701,70 +705,70 @@ impl TagManager {
         symbol: String,
         exchange: String,
         account_type: String,
-    ) -> Option<&SyncGroup> {
-        let group_id = self.member_to_group.get(&member).copied()?;
-        let group = self.groups.get_mut(&group_id)?;
-        group.symbol = symbol;
-        group.exchange = exchange;
-        group.account_type = account_type;
-        Some(group)
+    ) -> Option<&DataBubble> {
+        let bubble_id = self.member_to_bubble.get(&member).copied()?;
+        let bubble = self.bubbles.get_mut(&bubble_id)?;
+        bubble.symbol = symbol;
+        bubble.exchange = exchange;
+        bubble.account_type = account_type;
+        Some(bubble)
     }
 
     // =========================================================================
     // Color helpers
     // =========================================================================
 
-    /// Set the display color of a sync group.
-    pub fn set_color(&mut self, group_id: SyncGroupId, color: [f32; 4]) {
-        if let Some(group) = self.groups.get_mut(&group_id) {
-            group.color = color;
+    /// Set the display color of a data bubble.
+    pub fn set_color(&mut self, bubble_id: BubbleId, color: [f32; 4]) {
+        if let Some(bubble) = self.bubbles.get_mut(&bubble_id) {
+            bubble.color = color;
         }
     }
 
-    /// Promote an auto-created (untagged) group to a visible tagged group.
+    /// Promote an auto-created (untagged) bubble to a visible tagged bubble.
     ///
     /// Assigns the next unused color from the palette and clears the
-    /// `auto_created` flag so the group appears in UI color overlays.
-    /// No-op if the group is not auto-created.
+    /// `auto_created` flag so the bubble appears in UI color overlays.
+    /// No-op if the bubble is not auto-created.
     ///
-    /// Returns the assigned color, or `None` if the group does not exist
+    /// Returns the assigned color, or `None` if the bubble does not exist
     /// or was already tagged.
-    pub fn promote_to_tagged(&mut self, group_id: SyncGroupId) -> Option<[f32; 4]> {
+    pub fn promote_to_tagged(&mut self, bubble_id: BubbleId) -> Option<[f32; 4]> {
         let color = self.next_unused_color();
-        let group = self.groups.get_mut(&group_id)?;
-        if !group.auto_created {
+        let bubble = self.bubbles.get_mut(&bubble_id)?;
+        if !bubble.auto_created {
             return None;
         }
-        group.auto_created = false;
-        group.color = color;
+        bubble.auto_created = false;
+        bubble.color = color;
         Some(color)
     }
 
-    /// Find a group by its display color.
+    /// Find a bubble by its display color.
     ///
-    /// This is a bridge for UI code that identifies groups by color rather than id.
-    pub fn find_group_by_color(&self, color: [f32; 4]) -> Option<SyncGroupId> {
-        self.groups
+    /// This is a bridge for UI code that identifies bubbles by color rather than id.
+    pub fn find_group_by_color(&self, color: [f32; 4]) -> Option<BubbleId> {
+        self.bubbles
             .values()
-            .find(|g| {
-                !g.auto_created
-                    && (g.color[0] - color[0]).abs() < 0.01
-                    && (g.color[1] - color[1]).abs() < 0.01
-                    && (g.color[2] - color[2]).abs() < 0.01
+            .find(|b| {
+                !b.auto_created
+                    && (b.color[0] - color[0]).abs() < 0.01
+                    && (b.color[1] - color[1]).abs() < 0.01
+                    && (b.color[2] - color[2]).abs() < 0.01
             })
-            .map(|g| g.id)
+            .map(|b| b.id)
     }
 
     /// Pick the next color from the preset palette that is not already used by
-    /// an existing sync group.
+    /// an existing data bubble.
     ///
     /// Falls back to the first preset color if all are taken.
     pub fn next_unused_color(&self) -> [f32; 4] {
         use crate::ui::sync_color_grid::PRESET_COLORS;
-        // Only visible (non-auto) groups occupy palette colors
-        let used_colors: Vec<[f32; 4]> = self.groups.values()
-            .filter(|g| !g.auto_created)
-            .map(|g| g.color)
+        // Only visible (non-auto) bubbles occupy palette colors
+        let used_colors: Vec<[f32; 4]> = self.bubbles.values()
+            .filter(|b| !b.auto_created)
+            .map(|b| b.color)
             .collect();
         for &preset in PRESET_COLORS.iter() {
             let is_used = used_colors.iter().any(|uc| {
@@ -784,40 +788,40 @@ impl TagManager {
     // Preset restore helpers
     // =========================================================================
 
-    /// Remove all sync groups and reset the member-to-group index.
+    /// Remove all data bubbles and reset the member-to-bubble index.
     ///
     /// Used during preset restore to start from a clean slate before
-    /// re-inserting groups reconstructed from snapshots.
+    /// re-inserting bubbles reconstructed from snapshots.
     pub fn clear(&mut self) {
-        self.groups.clear();
-        self.member_to_group.clear();
+        self.bubbles.clear();
+        self.member_to_bubble.clear();
         self.next_indicator_config_id = 1;
-        self.active_chart_group = None;
+        self.active_chart_bubble = None;
         self.synced_panels.clear();
     }
 
-    /// Insert a fully-constructed [`SyncGroup`] using its own id.
+    /// Insert a fully-constructed [`DataBubble`] using its own id.
     ///
-    /// No new id is generated. If a group with the same id already exists it
+    /// No new id is generated. If a bubble with the same id already exists it
     /// is silently replaced. After inserting, also rebuilds the
-    /// `member_to_group` reverse-index for all members already recorded on
-    /// the group.
-    pub fn insert_group_raw(&mut self, group: SyncGroup) {
-        let group_id = group.id;
-        for &member_id in &group.members {
-            self.member_to_group.insert(member_id, group_id);
+    /// `member_to_bubble` reverse-index for all members already recorded on
+    /// the bubble.
+    pub fn insert_group_raw(&mut self, bubble: DataBubble) {
+        let bubble_id = bubble.id;
+        for &member_id in &bubble.members {
+            self.member_to_bubble.insert(member_id, bubble_id);
         }
-        self.groups.insert(group_id, group);
+        self.bubbles.insert(bubble_id, bubble);
     }
 
-    /// Reconstruct a [`SyncGroup`] from a [`SyncGroupSnapshot`].
+    /// Reconstruct a [`DataBubble`] from a [`DataBubbleSnapshot`].
     ///
-    /// The resulting group starts with an empty `primitives` list — primitives
+    /// The resulting bubble starts with an empty `primitives` list — primitives
     /// are restored separately via the `PrimitiveRegistry` and pushed in
     /// afterwards.
     pub fn group_from_snapshot(
         snap: &crate::preset::snapshots::SyncGroupSnapshot,
-    ) -> SyncGroup {
+    ) -> DataBubble {
         // Restore chart members (backward compat — stored as bare u64)
         let mut members = std::collections::HashSet::new();
         for &raw in &snap.members {
@@ -856,8 +860,8 @@ impl TagManager {
             }
         }
 
-        SyncGroup {
-            id: SyncGroupId(snap.id),
+        DataBubble {
+            id: BubbleId(snap.id),
             color: snap.color,
             primitives: Vec::new(),
             indicator_configs: snap.indicator_configs.clone(),
@@ -876,7 +880,7 @@ impl TagManager {
     }
 }
 
-impl Default for TagManager {
+impl Default for BubbleStore {
     fn default() -> Self {
         Self::new()
     }

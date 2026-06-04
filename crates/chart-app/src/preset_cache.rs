@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use zengeld_chart::state::panel_grid::ChartPanelGrid;
-use zengeld_chart::tag_manager::TagManager;
+use zengeld_chart::tag_manager::BubbleStore;
 use zengeld_chart::LeafId;
 use zengeld_terminal_indicators::IndicatorManager;
 
@@ -11,7 +11,7 @@ use zengeld_terminal_indicators::IndicatorManager;
 /// No serialization needed — just pointer swaps.
 pub struct LivePresetState {
     pub panel_grid: ChartPanelGrid,
-    pub tag_manager: TagManager,
+    pub tag_manager: BubbleStore,
     pub indicator_manager: IndicatorManager,
     pub alert_manager: alerts::AlertManager,
     pub leaf_color_tags: HashMap<LeafId, [f32; 4]>,

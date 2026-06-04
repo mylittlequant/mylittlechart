@@ -2412,7 +2412,7 @@ pub struct ChartPanelApp {
     pub sync_color_grid_draw: crate::ui::sync_color_grid::SyncColorGridDrawResult,
 
     // Sync group manager — owns all synchronization groups for this panel.
-    pub tag_manager: crate::tag_manager::TagManager,
+    pub tag_manager: crate::tag_manager::BubbleStore,
 
     // Chart presets — in-memory store. Persist layer binds to this later.
     pub presets: std::collections::HashMap<String, crate::preset::preset::ChartPreset>,
@@ -2467,7 +2467,7 @@ impl ChartPanelApp {
             leaf_color_tags: std::collections::HashMap::new(),
             sync_color_grid: crate::ui::sync_color_grid::SyncColorGridState::new(),
             sync_color_grid_draw: crate::ui::sync_color_grid::SyncColorGridDrawResult::default(),
-            tag_manager: crate::tag_manager::TagManager::new(),
+            tag_manager: crate::tag_manager::BubbleStore::new(),
             presets: std::collections::HashMap::new(),
             active_preset_id: "__default__".to_string(),
             open_tabs: Vec::new(),
@@ -2722,14 +2722,14 @@ impl ChartPanelApp {
         active_symbol: Option<&str>,
         active_timeframe: Option<&str>,
         sidebar_w: f64,
-        active_group_id: Option<crate::tag_manager::SyncGroupId>,
+        active_group_id: Option<crate::tag_manager::BubbleId>,
     ) -> ChartToolbarRenderResult {
         let toolbar_theme = self.toolbar_theme_for_render();
         let dropdown_theme = self.dropdown_theme_for_render();
         // Get sync flags for the active window's group (used to show toggle state in layout_menu)
         let active_gid = active_group_id;
-        let sync_flags = active_gid.and_then(|gid| self.tag_manager.group(gid)).map(|g| &g.sync_flags);
-        let is_mono_group = active_gid.and_then(|gid| self.tag_manager.group(gid)).map(|g| g.members.len() <= 1).unwrap_or(true);
+        let sync_flags = active_gid.and_then(|gid| self.tag_manager.bubble(gid)).map(|g| &g.sync_flags);
+        let is_mono_group = active_gid.and_then(|gid| self.tag_manager.bubble(gid)).map(|g| g.members.len() <= 1).unwrap_or(true);
         let is_expanded = self.panel_grid.is_expanded();
         self.toolbar_state.render_toolbars(ctx, layout, &self.toolbar_config, selected_primitive, Some(&toolbar_theme), Some(&dropdown_theme), clock_time, &self.presets, &self.active_preset_id, self.autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, active_symbol, active_timeframe, sidebar_w)
     }
@@ -3194,7 +3194,7 @@ impl ChartPanelApp {
                 let member = SyncMemberId::Panel(panel_id);
                 self.tag_manager
                     .group_for_member(member)
-                    .and_then(|gid| self.tag_manager.group(gid))
+                    .and_then(|gid| self.tag_manager.bubble(gid))
                     .filter(|g| !g.auto_created)
                     .map(|g| g.color)
             } else {

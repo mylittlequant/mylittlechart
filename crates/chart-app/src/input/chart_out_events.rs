@@ -766,7 +766,7 @@ impl ChartApp {
                                     crate::branch_meta_bridge::mirror_group_id(
                                         &mut self.branch_meta,
                                         chart_id,
-                                        snap.group_id.map(zengeld_chart::tag_manager::SyncGroupId),
+                                        snap.group_id.map(zengeld_chart::tag_manager::BubbleId),
                                     );
                                     // Phase 4 S2.4 dual-write: pre_tag_ids, stashed_command_history.
                                     // stashed_primitives already written above via push_stashed_primitive().
@@ -971,7 +971,7 @@ impl ChartApp {
                             crate::branch_meta_bridge::mirror_group_id(
                                 &mut self.branch_meta,
                                 chart_id,
-                                snap.group_id.map(zengeld_chart::tag_manager::SyncGroupId),
+                                snap.group_id.map(zengeld_chart::tag_manager::BubbleId),
                             );
                             // Phase 4 S2.4 dual-write: pre_tag_ids + stashed_command_history.
                             crate::branch_meta_bridge::mirror_pre_tag_ids(
@@ -996,7 +996,7 @@ impl ChartApp {
                     // ----------------------------------------------------------------
                     self.panel_app.tag_manager.clear();
                     for sg_snap in &preset.sync_groups {
-                        let mut group = zengeld_chart::tag_manager::TagManager::group_from_snapshot(sg_snap);
+                        let mut group = zengeld_chart::tag_manager::BubbleStore::group_from_snapshot(sg_snap);
                         if let Ok(reg) = zengeld_chart::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
                             for ps in &sg_snap.primitives {
                                 if let Some(mut prim) = reg.from_json(&ps.type_id, &ps.json) {
@@ -1022,7 +1022,7 @@ impl ChartApp {
                         // in synced_panel_ids was Synced (= follows active chart) at
                         // save time; re-register via set_synced so that next active
                         // chart change re-attaches the panel correctly.
-                        let gid = zengeld_chart::tag_manager::SyncGroupId(sg_snap.id);
+                        let gid = zengeld_chart::tag_manager::BubbleId(sg_snap.id);
                         for &pid in &sg_snap.synced_panel_ids {
                             let member = zengeld_chart::tag_manager::SyncMemberId::Panel(pid);
                             self.panel_app.tag_manager.set_synced(member, gid);
@@ -1036,7 +1036,7 @@ impl ChartApp {
                     // (fresh HashMap) as a safe fallback.
                     {
                         // Collect (chart_id, group_id) pairs without holding borrow.
-                        let rebind_info: Vec<(zengeld_chart::ChartId, zengeld_chart::tag_manager::SyncGroupId)> =
+                        let rebind_info: Vec<(zengeld_chart::ChartId, zengeld_chart::tag_manager::BubbleId)> =
                             self.panel_app.panel_grid.containers().keys()
                                 .copied()
                                 .filter_map(|cid| {
@@ -1046,7 +1046,7 @@ impl ChartApp {
                                 .collect();
                         for (chart_id, group_id) in rebind_info {
                             if let Some(style_arc) = self.panel_app.tag_manager
-                                .group(group_id)
+                                .bubble(group_id)
                                 .map(|g| g.last_used_style.clone())
                             {
                                 if let Some(window) = self.panel_app.panel_grid.containers()
@@ -1061,10 +1061,10 @@ impl ChartApp {
                         }
                     }
 
-                    // Bump SyncGroupId counter past any restored group IDs so
+                    // Bump BubbleId counter past any restored bubble IDs so
                     // future create_group / create_group_auto calls never collide.
                     for sg_snap in &preset.sync_groups {
-                        zengeld_chart::tag_manager::SyncGroupId::bump_past(sg_snap.id);
+                        zengeld_chart::tag_manager::BubbleId::bump_past(sg_snap.id);
                     }
 
                     // Seed the global primitive ID counter so future allocations
@@ -1080,7 +1080,7 @@ impl ChartApp {
                                     .flat_map(|v| v.iter())
                             )
                             .chain(
-                                self.panel_app.tag_manager.groups()
+                                self.panel_app.tag_manager.bubbles()
                                     .flat_map(|g| g.primitives.iter())
                             )
                             .map(|p| p.data().id)
@@ -1099,12 +1099,12 @@ impl ChartApp {
                         // using immutable borrows only.
                         let container_ids: Vec<zengeld_chart::ChartId> =
                             self.panel_app.panel_grid.containers().keys().copied().collect();
-                        let collision_info: Vec<(zengeld_chart::ChartId, zengeld_chart::tag_manager::SyncGroupId, std::collections::HashSet<u64>)> =
+                        let collision_info: Vec<(zengeld_chart::ChartId, zengeld_chart::tag_manager::BubbleId, std::collections::HashSet<u64>)> =
                             container_ids.into_iter()
                                 .filter_map(|cid| {
                                     let gid = crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid)?;
                                     let group_ids: std::collections::HashSet<u64> =
-                                        self.panel_app.tag_manager.group(gid)
+                                        self.panel_app.tag_manager.bubble(gid)
                                             .map(|g| g.primitives.iter().map(|p| p.data().id).collect())
                                             .unwrap_or_default();
                                     Some((cid, gid, group_ids))
@@ -1136,7 +1136,7 @@ impl ChartApp {
                     // Deduplicate IDs within each group.primitives collection.
                     // Old presets may have group primitives with identical IDs
                     // (from historical clone paths that didn't re-ID).
-                    for group in self.panel_app.tag_manager.groups_mut() {
+                    for group in self.panel_app.tag_manager.bubbles_mut() {
                         let mut seen_ids = std::collections::HashSet::new();
                         let mut reid_count = 0u32;
                         for p in &mut group.primitives {
@@ -1174,10 +1174,10 @@ impl ChartApp {
                                 .map(|(leaf_id, w)| (leaf_id, w.id))
                                 .collect();
                         let style_arc = self.panel_app.tag_manager
-                            .group(group_id)
+                            .bubble(group_id)
                             .map(|g| g.last_used_style.clone());
                         for &(leaf_id, chart_id) in &leaf_chart_ids {
-                            let _ = self.panel_app.tag_manager.connect_chart(chart_id, group_id);
+                            let _ = self.panel_app.tag_manager.attach_chart_to_bubble(chart_id, group_id);
                             if let Some(pid) = self.panel_app.panel_grid.container_for_leaf(leaf_id).map(|w| w.chart_panel_id) {
                                 if let Some(ref arc) = style_arc {
                                     if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
@@ -1802,7 +1802,7 @@ impl ChartApp {
                         };
                         // Collect orphans (Panel members in any group with no live state).
                         let mut orphans: Vec<SyncMemberId> = Vec::new();
-                        for group in self.panel_app.tag_manager.groups() {
+                        for group in self.panel_app.tag_manager.bubbles() {
                             for member in group.members.iter() {
                                 if let SyncMemberId::Panel(pid) = member {
                                     if !live_panel_ids.contains(pid) {
@@ -2036,7 +2036,7 @@ impl ChartApp {
                 let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
                 let mut newly_enabled = false;
                 if let Some(gid) = gid {
-                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                    if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
                         group.sync_flags.sync_symbol = !group.sync_flags.sync_symbol;
                         newly_enabled = group.sync_flags.sync_symbol;
                         eprintln!("[ChartApp] InternalToggleSyncSymbol: group={:?} sync_symbol={}", gid, group.sync_flags.sync_symbol);
@@ -2073,7 +2073,7 @@ impl ChartApp {
                 let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
                 let mut newly_enabled = false;
                 if let Some(gid) = gid {
-                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                    if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
                         group.sync_flags.sync_timeframe = !group.sync_flags.sync_timeframe;
                         newly_enabled = group.sync_flags.sync_timeframe;
                         eprintln!("[ChartApp] InternalToggleSyncTimeframe: group={:?} sync_timeframe={}", gid, group.sync_flags.sync_timeframe);
@@ -2100,7 +2100,7 @@ impl ChartApp {
                 let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
                 let mut newly_enabled = false;
                 if let Some(gid) = gid {
-                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                    if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
                         group.sync_flags.sync_crosshair = !group.sync_flags.sync_crosshair;
                         newly_enabled = group.sync_flags.sync_crosshair;
                         eprintln!("[ChartApp] InternalToggleSyncCrosshair: group={:?} sync_crosshair={}", gid, group.sync_flags.sync_crosshair);
@@ -2145,7 +2145,7 @@ impl ChartApp {
                 let mut newly_enabled = false;
                 let mut newly_disabled = false;
                 if let Some(gid) = gid {
-                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                    if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
                         let was_on = group.sync_flags.sync_viewport;
                         group.sync_flags.sync_viewport = !was_on;
                         newly_enabled = !was_on;
@@ -2166,7 +2166,7 @@ impl ChartApp {
                             .map(|w| w.price_scale.scale_mode);
                         if let Some(mode) = active_mode {
                             if let Some(gid) = gid {
-                                if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                                if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
                                     group.scale_mode = mode;
                                 }
                             }
@@ -2176,7 +2176,7 @@ impl ChartApp {
                         // scale_mode argument; stash happens here before the call.
                         if let Some(gid) = gid {
                             let peer_leaves: Vec<zengeld_chart::LeafId> =
-                                self.panel_app.tag_manager.chart_members(gid)
+                                self.panel_app.tag_manager.chart_member_ids(gid)
                                     .into_iter()
                                     .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
                                     .filter(|&lid| lid != active_leaf)
@@ -2208,7 +2208,7 @@ impl ChartApp {
                 if newly_disabled {
                     if let Some(gid) = gid {
                         let all_leaves: Vec<zengeld_chart::LeafId> =
-                            self.panel_app.tag_manager.chart_members(gid)
+                            self.panel_app.tag_manager.chart_member_ids(gid)
                                 .into_iter()
                                 .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
                                 .collect();
@@ -2227,7 +2227,7 @@ impl ChartApp {
                 let chart_id = self.panel_app.panel_grid.active_container().map(|w| w.id);
                 if let Some(gid) = gid {
                     // Toggle the flag and capture the new value.
-                    let new_sync = if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                    let new_sync = if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
                         group.sync_flags.sync_drawings = !group.sync_flags.sync_drawings;
                         eprintln!("[TagManager] sync_drawings toggled to {}", group.sync_flags.sync_drawings);
                         group.sync_flags.sync_drawings
@@ -2241,7 +2241,7 @@ impl ChartApp {
                         let group_prim_ids: std::collections::HashSet<u64> = self
                             .panel_app
                             .tag_manager
-                            .group(gid)
+                            .bubble(gid)
                             .map(|g| g.primitives.iter().map(|p| p.data().id).collect())
                             .unwrap_or_default();
 
@@ -2309,7 +2309,7 @@ impl ChartApp {
                 let chart_id = self.panel_app.panel_grid.active_container().map(|w| w.id);
                 if let (Some(gid), Some(chart_id)) = (gid, chart_id) {
                     // Toggle the flag and capture the new value.
-                    let new_sync = if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                    let new_sync = if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
                         group.sync_flags.sync_indicators = !group.sync_flags.sync_indicators;
                         eprintln!("[TagManager] sync_indicators toggled to {}", group.sync_flags.sync_indicators);
                         group.sync_flags.sync_indicators
@@ -2327,7 +2327,7 @@ impl ChartApp {
                         let group_indicator_ids: std::collections::HashSet<u64> = self
                             .panel_app
                             .tag_manager
-                            .group(gid)
+                            .bubble(gid)
                             .map(|g| g.indicator_configs.iter().map(|c| c.id).collect())
                             .unwrap_or_default();
 

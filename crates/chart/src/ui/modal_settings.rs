@@ -2945,7 +2945,7 @@ pub struct TagsTabsState {
     /// Active sub-tab in the TAGS sidebar.
     pub tags_tab: TagsTabsTagsTab,
     /// The sync group currently selected in the Groups tab.
-    pub selected_group_id: Option<crate::tag_manager::SyncGroupId>,
+    pub selected_group_id: Option<crate::tag_manager::BubbleId>,
     /// Modal position (None = centered on screen).
     pub position: Option<(f64, f64)>,
     /// Whether the title bar is being dragged.

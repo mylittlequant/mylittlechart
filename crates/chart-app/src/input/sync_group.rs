@@ -13,8 +13,8 @@ impl ChartApp {
         let source_color = self.panel_app.leaf_color_tags.get(&source_leaf).copied();
         let crosshair_sync_enabled = self.panel_app.panel_grid
             .container_id_for_leaf(source_leaf)
-            .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
-            .and_then(|gid| self.panel_app.tag_manager.group(gid))
+            .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid))
+            .and_then(|gid| self.panel_app.tag_manager.bubble(gid))
             .map(|g| g.sync_flags.sync_crosshair)
             .unwrap_or(true);
         let all_ids: Vec<zengeld_chart::LeafId> = self.panel_app
@@ -84,7 +84,7 @@ impl ChartApp {
 
         // 1b. Disconnect from TagManager group.
         if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
-            if let Some(old_group_id) = self.panel_app.tag_manager.disconnect_chart(chart_id) {
+            if let Some(old_group_id) = self.panel_app.tag_manager.detach_chart_from_bubble(chart_id) {
                 eprintln!(
                     "[TagManager] Disconnected chart {:?} from group {:?}",
                     chart_id, old_group_id
@@ -197,13 +197,13 @@ impl ChartApp {
                 .unwrap_or_else(zengeld_chart::state::Timeframe::h1);
             // Auto groups get transparent color — never occupy palette slots
             let new_group_id = self.panel_app.tag_manager.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
-            let _ = self.panel_app.tag_manager.connect_chart(chart_id, new_group_id);
+            let _ = self.panel_app.tag_manager.attach_chart_to_bubble(chart_id, new_group_id);
             let pid_rebind = self.panel_app.panel_grid.container_for_leaf(leaf_id).map(|w| w.chart_panel_id);
             if let Some(pid) = pid_rebind {
                 // Rebind to the fresh auto-group's style store.  The desynced window
                 // is now independent; its DM must not share the old group's Arc.
                 if let Some(style_arc) = self.panel_app.tag_manager
-                    .group(new_group_id)
+                    .bubble(new_group_id)
                     .map(|g| g.last_used_style.clone())
                 {
                     if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
@@ -220,7 +220,7 @@ impl ChartApp {
                     .map(|panel| panel.drawing_manager.primitives().iter().map(|p| p.clone_box()).collect())
                     .unwrap_or_default();
             if !dm_prims.is_empty() {
-                if let Some(g) = self.panel_app.tag_manager.group_mut(new_group_id) {
+                if let Some(g) = self.panel_app.tag_manager.bubble_mut(new_group_id) {
                     g.primitives = dm_prims;
                 }
             }
@@ -258,7 +258,7 @@ impl ChartApp {
                     .unwrap_or_else(zengeld_chart::state::Timeframe::h1);
                 self.panel_app.tag_manager.create_group(color, sym, tf)
             };
-            let _ = self.panel_app.tag_manager.connect_chart(chart_id, group_id);
+            let _ = self.panel_app.tag_manager.attach_chart_to_bubble(chart_id, group_id);
             eprintln!(
                 "[TagManager] Connected chart {:?} to group {:?} (new={})",
                 chart_id, group_id, is_new_group
@@ -268,7 +268,7 @@ impl ChartApp {
             // last-used style changes are immediately visible to all group peers.
             let pid_join = self.panel_app.panel_grid.container_for_leaf(joining_leaf).map(|w| w.chart_panel_id);
             if let Some(style_arc) = self.panel_app.tag_manager
-                .group(group_id)
+                .bubble(group_id)
                 .map(|g| g.last_used_style.clone())
             {
                 if let Some(pid) = pid_join {
@@ -295,7 +295,7 @@ impl ChartApp {
                 let seed_mode = self.panel_app.panel_grid
                     .container_for_leaf(joining_leaf)
                     .map(|w| w.price_scale.scale_mode);
-                if let (Some(mode), Some(group)) = (seed_mode, self.panel_app.tag_manager.group_mut(group_id)) {
+                if let (Some(mode), Some(group)) = (seed_mode, self.panel_app.tag_manager.bubble_mut(group_id)) {
                     group.scale_mode = mode;
                 }
 
@@ -348,7 +348,7 @@ impl ChartApp {
                 for p in &mut source_prims {
                     p.data_mut().id = zengeld_chart::drawing::alloc_primitive_id();
                 }
-                if let Some(group) = self.panel_app.tag_manager.group_mut(group_id) {
+                if let Some(group) = self.panel_app.tag_manager.bubble_mut(group_id) {
                     group.primitives = source_prims;
                 }
 
@@ -384,7 +384,7 @@ impl ChartApp {
                     .collect();
                 // Sort by id to preserve original creation order (HashMap iteration is random).
                 configs.sort_by_key(|c| c.id);
-                if let Some(group) = self.panel_app.tag_manager.group_mut(group_id) {
+                if let Some(group) = self.panel_app.tag_manager.bubble_mut(group_id) {
                     eprintln!(
                         "[TagManager] Seeded new tag {:?} with {} primitives, {} indicators",
                         group_id, group.primitives.len(), configs.len()
@@ -405,11 +405,11 @@ impl ChartApp {
             // When sync_viewport is ON for this group, stash the window's current
             // scale mode and apply the group mode. F (Focus) implies a pinned viewport,
             // so A/M/F must follow the group while viewport sync is active.
-            let viewport_sync_on = self.panel_app.tag_manager.group(group_id)
+            let viewport_sync_on = self.panel_app.tag_manager.bubble(group_id)
                 .map(|g| g.sync_flags.sync_viewport)
                 .unwrap_or(false);
             if viewport_sync_on {
-                let group_mode = self.panel_app.tag_manager.group(group_id)
+                let group_mode = self.panel_app.tag_manager.bubble(group_id)
                     .map(|g| g.scale_mode);
                 if let (Some(group_mode), Some(window)) = (
                     group_mode,
@@ -553,7 +553,7 @@ impl ChartApp {
                     if let Some(new_cid) = self.panel_app.panel_grid.container_id_for_leaf(mother_leaf) {
                         if new_cid != old_cid {
                             // The chart got a new ID after the split — connect the new one.
-                            let _ = self.panel_app.tag_manager.connect_chart(new_cid, old_gid);
+                            let _ = self.panel_app.tag_manager.attach_chart_to_bubble(new_cid, old_gid);
                             eprintln!("[TagManager] (SplitUntagged) Mother re-connected new cid {:?} → group {:?}", new_cid, old_gid);
                         }
                         // else: same chart_id survived the split, TagManager link is intact.
@@ -591,7 +591,7 @@ impl ChartApp {
                     timeframe,
                 );
                 if let Some(chart_id) = new_chart_id {
-                    let _ = self.panel_app.tag_manager.connect_chart(chart_id, gid);
+                    let _ = self.panel_app.tag_manager.attach_chart_to_bubble(chart_id, gid);
                 }
                 // Phase 4 S2.3 dual-write: mirror new leaf's fresh auto group_id.
                 if let Some(chart_id) = new_chart_id {
@@ -613,16 +613,16 @@ impl ChartApp {
         if !new_leaves.is_empty() {
             // Determine whether the pre-existing group is auto_created.
             let pre_split_is_auto = pre_split_group_id
-                .and_then(|gid| self.panel_app.tag_manager.group(gid))
+                .and_then(|gid| self.panel_app.tag_manager.bubble(gid))
                 .map(|g| g.auto_created)
                 .unwrap_or(false);
 
             // Disconnect the old chart from its group (leaf destroyed by split).
             if let (Some(old_cid), Some(old_gid)) = (pre_split_chart_id, pre_split_group_id) {
-                let _ = self.panel_app.tag_manager.disconnect_chart(old_cid);
+                let _ = self.panel_app.tag_manager.detach_chart_from_bubble(old_cid);
                 eprintln!("[TagManager] Disconnected destroyed chart {:?} from group {:?}", old_cid, old_gid);
                 // Bug C fix: remove the old group if it became empty and was auto-created.
-                if let Some(g) = self.panel_app.tag_manager.group(old_gid) {
+                if let Some(g) = self.panel_app.tag_manager.bubble(old_gid) {
                     if g.auto_created && g.members.is_empty() {
                         self.panel_app.tag_manager.remove_group(old_gid);
                         eprintln!("[TagManager] Removed empty auto group {:?} after split", old_gid);
@@ -668,14 +668,14 @@ impl ChartApp {
             // --- Shared group path (user-tagged groups or brand-new groups) ---
 
             // Assign the group's color to leaf_color_tags for UI display.
-            let group_color = self.panel_app.tag_manager.group(group_id)
+            let group_color = self.panel_app.tag_manager.bubble(group_id)
                 .map(|g| g.color)
                 .unwrap_or([0.5, 0.5, 0.5, 0.9]);
             for &leaf_id in &new_leaves {
                 self.panel_app.leaf_color_tags.insert(leaf_id, group_color);
             }
             // Determine if this is a truly new group (just created, has no state yet).
-            let is_new_group = self.panel_app.tag_manager.group(group_id)
+            let is_new_group = self.panel_app.tag_manager.bubble(group_id)
                 .is_none_or(|g| g.members.is_empty() && g.indicator_configs.is_empty() && g.primitives.is_empty());
             // Collect (leaf_id, chart_id) first to avoid mixed borrow when setting group_id.
             let leaf_chart_ids: Vec<(zengeld_chart::LeafId, zengeld_chart::ChartId)> = new_leaves
@@ -686,11 +686,11 @@ impl ChartApp {
                 })
                 .collect();
             for &(_, chart_id) in &leaf_chart_ids {
-                let _ = self.panel_app.tag_manager.connect_chart(chart_id, group_id);
+                let _ = self.panel_app.tag_manager.attach_chart_to_bubble(chart_id, group_id);
             }
             // Rebind every new window's DM to the group's shared style store.
             let style_arc = self.panel_app.tag_manager
-                .group(group_id)
+                .bubble(group_id)
                 .map(|g| g.last_used_style.clone());
             for &(leaf_id, _) in &leaf_chart_ids {
                 if let Some(pid) = self.panel_app.panel_grid.container_for_leaf(leaf_id).map(|w| w.chart_panel_id) {
@@ -809,7 +809,7 @@ impl ChartApp {
                     p.data_mut().id = zengeld_chart::drawing::alloc_primitive_id();
                 }
                 if !source_prims.is_empty() {
-                    if let Some(group) = self.panel_app.tag_manager.group_mut(group_id) {
+                    if let Some(group) = self.panel_app.tag_manager.bubble_mut(group_id) {
                         group.primitives = source_prims;
                         eprintln!(
                             "[TagManager] Seeded group {:?} with {} primitives",
@@ -854,7 +854,7 @@ impl ChartApp {
                         .collect();
                     // Sort by id to preserve original creation order (HashMap iteration is random).
                     configs.sort_by_key(|c| c.id);
-                    if let Some(group) = self.panel_app.tag_manager.group_mut(group_id) {
+                    if let Some(group) = self.panel_app.tag_manager.bubble_mut(group_id) {
                         let count = configs.len();
                         group.indicator_configs = configs;
                         eprintln!(
@@ -937,8 +937,8 @@ impl ChartApp {
         account_type: &str,
     ) {
         let should_sync = self.panel_app.panel_grid.container_id_for_leaf(source_leaf)
-            .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
-            .and_then(|gid| self.panel_app.tag_manager.group(gid))
+            .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid))
+            .and_then(|gid| self.panel_app.tag_manager.bubble(gid))
             .map(|g| g.sync_flags.sync_symbol)
             .unwrap_or(true);
         if !should_sync { return; }
@@ -947,10 +947,10 @@ impl ChartApp {
         // This makes propagation work for untagged (auto-created) groups too.
         let source_chart_id_for_peers = self.panel_app.panel_grid.container_id_for_leaf(source_leaf);
         let group_id_for_peers = source_chart_id_for_peers
-            .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid));
+            .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid));
         let sync_leaves: Vec<zengeld_chart::LeafId> = if let Some(gid) = group_id_for_peers {
             self.panel_app.tag_manager
-                .chart_members(gid)
+                .chart_member_ids(gid)
                 .into_iter()
                 .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
                 .filter(|&lid| lid != source_leaf)
@@ -1076,7 +1076,7 @@ impl ChartApp {
                 .unwrap_or_else(|| "S".to_string());
 
             let group_id = self.panel_app.panel_grid.container_id_for_leaf(source_leaf)
-                .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid));
+                .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid));
 
             let member = zengeld_chart::tag_manager::SyncMemberId::Chart(chart_id.0);
             self.panel_app.tag_manager.set_instrument(
@@ -1106,8 +1106,8 @@ impl ChartApp {
         tf: zengeld_chart::state::Timeframe,
     ) {
         let should_sync = self.panel_app.panel_grid.container_id_for_leaf(source_leaf)
-            .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
-            .and_then(|gid| self.panel_app.tag_manager.group(gid))
+            .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid))
+            .and_then(|gid| self.panel_app.tag_manager.bubble(gid))
             .map(|g| g.sync_flags.sync_timeframe)
             .unwrap_or(true);
         if !should_sync { return; }
@@ -1115,10 +1115,10 @@ impl ChartApp {
         // Enumerate peer leaves via TagManager group membership (not leaf_color_tags).
         let source_chart_id_for_tf = self.panel_app.panel_grid.container_id_for_leaf(source_leaf);
         let group_id_for_tf = source_chart_id_for_tf
-            .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid));
+            .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid));
         let sync_leaves: Vec<zengeld_chart::LeafId> = if let Some(gid) = group_id_for_tf {
             self.panel_app.tag_manager
-                .chart_members(gid)
+                .chart_member_ids(gid)
                 .into_iter()
                 .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
                 .filter(|&lid| lid != source_leaf)
@@ -1312,10 +1312,10 @@ impl ChartApp {
     ) {
         let source_chart_id = self.panel_app.panel_grid.container_id_for_leaf(source_leaf);
         let group_id = source_chart_id
-            .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid));
+            .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid));
 
         let should_sync = group_id
-            .and_then(|gid| self.panel_app.tag_manager.group(gid))
+            .and_then(|gid| self.panel_app.tag_manager.bubble(gid))
             .map(|g| g.sync_flags.sync_crosshair)
             .unwrap_or(true);
         if !should_sync { return; }
@@ -1327,7 +1327,7 @@ impl ChartApp {
         // Use TagManager membership so untagged groups propagate too.
         let sync_leaves: Vec<zengeld_chart::LeafId> = if let Some(gid) = group_id {
             self.panel_app.tag_manager
-                .chart_members(gid)
+                .chart_member_ids(gid)
                 .into_iter()
                 .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
                 .filter(|&lid| lid != source_leaf)
@@ -1338,7 +1338,7 @@ impl ChartApp {
                     let peer_should_sync = group_id
                         .zip(peer_chart_id)
                         .and_then(|(gid2, cid)| {
-                            self.panel_app.tag_manager.group(gid2).map(|g| {
+                            self.panel_app.tag_manager.bubble(gid2).map(|g| {
                                 g.effective_sync_crosshair(
                                     zengeld_chart::tag_manager::SyncMemberId::Chart(cid.0),
                                 )
@@ -1407,10 +1407,10 @@ impl ChartApp {
         // that happen to share the same color value.
         let group_id = self.panel_app.panel_grid
             .container_id_for_leaf(source_leaf)
-            .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid));
+            .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid));
 
         let should_sync = group_id
-            .and_then(|gid| self.panel_app.tag_manager.group(gid))
+            .and_then(|gid| self.panel_app.tag_manager.bubble(gid))
             .map(|g| g.sync_flags.sync_drawings)
             .unwrap_or(true);
         if !should_sync { return; }
@@ -1419,7 +1419,7 @@ impl ChartApp {
         let peer_leaves: Vec<zengeld_chart::LeafId> = if let Some(gid) = group_id {
             // Every chart member of the group except the source leaf itself.
             self.panel_app.tag_manager
-                .chart_members(gid)
+                .chart_member_ids(gid)
                 .into_iter()
                 .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
                 .filter(|&lid| lid != source_leaf)
@@ -1488,7 +1488,7 @@ impl ChartApp {
         // drawing_manager for this window only — forward sync is blocked anyway,
         // so moving it to the group would cause it to disappear visually.
         let (sync_drawings_on, is_auto_mono) = self.panel_app.tag_manager
-            .group(group_id)
+            .bubble(group_id)
             .map(|g| (g.sync_flags.sync_drawings, g.auto_created && g.members.len() <= 1))
             .unwrap_or((true, false));
         if !sync_drawings_on {
@@ -1543,7 +1543,7 @@ impl ChartApp {
         }
 
         // Add the primitive to the TagManager group so all members share it.
-        if let Some(group) = self.panel_app.tag_manager.group_mut(group_id) {
+        if let Some(group) = self.panel_app.tag_manager.bubble_mut(group_id) {
             group.primitives.push(prim);
             eprintln!(
                 "[TagManager] Moved completed primitive into group {:?} (now {} primitives)",
@@ -1577,9 +1577,9 @@ impl ChartApp {
             Some(gid) => gid,
             None => return,
         };
-        let _ = self.panel_app.tag_manager.disconnect_chart(chart_id);
+        let _ = self.panel_app.tag_manager.detach_chart_from_bubble(chart_id);
         // Remove the old group if it is now empty and was auto-created.
-        if let Some(g) = self.panel_app.tag_manager.group(old_gid) {
+        if let Some(g) = self.panel_app.tag_manager.bubble(old_gid) {
             if g.auto_created && g.members.is_empty() {
                 self.panel_app.tag_manager.remove_group(old_gid);
                 eprintln!("[TagManager] Removed empty auto group {:?}", old_gid);
@@ -1604,7 +1604,7 @@ impl ChartApp {
             None => return,
         };
         // Respect the sync_drawings flag — if disabled, do not write back to group.
-        if let Some(group) = self.panel_app.tag_manager.group(group_id) {
+        if let Some(group) = self.panel_app.tag_manager.bubble(group_id) {
             if !group.sync_flags.sync_drawings {
                 return;
             }
@@ -1614,7 +1614,7 @@ impl ChartApp {
                 .and_then(|w| self.panels_store.chart_panel.get(&w.chart_panel_id))
                 .map(|panel| panel.drawing_manager.primitives().iter().map(|p| p.clone_box()).collect())
                 .unwrap_or_default();
-        if let Some(group) = self.panel_app.tag_manager.group_mut(group_id) {
+        if let Some(group) = self.panel_app.tag_manager.bubble_mut(group_id) {
             group.primitives = new_prims;
         }
         self.sidebar_data_dirty = true;
@@ -1635,11 +1635,11 @@ impl ChartApp {
     /// new windows for each indicator config already in the group.
     pub(super) fn sync_group_indicators_to_new_members(
         &mut self,
-        group_id: zengeld_chart::tag_manager::SyncGroupId,
+        group_id: zengeld_chart::tag_manager::BubbleId,
         new_leaf_chart_ids: &[(zengeld_chart::LeafId, zengeld_chart::ChartId)],
     ) {
         // Respect the sync_indicators flag — if disabled, skip indicator sync.
-        if let Some(group) = self.panel_app.tag_manager.group(group_id) {
+        if let Some(group) = self.panel_app.tag_manager.bubble(group_id) {
             if !group.sync_flags.sync_indicators {
                 return;
             }
@@ -1647,7 +1647,7 @@ impl ChartApp {
 
         // Collect indicator configs from the group.
         let configs: Vec<(String, String)> = self.panel_app.tag_manager
-            .group(group_id)
+            .bubble(group_id)
             .map(|g| {
                 g.indicator_configs.iter()
                     .map(|c| (c.type_id.clone(), c.name.clone()))
@@ -1696,12 +1696,12 @@ impl ChartApp {
     /// on all peer windows in the same group.
     pub(super) fn sync_group_indicator_to_peers(
         &mut self,
-        group_id: zengeld_chart::tag_manager::SyncGroupId,
+        group_id: zengeld_chart::tag_manager::BubbleId,
         type_id: &str,
         source_leaf: zengeld_chart::LeafId,
     ) {
         // Respect the sync_indicators flag — if disabled, skip peer sync.
-        if let Some(group) = self.panel_app.tag_manager.group(group_id) {
+        if let Some(group) = self.panel_app.tag_manager.bubble(group_id) {
             if !group.sync_flags.sync_indicators {
                 return;
             }
@@ -1711,7 +1711,7 @@ impl ChartApp {
         // — each peer recalculates indicators against its own bars.
         let source_chart_id = self.panel_app.panel_grid.container_id_for_leaf(source_leaf);
         let peer_cids: Vec<zengeld_chart::ChartId> = self.panel_app.tag_manager
-            .chart_members(group_id)
+            .chart_member_ids(group_id)
             .into_iter()
             .filter(|&cid| Some(cid) != source_chart_id)
             .collect();

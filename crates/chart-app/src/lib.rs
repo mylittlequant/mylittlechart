@@ -4168,7 +4168,7 @@ impl ChartApp {
                     let panel_id = item.panel_id().0;
                     let member = SyncMemberId::Panel(panel_id);
                     let gid = self.panel_app.tag_manager.group_for_member(member)?;
-                    let group = self.panel_app.tag_manager.group(gid)?;
+                    let group = self.panel_app.tag_manager.bubble(gid)?;
                     if group.auto_created { None } else { Some(group.color) }
                 },
                 &|item: &sidebar_content::free_slot::FreeItem| -> Option<sidebar_content::render::PanelSyncFlagsSnapshot> {
@@ -4176,7 +4176,7 @@ impl ChartApp {
                     let panel_id = item.panel_id().0;
                     let member = SyncMemberId::Panel(panel_id);
                     let gid = self.panel_app.tag_manager.group_for_member(member)?;
-                    let group = self.panel_app.tag_manager.group(gid)?;
+                    let group = self.panel_app.tag_manager.bubble(gid)?;
                     Some(sidebar_content::render::PanelSyncFlagsSnapshot {
                         sync_symbol: group.effective_sync_symbol(member),
                         sync_crosshair: group.effective_sync_crosshair(member),
@@ -4686,7 +4686,7 @@ impl ChartApp {
                 let panel_id = item.panel_id().0;
                 let member = SyncMemberId::Panel(panel_id);
                 let gid = self.panel_app.tag_manager.group_for_member(member)?;
-                let group = self.panel_app.tag_manager.group(gid)?;
+                let group = self.panel_app.tag_manager.bubble(gid)?;
                 if group.auto_created { None } else { Some(group.color) }
             },
             &|item: &sidebar_content::free_slot::FreeItem| -> Option<sidebar_content::render::PanelSyncFlagsSnapshot> {
@@ -4694,7 +4694,7 @@ impl ChartApp {
                 let panel_id = item.panel_id().0;
                 let member = SyncMemberId::Panel(panel_id);
                 let gid = self.panel_app.tag_manager.group_for_member(member)?;
-                let group = self.panel_app.tag_manager.group(gid)?;
+                let group = self.panel_app.tag_manager.bubble(gid)?;
                 Some(sidebar_content::render::PanelSyncFlagsSnapshot {
                     sync_symbol: group.effective_sync_symbol(member),
                     sync_crosshair: group.effective_sync_crosshair(member),
@@ -5204,10 +5204,10 @@ impl ChartApp {
     /// when a chart changes its symbol (from `propagate_symbol_to_sync_group`).
     pub(crate) fn apply_key_to_panels_in_group(
         &mut self,
-        group_id: zengeld_chart::tag_manager::SyncGroupId,
+        group_id: zengeld_chart::tag_manager::BubbleId,
     ) {
         let (symbol, exchange, account_type, panel_ids) = {
-            let group = match self.panel_app.tag_manager.group(group_id) {
+            let group = match self.panel_app.tag_manager.bubble(group_id) {
                 Some(g) => g,
                 None => return,
             };
@@ -5952,9 +5952,9 @@ impl ChartApp {
                         if let Some(active_leaf) = active_leaf_opt {
                             let viewport_sync_on = self.panel_app.panel_grid
                                 .container_id_for_leaf(active_leaf)
-                                .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
+                                .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid))
                                 .and_then(|gid| {
-                                    self.panel_app.tag_manager.group_mut(gid).map(|g| {
+                                    self.panel_app.tag_manager.bubble_mut(gid).map(|g| {
                                         g.scale_mode = ScaleMode::Manual;
                                         g.sync_flags.sync_viewport
                                     })
@@ -6516,7 +6516,7 @@ impl ChartApp {
         };
 
         // Respect the sync_drawings flag — if disabled, do not write drag result back to group.
-        if let Some(group) = self.panel_app.tag_manager.group(group_id) {
+        if let Some(group) = self.panel_app.tag_manager.bubble(group_id) {
             if !group.sync_flags.sync_drawings {
                 return false;
             }
@@ -6542,7 +6542,7 @@ impl ChartApp {
         };
 
         // Replace the primitive in the group by id.
-        if let Some(group) = self.panel_app.tag_manager.group_mut(group_id) {
+        if let Some(group) = self.panel_app.tag_manager.bubble_mut(group_id) {
             if let Some(pos) = group.primitives.iter().position(|p| p.data().id == primitive_id) {
                 group.primitives[pos] = updated_prim;
                 return true;
@@ -6619,8 +6619,8 @@ impl ChartApp {
         scale_mode: Option<zengeld_chart::ScaleMode>,
     ) {
         let should_sync = self.panel_app.panel_grid.container_id_for_leaf(source_leaf)
-            .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
-            .and_then(|gid| self.panel_app.tag_manager.group(gid))
+            .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid))
+            .and_then(|gid| self.panel_app.tag_manager.bubble(gid))
             .map(|g| g.sync_flags.sync_viewport)
             .unwrap_or(true);
         if !should_sync { return; }
@@ -6643,10 +6643,10 @@ impl ChartApp {
         // Enumerate peers via TagManager group membership so untagged groups propagate too.
         let source_chart_id_vp = self.panel_app.panel_grid.container_id_for_leaf(source_leaf);
         let group_id_vp = source_chart_id_vp
-            .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid));
+            .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid));
         let sync_leaves: Vec<zengeld_chart::LeafId> = if let Some(gid) = group_id_vp {
             self.panel_app.tag_manager
-                .chart_members(gid)
+                .chart_member_ids(gid)
                 .into_iter()
                 .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
                 .filter(|&lid| lid != source_leaf)

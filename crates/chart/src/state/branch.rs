@@ -19,7 +19,7 @@ use crate::drawing::TradeManager;
 use crate::state::chart_container_leaf::ChartPanelId;
 use crate::state::chart_container::ConnectionStatus;
 use crate::state::Timeframe;
-use crate::tag_manager::SyncGroupId;
+use crate::tag_manager::BubbleId;
 use crate::state::history::CommandHistory;
 
 // =============================================================================
@@ -282,7 +282,7 @@ pub struct BranchMeta {
     pub kind: BranchKind,
     pub accepts: AcceptPolicy,
     /// Sync group this branch belongs to.
-    pub group_id: Option<SyncGroupId>,
+    pub group_id: Option<BubbleId>,
     /// Symbol context for chart-kind branches.  None for non-chart.
     pub symbol: Option<String>,
     pub timeframe: Option<Timeframe>,
@@ -365,7 +365,7 @@ impl BranchMeta {
     }
 
     /// Build a TagGroup-flavored metadata entry.
-    pub fn tag_group(group_id: SyncGroupId, label: Option<String>) -> Self {
+    pub fn tag_group(group_id: BubbleId, label: Option<String>) -> Self {
         Self {
             kind: BranchKind::TagGroup,
             accepts: AcceptPolicy::Any,
