@@ -21,7 +21,6 @@ use crate::state::Timeframe;
 use crate::{Crosshair, CrosshairOptions, KineticState, DragMode};
 use crate::{GridOptions, Legend, Watermark, PriceLine};
 use crate::state::chart_panel_state::ChartPanelState;
-use crate::drawing::DrawingManager;
 use crate::chart::{CompareOverlay, CompareSeries, get_compare_color};
 use crate::state::{SubPane, CommandHistory, Command};
 use crate::data_provider::{SharedDataProvider, NullDataProvider};
@@ -159,8 +158,6 @@ pub struct ChartContainer {
     pub drag_start_price_max: f64,
 
     // === Object Managers ===
-    /// Drawing primitives (trend lines, rectangles, etc.)
-    pub drawing_manager: DrawingManager,
     /// Horizontal price lines
     pub price_lines: HashMap<String, PriceLine>,
 
@@ -252,12 +249,8 @@ pub const DEFAULT_SNAP_MARGIN: f64 = 5.0;
 
 impl ChartContainer {
     /// Create a new chart window with a data provider.
-    pub fn new_with_provider(symbol: &str, _timeframe: Timeframe, data_provider: SharedDataProvider) -> Self {
+    pub fn new_with_provider(_symbol: &str, _timeframe: Timeframe, data_provider: SharedDataProvider) -> Self {
         let id = generate_chart_id();
-        let mut drawing_manager = DrawingManager::new();
-        drawing_manager.set_current_window(Some(id.0));
-        let exchange = data_provider.exchange_name(symbol);
-        drawing_manager.set_current_symbol_key(symbol, &exchange, "S");
 
         Self {
             id,
@@ -281,8 +274,7 @@ impl ChartContainer {
             drag_start_spacing: 0.0,
             drag_start_price_min: 0.0,
             drag_start_price_max: 0.0,
-            // Object managers
-            drawing_manager,
+            // Object managers (drawing_manager now lives in ChartPanelState)
             price_lines: HashMap::new(),
             // Compare overlay (per-window)
             compare_overlay: CompareOverlay::new(),
@@ -371,10 +363,17 @@ impl ChartContainer {
     ///
     /// The cache key is `"symbol:exchange:account_type"` (e.g. `"BTCUSDT:binance:S"`).
     /// If there are no drawings, any existing cache entry for the key is removed.
-    pub fn snapshot_drawings_for_symbol(&mut self, symbol: &str, exchange: &str, account_type: &str) {
+    ///
+    /// `drawing_manager` is taken from the caller's `ChartPanelState` (S2.8 migration).
+    pub fn snapshot_drawings_for_symbol(
+        &mut self,
+        symbol: &str,
+        exchange: &str,
+        account_type: &str,
+        drawing_manager: &crate::drawing::DrawingManager,
+    ) {
         let key = format!("{}:{}:{}", symbol, exchange, account_type);
-        let snapshots: Vec<crate::preset::snapshots::PrimitiveSnapshot> = self
-            .drawing_manager
+        let snapshots: Vec<crate::preset::snapshots::PrimitiveSnapshot> = drawing_manager
             .primitives()
             .iter()
             .map(|p| crate::preset::snapshots::PrimitiveSnapshot::from_primitive(p.as_ref()))
@@ -390,13 +389,21 @@ impl ChartContainer {
     ///
     /// The cache key is `"symbol:exchange:account_type"` (e.g. `"BTCUSDT:binance:S"`).
     /// Returns `true` if drawings were restored, `false` if no cache entry exists.
-    pub fn restore_drawings_for_symbol(&mut self, symbol: &str, exchange: &str, account_type: &str) -> bool {
+    ///
+    /// `drawing_manager` is taken from the caller's `ChartPanelState` (S2.8 migration).
+    pub fn restore_drawings_for_symbol(
+        &mut self,
+        symbol: &str,
+        exchange: &str,
+        account_type: &str,
+        drawing_manager: &mut crate::drawing::DrawingManager,
+    ) -> bool {
         let key = format!("{}:{}:{}", symbol, exchange, account_type);
         if let Some(snapshots) = self.symbol_drawings.get(&key).cloned() {
             if let Ok(reg) = crate::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
                 for snap in &snapshots {
                     if let Some(prim) = reg.from_json(&snap.type_id, &snap.json) {
-                        self.drawing_manager.add_external_primitive(prim);
+                        drawing_manager.add_external_primitive(prim);
                     }
                 }
             }
@@ -419,9 +426,16 @@ impl ChartContainer {
     /// `symbol`, `exchange`, `account_type` and `timeframe` are now owned by
     /// `branch_meta` in chart-app; callers pass them in from `read_*` helpers.
     ///
+    /// `src_drawing_manager` is the source window's `DrawingManager` (from
+    /// `ChartPanelState` after S2.8 migration).
+    ///
     /// When `sync_drawings` is `true`, all existing primitives are cloned into the
     /// new window as synced copies (`origin_id` is set to the original's id).
     /// When `false`, the new window starts with an empty drawing manager.
+    ///
+    /// Returns a `(ChartContainer, ChartPanelState)` tuple.  The caller must
+    /// insert the `ChartPanelState` into `TradingPanelsStore.chart_panel` under
+    /// the new `chart_panel_id` (available as `new_container.chart_panel_id`).
     pub fn clone_for_split(
         &self,
         new_chart_id: ChartId,
@@ -429,20 +443,46 @@ impl ChartContainer {
         symbol: &str,
         exchange: &str,
         account_type: &str,
-    ) -> Self {
-        let mut drawing_manager = DrawingManager::new();
+        src_drawing_manager: &crate::drawing::DrawingManager,
+        src_panel: &ChartPanelState,
+    ) -> (Self, ChartPanelState) {
+        let new_panel_id = crate::state::chart_container_leaf::generate_chart_panel_id();
+        let mut drawing_manager = crate::drawing::DrawingManager::new();
         drawing_manager.set_current_window(Some(new_chart_id.0));
         drawing_manager.set_current_symbol_key(symbol, exchange, account_type);
         if sync_drawings {
-            let synced = self.drawing_manager.clone_primitives_for_sync(new_chart_id.0);
+            let synced = src_drawing_manager.clone_primitives_for_sync(new_chart_id.0);
             drawing_manager.add_synced_primitives(synced);
         }
 
-        Self {
+        // Build ChartPanelState for the new window, inheriting display options
+        // from the source panel.
+        let mut new_panel = ChartPanelState::new(new_panel_id);
+        new_panel.show_candles = src_panel.show_candles;
+        new_panel.show_bars = src_panel.show_bars;
+        new_panel.show_hollow_candles = src_panel.show_hollow_candles;
+        new_panel.show_heikin_ashi = src_panel.show_heikin_ashi;
+        new_panel.show_line = src_panel.show_line;
+        new_panel.show_step_line = src_panel.show_step_line;
+        new_panel.show_line_markers = src_panel.show_line_markers;
+        new_panel.show_area = src_panel.show_area;
+        new_panel.show_hlc_area = src_panel.show_hlc_area;
+        new_panel.show_histogram = src_panel.show_histogram;
+        new_panel.show_columns = src_panel.show_columns;
+        new_panel.show_baseline = src_panel.show_baseline;
+        new_panel.chart_type = src_panel.chart_type;
+        new_panel.grid_options = src_panel.grid_options.clone();
+        new_panel.crosshair_options = src_panel.crosshair_options.clone();
+        new_panel.legend = src_panel.legend.clone();
+        new_panel.watermark = src_panel.watermark.clone();
+        new_panel.tooltip = src_panel.tooltip.clone();
+        new_panel.drawing_manager = drawing_manager;
+
+        let new_container = Self {
             // New chart ID
             id: new_chart_id,
             // Fresh canvas-leaf id for the split; the source's stays put.
-            chart_panel_id: crate::state::chart_container_leaf::generate_chart_panel_id(),
+            chart_panel_id: new_panel_id,
 
             // === Data (cloned) ===
             bars: self.bars.clone(),
@@ -478,8 +518,7 @@ impl ChartContainer {
             drag_start_price_min: 0.0,
             drag_start_price_max: 0.0,
 
-            // === Object Managers ===
-            drawing_manager,
+            // === Object Managers (drawing_manager now lives in ChartPanelState) ===
             price_lines: self.price_lines.clone(),
 
             // === Compare Overlay (reset) ===
@@ -515,7 +554,8 @@ impl ChartContainer {
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
             inner_layout: InnerLayout::new(),
-        }
+        };
+        (new_container, new_panel)
     }
 
     /// Crosshair state for rendering (respects render flag).
@@ -639,12 +679,21 @@ impl ChartContainer {
     ///
     /// Instrument fields (symbol/timeframe/exchange/account_type) live in
     /// `branch_meta` in chart-app; the caller is responsible for mirroring
-    /// the source window's instrument into branch_meta for the dest chart_id
-    /// and for calling `drawing_manager.set_current_symbol_key` afterwards.
-    pub fn clone_data_from(&mut self, source: &ChartContainer, symbol: &str, exchange: &str, account_type: &str) {
+    /// the source window's instrument into branch_meta for the dest chart_id.
+    ///
+    /// `dst_panel` is the destination window's `ChartPanelState`; this method
+    /// calls `dst_panel.drawing_manager.set_current_symbol_key` on it (S2.8).
+    pub fn clone_data_from(
+        &mut self,
+        source: &ChartContainer,
+        symbol: &str,
+        exchange: &str,
+        account_type: &str,
+        dst_panel: &mut ChartPanelState,
+    ) {
         self.bars = source.bars.clone();
 
-        self.drawing_manager.set_current_symbol_key(symbol, exchange, account_type);
+        dst_panel.drawing_manager.set_current_symbol_key(symbol, exchange, account_type);
 
         self.viewport = source.viewport.clone();
         self.price_scale = source.price_scale.clone();
@@ -700,12 +749,83 @@ impl ChartContainer {
     ///
     /// `crosshair_options` and `chart_type` are supplied by the caller from
     /// `ChartPanelState` (removed from `ChartContainer` in Phase 4 C).
+    /// Create a minimal clone of this chart window for use in `panel_grid::split_active`.
+    ///
+    /// Unlike `clone_for_split`, this variant does **not** take a source
+    /// `DrawingManager` or `ChartPanelState`.  It creates a fresh `ChartContainer`
+    /// with an empty drawing_manager hint (just the window-id set).  The caller
+    /// (chart-app `sync_group.rs`) is responsible for seeding the real
+    /// `ChartPanelState` (including the `drawing_manager`) into `panels_store`
+    /// after the split returns the new leaf ids.
+    ///
+    /// This overload exists so that `ChartPanelGrid::split_active` (inside the
+    /// `zengeld-chart` crate) can call it without needing to know about
+    /// `panels_store` — it just creates the container shell; the panel state is
+    /// seeded by chart-app after the split.
+    pub fn clone_for_split_shell(
+        &self,
+        new_chart_id: ChartId,
+    ) -> Self {
+        let new_panel_id = crate::state::chart_container_leaf::generate_chart_panel_id();
+
+        Self {
+            id: new_chart_id,
+            chart_panel_id: new_panel_id,
+
+            bars: self.bars.clone(),
+            viewport: self.viewport.clone(),
+            price_scale: self.price_scale.clone(),
+            time_scale: self.time_scale.clone(),
+
+            sub_panes: self.sub_panes.clone(),
+            sub_pane_overlay_states: Vec::new(),
+            sub_pane_overlay_results: Vec::new(),
+            total_chart_height: self.total_chart_height,
+
+            crosshair: {
+                let mut ch = self.crosshair;
+                ch.visible = false;
+                ch
+            },
+            kinetic: KineticState::new(),
+            drag_mode: DragMode::None,
+            last_mouse_pos: None,
+            drag_start_x: 0.0,
+            drag_start_y: 0.0,
+            drag_start_view: 0.0,
+            drag_start_spacing: 0.0,
+            drag_start_price_min: 0.0,
+            drag_start_price_max: 0.0,
+
+            price_lines: self.price_lines.clone(),
+
+            compare_overlay: CompareOverlay::new(),
+            command_history: CommandHistory::new(250),
+            data_provider: self.data_provider.clone(),
+            scale_settings: self.scale_settings.clone(),
+            chart_toolbar: ChartToolbarState::default(),
+            toolbar_config: ToolbarConfig::minimal(),
+
+            symbol_drawings: HashMap::new(),
+            pending_symbol_load: false,
+            needs_auto_scale_after_bars: false,
+            restore_scale_mode: None,
+            stashed_scale_mode: None,
+            scroll_fetch_in_flight: false,
+            scroll_fetch_started: None,
+            inner_layout: InnerLayout::new(),
+        }
+    }
+
+    /// `is_drawing_dragging` should be `panel.drawing_manager.is_dragging()` where
+    /// `panel` is the `ChartPanelState` for this window (S2.8 migration).
     pub fn to_render_config(
         &self,
         scale_theme: crate::chart::render::ScaleTheme,
         render_crosshair: bool,
         crosshair_options: &CrosshairOptions,
         chart_type: &'static str,
+        is_drawing_dragging: bool,
     ) -> crate::layout::ChartRenderConfig {
         let crosshair_config = if render_crosshair {
             crate::chart::render::CrosshairConfig {
@@ -731,7 +851,7 @@ impl ChartContainer {
             scale_config: crate::chart::render::ScaleConfig::default(),
             scale_theme,
             crosshair_config,
-            is_dragging: self.drag_mode.is_dragging() || self.drawing_manager.is_dragging(),
+            is_dragging: self.drag_mode.is_dragging() || is_drawing_dragging,
             chart_type,
         }
     }
@@ -1493,12 +1613,12 @@ impl ChartContainer {
             ChartAction::FitContent => { self.fit_content(); true }
             ChartAction::ResetZoom => { self.reset_zoom(); true }
 
-            // === Drawing ===
-            ChartAction::SelectTool(tool) => { self.drawing_manager.set_tool(Some(tool)); true }
-            ChartAction::ToggleLockDrawings => { self.drawing_manager.toggle_lock(); true }
-            ChartAction::ToggleDrawingsVisible => { self.drawing_manager.toggle_visible(); true }
-            ChartAction::DeleteSelected => { self.drawing_manager.delete_selected(); true }
-            ChartAction::DeleteAll => { self.drawing_manager.clear(); true }
+            // === Drawing (drawing_manager now lives in ChartPanelState — S2.8) ===
+            ChartAction::SelectTool(tool) => { panel.drawing_manager.set_tool(Some(tool)); true }
+            ChartAction::ToggleLockDrawings => { panel.drawing_manager.toggle_lock(); true }
+            ChartAction::ToggleDrawingsVisible => { panel.drawing_manager.toggle_visible(); true }
+            ChartAction::DeleteSelected => { panel.drawing_manager.delete_selected(); true }
+            ChartAction::DeleteAll => { panel.drawing_manager.clear(); true }
 
             // === Undo / Redo ===
             ChartAction::Undo => self.command_history.can_undo(),

@@ -1067,8 +1067,8 @@ impl App<'_> {
         chart.panel_app.user_manager.snapshots = self.app_state.snapshots.clone();
         // Apply persisted last-used drawing styles to all DrawingManagers in this new window.
         let drawing_styles = &self.app_state.snapshots.last_used_drawing_styles;
-        for w in chart.panel_app.panel_grid.containers_mut().values_mut() {
-            w.drawing_manager.load_last_styles(drawing_styles);
+        for panel in chart.panels_store.chart_panel.values_mut() {
+            panel.drawing_manager.load_last_styles(drawing_styles);
         }
         chart.panel_app.template_manager = self.app_state.template_manager.clone();
         // Sync server settings so the User Settings modal shows current state.
@@ -3540,8 +3540,8 @@ impl ApplicationHandler for App<'_> {
                         self.app_state.snapshots.clone();
                     // Apply persisted last-used drawing styles to every DrawingManager
                     // so new primitives of each type inherit the user's last-used style.
-                    for w in pw.chart.panel_app.panel_grid.containers_mut().values_mut() {
-                        w.drawing_manager.load_last_styles(drawing_styles);
+                    for panel in pw.chart.panels_store.chart_panel.values_mut() {
+                        panel.drawing_manager.load_last_styles(drawing_styles);
                     }
                 }
                 self.app_state.snapshots_dirty = false;

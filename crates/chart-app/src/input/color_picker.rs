@@ -586,32 +586,35 @@ impl ChartApp {
             Some(i) => i,
             None => return,
         };
-        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-            if let Some(mut data) = window.drawing_manager.get_data_at(idx) {
-                match field.as_str() {
-                    "stroke_color" => {
-                        data.color.stroke = color.to_string();
-                    }
-                    "fill_color" => {
-                        data.color.fill = Some(color.to_string());
-                    }
-                    "text_color" => {
-                        if let Some(ref mut text) = data.text {
-                            text.color = Some(color.to_string());
+        let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+        if let Some(pid) = active_pid {
+            if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
+                if let Some(mut data) = panel.drawing_manager.get_data_at(idx) {
+                    match field.as_str() {
+                        "stroke_color" => {
+                            data.color.stroke = color.to_string();
                         }
+                        "fill_color" => {
+                            data.color.fill = Some(color.to_string());
+                        }
+                        "text_color" => {
+                            if let Some(ref mut text) = data.text {
+                                text.color = Some(color.to_string());
+                            }
+                        }
+                        _ if field.starts_with("level_") && field.ends_with("_color") => {
+                            eprintln!("[ChartApp] level color change: {} = {}", field, color);
+                        }
+                        _ if field.starts_with("style_prop:") => {
+                            // Style property color — apply via primitive's apply_style_property
+                            let prop_id = &field["style_prop:".len()..];
+                            let value = zengeld_chart::drawing::primitives_v2::config::PropertyValue::Color(color.to_string());
+                            panel.drawing_manager.apply_style_property(idx, prop_id, value);
+                        }
+                        _ => {}
                     }
-                    _ if field.starts_with("level_") && field.ends_with("_color") => {
-                        eprintln!("[ChartApp] level color change: {} = {}", field, color);
-                    }
-                    _ if field.starts_with("style_prop:") => {
-                        // Style property color — apply via primitive's apply_style_property
-                        let prop_id = &field["style_prop:".len()..];
-                        let value = zengeld_chart::drawing::primitives_v2::config::PropertyValue::Color(color.to_string());
-                        window.drawing_manager.apply_style_property(idx, prop_id, value);
-                    }
-                    _ => {}
+                    panel.drawing_manager.set_data_at(idx, &data);
                 }
-                window.drawing_manager.set_data_at(idx, &data);
             }
         }
         self.sync_drawing_back_to_group();

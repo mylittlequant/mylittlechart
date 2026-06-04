@@ -420,7 +420,8 @@ impl ChartApp {
 
                 // Primitives from window-local drawing_manager — all symbols, annotated by state.
                 let local_prims: Vec<_> = self.panel_app.panel_grid.active_container()
-                    .map(|w| w.drawing_manager.primitives().iter()
+                    .and_then(|w| self.panels_store.chart_panel.get(&w.chart_panel_id))
+                    .map(|panel| panel.drawing_manager.primitives().iter()
                         .map(|p| {
                             let data = p.data();
                             let kind = p.kind();
@@ -930,9 +931,12 @@ impl ChartApp {
                 syncs
             };
             for (chart_id, cloned_prims) in group_prim_sync {
-                if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&chart_id) {
-                    if !window.drawing_manager.is_dragging() {
-                        window.drawing_manager.sync_from_group_primitives(&cloned_prims);
+                if let Some(window) = self.panel_app.panel_grid.containers().get(&chart_id) {
+                    let panel_id = window.chart_panel_id;
+                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&panel_id) {
+                        if !panel.drawing_manager.is_dragging() {
+                            panel.drawing_manager.sync_from_group_primitives(&cloned_prims);
+                        }
                     }
                 }
             }
@@ -957,7 +961,10 @@ impl ChartApp {
         } else {
             // Single pane: sync group primitives.
             if let Some(active_container) = self.panel_app.panel_grid.active_container() {
-                let is_dragging = active_container.drawing_manager.is_dragging();
+                let active_pid = active_container.chart_panel_id;
+                let is_dragging = self.panels_store.chart_panel.get(&active_pid)
+                    .map(|p| p.drawing_manager.is_dragging())
+                    .unwrap_or(false);
                 let chart_id_opt = self.panel_app.panel_grid.active_container_id();
                 let group_id_opt = chart_id_opt
                     .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid));
@@ -990,8 +997,11 @@ impl ChartApp {
                                         .map(|p| p.clone_box())
                                         .collect())
                                     .unwrap_or_default();
-                            if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&chart_id) {
-                                window.drawing_manager.sync_from_group_primitives(&cloned);
+                            if let Some(window) = self.panel_app.panel_grid.containers().get(&chart_id) {
+                                let pid = window.chart_panel_id;
+                                if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
+                                    panel.drawing_manager.sync_from_group_primitives(&cloned);
+                                }
                             }
                         }
                     }

@@ -1,13 +1,15 @@
-//! Phase 4 S2.7 — `ChartPanelState`: per-canvas display options.
+//! Phase 4 S2.8 — `ChartPanelState`: per-canvas display options + drawing manager.
 //!
 //! Moved into `zengeld-chart` so that both the chart crate and `chart-app`
 //! can reference the type without a circular dependency.
 //!
 //! Stored in `TradingPanelsStore.chart_panel` (chart-app) keyed by
-//! [`ChartPanelId`].  Replaces the 18 duplicate fields that were on
-//! [`super::chart_container::ChartContainer`] after S2.7 drops them.
+//! [`ChartPanelId`].  Replaces the 18 duplicate display-option fields (S2.7)
+//! and the `drawing_manager` field (S2.8) that were formerly on
+//! [`super::chart_container::ChartContainer`].
 
 use crate::chart::{CrosshairOptions, GridOptions, Legend, Tooltip, Watermark};
+use crate::drawing::DrawingManager;
 use crate::state::chart_container_leaf::ChartPanelId;
 
 /// State of one chart canvas leaf.
@@ -48,6 +50,14 @@ pub struct ChartPanelState {
     /// Default: `"candles"`.
     pub chart_type: &'static str,
 
+    // ── Drawing manager ───────────────────────────────────────────────────────
+    /// Drawing primitives manager for this canvas leaf.
+    ///
+    /// Migrated here from [`super::chart_container::ChartContainer`] in Phase 4
+    /// S2.8. Callers that need to draw, read primitives, or hit-test must look
+    /// up the `ChartPanelState` via `TradingPanelsStore.chart_panel`.
+    pub drawing_manager: DrawingManager,
+
     // ── Display options ───────────────────────────────────────────────────────
     /// Grid display options (vertical + horizontal lines).
     pub grid_options: GridOptions,
@@ -84,6 +94,7 @@ impl ChartPanelState {
             show_columns: false,
             show_baseline: false,
             chart_type: "candles",
+            drawing_manager: DrawingManager::new(),
             grid_options: GridOptions::default(),
             crosshair_options: CrosshairOptions::default(),
             legend: Legend::default(),

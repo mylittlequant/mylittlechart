@@ -261,6 +261,19 @@ impl Clone for DrawingManager {
     }
 }
 
+impl std::fmt::Debug for DrawingManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DrawingManager")
+            .field("current_tool", &self.current_tool)
+            .field("state", &format!("{:?}", &self.state))
+            .field("primitives_count", &self.primitives.len())
+            .field("selected", &self.selected)
+            .field("locked", &self.locked)
+            .field("visible", &self.visible)
+            .finish()
+    }
+}
+
 impl DrawingManager {
     /// Create a new drawing manager
     pub fn new() -> Self {

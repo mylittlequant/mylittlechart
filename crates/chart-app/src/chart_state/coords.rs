@@ -13,7 +13,8 @@ impl ChartApp {
         self.panel_app
             .panel_grid
             .active_container()
-            .map(|w| w.drawing_manager.is_drawing())
+            .and_then(|w| self.panels_store.chart_panel.get(&w.chart_panel_id))
+            .map(|panel| panel.drawing_manager.is_drawing())
             .unwrap_or(false)
     }
 
@@ -24,9 +25,10 @@ impl ChartApp {
         self.panel_app
             .panel_grid
             .active_container()
-            .map(|w| {
-                w.drawing_manager.current_tool().is_some()
-                    && !w.drawing_manager.is_freehand_tool()
+            .and_then(|w| self.panels_store.chart_panel.get(&w.chart_panel_id))
+            .map(|panel| {
+                panel.drawing_manager.current_tool().is_some()
+                    && !panel.drawing_manager.is_freehand_tool()
             })
             .unwrap_or(false)
     }

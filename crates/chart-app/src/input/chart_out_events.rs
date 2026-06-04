@@ -648,14 +648,11 @@ impl ChartApp {
                                     );
 
                                     // Apply all snapshot fields
-                                    window.drawing_manager.set_current_symbol_key(
-                                        &snap.symbol, &snap.exchange, &snap.account_type,
-                                    );
                                     window.viewport = snap.viewport.clone();
                                     window.price_scale = snap.price_scale.clone();
                                     window.scale_settings = snap.scale_settings.clone();
 
-                                    // Phase 4 C: restore 18 display/series fields into panel state.
+                                    // Phase 4 C+S2.8: restore display/series fields + drawing_manager into panel state.
                                     {
                                         let static_ct: &'static str = match snap.chart_type.as_str() {
                                             "bars"           => "bars",
@@ -690,21 +687,21 @@ impl ChartApp {
                                         panel_state.show_columns = snap.show_columns;
                                         panel_state.show_baseline = snap.show_baseline;
                                         panel_state.chart_type = static_ct;
-                                        self.panels_store.chart_panel.insert(window.chart_panel_id, panel_state);
-                                    }
-
-                                    // Restore local drawings
-                                    window.drawing_manager.clear_all_primitives();
-                                    if let Ok(reg) = zengeld_chart::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
-                                        for prim_snap in &snap.drawings.primitives {
-                                            if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
-                                                window.drawing_manager.add_external_primitive(prim);
+                                        // S2.8: restore drawings into panel_state.drawing_manager
+                                        panel_state.drawing_manager.set_current_symbol_key(
+                                            &snap.symbol, &snap.exchange, &snap.account_type,
+                                        );
+                                        panel_state.drawing_manager.clear_all_primitives();
+                                        if let Ok(reg) = zengeld_chart::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
+                                            for prim_snap in &snap.drawings.primitives {
+                                                if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
+                                                    panel_state.drawing_manager.add_external_primitive(prim);
+                                                }
                                             }
                                         }
+                                        panel_state.drawing_manager.migrate_all_legacy_timestamps();
+                                        self.panels_store.chart_panel.insert(window.chart_panel_id, panel_state);
                                     }
-                                    // Migrate old presets that stored timestamps as Unix seconds
-                                    // in point_timestamps instead of directly in ts_ms fields.
-                                    window.drawing_manager.migrate_all_legacy_timestamps();
 
                                     // Restore command history
                                     if let Some(history) = &snap.command_history {
@@ -837,9 +834,6 @@ impl ChartApp {
                             for snap in &preset.windows {
                                 let chart_id = zengeld_chart::state::chart_container::ChartId(snap.window_id);
                                 if let Some(window) = windows.get_mut(&chart_id) {
-                                    window.drawing_manager.set_current_symbol_key(
-                                        &snap.symbol, &snap.exchange, &snap.account_type,
-                                    );
                                     // Rebuild data_provider for this window’s (possibly new) exchange.
                                     let patch_exchange_id = digdigdig3::ExchangeId::from_str(&snap.exchange)
                                         .unwrap_or(digdigdig3::ExchangeId::Binance);
@@ -855,17 +849,6 @@ impl ChartApp {
                                     window.viewport = snap.viewport.clone();
                                     window.price_scale = snap.price_scale.clone();
                                     window.scale_settings = snap.scale_settings.clone();
-
-                                    // Restore drawings
-                                    window.drawing_manager.clear_all_primitives();
-                                    if let Ok(reg) = zengeld_chart::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
-                                        for prim_snap in &snap.drawings.primitives {
-                                            if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
-                                                window.drawing_manager.add_external_primitive(prim);
-                                            }
-                                        }
-                                    }
-                                    window.drawing_manager.migrate_all_legacy_timestamps();
 
                                     // Restore command history
                                     if let Some(history) = &snap.command_history {
@@ -937,6 +920,19 @@ impl ChartApp {
                                     ps.show_columns = snap.show_columns;
                                     ps.show_baseline = snap.show_baseline;
                                     ps.chart_type = static_ct;
+                                    // S2.8: restore drawings into ps.drawing_manager
+                                    ps.drawing_manager.set_current_symbol_key(
+                                        &snap.symbol, &snap.exchange, &snap.account_type,
+                                    );
+                                    ps.drawing_manager.clear_all_primitives();
+                                    if let Ok(reg) = zengeld_chart::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
+                                        for prim_snap in &snap.drawings.primitives {
+                                            if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
+                                                ps.drawing_manager.add_external_primitive(prim);
+                                            }
+                                        }
+                                    }
+                                    ps.drawing_manager.migrate_all_legacy_timestamps();
                                     panel_patches.push((window.chart_panel_id, ps));
 
                                     eprintln!("[ChartApp] patched window {} в†’ {}/{} ({} drawings)",
@@ -1038,10 +1034,13 @@ impl ChartApp {
                                 .group(group_id)
                                 .map(|g| g.last_used_style.clone())
                             {
-                                if let Some(window) = self.panel_app.panel_grid.containers_mut()
-                                    .get_mut(&chart_id)
+                                if let Some(window) = self.panel_app.panel_grid.containers()
+                                    .get(&chart_id)
                                 {
-                                    window.drawing_manager.bind_style_store(style_arc);
+                                    let pid = window.chart_panel_id;
+                                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
+                                        panel.drawing_manager.bind_style_store(style_arc);
+                                    }
                                 }
                             }
                         }
@@ -1057,7 +1056,10 @@ impl ChartApp {
                     // never collide with any ID loaded from disk.
                     {
                         let max_id = self.panel_app.panel_grid.containers().values()
-                            .flat_map(|w| w.drawing_manager.primitives().iter())
+                            .flat_map(|w| self.panels_store.chart_panel.get(&w.chart_panel_id)
+                                .map(|panel| panel.drawing_manager.primitives().iter()
+                                    .collect::<Vec<_>>())
+                                .unwrap_or_default())
                             .chain(
                                 self.stashed_primitives.values()
                                     .flat_map(|v| v.iter())
@@ -1161,9 +1163,11 @@ impl ChartApp {
                             .map(|g| g.last_used_style.clone());
                         for &(leaf_id, chart_id) in &leaf_chart_ids {
                             let _ = self.panel_app.tag_manager.connect_chart(chart_id, group_id);
-                            if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
+                            if let Some(pid) = self.panel_app.panel_grid.container_for_leaf(leaf_id).map(|w| w.chart_panel_id) {
                                 if let Some(ref arc) = style_arc {
-                                    window.drawing_manager.bind_style_store(arc.clone());
+                                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
+                                        panel.drawing_manager.bind_style_store(arc.clone());
+                                    }
                                 }
                             }
                         }
@@ -2221,23 +2225,28 @@ impl ChartApp {
                             .map(|g| g.primitives.iter().map(|p| p.data().id).collect())
                             .unwrap_or_default();
 
+                        let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                         let local_prims_opt: Option<Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>>> =
-                            if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                                // Drain all primitives from the manager, partition into local vs synced.
-                                let all: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
-                                    std::mem::take(window.drawing_manager.primitives_mut());
-                                let mut local: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> = Vec::new();
-                                let mut synced: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> = Vec::new();
-                                for prim in all {
-                                    if group_prim_ids.contains(&prim.data().id) {
-                                        synced.push(prim);
-                                    } else {
-                                        local.push(prim);
+                            if let Some(pid) = active_pid {
+                                if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
+                                    // Drain all primitives from the manager, partition into local vs synced.
+                                    let all: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
+                                        std::mem::take(panel.drawing_manager.primitives_mut());
+                                    let mut local: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> = Vec::new();
+                                    let mut synced: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> = Vec::new();
+                                    for prim in all {
+                                        if group_prim_ids.contains(&prim.data().id) {
+                                            synced.push(prim);
+                                        } else {
+                                            local.push(prim);
+                                        }
                                     }
+                                    // Restore the synced ones back into the manager.
+                                    panel.drawing_manager.add_synced_primitives(synced);
+                                    Some(local)
+                                } else {
+                                    None
                                 }
-                                // Restore the synced ones back into the manager.
-                                window.drawing_manager.add_synced_primitives(synced);
-                                Some(local)
                             } else {
                                 None
                             };
@@ -2253,12 +2262,15 @@ impl ChartApp {
                         }
                     } else {
                         // ON → OFF: restore stashed window-local primitives.
-                        if let (Some(cid), Some(window)) = (chart_id, self.panel_app.panel_grid.active_container_mut()) {
+                        let active_pid2 = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                        if let (Some(cid), Some(pid)) = (chart_id, active_pid2) {
                             let restored = crate::branch_meta_bridge::take_stashed_primitives(
                                 &mut self.stashed_primitives, cid,
                             ).unwrap_or_default();
                             let count = restored.len();
-                            window.drawing_manager.add_synced_primitives(restored);
+                            if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
+                                panel.drawing_manager.add_synced_primitives(restored);
+                            }
                             eprintln!(
                                 "[TagManager] sync_drawings OFF: restored {} stashed primitives",
                                 count

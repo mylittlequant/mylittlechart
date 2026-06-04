@@ -104,14 +104,15 @@ impl App<'_> {
                         })
                         .collect();
 
-                    let primitives: Vec<PrimitiveSummary> = cw.drawing_manager
-                        .primitives()
-                        .iter()
-                        .map(|p| {
-                            let d = p.data();
-                            PrimitiveSummary { id: d.id, type_id: d.type_id.clone() }
-                        })
-                        .collect();
+                    let primitives: Vec<PrimitiveSummary> = pw.chart.panels_store
+                        .chart_panel.get(&cw.chart_panel_id)
+                        .map(|panel| panel.drawing_manager.primitives().iter()
+                            .map(|p| {
+                                let d = p.data();
+                                PrimitiveSummary { id: d.id, type_id: d.type_id.clone() }
+                            })
+                            .collect())
+                        .unwrap_or_default();
 
                     Some(ChartSnapshot {
                         chart_id: cw.id.0,

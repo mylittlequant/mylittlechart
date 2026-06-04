@@ -1037,18 +1037,18 @@ impl ChartApp {
                     let current_price = window.bars.last().map(|b| b.close).unwrap_or(0.0);
                     let current_bar = window.bars.len().saturating_sub(1) as f64;
                     let bars = &window.bars;
-                    let drawing_points: Vec<(u64, Vec<(f64, f64)>, alerts::DrawingExtendMode)> = window
-                        .drawing_manager
-                        .primitives()
-                        .iter()
-                        .map(|p| {
-                            let pts_bar: Vec<(f64, f64)> = p.points()
-                                .into_iter()
-                                .map(|(ts_ms, price)| (timestamp_ms_to_bar_f64(bars, ts_ms), price))
-                                .collect();
-                            (p.data().id, pts_bar, alerts::DrawingExtendMode::from_u8(p.extend_mode_raw()))
-                        })
-                        .collect();
+                    let drawing_points: Vec<(u64, Vec<(f64, f64)>, alerts::DrawingExtendMode)> =
+                        self.panels_store.chart_panel.get(&window.chart_panel_id)
+                            .map(|panel| panel.drawing_manager.primitives().iter()
+                                .map(|p| {
+                                    let pts_bar: Vec<(f64, f64)> = p.points()
+                                        .into_iter()
+                                        .map(|(ts_ms, price)| (timestamp_ms_to_bar_f64(bars, ts_ms), price))
+                                        .collect();
+                                    (p.data().id, pts_bar, alerts::DrawingExtendMode::from_u8(p.extend_mode_raw()))
+                                })
+                                .collect())
+                            .unwrap_or_default();
                     Some(WindowAlertData {
                         symbol: sym,
                         exchange: exch,

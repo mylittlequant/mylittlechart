@@ -765,8 +765,10 @@ impl ChartPanelGrid {
                 };
 
                 // Clone the window now (before tree mutation borrows self).
+                // `clone_for_split_shell` creates the container without seeding
+                // the drawing_manager — chart-app seeds ChartPanelState afterward.
                 let cloned_window = match self.containers.get(&source_chart_id) {
-                    Some(w) => w.clone_for_split(new_chart_id, true, "", "", ""),
+                    Some(w) => w.clone_for_split_shell(new_chart_id),
                     None => return Vec::new(),
                 };
                 let cloned_title = String::new();
@@ -837,7 +839,7 @@ impl ChartPanelGrid {
                 for &leaf_id in new_leaf_ids.iter().skip(1) {
                     let new_chart_id = generate_chart_id();
                     let cloned = match self.containers.get(&source_chart_id) {
-                        Some(w) => w.clone_for_split(new_chart_id, true, "", "", ""),
+                        Some(w) => w.clone_for_split_shell(new_chart_id),
                         None => continue,
                     };
                     let cloned_title = String::new();
@@ -1331,6 +1333,9 @@ impl ChartPanelGrid {
     ///
     /// `indicator_overlay_hit(local_x, local_y, chart_height) -> Option<u64>`
     /// `indicator_subpane_hit(instance_id, local_x, local_y, pane_height) -> bool`
+    ///
+    /// `active_dm` — mutable reference to the active window's `DrawingManager`
+    /// (from `ChartPanelState`, S2.8).
     pub fn handle_right_click(
         &mut self,
         screen_x: f64,
@@ -1338,6 +1343,7 @@ impl ChartPanelGrid {
         extended: &crate::layout::ExtendedFrameLayout,
         indicator_overlay_hit: impl Fn(f64, f64, f64) -> Option<u64>,
         indicator_subpane_hit: impl Fn(u64, f64, f64, f64) -> bool,
+        active_dm: &mut crate::drawing::DrawingManager,
     ) -> ChartRightClickHit {
         // ----------------------------------------------------------------
         // Step 1 & 2: primitive hit-test (main chart then sub-panes).
@@ -1357,7 +1363,7 @@ impl ChartPanelGrid {
                     let mut corrected_vp = window.viewport.clone();
                     corrected_vp.chart_width = chart_rect.width;
                     corrected_vp.chart_height = chart_rect.height;
-                    window.drawing_manager.hit_test(
+                    active_dm.hit_test(
                         main_local_x,
                         main_local_y,
                         &window.bars,
@@ -1403,7 +1409,7 @@ impl ChartPanelGrid {
                     if let (Some(sub_viewport), Some(window)) =
                         (sub_viewport, self.active_container())
                     {
-                        if let Some(prim_idx) = window.drawing_manager.hit_test_in_pane(
+                        if let Some(prim_idx) = active_dm.hit_test_in_pane(
                             plx,
                             ply,
                             instance_id,
@@ -1412,9 +1418,7 @@ impl ChartPanelGrid {
                             &sub_price_scale,
                         ) {
                             // Record active pane so context-menu actions know which pane is active.
-                            if let Some(win) = self.active_container_mut() {
-                                win.drawing_manager.set_current_pane(Some(instance_id));
-                            }
+                            active_dm.set_current_pane(Some(instance_id));
                             sub_hit = Some(prim_idx);
                             break;
                         }
@@ -1549,11 +1553,15 @@ impl ChartPanelGrid {
     ///    [`ChartDragStartHit::Miss`] if outside all panes.
     ///
     /// The `extended` layout is supplied by the caller (already computed for the frame).
+    ///
+    /// `active_dm` — mutable reference to the active window's `DrawingManager`
+    /// (from `ChartPanelState`, S2.8).
     pub fn handle_drag_start(
         &mut self,
         screen_x: f64,
         screen_y: f64,
         extended: &crate::layout::ExtendedFrameLayout,
+        active_dm: &mut crate::drawing::DrawingManager,
     ) -> ChartDragStartHit {
         let chart_rect = extended.main_chart.chart;
         let local_x = screen_x - chart_rect.x;
@@ -1571,10 +1579,7 @@ impl ChartPanelGrid {
         // the sub-pane separator check — a freehand stroke that happens to
         // begin near a separator edge should draw, not resize panes.
         // ----------------------------------------------------------------
-        let is_freehand = self
-            .active_container()
-            .map(|w| w.drawing_manager.is_freehand_tool())
-            .unwrap_or(false);
+        let is_freehand = active_dm.is_freehand_tool();
         if is_freehand {
             // 0a: freehand on main chart canvas.
             if in_main {
@@ -1592,10 +1597,8 @@ impl ChartPanelGrid {
                     .unwrap_or(0);
                 let price =
                     price_max - (local_y / chart_rect.height) * (price_max - price_min);
-                if let Some(window) = self.active_container_mut() {
-                    window.drawing_manager.set_current_pane(None);
-                    window.drawing_manager.start_freehand(ts_ms, price);
-                }
+                active_dm.set_current_pane(None);
+                active_dm.start_freehand(ts_ms, price);
                 return ChartDragStartHit::FreehandStarted;
             }
 
@@ -1627,10 +1630,8 @@ impl ChartPanelGrid {
                     .unwrap_or(0);
                 let price =
                     price_max - (ply / content.height) * (price_max - price_min);
-                if let Some(window) = self.active_container_mut() {
-                    window.drawing_manager.set_current_pane(Some(instance_id));
-                    window.drawing_manager.start_freehand(ts_ms, price);
-                }
+                active_dm.set_current_pane(Some(instance_id));
+                active_dm.start_freehand(ts_ms, price);
                 return ChartDragStartHit::FreehandStarted;
             }
         }
@@ -1653,16 +1654,15 @@ impl ChartPanelGrid {
                 corrected_vp.chart_height = chart_rect.height;
 
                 // Control points have higher priority than primitive body.
-                if let Some(cp_type) = window.drawing_manager.hit_test_control_point(
+                if let Some(cp_type) = active_dm.hit_test_control_point(
                     local_x,
                     local_y,
                     &window.bars,
                     &corrected_vp,
                     &window.price_scale,
                 ) {
-                    if let Some(selected_idx) = window.drawing_manager.selected() {
-                        if let Some(id) = window
-                            .drawing_manager
+                    if let Some(selected_idx) = active_dm.selected() {
+                        if let Some(id) = active_dm
                             .primitives()
                             .get(selected_idx)
                             .map(|p| p.data().id)
@@ -1675,15 +1675,14 @@ impl ChartPanelGrid {
                     }
                 }
 
-                if let Some(prim_idx) = window.drawing_manager.hit_test(
+                if let Some(prim_idx) = active_dm.hit_test(
                     local_x,
                     local_y,
                     &window.bars,
                     &corrected_vp,
                     &window.price_scale,
                 ) {
-                    if let Some(id) = window
-                        .drawing_manager
+                    if let Some(id) = active_dm
                         .primitives()
                         .get(prim_idx)
                         .map(|p| p.data().id)
@@ -1725,7 +1724,7 @@ impl ChartPanelGrid {
             if let Some(sub_viewport) = sub_viewport {
                 if let Some(window) = self.active_container() {
                     // Control points first.
-                    if let Some(cp_type) = window.drawing_manager.hit_test_control_point_in_pane(
+                    if let Some(cp_type) = active_dm.hit_test_control_point_in_pane(
                         plx,
                         ply,
                         instance_id,
@@ -1733,9 +1732,8 @@ impl ChartPanelGrid {
                         &sub_viewport,
                         &sub_price_scale,
                     ) {
-                        if let Some(selected_idx) = window.drawing_manager.selected() {
-                            if let Some(id) = window
-                                .drawing_manager
+                        if let Some(selected_idx) = active_dm.selected() {
+                            if let Some(id) = active_dm
                                 .primitives()
                                 .get(selected_idx)
                                 .map(|p| p.data().id)
@@ -1747,7 +1745,7 @@ impl ChartPanelGrid {
                                 break 'sub_pane_loop;
                             }
                         }
-                    } else if let Some(prim_idx) = window.drawing_manager.hit_test_in_pane(
+                    } else if let Some(prim_idx) = active_dm.hit_test_in_pane(
                         plx,
                         ply,
                         instance_id,
@@ -1755,8 +1753,7 @@ impl ChartPanelGrid {
                         &sub_viewport,
                         &sub_price_scale,
                     ) {
-                        if let Some(id) = window
-                            .drawing_manager
+                        if let Some(id) = active_dm
                             .primitives()
                             .get(prim_idx)
                             .map(|p| p.data().id)
@@ -1806,6 +1803,8 @@ impl ChartPanelGrid {
     /// Returns the crosshair state `(timestamp, price, visible, pane_index)` that
     /// the caller should forward to sync-group propagation.  Returns `None` when
     /// no active window exists.
+    /// `active_dm` — reference to the active window's `DrawingManager`
+    /// (from `ChartPanelState`, S2.8), needed to query `current_pane()`.
     pub fn update_crosshair(
         &mut self,
         x: f64,
@@ -1813,14 +1812,14 @@ impl ChartPanelGrid {
         drag_mode: crate::engine::input::DragMode,
         drawing_active: bool,
         extended: &crate::layout::ExtendedFrameLayout,
+        active_dm: &crate::drawing::DrawingManager,
     ) -> Option<(i64, f64, bool, Option<usize>)> {
         use crate::engine::input::DragMode;
         use crate::layout::ExtendedLayoutHitTester;
 
         if drawing_active {
             // Unclamped crosshair — preview must extend beyond chart area.
-            let current_pane = self.active_container()
-                .and_then(|w| w.drawing_manager.current_pane());
+            let current_pane = active_dm.current_pane();
 
             match current_pane {
                 Some(instance_id) => {
@@ -1897,20 +1896,18 @@ impl ChartPanelGrid {
             // Resolve pane-lock from drag mode (same logic for drag-move and hover).
             let primitive_drag_pane: Option<Option<usize>> = match drag_mode {
                 DragMode::Primitive { id } => {
-                    let pane_id = self.active_container()
-                        .and_then(|w| w.drawing_manager.primitives().iter()
-                            .find(|p| p.data().id == id)
-                            .and_then(|p| p.data().pane_id));
+                    let pane_id = active_dm.primitives().iter()
+                        .find(|p| p.data().id == id)
+                        .and_then(|p| p.data().pane_id);
                     let pane_index = pane_id.and_then(|instance_id| {
                         extended.sub_panes.iter().position(|sp| sp.instance_id == instance_id)
                     });
                     Some(pane_index)
                 }
                 DragMode::ControlPoint { primitive_id, .. } => {
-                    let pane_id = self.active_container()
-                        .and_then(|w| w.drawing_manager.primitives().iter()
-                            .find(|p| p.data().id == primitive_id)
-                            .and_then(|p| p.data().pane_id));
+                    let pane_id = active_dm.primitives().iter()
+                        .find(|p| p.data().id == primitive_id)
+                        .and_then(|p| p.data().pane_id);
                     let pane_index = pane_id.and_then(|instance_id| {
                         extended.sub_panes.iter().position(|sp| sp.instance_id == instance_id)
                     });
@@ -2044,19 +2041,18 @@ impl ChartPanelGrid {
     /// `chart_rect` is the main-chart canvas rect (from `ExtendedFrameLayout`).
     /// Returns `true` when a freehand stroke was active and the point was added
     /// (so the caller can `return` early without running other drag logic).
+    ///
+    /// `active_dm` — mutable reference to the active window's `DrawingManager`
+    /// (from `ChartPanelState`, S2.8).
     pub fn extend_freehand(
         &mut self,
         screen_x: f64,
         screen_y: f64,
         extended: &crate::layout::ExtendedFrameLayout,
+        active_dm: &mut crate::drawing::DrawingManager,
     ) -> bool {
-        let (is_active, current_pane) = self
-            .active_container()
-            .map(|w| (
-                w.drawing_manager.is_drawing() && w.drawing_manager.is_freehand_tool(),
-                w.drawing_manager.current_pane(),
-            ))
-            .unwrap_or((false, None));
+        let is_active = active_dm.is_drawing() && active_dm.is_freehand_tool();
+        let current_pane = active_dm.current_pane();
 
         if !is_active {
             return false;
@@ -2092,10 +2088,10 @@ impl ChartPanelGrid {
             } else {
                 price_min
             };
-            if let Some(window) = self.active_container_mut() {
+            if let Some(window) = self.active_container() {
                 let ts_ms = crate::bar_f64_to_timestamp_ms(&window.bars, bar_f);
                 let bar_interval_ms = crate::bar_interval_seconds(&window.bars) * 1000;
-                window.drawing_manager.add_freehand_point(ts_ms, price, bar_interval_ms);
+                active_dm.add_freehand_point(ts_ms, price, bar_interval_ms);
             }
             return true;
         }
@@ -2117,10 +2113,10 @@ impl ChartPanelGrid {
 
         let price = price_max - (local_y / chart_rect.height) * (price_max - price_min);
 
-        if let Some(window) = self.active_container_mut() {
+        if let Some(window) = self.active_container() {
             let ts_ms = crate::bar_f64_to_timestamp_ms(&window.bars, bar_f);
             let bar_interval_ms = crate::bar_interval_seconds(&window.bars) * 1000;
-            window.drawing_manager.add_freehand_point(ts_ms, price, bar_interval_ms);
+            active_dm.add_freehand_point(ts_ms, price, bar_interval_ms);
         }
 
         true
@@ -2133,29 +2129,26 @@ impl ChartPanelGrid {
     /// for the caller to push an undo record.
     ///
     /// Returns `None` when no freehand stroke was active.
-    pub fn complete_freehand(&mut self) -> Option<FreehandCompleteResult> {
-        let is_active = self
-            .active_container()
-            .map(|w| w.drawing_manager.is_drawing() && w.drawing_manager.is_freehand_tool())
-            .unwrap_or(false);
+    ///
+    /// `active_dm` — mutable reference to the active window's `DrawingManager`
+    /// (from `ChartPanelState`, S2.8).
+    pub fn complete_freehand(
+        &mut self,
+        active_dm: &mut crate::drawing::DrawingManager,
+    ) -> Option<FreehandCompleteResult> {
+        let is_active = active_dm.is_drawing() && active_dm.is_freehand_tool();
 
         if !is_active {
             return None;
         }
 
-        if let Some(window) = self.active_container_mut() {
-            window.drawing_manager.complete_freehand();
-        }
+        active_dm.complete_freehand();
 
-        let result = self.active_container().and_then(|window| {
-            let idx = window.drawing_manager.last_index()?;
-            let type_id = window.drawing_manager.get_type_id_at(idx)?;
-            let points = window.drawing_manager.get_points_at(idx)?;
-            let data = window.drawing_manager.get_data_at(idx)?;
-            Some(FreehandCompleteResult { index: idx, type_id, points, data })
-        });
-
-        result
+        let idx = active_dm.last_index()?;
+        let type_id = active_dm.get_type_id_at(idx)?;
+        let points = active_dm.get_points_at(idx)?;
+        let data = active_dm.get_data_at(idx)?;
+        Some(FreehandCompleteResult { index: idx, type_id, points, data })
     }
 
     /// Update sub-pane overlay visibility + button hover for cursor at (screen_x, screen_y).

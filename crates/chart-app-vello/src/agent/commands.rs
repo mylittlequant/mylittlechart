@@ -177,11 +177,14 @@ impl App<'_> {
                             };
                             prim.data_mut().width = style.width;
                             drop(registry);
-                            let cw = pw.chart.panel_app.panel_grid.containers_mut().values_mut()
-                                .find(|cw| cw.id.0 == chart_id);
-                            if let Some(cw) = cw {
-                                cw.drawing_manager.add_external_primitive(prim);
-                                eprintln!("[AgentCommand] AddPrimitive: type={}, chart={}", type_id, chart_id);
+                            let cw_pid = pw.chart.panel_app.panel_grid.containers().values()
+                                .find(|cw| cw.id.0 == chart_id)
+                                .map(|cw| cw.chart_panel_id);
+                            if let Some(pid) = cw_pid {
+                                if let Some(panel) = pw.chart.panels_store.chart_panel.get_mut(&pid) {
+                                    panel.drawing_manager.add_external_primitive(prim);
+                                    eprintln!("[AgentCommand] AddPrimitive: type={}, chart={}", type_id, chart_id);
+                                }
                             } else {
                                 eprintln!("[AgentCommand] AddPrimitive: chart not found: {}", chart_id);
                             }
@@ -198,26 +201,29 @@ impl App<'_> {
                     window_id, chart_id, primitive_id, points, style, agent_id: _,
                 } => {
                     if let Some(pw) = self.windows.values_mut().find(|pw| pw.window_id == window_id) {
-                        let cw = pw.chart.panel_app.panel_grid.containers_mut().values_mut()
-                            .find(|cw| cw.id.0 == chart_id);
-                        if let Some(cw) = cw {
-                            let prim = cw.drawing_manager.primitives_mut()
-                                .iter_mut().find(|p| p.data().id == primitive_id);
-                            if let Some(prim) = prim {
-                                if let Some(pts) = points {
-                                    let new_pts: Vec<(i64, f64)> = pts.iter().map(|p| (p[0] as i64, p[1])).collect();
-                                    prim.set_points(&new_pts);
+                        let cw_pid2 = pw.chart.panel_app.panel_grid.containers().values()
+                            .find(|cw| cw.id.0 == chart_id)
+                            .map(|cw| cw.chart_panel_id);
+                        if let Some(pid) = cw_pid2 {
+                            if let Some(panel) = pw.chart.panels_store.chart_panel.get_mut(&pid) {
+                                let prim = panel.drawing_manager.primitives_mut()
+                                    .iter_mut().find(|p| p.data().id == primitive_id);
+                                if let Some(prim) = prim {
+                                    if let Some(pts) = points {
+                                        let new_pts: Vec<(i64, f64)> = pts.iter().map(|p| (p[0] as i64, p[1])).collect();
+                                        prim.set_points(&new_pts);
+                                    }
+                                    if let Some(s) = style {
+                                        prim.data_mut().color = zengeld_chart::drawing::primitives_v2::PrimitiveColor {
+                                            stroke: s.color,
+                                            fill: s.fill_color,
+                                        };
+                                        prim.data_mut().width = s.width;
+                                    }
+                                    eprintln!("[AgentCommand] UpdatePrimitive: id={}", primitive_id);
+                                } else {
+                                    eprintln!("[AgentCommand] UpdatePrimitive: primitive not found: {}", primitive_id);
                                 }
-                                if let Some(s) = style {
-                                    prim.data_mut().color = zengeld_chart::drawing::primitives_v2::PrimitiveColor {
-                                        stroke: s.color,
-                                        fill: s.fill_color,
-                                    };
-                                    prim.data_mut().width = s.width;
-                                }
-                                eprintln!("[AgentCommand] UpdatePrimitive: id={}", primitive_id);
-                            } else {
-                                eprintln!("[AgentCommand] UpdatePrimitive: primitive not found: {}", primitive_id);
                             }
                         } else {
                             eprintln!("[AgentCommand] UpdatePrimitive: chart not found: {}", chart_id);
@@ -232,14 +238,19 @@ impl App<'_> {
                 } => {
                     if let Some(pw) = self.windows.values_mut().find(|pw| pw.window_id == window_id) {
                         let removed = {
-                            let cw = pw.chart.panel_app.panel_grid.containers_mut().values_mut()
-                                .find(|cw| cw.id.0 == chart_id);
-                            if let Some(cw) = cw {
-                                let idx = cw.drawing_manager.primitives()
-                                    .iter().position(|p| p.data().id == primitive_id);
-                                if let Some(idx) = idx {
-                                    cw.drawing_manager.remove(idx);
-                                    true
+                            let cw_pid3 = pw.chart.panel_app.panel_grid.containers().values()
+                                .find(|cw| cw.id.0 == chart_id)
+                                .map(|cw| cw.chart_panel_id);
+                            if let Some(pid) = cw_pid3 {
+                                if let Some(panel) = pw.chart.panels_store.chart_panel.get_mut(&pid) {
+                                    let idx = panel.drawing_manager.primitives()
+                                        .iter().position(|p| p.data().id == primitive_id);
+                                    if let Some(idx) = idx {
+                                        panel.drawing_manager.remove(idx);
+                                        true
+                                    } else {
+                                        false
+                                    }
                                 } else {
                                     false
                                 }

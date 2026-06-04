@@ -3499,7 +3499,7 @@ impl ChartPanelApp {
                 ctx,
                 &chart_layout,
                 &render_state,
-                &window.drawing_manager,
+                &panel.drawing_manager,
             );
 
             // Restore the clip region saved at the start of this sub-window iteration.

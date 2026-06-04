@@ -3405,7 +3405,7 @@ pub fn render_chart_splits(
             state: &render_state,
             config: &leaf_config,
             corner_state: &corner_state,
-            drawing_manager: Some(&window.drawing_manager),
+            drawing_manager: Some(&panel.drawing_manager),
             indicator_source: None,
             symbol: None,
             sub_panes: None,

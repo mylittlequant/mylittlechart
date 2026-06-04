@@ -70,12 +70,16 @@ impl ChartApp {
         let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx else { return; };
 
         if field_id == "stroke_width" {
-            let data_opt = self.panel_app.panel_grid.active_container()
-                .and_then(|w| w.drawing_manager.get_data_at(idx))
+            let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+            let data_opt = active_pid
+                .and_then(|pid| self.panels_store.chart_panel.get(&pid))
+                .and_then(|panel| panel.drawing_manager.get_data_at(idx))
                 .map(|mut d| { d.width = value; d });
             if let Some(data) = data_opt {
-                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                    window.drawing_manager.set_data_at(idx, &data);
+                if let Some(pid) = active_pid {
+                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
+                        panel.drawing_manager.set_data_at(idx, &data);
+                    }
                 }
             }
             self.sync_drawing_back_to_group();
@@ -87,8 +91,11 @@ impl ChartApp {
         if let Some(prop_id) = field_id.strip_prefix("style_prop:") {
             use zengeld_chart::drawing::primitives_v2::config::PropertyValue;
             let new_val = PropertyValue::Number(value);
-            if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                window.drawing_manager.apply_style_property(idx, prop_id, new_val);
+            let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+            if let Some(pid) = active_pid {
+                if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
+                    panel.drawing_manager.apply_style_property(idx, prop_id, new_val);
+                }
             }
             self.sync_drawing_back_to_group();
             self.autosave_snapshot();
@@ -98,8 +105,11 @@ impl ChartApp {
         if let Some(prop_id) = field_id.strip_prefix("text_prop:") {
             use zengeld_chart::drawing::primitives_v2::config::PropertyValue;
             let new_val = PropertyValue::Number(value);
-            if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                window.drawing_manager.apply_text_property(idx, prop_id, new_val);
+            let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+            if let Some(pid) = active_pid {
+                if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
+                    panel.drawing_manager.apply_text_property(idx, prop_id, new_val);
+                }
             }
             self.autosave_snapshot();
             return;
@@ -113,7 +123,8 @@ impl ChartApp {
         let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx else { return; };
 
         let Some(data) = self.panel_app.panel_grid.active_container()
-            .and_then(|w| w.drawing_manager.get_data_at(idx)) else { return; };
+            .and_then(|w| self.panels_store.chart_panel.get(&w.chart_panel_id))
+            .and_then(|panel| panel.drawing_manager.get_data_at(idx)) else { return; };
 
         if let Some(tf_idx) = field_id.strip_prefix("tf_")
             .and_then(|s| s.strip_suffix("_slider"))
@@ -149,8 +160,11 @@ impl ChartApp {
             }
 
             new_data.timeframe_visibility = Some(tf_config);
-            if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                window.drawing_manager.set_data_at(idx, &new_data);
+            let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+            if let Some(pid) = active_pid {
+                if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
+                    panel.drawing_manager.set_data_at(idx, &new_data);
+                }
             }
             self.sync_drawing_back_to_group();
 
@@ -396,22 +410,25 @@ impl ChartApp {
     /// Apply a new minimum value for the timeframe range at `tf_idx` on primitive `prim_idx`.
     pub(crate) fn apply_tf_min_value(&mut self, prim_idx: usize, tf_idx: usize, val: u32) {
         use zengeld_chart::drawing::TimeframeVisibilityConfig;
-        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-            if let Some(mut data) = window.drawing_manager.get_data_at(prim_idx) {
-                let mut tf = data.timeframe_visibility.clone()
-                    .unwrap_or_else(TimeframeVisibilityConfig::all);
-                match tf_idx {
-                    1 => { if let Some((_, max)) = tf.seconds { tf.seconds = Some((val.min(max), max)); } }
-                    2 => { if let Some((_, max)) = tf.minutes { tf.minutes = Some((val.min(max), max)); } }
-                    3 => { if let Some((_, max)) = tf.hours   { tf.hours   = Some((val.min(max), max)); } }
-                    4 => { if let Some((_, max)) = tf.days    { tf.days    = Some((val.min(max), max)); } }
-                    5 => { if let Some((_, max)) = tf.weeks   { tf.weeks   = Some((val.min(max), max)); } }
-                    6 => { if let Some((_, max)) = tf.months  { tf.months  = Some((val.min(max), max)); } }
-                    _ => {}
+        let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+        if let Some(pid) = active_pid {
+            if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
+                if let Some(mut data) = panel.drawing_manager.get_data_at(prim_idx) {
+                    let mut tf = data.timeframe_visibility.clone()
+                        .unwrap_or_else(TimeframeVisibilityConfig::all);
+                    match tf_idx {
+                        1 => { if let Some((_, max)) = tf.seconds { tf.seconds = Some((val.min(max), max)); } }
+                        2 => { if let Some((_, max)) = tf.minutes { tf.minutes = Some((val.min(max), max)); } }
+                        3 => { if let Some((_, max)) = tf.hours   { tf.hours   = Some((val.min(max), max)); } }
+                        4 => { if let Some((_, max)) = tf.days    { tf.days    = Some((val.min(max), max)); } }
+                        5 => { if let Some((_, max)) = tf.weeks   { tf.weeks   = Some((val.min(max), max)); } }
+                        6 => { if let Some((_, max)) = tf.months  { tf.months  = Some((val.min(max), max)); } }
+                        _ => {}
+                    }
+                    data.timeframe_visibility = Some(tf);
+                    panel.drawing_manager.set_data_at(prim_idx, &data);
+                    eprintln!("[ChartApp] prim_settings tf_{}_min committed: {}", tf_idx, val);
                 }
-                data.timeframe_visibility = Some(tf);
-                window.drawing_manager.set_data_at(prim_idx, &data);
-                eprintln!("[ChartApp] prim_settings tf_{}_min committed: {}", tf_idx, val);
             }
         }
     }
@@ -419,22 +436,25 @@ impl ChartApp {
     /// Apply a new maximum value for the timeframe range at `tf_idx` on primitive `prim_idx`.
     pub(crate) fn apply_tf_max_value(&mut self, prim_idx: usize, tf_idx: usize, val: u32) {
         use zengeld_chart::drawing::TimeframeVisibilityConfig;
-        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-            if let Some(mut data) = window.drawing_manager.get_data_at(prim_idx) {
-                let mut tf = data.timeframe_visibility.clone()
-                    .unwrap_or_else(TimeframeVisibilityConfig::all);
-                match tf_idx {
-                    1 => { if let Some((min, _)) = tf.seconds { tf.seconds = Some((min, val.max(min))); } }
-                    2 => { if let Some((min, _)) = tf.minutes { tf.minutes = Some((min, val.max(min))); } }
-                    3 => { if let Some((min, _)) = tf.hours   { tf.hours   = Some((min, val.max(min))); } }
-                    4 => { if let Some((min, _)) = tf.days    { tf.days    = Some((min, val.max(min))); } }
-                    5 => { if let Some((min, _)) = tf.weeks   { tf.weeks   = Some((min, val.max(min))); } }
-                    6 => { if let Some((min, _)) = tf.months  { tf.months  = Some((min, val.max(min))); } }
-                    _ => {}
+        let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+        if let Some(pid) = active_pid {
+            if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
+                if let Some(mut data) = panel.drawing_manager.get_data_at(prim_idx) {
+                    let mut tf = data.timeframe_visibility.clone()
+                        .unwrap_or_else(TimeframeVisibilityConfig::all);
+                    match tf_idx {
+                        1 => { if let Some((min, _)) = tf.seconds { tf.seconds = Some((min, val.max(min))); } }
+                        2 => { if let Some((min, _)) = tf.minutes { tf.minutes = Some((min, val.max(min))); } }
+                        3 => { if let Some((min, _)) = tf.hours   { tf.hours   = Some((min, val.max(min))); } }
+                        4 => { if let Some((min, _)) = tf.days    { tf.days    = Some((min, val.max(min))); } }
+                        5 => { if let Some((min, _)) = tf.weeks   { tf.weeks   = Some((min, val.max(min))); } }
+                        6 => { if let Some((min, _)) = tf.months  { tf.months  = Some((min, val.max(min))); } }
+                        _ => {}
+                    }
+                    data.timeframe_visibility = Some(tf);
+                    panel.drawing_manager.set_data_at(prim_idx, &data);
+                    eprintln!("[ChartApp] prim_settings tf_{}_max committed: {}", tf_idx, val);
                 }
-                data.timeframe_visibility = Some(tf);
-                window.drawing_manager.set_data_at(prim_idx, &data);
-                eprintln!("[ChartApp] prim_settings tf_{}_max committed: {}", tf_idx, val);
             }
         }
     }

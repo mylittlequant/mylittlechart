@@ -17,7 +17,7 @@
 //! ends and pass it here (split-block pattern matching S2.2..S2.5).
 
 use zengeld_chart::state::ChartPanelId;
-use zengeld_chart::{CrosshairOptions, GridOptions, Legend, Tooltip, Watermark, ChartPanelState};
+use zengeld_chart::{CrosshairOptions, DrawingManager, GridOptions, Legend, Tooltip, Watermark, ChartPanelState};
 
 use crate::panels_store::TradingPanelsStore;
 
@@ -145,6 +145,39 @@ pub fn mirror_display_options(
     entry.legend = src.legend;
     entry.watermark = src.watermark;
     entry.tooltip = src.tooltip;
+}
+
+// =============================================================================
+// S2.8 drawing_manager helpers
+// =============================================================================
+
+/// Get an immutable reference to the `DrawingManager` for the given panel id.
+///
+/// Returns `None` if the `ChartPanelState` entry is missing from the store
+/// (e.g. the canvas leaf was not yet seeded — treat as no primitives).
+pub fn drawing_manager_for_panel(
+    panels_store: &TradingPanelsStore,
+    chart_panel_id: ChartPanelId,
+) -> Option<&DrawingManager> {
+    panels_store
+        .chart_panel
+        .get(&chart_panel_id)
+        .map(|panel| &panel.drawing_manager)
+}
+
+/// Get a mutable reference to the `DrawingManager` for the given panel id.
+///
+/// Lazy-inserts a default `ChartPanelState` entry when missing (same policy as
+/// `ensure_chart_panel_state`) so callers do not need to pre-seed.
+pub fn drawing_manager_for_panel_mut(
+    panels_store: &mut TradingPanelsStore,
+    chart_panel_id: ChartPanelId,
+) -> &mut DrawingManager {
+    let entry = panels_store
+        .chart_panel
+        .entry(chart_panel_id)
+        .or_insert_with(|| ChartPanelState::new(chart_panel_id));
+    &mut entry.drawing_manager
 }
 
 // =============================================================================
