@@ -519,7 +519,7 @@ impl ChartApp {
                 if let Some(p) = self.panel_app.presets.get(&id) {
                     eprintln!(
                         "[ChartApp] preset '{}' saved ({} windows, {} groups, {} indicators)",
-                        id, p.windows.len(), p.sync_groups.len(), p.indicators.len()
+                        id, p.windows.len(), p.bubbles.len(), p.indicators.len()
                     );
                 }
             }
@@ -591,7 +591,7 @@ impl ChartApp {
                 } else if let Some(preset) = self.panel_app.presets.get(&id).cloned() {
                     eprintln!(
                         "[ChartApp] applying preset '{}': {} windows, {} groups, {} indicators",
-                        preset.name, preset.windows.len(), preset.sync_groups.len(), preset.indicators.len()
+                        preset.name, preset.windows.len(), preset.bubbles.len(), preset.indicators.len()
                     );
 
                     // ----------------------------------------------------------------
@@ -766,7 +766,7 @@ impl ChartApp {
                                     crate::branch_meta_bridge::mirror_group_id(
                                         &mut self.branch_meta,
                                         chart_id,
-                                        snap.group_id.map(zengeld_chart::tag_manager::BubbleId),
+                                        snap.bubble_id.map(zengeld_chart::tag_manager::BubbleId),
                                     );
                                     // Phase 4 S2.4 dual-write: pre_tag_ids, stashed_command_history.
                                     // stashed_primitives already written above via push_stashed_primitive().
@@ -971,7 +971,7 @@ impl ChartApp {
                             crate::branch_meta_bridge::mirror_group_id(
                                 &mut self.branch_meta,
                                 chart_id,
-                                snap.group_id.map(zengeld_chart::tag_manager::BubbleId),
+                                snap.bubble_id.map(zengeld_chart::tag_manager::BubbleId),
                             );
                             // Phase 4 S2.4 dual-write: pre_tag_ids + stashed_command_history.
                             crate::branch_meta_bridge::mirror_pre_tag_ids(
@@ -995,7 +995,7 @@ impl ChartApp {
                     // Step 5: Restore TagManager (sync groups)
                     // ----------------------------------------------------------------
                     self.panel_app.tag_manager.clear();
-                    for sg_snap in &preset.sync_groups {
+                    for sg_snap in &preset.bubbles {
                         let mut group = zengeld_chart::tag_manager::BubbleStore::group_from_snapshot(sg_snap);
                         if let Ok(reg) = zengeld_chart::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
                             for ps in &sg_snap.primitives {
@@ -1028,7 +1028,7 @@ impl ChartApp {
                             self.panel_app.tag_manager.set_synced(member, gid);
                         }
                     }
-                    eprintln!("[ChartApp] restored {} sync groups", preset.sync_groups.len());
+                    eprintln!("[ChartApp] restored {} sync groups", preset.bubbles.len());
 
                     // Rebind every window's DM to its group's shared style store now
                     // that all groups are fully reconstructed.  Windows whose group_id
@@ -1063,7 +1063,7 @@ impl ChartApp {
 
                     // Bump BubbleId counter past any restored bubble IDs so
                     // future create_group / create_group_auto calls never collide.
-                    for sg_snap in &preset.sync_groups {
+                    for sg_snap in &preset.bubbles {
                         zengeld_chart::tag_manager::BubbleId::bump_past(sg_snap.id);
                     }
 
@@ -1156,7 +1156,7 @@ impl ChartApp {
 
                     // Step 5b: If no sync groups exist but windows do, auto-create
                     // a default group so primitives always use the grouped path.
-                    if preset.sync_groups.is_empty() && !self.panel_app.panel_grid.containers().is_empty() {
+                    if preset.bubbles.is_empty() && !self.panel_app.panel_grid.containers().is_empty() {
                         // Auto groups get transparent color вЂ” never occupy palette slots
                         let Some((_, first_win)) = self.panel_app.panel_grid.iter_containers().next() else {
                             eprintln!("[sync_group] preset restore step 5b: iter_containers empty despite non-empty guard - skipping auto group");

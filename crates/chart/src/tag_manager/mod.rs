@@ -820,7 +820,7 @@ impl BubbleStore {
     /// are restored separately via the `PrimitiveRegistry` and pushed in
     /// afterwards.
     pub fn group_from_snapshot(
-        snap: &crate::preset::snapshots::SyncGroupSnapshot,
+        snap: &crate::preset::snapshots::DataBubbleSnapshot,
     ) -> DataBubble {
         // Restore chart members (backward compat — stored as bare u64)
         let mut members = std::collections::HashSet::new();

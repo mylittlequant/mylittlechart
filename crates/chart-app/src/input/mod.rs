@@ -8760,7 +8760,7 @@ impl ChartApp {
         // group's persisted synced_panel_ids list survives restore).
         let synced_snapshot = self.panel_app.tag_manager.synced_panels_snapshot();
         for group in self.panel_app.tag_manager.bubbles() {
-            preset.sync_groups.push(SyncGroupSnapshot::from_group(group, &synced_snapshot));
+            preset.bubbles.push(DataBubbleSnapshot::from_group(group, &synced_snapshot));
         }
 
         // Snapshot indicators (sorted by display order so restore preserves sequence).

@@ -107,8 +107,9 @@ pub struct ChartWindowSnapshot {
     pub viewport: Viewport,
     /// Price scale configuration.
     pub price_scale: PriceScale,
-    /// Sync group this window belongs to (if any).
-    pub group_id: Option<u64>,
+    /// Data bubble this window belongs to (if any).
+    #[serde(alias = "group_id")]
+    pub bubble_id: Option<u64>,
     /// Grid line display options.
     pub grid_options: GridOptions,
     /// Crosshair line style and mode.
@@ -220,7 +221,7 @@ impl ChartWindowSnapshot {
         window: &ChartContainer,
         panel: &ChartPanelState,
         leaf_id: u64,
-        group_id: Option<u64>,
+        bubble_id: Option<u64>,
         pre_tag_indicator_ids: Vec<u64>,
         stashed_command_history: Option<CommandHistory>,
         stashed_primitives_snap: Vec<PrimitiveSnapshot>,
@@ -252,7 +253,7 @@ impl ChartWindowSnapshot {
             timeframe,
             viewport: saved_viewport,
             price_scale: saved_price_scale,
-            group_id,
+            bubble_id,
             grid_options: panel.grid_options.clone(),
             crosshair_options: panel.crosshair_options.clone(),
             legend: panel.legend.clone(),
@@ -391,10 +392,6 @@ pub struct IndicatorSnapshot {
 }
 
 // =============================================================================
-// SyncGroupSnapshot
-// =============================================================================
-
-// =============================================================================
 // MemberOverrideSnapshot
 // =============================================================================
 
@@ -412,12 +409,15 @@ pub struct MemberOverrideSnapshot {
 }
 
 // =============================================================================
-// SyncGroupSnapshot
+// DataBubbleSnapshot
 // =============================================================================
 
-/// Serializable snapshot of a [`SyncGroup`].
+/// Serializable snapshot of a [`DataBubble`].
+///
+/// The serde rename keeps the on-disk JSON key as `"SyncGroupSnapshot"` for
+/// backward-compatible reading of preset files written before this rename.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SyncGroupSnapshot {
+pub struct DataBubbleSnapshot {
     /// Unique group identifier.
     pub id: u64,
     /// Display color `[r, g, b, a]` used to identify this group in the UI.
@@ -465,12 +465,12 @@ pub struct SyncGroupSnapshot {
     pub scale_mode: ScaleMode,
 }
 
-impl SyncGroupSnapshot {
-    /// Capture a snapshot from a live [`SyncGroup`].
+impl DataBubbleSnapshot {
+    /// Capture a snapshot from a live [`DataBubble`].
     ///
-    /// `synced_panels` is the global TagManager.synced_panels set (panel ids
+    /// `synced_panels` is the global BubbleStore.synced_panels set (panel ids
     /// flagged "follow active chart"). We persist only those panel ids that
-    /// are also members of THIS group so that on restore each group recovers
+    /// are also members of THIS bubble so that on restore each bubble recovers
     /// its own follow-list.
     pub fn from_group(group: &DataBubble, synced_panels: &[SyncMemberId]) -> Self {
         let primitives = group

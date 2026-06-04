@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 
-use super::snapshots::{ChartWindowSnapshot, IndicatorSnapshot, SyncGroupSnapshot};
+use super::snapshots::{ChartWindowSnapshot, DataBubbleSnapshot, IndicatorSnapshot};
 use alerts::AlertItem;
 
 // =============================================================================
@@ -46,8 +46,9 @@ pub struct ChartPreset {
     pub layout: serde_json::Value,
     /// Per-window configuration snapshots.
     pub windows: Vec<ChartWindowSnapshot>,
-    /// Sync group snapshots (shared symbol/timeframe/indicators across windows).
-    pub sync_groups: Vec<SyncGroupSnapshot>,
+    /// Data bubble snapshots (shared symbol/timeframe/indicators across windows).
+    #[serde(alias = "sync_groups")]
+    pub bubbles: Vec<DataBubbleSnapshot>,
     /// All indicator instance snapshots across all windows.
     pub indicators: Vec<IndicatorSnapshot>,
     /// Alert items associated with this preset.
@@ -218,7 +219,7 @@ impl ChartPreset {
             version: PRESET_VERSION,
             layout: serde_json::Value::Null,
             windows: Vec::new(),
-            sync_groups: Vec::new(),
+            bubbles: Vec::new(),
             indicators: Vec::new(),
             alerts: Vec::new(),
             leaf_color_tags: std::collections::HashMap::new(),

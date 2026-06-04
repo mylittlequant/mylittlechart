@@ -136,7 +136,7 @@ pub fn save_preset(preset: &ChartPreset, _key: Option<&VaultKey>) -> Result<Path
             *stashed = stashed.stripped_for_persistence();
         }
     }
-    for group in &mut stripped.sync_groups {
+    for group in &mut stripped.bubbles {
         if let Some(ref mut history) = group.command_history {
             *history = history.stripped_for_persistence();
         }
