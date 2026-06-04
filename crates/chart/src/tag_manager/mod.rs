@@ -150,6 +150,11 @@ pub struct DataBubble {
     /// `command_history` instead.
     pub command_history: CommandHistory,
 
+    /// Indicator instance ids that were active on the chart BEFORE it joined a
+    /// color-tag sync group.  Populated at join time so desync can restore and
+    /// unhide them.  Cleared after desync.
+    pub pre_tag_indicator_ids: Vec<u64>,
+
     /// Invisible default bubble — auto-created so every window has a bubble.
     /// No color tag shown in UI. Set to false when user manually tags.
     pub auto_created: bool,
@@ -218,6 +223,7 @@ impl Clone for DataBubble {
             members: self.members.clone(),
             member_overrides: self.member_overrides.clone(),
             command_history: CommandHistory::new(250),
+            pre_tag_indicator_ids: self.pre_tag_indicator_ids.clone(),
             auto_created: self.auto_created,
             // Clone the Arc — both copies point to the same shared store.
             last_used_style: Arc::clone(&self.last_used_style),
@@ -333,6 +339,7 @@ impl BubbleStore {
             members: std::collections::HashSet::new(),
             member_overrides: std::collections::HashMap::new(),
             command_history: CommandHistory::new(250),
+            pre_tag_indicator_ids: Vec::new(),
             auto_created: false,
             last_used_style: Arc::new(RwLock::new(HashMap::new())),
             prev_close_price: None,
@@ -367,6 +374,7 @@ impl BubbleStore {
             members: std::collections::HashSet::new(),
             member_overrides: std::collections::HashMap::new(),
             command_history: CommandHistory::new(250),
+            pre_tag_indicator_ids: Vec::new(),
             auto_created: true,
             last_used_style: Arc::new(RwLock::new(HashMap::new())),
             prev_close_price: None,
@@ -950,6 +958,7 @@ impl BubbleStore {
             members,
             member_overrides,
             command_history: snap.command_history.clone().unwrap_or_else(|| CommandHistory::new(250)),
+            pre_tag_indicator_ids: Vec::new(),
             auto_created: snap.auto_created,
             last_used_style: Arc::new(RwLock::new(style_map)),
             prev_close_price: None,

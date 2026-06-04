@@ -356,24 +356,31 @@ impl ChartApp {
                 // while also needing indicator_manager (which is not behind the same ref).
                 // Stashed primitives are always shown regardless of sync_drawings state —
                 // they represent objects that were on the window before joining the tag group.
+                // Read home primitives from auto_bubble (chart's pre-tag / home drawings).
                 let stashed_prim_data: Vec<_> = active_cid
-                    .and_then(|cid| crate::stash::read_stashed_primitives(
-                        &self.stashed_primitives, cid,
-                    ))
-                    .map(|v| v.iter()
-                        .map(|p| {
-                            let data = p.data();
-                            let kind = p.kind();
-                            let display = localize_primitive_name(&data.type_id, p.display_name());
-                            (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone(), data.symbol.clone())
-                        })
-                        .collect())
+                    .and_then(|cid| {
+                        let auto_bid = self.panel_app.panel_grid.containers().get(&cid)?.auto_bubble_id;
+                        self.panel_app.tag_manager.bubble(auto_bid)
+                    })
+                    .map(|auto_bub| {
+                        auto_bub.primitives.iter()
+                            .map(|p| {
+                                let data = p.data();
+                                let kind = p.kind();
+                                let display = localize_primitive_name(&data.type_id, p.display_name());
+                                (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone(), data.symbol.clone())
+                            })
+                            .collect()
+                    })
                     .unwrap_or_default();
 
-                // Collect window-local indicator IDs before releasing the window borrow.
+                // Read pre_tag_indicator_ids from auto_bubble.
                 let pre_tag_ids: Vec<u64> = active_cid
-                    .and_then(|cid| self.pre_tag_ids_by_chart.get(&cid))
-                    .cloned()
+                    .and_then(|cid| {
+                        let auto_bid = self.panel_app.panel_grid.containers().get(&cid)?.auto_bubble_id;
+                        self.panel_app.tag_manager.bubble(auto_bid)
+                    })
+                    .map(|auto_bub| auto_bub.pre_tag_indicator_ids.clone())
                     .unwrap_or_default();
 
                 let has_window_section = !stashed_prim_data.is_empty() || !pre_tag_ids.is_empty();

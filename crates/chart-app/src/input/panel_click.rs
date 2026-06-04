@@ -2569,22 +2569,31 @@ impl ChartApp {
                     return;
                 }
 
-                // 2. Try stashed_primitives (WindowStash).
+                // 2. Try auto_bubble.primitives (WindowStash).
                 let active_chart_id = self.panel_app.panel_grid.active_container().map(|w| w.id);
-                let removed_from_stash = if let Some(cid) = active_chart_id {
-                    crate::stash::retain_stashed_primitives(
-                        &mut self.stashed_primitives,
-                        cid,
-                        |p| p.data().id != id,
-                    )
+                let removed_from_auto_bubble = if let Some(cid) = active_chart_id {
+                    let auto_bid = self.panel_app.panel_grid.containers()
+                        .get(&cid)
+                        .map(|w| w.auto_bubble_id);
+                    if let Some(bid) = auto_bid {
+                        if let Some(auto_bub) = self.panel_app.tag_manager.bubble_mut(bid) {
+                            let before = auto_bub.primitives.len();
+                            auto_bub.primitives.retain(|p| p.data().id != id);
+                            auto_bub.primitives.len() < before
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
                 } else {
                     false
                 };
 
-                if removed_from_stash {
+                if removed_from_auto_bubble {
                     self.autosave_snapshot();
                     self.sidebar_data_dirty = true;
-                    eprintln!("[Sidebar] Drawing deleted from stashed_primitives: {}", id);
+                    eprintln!("[Sidebar] Drawing deleted from auto_bubble.primitives: {}", id);
                     return;
                 }
 

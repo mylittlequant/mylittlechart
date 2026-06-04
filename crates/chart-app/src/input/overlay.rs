@@ -838,17 +838,18 @@ impl ChartApp {
             self.alert_manager.remove_alerts_for_indicator(*inst_id);
         }
 
-        // Remove stale entries from every window's pre_tag_indicator_ids so the
-        // Object Tree does not show phantom items for deleted indicators.
+        // Remove stale entries from auto_bubble.pre_tag_indicator_ids for every window
+        // so the Object Tree does not show phantom items for deleted indicators.
         {
-            let chart_ids: Vec<zengeld_chart::state::ChartId> = self.panel_app.panel_grid
+            let auto_bids: Vec<zengeld_chart::tag_manager::BubbleId> = self.panel_app.panel_grid
                 .containers()
-                .keys()
-                .copied()
+                .values()
+                .map(|w| w.auto_bubble_id)
+                .filter(|&bid| bid != zengeld_chart::tag_manager::BubbleId(0))
                 .collect();
-            for cid in chart_ids {
-                if let Some(v) = self.pre_tag_ids_by_chart.get_mut(&cid) {
-                    v.retain(|iid| !all_to_remove.contains(iid));
+            for bid in auto_bids {
+                if let Some(auto_bub) = self.panel_app.tag_manager.bubble_mut(bid) {
+                    auto_bub.pre_tag_indicator_ids.retain(|iid| !all_to_remove.contains(iid));
                 }
             }
         }

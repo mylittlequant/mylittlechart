@@ -1,4 +1,4 @@
-//! Process ChartOutEvent variants — propagates chart-internal events
+//! Process ChartOutEvent variants  -  propagates chart-internal events
 //! (viewport, timeframe, symbol, indicator, drawing changes) to sync groups,
 //! tag manager, autosave, and other downstream consumers.
 
@@ -7,7 +7,7 @@ use zengeld_chart::UIStyle;
 use zengeld_chart::ui::modal_state::OpenModal;
 
 impl ChartApp {
-    /// Process a `ChartOutEvent` — route high-level outcomes back to state.
+    /// Process a `ChartOutEvent`  -  route high-level outcomes back to state.
     pub(crate) fn process_chart_out_event(&mut self, event: zengeld_chart::events::ChartOutEvent) {
         use zengeld_chart::events::ChartOutEvent;
         use zengeld_chart::state::Timeframe;
@@ -83,7 +83,7 @@ impl ChartApp {
                             }
                         }
                     }
-                    // Fetch bars for new timeframe. Trade stream stays alive вЂ” trades
+                    // Fetch bars for new timeframe. Trade stream stays alive  -  trades
                     // build bars regardless of timeframe and the symbol has not changed.
                     if !symbol.is_empty() {
                         let eid_str = self.active_exchange.as_str();
@@ -163,13 +163,13 @@ impl ChartApp {
                 self.modal_state.start_editing(0);
                 eprintln!("[ChartApp] compare search modal opened");
             }
-            // Chart settings modal вЂ” opened by gear dropdown "Chart Settings..." item.
+            // Chart settings modal  -  opened by gear dropdown "Chart Settings..." item.
             ChartOutEvent::OpenChartSettings => {
                 self.panel_app.chart_settings_state.toggle();
                 eprintln!("[ChartApp] chart_settings modal toggled via settings dropdown: {}", self.panel_app.chart_settings_state.is_open);
             }
 
-            // User settings modal вЂ” opened by the chrome gear button.
+            // User settings modal  -  opened by the chrome gear button.
             ChartOutEvent::OpenUserSettings => {
                 self.panel_app.user_settings_state.toggle();
                 eprintln!("[ChartApp] user_settings modal toggled: {}", self.panel_app.user_settings_state.is_open);
@@ -177,7 +177,7 @@ impl ChartApp {
 
             // Quick-settings toggles from the settings gear dropdown.
             ChartOutEvent::ToggleGrid => {
-                // Collect active panel id — drops grid borrow before panels_store borrow.
+                // Collect active panel id  -  drops grid borrow before panels_store borrow.
                 let active_pid = self.panel_app.panel_grid.active_container()
                     .map(|w| w.chart_panel_id);
                 let new_val = if let Some(pid) = active_pid {
@@ -246,16 +246,16 @@ impl ChartApp {
                 state_mutated = true;
             }
 
-            // Left panel вЂ” no sidebar in standalone mode.
+            // Left panel  -  no sidebar in standalone mode.
             ChartOutEvent::ToggleLeftPanel => {
                 eprintln!("[ChartApp] Not available in standalone mode: {:?}", event);
             }
 
-            // Right sidebar panels вЂ” handled via SidebarState.
+            // Right sidebar panels  -  handled via SidebarState.
             // toggle_right_panel returns Option<(bool, f64)>:
-            //   Some((true,  w)) в†’ sidebar opened  в†’ compensate viewport rightward
-            //   Some((false, w)) в†’ sidebar closed  в†’ compensate viewport leftward
-            //   None             в†’ panel switched  в†’ no viewport change needed
+            //   Some((true,  w))  ->  sidebar opened   ->  compensate viewport rightward
+            //   Some((false, w))  ->  sidebar closed   ->  compensate viewport leftward
+            //   None              ->  panel switched   ->  no viewport change needed
             ChartOutEvent::ToggleWatchlist => {
                 let result = self.sidebar_state.toggle_right_panel(
                     sidebar_content::state::RightSidebarPanel::Watchlist,
@@ -334,7 +334,7 @@ impl ChartApp {
                 self.sidebar_data_dirty = true;
                 self.persist_profile();
             }
-            // Split layout events вЂ” wire to ChartPanelGrid split system.
+            // Split layout events  -  wire to ChartPanelGrid split system.
             // After each split all new leaves receive a shared sync color tag so
             // that symbol / timeframe changes propagate across the split group.
             ChartOutEvent::InternalSplitHorizontal => { self.do_split(zengeld_chart::SplitKind::SplitRight); state_mutated = true; }
@@ -493,11 +493,11 @@ impl ChartApp {
             }
             // === Presets (in-memory HashMap) ===
             ChartOutEvent::SavePreset { name } => {
-                // "Save As" вЂ” create a new named preset from current state.
+                // "Save As"  -  create a new named preset from current state.
                 use zengeld_chart::preset::preset::unix_timestamp_parts;
                 let (secs, nanos) = unix_timestamp_parts();
                 let id = format!("preset_{}_{}", secs, nanos);
-                eprintln!("[ChartApp] save-as preset '{}' в†’ id={}", name, id);
+                eprintln!("[ChartApp] save-as preset '{}'  ->  id={}", name, id);
                 self.collect_state_into_preset(&id, &name);
                 self.panel_app.active_preset_id = id.clone();
                 // Add the new preset to open_tabs.
@@ -520,7 +520,7 @@ impl ChartApp {
                 eprintln!("[ChartApp] load preset: {}", id);
                 let prev_id = self.panel_app.active_preset_id.clone();
 
-                // Same tab вЂ” no-op.
+                // Same tab  -  no-op.
                 if prev_id == id {
                     eprintln!("[ChartApp] LoadPreset: already active, skipping");
                     state_mutated = true;
@@ -539,9 +539,9 @@ impl ChartApp {
                 self.panel_app.active_preset_id = id.clone();
                 self.persist_profile();
 
-                // Warm path: live cache hit вЂ” zero-flicker switch.
+                // Warm path: live cache hit  -  zero-flicker switch.
                 if self.unpark_preset(&id) {
-                    eprintln!("[ChartApp] LoadPreset '{}': live cache hit вЂ” zero-flicker switch", id);
+                    eprintln!("[ChartApp] LoadPreset '{}': live cache hit  -  zero-flicker switch", id);
 
                     // Cure: request 300 fresh bars for every window so gaps are
                     // healed, stale data is refreshed, and bar store is updated.
@@ -700,19 +700,37 @@ impl ChartApp {
                                         window.command_history = history.clone();
                                     }
 
-                                    // Restore stashed primitives (pre-tag drawings)
-                                    crate::stash::clear_stashed_primitives(
-                                        &mut self.stashed_primitives, chart_id,
+                                    // Create a fresh auto-bubble for this chart and restore
+                                    // stashed state (pre-tag primitives, pre_tag_indicator_ids,
+                                    // stashed command_history) into it.
+                                    let auto_bid = self.panel_app.tag_manager.create_group_auto(
+                                        [0.0, 0.0, 0.0, 0.0],
+                                        snap.symbol.clone(),
+                                        snap.timeframe.clone(),
                                     );
-                                    if !snap.stashed_primitives.is_empty() {
-                                        if let Ok(reg) = zengeld_chart::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
-                                            for prim_snap in &snap.stashed_primitives {
-                                                if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
-                                                    crate::stash::push_stashed_primitive(
-                                                        &mut self.stashed_primitives, chart_id, prim,
-                                                    );
+                                    window.auto_bubble_id = auto_bid;
+                                    // current_bubble_id is set later when we attach to the
+                                    // color-bubble (Step 5); default to auto_bid for now.
+                                    window.current_bubble_id = auto_bid;
+                                    let _ = self.panel_app.tag_manager.attach_chart_to_bubble(chart_id, auto_bid);
+
+                                    // Restore stashed primitives into auto_bubble.primitives.
+                                    if let Some(auto_bub) = self.panel_app.tag_manager.bubble_mut(auto_bid) {
+                                        auto_bub.primitives.clear();
+                                        if !snap.stashed_primitives.is_empty() {
+                                            if let Ok(reg) = zengeld_chart::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
+                                                for prim_snap in &snap.stashed_primitives {
+                                                    if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
+                                                        auto_bub.primitives.push(prim);
+                                                    }
                                                 }
                                             }
+                                        }
+                                        // Restore pre_tag_indicator_ids into auto_bubble.
+                                        auto_bub.pre_tag_indicator_ids = snap.pre_tag_indicator_ids.clone();
+                                        // Restore stashed command_history into auto_bubble.
+                                        if let Some(h) = snap.stashed_command_history.clone() {
+                                            auto_bub.command_history = h;
                                         }
                                     }
 
@@ -722,8 +740,8 @@ impl ChartApp {
                                     // Restore stashed scale mode (pre-join A/M/F, restored on desync).
                                     window.stashed_scale_mode = snap.stashed_scale_mode;
 
-                                    // Restore bar_spacing (user's zoom level). chart_width is NOT restored вЂ”
-                                    // it comes from layout on the first frame; view_start is NOT restored вЂ”
+                                    // Restore bar_spacing (user's zoom level). chart_width is NOT restored  - 
+                                    // it comes from layout on the first frame; view_start is NOT restored  - 
                                     // snap-to-end always positions to the latest bar.
                                     if snap.viewport.bar_spacing > 0.0 {
                                         window.viewport.bar_spacing = snap.viewport.bar_spacing;
@@ -738,7 +756,7 @@ impl ChartApp {
                                     window.pending_symbol_load = true;
 
                                     eprintln!(
-                                        "[ChartApp] built window {} в†’ {}/{} ({} drawings)",
+                                        "[ChartApp] built window {} -> {}/{} ({} drawings)",
                                         snap.window_id, snap.symbol, snap.timeframe.name,
                                         snap.drawings.primitives.len()
                                     );
@@ -750,12 +768,6 @@ impl ChartApp {
                                             bubble.exchange = snap.exchange.clone();
                                             bubble.account_type = snap.account_type.clone();
                                         }
-                                    }
-                                    self.pre_tag_ids_by_chart.insert(chart_id, snap.pre_tag_indicator_ids.clone());
-                                    if let Some(h) = snap.stashed_command_history.clone() {
-                                        self.stashed_command_history_by_chart.insert(chart_id, h);
-                                    } else {
-                                        self.stashed_command_history_by_chart.remove(&chart_id);
                                     }
                                     // Phase 4 C: panel state already written above.
 
@@ -770,10 +782,10 @@ impl ChartApp {
 
                                 // Step 3: Restore the docking tree.
                                 //
-                                // The factory returns a placeholder PanelLeaf — actual
+                                // The factory returns a placeholder PanelLeaf  -  actual
                                 // ChartPanelId for each leaf is patched below by walking
                                 // the restored tree and matching its LeafId against
-                                // `new_leaf_to_chart` → `new_containers.chart_panel_id`.
+                                // `new_leaf_to_chart` -> `new_containers.chart_panel_id`.
                                 match layout_snap.restore_tree(|_type_id| {
                                     Some(zengeld_chart::state::PanelLeaf::ChartPanel(
                                         zengeld_chart::state::ChartPanelId(0),
@@ -799,18 +811,18 @@ impl ChartApp {
                                         true
                                     }
                                     Err(e) => {
-                                        eprintln!("[ChartApp] restore_tree failed: {} вЂ” falling back to patch", e);
+                                        eprintln!("[ChartApp] restore_tree failed: {}  -  falling back to patch", e);
                                         false
                                     }
                                 }
                             }
                             Err(e) => {
-                                eprintln!("[ChartApp] layout deserialize failed: {} вЂ” falling back to patch", e);
+                                eprintln!("[ChartApp] layout deserialize failed: {} - falling back to patch", e);
                                 false
                             }
                         }
                     } else {
-                        eprintln!("[ChartApp] preset has no layout snapshot вЂ” falling back to patch");
+                        eprintln!("[ChartApp] preset has no layout snapshot - falling back to patch");
                         false
                     };
 
@@ -826,7 +838,7 @@ impl ChartApp {
                             for snap in &preset.windows {
                                 let chart_id = zengeld_chart::state::chart_container::ChartId(snap.window_id);
                                 if let Some(window) = windows.get_mut(&chart_id) {
-                                    // Rebuild data_provider for this window’s (possibly new) exchange.
+                                    // Rebuild data_provider for this window's (possibly new) exchange.
                                     let patch_exchange_id = digdigdig3::ExchangeId::from_str(&snap.exchange)
                                         .unwrap_or(digdigdig3::ExchangeId::Binance);
                                     let patch_at = crate::account_type_from_label(&snap.account_type);
@@ -847,19 +859,38 @@ impl ChartApp {
                                         window.command_history = history.clone();
                                     }
 
-                                    // Restore stashed primitives (pre-tag drawings)
-                                    crate::stash::clear_stashed_primitives(
-                                        &mut self.stashed_primitives, chart_id,
-                                    );
-                                    if !snap.stashed_primitives.is_empty() {
-                                        if let Ok(reg) = zengeld_chart::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
-                                            for prim_snap in &snap.stashed_primitives {
-                                                if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
-                                                    crate::stash::push_stashed_primitive(
-                                                        &mut self.stashed_primitives, chart_id, prim,
-                                                    );
+                                    // Restore stashed primitives into auto_bubble.
+                                    // Fallback path: window already exists in panel_grid, so
+                                    // we read auto_bubble_id from the existing container.
+                                    let existing_auto_bid = window.auto_bubble_id;
+                                    // If auto_bubble_id is still the sentinel, create a fresh one.
+                                    let auto_bid_fallback = if existing_auto_bid == zengeld_chart::tag_manager::BubbleId(0) {
+                                        let fresh = self.panel_app.tag_manager.create_group_auto(
+                                            [0.0, 0.0, 0.0, 0.0],
+                                            snap.symbol.clone(),
+                                            snap.timeframe.clone(),
+                                        );
+                                        window.auto_bubble_id = fresh;
+                                        window.current_bubble_id = fresh;
+                                        let _ = self.panel_app.tag_manager.attach_chart_to_bubble(chart_id, fresh);
+                                        fresh
+                                    } else {
+                                        existing_auto_bid
+                                    };
+                                    if let Some(auto_bub) = self.panel_app.tag_manager.bubble_mut(auto_bid_fallback) {
+                                        auto_bub.primitives.clear();
+                                        if !snap.stashed_primitives.is_empty() {
+                                            if let Ok(reg) = zengeld_chart::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
+                                                for prim_snap in &snap.stashed_primitives {
+                                                    if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
+                                                        auto_bub.primitives.push(prim);
+                                                    }
                                                 }
                                             }
+                                        }
+                                        auto_bub.pre_tag_indicator_ids = snap.pre_tag_indicator_ids.clone();
+                                        if let Some(h) = snap.stashed_command_history.clone() {
+                                            auto_bub.command_history = h;
                                         }
                                     }
 
@@ -869,7 +900,7 @@ impl ChartApp {
                                     // Restore stashed scale mode (pre-join A/M/F, restored on desync).
                                     window.stashed_scale_mode = snap.stashed_scale_mode;
 
-                                    // Restore bar_spacing (user’s zoom level).
+                                    // Restore bar_spacing (user's zoom level).
                                     if snap.viewport.bar_spacing > 0.0 {
                                         window.viewport.bar_spacing = snap.viewport.bar_spacing;
                                     }
@@ -927,13 +958,13 @@ impl ChartApp {
                                     ps.drawing_manager.migrate_all_legacy_timestamps();
                                     panel_patches.push((window.chart_panel_id, ps));
 
-                                    eprintln!("[ChartApp] patched window {} в†’ {}/{} ({} drawings)",
+                                    eprintln!("[ChartApp] patched window {}  ->  {}/{} ({} drawings)",
                                         snap.window_id, snap.symbol, snap.timeframe.name,
                                         snap.drawings.primitives.len());
                                 }
                             }
                         } // windows (panel_grid borrow) dropped here
-                        // Phase 1.2: dual-write instrument into branch_meta + bubble.
+                        // Restore instrument fields into the bubble for each window.
                         for snap in &preset.windows {
                             let chart_id = zengeld_chart::state::chart_container::ChartId(snap.window_id);
                             if let Some(bid) = self.panel_app.tag_manager.bubble_for_chart(chart_id) {
@@ -944,12 +975,8 @@ impl ChartApp {
                                     bubble.account_type = snap.account_type.clone();
                                 }
                             }
-                            self.pre_tag_ids_by_chart.insert(chart_id, snap.pre_tag_indicator_ids.clone());
-                            if let Some(h) = snap.stashed_command_history.clone() {
-                                self.stashed_command_history_by_chart.insert(chart_id, h);
-                            } else {
-                                self.stashed_command_history_by_chart.remove(&chart_id);
-                            }
+                            // Note: pre_tag_indicator_ids and stashed_command_history are
+                            // already written into auto_bubble above; no separate map needed.
                         }
                         // Phase 4 C: write panel states (panel_grid borrow is dropped above).
                         for (chart_panel_id, ps) in panel_patches {
@@ -969,7 +996,7 @@ impl ChartApp {
                                     // Backfill symbol/exchange/account_type for primitives
                                     // saved before these fields existed (serde(default) gives
                                     // empty string). Use the group's shared instrument as
-                                    // source of truth — prevents them falling into Memory on load.
+                                    // source of truth  -  prevents them falling into Memory on load.
                                     if prim.data().symbol.is_empty() && !sg_snap.symbol.is_empty() {
                                         prim.data_mut().symbol = sg_snap.symbol.clone();
                                     }
@@ -1073,22 +1100,25 @@ impl ChartApp {
                                 })
                                 .collect();
 
-                        // Phase 2: mutably iterate stash entries and re-ID colliding ones.
+                        // Phase 2: mutably iterate auto_bubble.primitives and re-ID colliding ones.
                         for (chart_id, _gid, group_ids) in &collision_info {
                             let mut reid_count = 0u32;
-                            if let Some(v) = crate::stash::stashed_primitives_mut(
-                                &mut self.stashed_primitives, *chart_id,
-                            ) {
-                                for p in v.iter_mut() {
-                                    if group_ids.contains(&p.data().id) {
-                                        p.data_mut().id = zengeld_chart::drawing::alloc_primitive_id();
-                                        reid_count += 1;
+                            let auto_bid = self.panel_app.panel_grid.containers()
+                                .get(chart_id)
+                                .map(|w| w.auto_bubble_id);
+                            if let Some(bid) = auto_bid {
+                                if let Some(auto_bub) = self.panel_app.tag_manager.bubble_mut(bid) {
+                                    for p in auto_bub.primitives.iter_mut() {
+                                        if group_ids.contains(&p.data().id) {
+                                            p.data_mut().id = zengeld_chart::drawing::alloc_primitive_id();
+                                            reid_count += 1;
+                                        }
                                     }
                                 }
                             }
                             if reid_count > 0 {
                                 eprintln!(
-                                    "[ChartApp] Re-IDed {} stash primitive(s) in window {:?} (legacy autosave collision fix)",
+                                    "[ChartApp] Re-IDed {} auto-bubble primitive(s) in window {:?} (legacy autosave collision fix)",
                                     reid_count, chart_id
                                 );
                             }
@@ -1119,7 +1149,7 @@ impl ChartApp {
                     // Step 5b: If no sync groups exist but windows do, auto-create
                     // a default group so primitives always use the grouped path.
                     if preset.bubbles.is_empty() && !self.panel_app.panel_grid.containers().is_empty() {
-                        // Auto groups get transparent color вЂ” never occupy palette slots
+                        // Auto groups get transparent color  -  never occupy palette slots
                         let Some((_, first_win)) = self.panel_app.panel_grid.iter_containers().next() else {
                             eprintln!("[sync_group] preset restore step 5b: iter_containers empty despite non-empty guard - skipping auto group");
                             return;
@@ -1160,7 +1190,7 @@ impl ChartApp {
                             ind_snap.id,
                             &ind_snap.type_id,
                         ) {
-                            // Bind to the persisted window_id via the index — direct
+                            // Bind to the persisted window_id via the index  -  direct
                             // field assignment would leak the instance into the
                             // wrong by_window_id bucket.
                             self.indicator_manager.assign_window(ind_snap.id, ind_snap.window_id);
@@ -1201,7 +1231,7 @@ impl ChartApp {
                     // ----------------------------------------------------------------
                     // Step 6b: Immediately recalculate indicators for every window that
                     // already has bars.  Bars were restored in Steps 2-4 so we can feed
-                    // them to the indicator engine right now вЂ” no need to wait for the
+                    // them to the indicator engine right now  -  no need to wait for the
                     // next BarsLoaded / TradeUpdate round-trip.
                     // Collect (symbol, window_id, bars) first to avoid a split borrow of
                     // `self` (panel_grid vs indicator_manager both live on `self`).
@@ -1298,7 +1328,7 @@ impl ChartApp {
                         }
                     };
 
-                    // Helper: convert PersistedSymbolSource в†’ SymbolSource.
+                    // Helper: convert PersistedSymbolSource  ->  SymbolSource.
                     let convert_source = |src: &zengeld_chart::preset::preset::PersistedSymbolSource| -> zengeld_panels::trading::SymbolSource {
                         match src {
                             zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus => zengeld_panels::trading::SymbolSource::HyperFocus,
@@ -1546,9 +1576,9 @@ impl ChartApp {
                             }
                         }
 
-                        // Build a leaf_id в†’ PersistedFreeLeaf map for O(1) lookup
+                        // Build a leaf_id  ->  PersistedFreeLeaf map for O(1) lookup
                         // inside the restore closure.  type_id() now returns only the
-                        // variant kind (e.g. "free_dom") вЂ” panel identity comes from
+                        // variant kind (e.g. "free_dom")  -  panel identity comes from
                         // the leaf_id passed by restore_tree_with_id.
                         let leaves_by_id: std::collections::HashMap<u64, &zengeld_chart::preset::preset::PersistedFreeLeaf> =
                             preset.slot_leaves[i].iter().map(|l| (l.leaf_id, l)).collect();
@@ -1587,13 +1617,13 @@ impl ChartApp {
                                                 )
                                             }
                                             Err(e) => {
-                                                eprintln!("[ChartApp] slot{} restore_tree failed: {} вЂ” empty fallback", i + 1, e);
+                                                eprintln!("[ChartApp] slot{} restore_tree failed: {} - empty fallback", i + 1, e);
                                                 sidebar_content::SlotDockingManager::new()
                                             }
                                         }
                                     }
                                     Err(e) => {
-                                        eprintln!("[ChartApp] slot{} from_json failed: {} вЂ” empty fallback", i + 1, e);
+                                        eprintln!("[ChartApp] slot{} from_json failed: {} - empty fallback", i + 1, e);
                                         sidebar_content::SlotDockingManager::new()
                                     }
                                 }
@@ -1815,7 +1845,7 @@ impl ChartApp {
                     if let Some(next) = self.panel_app.open_tabs.last().cloned() {
                         self.process_chart_out_event(ChartOutEvent::LoadPreset { id: next });
                     } else {
-                        // No tabs left вЂ” fall back to __default__.
+                        // No tabs left  -  fall back to __default__.
                         self.panel_app.active_preset_id = "__default__".to_string();
                     }
                 }
@@ -1825,7 +1855,7 @@ impl ChartApp {
             ChartOutEvent::OpenTab { id } => {
                 eprintln!("[ChartApp] open tab: {}", id);
                 if self.panel_app.open_tabs.contains(&id) {
-                    // Preset already open вЂ” just switch to it.
+                    // Preset already open  -  just switch to it.
                     self.panel_app.active_preset_id = id.clone();
                     self.process_chart_out_event(ChartOutEvent::LoadPreset { id });
                 } else {
@@ -1916,7 +1946,7 @@ impl ChartApp {
                         eprintln!("[ChartApp] saved snapshot into preset '{}' (id={})", name, id);
                     }
                 } else {
-                    // No active named preset вЂ” treat as Save As
+                    // No active named preset  -  treat as Save As
                     self.process_chart_out_event(ChartOutEvent::OpenPresetSaveAs);
                 }
             }
@@ -1962,7 +1992,7 @@ impl ChartApp {
                     eprintln!("[ChartApp] auto-saved __default__ as '{}' (id={})", autosave_name, autosave_id);
                 }
 
-                // Now compute the next "Untitled N" вЂ” the auto-saved one is already counted.
+                // Now compute the next "Untitled N"  -  the auto-saved one is already counted.
                 let max_n = self.panel_app.presets.values()
                     .filter_map(|p| p.name.strip_prefix("Untitled "))
                     .filter_map(|s| s.parse::<u32>().ok())
@@ -2113,7 +2143,7 @@ impl ChartApp {
                 } else {
                     eprintln!("[ChartApp] InternalToggleSyncViewport: no active group");
                 }
-                // OFF → ON: adopt the active leaf's current scale_mode as the group mode,
+                // OFF -> ON: adopt the active leaf's current scale_mode as the group mode,
                 // stash each peer's prior mode, then push mode + viewport to all peers.
                 if newly_enabled {
                     let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
@@ -2161,7 +2191,7 @@ impl ChartApp {
                         }
                     }
                 }
-                // ON → OFF: clear stashed_scale_mode on all peers (they keep whatever
+                // ON -> OFF: clear stashed_scale_mode on all peers (they keep whatever
                 // mode they currently display, which was the group mode).
                 if newly_disabled {
                     if let Some(gid) = gid {
@@ -2193,65 +2223,51 @@ impl ChartApp {
                         return;
                     };
 
-                    if new_sync {
-                        // OFF → ON: stash window-local primitives (those not in group.primitives).
-                        // Collect the set of IDs that live in the group.
-                        let group_prim_ids: std::collections::HashSet<u64> = self
-                            .panel_app
-                            .tag_manager
-                            .bubble(gid)
-                            .map(|g| g.primitives.iter().map(|p| p.data().id).collect())
-                            .unwrap_or_default();
+                    // Get auto_bubble_id and chart_panel_id before any mutable borrows.
+                    let auto_bid = chart_id.and_then(|cid| {
+                        self.panel_app.panel_grid.containers().get(&cid).map(|w| w.auto_bubble_id)
+                    });
+                    let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
 
-                        let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-                        let local_prims_opt: Option<Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>>> =
-                            if let Some(pid) = active_pid {
-                                if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                    // Drain all primitives from the manager, partition into local vs synced.
-                                    let all: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
-                                        std::mem::take(panel.drawing_manager.primitives_mut());
-                                    let mut local: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> = Vec::new();
-                                    let mut synced: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> = Vec::new();
-                                    for prim in all {
-                                        if group_prim_ids.contains(&prim.data().id) {
-                                            synced.push(prim);
-                                        } else {
-                                            local.push(prim);
-                                        }
-                                    }
-                                    // Restore the synced ones back into the manager.
-                                    panel.drawing_manager.add_synced_primitives(synced);
-                                    Some(local)
-                                } else {
-                                    None
+                    if new_sync {
+                        // sync_drawings OFF -> ON: the chart was showing its own drawings (from
+                        // auto_bubble); now it will show the color-group drawings via per-frame
+                        // sync.  Save current drawing_manager locals into auto_bubble.primitives
+                        // (they are the "home" state; auto_bubble must hold them for desync).
+                        if let (Some(bid), Some(pid)) = (auto_bid, active_pid) {
+                            if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
+                                let local: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
+                                    panel.drawing_manager.primitives().iter()
+                                        .filter(|p| p.data().origin_id.is_none())
+                                        .map(|p| p.clone_box())
+                                        .collect();
+                                let stash_count = local.len();
+                                if let Some(auto_bub) = self.panel_app.tag_manager.bubble_mut(bid) {
+                                    auto_bub.primitives = local;
                                 }
-                            } else {
-                                None
-                            };
-                        if let (Some(cid), Some(local)) = (chart_id, local_prims_opt) {
-                            let stash_count = local.len();
-                            crate::stash::extend_stashed_primitives(
-                                &mut self.stashed_primitives, cid, local,
-                            );
-                            eprintln!(
-                                "[BubbleStore] sync_drawings ON: stashed {} window-local primitives",
-                                stash_count
-                            );
+                                panel.drawing_manager.clear_all_primitives();
+                                eprintln!(
+                                    "[BubbleStore] sync_drawings ON: moved {} window-local primitives into auto-bubble {:?}",
+                                    stash_count, bid
+                                );
+                            }
                         }
                     } else {
-                        // ON → OFF: restore stashed window-local primitives.
-                        let active_pid2 = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-                        if let (Some(cid), Some(pid)) = (chart_id, active_pid2) {
-                            let restored = crate::stash::take_stashed_primitives(
-                                &mut self.stashed_primitives, cid,
-                            ).unwrap_or_default();
+                        // sync_drawings ON -> OFF: restore home drawings from auto_bubble into
+                        // drawing_manager so the chart shows its own drawings again.
+                        if let (Some(bid), Some(pid)) = (auto_bid, active_pid) {
+                            let restored: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
+                                self.panel_app.tag_manager.bubble(bid)
+                                    .map(|bub| bub.primitives.iter().map(|p| p.clone_box()).collect())
+                                    .unwrap_or_default();
                             let count = restored.len();
                             if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
+                                panel.drawing_manager.clear_all_primitives();
                                 panel.drawing_manager.add_synced_primitives(restored);
                             }
                             eprintln!(
-                                "[BubbleStore] sync_drawings OFF: restored {} stashed primitives",
-                                count
+                                "[BubbleStore] sync_drawings OFF: restored {} primitives from auto-bubble {:?}",
+                                count, bid
                             );
                         }
                     }
@@ -2275,13 +2291,18 @@ impl ChartApp {
                         return;
                     };
 
-                    let pre_tag_ids: Vec<u64> = self.pre_tag_ids_by_chart
-                        .get(&chart_id)
-                        .cloned()
-                        .unwrap_or_default();
+                    let pre_tag_ids: Vec<u64> = {
+                        let auto_bid = self.panel_app.panel_grid.containers()
+                            .get(&chart_id)
+                            .map(|w| w.auto_bubble_id);
+                        auto_bid
+                            .and_then(|bid| self.panel_app.tag_manager.bubble(bid))
+                            .map(|bub| bub.pre_tag_indicator_ids.clone())
+                            .unwrap_or_default()
+                    };
 
                     if new_sync {
-                        // OFF в†’ ON: hide window-local indicators (in pre_tag_indicator_ids
+                        // OFF  ->  ON: hide window-local indicators (in pre_tag_indicator_ids
                         // but not yet in the group's indicator_configs).
                         let group_indicator_ids: std::collections::HashSet<u64> = self
                             .panel_app
@@ -2311,7 +2332,7 @@ impl ChartApp {
                             to_hide.len()
                         );
                     } else {
-                        // ON в†’ OFF: unhide window-local (pre_tag) indicators.
+                        // ON  ->  OFF: unhide window-local (pre_tag) indicators.
                         let to_show: Vec<u64> = self
                             .indicator_manager
                             .instances_iter()

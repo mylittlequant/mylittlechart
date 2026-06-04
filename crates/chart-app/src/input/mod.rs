@@ -8127,16 +8127,16 @@ impl ChartApp {
                 if self.indicator_manager.create_instance_with_id(*instance_id, type_id) {
                     self.indicator_manager.assign_window(*instance_id, Some(chart_id_val.0));
                     self.indicator_manager.calculate(*instance_id, &bars_snapshot);
-                    // Re-add to pre_tag_indicator_ids for Object Tree visibility.
-                    // indicator_manager borrows are released before this block.
-                    let already_present = self.pre_tag_ids_by_chart
+                    // Re-add to auto_bubble.pre_tag_indicator_ids for Object Tree visibility.
+                    let auto_bid = self.panel_app.panel_grid.containers()
                         .get(&chart_id_val)
-                        .map_or(false, |v| v.contains(instance_id));
-                    if !already_present {
-                        self.pre_tag_ids_by_chart
-                            .entry(chart_id_val)
-                            .or_default()
-                            .push(*instance_id);
+                        .map(|w| w.auto_bubble_id);
+                    if let Some(bid) = auto_bid {
+                        if let Some(auto_bub) = self.panel_app.tag_manager.bubble_mut(bid) {
+                            if !auto_bub.pre_tag_indicator_ids.contains(instance_id) {
+                                auto_bub.pre_tag_indicator_ids.push(*instance_id);
+                            }
+                        }
                     }
                     self.sync_sub_panes_from_manager();
                     eprintln!("[Undo/Redo] Re-created indicator {} (id={}) window_id={}", type_id, instance_id, chart_id_val.0);
@@ -8146,16 +8146,17 @@ impl ChartApp {
             }
             Command::RemoveIndicator { instance_id, .. } => {
                 if self.indicator_manager.remove_instance(*instance_id).is_some() {
-                    // Remove stale entries so the Object Tree does not show phantom items.
+                    // Remove stale entries from auto_bubble.pre_tag_indicator_ids.
                     let removed_id = *instance_id;
-                    let chart_ids: Vec<zengeld_chart::state::ChartId> = self.panel_app.panel_grid
+                    let auto_bids: Vec<zengeld_chart::tag_manager::BubbleId> = self.panel_app.panel_grid
                         .containers()
-                        .keys()
-                        .copied()
+                        .values()
+                        .map(|w| w.auto_bubble_id)
+                        .filter(|&bid| bid != zengeld_chart::tag_manager::BubbleId(0))
                         .collect();
-                    for cid in chart_ids {
-                        if let Some(v) = self.pre_tag_ids_by_chart.get_mut(&cid) {
-                            v.retain(|iid| *iid != removed_id);
+                    for bid in auto_bids {
+                        if let Some(auto_bub) = self.panel_app.tag_manager.bubble_mut(bid) {
+                            auto_bub.pre_tag_indicator_ids.retain(|iid| *iid != removed_id);
                         }
                     }
                     self.sync_sub_panes_from_manager();
@@ -8707,14 +8708,28 @@ impl ChartApp {
             if let Some(window) = self.panel_app.panel_grid.container_for_leaf(leaf_id) {
                 let gid = self.panel_app.tag_manager.bubble_for_chart(chart_id)
                     .map(|g| g.0);
-                let ptids = self.pre_tag_ids_by_chart.get(&chart_id).cloned().unwrap_or_default();
-                let stashed_ch = self.stashed_command_history_by_chart.get(&chart_id).cloned();
-                let stashed_prims_snap: Vec<zengeld_chart::preset::snapshots::PrimitiveSnapshot> =
-                    crate::stash::read_stashed_primitives(&self.stashed_primitives, chart_id)
-                        .map(|v| v.iter()
-                            .map(|p| zengeld_chart::preset::snapshots::PrimitiveSnapshot::from_primitive(p.as_ref()))
-                            .collect())
-                        .unwrap_or_default();
+                // Read stash data from the chart's permanent auto-bubble.
+                let auto_bid = window.auto_bubble_id;
+                let (ptids, stashed_ch, stashed_prims_snap) =
+                    if let Some(auto_bub) = self.panel_app.tag_manager.bubble(auto_bid) {
+                        let ptids = auto_bub.pre_tag_indicator_ids.clone();
+                        // The auto_bubble holds the stashed command_history only while
+                        // the chart is IN a color group (joined). When ungrouped the
+                        // history lives back on the window; persist a clone of the
+                        // current auto_bubble history (may be empty for ungrouped charts).
+                        let stashed_ch = if auto_bub.command_history.size() > 0 || auto_bub.command_history.can_redo() {
+                            Some(auto_bub.command_history.clone())
+                        } else {
+                            None
+                        };
+                        let prims_snap: Vec<zengeld_chart::preset::snapshots::PrimitiveSnapshot> =
+                            auto_bub.primitives.iter()
+                                .map(|p| zengeld_chart::preset::snapshots::PrimitiveSnapshot::from_primitive(p.as_ref()))
+                                .collect();
+                        (ptids, stashed_ch, prims_snap)
+                    } else {
+                        (Vec::new(), None, Vec::new())
+                    };
                 // Phase 4 B: read instrument fields from branch_meta for snapshot.
                 let snap_symbol = self.panel_app.tag_manager.symbol_for_chart(chart_id)
                     .map(String::from).unwrap_or_default();

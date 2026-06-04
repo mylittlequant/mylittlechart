@@ -71,88 +71,121 @@ impl ChartApp {
             .container_id_for_leaf(leaf_id)
             .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid))
             .is_some();
-        // Pre-tag indicator ids — these survive desync (will be unhidden).
-        let pre_tag_ids: Vec<u64> = self.panel_app.panel_grid
-            .container_id_for_leaf(leaf_id)
-            .and_then(|cid| self.pre_tag_ids_by_chart.get(&cid))
-            .cloned()
-            .unwrap_or_default();
-        // Has stashed primitives? (window joined an existing tag)
-        let has_stash = self.panel_app.panel_grid
-            .container_id_for_leaf(leaf_id)
-            .is_some_and(|cid| crate::stash::has_stashed_primitives(&self.stashed_primitives, cid));
 
-        // 1b. Disconnect from TagManager group.
-        if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
-            if let Some(old_group_id) = self.panel_app.tag_manager.detach_chart_from_bubble(chart_id) {
-                eprintln!(
-                    "[BubbleStore] Disconnected chart {:?} from group {:?}",
-                    chart_id, old_group_id
-                );
-                let remaining = self.panel_app.tag_manager
-                    .members(old_group_id)
-                    .map_or(0, |m| m.len());
-                eprintln!("[BubbleStore] Group {:?} has {} remaining members", old_group_id, remaining);
+        let chart_id = match self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
+            Some(id) => id,
+            None => {
+                eprintln!("[sync_group] perform_desync: container_for_leaf({:?}) returned None — skipping desync", leaf_id);
+                return;
             }
+        };
+
+        // Read auto_bubble_id BEFORE disconnect so we can re-attach.
+        let auto_bubble_id = self.panel_app.panel_grid
+            .containers()
+            .get(&chart_id)
+            .map(|w| w.auto_bubble_id);
+
+        // 1b. Disconnect from current color-tag group.
+        if let Some(old_group_id) = self.panel_app.tag_manager.detach_chart_from_bubble(chart_id) {
+            let remaining = self.panel_app.tag_manager
+                .members(old_group_id)
+                .map_or(0, |m| m.len());
+            eprintln!(
+                "[BubbleStore] Disconnected chart {:?} from group {:?} ({} remaining)",
+                chart_id, old_group_id, remaining
+            );
         }
 
-        // 2. Restore window's own state: primitives and indicators.
-        if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
-            let pid_desync = self.panel_app.panel_grid.container_for_leaf(leaf_id).map(|w| w.chart_panel_id);
-            if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
-                if had_group_id {
-                    // Clear tag primitives (pre-render sync fills these from group).
-                    if let Some(pid) = pid_desync {
-                        if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                            panel.drawing_manager.clear_all_primitives();
-                            // Restore stashed primitives (window's own, hidden on join).
-                            if has_stash {
-                                let restored = crate::stash::take_stashed_primitives(
-                                    &mut self.stashed_primitives, chart_id,
-                                ).unwrap_or_default();
-                                let count = restored.len();
-                                panel.drawing_manager.add_synced_primitives(restored);
-                                eprintln!("[BubbleStore] Desync: restored {} stashed primitives", count);
-                            } else {
-                                eprintln!("[BubbleStore] Desync: no stashed primitives (split child or seed source)");
-                            }
+        // 2. Re-attach chart to its permanent home auto-bubble and restore state.
+        let pid_desync = self.panel_app.panel_grid
+            .containers()
+            .get(&chart_id)
+            .map(|w| w.chart_panel_id);
+
+        if let Some(auto_bid) = auto_bubble_id {
+            // Re-attach to home auto-bubble.
+            let _ = self.panel_app.tag_manager.attach_chart_to_bubble(chart_id, auto_bid);
+
+            if had_group_id {
+                // Restore drawing_manager from auto_bubble.primitives (the home drawings
+                // that were preserved during the sync-group membership).
+                // Read pre_tag_ids from auto_bubble BEFORE taking command_history so
+                // we can do the indicator cleanup step below.
+                let (pre_tag_ids, restored_prims, old_history) = {
+                    let auto_bub = self.panel_app.tag_manager.bubble_mut(auto_bid);
+                    if let Some(bub) = auto_bub {
+                        let pre_tag = bub.pre_tag_indicator_ids.clone();
+                        bub.pre_tag_indicator_ids.clear();
+                        let prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
+                            bub.primitives.iter().map(|p| p.clone_box()).collect();
+                        // Swap window history back out of auto_bubble.
+                        // auto_bubble.command_history holds the stashed pre-join history.
+                        let old = std::mem::replace(
+                            &mut bub.command_history,
+                            zengeld_chart::CommandHistory::new(250),
+                        );
+                        (pre_tag, prims, Some(old))
+                    } else {
+                        (Vec::new(), Vec::new(), None)
+                    }
+                };
+
+                // Apply restored state to window and drawing_manager.
+                if let Some(pid) = pid_desync {
+                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
+                        panel.drawing_manager.clear_all_primitives();
+                        if !restored_prims.is_empty() {
+                            let count = restored_prims.len();
+                            panel.drawing_manager.add_synced_primitives(restored_prims);
+                            eprintln!("[BubbleStore] Desync: restored {} primitives from auto-bubble", count);
+                        } else {
+                            eprintln!("[BubbleStore] Desync: auto-bubble had no primitives (fresh chart)");
                         }
                     }
-                } else if let Some(pid) = pid_desync {
-                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                        panel.drawing_manager.purge_synced_primitives();
-                    }
-                }
-                // Restore the window-local command history stashed at join time.
-                if let Some(stashed) = self.stashed_command_history_by_chart.remove(&chart_id) {
-                    window.command_history = stashed;
-                    eprintln!("[BubbleStore] Desync: restored stashed command history");
                 }
 
-                // Restore the window's pre-join scale mode. The stash is populated
-                // when a window joins a group with sync_viewport=ON; restoring it
-                // here undoes the group-imposed A/M/F override.
-                if let Some(prev_mode) = window.stashed_scale_mode.take() {
-                    window.price_scale.scale_mode = prev_mode;
-                    let is_auto = prev_mode.is_auto_y();
-                    for state in window.sub_pane_y_state.values_mut() {
-                        state.auto_scale = is_auto;
+                // Restore command_history into the window.
+                if let Some(h) = old_history {
+                    if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
+                        window.command_history = h;
+                        eprintln!("[BubbleStore] Desync: restored command history from auto-bubble");
                     }
-                    if is_auto {
-                        window.calc_auto_scale();
-                    }
-                    eprintln!("[BubbleStore] Desync: restored stashed scale mode {:?}", prev_mode);
                 }
-            }
-            // Membership cleared via detach_chart_from_bubble above; BubbleStore reverse
-            // index is the truth for group membership.
-            self.pre_tag_ids_by_chart.remove(&chart_id);
-            crate::stash::clear_stashed_primitives(&mut self.stashed_primitives, chart_id);
-            self.stashed_command_history_by_chart.remove(&chart_id);
 
-            // Remove tag indicators: all indicators for this window EXCEPT pre-tag ones.
-            // Then unhide pre-tag indicators.
-            if had_group_id {
+                // Update current_bubble_id on the window.
+                if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
+                    window.current_bubble_id = auto_bid;
+                }
+
+                // Rebind drawing_manager to the auto-bubble's style store.
+                if let Some(pid) = pid_desync {
+                    if let Some(style_arc) = self.panel_app.tag_manager
+                        .bubble(auto_bid)
+                        .map(|g| g.last_used_style.clone())
+                    {
+                        if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
+                            panel.drawing_manager.bind_style_store(style_arc);
+                        }
+                    }
+                }
+
+                // Restore the window's pre-join scale mode.
+                if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
+                    if let Some(prev_mode) = window.stashed_scale_mode.take() {
+                        window.price_scale.scale_mode = prev_mode;
+                        let is_auto = prev_mode.is_auto_y();
+                        for state in window.sub_pane_y_state.values_mut() {
+                            state.auto_scale = is_auto;
+                        }
+                        if is_auto {
+                            window.calc_auto_scale();
+                        }
+                        eprintln!("[BubbleStore] Desync: restored stashed scale mode {:?}", prev_mode);
+                    }
+                }
+
+                // Remove tag indicators; unhide pre-tag indicators.
                 let to_remove: Vec<u64> = self.indicator_manager
                     .instances_iter()
                     .filter(|i| {
@@ -161,45 +194,65 @@ impl ChartApp {
                     })
                     .map(|i| i.id)
                     .collect();
-                let count = to_remove.len();
+                let remove_count = to_remove.len();
                 for id in &to_remove {
                     self.indicator_manager.remove_instance(*id);
                 }
-                // Unhide pre-tag indicators.
                 for &id in &pre_tag_ids {
                     if let Some(inst) = self.indicator_manager.get_instance_mut(id) {
                         inst.visible = true;
                     }
                 }
-                eprintln!("[BubbleStore] Desync: removed {} tag indicators, unhid {} pre-tag",
-                    count, pre_tag_ids.len());
-            } else {
-                self.indicator_manager.purge_synced_instances_for_window(chart_id.0);
-            }
-        }
+                eprintln!(
+                    "[BubbleStore] Desync: removed {} tag indicators, unhid {} pre-tag",
+                    remove_count, pre_tag_ids.len()
+                );
 
-        // 4. Create a new auto_created group for the desynced window.
-        // Every window must always be in a group — standalone path is dead.
-        if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
-            if self.panel_app.panel_grid.container_for_leaf(leaf_id).is_none() {
-                eprintln!("[sync_group] perform_desync: container_for_leaf({:?}) returned None — skipping desync", leaf_id);
-                return;
+                // Sync drawing_manager primitives back into the auto-bubble so they
+                // are the authoritative home-state for future join cycles.
+                let dm_prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
+                    pid_desync
+                        .and_then(|pid| self.panels_store.chart_panel.get(&pid))
+                        .map(|panel| panel.drawing_manager.primitives().iter().map(|p| p.clone_box()).collect())
+                        .unwrap_or_default();
+                if let Some(auto_bub) = self.panel_app.tag_manager.bubble_mut(auto_bid) {
+                    auto_bub.primitives = dm_prims;
+                }
+            } else {
+                // Was not in a color group — just purge synced primitives and update ids.
+                if let Some(pid) = pid_desync {
+                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
+                        panel.drawing_manager.purge_synced_primitives();
+                    }
+                }
+                self.indicator_manager.purge_synced_instances_for_window(chart_id.0);
+                if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
+                    window.current_bubble_id = auto_bid;
+                }
             }
+
+            eprintln!("[BubbleStore] Desync: chart {:?} re-attached to auto-bubble {:?}", chart_id, auto_bid);
+        } else {
+            // auto_bubble_id is BubbleId(0) sentinel — this chart never had a proper
+            // auto-bubble assigned.  Fall back: create a fresh auto-bubble now.
+            eprintln!("[BubbleStore] Desync: chart {:?} had sentinel auto_bubble_id — creating fresh auto-bubble", chart_id);
             let symbol = self.panel_app.tag_manager.symbol_for_chart(chart_id)
                 .map(String::from)
                 .unwrap_or_default();
             let timeframe = self.panel_app.tag_manager.timeframe_for_chart(chart_id)
                 .cloned()
                 .unwrap_or_else(zengeld_chart::state::Timeframe::h1);
-            // Auto groups get transparent color — never occupy palette slots
-            let new_group_id = self.panel_app.tag_manager.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
-            let _ = self.panel_app.tag_manager.attach_chart_to_bubble(chart_id, new_group_id);
-            let pid_rebind = self.panel_app.panel_grid.container_for_leaf(leaf_id).map(|w| w.chart_panel_id);
-            if let Some(pid) = pid_rebind {
-                // Rebind to the fresh auto-group's style store.  The desynced window
-                // is now independent; its DM must not share the old group's Arc.
+            let new_auto_bid = self.panel_app.tag_manager.create_group_auto(
+                [0.0, 0.0, 0.0, 0.0], symbol, timeframe,
+            );
+            let _ = self.panel_app.tag_manager.attach_chart_to_bubble(chart_id, new_auto_bid);
+            if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
+                window.auto_bubble_id = new_auto_bid;
+                window.current_bubble_id = new_auto_bid;
+            }
+            if let Some(pid) = pid_desync {
                 if let Some(style_arc) = self.panel_app.tag_manager
-                    .bubble(new_group_id)
+                    .bubble(new_auto_bid)
                     .map(|g| g.last_used_style.clone())
                 {
                     if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
@@ -207,19 +260,6 @@ impl ChartApp {
                     }
                 }
             }
-            // BubbleStore reverse index updated by attach_chart_to_bubble above.
-            // Move restored primitives from drawing_manager into the new group.
-            let dm_prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
-                self.panel_app.panel_grid.container_for_leaf(leaf_id)
-                    .and_then(|w| self.panels_store.chart_panel.get(&w.chart_panel_id))
-                    .map(|panel| panel.drawing_manager.primitives().iter().map(|p| p.clone_box()).collect())
-                    .unwrap_or_default();
-            if !dm_prims.is_empty() {
-                if let Some(g) = self.panel_app.tag_manager.bubble_mut(new_group_id) {
-                    g.primitives = dm_prims;
-                }
-            }
-            eprintln!("[BubbleStore] Desync: created new auto group {:?} for desynced window", new_group_id);
         }
 
         // 5. Recalculate sub-panes so indicator panels stay in sync.
@@ -282,7 +322,7 @@ impl ChartApp {
 
             if is_new_group {
                 // NEW GROUP: seed tag with window's current state.
-                // Stash window's own primitives, copy them to group seed.
+                // Auto-bubble holds home drawings (no explicit stash needed).
                 // Pre-render sync will fill drawing_manager from group each frame.
 
                 // Seed group.scale_mode from the creating window's current mode so the
@@ -294,73 +334,79 @@ impl ChartApp {
                     group.scale_mode = mode;
                 }
 
-                let stashed_history = if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(joining_leaf) {
-                    // Stash window's own primitives (for restore on desync).
-                    let own_prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
+                // Get auto_bubble_id before taking mutable window borrow.
+                let auto_bid = self.panel_app.panel_grid
+                    .containers()
+                    .get(&chart_id)
+                    .map(|w| w.auto_bubble_id);
+
+                // Stash command_history and pre_tag_ids into auto_bubble.
+                // Replace window.command_history with a fresh one so group ops are independent.
+                if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(joining_leaf) {
+                    let old_history = std::mem::replace(
+                        &mut window.command_history,
+                        zengeld_chart::CommandHistory::new(250),
+                    );
+                    if let Some(bid) = auto_bid {
+                        if let Some(auto_bub) = self.panel_app.tag_manager.bubble_mut(bid) {
+                            auto_bub.command_history = old_history;
+                            auto_bub.pre_tag_indicator_ids = pre_tag_ids.clone();
+                        }
+                    }
+                    // Update current_bubble_id to the new color group.
+                    window.current_bubble_id = group_id;
+                }
+
+                // Seed group.primitives from auto_bubble.primitives (clone + re-ID).
+                // auto_bubble.primitives already holds the chart's home drawings.
+                let (prim_symbol, prim_exchange, prim_account_type) = {
+                    let sym = self.panel_app.tag_manager.symbol_for_chart(chart_id)
+                        .map(String::from)
+                        .unwrap_or_default();
+                    let exch = self.panel_app.tag_manager.exchange_for_chart(chart_id)
+                        .map(String::from)
+                        .unwrap_or_default();
+                    let at = self.panel_app.tag_manager.account_type_for_chart(chart_id)
+                        .map(String::from)
+                        .unwrap_or_else(|| "S".to_string());
+                    (sym, exch, at)
+                };
+                let source_prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
+                    if let Some(bid) = auto_bid {
+                        self.panel_app.tag_manager.bubble(bid)
+                            .map(|bub| bub.primitives.iter().map(|p| p.clone_box()).collect())
+                            .unwrap_or_default()
+                    } else {
+                        // Fallback: read from drawing_manager if no valid auto_bubble.
                         pid_join.and_then(|pid| self.panels_store.chart_panel.get(&pid))
                             .map(|panel| panel.drawing_manager.primitives().iter()
                                 .filter(|p| p.data().origin_id.is_none())
                                 .map(|p| p.clone_box())
                                 .collect())
-                            .unwrap_or_default();
-                    crate::stash::stash_primitives(
-                        &mut self.stashed_primitives, chart_id, own_prims,
-                    );
-                    // Stash window's command history — shared ops will go to group history.
-                    Some(std::mem::replace(
-                        &mut window.command_history,
-                        zengeld_chart::CommandHistory::new(250),
-                    ))
-                } else {
-                    None
-                };
-                if let Some(h) = stashed_history {
-                    self.stashed_command_history_by_chart.insert(chart_id, h);
-                } else {
-                    self.stashed_command_history_by_chart.remove(&chart_id);
-                }
-
-                // B1 S2.7.1d: read prim key from branch_meta for seed primitives.
-                let (prim_symbol, prim_exchange, prim_account_type) = {
-                    let cid = self.panel_app.panel_grid.container_id_for_leaf(joining_leaf);
-                    let sym = cid.and_then(|c| self.panel_app.tag_manager.symbol_for_chart(c))
-                        .map(String::from)
-                        .unwrap_or_default();
-                    let exch = cid.and_then(|c| self.panel_app.tag_manager.exchange_for_chart(c))
-                        .map(String::from)
-                        .unwrap_or_default();
-                    let at = cid.and_then(|c| self.panel_app.tag_manager.account_type_for_chart(c))
-                        .map(String::from)
-                        .unwrap_or_else(|| "S".to_string());
-                    (sym, exch, at)
-                };
-                let mut source_prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
-                    crate::stash::clone_stashed_primitives(&self.stashed_primitives, chart_id);
-                for p in &mut source_prims {
+                            .unwrap_or_default()
+                    };
+                let mut group_prims = source_prims;
+                for p in &mut group_prims {
                     let d = p.data_mut();
                     d.symbol = prim_symbol.clone();
                     d.exchange = prim_exchange.clone();
                     d.account_type = prim_account_type.clone();
-                }
-                // Re-ID the group copies so they are globally unique.
-                // The stash retains the original IDs for restoration on leave.
-                for p in &mut source_prims {
-                    p.data_mut().id = zengeld_chart::drawing::alloc_primitive_id();
+                    // Re-ID group copies so they are globally unique; auto_bubble keeps originals.
+                    d.id = zengeld_chart::drawing::alloc_primitive_id();
                 }
                 if let Some(group) = self.panel_app.tag_manager.bubble_mut(group_id) {
-                    group.primitives = source_prims;
+                    group.primitives = group_prims;
                 }
 
-                // B1 S2.7.1d: read indicator seed key from branch_meta.
+                // Seed indicator configs from the creating window's indicators.
                 let (seed_symbol, seed_exchange, seed_account_type) = {
-                    let cid = self.panel_app.panel_grid.container_id_for_leaf(joining_leaf);
-                    let sym = cid.and_then(|c| self.panel_app.tag_manager.symbol_for_chart(c))
+                    let sym = self.panel_app.tag_manager.symbol_for_chart(chart_id)
                         .map(String::from)
                         .unwrap_or_default();
-                    let exch = cid.and_then(|c| self.panel_app.tag_manager.exchange_for_chart(c))
+                    let exch = self.panel_app.tag_manager.exchange_for_chart(chart_id)
                         .map(String::from)
                         .unwrap_or_default();
-                    let at = cid.and_then(|c| self.panel_app.tag_manager.account_type_for_chart(c))
+                    let at = self.panel_app.tag_manager.account_type_for_chart(chart_id)
                         .map(String::from)
                         .unwrap_or_else(|| "S".to_string());
                     (sym, exch, at)
@@ -390,12 +436,11 @@ impl ChartApp {
                     );
                     group.indicator_configs = configs;
                 }
-                self.pre_tag_ids_by_chart.insert(chart_id, pre_tag_ids);
                 return;
             }
 
-            // EXISTING GROUP: stash window's own primitives and hide its indicators.
-            // The window switches to showing tag content only.
+            // EXISTING GROUP: auto_bubble holds home drawings (no explicit stash needed).
+            // Clear drawing_manager; per-frame sync will fill it from group each frame.
 
             // When sync_viewport is ON for this group, stash the window's current
             // scale mode and apply the group mode. F (Focus) implies a pinned viewport,
@@ -424,39 +469,37 @@ impl ChartApp {
                 }
             }
 
-            // Stash primitives: move window's own primitives into stashed_primitives.
-            let stashed_history_existing = if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(joining_leaf) {
-                let own_prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
-                    pid_join.and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                        .map(|panel| panel.drawing_manager.primitives().iter()
-                            .filter(|p| p.data().origin_id.is_none())
-                            .map(|p| p.clone_box())
-                            .collect())
-                        .unwrap_or_default();
-                let stash_count = own_prims.len();
-                crate::stash::stash_primitives(
-                    &mut self.stashed_primitives, chart_id, own_prims,
-                );
-                if let Some(pid) = pid_join {
-                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                        panel.drawing_manager.clear_all_primitives();
-                    }
+            // Clear drawing_manager; group prims arrive via per-frame sync.
+            if let Some(pid) = pid_join {
+                if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
+                    panel.drawing_manager.clear_all_primitives();
                 }
-                // Stash window's command history — shared ops will go to group history.
+            }
+
+            // Get auto_bubble_id before taking mutable window borrow.
+            let auto_bid_existing = self.panel_app.panel_grid
+                .containers()
+                .get(&chart_id)
+                .map(|w| w.auto_bubble_id);
+
+            // Stash command_history and pre_tag_ids into auto_bubble.
+            if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(joining_leaf) {
                 let old_history = std::mem::replace(
                     &mut window.command_history,
                     zengeld_chart::CommandHistory::new(250),
                 );
-                eprintln!("[BubbleStore] Stashed {} window primitives before joining existing group", stash_count);
-                Some(old_history)
-            } else {
-                None
-            };
-            self.pre_tag_ids_by_chart.insert(chart_id, pre_tag_ids.clone());
-            if let Some(h) = stashed_history_existing {
-                self.stashed_command_history_by_chart.insert(chart_id, h);
-            } else {
-                self.stashed_command_history_by_chart.remove(&chart_id);
+                if let Some(bid) = auto_bid_existing {
+                    if let Some(auto_bub) = self.panel_app.tag_manager.bubble_mut(bid) {
+                        auto_bub.command_history = old_history;
+                        auto_bub.pre_tag_indicator_ids = pre_tag_ids.clone();
+                        eprintln!(
+                            "[BubbleStore] Stashed command_history and {} pre_tag_ids into auto-bubble {:?}",
+                            pre_tag_ids.len(), bid
+                        );
+                    }
+                }
+                // Update current_bubble_id to the existing color group.
+                window.current_bubble_id = group_id;
             }
 
             // Hide pre-tag indicators by setting visible=false.
@@ -472,7 +515,7 @@ impl ChartApp {
             self.sync_group_indicators_to_new_members(group_id, &leaf_chart_ids);
             self.sync_sub_panes_from_manager();
             self.sidebar_data_dirty = true;
-            eprintln!("[BubbleStore] Join existing group: stashed own state, synced tag content");
+            eprintln!("[BubbleStore] Join existing group: cleared window drawings, synced tag content");
         }
 
         // Dead fallback removed — TagManager handles all sync join logic above.
@@ -493,6 +536,40 @@ impl ChartApp {
             .and_then(|lid| self.panel_app.panel_grid.container_id_for_leaf(lid));
 
         let new_leaves = self.panel_app.panel_grid.split_active(kind);
+
+        // Assign fresh auto-bubbles for any split-produced charts that still carry
+        // the BubbleId(0) sentinel (clone_for_split_shell sets the sentinel so
+        // do_split is the designated fix-up site).
+        {
+            let needs_auto: Vec<zengeld_chart::state::ChartId> = new_leaves
+                .iter()
+                .filter_map(|&lid| self.panel_app.panel_grid.container_id_for_leaf(lid))
+                .filter(|&cid| {
+                    self.panel_app.panel_grid.containers()
+                        .get(&cid)
+                        .map(|w| w.auto_bubble_id == zengeld_chart::tag_manager::BubbleId(0))
+                        .unwrap_or(false)
+                })
+                .collect();
+            for cid in needs_auto {
+                let sym = self.panel_app.tag_manager.symbol_for_chart(cid)
+                    .map(String::from)
+                    .unwrap_or_default();
+                let tf = self.panel_app.tag_manager.timeframe_for_chart(cid)
+                    .cloned()
+                    .unwrap_or_else(zengeld_chart::state::Timeframe::h1);
+                let auto_bid = self.panel_app.tag_manager.create_group_auto(
+                    [0.0, 0.0, 0.0, 0.0], sym, tf,
+                );
+                if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&cid) {
+                    window.auto_bubble_id = auto_bid;
+                    window.current_bubble_id = auto_bid;
+                }
+                let _ = self.panel_app.tag_manager.attach_chart_to_bubble(cid, auto_bid);
+                eprintln!("[BubbleStore] do_split: created auto-bubble {:?} for chart {:?}", auto_bid, cid);
+            }
+        }
+
         self.propagate_crosshair_after_split(&new_leaves);
 
         // Phase 4 B: seed branch_meta for every new leaf produced by the
@@ -692,8 +769,8 @@ impl ChartApp {
             }
             // BubbleStore reverse index updated by attach_chart_to_bubble loop above.
 
-            // For new groups: snapshot source window's current indicator and primitive ids as pre-tag.
-            // On desync, only items NOT in these lists will be removed.
+            // For new groups: snapshot source window's indicator ids and command_history
+            // into its auto_bubble so desync can restore them.
             if is_new_group {
                 if let Some(&(source_leaf, source_cid)) = leaf_chart_ids.first() {
                     let pre_tag_ids: Vec<u64> = self.indicator_manager
@@ -701,33 +778,30 @@ impl ChartApp {
                         .filter(|i| i.window_id == Some(source_cid.0) && i.origin_id.is_none())
                         .map(|i| i.id)
                         .collect();
-                    let source_pid = self.panel_app.panel_grid.container_for_leaf(source_leaf).map(|w| w.chart_panel_id);
-                    let stashed_history_source = if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(source_leaf) {
-                        // Stash source window's primitives for restore on desync.
-                        let own_prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
-                            source_pid.and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                                .map(|panel| panel.drawing_manager.primitives().iter()
-                                    .filter(|p| p.data().origin_id.is_none())
-                                    .map(|p| p.clone_box())
-                                    .collect())
-                                .unwrap_or_default();
-                        crate::stash::stash_primitives(
-                            &mut self.stashed_primitives, source_cid, own_prims,
-                        );
-                        // Stash source window's command history for restore on desync.
-                        Some(std::mem::replace(
+
+                    // Read auto_bubble_id before taking mutable window borrow.
+                    let source_auto_bid = self.panel_app.panel_grid
+                        .containers()
+                        .get(&source_cid)
+                        .map(|w| w.auto_bubble_id);
+
+                    if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(source_leaf) {
+                        // Stash command_history into auto_bubble; window gets a fresh one.
+                        let old_history = std::mem::replace(
                             &mut window.command_history,
                             zengeld_chart::CommandHistory::new(250),
-                        ))
-                    } else {
-                        None
-                    };
-                    self.pre_tag_ids_by_chart.insert(source_cid, pre_tag_ids);
-                    if let Some(h) = stashed_history_source {
-                        self.stashed_command_history_by_chart.insert(source_cid, h);
-                    } else {
-                        self.stashed_command_history_by_chart.remove(&source_cid);
+                        );
+                        if let Some(bid) = source_auto_bid {
+                            if let Some(auto_bub) = self.panel_app.tag_manager.bubble_mut(bid) {
+                                auto_bub.command_history = old_history;
+                                auto_bub.pre_tag_indicator_ids = pre_tag_ids;
+                            }
+                        }
+                        // Update current_bubble_id to the new group.
+                        window.current_bubble_id = group_id;
                     }
+                    // auto_bubble.primitives already holds the source's home drawings —
+                    // no explicit stash needed.
                 }
             }
             eprintln!(

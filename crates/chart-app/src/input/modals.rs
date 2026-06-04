@@ -619,17 +619,18 @@ impl ChartApp {
         for id in &existing_ids {
             self.indicator_manager.remove_instance(*id);
         }
-        // Clear orphan pre_tag_indicator_ids for every window so the Object Tree
-        // does not show phantom items after a bulk indicator replace.
+        // Clear orphan pre_tag_indicator_ids from auto_bubble for every window so the
+        // Object Tree does not show phantom items after a bulk indicator replace.
         {
-            let chart_ids: Vec<zengeld_chart::state::ChartId> = self.panel_app.panel_grid
+            let auto_bids: Vec<zengeld_chart::tag_manager::BubbleId> = self.panel_app.panel_grid
                 .containers()
-                .keys()
-                .copied()
+                .values()
+                .map(|w| w.auto_bubble_id)
+                .filter(|&bid| bid != zengeld_chart::tag_manager::BubbleId(0))
                 .collect();
-            for cid in chart_ids {
-                if let Some(v) = self.pre_tag_ids_by_chart.get_mut(&cid) {
-                    v.retain(|iid| !existing_ids.contains(iid));
+            for bid in auto_bids {
+                if let Some(auto_bub) = self.panel_app.tag_manager.bubble_mut(bid) {
+                    auto_bub.pre_tag_indicator_ids.retain(|iid| !existing_ids.contains(iid));
                 }
             }
         }
@@ -1044,14 +1045,18 @@ impl ChartApp {
                                         // window only. Record it in pre_tag_indicator_ids so that
                                         // if the window is later desynced (untagged), the desync
                                         // logic does NOT treat it as a group indicator and delete it.
-                                        // sync_indicators is OFF — record in branch_meta pre_tag_ids.
+                                        // sync_indicators is OFF — record in auto_bubble.pre_tag_indicator_ids.
                                         if let Some(cid) = active_container_id {
-                                            self.pre_tag_ids_by_chart
-                                                .entry(cid)
-                                                .or_default()
-                                                .push(new_id);
+                                            let auto_bid = self.panel_app.panel_grid.containers()
+                                                .get(&cid)
+                                                .map(|w| w.auto_bubble_id);
+                                            if let Some(bid) = auto_bid {
+                                                if let Some(auto_bub) = self.panel_app.tag_manager.bubble_mut(bid) {
+                                                    auto_bub.pre_tag_indicator_ids.push(new_id);
+                                                }
+                                            }
                                             eprintln!(
-                                                "[BubbleStore] sync_indicators=off: recorded id={} in pre_tag_indicator_ids for leaf {:?}",
+                                                "[BubbleStore] sync_indicators=off: recorded id={} in auto_bubble.pre_tag_indicator_ids for leaf {:?}",
                                                 new_id, active_leaf
                                             );
                                         }

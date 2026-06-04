@@ -15,6 +15,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::tag_manager::BubbleId;
 use crate::{Bar, Viewport, PriceScale, TimeScale};
 use crate::chart::types::price_scale::ScaleMode;
 use crate::state::Timeframe;
@@ -137,6 +138,22 @@ pub struct ChartContainer {
     /// Phase 4 S2.6 canvas-state migration. Allocated fresh on every
     /// construction (including `clone_for_split`).
     pub chart_panel_id: crate::state::chart_container_leaf::ChartPanelId,
+
+    /// Permanent home bubble for this chart, created at chart birth and never
+    /// changed.  Holds home-state primitives and command history while the
+    /// chart is in a color-tag sync group.
+    ///
+    /// `BubbleId(0)` is a construction-time sentinel only.  Every code path
+    /// that uses a `ChartContainer` must ensure this has been set to a real
+    /// bubble before the container is active.
+    pub auto_bubble_id: BubbleId,
+
+    /// The bubble this chart currently displays.  Equal to `auto_bubble_id`
+    /// when ungrouped; flipped to the color-tag bubble on sync join; flipped
+    /// back to `auto_bubble_id` on desync.
+    ///
+    /// `BubbleId(0)` is a construction-time sentinel (same as `auto_bubble_id`).
+    pub current_bubble_id: BubbleId,
 
     // === Data ===
     /// OHLC bars for this chart
@@ -350,6 +367,10 @@ impl ChartContainer {
         Self {
             id,
             chart_panel_id: panel_id,
+            // Sentinel — caller must set auto_bubble_id / current_bubble_id
+            // immediately after construction via post-construction mutation.
+            auto_bubble_id: BubbleId(0),
+            current_bubble_id: BubbleId(0),
             bars: Vec::new(),
             viewport: Viewport::default(),
             price_scale: PriceScale::default(),
@@ -581,6 +602,10 @@ impl ChartContainer {
             id: new_chart_id,
             // Fresh canvas-leaf id for the split; the source's stays put.
             chart_panel_id: new_panel_id,
+            // Sentinel — do_split must detect BubbleId(0) and create a fresh
+            // auto-bubble for every chart that clone_for_split produces.
+            auto_bubble_id: BubbleId(0),
+            current_bubble_id: BubbleId(0),
 
             // === Data (cloned) ===
             bars: self.bars.clone(),
@@ -849,6 +874,10 @@ impl ChartContainer {
         Self {
             id: new_chart_id,
             chart_panel_id: new_panel_id,
+            // Sentinel — do_split must detect BubbleId(0) and create a fresh
+            // auto-bubble for every chart that clone_for_split_shell produces.
+            auto_bubble_id: BubbleId(0),
+            current_bubble_id: BubbleId(0),
 
             bars: self.bars.clone(),
             viewport: self.viewport.clone(),

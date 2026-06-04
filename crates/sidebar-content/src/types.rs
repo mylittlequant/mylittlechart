@@ -16,8 +16,8 @@ pub enum MemoryKind {
     /// Default / unknown (guards against old serialised data).
     #[default]
     None,
-    /// Stashed pre-tag drawings: primitives that were on this window before
-    /// it joined a sync group.  Stored in `window.stashed_primitives`.
+    /// Home drawings: primitives that were on this window before it joined a
+    /// sync group.  Stored in the chart's permanent `auto_bubble.primitives`.
     WindowStash,
     /// Drawings or indicators on other symbol keys for an untagged window.
     /// Source: `window.drawing_manager` or `window.indicator_manager` where

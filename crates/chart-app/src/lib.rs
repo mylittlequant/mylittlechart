@@ -15,7 +15,6 @@
 //! ```
 
 pub mod agent;
-pub mod stash;
 pub mod chart_panel_bridge;
 pub mod chart_panel_state;
 pub mod chart_state;
@@ -696,23 +695,6 @@ pub struct ChartApp {
     /// Per-leaf chart geometry for split mode, keyed by LeafId. Same lifecycle.
     pub(crate) frame_layouts: std::collections::HashMap<zengeld_chart::LeafId, zengeld_chart::ExtendedFrameLayout>,
 
-    /// Per-chart stash of drawing primitives saved at sync-group join time.
-    /// Keyed by ChartId.  Populated on join; consumed on desync.
-    pub stashed_primitives: std::collections::HashMap<
-        zengeld_chart::state::ChartId,
-        Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>>,
-    >,
-
-    /// Per-chart indicator id list snapshotted before the chart joined a sync group.
-    /// Used to restore indicator membership on desync.
-    pub pre_tag_ids_by_chart: std::collections::HashMap<zengeld_chart::state::ChartId, Vec<u64>>,
-
-    /// Per-chart command history stashed at sync-group join time.
-    /// Restored on desync so window-local undo survives a join/leave cycle.
-    pub stashed_command_history_by_chart: std::collections::HashMap<
-        zengeld_chart::state::ChartId,
-        zengeld_chart::state::CommandHistory,
-    >,
 }
 
 /// An action that mutates the app-level watchlist.
@@ -1074,9 +1056,6 @@ impl ChartApp {
             ).ok(),
             active_frame_layout: None,
             frame_layouts: std::collections::HashMap::new(),
-            stashed_primitives: std::collections::HashMap::new(),
-            pre_tag_ids_by_chart: std::collections::HashMap::new(),
-            stashed_command_history_by_chart: std::collections::HashMap::new(),
         };
 
         if let Some(tm) = &app.trading_manager {
@@ -1191,12 +1170,32 @@ impl ChartApp {
                     .set_current_symbol_key("BTCUSDT", &exchange_name, "S");
             }
             if let Some(chart_id) = active_chart_id {
-                if let Some(bid) = app.panel_app.tag_manager.bubble_for_chart(chart_id) {
-                    if let Some(bubble) = app.panel_app.tag_manager.bubble_mut(bid) {
-                        bubble.symbol = "BTCUSDT".to_string();
-                        bubble.timeframe = zengeld_chart::state::Timeframe::new("1H", 60);
-                        bubble.exchange = exchange_name.clone();
-                        bubble.account_type = "S".to_string();
+                // Create auto-bubble for the initial chart and assign instrument.
+                let auto_bid = app.panel_app.tag_manager.create_group_auto(
+                    [0.0, 0.0, 0.0, 0.0],
+                    "BTCUSDT".to_string(),
+                    zengeld_chart::state::Timeframe::new("1H", 60),
+                );
+                let _ = app.panel_app.tag_manager.attach_chart_to_bubble(chart_id, auto_bid);
+                if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
+                    window.auto_bubble_id = auto_bid;
+                    window.current_bubble_id = auto_bid;
+                }
+                if let Some(bubble) = app.panel_app.tag_manager.bubble_mut(auto_bid) {
+                    bubble.symbol = "BTCUSDT".to_string();
+                    bubble.timeframe = zengeld_chart::state::Timeframe::new("1H", 60);
+                    bubble.exchange = exchange_name.clone();
+                    bubble.account_type = "S".to_string();
+                }
+                // Bind drawing manager style store to auto-bubble's shared Arc.
+                if let Some(pid) = active_pid_init {
+                    if let Some(style_arc) = app.panel_app.tag_manager
+                        .bubble(auto_bid)
+                        .map(|g| g.last_used_style.clone())
+                    {
+                        if let Some(panel) = app.panels_store.chart_panel.get_mut(&pid) {
+                            panel.drawing_manager.bind_style_store(style_arc);
+                        }
                     }
                 }
             }
@@ -1399,9 +1398,6 @@ impl ChartApp {
             trading_manager: None,
             active_frame_layout: None,
             frame_layouts: std::collections::HashMap::new(),
-            stashed_primitives: std::collections::HashMap::new(),
-            pre_tag_ids_by_chart: std::collections::HashMap::new(),
-            stashed_command_history_by_chart: std::collections::HashMap::new(),
         };
 
         app.sidebar_state.watchlist_manager = sidebar_content::watchlist::WatchlistManager::new(
@@ -1433,14 +1429,32 @@ impl ChartApp {
             crate::chart_panel_bridge::drawing_manager_for_panel_mut(&mut app.panels_store, pid)
                 .set_current_symbol_key("BTCUSDT", &exchange_name, "S");
         }
-        // Phase 1.2: seed branch_meta + bubble for the freshly-default chart.
+        // Create auto-bubble for the initial chart and assign instrument.
         if let Some(chart_id) = active_chart_id {
-            if let Some(bid) = app.panel_app.tag_manager.bubble_for_chart(chart_id) {
-                if let Some(bubble) = app.panel_app.tag_manager.bubble_mut(bid) {
-                    bubble.symbol = "BTCUSDT".to_string();
-                    bubble.timeframe = zengeld_chart::state::Timeframe::new("1H", 60);
-                    bubble.exchange = exchange_name.clone();
-                    bubble.account_type = "S".to_string();
+            let auto_bid = app.panel_app.tag_manager.create_group_auto(
+                [0.0, 0.0, 0.0, 0.0],
+                "BTCUSDT".to_string(),
+                zengeld_chart::state::Timeframe::new("1H", 60),
+            );
+            let _ = app.panel_app.tag_manager.attach_chart_to_bubble(chart_id, auto_bid);
+            if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
+                window.auto_bubble_id = auto_bid;
+                window.current_bubble_id = auto_bid;
+            }
+            if let Some(bubble) = app.panel_app.tag_manager.bubble_mut(auto_bid) {
+                bubble.symbol = "BTCUSDT".to_string();
+                bubble.timeframe = zengeld_chart::state::Timeframe::new("1H", 60);
+                bubble.exchange = exchange_name.clone();
+                bubble.account_type = "S".to_string();
+            }
+            if let Some(pid) = active_pid_init2 {
+                if let Some(style_arc) = app.panel_app.tag_manager
+                    .bubble(auto_bid)
+                    .map(|g| g.last_used_style.clone())
+                {
+                    if let Some(panel) = app.panels_store.chart_panel.get_mut(&pid) {
+                        panel.drawing_manager.bind_style_store(style_arc);
+                    }
                 }
             }
         }
@@ -1627,9 +1641,6 @@ impl ChartApp {
             trading_manager: None,
             active_frame_layout: None,
             frame_layouts: std::collections::HashMap::new(),
-            stashed_primitives: std::collections::HashMap::new(),
-            pre_tag_ids_by_chart: std::collections::HashMap::new(),
-            stashed_command_history_by_chart: std::collections::HashMap::new(),
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_user_state below.
@@ -1823,14 +1834,32 @@ impl ChartApp {
                     crate::chart_panel_bridge::drawing_manager_for_panel_mut(&mut app.panels_store, pid)
                         .set_current_symbol_key("BTCUSDT", &exchange_name, "S");
                 }
-                // Phase 1.2: seed branch_meta + bubble for the freshly-default chart.
+                // Create auto-bubble for the initial chart and assign instrument.
                 if let Some(chart_id) = active_chart_id {
-                    if let Some(bid) = app.panel_app.tag_manager.bubble_for_chart(chart_id) {
-                        if let Some(bubble) = app.panel_app.tag_manager.bubble_mut(bid) {
-                            bubble.symbol = "BTCUSDT".to_string();
-                            bubble.timeframe = zengeld_chart::state::Timeframe::new("1H", 60);
-                            bubble.exchange = exchange_name.clone();
-                            bubble.account_type = "S".to_string();
+                    let auto_bid = app.panel_app.tag_manager.create_group_auto(
+                        [0.0, 0.0, 0.0, 0.0],
+                        "BTCUSDT".to_string(),
+                        zengeld_chart::state::Timeframe::new("1H", 60),
+                    );
+                    let _ = app.panel_app.tag_manager.attach_chart_to_bubble(chart_id, auto_bid);
+                    if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
+                        window.auto_bubble_id = auto_bid;
+                        window.current_bubble_id = auto_bid;
+                    }
+                    if let Some(bubble) = app.panel_app.tag_manager.bubble_mut(auto_bid) {
+                        bubble.symbol = "BTCUSDT".to_string();
+                        bubble.timeframe = zengeld_chart::state::Timeframe::new("1H", 60);
+                        bubble.exchange = exchange_name.clone();
+                        bubble.account_type = "S".to_string();
+                    }
+                    if let Some(pid) = active_pid_init3 {
+                        if let Some(style_arc) = app.panel_app.tag_manager
+                            .bubble(auto_bid)
+                            .map(|g| g.last_used_style.clone())
+                        {
+                            if let Some(panel) = app.panels_store.chart_panel.get_mut(&pid) {
+                                panel.drawing_manager.bind_style_store(style_arc);
+                            }
                         }
                     }
                 }
