@@ -357,6 +357,26 @@ pub fn mirror_stashed_command_history(
     }
 }
 
+/// Read the stashed command history for a chart.
+pub fn read_stashed_command_history(
+    branch_meta: &std::collections::HashMap<BranchId, BranchMeta>,
+    chart_id: ChartId,
+) -> Option<&CommandHistory> {
+    branch_meta
+        .get(&branch_key_for_chart(chart_id))
+        .and_then(|m| m.stashed_command_history.as_ref())
+}
+
+/// Take (drain) the stashed command history for a chart.
+pub fn take_stashed_command_history(
+    branch_meta: &mut std::collections::HashMap<BranchId, BranchMeta>,
+    chart_id: ChartId,
+) -> Option<CommandHistory> {
+    branch_meta
+        .get_mut(&branch_key_for_chart(chart_id))
+        .and_then(|m| m.stashed_command_history.take())
+}
+
 /// Store an owned vec of stashed primitives for `chart_id`. Replaces any
 /// existing stash. `Box<dyn Primitive>` has no Clone — callers must pass
 /// ownership (typically built via `iter().map(|p| p.clone_box()).collect()`

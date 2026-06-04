@@ -8595,7 +8595,8 @@ impl ChartApp {
                 let ptids = crate::branch_meta_bridge::read_pre_tag_ids(&self.branch_meta, chart_id)
                     .cloned()
                     .unwrap_or_default();
-                preset.windows.push(ChartWindowSnapshot::from_window(window, leaf_id.0, gid, ptids));
+                let stashed_ch = crate::branch_meta_bridge::read_stashed_command_history(&self.branch_meta, chart_id).cloned();
+                preset.windows.push(ChartWindowSnapshot::from_window(window, leaf_id.0, gid, ptids, stashed_ch));
             }
         }
 

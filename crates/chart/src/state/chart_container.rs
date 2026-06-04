@@ -251,11 +251,6 @@ pub struct ChartContainer {
     /// Stashed primitives: window's own primitives hidden when joining an existing tag.
     /// Restored on desync. Empty for new-tag creation (seed flow) and split children.
     pub stashed_primitives: Vec<Box<dyn crate::drawing::primitives_v2::Primitive>>,
-    /// Stashed command history: the window's own `command_history` saved when the
-    /// window joins a sync group. While in a group, shared commands go into the
-    /// group's `command_history`; on desync the window-local history is restored.
-    pub stashed_command_history: Option<CommandHistory>,
-
     /// Per-symbol drawing cache. When the user switches symbols, the current
     /// drawings are snapshotted here keyed by the old symbol, and drawings
     /// for the new symbol are restored (if any).
@@ -385,7 +380,6 @@ impl ChartContainer {
             // Toolbar config (DEBUG: standalone mode with all 4 toolbars)
             toolbar_config: ToolbarConfig::standalone(),
             stashed_primitives: Vec::new(),
-            stashed_command_history: None,
             symbol_drawings: HashMap::new(),
             pending_symbol_load: false,
             needs_auto_scale_after_bars: false,
@@ -620,8 +614,6 @@ impl ChartContainer {
 
             // Split child has no pre-tag state — everything comes from the tag.
             stashed_primitives: Vec::new(),
-            // Split child starts with no stashed history.
-            stashed_command_history: None,
             // Split child does not inherit per-symbol drawing cache.
             symbol_drawings: HashMap::new(),
             // Split child has no pending viewport restore.

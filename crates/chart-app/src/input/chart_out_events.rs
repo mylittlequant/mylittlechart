@@ -661,9 +661,6 @@ impl ChartApp {
                                     if let Some(history) = &snap.command_history {
                                         window.command_history = history.clone();
                                     }
-                                    if let Some(stashed) = &snap.stashed_command_history {
-                                        window.stashed_command_history = Some(stashed.clone());
-                                    }
 
                                     // Restore stashed primitives (pre-tag drawings)
                                     window.stashed_primitives.clear();
@@ -890,9 +887,6 @@ impl ChartApp {
                                 // Restore command history
                                 if let Some(history) = &snap.command_history {
                                     window.command_history = history.clone();
-                                }
-                                if let Some(stashed) = &snap.stashed_command_history {
-                                    window.stashed_command_history = Some(stashed.clone());
                                 }
 
                                 // Restore stashed primitives (pre-tag drawings)
