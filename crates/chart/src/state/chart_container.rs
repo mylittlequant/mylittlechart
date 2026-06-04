@@ -22,16 +22,12 @@ use crate::{Crosshair, CrosshairOptions, KineticState, DragMode};
 use crate::{GridOptions, Legend, Watermark, Tooltip, PriceLine};
 use crate::drawing::DrawingManager;
 use crate::chart::{CompareOverlay, CompareSeries, get_compare_color};
-use crate::state::{SubPane, PaneManager, CommandHistory, Command};
+use crate::state::{SubPane, CommandHistory, Command};
 use crate::data_provider::{SharedDataProvider, NullDataProvider};
 use crate::scale_settings::ScaleSettings;
-use crate::indicator_source::{IndicatorSource, NullIndicatorSource};
 use crate::panel_app::{ChartToolbarState, ToolbarConfig};
 use crate::ui::modal_settings::SubPaneOverlayState;
 use crate::layout::SubPaneOverlayResult;
-use crate::layout::LayoutRect;
-use crate::chart::render::ChartRect;
-use crate::scale_settings::{PriceScalePosition, TimeScalePosition};
 use crate::state::inner_layout::InnerLayout;
 
 fn default_account_type_spot() -> String {
@@ -142,8 +138,6 @@ pub struct ChartContainer {
     /// Cached sub-pane overlay button rects from the last render frame.
     /// Used by hit tester to detect button clicks.
     pub sub_pane_overlay_results: Vec<SubPaneOverlayResult>,
-    /// Pane manager for layout
-    pub pane_manager: PaneManager,
     /// Total chart height including sub-panes
     pub total_chart_height: f64,
 
@@ -160,10 +154,6 @@ pub struct ChartContainer {
     pub account_type: String,
 
     // === Interaction State ===
-    /// Whether this window is active/focused
-    pub is_active: bool,
-    /// Active pane index: None = main chart, Some(n) = sub-pane n
-    pub active_pane_index: Option<usize>,
     /// Crosshair state (position, visibility)
     pub crosshair: Crosshair,
     /// Kinetic scrolling state
@@ -200,8 +190,6 @@ pub struct ChartContainer {
     // === Object Managers ===
     /// Drawing primitives (trend lines, rectangles, etc.)
     pub drawing_manager: DrawingManager,
-    /// Indicator data source (trait object - no direct IndicatorManager dependency)
-    pub indicator_source: Box<dyn IndicatorSource>,
     /// Horizontal price lines
     pub price_lines: HashMap<String, PriceLine>,
 
@@ -356,15 +344,12 @@ impl ChartContainer {
             sub_panes: Vec::new(),
             sub_pane_overlay_states: Vec::new(),
             sub_pane_overlay_results: Vec::new(),
-            pane_manager: PaneManager::new(),
             total_chart_height: 0.0,
             symbol: symbol.to_string(),
             timeframe,
             exchange: data_provider.exchange_name(symbol),
             account_type: default_account_type_spot(),
             // Interaction
-            is_active: false,
-            active_pane_index: None,
             crosshair: Crosshair::default(),
             kinetic: KineticState::new(),
             drag_mode: DragMode::None,
@@ -383,7 +368,6 @@ impl ChartContainer {
             tooltip: Tooltip::default(),
             // Object managers
             drawing_manager,
-            indicator_source: Box::new(NullIndicatorSource),
             price_lines: HashMap::new(),
             // Compare overlay (per-window)
             compare_overlay: CompareOverlay::new(),
@@ -582,7 +566,6 @@ impl ChartContainer {
             sub_pane_overlay_states: Vec::new(),
             // Overlay results are frame-local; the split child starts empty.
             sub_pane_overlay_results: Vec::new(),
-            pane_manager: self.pane_manager.clone(),
             total_chart_height: self.total_chart_height,
 
             // === Symbol & Timeframe (cloned) ===
@@ -592,8 +575,6 @@ impl ChartContainer {
             account_type: self.account_type.clone(),
 
             // === Interaction State (reset) ===
-            is_active: false,
-            active_pane_index: None,
             crosshair: {
                 let mut ch = self.crosshair;
                 ch.visible = false;
@@ -618,7 +599,6 @@ impl ChartContainer {
 
             // === Object Managers ===
             drawing_manager,
-            indicator_source: Box::new(NullIndicatorSource), // Fresh (no indicators copied)
             price_lines: self.price_lines.clone(),
 
             // === Compare Overlay (reset) ===
@@ -703,61 +683,6 @@ impl ChartContainer {
             legend.visible = false;
             legend
         }
-    }
-
-    /// Build the main chart rect for rendering within a window layout.
-    pub fn chart_rect_for_render(
-        &self,
-        chart_panel: &LayoutRect,
-        window_rect: &WindowRect,
-    ) -> ChartRect {
-        const SUB_PANE_HEIGHT: f64 = 100.0;
-        const SEPARATOR_HEIGHT: f64 = 1.0;
-
-        let sub_pane_count = self
-            .indicator_source
-            .get_instances_for_symbol(&self.symbol)
-            .into_iter()
-            .filter(|i| i.visible && i.pane_index > 0)
-            .count();
-
-        let sub_panes_height = if sub_pane_count > 0 {
-            (SUB_PANE_HEIGHT + SEPARATOR_HEIGHT) * sub_pane_count as f64
-        } else {
-            0.0
-        };
-
-        // Account for scale positions
-        let price_width = self.scale_settings.effective_price_scale_width();
-        let time_height = self.scale_settings.effective_time_scale_height();
-
-        let available_height = window_rect.height as f64 - time_height;
-        let min_main_chart = if sub_pane_count > 0 {
-            let reserved = (SEPARATOR_HEIGHT + 20.0) * sub_pane_count as f64;
-            (available_height - reserved).clamp(50.0, 200.0)
-        } else {
-            200.0_f64.min(available_height)
-        };
-        let main_chart_height = (available_height - sub_panes_height).max(min_main_chart);
-
-        let chart_x = match self.scale_settings.price_scale_position {
-            PriceScalePosition::Left => chart_panel.x + window_rect.x as f64 + price_width,
-            _ => chart_panel.x + window_rect.x as f64,
-        };
-
-        let chart_y = match self.scale_settings.time_scale_position {
-            TimeScalePosition::Top => chart_panel.y + window_rect.y as f64 + time_height,
-            _ => chart_panel.y + window_rect.y as f64,
-        };
-
-        let chart_width = window_rect.width as f64 - price_width;
-
-        ChartRect::new(
-            chart_x,
-            chart_y,
-            chart_width,
-            main_chart_height,
-        )
     }
 
     /// Calculate auto-scale for price axis based on visible data
@@ -909,54 +834,6 @@ impl ChartContainer {
         self.update_title();
     }
 
-    /// Synchronize sub_panes with indicator_source
-    ///
-    /// Creates/removes SubPane entries to match indicators with pane > 0.
-    /// Preserves existing Y-axis state for panes that still exist.
-    pub fn sync_sub_panes(&mut self) {
-        // Get all indicator instances that need sub-panes (pane > 0)
-        let sub_pane_indicators: Vec<u64> = self.indicator_source
-            .get_instances_for_symbol(&self.symbol)
-            .into_iter()
-            .filter(|i| i.visible && i.pane_index > 0)
-            .map(|i| i.id)
-            .collect();
-
-        // Get visible range for price calculation
-        let (visible_start, visible_end) = self.viewport.visible_range();
-        let visible_end = visible_end.min(self.bars.len());
-
-        // Build new sub_panes list, preserving existing state where possible
-        let mut new_sub_panes = Vec::with_capacity(sub_pane_indicators.len());
-
-        for (index, &instance_id) in sub_pane_indicators.iter().enumerate() {
-            // Try to find existing sub_pane with this instance_id — reuse it
-            // verbatim (existing SubPaneId stays stable across reconciliation
-            // passes; only `index` is refreshed).  We do NOT call `.clone()`
-            // here because the manual Clone impl on SubPane allocates a fresh
-            // SubPaneId — that would break stable identity for tab navigation
-            // / save-restore.  Move-by-take + push instead.
-            if let Some(pos) = self.sub_panes.iter().position(|p| p.instance_id == instance_id) {
-                let mut pane = self.sub_panes.remove(pos);
-                pane.index = index;
-                new_sub_panes.push(pane);
-            } else {
-                let mut pane = SubPane::new(instance_id);
-                pane.index = index;
-
-                // Initialize price_min/max from indicator data
-                if let Some((p_min, p_max)) = self.indicator_source.calculate_pane_range(instance_id, visible_start, visible_end) {
-                    pane.price_min = p_min;
-                    pane.price_max = p_max;
-                }
-
-                new_sub_panes.push(pane);
-            }
-        }
-
-        self.sub_panes = new_sub_panes;
-    }
-
     /// Get sub_pane by index (if exists)
     pub fn get_sub_pane(&self, index: usize) -> Option<&SubPane> {
         self.sub_panes.get(index)
@@ -975,50 +852,6 @@ impl ChartContainer {
     /// Get mutable sub_pane by instance_id (if exists)
     pub fn get_sub_pane_by_instance_mut(&mut self, instance_id: u64) -> Option<&mut SubPane> {
         self.sub_panes.iter_mut().find(|p| p.instance_id == instance_id)
-    }
-
-    /// Update sub-pane price ranges for auto-scaling panes.
-    ///
-    /// Applies the same symmetrization (for `HistogramStyle::Centered`) and 5% padding
-    /// that `render_sub_pane` uses, so that stored values always match what render
-    /// would display. This prevents range jumps when switching between auto and manual
-    /// scale modes (A↔M).
-    pub fn update_sub_pane_ranges(&mut self) {
-        let (visible_start, visible_end) = self.viewport.visible_range();
-        let visible_end = visible_end.min(self.bars.len());
-
-        for sub_pane in &mut self.sub_panes {
-            if sub_pane.auto_scale {
-                if let Some((mut p_min, mut p_max)) = self.indicator_source.calculate_pane_range(
-                    sub_pane.instance_id,
-                    visible_start,
-                    visible_end,
-                ) {
-                    // Mirror render_sub_pane: symmetrize centered histograms around zero.
-                    if let Some(instance) =
-                        self.indicator_source.get_render_instance(sub_pane.instance_id)
-                    {
-                        if instance.histogram_style
-                            == crate::indicator_source::HistogramStyle::Centered
-                        {
-                            let max_abs = p_min.abs().max(p_max.abs());
-                            if max_abs > 0.0 {
-                                p_min = -max_abs;
-                                p_max = max_abs;
-                            }
-                        }
-                    }
-
-                    // Mirror render_sub_pane: add 5% padding so bars never touch edges.
-                    let padding = (p_max - p_min) * 0.05;
-                    p_min -= padding;
-                    p_max += padding;
-
-                    sub_pane.price_min = p_min;
-                    sub_pane.price_max = p_max;
-                }
-            }
-        }
     }
 
     /// Get bar count
