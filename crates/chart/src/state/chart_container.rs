@@ -248,10 +248,6 @@ pub struct ChartContainer {
     /// their full rect is available as chart content.
     pub toolbar_config: ToolbarConfig,
 
-    // === Previous Close ===
-    /// Previous session close price (for prev close line)
-    pub prev_close_price: Option<f64>,
-
     /// Sync group this window belongs to (set by TagManager during split/join/desync).
     pub group_id: Option<crate::tag_manager::SyncGroupId>,
 
@@ -395,8 +391,6 @@ impl ChartContainer {
             chart_toolbar: ChartToolbarState::default(),
             // Toolbar config (DEBUG: standalone mode with all 4 toolbars)
             toolbar_config: ToolbarConfig::standalone(),
-            // Previous close
-            prev_close_price: None,
             // Sync group (not yet assigned)
             group_id: None,
             pre_tag_indicator_ids: Vec::new(),
@@ -634,9 +628,6 @@ impl ChartContainer {
             // === Toolbar Config (sub-windows have no toolbar — parent owns it) ===
             toolbar_config: ToolbarConfig::minimal(),
 
-            // === Previous Close ===
-            prev_close_price: self.prev_close_price,
-
             // === Sync Group (NOT inherited — do_split assigns the correct group) ===
             group_id: None,
             // Split child has no pre-tag state — everything comes from the tag.
@@ -705,14 +696,7 @@ impl ChartContainer {
     pub fn set_bars(&mut self, bars: Vec<Bar>) {
         self.bars = bars;
 
-        // Calculate prev_close (use first bar's open as proxy for previous session close)
-        if !self.bars.is_empty() {
-            self.prev_close_price = Some(self.bars[0].open);
-        } else {
-            self.prev_close_price = None;
-        }
-
-        // Update prev close line if enabled
+        // Update prev close line if enabled (derives prev_close from bars[0].open)
         self.update_prev_close_line();
 
         // Update bar count so the viewport knows how many bars exist.
@@ -742,11 +726,6 @@ impl ChartContainer {
     pub fn update_bars(&mut self, bars: Vec<Bar>) {
         self.bars = bars;
 
-        if !self.bars.is_empty() {
-            self.prev_close_price = Some(self.bars[0].open);
-        } else {
-            self.prev_close_price = None;
-        }
         self.update_prev_close_line();
 
         self.viewport.bar_count = self.bars.len();
@@ -1384,7 +1363,8 @@ impl ChartContainer {
         self.price_lines.remove("prev_close");
 
         if self.scale_settings.show_prev_close_line {
-            if let Some(prev_close) = self.prev_close_price {
+            // Phase 4 A — derive from bars[0].open instead of cached field.
+            if let Some(prev_close) = self.bars.first().map(|b| b.open) {
                 let line = PriceLine {
                     id: "prev_close".to_string(),
                     price: prev_close,

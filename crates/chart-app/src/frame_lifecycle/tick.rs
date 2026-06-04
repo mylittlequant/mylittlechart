@@ -271,9 +271,8 @@ impl ChartApp {
                             }
                             crate::dlog!("[BarsLoaded] after set_bars: view_start={} chart_width={} bar_spacing={}",
                                 window.viewport.view_start, window.viewport.chart_width, window.viewport.bar_spacing);
-                            // Phase 4 S2.3: capture freshly-derived prev_close_price
-                            // for branch_meta mirror after the panel_grid borrow drops.
-                            prev_close_mirrors.push((*chart_id_key, window.prev_close_price));
+                            // Phase 4 A: prev_close_price now derived in branch_meta from window.bars.
+                            prev_close_mirrors.push((*chart_id_key, window.bars.first().map(|b| b.open)));
                         }
                     }
                     // Phase 4 S2.3 dual-write: mirror prev_close_price into branch_meta.
@@ -363,7 +362,7 @@ impl ChartApp {
                         if window.price_scale.scale_mode.is_auto_y() {
                             window.calc_auto_scale();
                         }
-                        prev_close_mirrors.push((*chart_id_key, window.prev_close_price));
+                        prev_close_mirrors.push((*chart_id_key, window.bars.first().map(|b| b.open)));
                     }
                     for (chart_id, prev_close) in prev_close_mirrors {
                         crate::branch_meta_bridge::mirror_prev_close_price(
@@ -435,7 +434,7 @@ impl ChartApp {
                         if window.price_scale.scale_mode.is_auto_y() {
                             window.calc_auto_scale();
                         }
-                        prev_close_mirrors.push((*chart_id_key, window.prev_close_price));
+                        prev_close_mirrors.push((*chart_id_key, window.bars.first().map(|b| b.open)));
                     }
                     for (chart_id, prev_close) in prev_close_mirrors {
                         crate::branch_meta_bridge::mirror_prev_close_price(
