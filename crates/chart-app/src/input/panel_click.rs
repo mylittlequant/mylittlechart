@@ -2561,28 +2561,17 @@ impl ChartApp {
 
                 // 2. Try stashed_primitives (WindowStash).
                 let active_chart_id = self.panel_app.panel_grid.active_container().map(|w| w.id);
-                let removed_from_stash = self.panel_app.panel_grid
-                    .active_container_mut()
-                    .map(|w| {
-                        let before = w.stashed_primitives.len();
-                        w.stashed_primitives.retain(|p| p.data().id != id);
-                        w.stashed_primitives.len() < before
-                    })
-                    .unwrap_or(false);
+                let removed_from_stash = if let Some(cid) = active_chart_id {
+                    crate::branch_meta_bridge::retain_stashed_primitives(
+                        &mut self.stashed_primitives,
+                        cid,
+                        |p| p.data().id != id,
+                    )
+                } else {
+                    false
+                };
 
                 if removed_from_stash {
-                    // Phase 4 S2.4 dual-write: re-mirror stash after retain.
-                    if let Some(cid) = active_chart_id {
-                        let prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
-                            self.panel_app.panel_grid.active_container()
-                                .map(|w| w.stashed_primitives.iter().map(|p| p.clone_box()).collect())
-                                .unwrap_or_default();
-                        crate::branch_meta_bridge::stash_primitives(
-                            &mut self.stashed_primitives,
-                            cid,
-                            prims,
-                        );
-                    }
                     self.autosave_snapshot();
                     self.sidebar_data_dirty = true;
                     eprintln!("[Sidebar] Drawing deleted from stashed_primitives: {}", id);

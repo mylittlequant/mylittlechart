@@ -8596,7 +8596,13 @@ impl ChartApp {
                     .cloned()
                     .unwrap_or_default();
                 let stashed_ch = crate::branch_meta_bridge::read_stashed_command_history(&self.branch_meta, chart_id).cloned();
-                preset.windows.push(ChartWindowSnapshot::from_window(window, leaf_id.0, gid, ptids, stashed_ch));
+                let stashed_prims_snap: Vec<zengeld_chart::preset::snapshots::PrimitiveSnapshot> =
+                    crate::branch_meta_bridge::read_stashed_primitives(&self.stashed_primitives, chart_id)
+                        .map(|v| v.iter()
+                            .map(|p| zengeld_chart::preset::snapshots::PrimitiveSnapshot::from_primitive(p.as_ref()))
+                            .collect())
+                        .unwrap_or_default();
+                preset.windows.push(ChartWindowSnapshot::from_window(window, leaf_id.0, gid, ptids, stashed_ch, stashed_prims_snap));
             }
         }
 

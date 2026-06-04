@@ -344,8 +344,11 @@ impl ChartApp {
                 // while also needing indicator_manager (which is not behind the same ref).
                 // Stashed primitives are always shown regardless of sync_drawings state —
                 // they represent objects that were on the window before joining the tag group.
-                let stashed_prim_data: Vec<_> = self.panel_app.panel_grid.active_container()
-                    .map(|w| w.stashed_primitives.iter()
+                let stashed_prim_data: Vec<_> = active_cid
+                    .and_then(|cid| crate::branch_meta_bridge::read_stashed_primitives(
+                        &self.stashed_primitives, cid,
+                    ))
+                    .map(|v| v.iter()
                         .map(|p| {
                             let data = p.data();
                             let kind = p.kind();

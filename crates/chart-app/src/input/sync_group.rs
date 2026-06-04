@@ -79,8 +79,8 @@ impl ChartApp {
             .unwrap_or_default();
         // Has stashed primitives? (window joined an existing tag)
         let has_stash = self.panel_app.panel_grid
-            .container_for_leaf(leaf_id)
-            .is_some_and(|w| !w.stashed_primitives.is_empty());
+            .container_id_for_leaf(leaf_id)
+            .is_some_and(|cid| crate::branch_meta_bridge::has_stashed_primitives(&self.stashed_primitives, cid));
 
         // 1b. Disconnect from TagManager group.
         if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
@@ -105,8 +105,9 @@ impl ChartApp {
 
                     // Restore stashed primitives (window's own, hidden on join).
                     if has_stash {
-                        let restored: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
-                            std::mem::take(&mut window.stashed_primitives);
+                        let restored = crate::branch_meta_bridge::take_stashed_primitives(
+                            &mut self.stashed_primitives, chart_id,
+                        ).unwrap_or_default();
                         let count = restored.len();
                         window.drawing_manager.add_synced_primitives(restored);
                         eprintln!("[TagManager] Desync: restored {} stashed primitives", count);
@@ -116,7 +117,6 @@ impl ChartApp {
                 } else {
                     window.drawing_manager.purge_synced_primitives();
                 }
-                window.stashed_primitives.clear();
                 // Restore the window-local command history stashed at join time.
                 if let Some(stashed) = crate::branch_meta_bridge::take_stashed_command_history(&mut self.branch_meta, chart_id) {
                     window.command_history = stashed;
@@ -295,7 +295,9 @@ impl ChartApp {
                             .filter(|p| p.data().origin_id.is_none())
                             .map(|p| p.clone_box())
                             .collect();
-                    window.stashed_primitives = own_prims;
+                    crate::branch_meta_bridge::stash_primitives(
+                        &mut self.stashed_primitives, chart_id, own_prims,
+                    );
                     // Stash window's command history — shared ops will go to group history.
                     Some(std::mem::replace(
                         &mut window.command_history,
@@ -324,13 +326,7 @@ impl ChartApp {
                     (sym, exch, at)
                 };
                 let mut source_prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
-                    self.panel_app.panel_grid.container_for_leaf(joining_leaf)
-                        .map(|w| {
-                            w.stashed_primitives.iter()
-                                .map(|p| p.clone_box())
-                                .collect()
-                        })
-                        .unwrap_or_default();
+                    crate::branch_meta_bridge::clone_stashed_primitives(&self.stashed_primitives, chart_id);
                 for p in &mut source_prims {
                     let d = p.data_mut();
                     d.symbol = prim_symbol.clone();
@@ -390,15 +386,9 @@ impl ChartApp {
                 }
                 // Phase 4 S2.3 dual-write: mirror new group_id (new group path).
                 crate::branch_meta_bridge::mirror_group_id(&mut self.branch_meta, chart_id, Some(group_id));
-                // Phase 4 S2.4 dual-write: pre_tag_ids, stashed_primitives, stashed_command_history.
+                // Phase 4 S2.4 dual-write: pre_tag_ids, stashed_command_history.
+                // stashed_primitives already written above via stash_primitives().
                 crate::branch_meta_bridge::mirror_pre_tag_ids(&mut self.branch_meta, chart_id, pre_tag_ids);
-                {
-                    let prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
-                        self.panel_app.panel_grid.container_for_leaf(joining_leaf)
-                            .map(|w| w.stashed_primitives.iter().map(|p| p.clone_box()).collect())
-                            .unwrap_or_default();
-                    crate::branch_meta_bridge::stash_primitives(&mut self.stashed_primitives, chart_id, prims);
-                }
                 return;
             }
 
@@ -440,7 +430,9 @@ impl ChartApp {
                         .map(|p| p.clone_box())
                         .collect();
                 let stash_count = own_prims.len();
-                window.stashed_primitives = own_prims;
+                crate::branch_meta_bridge::stash_primitives(
+                    &mut self.stashed_primitives, chart_id, own_prims,
+                );
                 window.drawing_manager.clear_all_primitives();
                 // Stash window's command history — shared ops will go to group history.
                 let old_history = std::mem::replace(
@@ -454,15 +446,9 @@ impl ChartApp {
             };
             // Phase 4 S2.3 dual-write: mirror new group_id (existing group path).
             crate::branch_meta_bridge::mirror_group_id(&mut self.branch_meta, chart_id, Some(group_id));
-            // Phase 4 S2.4 dual-write: pre_tag_ids, stashed_primitives, stashed_command_history.
+            // Phase 4 S2.4 dual-write: pre_tag_ids, stashed_command_history.
+            // stashed_primitives already written above via stash_primitives().
             crate::branch_meta_bridge::mirror_pre_tag_ids(&mut self.branch_meta, chart_id, pre_tag_ids.clone());
-            {
-                let prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
-                    self.panel_app.panel_grid.container_for_leaf(joining_leaf)
-                        .map(|w| w.stashed_primitives.iter().map(|p| p.clone_box()).collect())
-                        .unwrap_or_default();
-                crate::branch_meta_bridge::stash_primitives(&mut self.stashed_primitives, chart_id, prims);
-            }
             crate::branch_meta_bridge::mirror_stashed_command_history(&mut self.branch_meta, chart_id, stashed_history_existing);
 
             // Hide pre-tag indicators by setting visible=false.
@@ -713,7 +699,9 @@ impl ChartApp {
                                 .filter(|p| p.data().origin_id.is_none())
                                 .map(|p| p.clone_box())
                                 .collect();
-                        window.stashed_primitives = own_prims;
+                        crate::branch_meta_bridge::stash_primitives(
+                            &mut self.stashed_primitives, source_cid, own_prims,
+                        );
                         // Stash source window's command history for restore on desync.
                         Some(std::mem::replace(
                             &mut window.command_history,
@@ -723,14 +711,8 @@ impl ChartApp {
                         None
                     };
                     // Phase 4 S2.4 dual-write: mirror split new-group source state.
+                    // stashed_primitives already written above via stash_primitives().
                     crate::branch_meta_bridge::mirror_pre_tag_ids(&mut self.branch_meta, source_cid, pre_tag_ids);
-                    {
-                        let prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
-                            self.panel_app.panel_grid.container_for_leaf(source_leaf)
-                                .map(|w| w.stashed_primitives.iter().map(|p| p.clone_box()).collect())
-                                .unwrap_or_default();
-                        crate::branch_meta_bridge::stash_primitives(&mut self.stashed_primitives, source_cid, prims);
-                    }
                     crate::branch_meta_bridge::mirror_stashed_command_history(&mut self.branch_meta, source_cid, stashed_history_source);
                 }
             }

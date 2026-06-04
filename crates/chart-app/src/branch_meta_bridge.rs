@@ -408,6 +408,82 @@ pub fn clear_stashed_primitives(
     stashed_primitives.remove(&branch_key_for_chart(chart_id));
 }
 
+/// Returns `true` if there are any stashed primitives for `chart_id`.
+pub fn has_stashed_primitives(
+    stashed_primitives: &std::collections::HashMap<BranchId, Vec<Box<dyn Primitive>>>,
+    chart_id: ChartId,
+) -> bool {
+    stashed_primitives
+        .get(&branch_key_for_chart(chart_id))
+        .map_or(false, |v| !v.is_empty())
+}
+
+/// Read-only view of the stashed primitives slice for `chart_id`.
+pub fn read_stashed_primitives(
+    stashed_primitives: &std::collections::HashMap<BranchId, Vec<Box<dyn Primitive>>>,
+    chart_id: ChartId,
+) -> Option<&Vec<Box<dyn Primitive>>> {
+    stashed_primitives.get(&branch_key_for_chart(chart_id))
+}
+
+/// Mutable reference to the stashed primitives vec for `chart_id`.
+pub fn stashed_primitives_mut(
+    stashed_primitives: &mut std::collections::HashMap<BranchId, Vec<Box<dyn Primitive>>>,
+    chart_id: ChartId,
+) -> Option<&mut Vec<Box<dyn Primitive>>> {
+    stashed_primitives.get_mut(&branch_key_for_chart(chart_id))
+}
+
+/// Append a single primitive. Lazy-inserts the entry if missing.
+pub fn push_stashed_primitive(
+    stashed_primitives: &mut std::collections::HashMap<BranchId, Vec<Box<dyn Primitive>>>,
+    chart_id: ChartId,
+    prim: Box<dyn Primitive>,
+) {
+    stashed_primitives
+        .entry(branch_key_for_chart(chart_id))
+        .or_default()
+        .push(prim);
+}
+
+/// Extend with multiple primitives. Lazy-inserts the entry if missing.
+pub fn extend_stashed_primitives(
+    stashed_primitives: &mut std::collections::HashMap<BranchId, Vec<Box<dyn Primitive>>>,
+    chart_id: ChartId,
+    prims: impl IntoIterator<Item = Box<dyn Primitive>>,
+) {
+    stashed_primitives
+        .entry(branch_key_for_chart(chart_id))
+        .or_default()
+        .extend(prims);
+}
+
+/// Retain primitives by predicate. Returns `true` if any were removed.
+pub fn retain_stashed_primitives(
+    stashed_primitives: &mut std::collections::HashMap<BranchId, Vec<Box<dyn Primitive>>>,
+    chart_id: ChartId,
+    pred: impl FnMut(&Box<dyn Primitive>) -> bool,
+) -> bool {
+    if let Some(v) = stashed_primitives.get_mut(&branch_key_for_chart(chart_id)) {
+        let before = v.len();
+        v.retain(pred);
+        v.len() < before
+    } else {
+        false
+    }
+}
+
+/// Clone all stashed primitives via `Primitive::clone_box`.
+pub fn clone_stashed_primitives(
+    stashed_primitives: &std::collections::HashMap<BranchId, Vec<Box<dyn Primitive>>>,
+    chart_id: ChartId,
+) -> Vec<Box<dyn Primitive>> {
+    stashed_primitives
+        .get(&branch_key_for_chart(chart_id))
+        .map(|v| v.iter().map(|p| p.clone_box()).collect())
+        .unwrap_or_default()
+}
+
 // =============================================================================
 // Group O (S2.5) — signal_manager / trade_manager / marker_manager
 // =============================================================================
