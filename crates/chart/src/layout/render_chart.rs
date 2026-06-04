@@ -43,7 +43,7 @@ use crate::chart::types::compare::CompareOverlay;
 use crate::drawing::{DrawingManager, draw_control_points};
 use crate::apply_opacity;
 use crate::scale_settings::ScaleSettings;
-use crate::state::SubPane;
+use crate::state::chart_container::SubPaneYState;
 use crate::ui::icons::Icon;
 use crate::ui::modal_settings::SubPaneOverlayState;
 use super::rects::{ChartAreaLayout, FrameLayout, LayoutRect, SubPaneLayout};
@@ -2901,8 +2901,8 @@ pub struct ChartPanelRenderData<'a> {
     pub indicator_source: Option<&'a dyn crate::indicator_source::IndicatorSource>,
     /// Symbol string used to filter indicators (optional)
     pub symbol: Option<&'a str>,
-    /// Per-sub-pane Y-axis states for manual zoom/pan (optional)
-    pub sub_panes: Option<&'a [SubPane]>,
+    /// Per-instance Y-axis state (price_min/max, auto_scale), keyed by instance_id.
+    pub sub_pane_y_state: Option<&'a std::collections::HashMap<u64, SubPaneYState>>,
     /// Symbol comparison overlay (optional)
     pub compare_overlay: Option<&'a CompareOverlay>,
     /// Watermark displayed behind chart content (optional)
@@ -3129,9 +3129,8 @@ pub fn render_full_chart_panel(
     let mut sub_pane_overlay_results: Vec<SubPaneOverlayResult> = Vec::new();
     if let Some(im) = data.indicator_source {
         for (pane_idx, pane_layout) in extended_layout.sub_panes.iter().enumerate() {
-            let sub_pane_state = data.sub_panes.and_then(|panes|
-                panes.iter().find(|p| p.instance_id == pane_layout.instance_id)
-            );
+            let sub_pane_state = data.sub_pane_y_state
+                .and_then(|m| m.get(&pane_layout.instance_id));
             let (auto_scale, price_min, price_max) = match sub_pane_state {
                 Some(sp) => (sp.auto_scale, sp.price_min, sp.price_max),
                 None => (true, 0.0, 100.0),
@@ -3158,17 +3157,16 @@ pub fn render_full_chart_panel(
             }
 
             // Render the overlay button bar for this sub-pane.
-            // Look up overlay state by the original sub_panes index (not filtered index).
-            let overlay_state_idx = data.sub_panes
-                .and_then(|panes| panes.iter().position(|p| p.instance_id == pane_layout.instance_id))
-                .unwrap_or(pane_idx);
+            // overlay_states are indexed in tree/layout order (same as pane_idx).
+            let overlay_state_idx = pane_idx;
             let overlay_state = data.sub_pane_overlay_states
                 .get(overlay_state_idx)
                 .cloned()
                 .unwrap_or_default();
             // is_hidden is always false here — hidden panes are filtered out of
             // sub_pane_ids via instance.visible check, so only visible panes render.
-            let is_maximized = sub_pane_state.is_some_and(|sp| sp.maximized);
+            // Maximized is deferred to S7; always false for now.
+            let is_maximized = false;
             let overlay_result = render_sub_pane_overlay(
                 ctx,
                 &pane_layout.content,
@@ -3408,7 +3406,7 @@ pub fn render_chart_splits(
             drawing_manager: Some(&panel.drawing_manager),
             indicator_source: None,
             symbol: None,
-            sub_panes: None,
+            sub_pane_y_state: None,
             compare_overlay: None,
             watermark: None,
             tooltip: None,
@@ -3424,8 +3422,8 @@ pub fn render_chart_splits(
             // render_full_chart_panel computes layout from the full rect.
             toolbar_config: &window.toolbar_config,
             is_split: true,
-            inner_proportions: &window.inner_layout.proportions,
-            inner_sub_instance_ids: &window.inner_layout.sub_instance_ids,
+            inner_proportions: &crate::state::chart_container::collect_inner_proportions(&window.inner_docking),
+            inner_sub_instance_ids: &crate::state::chart_container::collect_inner_instance_ids(&window.inner_docking),
         };
 
         // sub_pane_ranges writeback is not performed here because render_chart_splits

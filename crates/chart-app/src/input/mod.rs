@@ -415,11 +415,8 @@ impl ChartApp {
                                     window.calc_auto_scale();
                                 }
                                 let is_auto = next_mode.is_auto_y();
-                                for sp in &mut window.sub_panes {
-                                    // update_sub_pane_ranges() already bakes in symmetrization
-                                    // and 5% padding, so price_min/price_max already match
-                                    // what is displayed.  Just flip the flag.
-                                    sp.auto_scale = is_auto;
+                                for state in window.sub_pane_y_state.values_mut() {
+                                    state.auto_scale = is_auto;
                                 }
                             }
                             // Mutate group.scale_mode when sync_viewport is on so the
@@ -549,8 +546,9 @@ impl ChartApp {
             .unwrap_or_default();
         let (viewport, price_scale, sub_pane_ranges) = {
             if let Some(window) = self.panel_app.panel_grid.active_container() {
-                let ranges: Vec<(u64, f64, f64)> = window.sub_panes.iter()
-                    .map(|sp| (sp.instance_id, sp.price_min, sp.price_max))
+                let ranges: Vec<(u64, f64, f64)> = window.sub_pane_y_state
+                    .iter()
+                    .map(|(&iid, s)| (iid, s.price_min, s.price_max))
                     .collect();
                 (
                     window.viewport.clone(),
@@ -791,8 +789,11 @@ impl ChartApp {
         if let zengeld_chart::engine::input::HitResult::SubPanePriceScale { pane_index } = hit {
             use zengeld_chart::ScaleMode;
             if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                if let Some(sub_pane) = window.sub_panes.get_mut(pane_index) {
-                    sub_pane.auto_scale = true;
+                let instance_id = zengeld_chart::state::chart_container::collect_inner_instance_ids(
+                    &window.inner_docking,
+                ).into_iter().nth(pane_index);
+                if let Some(iid) = instance_id {
+                    window.sub_pane_y_state.entry(iid).or_default().auto_scale = true;
                 }
                 // Restore the main chart to Auto so the A/M button reflects the true state.
                 window.price_scale.scale_mode = ScaleMode::Auto;
@@ -2607,19 +2608,20 @@ impl ChartApp {
             // snapshotted at drag-start. content_h = main + all sub-panes +
             // separators -- the slice the inner stack actually owns.
             let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
-            let content_h: f64 = active_leaf
+            let (content_h, content_w): (f64, f64) = active_leaf
                 .and_then(|leaf| self.frame_layouts.get(&leaf))
                 .map(|ext| {
-                    ext.main_chart.chart.height
-                        + ext.sub_panes.iter().map(|p| p.content.height + p.separator.height).sum::<f64>()
+                    let h = ext.main_chart.chart.height
+                        + ext.sub_panes.iter().map(|p| p.content.height + p.separator.height).sum::<f64>();
+                    let w = ext.main_chart.chart.width;
+                    (h, w)
                 })
-                .unwrap_or(0.0);
+                .unwrap_or((0.0, 0.0));
             if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                let before = window.inner_layout.proportions.clone();
-                let ok = window.drag_sub_pane_separator(instance_id, dy, content_h);
+                let ok = window.drag_sub_pane_separator(instance_id, dy, content_h, content_w);
                 eprintln!(
-                    "[ChartApp] sub-pane sep DRAG id={} dy={:.1} content_h={:.0} ok={} props {:?} -> {:?}",
-                    instance_id, dy, content_h, ok, before, window.inner_layout.proportions
+                    "[ChartApp] sub-pane sep DRAG id={} dy={:.1} content_h={:.0} ok={}",
+                    instance_id, dy, content_h, ok
                 );
             }
             return;
@@ -4851,13 +4853,8 @@ impl ChartApp {
                         }
                         for (layout_idx, pane_layout) in extended.sub_panes.iter().enumerate() {
                             if pane_layout.content.contains(x, y) {
-                                // Find the real position in window.sub_panes by instance_id.
-                                // During maximized mode, extended.sub_panes has only 1 entry
-                                // but window.sub_panes may have the pane at a different index.
-                                let real_idx = window.sub_panes
-                                    .iter()
-                                    .position(|p| p.instance_id == pane_layout.instance_id)
-                                    .unwrap_or(layout_idx);
+                                // overlay_states are indexed in tree/layout order (same as layout_idx).
+                                let real_idx = layout_idx;
                                 while window.sub_pane_overlay_states.len() <= real_idx {
                                     window.sub_pane_overlay_states.push(Default::default());
                                 }
@@ -8257,17 +8254,18 @@ impl ChartApp {
             }
         };
 
-        // Both order and proportions from the container's InnerLayout
-        // (single source of truth), filtered by indicator_manager visibility.
+        // Both order and proportions from the container's inner_docking tree,
+        // filtered by indicator_manager visibility.
         let (sub_pane_ids, sub_proportions): (Vec<u64>, Vec<f64>) = self.panel_app.panel_grid
             .active_container()
             .map(|win| {
-                win.inner_layout
-                    .sub_instance_ids
-                    .iter()
-                    .zip(win.inner_layout.proportions.iter().skip(1))
-                    .filter(|(id, _)| visible_set.contains(id))
-                    .map(|(&id, &p)| (id, p))
+                use zengeld_chart::state::chart_container::{collect_inner_instance_ids, collect_inner_proportions};
+                let ids = collect_inner_instance_ids(&win.inner_docking);
+                let props = collect_inner_proportions(&win.inner_docking);
+                ids.iter()
+                    .enumerate()
+                    .filter(|(_, id)| visible_set.contains(id))
+                    .map(|(i, &id)| (id, props.get(i + 1).copied().unwrap_or(0.0)))
                     .unzip()
             })
             .unwrap_or_default();
@@ -8318,13 +8316,14 @@ impl ChartApp {
             }
         };
 
-        let (sub_pane_ids, sub_proportions): (Vec<u64>, Vec<f64>) = window
-            .inner_layout
-            .sub_instance_ids
+        use zengeld_chart::state::chart_container::{collect_inner_instance_ids, collect_inner_proportions};
+        let all_ids = collect_inner_instance_ids(&window.inner_docking);
+        let all_props = collect_inner_proportions(&window.inner_docking);
+        let (sub_pane_ids, sub_proportions): (Vec<u64>, Vec<f64>) = all_ids
             .iter()
-            .zip(window.inner_layout.proportions.iter().skip(1))
-            .filter(|(id, _)| visible_set.contains(id))
-            .map(|(&id, &p)| (id, p))
+            .enumerate()
+            .filter(|(_, id)| visible_set.contains(id))
+            .map(|(i, &id)| (id, all_props.get(i + 1).copied().unwrap_or(0.0)))
             .unzip();
         Some(ExtendedFrameLayout::from_proportions(
             leaf_rect,

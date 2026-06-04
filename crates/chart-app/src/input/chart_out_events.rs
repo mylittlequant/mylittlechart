@@ -1269,6 +1269,7 @@ impl ChartApp {
                     self.pending_sub_pane_ratios.clear();
                     self.pending_sub_pane_above_main.clear();
                     self.pending_sub_pane_order.clear();
+                    self.pending_sub_pane_hidden.clear();
                     for snap in &preset.windows {
                         if !snap.sub_pane_height_ratios.is_empty() {
                             self.pending_sub_pane_ratios
@@ -1281,6 +1282,10 @@ impl ChartApp {
                         if !snap.sub_pane_order.is_empty() {
                             self.pending_sub_pane_order
                                 .insert(snap.window_id, snap.sub_pane_order.clone());
+                        }
+                        if !snap.sub_pane_hidden.is_empty() {
+                            self.pending_sub_pane_hidden
+                                .insert(snap.window_id, snap.sub_pane_hidden.clone());
                         }
                     }
                     if !self.pending_sub_pane_ratios.is_empty() {

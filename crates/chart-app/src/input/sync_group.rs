@@ -135,8 +135,8 @@ impl ChartApp {
                 if let Some(prev_mode) = window.stashed_scale_mode.take() {
                     window.price_scale.scale_mode = prev_mode;
                     let is_auto = prev_mode.is_auto_y();
-                    for sp in &mut window.sub_panes {
-                        sp.auto_scale = is_auto;
+                    for state in window.sub_pane_y_state.values_mut() {
+                        state.auto_scale = is_auto;
                     }
                     if is_auto {
                         window.calc_auto_scale();
@@ -420,8 +420,8 @@ impl ChartApp {
                     }
                     window.price_scale.scale_mode = group_mode;
                     let is_auto = group_mode.is_auto_y();
-                    for sp in &mut window.sub_panes {
-                        sp.auto_scale = is_auto;
+                    for state in window.sub_pane_y_state.values_mut() {
+                        state.auto_scale = is_auto;
                     }
                     if is_auto {
                         window.calc_auto_scale();

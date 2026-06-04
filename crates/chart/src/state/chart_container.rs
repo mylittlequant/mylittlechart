@@ -22,14 +22,43 @@ use crate::{Crosshair, CrosshairOptions, KineticState, DragMode};
 use crate::{GridOptions, Legend, Watermark, PriceLine};
 use crate::state::chart_panel_state::ChartPanelState;
 use crate::chart::{CompareOverlay, CompareSeries, get_compare_color};
-use crate::state::{SubPane, CommandHistory, Command};
+use crate::state::{CommandHistory, Command};
 use crate::data_provider::{SharedDataProvider, NullDataProvider};
 use crate::scale_settings::ScaleSettings;
 use crate::panel_app::{ChartToolbarState, ToolbarConfig};
 use crate::ui::modal_settings::SubPaneOverlayState;
 use crate::layout::SubPaneOverlayResult;
-use crate::state::inner_layout::InnerLayout;
 
+/// Per-instance Y-axis state for indicator sub-panes.
+///
+/// Replaces the Y-axis fields that used to live on `SubPane`
+/// (`price_min`, `price_max`, `auto_scale`, drag start state).
+/// Keyed by `instance_id` in `ChartContainer.sub_pane_y_state`.
+#[derive(Clone, Debug)]
+pub struct SubPaneYState {
+    /// Current Y-axis bottom price.
+    pub price_min: f64,
+    /// Current Y-axis top price.
+    pub price_max: f64,
+    /// Whether auto-scale is enabled for this sub-pane.
+    pub auto_scale: bool,
+    /// Saved price_min at drag start (for y-axis drag operations).
+    pub drag_start_price_min: f64,
+    /// Saved price_max at drag start (for y-axis drag operations).
+    pub drag_start_price_max: f64,
+}
+
+impl Default for SubPaneYState {
+    fn default() -> Self {
+        Self {
+            price_min: 0.0,
+            price_max: 100.0,
+            auto_scale: true,
+            drag_start_price_min: 0.0,
+            drag_start_price_max: 0.0,
+        }
+    }
+}
 
 /// Unique identifier for a chart window
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -122,18 +151,18 @@ pub struct ChartContainer {
     pub time_scale: TimeScale,
 
     // === Sub-panes ===
-    /// Sub-panes for indicators
-    pub sub_panes: Vec<SubPane>,
+    /// Per-instance Y-axis state (price_min/max, auto_scale, drag start).
+    /// Keyed by indicator `instance_id`. Entry is absent until the sub-pane
+    /// is first rendered or manipulated.
+    pub sub_pane_y_state: HashMap<u64, SubPaneYState>,
     /// Per-sub-pane overlay button UI state (hover visibility, hovered button).
     ///
-    /// Indexed in the same order as `sub_panes`.  Grown on demand; missing
-    /// entries are treated as default (not visible).
+    /// Indexed in tree order of indicator leaves in `inner_docking`.
+    /// Grown on demand; missing entries are treated as default (not visible).
     pub sub_pane_overlay_states: Vec<SubPaneOverlayState>,
     /// Cached sub-pane overlay button rects from the last render frame.
     /// Used by hit tester to detect button clicks.
     pub sub_pane_overlay_results: Vec<SubPaneOverlayResult>,
-    /// Total chart height including sub-panes
-    pub total_chart_height: f64,
 
     // === Interaction State ===
     /// Crosshair state (position, visibility)
@@ -235,34 +264,99 @@ pub struct ChartContainer {
     /// so mode is tightly coupled to viewport sync state.
     pub stashed_scale_mode: Option<ScaleMode>,
 
-    /// 1D vertical stack layout for `[main_chart, sub_pane_1, sub_pane_2,
-    /// ...]`. Owns its own math -- no uzor docking tree, no nested
-    /// branches. Single source of truth for sub-pane heights and
-    /// separator drag. Renderer reads `inner_layout.heights(content_h)`;
-    /// drag handler calls `inner_layout.drag_separator(sep_idx, dy, h)`.
-    pub inner_layout: InnerLayout,
+    /// Inner uzor docking tree: [MainChart leaf, IndicatorPanel leaf, ...].
+    /// Single source of truth for sub-pane identity, proportions, and
+    /// separator drag. Replaces `inner_layout` (which is kept only during
+    /// the dual-write transition and deleted once all reads migrate here).
+    pub inner_docking: uzor::layout::DockState<crate::state::chart_container_leaf::ChartContainerLeaf>,
 }
 
 /// Default number of empty bars shown to the right of the last candle
 /// after a snap-to-end operation. Will be user-configurable in the future.
 pub const DEFAULT_SNAP_MARGIN: f64 = 5.0;
 
+/// Build a fresh `DockState<ChartContainerLeaf>` with a single `MainChart` leaf.
+///
+/// Used by every `ChartContainer` constructor. The main chart leaf's
+/// `chart_panel_id` matches `ChartContainer.chart_panel_id` so that lookups
+/// in `TradingPanelsStore.chart_panel` remain consistent.
+pub fn make_inner_docking_with_main_chart(
+    panel_id: crate::state::chart_container_leaf::ChartPanelId,
+) -> uzor::layout::DockState<crate::state::chart_container_leaf::ChartContainerLeaf> {
+    let mut ds = uzor::layout::DockState::new();
+    ds.tree_mut().add_leaf(
+        crate::state::chart_container_leaf::ChartContainerLeaf::MainChart { chart_panel_id: panel_id },
+    );
+    ds
+}
+
+/// Collect indicator `instance_id`s from an inner docking tree in tree order
+/// (skipping the root MainChart leaf at index 0).
+pub fn collect_inner_instance_ids(
+    inner_docking: &uzor::layout::DockState<crate::state::chart_container_leaf::ChartContainerLeaf>,
+) -> Vec<u64> {
+    inner_docking.tree().root().children
+        .iter()
+        .skip(1)
+        .filter_map(|node| {
+            if let uzor::panels::PanelNode::Leaf(leaf) = node {
+                if leaf.hidden {
+                    return None;
+                }
+                leaf.panels.first().and_then(|p| p.indicator_instance_id())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Collect indicator `instance_id`s for hidden sub-pane leaves.
+/// Used by `ChartWindowSnapshot::from_window` to capture the hidden set.
+pub fn collect_hidden_instance_ids(
+    inner_docking: &uzor::layout::DockState<crate::state::chart_container_leaf::ChartContainerLeaf>,
+) -> std::collections::HashSet<u64> {
+    inner_docking.tree().root().children
+        .iter()
+        .skip(1)
+        .filter_map(|node| {
+            if let uzor::panels::PanelNode::Leaf(leaf) = node {
+                if leaf.hidden {
+                    leaf.panels.first().and_then(|p| p.indicator_instance_id())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Collect proportions from an inner docking tree in parallel with
+/// `collect_inner_instance_ids`.  Index 0 = main chart share, [1..] = sub-panes.
+pub fn collect_inner_proportions(
+    inner_docking: &uzor::layout::DockState<crate::state::chart_container_leaf::ChartContainerLeaf>,
+) -> Vec<f64> {
+    inner_docking.tree().root().proportions.clone()
+}
+
 impl ChartContainer {
     /// Create a new chart window with a data provider.
     pub fn new_with_provider(_symbol: &str, _timeframe: Timeframe, data_provider: SharedDataProvider) -> Self {
         let id = generate_chart_id();
+        let panel_id = crate::state::chart_container_leaf::generate_chart_panel_id();
 
         Self {
             id,
-            chart_panel_id: crate::state::chart_container_leaf::generate_chart_panel_id(),
+            chart_panel_id: panel_id,
             bars: Vec::new(),
             viewport: Viewport::default(),
             price_scale: PriceScale::default(),
             time_scale: TimeScale::new(),
-            sub_panes: Vec::new(),
+            sub_pane_y_state: HashMap::new(),
             sub_pane_overlay_states: Vec::new(),
             sub_pane_overlay_results: Vec::new(),
-            total_chart_height: 0.0,
             // Interaction
             crosshair: Crosshair::default(),
             kinetic: KineticState::new(),
@@ -295,7 +389,7 @@ impl ChartContainer {
             stashed_scale_mode: None,
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
-            inner_layout: InnerLayout::new(),
+            inner_docking: make_inner_docking_with_main_chart(panel_id),
         }
     }
 
@@ -312,51 +406,55 @@ impl ChartContainer {
     }
 
     // =========================================================================
-    // Inner-layout helpers — thin wrappers over `InnerLayout` (1D math).
+    // Inner-docking helpers.
     // =========================================================================
 
-    /// Reconcile the inner-layout sub-pane list against the canonical
-    /// `sub_panes` Vec. Adds missing ids, removes vanished ids, preserves
-    /// existing shares.
-    pub fn sync_inner_layout_from_sub_panes(&mut self) {
-        let want_ids: Vec<u64> = self.sub_panes.iter().map(|p| p.instance_id).collect();
-        self.inner_layout.sync_with(&want_ids);
+    /// Return the separator index in `inner_docking.separators()` for the
+    /// separator that sits above the `IndicatorPanel` leaf with `instance_id`.
+    ///
+    /// The separators list is only valid after `inner_docking.layout(...)` has
+    /// been called. The caller must ensure layout is fresh before calling this.
+    fn sep_index_for_instance(&self, instance_id: u64) -> Option<usize> {
+        // Walk inner_docking leaves to find the leaf_id for this instance_id.
+        let target_leaf_id = self.inner_docking.tree().leaves().iter()
+            .find(|leaf| {
+                leaf.panels.first()
+                    .and_then(|p| p.indicator_instance_id())
+                    == Some(instance_id)
+            })
+            .map(|leaf| leaf.id)?;
+
+        // Walk separators to find the one whose child_b is this leaf's raw id.
+        self.inner_docking.separators().iter().position(|sep| {
+            sep.child_b() == Some(target_leaf_id.0)
+        })
     }
 
-    /// Seed inner-layout proportions from `(instance_id -> ratio)` map.
-    /// Used on preset restore where legacy `sub_pane_height_ratios` lives.
-    pub fn seed_inner_proportions_from_sub_pane_ratios(&mut self) {
-        if self.sub_panes.is_empty() {
-            return;
-        }
-        let want_ids: Vec<u64> = self.sub_panes.iter().map(|p| p.instance_id).collect();
-        let ratios: std::collections::HashMap<u64, f32> = self
-            .sub_panes
-            .iter()
-            .map(|p| (p.instance_id, p.height_ratio))
-            .collect();
-        self.inner_layout.seed_from_ratios(&want_ids, &ratios);
-    }
-
-    /// Apply a sub-pane separator drag through the inner 1D layout. The
-    /// separator above sub-pane `instance_id` is the one between root child
-    /// K and K+1 where K = sub_index + 1 (since index 0 is the main chart).
+    /// Apply a sub-pane separator drag through the uzor inner docking tree.
     /// `delta_y` is per-event pixels (positive = drag down).
+    /// `content_w` / `content_h` are the pixel dimensions of the container's
+    /// content area (excluding toolbars and time scale).
     pub fn drag_sub_pane_separator(
         &mut self,
         instance_id: u64,
         delta_y: f64,
-        content_height: f64,
+        content_h: f64,
+        content_w: f64,
     ) -> bool {
-        let sub_idx = match self.inner_layout.sub_index(instance_id) {
+        // Ensure separators list is fresh before looking up sep_idx.
+        self.inner_docking.layout(uzor::panels::PanelRect::new(
+            0.0, 0.0, content_w as f32, content_h as f32,
+        ));
+        let sep_idx = match self.sep_index_for_instance(instance_id) {
             Some(i) => i,
             None => return false,
         };
-        // The separator above sub-pane `sub_idx` is separator index `sub_idx`
-        // (separator 0 = between main and sub_0, separator 1 = between
-        // sub_0 and sub_1, ...).
-        self.inner_layout
-            .drag_separator(sub_idx, delta_y, content_height)
+        self.inner_docking.drag_separator(
+            sep_idx,
+            delta_y as f32,
+            content_w as f32,
+            content_h as f32,
+        )
     }
 
     /// Snapshot current drawings into the per-symbol cache for the given symbol.
@@ -492,15 +590,13 @@ impl ChartContainer {
             price_scale: self.price_scale.clone(),
             time_scale: self.time_scale.clone(),
 
-            // === Sub-panes (cloned) ===
-            // Clone sub_panes so the new window has correct layout immediately.
-            // sync_sub_panes_from_manager will reconcile instance IDs on the next tick.
-            sub_panes: self.sub_panes.clone(),
+            // === Sub-panes ===
+            // Y-state not inherited — sync_sub_panes_from_manager seeds it on next tick.
+            sub_pane_y_state: HashMap::new(),
             // Overlay state is not inherited — the split child starts with no hover state.
             sub_pane_overlay_states: Vec::new(),
             // Overlay results are frame-local; the split child starts empty.
             sub_pane_overlay_results: Vec::new(),
-            total_chart_height: self.total_chart_height,
 
             // === Interaction State (reset) ===
             crosshair: {
@@ -553,7 +649,9 @@ impl ChartContainer {
             // Split child has no in-flight scroll fetch.
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
-            inner_layout: InnerLayout::new(),
+            // Clone starts with only MainChart leaf; sync_sub_panes_from_manager
+            // re-adds indicator leaves on the next tick.
+            inner_docking: make_inner_docking_with_main_chart(new_panel_id),
         };
         (new_container, new_panel)
     }
@@ -643,26 +741,6 @@ impl ChartContainer {
         if self.price_scale.scale_mode.is_auto_y() {
             self.calc_auto_scale();
         }
-    }
-
-    /// Get sub_pane by index (if exists)
-    pub fn get_sub_pane(&self, index: usize) -> Option<&SubPane> {
-        self.sub_panes.get(index)
-    }
-
-    /// Get mutable sub_pane by index (if exists)
-    pub fn get_sub_pane_mut(&mut self, index: usize) -> Option<&mut SubPane> {
-        self.sub_panes.get_mut(index)
-    }
-
-    /// Get sub_pane by instance_id (if exists)
-    pub fn get_sub_pane_by_instance(&self, instance_id: u64) -> Option<&SubPane> {
-        self.sub_panes.iter().find(|p| p.instance_id == instance_id)
-    }
-
-    /// Get mutable sub_pane by instance_id (if exists)
-    pub fn get_sub_pane_by_instance_mut(&mut self, instance_id: u64) -> Option<&mut SubPane> {
-        self.sub_panes.iter_mut().find(|p| p.instance_id == instance_id)
     }
 
     /// Get bar count
@@ -777,10 +855,9 @@ impl ChartContainer {
             price_scale: self.price_scale.clone(),
             time_scale: self.time_scale.clone(),
 
-            sub_panes: self.sub_panes.clone(),
+            sub_pane_y_state: HashMap::new(),
             sub_pane_overlay_states: Vec::new(),
             sub_pane_overlay_results: Vec::new(),
-            total_chart_height: self.total_chart_height,
 
             crosshair: {
                 let mut ch = self.crosshair;
@@ -813,7 +890,7 @@ impl ChartContainer {
             stashed_scale_mode: None,
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
-            inner_layout: InnerLayout::new(),
+            inner_docking: make_inner_docking_with_main_chart(new_panel_id),
         }
     }
 
@@ -900,11 +977,10 @@ impl ChartContainer {
                         let local_x = global_x - sub_pane_layout.content.x;
                         let local_y = global_y - sub_pane_layout.content.y;
                         let pane_height = sub_pane_layout.content.height;
-                        let (price_min, price_max) = if let Some(sub_pane) = self.sub_panes.get(pane_idx) {
-                            (sub_pane.price_min, sub_pane.price_max)
-                        } else {
-                            (0.0, 100.0)
-                        };
+                        let (price_min, price_max) = self.sub_pane_y_state
+                            .get(&sub_pane_layout.instance_id)
+                            .map(|s| (s.price_min, s.price_max))
+                            .unwrap_or((0.0, 100.0));
                         self.update_crosshair_internal(
                             local_x, local_y, pane_height, price_min, price_max,
                             Some(pane_idx), main_chart.chart.width, true,
@@ -938,11 +1014,10 @@ impl ChartContainer {
                 let local_x = global_x - sub_pane_layout.content.x;
                 let local_y = global_y - sub_pane_layout.content.y;
                 let pane_height = sub_pane_layout.content.height;
-                let (price_min, price_max) = if let Some(sub_pane) = self.sub_panes.get(idx) {
-                    (sub_pane.price_min, sub_pane.price_max)
-                } else {
-                    (0.0, 100.0)
-                };
+                let (price_min, price_max) = self.sub_pane_y_state
+                    .get(&sub_pane_layout.instance_id)
+                    .map(|s| (s.price_min, s.price_max))
+                    .unwrap_or((0.0, 100.0));
                 self.update_crosshair_internal(
                     local_x, local_y, pane_height, price_min, price_max,
                     Some(idx), main_chart.chart.width, false,
@@ -1099,12 +1174,21 @@ impl ChartContainer {
                 self.crosshair.snapped_price = price;
             }
             Some(idx) => {
-                // Sub-pane — use sub-pane's price_min/price_max
-                if let Some(sub_pane) = self.sub_panes.get(idx) {
-                    let pane_height = sub_pane.height as f64;
-                    let range = sub_pane.price_max - sub_pane.price_min;
-                    let y = if range > 0.0 {
-                        pane_height * (1.0 - (price - sub_pane.price_min) / range)
+                // Sub-pane — look up via tree-order instance_id.
+                let iid = collect_inner_instance_ids(&self.inner_docking)
+                    .into_iter()
+                    .nth(idx);
+                if let Some(instance_id) = iid {
+                    let (price_min, price_max) = self.sub_pane_y_state
+                        .get(&instance_id)
+                        .map(|s| (s.price_min, s.price_max))
+                        .unwrap_or((0.0, 100.0));
+                    // Use viewport.chart_height as a proxy — height is corrected
+                    // on the next render frame once geometry is recomputed.
+                    let pane_height = self.viewport.chart_height;
+                    let range = price_max - price_min;
+                    let y = if range > 0.0 && pane_height > 0.0 {
+                        pane_height * (1.0 - (price - price_min) / range)
                     } else {
                         pane_height / 2.0
                     };

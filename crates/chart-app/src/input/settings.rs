@@ -407,11 +407,8 @@ impl ChartApp {
                                 w.calc_auto_scale();
                             }
                             let is_auto = next.is_auto_y();
-                            for sp in &mut w.sub_panes {
-                                // update_sub_pane_ranges() already bakes in symmetrization
-                                // and 5% padding, so price_min/price_max already match
-                                // what is displayed.  Just flip the flag.
-                                sp.auto_scale = is_auto;
+                            for state in w.sub_pane_y_state.values_mut() {
+                                state.auto_scale = is_auto;
                             }
                             eprintln!("[ChartApp] scales:auto_scale -> {:?}", next);
                         }

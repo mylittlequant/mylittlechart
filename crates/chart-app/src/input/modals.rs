@@ -1135,11 +1135,8 @@ impl ChartApp {
                             window.calc_auto_scale();
                         }
                         let is_auto = next_mode.is_auto_y();
-                        for sp in &mut window.sub_panes {
-                            // update_sub_pane_ranges() already bakes in symmetrization
-                            // and 5% padding, so price_min/price_max already match
-                            // what is displayed.  Just flip the flag.
-                            sp.auto_scale = is_auto;
+                        for state in window.sub_pane_y_state.values_mut() {
+                            state.auto_scale = is_auto;
                         }
                     }
                     // Mutate group.scale_mode when sync_viewport is on so the group
@@ -1198,9 +1195,13 @@ impl ChartApp {
                     .unwrap_or(0);
                 if instance_id == 0 { return; }
 
-                // Find the real index in window.sub_panes by instance_id.
+                // Find the tree-order index for this instance_id.
                 let real_index = self.panel_app.panel_grid.active_container()
-                    .and_then(|w| w.sub_panes.iter().position(|p| p.instance_id == instance_id));
+                    .and_then(|w| {
+                        zengeld_chart::state::chart_container::collect_inner_instance_ids(&w.inner_docking)
+                            .iter()
+                            .position(|&iid| iid == instance_id)
+                    });
 
                 use zengeld_chart::ui::modal_settings::SubPaneButton;
                 match button {
@@ -1216,113 +1217,25 @@ impl ChartApp {
                         self.autosave_snapshot();
                     }
                     SubPaneButton::MoveUp => {
-                        if let Some(idx) = real_index {
-                            if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                                let len = window.sub_panes.len();
-                                if idx < len {
-                                    let is_above = window.sub_panes[idx].above_main;
-                                    if is_above {
-                                        // Already above main — swap within above group if possible.
-                                        if idx > 0 {
-                                            window.sub_panes.swap(idx, idx - 1);
-                                        }
-                                    } else {
-                                        // Below main: check if this is the first below-main pane.
-                                        let first_below = window.sub_panes[..idx]
-                                            .iter()
-                                            .all(|p| p.above_main);
-                                        if first_below {
-                                            // Promote to above-main: set flag and move to end of
-                                            // above group (last above = closest to main chart).
-                                            window.sub_panes[idx].above_main = true;
-                                            let above_end = window.sub_panes[..idx]
-                                                .iter()
-                                                .filter(|p| p.above_main)
-                                                .count();
-                                            // above_end is the count of above panes before idx;
-                                            // since we just set [idx].above_main = true the pane
-                                            // should sit at position above_end (end of the above
-                                            // group).  Rotate it from idx down to above_end.
-                                            window.sub_panes[above_end..=idx].rotate_right(1);
-                                        } else {
-                                            // Normal swap within below group.
-                                            window.sub_panes.swap(idx, idx - 1);
-                                        }
-                                    }
-                                    for (i, pane) in window.sub_panes.iter_mut().enumerate() {
-                                        pane.index = i;
-                                    }
-                                }
-                            }
-                        }
+                        // TODO S6-uzor-gap1: wire reorder_children once S6 lands.
+                        // MoveUp is a no-op in S4; the button renders but does nothing.
+                        let _ = real_index;
                         self.autosave_snapshot();
                     }
                     SubPaneButton::MoveDown => {
-                        if let Some(idx) = real_index {
-                            if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                                let len = window.sub_panes.len();
-                                if idx < len {
-                                    let is_above = window.sub_panes[idx].above_main;
-                                    if !is_above {
-                                        // Already below main — swap within below group if possible.
-                                        if idx + 1 < len {
-                                            window.sub_panes.swap(idx, idx + 1);
-                                        }
-                                    } else {
-                                        // Above main: check if this is the last above-main pane.
-                                        let last_above = window.sub_panes[idx + 1..]
-                                            .iter()
-                                            .all(|p| !p.above_main);
-                                        if last_above {
-                                            // Demote to below-main: set flag and move to position 0
-                                            // in the below group (first below = closest to main
-                                            // chart).
-                                            window.sub_panes[idx].above_main = false;
-                                            // Count how many above-main panes are at positions
-                                            // 0..idx (they stay in place).  The pane should move
-                                            // to position idx (first below slot) — it's already
-                                            // there since all after idx are below-main, so a
-                                            // rotate_left on [idx..] places it at the start of the
-                                            // below group.
-                                            // Actually: positions [idx+1..] are all below_main,
-                                            // so rotating [idx..] left by 1 moves idx to end.
-                                            // We want it at position idx (start of below group),
-                                            // so no rotate needed — it's already at the boundary.
-                                        } else {
-                                            // Normal swap within above group.
-                                            window.sub_panes.swap(idx, idx + 1);
-                                        }
-                                    }
-                                    for (i, pane) in window.sub_panes.iter_mut().enumerate() {
-                                        pane.index = i;
-                                    }
-                                }
-                            }
-                        }
+                        // TODO S6-uzor-gap1: wire reorder_children once S6 lands.
+                        // MoveDown is a no-op in S4; the button renders but does nothing.
+                        let _ = real_index;
                         self.autosave_snapshot();
                     }
                     SubPaneButton::Expand => {
-                        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                            for pane in window.sub_panes.iter_mut() {
-                                if pane.instance_id == instance_id {
-                                    pane.pre_maximize_height_ratio = pane.height_ratio;
-                                    pane.maximized = true;
-                                } else {
-                                    pane.maximized = false;
-                                }
-                            }
-                        }
+                        // Maximized state deferred to S7 — no-op for now.
+                        let _ = instance_id;
                         self.autosave_snapshot();
                     }
                     SubPaneButton::Restore => {
-                        if let Some(idx) = real_index {
-                            if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                                if let Some(sub_pane) = window.sub_panes.get_mut(idx) {
-                                    sub_pane.maximized = false;
-                                    sub_pane.height_ratio = sub_pane.pre_maximize_height_ratio;
-                                }
-                            }
-                        }
+                        // Restore from maximized deferred to S7 — no-op for now.
+                        let _ = real_index;
                         self.autosave_snapshot();
                     }
                     SubPaneButton::IndicatorEye => {
@@ -1553,9 +1466,9 @@ impl ChartApp {
                 // Get price range for this sub-pane from window state.
                 let (price_min, price_max) = self.panel_app.panel_grid.active_container()
                     .and_then(|w| {
-                        w.sub_panes.iter()
-                            .find(|sp| sp.instance_id == instance_id)
-                            .map(|sp| (sp.price_min, sp.price_max))
+                        w.sub_pane_y_state
+                            .get(&instance_id)
+                            .map(|s| (s.price_min, s.price_max))
                     })
                     .unwrap_or((0.0, 100.0));
 
@@ -1751,9 +1664,9 @@ impl ChartApp {
                 // Build a temporary PriceScale for the sub-pane's Y-axis.
                 let (price_min, price_max) = self.panel_app.panel_grid.active_container()
                     .and_then(|w| {
-                        w.sub_panes.iter()
-                            .find(|sp| sp.instance_id == instance_id)
-                            .map(|sp| (sp.price_min, sp.price_max))
+                        w.sub_pane_y_state
+                            .get(&instance_id)
+                            .map(|s| (s.price_min, s.price_max))
                     })
                     .unwrap_or((0.0, 100.0));
                 let sub_price_scale = zengeld_chart::PriceScale::new(price_min, price_max);
@@ -1808,9 +1721,9 @@ impl ChartApp {
                 let instance_id = sp.instance_id;
                 let (price_min, price_max) = self.panel_app.panel_grid.active_container()
                     .and_then(|w| {
-                        w.sub_panes.iter()
-                            .find(|p| p.instance_id == instance_id)
-                            .map(|p| (p.price_min, p.price_max))
+                        w.sub_pane_y_state
+                            .get(&instance_id)
+                            .map(|s| (s.price_min, s.price_max))
                     })
                     .unwrap_or((0.0, 100.0));
                 let hit = self.panel_app.panel_grid.active_container()

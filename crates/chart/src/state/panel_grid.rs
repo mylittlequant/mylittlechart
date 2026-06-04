@@ -1416,10 +1416,9 @@ impl ChartPanelGrid {
                     let (price_min, price_max) = self
                         .active_container()
                         .and_then(|w| {
-                            w.sub_panes
-                                .iter()
-                                .find(|sp| sp.instance_id == instance_id)
-                                .map(|sp| (sp.price_min, sp.price_max))
+                            w.sub_pane_y_state
+                                .get(&instance_id)
+                                .map(|s| (s.price_min, s.price_max))
                         })
                         .unwrap_or((0.0, 100.0));
                     let sub_price_scale =
@@ -1637,10 +1636,9 @@ impl ChartPanelGrid {
                 let (price_min, price_max) = self
                     .active_container()
                     .and_then(|w| {
-                        w.sub_panes
-                            .iter()
-                            .find(|sp| sp.instance_id == instance_id)
-                            .map(|sp| (sp.price_min, sp.price_max))
+                        w.sub_pane_y_state
+                            .get(&instance_id)
+                            .map(|s| (s.price_min, s.price_max))
                     })
                     .unwrap_or((0.0, 100.0));
                 let bar_f = self
@@ -1731,10 +1729,9 @@ impl ChartPanelGrid {
             let (price_min, price_max) = self
                 .active_container()
                 .and_then(|w| {
-                    w.sub_panes
-                        .iter()
-                        .find(|sp| sp.instance_id == instance_id)
-                        .map(|sp| (sp.price_min, sp.price_max))
+                    w.sub_pane_y_state
+                        .get(&instance_id)
+                        .map(|s| (s.price_min, s.price_max))
                 })
                 .unwrap_or((0.0, 100.0));
             let sub_price_scale = crate::PriceScale::new(price_min, price_max);
@@ -1856,9 +1853,9 @@ impl ChartPanelGrid {
                             .position(|sp| sp.instance_id == instance_id);
                         let (price_min, price_max) = self.active_container()
                             .and_then(|w| {
-                                w.sub_panes.iter()
-                                    .find(|sp| sp.instance_id == instance_id)
-                                    .map(|sp| (sp.price_min, sp.price_max))
+                                w.sub_pane_y_state
+                                    .get(&instance_id)
+                                    .map(|s| (s.price_min, s.price_max))
                             })
                             .unwrap_or((0.0, 100.0));
                         if let Some(window) = self.active_container_mut() {
@@ -2094,10 +2091,9 @@ impl ChartPanelGrid {
             let (price_min, price_max) = self
                 .active_container()
                 .and_then(|w| {
-                    w.sub_panes
-                        .iter()
-                        .find(|sp| sp.instance_id == pane_id)
-                        .map(|sp| (sp.price_min, sp.price_max))
+                    w.sub_pane_y_state
+                        .get(&pane_id)
+                        .map(|s| (s.price_min, s.price_max))
                 })
                 .unwrap_or((0.0, 100.0));
             let local_x = screen_x - content.x;
@@ -2202,20 +2198,14 @@ impl ChartPanelGrid {
             // Show overlay for the pane the cursor is inside.
             for (layout_idx, pane_layout) in extended.sub_panes.iter().enumerate() {
                 if pane_layout.content.contains(screen_x, screen_y) {
-                    // Find the real position in window.sub_panes by instance_id.
-                    // During maximized mode, extended.sub_panes has only 1 entry
-                    // but window.sub_panes may have the pane at a different index.
-                    let real_idx = window
-                        .sub_panes
-                        .iter()
-                        .position(|p| p.instance_id == pane_layout.instance_id)
-                        .unwrap_or(layout_idx);
+                    // overlay_states are indexed in tree order (same as layout_idx).
+                    let real_idx = layout_idx;
                     while window.sub_pane_overlay_states.len() <= real_idx {
                         window.sub_pane_overlay_states.push(Default::default());
                     }
                     window.sub_pane_overlay_states[real_idx].visible = true;
                     // Determine which button (if any) is hovered.
-                    // overlay_results is indexed by layout position (not window.sub_panes position).
+                    // overlay_results is indexed by layout position.
                     if layout_idx < overlay_results.len() {
                         let overlay = &overlay_results[layout_idx];
                         let hovered = if overlay.delete_rect.as_ref().is_some_and(|r| r.contains(screen_x, screen_y)) {

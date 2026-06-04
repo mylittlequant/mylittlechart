@@ -71,9 +71,9 @@ impl ChartApp {
             {
                 let content = pane_layout.content;
                 let local_y = screen_y - content.y;
-                let (p_min, p_max) = window.sub_panes.iter()
-                    .find(|sp| sp.instance_id == instance_id)
-                    .map(|sp| (sp.price_min, sp.price_max))
+                let (p_min, p_max) = window.sub_pane_y_state
+                    .get(&instance_id)
+                    .map(|s| (s.price_min, s.price_max))
                     .unwrap_or((0.0, 100.0));
                 let pane_h = content.height;
                 if pane_h > 0.0 {

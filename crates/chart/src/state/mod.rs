@@ -90,6 +90,7 @@ pub use chart_container::{
     generate_chart_id,
     bump_chart_id_past,
     DEFAULT_SNAP_MARGIN,
+    SubPaneYState,
 };
 
 

@@ -566,6 +566,12 @@ pub struct ChartApp {
     ///
     /// Format: `window_id → Vec<instance_id>`.  Cleared after applied.
     pub(crate) pending_sub_pane_order: std::collections::HashMap<u64, Vec<u64>>,
+    /// Per-window set of sub-pane instance_ids that should be hidden after
+    /// the next `sync_sub_panes_from_manager` call.  Populated during
+    /// `LoadPreset` from `ChartWindowSnapshot::sub_pane_hidden`.
+    ///
+    /// Format: `window_id → HashSet<instance_id>`.  Cleared after applied.
+    pub(crate) pending_sub_pane_hidden: std::collections::HashMap<u64, std::collections::HashSet<u64>>,
 
     /// Agent session manager — owns PTY and pipe sessions.
     ///
@@ -1036,6 +1042,7 @@ impl ChartApp {
             pending_sub_pane_ratios: std::collections::HashMap::new(),
             pending_sub_pane_above_main: std::collections::HashMap::new(),
             pending_sub_pane_order: std::collections::HashMap::new(),
+            pending_sub_pane_hidden: std::collections::HashMap::new(),
             series_handles: std::collections::HashMap::new(),
             live_preset_cache: std::collections::HashMap::new(),
             agent: agent::AgentSessionManager::default(),
@@ -1365,6 +1372,7 @@ impl ChartApp {
             pending_sub_pane_ratios: std::collections::HashMap::new(),
             pending_sub_pane_above_main: std::collections::HashMap::new(),
             pending_sub_pane_order: std::collections::HashMap::new(),
+            pending_sub_pane_hidden: std::collections::HashMap::new(),
             series_handles: std::collections::HashMap::new(),
             live_preset_cache: std::collections::HashMap::new(),
             agent: agent::AgentSessionManager::default(),
@@ -1591,6 +1599,7 @@ impl ChartApp {
             pending_sub_pane_ratios: std::collections::HashMap::new(),
             pending_sub_pane_above_main: std::collections::HashMap::new(),
             pending_sub_pane_order: std::collections::HashMap::new(),
+            pending_sub_pane_hidden: std::collections::HashMap::new(),
             series_handles: std::collections::HashMap::new(),
             live_preset_cache: std::collections::HashMap::new(),
             agent: agent::AgentSessionManager::default(),
@@ -2884,8 +2893,8 @@ impl ChartApp {
                     })
                     .collect();
 
-                let inner_proportions_vec: Vec<f64> = window.inner_layout.proportions.clone();
-                let inner_sub_ids_vec: Vec<u64> = window.inner_layout.sub_instance_ids.clone();
+                let inner_proportions_vec = zengeld_chart::state::chart_container::collect_inner_proportions(&window.inner_docking);
+                let inner_sub_ids_vec = zengeld_chart::state::chart_container::collect_inner_instance_ids(&window.inner_docking);
                 let panel_data = ChartPanelRenderData {
                     state: &render_state,
                     config: &render_config,
@@ -2893,7 +2902,7 @@ impl ChartApp {
                     drawing_manager: Some(&split_panel.drawing_manager),
                     indicator_source: Some(&self.indicator_manager),
                     symbol: Some(split_symbol.as_str()),
-                    sub_panes: Some(&window.sub_panes),
+                    sub_pane_y_state: Some(&window.sub_pane_y_state),
                     compare_overlay: Some(&window.compare_overlay),
                     watermark: split_panel.watermark.as_ref(),
                     tooltip: Some(&split_panel.tooltip),
@@ -2940,13 +2949,13 @@ impl ChartApp {
                             .map(|i| i.id)
                             .collect()
                     };
-                    let (sub_pane_ids, sub_proportions): (Vec<u64>, Vec<f64>) = window
-                        .inner_layout
-                        .sub_instance_ids
+                    let all_ids = zengeld_chart::state::chart_container::collect_inner_instance_ids(&window.inner_docking);
+                    let all_props = zengeld_chart::state::chart_container::collect_inner_proportions(&window.inner_docking);
+                    let (sub_pane_ids, sub_proportions): (Vec<u64>, Vec<f64>) = all_ids
                         .iter()
-                        .zip(window.inner_layout.proportions.iter().skip(1))
-                        .filter(|(id, _)| visible_set.contains(id))
-                        .map(|(&id, &p)| (id, p))
+                        .enumerate()
+                        .filter(|(_, id)| visible_set.contains(id))
+                        .map(|(i, &id)| (id, all_props.get(i + 1).copied().unwrap_or(0.0)))
                         .unzip();
                     let extended = zengeld_chart::ExtendedFrameLayout::from_proportions(
                         &leaf_rect,
@@ -3400,8 +3409,8 @@ impl ChartApp {
                     &single_window_panel.legend,
                 );
 
-                let inner_proportions_vec: Vec<f64> = window.inner_layout.proportions.clone();
-                let inner_sub_ids_vec: Vec<u64> = window.inner_layout.sub_instance_ids.clone();
+                let inner_proportions_vec = zengeld_chart::state::chart_container::collect_inner_proportions(&window.inner_docking);
+                let inner_sub_ids_vec = zengeld_chart::state::chart_container::collect_inner_instance_ids(&window.inner_docking);
                 let panel_data = ChartPanelRenderData {
                     state: &render_state,
                     config: &render_config,
@@ -3409,7 +3418,7 @@ impl ChartApp {
                     drawing_manager: Some(&single_window_panel.drawing_manager),
                     indicator_source: Some(&self.indicator_manager),
                     symbol: Some(single_sym),
-                    sub_panes: Some(&window.sub_panes),
+                    sub_pane_y_state: Some(&window.sub_pane_y_state),
                     compare_overlay: Some(&window.compare_overlay),
                     watermark: single_window_panel.watermark.as_ref(),
                     tooltip: Some(&single_window_panel.tooltip),
@@ -3460,13 +3469,13 @@ impl ChartApp {
                             .map(|i| i.id)
                             .collect()
                     };
-                    let (sub_pane_ids, sub_proportions): (Vec<u64>, Vec<f64>) = window
-                        .inner_layout
-                        .sub_instance_ids
+                    let all_ids2 = zengeld_chart::state::chart_container::collect_inner_instance_ids(&window.inner_docking);
+                    let all_props2 = zengeld_chart::state::chart_container::collect_inner_proportions(&window.inner_docking);
+                    let (sub_pane_ids, sub_proportions): (Vec<u64>, Vec<f64>) = all_ids2
                         .iter()
-                        .zip(window.inner_layout.proportions.iter().skip(1))
-                        .filter(|(id, _)| visible_set.contains(id))
-                        .map(|(&id, &p)| (id, p))
+                        .enumerate()
+                        .filter(|(_, id)| visible_set.contains(id))
+                        .map(|(i, &id)| (id, all_props2.get(i + 1).copied().unwrap_or(0.0)))
                         .unzip();
                     let extended = zengeld_chart::ExtendedFrameLayout::from_proportions(
                         &chart_render_rect,
@@ -4343,10 +4352,16 @@ impl ChartApp {
         // Write back render-computed sub-pane ranges (symmetrization + padding already applied).
         for (leaf_id, pane_idx, min, max) in output.sub_pane_range_writebacks {
             if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
-                if let Some(sp) = window.sub_panes.get_mut(pane_idx) {
-                    if sp.auto_scale {
-                        sp.price_min = min;
-                        sp.price_max = max;
+                let instance_id = zengeld_chart::state::chart_container::collect_inner_instance_ids(
+                    &window.inner_docking,
+                ).into_iter().nth(pane_idx);
+                if let Some(iid) = instance_id {
+                    let entry = window.sub_pane_y_state
+                        .entry(iid)
+                        .or_default();
+                    if entry.auto_scale {
+                        entry.price_min = min;
+                        entry.price_max = max;
                     }
                 }
             }
@@ -5491,28 +5506,28 @@ impl ChartApp {
         }
     }
 
-    /// Synchronise `window.sub_panes` with the external `IndicatorManager`.
+    /// Synchronise `window.inner_docking` with the external `IndicatorManager`.
     ///
-    /// `ChartContainer.indicator_source` is always `NullIndicatorSource`, so the
-    /// built-in `ChartContainer::sync_sub_panes()` always produces an empty list.
-    /// This method replicates that logic but reads from `self.indicator_manager`
-    /// (the real source of truth) instead.
+    /// Reads desired sub-pane instance ids from `indicator_manager`, walks the
+    /// inner docking tree, adds missing leaves via `split_leaf`, hides vanished
+    /// leaves via `hide_leaf`, restores re-appeared leaves via `show_leaf`.
+    /// Also seeds `sub_pane_y_state` for brand-new panes from the visible range
+    /// and drains pending preset restore state into the tree.
     ///
     /// Call after any operation that adds/removes indicators or recalculates
     /// indicator values (init, tick, indicator create/delete).
     pub fn sync_sub_panes_from_manager(&mut self) {
-        // Step 1: collect (leaf_id, chart_id_u64, symbol, visible_start, visible_end)
-        // for every window — before taking mutable borrows on anything.
-        // S2.7.1: read symbol from branch_meta instead of window.symbol.
+        use zengeld_chart::state::chart_container::collect_inner_instance_ids;
+        use uzor::layout::docking::SplitKind;
+        use zengeld_chart::state::chart_container_leaf::ChartContainerLeaf;
+
+        // Step 1: collect window-level read-only data before taking mutable borrows.
         let window_data: Vec<(zengeld_chart::LeafId, u64, String, usize, usize)> = self
             .panel_app
             .panel_grid
             .iter_containers()
             .map(|(leaf_id, window)| {
-                let chart_id = self
-                    .panel_app
-                    .panel_grid
-                    .container_id_for_leaf(leaf_id);
+                let chart_id = self.panel_app.panel_grid.container_id_for_leaf(leaf_id);
                 let chart_id_val = chart_id.map(|cid| cid.0).unwrap_or(0);
                 let symbol = chart_id
                     .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
@@ -5524,13 +5539,8 @@ impl ChartApp {
             })
             .collect();
 
-        // Step 2: for each window, collect sub-pane data scoped to that window's
-        // chart_id so we only get the indicator instances belonging to this window.
+        // Step 2: for each window, collect desired instance_ids from indicator_manager.
         for (leaf_id, chart_id_val, symbol, visible_start, visible_end) in &window_data {
-            // `pane > 0` means it lives in a separate sub-pane (not the main chart).
-            // Collect ALL pane>0 instances regardless of visible — hidden panes
-            // must keep their SubPane struct (position, height_ratio, above_main).
-            // Visibility filtering happens in the render pipeline, not here.
             let sub_pane_data: Vec<(u64, Option<(f64, f64)>)> = self
                 .indicator_manager
                 .get_instances_for_symbol_in_window(symbol, *chart_id_val)
@@ -5546,138 +5556,142 @@ impl ChartApp {
                 })
                 .collect();
 
-            // Step 3: apply to the window — no borrow on indicator_manager remains.
             let window = match self.panel_app.panel_grid.container_for_leaf_mut(*leaf_id) {
                 Some(w) => w,
                 None => continue,
             };
 
-            // Grab any pending restore data for this window (from a preset restore).
             let pending_ratios = self.pending_sub_pane_ratios.get(&window.id.0).cloned();
-            let pending_above_main = self.pending_sub_pane_above_main.get(&window.id.0).cloned();
             let pending_order = self.pending_sub_pane_order.get(&window.id.0).cloned();
+            let pending_hidden = self.pending_sub_pane_hidden.get(&window.id.0).cloned();
 
-            // Build a lookup from instance_id → price range for new panes.
+            // Determine the desired order (from preset restore or indicator_manager order).
+            let desired_ids: Vec<u64> = if let Some(ref order) = pending_order {
+                // Preset order first, then append newly-discovered ids.
+                let mut ids: Vec<u64> = order.iter()
+                    .filter(|&&iid| sub_pane_data.iter().any(|(id, _)| *id == iid))
+                    .copied()
+                    .collect();
+                for (iid, _) in &sub_pane_data {
+                    if !ids.contains(iid) {
+                        ids.push(*iid);
+                    }
+                }
+                ids
+            } else {
+                sub_pane_data.iter().map(|(id, _)| *id).collect()
+            };
+
             let range_map: std::collections::HashMap<u64, Option<(f64, f64)>> =
                 sub_pane_data.iter().map(|(id, r)| (*id, *r)).collect();
 
-            // Build new_sub_panes.
-            //
-            // When a saved order exists, honour it: iterate saved order first,
-            // then append any new instance_ids not present in the saved order.
-            // When no saved order exists, preserve current Vec order for existing
-            // panes and append newly-appeared panes at the end (original logic).
-            let mut new_sub_panes: Vec<zengeld_chart::state::SubPane> =
-                Vec::with_capacity(sub_pane_data.len());
-            let mut used_ids: std::collections::HashSet<u64> = std::collections::HashSet::new();
+            // Step 3: reconcile inner_docking with desired_ids.
+            // Get current leaf set (excluding MainChart leaf at index 0).
+            let current_ids = collect_inner_instance_ids(&window.inner_docking);
 
-            // Helper: build / update a single SubPane.
-            let build_pane = |instance_id: u64,
-                              existing: Option<&zengeld_chart::state::SubPane>,
-                              pending_ratios: &Option<std::collections::HashMap<u64, f32>>,
-                              pending_above_main: &Option<std::collections::HashSet<u64>>,
-                              range_map: &std::collections::HashMap<u64, Option<(f64, f64)>>|
-             -> zengeld_chart::state::SubPane {
-                let mut pane = existing
-                    .cloned()
-                    .unwrap_or_else(|| zengeld_chart::state::SubPane::new(instance_id));
+            // Find the main chart leaf id (always first child).
+            let main_leaf_id = window.inner_docking.tree().root().children
+                .first()
+                .and_then(|n| if let uzor::panels::PanelNode::Leaf(l) = n { Some(l.id) } else { None });
 
-                // Apply saved price range when creating a brand-new pane.
-                if existing.is_none() {
-                    if let Some(Some((p_min, p_max))) = range_map.get(&instance_id) {
-                        pane.price_min = *p_min;
-                        pane.price_max = *p_max;
+            // Add leaves for desired_ids not yet in the tree (or hidden).
+            for &iid in &desired_ids {
+                let existing_leaf = window.inner_docking.tree().leaves().iter()
+                    .find(|l| l.panels.first().and_then(|p| p.indicator_instance_id()) == Some(iid))
+                    .map(|l| (l.id, l.hidden));
+                match existing_leaf {
+                    None => {
+                        // New indicator: add a leaf via split_leaf from the last child.
+                        let last_leaf_id = window.inner_docking.tree().root().children
+                            .last()
+                            .and_then(|n| if let uzor::panels::PanelNode::Leaf(l) = n { Some(l.id) } else { None })
+                            .or(main_leaf_id);
+                        if let Some(anchor) = last_leaf_id {
+                            window.inner_docking.tree_mut().split_leaf(
+                                anchor,
+                                SplitKind::SplitBottom,
+                                ChartContainerLeaf::IndicatorPanel { instance_id: iid },
+                            );
+                        }
+                        // Seed y_state for the new pane.
+                        let entry = window.sub_pane_y_state.entry(iid).or_default();
+                        if let Some(Some((p_min, p_max))) = range_map.get(&iid) {
+                            entry.price_min = *p_min;
+                            entry.price_max = *p_max;
+                        }
                     }
-                }
-                // Apply saved height ratio.
-                if let Some(ref ratios) = pending_ratios {
-                    if let Some(&ratio) = ratios.get(&instance_id) {
-                        pane.height_ratio = ratio;
+                    Some((leaf_id_inner, true)) => {
+                        // Leaf exists but was hidden — restore it.
+                        window.inner_docking.tree_mut().show_leaf(leaf_id_inner);
                     }
-                }
-                // Apply saved above_main flag.
-                if let Some(ref above_set) = pending_above_main {
-                    pane.above_main = above_set.contains(&instance_id);
-                }
-                pane
-            };
-
-            // Build a quick lookup for existing sub_panes.
-            let existing_map: std::collections::HashMap<u64, &zengeld_chart::state::SubPane> =
-                window.sub_panes.iter().map(|p| (p.instance_id, p)).collect();
-
-            if let Some(ref order) = pending_order {
-                // Restore saved order first.
-                for &iid in order {
-                    if range_map.contains_key(&iid) {
-                        let pane = build_pane(
-                            iid,
-                            existing_map.get(&iid).copied(),
-                            &pending_ratios,
-                            &pending_above_main,
-                            &range_map,
-                        );
-                        new_sub_panes.push(pane);
-                        used_ids.insert(iid);
-                    }
-                }
-            } else {
-                // No saved order: keep existing Vec order for panes that are
-                // still present in sub_pane_data, or are hidden.
-                for existing in &window.sub_panes {
-                    if range_map.contains_key(&existing.instance_id) {
-                        let pane = build_pane(
-                            existing.instance_id,
-                            Some(existing),
-                            &pending_ratios,
-                            &pending_above_main,
-                            &range_map,
-                        );
-                        new_sub_panes.push(pane);
-                        used_ids.insert(existing.instance_id);
+                    Some((_, false)) => {
+                        // Already present and visible — nothing to do.
                     }
                 }
             }
 
-            // Append any new panes not covered by the ordering pass.
-            for (instance_id, _) in &sub_pane_data {
-                if used_ids.contains(instance_id) {
-                    continue;
+            // Hide leaves for instance_ids that have vanished from desired set.
+            let current_ids_after = collect_inner_instance_ids(&window.inner_docking);
+            for iid in &current_ids_after {
+                if !desired_ids.contains(iid) {
+                    if let Some(leaf_id_inner) = window.inner_docking.tree().leaves().iter()
+                        .find(|l| l.panels.first().and_then(|p| p.indicator_instance_id()) == Some(*iid))
+                        .map(|l| l.id)
+                    {
+                        window.inner_docking.tree_mut().hide_leaf(leaf_id_inner);
+                    }
                 }
-                let pane = build_pane(
-                    *instance_id,
-                    existing_map.get(instance_id).copied(),
-                    &pending_ratios,
-                    &pending_above_main,
-                    &range_map,
-                );
-                new_sub_panes.push(pane);
             }
 
-            // Update indices.
-            for (i, pane) in new_sub_panes.iter_mut().enumerate() {
-                pane.index = i;
+            // Apply preset-restore hidden set.
+            if let Some(ref hidden_set) = pending_hidden {
+                for &iid in hidden_set {
+                    if let Some(leaf_id_inner) = window.inner_docking.tree().leaves().iter()
+                        .find(|l| l.panels.first().and_then(|p| p.indicator_instance_id()) == Some(iid))
+                        .map(|l| l.id)
+                    {
+                        window.inner_docking.tree_mut().hide_leaf(leaf_id_inner);
+                    }
+                }
             }
-            window.sub_panes = new_sub_panes;
 
-            // Phase 2: reconcile the inner uzor docking tree with the
-            // canonical sub_panes Vec. Adds leaves for newly-spawned
-            // indicators, removes leaves for vanished ones.
-            window.sync_inner_layout_from_sub_panes();
+            // Set preserve_if_empty on root branch so splits aren't collapsed when empty.
+            let root_id = window.inner_docking.tree().root().id;
+            window.inner_docking.tree_mut().set_branch_preserve_if_empty(root_id, true);
 
-            // If preset restore staged height ratios for this window,
-            // seed the inner tree's proportions from them so the renderer
-            // shows panes at their saved sizes. (Uzor's drag_separator
-            // takes over from there.)
-            if pending_ratios.is_some() {
-                window.seed_inner_proportions_from_sub_pane_ratios();
+            // Apply preset-restore proportions if available.
+            if let Some(ref ratios) = pending_ratios {
+                let current_visible_ids = collect_inner_instance_ids(&window.inner_docking);
+                if !current_visible_ids.is_empty() {
+                    let sub_total: f64 = current_visible_ids.iter()
+                        .map(|iid| ratios.get(iid).copied().unwrap_or(0.15) as f64)
+                        .sum::<f64>()
+                        .min(0.75);
+                    let n = current_visible_ids.len();
+                    let default_sub = sub_total / n as f64;
+                    let main_share = (1.0 - sub_total).max(0.1);
+                    let mut props = vec![main_share];
+                    for iid in &current_visible_ids {
+                        props.push(ratios.get(iid).copied().unwrap_or(default_sub as f32) as f64);
+                    }
+                    let total: f64 = props.iter().sum();
+                    if total > 0.0 {
+                        for v in &mut props { *v /= total; }
+                    }
+                    let root_branch_id = window.inner_docking.tree().root().id;
+                    window.inner_docking.tree_mut().set_branch_proportions(root_branch_id, props);
+                }
             }
+
+            // Suppress "current_ids" unused warning from the step before reconcile.
+            let _ = current_ids;
         }
 
         // Clear all pending restore state once applied (one-shot).
         self.pending_sub_pane_ratios.clear();
         self.pending_sub_pane_above_main.clear();
         self.pending_sub_pane_order.clear();
+        self.pending_sub_pane_hidden.clear();
     }
 
     /// Sync sub-pane pixel geometry (height, y_offset, chart_width) from the
@@ -5718,22 +5732,10 @@ impl ChartApp {
                 })
                 .collect();
 
-        // Phase 2: apply geometry to sub_panes using &mut self.
-        for (leaf_id, extended) in &extended_layouts {
-            if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(*leaf_id) {
-                for layout_sp in &extended.sub_panes {
-                    if let Some(sp) = window
-                        .sub_panes
-                        .iter_mut()
-                        .find(|s| s.instance_id == layout_sp.instance_id)
-                    {
-                        sp.height = layout_sp.content.height as f32;
-                        sp.y_offset = layout_sp.content.y as f32;
-                        sp.chart_width = layout_sp.content.width as f32;
-                    }
-                }
-            }
-        }
+        // Phase 2: geometry writeback was previously to SubPane structs.
+        // After S4 the inner_docking tree drives layout; no per-pane geometry
+        // fields need to be written back here. Leave loop body empty.
+        let _ = &extended_layouts;
 
         // Phase 3: store per-leaf layouts as state so input handlers can read
         // them without rebuilding (producer/consumer split).  Rebuild fresh each
@@ -5879,13 +5881,21 @@ impl ChartApp {
                     let bar_delta_bars = bar_delta / window.viewport.bar_spacing;
                     window.viewport.pan(bar_delta_bars);
                     if let zengeld_chart::engine::input::DragMode::SubPaneChart { pane_index } = drag_mode {
-                        if let Some(sub_pane) = window.sub_panes.get_mut(pane_index) {
-                            if !sub_pane.auto_scale {
-                                let price_range = sub_pane.price_max - sub_pane.price_min;
-                                let pane_height = sub_pane.height as f64;
-                                let price_delta_scaled = price_delta * price_range / pane_height;
-                                sub_pane.price_min += price_delta_scaled;
-                                sub_pane.price_max += price_delta_scaled;
+                        let instance_id = zengeld_chart::state::chart_container::collect_inner_instance_ids(
+                            &window.inner_docking,
+                        ).into_iter().nth(pane_index);
+                        let pane_height = self.active_frame_layout.as_ref()
+                            .and_then(|ext| ext.sub_panes.get(pane_index))
+                            .map(|sp| sp.content.height)
+                            .unwrap_or(100.0);
+                        if let Some(iid) = instance_id {
+                            if let Some(s) = window.sub_pane_y_state.get_mut(&iid) {
+                                if !s.auto_scale {
+                                    let price_range = s.price_max - s.price_min;
+                                    let price_delta_scaled = price_delta * price_range / pane_height;
+                                    s.price_min += price_delta_scaled;
+                                    s.price_max += price_delta_scaled;
+                                }
                             }
                         }
                     } else if window.price_scale.scale_mode.is_auto_y() {
@@ -5963,8 +5973,11 @@ impl ChartApp {
                 ChartOutputAction::ResetPriceScale => {
                     let Some(window) = self.panel_app.panel_grid.active_container_mut() else { continue; };
                     if let zengeld_chart::engine::input::DragMode::SubPanePriceScale { pane_index } = drag_mode {
-                        if let Some(sub_pane) = window.sub_panes.get_mut(pane_index) {
-                            sub_pane.auto_scale = true;
+                        let instance_id = zengeld_chart::state::chart_container::collect_inner_instance_ids(
+                            &window.inner_docking,
+                        ).into_iter().nth(pane_index);
+                        if let Some(iid) = instance_id {
+                            window.sub_pane_y_state.entry(iid).or_default().auto_scale = true;
                         }
                         // Restore main chart to Auto so the A/M button reflects the true state.
                         window.price_scale.scale_mode = ScaleMode::Auto;
@@ -6426,16 +6439,24 @@ impl ChartApp {
 
                 ChartOutputAction::ZoomSubPane { pane_index, delta_y } => {
                     let Some(window) = self.panel_app.panel_grid.active_container_mut() else { continue; };
-                    if let Some(sub_pane) = window.sub_panes.get_mut(pane_index) {
-                        sub_pane.auto_scale = false;
-                        let pane_h = sub_pane.height as f64;
-                        if pane_h > 0.0 {
-                            // 1:1 pixel-to-zoom: each pixel of drag = proportional range change
-                            let factor = 1.0 + delta_y / pane_h;
-                            let center = (sub_pane.price_min + sub_pane.price_max) / 2.0;
-                            let half_range = (sub_pane.price_max - sub_pane.price_min) / 2.0 * factor;
-                            sub_pane.price_min = center - half_range;
-                            sub_pane.price_max = center + half_range;
+                    {
+                        let instance_id = zengeld_chart::state::chart_container::collect_inner_instance_ids(
+                            &window.inner_docking,
+                        ).into_iter().nth(pane_index);
+                        let pane_h = self.active_frame_layout.as_ref()
+                            .and_then(|ext| ext.sub_panes.get(pane_index))
+                            .map(|sp| sp.content.height)
+                            .unwrap_or(100.0);
+                        if let Some(iid) = instance_id {
+                            let entry = window.sub_pane_y_state.entry(iid).or_default();
+                            entry.auto_scale = false;
+                            if pane_h > 0.0 {
+                                let factor = 1.0 + delta_y / pane_h;
+                                let center = (entry.price_min + entry.price_max) / 2.0;
+                                let half_range = (entry.price_max - entry.price_min) / 2.0 * factor;
+                                entry.price_min = center - half_range;
+                                entry.price_max = center + half_range;
+                            }
                         }
                     }
                     // Dragging a sub-pane price scale switches the whole window to
@@ -6644,8 +6665,8 @@ impl ChartApp {
                 if let Some(mode) = scale_mode {
                     window.price_scale.scale_mode = mode;
                     let is_auto = mode.is_auto_y();
-                    for sp in &mut window.sub_panes {
-                        sp.auto_scale = is_auto;
+                    for state in window.sub_pane_y_state.values_mut() {
+                        state.auto_scale = is_auto;
                     }
                 }
                 // Time-based sync: convert source timestamp to peer's bar index so

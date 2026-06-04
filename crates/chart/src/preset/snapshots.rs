@@ -196,6 +196,11 @@ pub struct ChartWindowSnapshot {
     /// (above-main panes are stored first, then below-main panes).
     #[serde(default)]
     pub sub_pane_order: Vec<u64>,
+    /// Set of sub-pane instance_ids whose leaf was hidden at save time.
+    /// On restore, `hide_leaf` is called for each instance_id in this set.
+    /// Fixes the pre-existing "hidden sub-pane never restored" bug.
+    #[serde(default)]
+    pub sub_pane_hidden: HashSet<u64>,
     /// Pre-join scale mode stashed when this window entered a group with
     /// `sync_viewport = ON`. Restored on desync. `None` = not stashed.
     #[serde(default)]
@@ -275,23 +280,31 @@ impl ChartWindowSnapshot {
             bars: Vec::new(),
             stashed_primitives: stashed_primitives_snap,
             pre_tag_indicator_ids,
-            sub_pane_height_ratios: window
-                .sub_panes
-                .iter()
-                .filter(|p| p.height_ratio > 0.0)
-                .map(|p| (p.instance_id, p.height_ratio))
-                .collect(),
-            sub_pane_above_main: window
-                .sub_panes
-                .iter()
-                .filter(|p| p.above_main)
-                .map(|p| p.instance_id)
-                .collect(),
-            sub_pane_order: window
-                .sub_panes
-                .iter()
-                .map(|p| p.instance_id)
-                .collect(),
+            // Collect sub-pane order, height ratios, and hidden set from
+            // the inner docking tree (single source of truth after S4).
+            sub_pane_height_ratios: {
+                let proportions = &window.inner_docking.tree().root().proportions;
+                let instance_ids = crate::state::chart_container::collect_inner_instance_ids(
+                    &window.inner_docking,
+                );
+                instance_ids
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, &iid)| {
+                        let prop_idx = i + 1;
+                        let ratio = proportions.get(prop_idx).copied().unwrap_or(0.0) as f32;
+                        if ratio > 0.0 { Some((iid, ratio)) } else { None }
+                    })
+                    .collect()
+            },
+            // above_main is deferred to S7 — emit empty set.
+            sub_pane_above_main: HashSet::new(),
+            sub_pane_order: crate::state::chart_container::collect_inner_instance_ids(
+                &window.inner_docking,
+            ),
+            sub_pane_hidden: crate::state::chart_container::collect_hidden_instance_ids(
+                &window.inner_docking,
+            ),
             stashed_scale_mode: window.stashed_scale_mode,
         }
     }
