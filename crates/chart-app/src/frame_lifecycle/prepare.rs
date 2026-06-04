@@ -356,8 +356,9 @@ impl ChartApp {
                     .unwrap_or_default();
 
                 // Collect window-local indicator IDs before releasing the window borrow.
-                let pre_tag_ids: Vec<u64> = self.panel_app.panel_grid.active_container()
-                    .map(|w| w.pre_tag_indicator_ids.clone())
+                let pre_tag_ids: Vec<u64> = active_cid
+                    .and_then(|cid| crate::branch_meta_bridge::read_pre_tag_ids(&self.branch_meta, cid))
+                    .cloned()
                     .unwrap_or_default();
 
                 let has_window_section = !stashed_prim_data.is_empty() || !pre_tag_ids.is_empty();

@@ -8010,24 +8010,14 @@ impl ChartApp {
                     self.indicator_manager.calculate(*instance_id, &bars_snapshot);
                     // Re-add to pre_tag_indicator_ids for Object Tree visibility.
                     // indicator_manager borrows are released before this block.
-                    if let Some(window) = self.panel_app.panel_grid.containers_mut().values_mut()
-                        .find(|w| w.id == chart_id_val)
-                    {
-                        if !window.pre_tag_indicator_ids.contains(instance_id) {
-                            window.pre_tag_indicator_ids.push(*instance_id);
-                        }
-                    }
-                    // Phase 4 S2.4 dual-write: mirror updated pre_tag_ids.
-                    {
-                        let ids = self.panel_app.panel_grid.containers()
-                            .values()
-                            .find(|w| w.id == chart_id_val)
-                            .map(|w| w.pre_tag_indicator_ids.clone())
-                            .unwrap_or_default();
-                        crate::branch_meta_bridge::mirror_pre_tag_ids(
+                    let already_present = crate::branch_meta_bridge::read_pre_tag_ids(
+                        &self.branch_meta, chart_id_val)
+                        .map_or(false, |v| v.contains(instance_id));
+                    if !already_present {
+                        crate::branch_meta_bridge::push_pre_tag_id(
                             &mut self.branch_meta,
                             chart_id_val,
-                            ids,
+                            *instance_id,
                         );
                     }
                     self.sync_sub_panes_from_manager();
@@ -8040,20 +8030,16 @@ impl ChartApp {
                 if self.indicator_manager.remove_instance(*instance_id).is_some() {
                     // Remove stale entries so the Object Tree does not show phantom items.
                     let removed_id = *instance_id;
-                    for window in self.panel_app.panel_grid.containers_mut().values_mut() {
-                        window.pre_tag_indicator_ids.retain(|iid| *iid != removed_id);
-                    }
-                    // Phase 4 S2.4 dual-write: mirror updated pre_tag_ids for every window.
-                    let updates: Vec<(zengeld_chart::state::ChartId, Vec<u64>)> = self.panel_app.panel_grid
+                    let chart_ids: Vec<zengeld_chart::state::ChartId> = self.panel_app.panel_grid
                         .containers()
-                        .values()
-                        .map(|w| (w.id, w.pre_tag_indicator_ids.clone()))
+                        .keys()
+                        .copied()
                         .collect();
-                    for (cid, ids) in updates {
-                        crate::branch_meta_bridge::mirror_pre_tag_ids(
+                    for cid in chart_ids {
+                        crate::branch_meta_bridge::retain_pre_tag_ids(
                             &mut self.branch_meta,
                             cid,
-                            ids,
+                            |iid| *iid != removed_id,
                         );
                     }
                     self.sync_sub_panes_from_manager();
@@ -8606,7 +8592,10 @@ impl ChartApp {
             if let Some(window) = self.panel_app.panel_grid.container_for_leaf(leaf_id) {
                 let gid = crate::branch_meta_bridge::read_group_id(&self.branch_meta, chart_id)
                     .map(|g| g.0);
-                preset.windows.push(ChartWindowSnapshot::from_window(window, leaf_id.0, gid));
+                let ptids = crate::branch_meta_bridge::read_pre_tag_ids(&self.branch_meta, chart_id)
+                    .cloned()
+                    .unwrap_or_default();
+                preset.windows.push(ChartWindowSnapshot::from_window(window, leaf_id.0, gid, ptids));
             }
         }
 

@@ -299,6 +299,52 @@ pub fn mirror_pre_tag_ids(
     }
 }
 
+/// Push a single indicator id into the pre-tag list. Silent no-op if
+/// the entry is missing (entry must exist — seeded at chart construction).
+pub fn push_pre_tag_id(
+    branch_meta: &mut std::collections::HashMap<BranchId, BranchMeta>,
+    chart_id: ChartId,
+    id: u64,
+) {
+    if let Some(entry) = branch_meta.get_mut(&branch_key_for_chart(chart_id)) {
+        entry.pre_tag_indicator_ids.push(id);
+    }
+}
+
+/// Retain only the ids for which `predicate` returns `true`. Silent no-op
+/// if the entry is missing.
+pub fn retain_pre_tag_ids(
+    branch_meta: &mut std::collections::HashMap<BranchId, BranchMeta>,
+    chart_id: ChartId,
+    predicate: impl Fn(&u64) -> bool,
+) {
+    if let Some(entry) = branch_meta.get_mut(&branch_key_for_chart(chart_id)) {
+        entry.pre_tag_indicator_ids.retain(predicate);
+    }
+}
+
+/// Clear the pre-tag indicator id list. Silent no-op if the entry is
+/// missing (clearing a non-existent list is already a no-op).
+pub fn clear_pre_tag_ids(
+    branch_meta: &mut std::collections::HashMap<BranchId, BranchMeta>,
+    chart_id: ChartId,
+) {
+    if let Some(entry) = branch_meta.get_mut(&branch_key_for_chart(chart_id)) {
+        entry.pre_tag_indicator_ids.clear();
+    }
+}
+
+/// Return a reference to the pre-tag indicator id list, or `None` if
+/// the entry does not exist.
+pub fn read_pre_tag_ids<'a>(
+    branch_meta: &'a std::collections::HashMap<BranchId, BranchMeta>,
+    chart_id: ChartId,
+) -> Option<&'a Vec<u64>> {
+    branch_meta
+        .get(&branch_key_for_chart(chart_id))
+        .map(|m| &m.pre_tag_indicator_ids)
+}
+
 /// Mirror the stashed window-local command history into branch_meta.
 /// Silent no-op if the entry is missing.
 pub fn mirror_stashed_command_history(

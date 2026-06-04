@@ -248,10 +248,6 @@ pub struct ChartContainer {
     /// their full rect is available as chart content.
     pub toolbar_config: ToolbarConfig,
 
-    /// Indicator instance IDs that existed on this window BEFORE it joined a tag.
-    /// On desync, only indicators NOT in this set are removed (they came from the tag).
-    /// Empty for split children (they had nothing before the tag).
-    pub pre_tag_indicator_ids: Vec<u64>,
     /// Stashed primitives: window's own primitives hidden when joining an existing tag.
     /// Restored on desync. Empty for new-tag creation (seed flow) and split children.
     pub stashed_primitives: Vec<Box<dyn crate::drawing::primitives_v2::Primitive>>,
@@ -388,7 +384,6 @@ impl ChartContainer {
             chart_toolbar: ChartToolbarState::default(),
             // Toolbar config (DEBUG: standalone mode with all 4 toolbars)
             toolbar_config: ToolbarConfig::standalone(),
-            pre_tag_indicator_ids: Vec::new(),
             stashed_primitives: Vec::new(),
             stashed_command_history: None,
             symbol_drawings: HashMap::new(),
@@ -624,7 +619,6 @@ impl ChartContainer {
             toolbar_config: ToolbarConfig::minimal(),
 
             // Split child has no pre-tag state — everything comes from the tag.
-            pre_tag_indicator_ids: Vec::new(),
             stashed_primitives: Vec::new(),
             // Split child starts with no stashed history.
             stashed_command_history: None,

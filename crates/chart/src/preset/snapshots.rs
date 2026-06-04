@@ -206,7 +206,7 @@ impl ChartWindowSnapshot {
     ///
     /// `leaf_id` is the docking-tree leaf slot this window occupies; it is
     /// stored so that presets can restore windows to the correct panel slot.
-    pub fn from_window(window: &ChartContainer, leaf_id: u64, group_id: Option<u64>) -> Self {
+    pub fn from_window(window: &ChartContainer, leaf_id: u64, group_id: Option<u64>, pre_tag_indicator_ids: Vec<u64>) -> Self {
         let drawings = DrawingSnapshot::from_manager(window.id.0, &window.drawing_manager);
 
         // Save full viewport — chart_width, bar_spacing, bar_count are all valid
@@ -261,7 +261,7 @@ impl ChartWindowSnapshot {
                 .iter()
                 .map(|p| PrimitiveSnapshot::from_primitive(p.as_ref()))
                 .collect(),
-            pre_tag_indicator_ids: window.pre_tag_indicator_ids.clone(),
+            pre_tag_indicator_ids,
             sub_pane_height_ratios: window
                 .sub_panes
                 .iter()

@@ -836,21 +836,17 @@ impl ChartApp {
 
         // Remove stale entries from every window's pre_tag_indicator_ids so the
         // Object Tree does not show phantom items for deleted indicators.
-        for window in self.panel_app.panel_grid.containers_mut().values_mut() {
-            window.pre_tag_indicator_ids.retain(|iid| !all_to_remove.contains(iid));
-        }
-        // Phase 4 S2.4 dual-write: mirror updated pre_tag_ids for every window.
         {
-            let updates: Vec<(zengeld_chart::state::ChartId, Vec<u64>)> = self.panel_app.panel_grid
+            let chart_ids: Vec<zengeld_chart::state::ChartId> = self.panel_app.panel_grid
                 .containers()
-                .values()
-                .map(|w| (w.id, w.pre_tag_indicator_ids.clone()))
+                .keys()
+                .copied()
                 .collect();
-            for (cid, ids) in updates {
-                crate::branch_meta_bridge::mirror_pre_tag_ids(
+            for cid in chart_ids {
+                crate::branch_meta_bridge::retain_pre_tag_ids(
                     &mut self.branch_meta,
                     cid,
-                    ids,
+                    |iid| !all_to_remove.contains(iid),
                 );
             }
         }

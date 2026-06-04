@@ -677,9 +677,6 @@ impl ChartApp {
                                         }
                                     }
 
-                                    // Restore pre-tag indicator IDs
-                                    window.pre_tag_indicator_ids = snap.pre_tag_indicator_ids.clone();
-
                                     // Restore per-symbol drawing cache
                                     window.symbol_drawings = snap.symbol_drawings_snapshots.clone();
 
@@ -909,9 +906,6 @@ impl ChartApp {
                                         }
                                     }
                                 }
-
-                                // Restore pre-tag indicator IDs
-                                window.pre_tag_indicator_ids = snap.pre_tag_indicator_ids.clone();
 
                                 // Restore per-symbol drawing cache
                                 window.symbol_drawings = snap.symbol_drawings_snapshots.clone();
@@ -2340,11 +2334,8 @@ impl ChartApp {
                         return;
                     };
 
-                    let pre_tag_ids: Vec<u64> = self
-                        .panel_app
-                        .panel_grid
-                        .active_container()
-                        .map(|w| w.pre_tag_indicator_ids.clone())
+                    let pre_tag_ids: Vec<u64> = crate::branch_meta_bridge::read_pre_tag_ids(&self.branch_meta, chart_id)
+                        .cloned()
                         .unwrap_or_default();
 
                     if new_sync {

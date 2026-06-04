@@ -594,21 +594,17 @@ impl ChartApp {
         }
         // Clear orphan pre_tag_indicator_ids for every window so the Object Tree
         // does not show phantom items after a bulk indicator replace.
-        for window in self.panel_app.panel_grid.containers_mut().values_mut() {
-            window.pre_tag_indicator_ids.retain(|iid| !existing_ids.contains(iid));
-        }
-        // Phase 4 S2.4 dual-write: mirror updated pre_tag_ids for every window.
         {
-            let updates: Vec<(zengeld_chart::state::ChartId, Vec<u64>)> = self.panel_app.panel_grid
+            let chart_ids: Vec<zengeld_chart::state::ChartId> = self.panel_app.panel_grid
                 .containers()
-                .values()
-                .map(|w| (w.id, w.pre_tag_indicator_ids.clone()))
+                .keys()
+                .copied()
                 .collect();
-            for (cid, ids) in updates {
-                crate::branch_meta_bridge::mirror_pre_tag_ids(
+            for cid in chart_ids {
+                crate::branch_meta_bridge::retain_pre_tag_ids(
                     &mut self.branch_meta,
                     cid,
-                    ids,
+                    |iid| !existing_ids.contains(iid),
                 );
             }
         }
@@ -1006,23 +1002,16 @@ impl ChartApp {
                                         // window only. Record it in pre_tag_indicator_ids so that
                                         // if the window is later desynced (untagged), the desync
                                         // logic does NOT treat it as a group indicator and delete it.
-                                        if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(active_leaf) {
-                                            window.pre_tag_indicator_ids.push(new_id);
+                                        // sync_indicators is OFF — record in branch_meta pre_tag_ids.
+                                        if let Some(cid) = active_container_id {
+                                            crate::branch_meta_bridge::push_pre_tag_id(
+                                                &mut self.branch_meta,
+                                                cid,
+                                                new_id,
+                                            );
                                             eprintln!(
                                                 "[TagManager] sync_indicators=off: recorded id={} in pre_tag_indicator_ids for leaf {:?}",
                                                 new_id, active_leaf
-                                            );
-                                        }
-                                        // Phase 4 S2.4 dual-write: mirror updated pre_tag_ids.
-                                        if let Some(cid) = active_container_id {
-                                            let ids = self.panel_app.panel_grid
-                                                .container_for_leaf(active_leaf)
-                                                .map(|w| w.pre_tag_indicator_ids.clone())
-                                                .unwrap_or_default();
-                                            crate::branch_meta_bridge::mirror_pre_tag_ids(
-                                                &mut self.branch_meta,
-                                                cid,
-                                                ids,
                                             );
                                         }
                                     }
