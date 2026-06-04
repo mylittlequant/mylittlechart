@@ -1,32 +1,22 @@
-//! Phase 4 — S2.2 instrument bridge.
+//! Phase 1 DataBubble migration — instrument bridge.
 //!
 //! Free helpers used by every write site that mutates the four instrument
 //! fields (`symbol`/`exchange`/`account_type`/`timeframe`) on a
-//! [`zengeld_chart::state::ChartContainer`]. Each helper mirrors the new
-//! value into `ChartApp.branch_meta` using `entry().or_insert_with(...)`
-//! so callers do not need to seed the entry up-front (lazy-insert hybrid).
+//! [`zengeld_chart::state::ChartContainer`]. Each helper dual-writes the new
+//! value into both `ChartApp.branch_meta` (still authoritative for reads in
+//! Phase 1.2) AND `BubbleStore.bubble_mut(bid)` via
+//! `bubble_store.bubble_for_chart(chart_id)`.
 //!
-//! Per the S2.2 audit (`docs/plans/phase4-s2.2-instrument-field-audit.md`
-//! §10): struct fields on `ChartContainer` stay read-authoritative through
-//! S2.2..S2.6; S2.7 flips reads to `branch_meta` and removes the duplicate
-//! fields.
-//!
-//! These helpers take **disjoint** `&mut HashMap<BranchId, BranchMeta>`
-//! plus owned/borrowed instrument values so callers can run them after
-//! dropping the `panel_grid.containers_mut()` borrow (split-block
-//! pattern). The intentional avoidance of `&mut ChartApp` means callers
-//! can keep their `panel_grid` borrow alive when needed and update
-//! `branch_meta` in a separate block.
+//! Phase 1.3 will flip the read helpers to read from bubble only; Phase 1.4
+//! deletes branch_meta entirely.
 
 use std::collections::HashMap;
 
 use uzor::panels::BranchId;
 use zengeld_chart::drawing::primitives_v2::Primitive;
-use zengeld_chart::drawing::{SignalManager, TradeManager};
-use zengeld_chart::MarkerManager;
 use zengeld_chart::state::history::CommandHistory;
-use zengeld_chart::state::{BranchMeta, ChartId, ConnectionStatus, Timeframe};
-use zengeld_chart::tag_manager::BubbleId;
+use zengeld_chart::state::{BranchMeta, ChartId, Timeframe};
+use zengeld_chart::tag_manager::{BubbleId, BubbleStore};
 
 /// Map a `ChartId` to the temporary `BranchId` used by S2 (per S2.G6 the
 /// keys are `BranchId(chart_id.0)` until S3 wires real uzor branch ids).
@@ -54,12 +44,12 @@ pub fn ensure_chart_container_meta<'a>(
         .or_insert_with(|| BranchMeta::chart_container(symbol, timeframe, exchange, account_type))
 }
 
-/// Mirror the full instrument tuple into `branch_meta` for the given
-/// chart. Lazy-inserts the entry if missing. Used by every dual-write
-/// site that changes more than one of (symbol, exchange, account_type,
-/// timeframe) atomically.
+/// Mirror the full instrument tuple into `branch_meta` AND `bubble_store`
+/// for the given chart. Lazy-inserts the branch_meta entry if missing.
+/// Silently skips the bubble write if the chart has no bubble yet.
 pub fn mirror_instrument(
     branch_meta: &mut HashMap<BranchId, BranchMeta>,
+    bubble_store: &mut BubbleStore,
     chart_id: ChartId,
     symbol: &str,
     timeframe: Timeframe,
@@ -75,35 +65,24 @@ pub fn mirror_instrument(
         account_type,
     );
     entry.symbol = Some(symbol.to_string());
-    entry.timeframe = Some(timeframe);
+    entry.timeframe = Some(timeframe.clone());
     entry.exchange = Some(exchange.to_string());
     entry.account_type = Some(account_type.to_string());
+
+    if let Some(bid) = bubble_store.bubble_for_chart(chart_id) {
+        if let Some(bubble) = bubble_store.bubble_mut(bid) {
+            bubble.symbol = symbol.to_string();
+            bubble.timeframe = timeframe;
+            bubble.exchange = exchange.to_string();
+            bubble.account_type = account_type.to_string();
+        }
+    }
 }
 
-/// Mirror just the symbol into `branch_meta`. Lazy-inserts using the
-/// caller-supplied defaults for the other fields when the entry is new.
-pub fn mirror_symbol(
-    branch_meta: &mut HashMap<BranchId, BranchMeta>,
-    chart_id: ChartId,
-    symbol: &str,
-    timeframe_for_seed: Timeframe,
-    exchange_for_seed: &str,
-    account_type_for_seed: &str,
-) {
-    let entry = ensure_chart_container_meta(
-        branch_meta,
-        chart_id,
-        symbol,
-        timeframe_for_seed,
-        exchange_for_seed,
-        account_type_for_seed,
-    );
-    entry.symbol = Some(symbol.to_string());
-}
-
-/// Mirror just the timeframe.
+/// Mirror just the timeframe into `branch_meta` AND `bubble_store`.
 pub fn mirror_timeframe(
     branch_meta: &mut HashMap<BranchId, BranchMeta>,
+    bubble_store: &mut BubbleStore,
     chart_id: ChartId,
     timeframe: Timeframe,
     symbol_for_seed: &str,
@@ -118,12 +97,19 @@ pub fn mirror_timeframe(
         exchange_for_seed,
         account_type_for_seed,
     );
-    entry.timeframe = Some(timeframe);
+    entry.timeframe = Some(timeframe.clone());
+
+    if let Some(bid) = bubble_store.bubble_for_chart(chart_id) {
+        if let Some(bubble) = bubble_store.bubble_mut(bid) {
+            bubble.timeframe = timeframe;
+        }
+    }
 }
 
-/// Mirror just the exchange.
+/// Mirror just the exchange into `branch_meta` AND `bubble_store`.
 pub fn mirror_exchange(
     branch_meta: &mut HashMap<BranchId, BranchMeta>,
+    bubble_store: &mut BubbleStore,
     chart_id: ChartId,
     exchange: &str,
     symbol_for_seed: &str,
@@ -139,31 +125,18 @@ pub fn mirror_exchange(
         account_type_for_seed,
     );
     entry.exchange = Some(exchange.to_string());
-}
 
-/// Mirror just the account_type.
-pub fn mirror_account_type(
-    branch_meta: &mut HashMap<BranchId, BranchMeta>,
-    chart_id: ChartId,
-    account_type: &str,
-    symbol_for_seed: &str,
-    timeframe_for_seed: Timeframe,
-    exchange_for_seed: &str,
-) {
-    let entry = ensure_chart_container_meta(
-        branch_meta,
-        chart_id,
-        symbol_for_seed,
-        timeframe_for_seed,
-        exchange_for_seed,
-        account_type,
-    );
-    entry.account_type = Some(account_type.to_string());
+    if let Some(bid) = bubble_store.bubble_for_chart(chart_id) {
+        if let Some(bubble) = bubble_store.bubble_mut(bid) {
+            bubble.exchange = exchange.to_string();
+        }
+    }
 }
 
 // =============================================================================
 // Read accessors (S2.7.1) — flip reads from `ChartContainer.field` to
 // `branch_meta`. These are the post-cutover canonical reads.
+// Phase 1.3 will flip the bodies to read from bubble instead.
 // =============================================================================
 //
 // Convention: read helpers return `Option<&T>` (or `Option<T>` for Copy
@@ -235,56 +208,33 @@ pub fn read_prev_close_price(
 }
 
 // =============================================================================
-// Group M (S2.3) — group_id / prev_close_price / connection_status
+// Group M — prev_close_price
 // =============================================================================
-//
-// These mirrors do NOT lazy-insert: the entry MUST already exist when a
-// group_id / prev_close_price / connection_status write fires (all such
-// writes happen on charts that S2.2 already seeded). A miss is logged
-// (silent-skip) rather than synthesized so callers don't accidentally
-// create a half-shaped entry without instrument context.
 
-/// Mirror the sync `group_id` for a chart's branch into branch_meta.
-/// Silent no-op if the entry is missing (entry should exist post-S2.2).
-pub fn mirror_group_id(
-    branch_meta: &mut std::collections::HashMap<BranchId, BranchMeta>,
-    chart_id: ChartId,
-    group_id: Option<BubbleId>,
-) {
-    if let Some(entry) = branch_meta.get_mut(&branch_key_for_chart(chart_id)) {
-        entry.group_id = group_id;
-    }
-}
-
-/// Mirror the previous-close price (derived from `bars[0].open`) into
-/// branch_meta. Silent no-op if the entry is missing.
+/// Mirror the previous-close price into `branch_meta` AND `bubble_store`.
+/// Silent no-op on branch_meta miss; still writes to bubble if chart has one.
 pub fn mirror_prev_close_price(
-    branch_meta: &mut std::collections::HashMap<BranchId, BranchMeta>,
+    branch_meta: &mut HashMap<BranchId, BranchMeta>,
+    bubble_store: &mut BubbleStore,
     chart_id: ChartId,
     prev_close_price: Option<f64>,
 ) {
     if let Some(entry) = branch_meta.get_mut(&branch_key_for_chart(chart_id)) {
         entry.prev_close_price = prev_close_price;
     }
-}
 
-/// Mirror the connection status into branch_meta. Silent no-op if the
-/// entry is missing.
-pub fn mirror_connection_status(
-    branch_meta: &mut std::collections::HashMap<BranchId, BranchMeta>,
-    chart_id: ChartId,
-    status: ConnectionStatus,
-) {
-    if let Some(entry) = branch_meta.get_mut(&branch_key_for_chart(chart_id)) {
-        entry.connection_status = Some(status);
+    if let Some(bid) = bubble_store.bubble_for_chart(chart_id) {
+        if let Some(bubble) = bubble_store.bubble_mut(bid) {
+            bubble.prev_close_price = prev_close_price;
+        }
     }
 }
 
 // =============================================================================
-// Group N (S2.4) — pre_tag_indicator_ids / stashed_command_history /
-//                  stashed_primitives (separate map; Box<dyn Primitive>
-//                  cannot live on BranchMeta because it would break
-//                  BranchMeta's Clone derive)
+// Group N — pre_tag_indicator_ids / stashed_command_history /
+//           stashed_primitives (separate map; Box<dyn Primitive>
+//           cannot live on BranchMeta because it would break
+//           BranchMeta's Clone derive)
 // =============================================================================
 
 /// Mirror the pre-tag indicator id list into branch_meta. Silent no-op
@@ -300,7 +250,7 @@ pub fn mirror_pre_tag_ids(
 }
 
 /// Push a single indicator id into the pre-tag list. Silent no-op if
-/// the entry is missing (entry must exist — seeded at chart construction).
+/// the entry is missing.
 pub fn push_pre_tag_id(
     branch_meta: &mut std::collections::HashMap<BranchId, BranchMeta>,
     chart_id: ChartId,
@@ -320,17 +270,6 @@ pub fn retain_pre_tag_ids(
 ) {
     if let Some(entry) = branch_meta.get_mut(&branch_key_for_chart(chart_id)) {
         entry.pre_tag_indicator_ids.retain(predicate);
-    }
-}
-
-/// Clear the pre-tag indicator id list. Silent no-op if the entry is
-/// missing (clearing a non-existent list is already a no-op).
-pub fn clear_pre_tag_ids(
-    branch_meta: &mut std::collections::HashMap<BranchId, BranchMeta>,
-    chart_id: ChartId,
-) {
-    if let Some(entry) = branch_meta.get_mut(&branch_key_for_chart(chart_id)) {
-        entry.pre_tag_indicator_ids.clear();
     }
 }
 
@@ -484,46 +423,6 @@ pub fn clone_stashed_primitives(
         .unwrap_or_default()
 }
 
-// =============================================================================
-// Group O (S2.5) — signal_manager / trade_manager / marker_manager
-// =============================================================================
-//
-// These mirrors do NOT lazy-insert: same policy as Group M/N — the entry
-// MUST already exist (seeded at chart construction). Silent no-op on miss.
-
-/// Mirror signal_manager into branch_meta. Silent no-op if entry missing.
-pub fn mirror_signal_manager(
-    branch_meta: &mut std::collections::HashMap<BranchId, BranchMeta>,
-    chart_id: ChartId,
-    manager: SignalManager,
-) {
-    if let Some(entry) = branch_meta.get_mut(&branch_key_for_chart(chart_id)) {
-        entry.signal_manager = manager;
-    }
-}
-
-/// Mirror trade_manager into branch_meta. Silent no-op if entry missing.
-pub fn mirror_trade_manager(
-    branch_meta: &mut std::collections::HashMap<BranchId, BranchMeta>,
-    chart_id: ChartId,
-    manager: TradeManager,
-) {
-    if let Some(entry) = branch_meta.get_mut(&branch_key_for_chart(chart_id)) {
-        entry.trade_manager = manager;
-    }
-}
-
-/// Mirror marker_manager into branch_meta. Silent no-op if entry missing.
-pub fn mirror_marker_manager(
-    branch_meta: &mut std::collections::HashMap<BranchId, BranchMeta>,
-    chart_id: ChartId,
-    manager: MarkerManager,
-) {
-    if let Some(entry) = branch_meta.get_mut(&branch_key_for_chart(chart_id)) {
-        entry.marker_manager = manager;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -536,7 +435,8 @@ mod tests {
     #[test]
     fn mirror_instrument_lazy_inserts() {
         let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
-        mirror_instrument(&mut bm, ChartId(7), "BTCUSDT", tf(), "Binance", "S");
+        let mut bs = BubbleStore::new();
+        mirror_instrument(&mut bm, &mut bs, ChartId(7), "BTCUSDT", tf(), "Binance", "S");
         let key = branch_key_for_chart(ChartId(7));
         let entry = bm.get(&key).expect("entry seeded");
         assert_eq!(entry.symbol.as_deref(), Some("BTCUSDT"));
@@ -548,11 +448,12 @@ mod tests {
     #[test]
     fn mirror_instrument_updates_existing_without_recreating() {
         let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
-        mirror_instrument(&mut bm, ChartId(3), "BTC", tf(), "Binance", "S");
+        let mut bs = BubbleStore::new();
+        mirror_instrument(&mut bm, &mut bs, ChartId(3), "BTC", tf(), "Binance", "S");
         // mutate label to detect re-insertion
         bm.get_mut(&branch_key_for_chart(ChartId(3))).unwrap().label =
             Some("sticky".to_string());
-        mirror_instrument(&mut bm, ChartId(3), "ETH", tf(), "OKX", "M");
+        mirror_instrument(&mut bm, &mut bs, ChartId(3), "ETH", tf(), "OKX", "M");
         let entry = bm.get(&branch_key_for_chart(ChartId(3))).unwrap();
         assert_eq!(entry.symbol.as_deref(), Some("ETH"));
         assert_eq!(entry.exchange.as_deref(), Some("OKX"));
@@ -561,70 +462,32 @@ mod tests {
     }
 
     #[test]
-    fn mirror_symbol_only_updates_symbol() {
-        let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
-        mirror_instrument(&mut bm, ChartId(1), "BTC", tf(), "Binance", "S");
-        mirror_symbol(&mut bm, ChartId(1), "ETHUSDT", tf(), "Binance", "S");
-        let entry = bm.get(&branch_key_for_chart(ChartId(1))).unwrap();
-        assert_eq!(entry.symbol.as_deref(), Some("ETHUSDT"));
-        assert_eq!(entry.exchange.as_deref(), Some("Binance"));
-    }
-
-    #[test]
-    fn mirror_group_id_no_lazy_insert_when_missing() {
-        let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
-        // Entry not seeded — mirror should be silent no-op.
-        mirror_group_id(&mut bm, ChartId(99), Some(BubbleId(7)));
-        assert!(bm.is_empty());
-    }
-
-    #[test]
-    fn mirror_group_id_writes_on_existing_entry() {
-        let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
-        mirror_instrument(&mut bm, ChartId(5), "BTC", tf(), "Binance", "S");
-        mirror_group_id(&mut bm, ChartId(5), Some(BubbleId(42)));
-        let entry = bm.get(&branch_key_for_chart(ChartId(5))).unwrap();
-        assert_eq!(entry.group_id, Some(BubbleId(42)));
-    }
-
-    #[test]
     fn mirror_prev_close_price_writes_on_existing_entry() {
         let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
-        mirror_instrument(&mut bm, ChartId(11), "BTC", tf(), "Binance", "S");
-        mirror_prev_close_price(&mut bm, ChartId(11), Some(50_000.0));
+        let mut bs = BubbleStore::new();
+        mirror_instrument(&mut bm, &mut bs, ChartId(11), "BTC", tf(), "Binance", "S");
+        mirror_prev_close_price(&mut bm, &mut bs, ChartId(11), Some(50_000.0));
         let entry = bm.get(&branch_key_for_chart(ChartId(11))).unwrap();
         assert_eq!(entry.prev_close_price, Some(50_000.0));
     }
 
     #[test]
-    fn mirror_connection_status_writes_on_existing_entry() {
-        let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
-        mirror_instrument(&mut bm, ChartId(13), "BTC", tf(), "Binance", "S");
-        mirror_connection_status(&mut bm, ChartId(13), ConnectionStatus::Delayed);
-        let entry = bm.get(&branch_key_for_chart(ChartId(13))).unwrap();
-        assert_eq!(entry.connection_status, Some(ConnectionStatus::Delayed));
-    }
-
-    #[test]
     fn mirror_pre_tag_ids_writes_on_existing_entry() {
         let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
-        mirror_instrument(&mut bm, ChartId(15), "BTC", tf(), "Binance", "S");
+        mirror_pre_tag_ids(&mut bm, ChartId(15), vec![10, 20, 30]);
+        // No entry — silent no-op
+        assert!(bm.is_empty());
+        mirror_instrument(&mut bm, &mut BubbleStore::default(), ChartId(15), "BTC", tf(), "Binance", "S");
         mirror_pre_tag_ids(&mut bm, ChartId(15), vec![10, 20, 30]);
         let entry = bm.get(&branch_key_for_chart(ChartId(15))).unwrap();
         assert_eq!(entry.pre_tag_indicator_ids, vec![10, 20, 30]);
     }
 
     #[test]
-    fn mirror_pre_tag_ids_no_lazy_insert() {
-        let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
-        mirror_pre_tag_ids(&mut bm, ChartId(99), vec![1, 2]);
-        assert!(bm.is_empty());
-    }
-
-    #[test]
     fn mirror_stashed_command_history_round_trips() {
         let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
-        mirror_instrument(&mut bm, ChartId(17), "BTC", tf(), "Binance", "S");
+        let mut bs = BubbleStore::new();
+        mirror_instrument(&mut bm, &mut bs, ChartId(17), "BTC", tf(), "Binance", "S");
         let history = CommandHistory::new(50);
         mirror_stashed_command_history(&mut bm, ChartId(17), Some(history));
         let entry = bm.get(&branch_key_for_chart(ChartId(17))).unwrap();
@@ -647,56 +510,5 @@ mod tests {
         let mut sp: HashMap<BranchId, Vec<Box<dyn Primitive>>> = HashMap::new();
         let taken = take_stashed_primitives(&mut sp, ChartId(123));
         assert!(taken.is_none());
-    }
-
-    // -------------------------------------------------------------------------
-    // Group O (S2.5) tests
-    // -------------------------------------------------------------------------
-
-    #[test]
-    fn mirror_signal_manager_round_trip() {
-        let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
-        mirror_instrument(&mut bm, ChartId(21), "BTC", tf(), "Binance", "S");
-        let mgr = SignalManager::default();
-        mirror_signal_manager(&mut bm, ChartId(21), mgr);
-        // Entry exists and has the default signal_manager value.
-        assert!(bm.contains_key(&branch_key_for_chart(ChartId(21))));
-    }
-
-    #[test]
-    fn mirror_signal_manager_no_lazy_insert_when_missing() {
-        let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
-        mirror_signal_manager(&mut bm, ChartId(99), SignalManager::default());
-        assert!(bm.is_empty());
-    }
-
-    #[test]
-    fn mirror_trade_manager_round_trip() {
-        let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
-        mirror_instrument(&mut bm, ChartId(23), "ETH", tf(), "Binance", "S");
-        mirror_trade_manager(&mut bm, ChartId(23), TradeManager::default());
-        assert!(bm.contains_key(&branch_key_for_chart(ChartId(23))));
-    }
-
-    #[test]
-    fn mirror_trade_manager_no_lazy_insert_when_missing() {
-        let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
-        mirror_trade_manager(&mut bm, ChartId(99), TradeManager::default());
-        assert!(bm.is_empty());
-    }
-
-    #[test]
-    fn mirror_marker_manager_round_trip() {
-        let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
-        mirror_instrument(&mut bm, ChartId(25), "SOL", tf(), "Binance", "S");
-        mirror_marker_manager(&mut bm, ChartId(25), MarkerManager::default());
-        assert!(bm.contains_key(&branch_key_for_chart(ChartId(25))));
-    }
-
-    #[test]
-    fn mirror_marker_manager_no_lazy_insert_when_missing() {
-        let mut bm: HashMap<BranchId, BranchMeta> = HashMap::new();
-        mirror_marker_manager(&mut bm, ChartId(99), MarkerManager::default());
-        assert!(bm.is_empty());
     }
 }

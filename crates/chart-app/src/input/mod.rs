@@ -8042,6 +8042,7 @@ impl ChartApp {
                 if let (Some(chart_id), Some(exch)) = (active_chart_id, new_exch) {
                     crate::branch_meta_bridge::mirror_instrument(
                         &mut self.branch_meta,
+                        &mut self.panel_app.tag_manager,
                         chart_id,
                         new_symbol,
                         cur_tf,
@@ -8077,6 +8078,7 @@ impl ChartApp {
                     if let Some(chart_id) = active_chart_id {
                         crate::branch_meta_bridge::mirror_timeframe(
                             &mut self.branch_meta,
+                            &mut self.panel_app.tag_manager,
                             chart_id,
                             new_timeframe.clone(),
                             &cur_sym,
@@ -8656,8 +8658,6 @@ impl ChartApp {
                         }
                     }
                 }
-                // Phase 4 S2.3 dual-write: mirror new_pane's auto group_id.
-                crate::branch_meta_bridge::mirror_group_id(&mut self.branch_meta, chart_id, Some(group_id));
                 eprintln!("[ChartApp] Auto-created invisible sync group {:?} for new chart", group_id);
             }
         }

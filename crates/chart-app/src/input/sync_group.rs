@@ -144,11 +144,8 @@ impl ChartApp {
                     eprintln!("[BubbleStore] Desync: restored stashed scale mode {:?}", prev_mode);
                 }
             }
-            // Phase 4 S2.3 dual-write: mirror the (temporary) None clear into
-            // branch_meta. The real group_id is reassigned below; mirror that
-            // write too. This intermediate mirror keeps branch_meta consistent
-            // if anything reads between the two writes.
-            crate::branch_meta_bridge::mirror_group_id(&mut self.branch_meta, chart_id, None);
+            // Membership cleared via detach_chart_from_bubble above; BubbleStore reverse
+            // index is the truth for group membership.
             // Phase 4 S2.4 dual-write: clear pre_tag_ids, stash, history mirrors.
             crate::branch_meta_bridge::mirror_pre_tag_ids(&mut self.branch_meta, chart_id, Vec::new());
             crate::branch_meta_bridge::clear_stashed_primitives(&mut self.stashed_primitives, chart_id);
@@ -211,8 +208,7 @@ impl ChartApp {
                     }
                 }
             }
-            // Phase 4 S2.3 dual-write: mirror new auto_created group_id.
-            crate::branch_meta_bridge::mirror_group_id(&mut self.branch_meta, chart_id, Some(new_group_id));
+            // BubbleStore reverse index updated by attach_chart_to_bubble above.
             // Move restored primitives from drawing_manager into the new group.
             let dm_prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
                 self.panel_app.panel_grid.container_for_leaf(leaf_id)
@@ -391,8 +387,7 @@ impl ChartApp {
                     );
                     group.indicator_configs = configs;
                 }
-                // Phase 4 S2.3 dual-write: mirror new group_id (new group path).
-                crate::branch_meta_bridge::mirror_group_id(&mut self.branch_meta, chart_id, Some(group_id));
+                // BubbleStore reverse index updated by attach_chart_to_bubble above.
                 // Phase 4 S2.4 dual-write: pre_tag_ids, stashed_command_history.
                 // stashed_primitives already written above via stash_primitives().
                 crate::branch_meta_bridge::mirror_pre_tag_ids(&mut self.branch_meta, chart_id, pre_tag_ids);
@@ -457,8 +452,7 @@ impl ChartApp {
             } else {
                 None
             };
-            // Phase 4 S2.3 dual-write: mirror new group_id (existing group path).
-            crate::branch_meta_bridge::mirror_group_id(&mut self.branch_meta, chart_id, Some(group_id));
+            // BubbleStore reverse index updated by attach_chart_to_bubble above.
             // Phase 4 S2.4 dual-write: pre_tag_ids, stashed_command_history.
             // stashed_primitives already written above via stash_primitives().
             crate::branch_meta_bridge::mirror_pre_tag_ids(&mut self.branch_meta, chart_id, pre_tag_ids.clone());
@@ -533,6 +527,7 @@ impl ChartApp {
         for chart_id in new_chart_ids {
             crate::branch_meta_bridge::mirror_instrument(
                 &mut self.branch_meta,
+                &mut self.panel_app.tag_manager,
                 chart_id,
                 &source_sym,
                 source_tf.clone(),
@@ -558,10 +553,7 @@ impl ChartApp {
                         }
                         // else: same chart_id survived the split, TagManager link is intact.
                     }
-                    // Phase 4 S2.3 dual-write: mirror mother's restored group_id.
-                    if let Some(mother_cid) = self.panel_app.panel_grid.container_id_for_leaf(mother_leaf) {
-                        crate::branch_meta_bridge::mirror_group_id(&mut self.branch_meta, mother_cid, Some(old_gid));
-                    }
+                    // BubbleStore reverse index maintained by attach_chart_to_bubble above.
                     // Restore the mother's color tag that was snapshotted before the split.
                     if let Some(color) = pre_split_color {
                         self.panel_app.leaf_color_tags.insert(mother_leaf, color);
@@ -593,10 +585,7 @@ impl ChartApp {
                 if let Some(chart_id) = new_chart_id {
                     let _ = self.panel_app.tag_manager.attach_chart_to_bubble(chart_id, gid);
                 }
-                // Phase 4 S2.3 dual-write: mirror new leaf's fresh auto group_id.
-                if let Some(chart_id) = new_chart_id {
-                    crate::branch_meta_bridge::mirror_group_id(&mut self.branch_meta, chart_id, Some(gid));
-                }
+                // BubbleStore reverse index updated by attach_chart_to_bubble above.
                 self.panel_app.leaf_color_tags.remove(&leaf_id);
                 eprintln!("[BubbleStore] (SplitUntagged) Created auto group {:?} for new leaf {:?}", gid, leaf_id);
             }
@@ -701,10 +690,7 @@ impl ChartApp {
                     }
                 }
             }
-            // Phase 4 S2.3 dual-write: mirror new group_id for every split leaf.
-            for &(_, chart_id) in &leaf_chart_ids {
-                crate::branch_meta_bridge::mirror_group_id(&mut self.branch_meta, chart_id, Some(group_id));
-            }
+            // BubbleStore reverse index updated by attach_chart_to_bubble loop above.
 
             // For new groups: snapshot source window's current indicator and primitive ids as pre-tag.
             // On desync, only items NOT in these lists will be removed.
@@ -1019,15 +1005,14 @@ impl ChartApp {
             }
         }
 
-        // Phase 4 S2.2 dual-write: mirror (symbol, exchange, account_type) into
-        // `branch_meta` for each peer. `panel_grid` borrow is released here so
-        // `branch_meta` can be mutably borrowed. Timeframe seed comes from the
-        // pre-mutation snapshot (peer_info) — peer windows kept their timeframe
-        // during this propagation.
+        // Phase 1.2: dual-write instrument into branch_meta + bubble for each peer.
+        // panel_grid borrow released before this block; branch_meta and tag_manager
+        // are disjoint fields — split borrow compiles cleanly.
         for ((_, chart_id_opt), (_, _, _, peer_tf)) in peer_chart_ids.iter().zip(peer_info.iter()) {
             if let Some(chart_id) = chart_id_opt {
                 crate::branch_meta_bridge::mirror_instrument(
                     &mut self.branch_meta,
+                    &mut self.panel_app.tag_manager,
                     *chart_id,
                     &symbol_owned,
                     peer_tf.clone(),
@@ -1170,15 +1155,14 @@ impl ChartApp {
             }
         }
 
-        // Phase 4 S2.2 dual-write: mirror new timeframe into branch_meta for
-        // each peer. Seed defaults come from `peer_requests` (pre-mutation
-        // exchange / symbol / account_type — unchanged by this propagation).
+        // Phase 1.2: dual-write timeframe into branch_meta + bubble for each peer.
         for ((_, chart_id_opt), (exchange_seed, symbol_seed, at_seed))
             in peer_chart_ids.iter().zip(peer_requests.iter())
         {
             if let Some(chart_id) = chart_id_opt {
                 crate::branch_meta_bridge::mirror_timeframe(
                     &mut self.branch_meta,
+                    &mut self.panel_app.tag_manager,
                     *chart_id,
                     tf.clone(),
                     symbol_seed,

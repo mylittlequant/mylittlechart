@@ -80,10 +80,11 @@ impl ChartApp {
                         window.viewport.bar_count = 0;
                         window.viewport.view_start = 0.0;
                     }
-                    // Phase 4 S2.2 dual-write: mirror new timeframe into branch_meta.
+                    // Phase 1.2: dual-write timeframe into branch_meta + bubble.
                     if let Some(chart_id) = active_chart_id {
                         crate::branch_meta_bridge::mirror_timeframe(
                             &mut self.branch_meta,
+                            &mut self.panel_app.tag_manager,
                             chart_id,
                             tf.clone(),
                             &symbol,
@@ -751,22 +752,15 @@ impl ChartApp {
                                         snap.drawings.primitives.len()
                                     );
 
-                                    // Phase 4 S2.2: seed branch_meta from the restored
-                                    // snapshot. `window` is a local var here; no panel_grid
-                                    // borrow holds the branch_meta map.
+                                    // Phase 1.2: dual-write instrument into branch_meta + bubble.
                                     crate::branch_meta_bridge::mirror_instrument(
                                         &mut self.branch_meta,
+                                        &mut self.panel_app.tag_manager,
                                         chart_id,
                                         &snap.symbol,
                                         snap.timeframe.clone(),
                                         &snap.exchange,
                                         &snap.account_type,
-                                    );
-                                    // Phase 4 S2.3 dual-write: mirror restored group_id.
-                                    crate::branch_meta_bridge::mirror_group_id(
-                                        &mut self.branch_meta,
-                                        chart_id,
-                                        snap.bubble_id.map(zengeld_chart::tag_manager::BubbleId),
                                     );
                                     // Phase 4 S2.4 dual-write: pre_tag_ids, stashed_command_history.
                                     // stashed_primitives already written above via push_stashed_primitive().
@@ -956,22 +950,17 @@ impl ChartApp {
                                 }
                             }
                         } // windows (panel_grid borrow) dropped here
-                        // Phase 4 S2.2 dual-write: mirror restored instrument into branch_meta.
+                        // Phase 1.2: dual-write instrument into branch_meta + bubble.
                         for snap in &preset.windows {
                             let chart_id = zengeld_chart::state::chart_container::ChartId(snap.window_id);
                             crate::branch_meta_bridge::mirror_instrument(
                                 &mut self.branch_meta,
+                                &mut self.panel_app.tag_manager,
                                 chart_id,
                                 &snap.symbol,
                                 snap.timeframe.clone(),
                                 &snap.exchange,
                                 &snap.account_type,
-                            );
-                            // Phase 4 S2.3 dual-write: mirror restored group_id (patch path).
-                            crate::branch_meta_bridge::mirror_group_id(
-                                &mut self.branch_meta,
-                                chart_id,
-                                snap.bubble_id.map(zengeld_chart::tag_manager::BubbleId),
                             );
                             // Phase 4 S2.4 dual-write: pre_tag_ids + stashed_command_history.
                             crate::branch_meta_bridge::mirror_pre_tag_ids(
@@ -1185,10 +1174,6 @@ impl ChartApp {
                                     }
                                 }
                             }
-                        }
-                        // Phase 4 S2.3 dual-write: mirror auto-group_id for orphan windows.
-                        for &(_, chart_id) in &leaf_chart_ids {
-                            crate::branch_meta_bridge::mirror_group_id(&mut self.branch_meta, chart_id, Some(group_id));
                         }
                         eprintln!("[ChartApp] Auto-created invisible sync group {:?} for {} orphaned windows", group_id, leaf_chart_ids.len());
                     }

@@ -281,10 +281,11 @@ impl ChartApp {
                             prev_close_mirrors.push((*chart_id_key, window.bars.first().map(|b| b.open)));
                         }
                     }
-                    // Phase 4 S2.3 dual-write: mirror prev_close_price into branch_meta.
+                    // Phase 1.2: dual-write prev_close_price into branch_meta + bubble.
                     for (chart_id, prev_close) in prev_close_mirrors {
                         crate::branch_meta_bridge::mirror_prev_close_price(
                             &mut self.branch_meta,
+                            &mut self.panel_app.tag_manager,
                             chart_id,
                             prev_close,
                         );
@@ -388,9 +389,11 @@ impl ChartApp {
                         }
                         prev_close_mirrors.push((*chart_id_key, window.bars.first().map(|b| b.open)));
                     }
+                    // Phase 1.2: dual-write prev_close_price into branch_meta + bubble.
                     for (chart_id, prev_close) in prev_close_mirrors {
                         crate::branch_meta_bridge::mirror_prev_close_price(
                             &mut self.branch_meta,
+                            &mut self.panel_app.tag_manager,
                             chart_id,
                             prev_close,
                         );
@@ -478,9 +481,11 @@ impl ChartApp {
                         }
                         prev_close_mirrors.push((*chart_id_key, window.bars.first().map(|b| b.open)));
                     }
+                    // Phase 1.2: dual-write prev_close_price into branch_meta + bubble.
                     for (chart_id, prev_close) in prev_close_mirrors {
                         crate::branch_meta_bridge::mirror_prev_close_price(
                             &mut self.branch_meta,
+                            &mut self.panel_app.tag_manager,
                             chart_id,
                             prev_close,
                         );

@@ -1196,10 +1196,11 @@ impl ChartApp {
                 crate::chart_panel_bridge::drawing_manager_for_panel_mut(&mut app.panels_store, pid)
                     .set_current_symbol_key("BTCUSDT", &exchange_name, "S");
             }
-            // Phase 4 B: seed branch_meta for the freshly-default chart.
+            // Phase 1.2: seed branch_meta + bubble for the freshly-default chart.
             if let Some(chart_id) = active_chart_id {
                 crate::branch_meta_bridge::mirror_instrument(
                     &mut app.branch_meta,
+                    &mut app.panel_app.tag_manager,
                     chart_id,
                     "BTCUSDT",
                     zengeld_chart::state::Timeframe::new("1H", 60),
@@ -1439,10 +1440,11 @@ impl ChartApp {
             crate::chart_panel_bridge::drawing_manager_for_panel_mut(&mut app.panels_store, pid)
                 .set_current_symbol_key("BTCUSDT", &exchange_name, "S");
         }
-        // Phase 4 B: seed branch_meta for the freshly-default chart.
+        // Phase 1.2: seed branch_meta + bubble for the freshly-default chart.
         if let Some(chart_id) = active_chart_id {
             crate::branch_meta_bridge::mirror_instrument(
                 &mut app.branch_meta,
+                &mut app.panel_app.tag_manager,
                 chart_id,
                 "BTCUSDT",
                 zengeld_chart::state::Timeframe::new("1H", 60),
@@ -1830,10 +1832,11 @@ impl ChartApp {
                     crate::chart_panel_bridge::drawing_manager_for_panel_mut(&mut app.panels_store, pid)
                         .set_current_symbol_key("BTCUSDT", &exchange_name, "S");
                 }
-                // Phase 4 B: seed branch_meta for the freshly-default chart.
+                // Phase 1.2: seed branch_meta + bubble for the freshly-default chart.
                 if let Some(chart_id) = active_chart_id {
                     crate::branch_meta_bridge::mirror_instrument(
                         &mut app.branch_meta,
+                        &mut app.panel_app.tag_manager,
                         chart_id,
                         "BTCUSDT",
                         zengeld_chart::state::Timeframe::new("1H", 60),
@@ -2203,10 +2206,11 @@ impl ChartApp {
             mirror_args = Some((cur_sym_exc.clone(), cur_tf_exc.clone(), exchange_name.clone(), cur_at_label_exc.clone()));
             bridge.request_bars(exchange_id, &cur_sym_exc, &cur_tf_exc, at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), false);
         }
-        // Phase 4 S2.2 dual-write: mirror new exchange into branch_meta.
+        // Phase 1.2: dual-write exchange into branch_meta + bubble.
         if let (Some(chart_id), Some((sym, tf, exch, at_label))) = (active_chart_id, mirror_args) {
             crate::branch_meta_bridge::mirror_exchange(
                 &mut self.branch_meta,
+                &mut self.panel_app.tag_manager,
                 chart_id,
                 &exch,
                 &sym,

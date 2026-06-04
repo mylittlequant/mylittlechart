@@ -415,10 +415,11 @@ impl ChartApp {
                     window.viewport.bar_count = 0;
                     window.pending_symbol_load = true;
                 }
-                // Phase 4 B: mirror new (symbol, exchange, account_type) into branch_meta.
+                // Phase 1.2: dual-write instrument into branch_meta + bubble.
                 if let Some(chart_id) = active_chart_id {
                     crate::branch_meta_bridge::mirror_instrument(
                         &mut self.branch_meta,
+                        &mut self.panel_app.tag_manager,
                         chart_id,
                         sym_part,
                         timeframe.clone(),
@@ -888,10 +889,11 @@ impl ChartApp {
                             window.viewport.view_start = 0.0;
                             window.pending_symbol_load = true;
                         }
-                        // Phase 4 B: mirror new instrument into branch_meta.
+                        // Phase 1.2: dual-write instrument into branch_meta + bubble.
                         if let Some(chart_id) = active_chart_id {
                             crate::branch_meta_bridge::mirror_instrument(
                                 &mut self.branch_meta,
+                                &mut self.panel_app.tag_manager,
                                 chart_id,
                                 symbol_part,
                                 timeframe.clone(),
