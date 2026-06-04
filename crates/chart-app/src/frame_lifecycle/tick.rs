@@ -209,69 +209,75 @@ impl ChartApp {
 
                     let mut any_matched = false;
                     // Collect (symbol, timeframe, account_type) for windows that received
-                    // an initial load so we can trigger background backfill after the loop
-                    // (can't borrow self.bridge while containers_mut() is held).
+                    // an initial load so we can trigger background backfill after the loop.
                     let mut backfill_requests: Vec<(String, zengeld_chart::state::Timeframe, digdigdig3::AccountType)> = Vec::new();
                     // Phase 4 S2.3: collect (chart_id, prev_close_price) for matched
                     // windows so we can mirror into branch_meta after the panel_grid
                     // mut borrow drops.
                     let mut prev_close_mirrors: Vec<(zengeld_chart::state::ChartId, Option<f64>)> = Vec::new();
+
+                    // Phase 4 B: pre-collect instrument map from branch_meta so we can
+                    // read symbol/tf/exchange/account_type inside the containers_mut() loop
+                    // (branch_meta can't be borrowed concurrently with the mut borrow).
+                    let instrument_by_cid: std::collections::HashMap<zengeld_chart::state::ChartId, (String, zengeld_chart::state::Timeframe, String, String)> = {
+                        use crate::branch_meta_bridge::{branch_key_for_chart, read_symbol, read_timeframe, read_exchange, read_account_type};
+                        self.panel_app.panel_grid.containers().keys()
+                            .filter_map(|cid| {
+                                let sym = read_symbol(&self.branch_meta, *cid).map(String::from)?;
+                                let tf = read_timeframe(&self.branch_meta, *cid).cloned()?;
+                                let exch = read_exchange(&self.branch_meta, *cid).map(String::from)?;
+                                let at = read_account_type(&self.branch_meta, *cid).map(String::from)?;
+                                let _ = branch_key_for_chart(*cid);
+                                Some((*cid, (sym, tf, exch, at)))
+                            })
+                            .collect()
+                    };
+
                     for (chart_id_key, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
-                        // B2-defer S2.7.3 target: reads inside containers_mut() block;
-                        // branch_meta borrow conflicts with panel_grid mut borrow here.
-                        let tf_matches = window.timeframe.name == tf_name;
-                        let matched = window.symbol == symbol
-                            && window.exchange == exchange_id.as_str()
+                        let (win_sym, win_tf, win_exch, win_at) = match instrument_by_cid.get(chart_id_key) {
+                            Some(t) => t,
+                            None => continue,
+                        };
+                        let tf_matches = win_tf.name == tf_name;
+                        let matched = win_sym.as_str() == symbol
+                            && win_exch.as_str() == exchange_id.as_str()
                             && tf_matches
-                            && window.account_type == account_type.short_label();
+                            && win_at.as_str() == account_type.short_label();
                         if matched {
                             any_matched = true;
-                            // Use update_bars for backfill (preserves viewport),
-                            // set_bars for initial load (resets viewport to end).
-                            // pending_symbol_load forces the initial-load path even if a
-                            // stray TradeUpdate inserted a synthetic bar before bars arrived.
                             let is_backfill = if window.pending_symbol_load {
-                                false // force initial-load path, ignore any stray bars
+                                false
                             } else {
                                 !window.bars.is_empty()
                             };
                             crate::dlog!("[ChartApp]   -> window matched: sym={} exch={} tf={} is_backfill={} bars_len={} pending_sym={}",
-                                window.symbol, window.exchange, window.timeframe.name,
+                                win_sym, win_exch, win_tf.name,
                                 is_backfill, window.bars.len(), window.pending_symbol_load);
                             if is_backfill {
                                 window.update_bars(bars.clone());
-                                // Also schedule backfill for cached windows that haven't
-                                // reached the target bar count yet.
                                 let target = self.panel_app.user_manager.profile.data_load.background_bar_count;
                                 if target > 0 && (window.bars.len() as u32) < target {
-                                    // B2-defer S2.7.3 target: window.symbol/timeframe/account_type reads
                                     backfill_requests.push((
-                                        window.symbol.clone(),
-                                        window.timeframe.clone(),
-                                        account_type_from_label(&window.account_type),
+                                        win_sym.clone(),
+                                        win_tf.clone(),
+                                        account_type_from_label(win_at),
                                     ));
                                 }
                             } else {
-                                // Apply scale mode BEFORE set_bars so calc_auto_scale()
-                                // runs with the correct mode (not stale Manual from previous symbol).
                                 window.price_scale.scale_mode = self.default_scale_mode;
                                 window.set_bars(bars.clone());
                                 window.pending_symbol_load = false;
-                                // Schedule a Layer 2 background backfill to extend history
-                                // beyond the initial 300 bars.
                                 let target = self.panel_app.user_manager.profile.data_load.background_bar_count;
                                 if target > 300 {
-                                    // B2-defer S2.7.3 target: window.symbol/timeframe/account_type reads
                                     backfill_requests.push((
-                                        window.symbol.clone(),
-                                        window.timeframe.clone(),
-                                        account_type_from_label(&window.account_type),
+                                        win_sym.clone(),
+                                        win_tf.clone(),
+                                        account_type_from_label(win_at),
                                     ));
                                 }
                             }
                             crate::dlog!("[BarsLoaded] after set_bars: view_start={} chart_width={} bar_spacing={}",
                                 window.viewport.view_start, window.viewport.chart_width, window.viewport.bar_spacing);
-                            // Phase 4 A: prev_close_price now derived in branch_meta from window.bars.
                             prev_close_mirrors.push((*chart_id_key, window.bars.first().map(|b| b.open)));
                         }
                     }
@@ -347,17 +353,35 @@ impl ChartApp {
                     crate::dlog!("[ChartApp] BackfillComplete: {} {} tf={} bars={}", exchange_id.as_str(), symbol, tf_name, bars.len());
                     // Phase 4 S2.3: collect prev_close_price mirrors after the loop.
                     let mut prev_close_mirrors: Vec<(zengeld_chart::state::ChartId, Option<f64>)> = Vec::new();
+
+                    // Phase 4 B: pre-collect instrument map from branch_meta.
+                    let instrument_by_cid_bc: std::collections::HashMap<zengeld_chart::state::ChartId, (String, zengeld_chart::state::Timeframe, String, String)> = {
+                        use crate::branch_meta_bridge::{branch_key_for_chart, read_symbol, read_timeframe, read_exchange, read_account_type};
+                        self.panel_app.panel_grid.containers().keys()
+                            .filter_map(|cid| {
+                                let sym = read_symbol(&self.branch_meta, *cid).map(String::from)?;
+                                let tf = read_timeframe(&self.branch_meta, *cid).cloned()?;
+                                let exch = read_exchange(&self.branch_meta, *cid).map(String::from)?;
+                                let at = read_account_type(&self.branch_meta, *cid).map(String::from)?;
+                                let _ = branch_key_for_chart(*cid);
+                                Some((*cid, (sym, tf, exch, at)))
+                            })
+                            .collect()
+                    };
+
                     for (chart_id_key, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
-                        // B2-defer S2.7.3 target: reads inside containers_mut() block.
-                        let tf_matches = window.timeframe.name == tf_name;
-                        if !(window.symbol == symbol
-                            && window.exchange == exchange_id.as_str()
+                        let (win_sym, win_tf, win_exch, win_at) = match instrument_by_cid_bc.get(chart_id_key) {
+                            Some(t) => t,
+                            None => continue,
+                        };
+                        let tf_matches = win_tf.name == tf_name;
+                        if !(win_sym.as_str() == symbol
+                            && win_exch.as_str() == exchange_id.as_str()
                             && tf_matches
-                            && window.account_type == account_type.short_label())
+                            && win_at.as_str() == account_type.short_label())
                         {
                             continue;
                         }
-                        // Backfill always uses update_bars — viewport is never reset.
                         window.update_bars(bars.clone());
                         if window.price_scale.scale_mode.is_auto_y() {
                             window.calc_auto_scale();
@@ -402,13 +426,31 @@ impl ChartApp {
                     // Phase 4 S2.3: collect prev_close_price mirrors after the loop.
                     let mut prev_close_mirrors: Vec<(zengeld_chart::state::ChartId, Option<f64>)> = Vec::new();
 
+                    // Phase 4 B: pre-collect instrument map from branch_meta.
+                    let instrument_by_cid_sb: std::collections::HashMap<zengeld_chart::state::ChartId, (String, zengeld_chart::state::Timeframe, String, String)> = {
+                        use crate::branch_meta_bridge::{branch_key_for_chart, read_symbol, read_timeframe, read_exchange, read_account_type};
+                        self.panel_app.panel_grid.containers().keys()
+                            .filter_map(|cid| {
+                                let sym = read_symbol(&self.branch_meta, *cid).map(String::from)?;
+                                let tf = read_timeframe(&self.branch_meta, *cid).cloned()?;
+                                let exch = read_exchange(&self.branch_meta, *cid).map(String::from)?;
+                                let at = read_account_type(&self.branch_meta, *cid).map(String::from)?;
+                                let _ = branch_key_for_chart(*cid);
+                                Some((*cid, (sym, tf, exch, at)))
+                            })
+                            .collect()
+                    };
+
                     for (chart_id_key, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
-                        // B2-defer S2.7.3 target: reads inside containers_mut() block.
-                        let tf_matches = window.timeframe.name == tf_name;
-                        if !(window.symbol == symbol
-                            && window.exchange == exchange_id.as_str()
+                        let (win_sym, win_tf, win_exch, win_at) = match instrument_by_cid_sb.get(chart_id_key) {
+                            Some(t) => t,
+                            None => continue,
+                        };
+                        let tf_matches = win_tf.name == tf_name;
+                        if !(win_sym.as_str() == symbol
+                            && win_exch.as_str() == exchange_id.as_str()
                             && tf_matches
-                            && window.account_type == at_label)
+                            && win_at.as_str() == at_label)
                         {
                             continue;
                         }
@@ -481,18 +523,33 @@ impl ChartApp {
 
                     let _bar_apply_start = std::time::Instant::now();
 
+                    // Phase 4 B: pre-collect instrument map from branch_meta for TradeUpdate.
+                    let instrument_by_cid_tu: std::collections::HashMap<zengeld_chart::state::ChartId, (String, zengeld_chart::state::Timeframe, String, String)> = {
+                        use crate::branch_meta_bridge::{branch_key_for_chart, read_symbol, read_timeframe, read_exchange, read_account_type};
+                        self.panel_app.panel_grid.containers().keys()
+                            .filter_map(|cid| {
+                                let sym = read_symbol(&self.branch_meta, *cid).map(String::from)?;
+                                let tf = read_timeframe(&self.branch_meta, *cid).cloned()?;
+                                let exch = read_exchange(&self.branch_meta, *cid).map(String::from)?;
+                                let at = read_account_type(&self.branch_meta, *cid).map(String::from)?;
+                                let _ = branch_key_for_chart(*cid);
+                                Some((*cid, (sym, tf, exch, at)))
+                            })
+                            .collect()
+                    };
+
                     // Update the last bar of every window matching this symbol.
-                    for window in self.panel_app.panel_grid.containers_mut().values_mut() {
+                    for (cid_tu, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if window.pending_symbol_load {
-                            // Skip trade updates while waiting for initial bars —
-                            // otherwise a stray bar inserted here would cause BarsLoaded
-                            // to treat the load as a backfill and skip viewport repositioning.
+                            // Skip trade updates while waiting for initial bars.
                             continue;
                         }
-                        // B2-defer S2.7.3 target: window.symbol/account_type reads inside containers_mut() block.
-                        if window.symbol == symbol && window.account_type == account_type.short_label() {
-                            // Period in seconds derived from minutes field of Timeframe.
-                            let period_secs = (window.timeframe.minutes as i64) * 60;
+                        let (win_sym_tu, win_tf_tu, _win_exch_tu, win_at_tu) = match instrument_by_cid_tu.get(cid_tu) {
+                            Some(t) => t,
+                            None => continue,
+                        };
+                        if win_sym_tu.as_str() == symbol && win_at_tu.as_str() == account_type.short_label() {
+                            let period_secs = (win_tf_tu.minutes as i64) * 60;
                             let trade_ts_secs = timestamp / 1000;
 
                             if let Some(last_ts) = window.bars.last().map(|b| b.timestamp) {
@@ -577,7 +634,7 @@ impl ChartApp {
                     if needs_backfill {
                         crate::dlog!("[ChartApp] Multi-bar gap detected for {} — requesting REST backfill", symbol);
                         let bridge = self.bridge.clone();
-                        for (cid, window) in self.panel_app.panel_grid.containers().iter() {
+                        for cid in self.panel_app.panel_grid.containers().keys() {
                             use crate::branch_meta_bridge::{read_symbol, read_account_type, read_timeframe};
                             let sym_match = read_symbol(&self.branch_meta, *cid).map_or(false, |s| s == symbol);
                             let at_match = read_account_type(&self.branch_meta, *cid).map_or(false, |at| at == account_type.short_label());
@@ -587,8 +644,6 @@ impl ChartApp {
                                 );
                                 if let Some(tf) = read_timeframe(&self.branch_meta, *cid) {
                                     bridge.request_bars(exchange_id, &symbol, tf, at, None, None, false);
-                                } else {
-                                    bridge.request_bars(exchange_id, &window.symbol, &window.timeframe, at, None, None, false);
                                 }
                             }
                         }
@@ -1120,9 +1175,10 @@ impl ChartApp {
                     .panel_app
                     .panel_grid
                     .containers()
-                    .iter()
-                    .filter(|(_id, w)| w.symbol == *symbol)
-                    .map(|(id, _w)| id.0)
+                    .keys()
+                    .filter(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, **cid)
+                        .map_or(false, |s| s == *symbol))
+                    .map(|cid| cid.0)
                     .collect();
 
                 // Split-borrow: `panel_app.panel_grid` and `indicator_manager`
@@ -1160,21 +1216,30 @@ impl ChartApp {
         }
 
         // ── Layer 3: trigger scroll-fetch when viewport approaches left edge ───
-        // Collect (symbol, exchange, tf_name, at_label) for windows that need a
-        // historical extension fetch.  Two-pass to avoid a mutable/immutable
-        // borrow conflict: first collect while mutating `scroll_fetch_in_flight`,
-        // then re-borrow immutably to read `oldest_ts` for each request.
         {
-            let mut scroll_requests: Vec<(String, String, String, String)> = Vec::new();
-
+            let mut scroll_requests: Vec<(zengeld_chart::state::ChartId, String, String, String, String)> = Vec::new();
             let max_loaded = self.panel_app.user_manager.profile.data_load.max_loaded_bars;
 
-            for window in self.panel_app.panel_grid.containers_mut().values_mut() {
+            // Phase 4 B: pre-collect instrument map from branch_meta.
+            let instrument_by_cid_scroll: std::collections::HashMap<zengeld_chart::state::ChartId, (String, zengeld_chart::state::Timeframe, String, String)> = {
+                use crate::branch_meta_bridge::{branch_key_for_chart, read_symbol, read_timeframe, read_exchange, read_account_type};
+                self.panel_app.panel_grid.containers().keys()
+                    .filter_map(|cid| {
+                        let sym = read_symbol(&self.branch_meta, *cid).map(String::from)?;
+                        let tf = read_timeframe(&self.branch_meta, *cid).cloned()?;
+                        let exch = read_exchange(&self.branch_meta, *cid).map(String::from)?;
+                        let at = read_account_type(&self.branch_meta, *cid).map(String::from)?;
+                        let _ = branch_key_for_chart(*cid);
+                        Some((*cid, (sym, tf, exch, at)))
+                    })
+                    .collect()
+            };
+
+            for (cid_scroll, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                 if window.scroll_fetch_in_flight {
                     if let Some(started) = window.scroll_fetch_started {
                         if started.elapsed() > std::time::Duration::from_secs(10) {
-                            // B2-defer S2.7.3 target: window.symbol read inside containers_mut() block.
-                            crate::dlog!("[ChartApp] scroll_fetch_in_flight timeout, resetting for {}", window.symbol);
+                            crate::dlog!("[ChartApp] scroll_fetch_in_flight timeout, resetting for chart {:?}", cid_scroll);
                             window.scroll_fetch_in_flight = false;
                             window.scroll_fetch_started = None;
                         }
@@ -1190,26 +1255,26 @@ impl ChartApp {
 
                 if max_loaded > 0 && window.bars.len() >= max_loaded as usize { continue; }
 
+                let (win_sym_sc, win_tf_sc, win_exch_sc, win_at_sc) = match instrument_by_cid_scroll.get(cid_scroll) {
+                    Some(t) => t,
+                    None => continue,
+                };
+
                 window.scroll_fetch_in_flight = true;
                 window.scroll_fetch_started = Some(std::time::Instant::now());
-                // B2-defer S2.7.3 target: window.symbol/exchange/timeframe.name/account_type reads inside containers_mut() block.
                 scroll_requests.push((
-                    window.symbol.clone(),
-                    window.exchange.clone(),
-                    window.timeframe.name.clone(),
-                    window.account_type.clone(),
+                    *cid_scroll,
+                    win_sym_sc.clone(),
+                    win_exch_sc.clone(),
+                    win_tf_sc.name.clone(),
+                    win_at_sc.clone(),
                 ));
             }
 
-            for (symbol, exchange, tf_name, at_label) in scroll_requests {
+            for (cid_req, symbol, exchange, tf_name, at_label) in scroll_requests {
+                // Read oldest_ts from the window's bars directly.
                 let oldest_ts = self.panel_app.panel_grid.containers()
-                    .values()
-                    .find(|w| {
-                        w.symbol == symbol
-                            && w.exchange == exchange
-                            && w.timeframe.name == tf_name
-                            && w.account_type == at_label
-                    })
+                    .get(&cid_req)
                     .and_then(|w| w.bars.first().map(|b| b.timestamp))
                     .unwrap_or(0);
 

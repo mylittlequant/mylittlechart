@@ -327,18 +327,23 @@ impl ChartApp {
                             .cloned()
                             .unwrap_or_default();
                         let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
-                        // Phase 4 S2.2: capture chart_id BEFORE the mutating block.
+                        // Phase 4 B: capture chart_id BEFORE the mutating block.
                         let active_chart_id = self.panel_app.panel_grid.active_container_id();
+                        let old_sym_pc = active_chart_id
+                            .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                            .map(String::from)
+                            .unwrap_or_default();
+                        let old_exch_pc = active_chart_id
+                            .and_then(|cid| crate::branch_meta_bridge::read_exchange(&self.branch_meta, cid))
+                            .map(String::from)
+                            .unwrap_or_default();
+                        let old_at_pc = active_chart_id
+                            .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid))
+                            .map(String::from)
+                            .unwrap_or_else(|| "S".to_string());
                         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                            let old_sym = window.symbol.clone();
-                            let old_exchange = window.exchange.clone();
-                            let old_account_type = window.account_type.clone();
-                            window.snapshot_drawings_for_symbol(&old_sym, &old_exchange, &old_account_type);
-                            window.symbol = symbol.clone();
-                            window.exchange = item_exchange.clone();
-                            window.account_type = item_account_type.clone();
-                            window.update_title();
-                            window.drawing_manager.set_current_symbol_key(&window.symbol, &window.exchange, &window.account_type);
+                            window.snapshot_drawings_for_symbol(&old_sym_pc, &old_exch_pc, &old_at_pc);
+                            window.drawing_manager.set_current_symbol_key(&symbol, &item_exchange, &item_account_type);
                             window.bars.clear();
                             window.viewport.bar_count = 0;
                             window.viewport.view_start = 0.0;
@@ -346,7 +351,7 @@ impl ChartApp {
                             window.drawing_manager.clear_all_primitives();
                             window.restore_drawings_for_symbol(&symbol, &item_exchange, &item_account_type);
                         }
-                        // Phase 4 S2.2 dual-write: mirror new instrument into branch_meta.
+                        // Phase 4 B: mirror new instrument into branch_meta.
                         if let Some(chart_id) = active_chart_id {
                             crate::branch_meta_bridge::mirror_instrument(
                                 &mut self.branch_meta,

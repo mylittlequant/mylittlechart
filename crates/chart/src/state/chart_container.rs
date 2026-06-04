@@ -30,9 +30,6 @@ use crate::ui::modal_settings::SubPaneOverlayState;
 use crate::layout::SubPaneOverlayResult;
 use crate::state::inner_layout::InnerLayout;
 
-fn default_account_type_spot() -> String {
-    "S".to_string()
-}
 
 /// Unique identifier for a chart window
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -112,9 +109,6 @@ pub struct ChartContainer {
     /// construction (including `clone_for_split`).
     pub chart_panel_id: crate::state::chart_container_leaf::ChartPanelId,
 
-    /// Display title (e.g., "BTCUSD 1H")
-    pub title: String,
-
     // === Data ===
     /// OHLC bars for this chart
     pub bars: Vec<Bar>,
@@ -140,18 +134,6 @@ pub struct ChartContainer {
     pub sub_pane_overlay_results: Vec<SubPaneOverlayResult>,
     /// Total chart height including sub-panes
     pub total_chart_height: f64,
-
-    // === Symbol & Timeframe ===
-    /// Current symbol (ticker)
-    pub symbol: String,
-    /// Current timeframe
-    pub timeframe: Timeframe,
-    /// Exchange name (e.g. "Binance", "Demo")
-    pub exchange: String,
-    /// Account type short label (e.g. "S" for Spot, "F" for FuturesCross).
-    /// Stored as String so the chart crate has no dependency on digdigdig3.
-    /// Default is "S" (Spot) to match existing data on disk.
-    pub account_type: String,
 
     // === Interaction State ===
     /// Crosshair state (position, visibility)
@@ -309,15 +291,16 @@ pub const DEFAULT_SNAP_MARGIN: f64 = 5.0;
 
 impl ChartContainer {
     /// Create a new chart window with a data provider.
-    pub fn new_with_provider(symbol: &str, timeframe: Timeframe, data_provider: SharedDataProvider) -> Self {
+    pub fn new_with_provider(symbol: &str, _timeframe: Timeframe, data_provider: SharedDataProvider) -> Self {
         let id = generate_chart_id();
         let mut drawing_manager = DrawingManager::new();
         drawing_manager.set_current_window(Some(id.0));
+        let exchange = data_provider.exchange_name(symbol);
+        drawing_manager.set_current_symbol_key(symbol, &exchange, "S");
 
-        let mut window = Self {
+        Self {
             id,
             chart_panel_id: crate::state::chart_container_leaf::generate_chart_panel_id(),
-            title: format!("{} {}", symbol, timeframe.name.clone()),
             bars: Vec::new(),
             viewport: Viewport::default(),
             price_scale: PriceScale::default(),
@@ -326,10 +309,6 @@ impl ChartContainer {
             sub_pane_overlay_states: Vec::new(),
             sub_pane_overlay_results: Vec::new(),
             total_chart_height: 0.0,
-            symbol: symbol.to_string(),
-            timeframe,
-            exchange: data_provider.exchange_name(symbol),
-            account_type: default_account_type_spot(),
             // Interaction
             crosshair: Crosshair::default(),
             kinetic: KineticState::new(),
@@ -384,9 +363,7 @@ impl ChartContainer {
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
             inner_layout: InnerLayout::new(),
-        };
-        window.drawing_manager.set_current_symbol_key(&window.symbol, &window.exchange, &window.account_type);
-        window
+        }
     }
 
     /// Create a new chart window with default settings (uses NullDataProvider).
@@ -449,11 +426,6 @@ impl ChartContainer {
             .drag_separator(sub_idx, delta_y, content_height)
     }
 
-    /// Update title based on current symbol and timeframe
-    pub fn update_title(&mut self) {
-        self.title = format!("{} {}", self.symbol, self.timeframe.name);
-    }
-
     /// Snapshot current drawings into the per-symbol cache for the given symbol.
     ///
     /// The cache key is `"symbol:exchange:account_type"` (e.g. `"BTCUSDT:binance:S"`).
@@ -500,16 +472,26 @@ impl ChartContainer {
 
     /// Create a clone of this chart window for split operation.
     ///
-    /// Copies symbol, timeframe, viewport settings, scale settings, indicators.
+    /// Copies viewport settings, scale settings, indicators.
     /// Gets a fresh ChartId.
+    ///
+    /// `symbol`, `exchange`, `account_type` and `timeframe` are now owned by
+    /// `branch_meta` in chart-app; callers pass them in from `read_*` helpers.
     ///
     /// When `sync_drawings` is `true`, all existing primitives are cloned into the
     /// new window as synced copies (`origin_id` is set to the original's id).
     /// When `false`, the new window starts with an empty drawing manager.
-    pub fn clone_for_split(&self, new_chart_id: ChartId, sync_drawings: bool) -> Self {
+    pub fn clone_for_split(
+        &self,
+        new_chart_id: ChartId,
+        sync_drawings: bool,
+        symbol: &str,
+        exchange: &str,
+        account_type: &str,
+    ) -> Self {
         let mut drawing_manager = DrawingManager::new();
         drawing_manager.set_current_window(Some(new_chart_id.0));
-        drawing_manager.set_current_symbol_key(&self.symbol, &self.exchange, &self.account_type);
+        drawing_manager.set_current_symbol_key(symbol, exchange, account_type);
         if sync_drawings {
             let synced = self.drawing_manager.clone_primitives_for_sync(new_chart_id.0);
             drawing_manager.add_synced_primitives(synced);
@@ -520,9 +502,6 @@ impl ChartContainer {
             id: new_chart_id,
             // Fresh canvas-leaf id for the split; the source's stays put.
             chart_panel_id: crate::state::chart_container_leaf::generate_chart_panel_id(),
-
-            // Generate new title from symbol/timeframe
-            title: format!("{} {}", self.symbol, self.timeframe.name),
 
             // === Data (cloned) ===
             bars: self.bars.clone(),
@@ -541,12 +520,6 @@ impl ChartContainer {
             // Overlay results are frame-local; the split child starts empty.
             sub_pane_overlay_results: Vec::new(),
             total_chart_height: self.total_chart_height,
-
-            // === Symbol & Timeframe (cloned) ===
-            symbol: self.symbol.clone(),
-            timeframe: self.timeframe.clone(),
-            exchange: self.exchange.clone(),
-            account_type: self.account_type.clone(),
 
             // === Interaction State (reset) ===
             crosshair: {
@@ -713,79 +686,6 @@ impl ChartContainer {
         }
     }
 
-    /// Change symbol (requires data reload)
-    pub fn set_symbol(&mut self, symbol: &str) {
-        self.symbol = symbol.to_string();
-        self.update_title();
-        self.drawing_manager.set_current_symbol_key(&self.symbol, &self.exchange, &self.account_type);
-    }
-
-    /// Change symbol and load data from the configured provider.
-    ///
-    /// Returns `true` if symbol was changed, `false` if data not available.
-    pub fn change_symbol(&mut self, symbol: &str) -> bool {
-        let Some(new_bars) = self.data_provider.get_bars(symbol, &self.timeframe) else {
-            eprintln!(
-                "[ChartContainer] Data not available for symbol={} tf={}",
-                symbol,
-                self.timeframe.name
-            );
-            return false;
-        };
-        if new_bars.is_empty() {
-            eprintln!("[ChartContainer] No bars loaded for {}", symbol);
-            return false;
-        }
-
-        self.symbol = symbol.to_string();
-        self.exchange = self.data_provider.exchange_name(symbol);
-        self.update_title();
-        self.drawing_manager.set_current_symbol_key(&self.symbol, &self.exchange, &self.account_type);
-        self.set_bars(new_bars);
-
-        eprintln!(
-            "[ChartContainer] Changed to {} ({} bars)",
-            symbol,
-            self.bars.len()
-        );
-        true
-    }
-
-    /// Change timeframe and load data from the configured provider.
-    ///
-    /// Returns `true` if timeframe was changed, `false` if data not available.
-    pub fn change_timeframe(&mut self, timeframe: Timeframe) -> bool {
-        let Some(new_bars) = self.data_provider.get_bars(&self.symbol, &timeframe) else {
-            eprintln!(
-                "[ChartContainer] Data not available for symbol={} tf={}",
-                self.symbol,
-                timeframe.name
-            );
-            return false;
-        };
-        if new_bars.is_empty() {
-            eprintln!("[ChartContainer] No bars loaded for {} at {:?}", self.symbol, timeframe);
-            return false;
-        }
-
-        self.timeframe = timeframe;
-        self.update_title();
-        self.set_bars(new_bars);
-
-        eprintln!(
-            "[ChartContainer] Changed timeframe to {} ({} bars)",
-            self.timeframe.name,
-            self.bars.len()
-        );
-        true
-    }
-
-    /// Change timeframe (requires data reload)
-    pub fn set_timeframe(&mut self, timeframe: Timeframe) {
-        self.timeframe = timeframe;
-        self.update_title();
-    }
-
     /// Get sub_pane by index (if exists)
     pub fn get_sub_pane(&self, index: usize) -> Option<&SubPane> {
         self.sub_panes.get(index)
@@ -816,15 +716,16 @@ impl ChartContainer {
         !self.bars.is_empty()
     }
 
-    /// Clone data from another window (bars, symbol, timeframe, viewport settings)
-    pub fn clone_data_from(&mut self, source: &ChartContainer) {
+    /// Clone data from another window (bars, viewport settings).
+    ///
+    /// Instrument fields (symbol/timeframe/exchange/account_type) live in
+    /// `branch_meta` in chart-app; the caller is responsible for mirroring
+    /// the source window's instrument into branch_meta for the dest chart_id
+    /// and for calling `drawing_manager.set_current_symbol_key` afterwards.
+    pub fn clone_data_from(&mut self, source: &ChartContainer, symbol: &str, exchange: &str, account_type: &str) {
         self.bars = source.bars.clone();
 
-        self.symbol = source.symbol.clone();
-        self.timeframe = source.timeframe.clone();
-        self.exchange = source.exchange.clone();
-        self.update_title();
-        self.drawing_manager.set_current_symbol_key(&self.symbol, &self.exchange, &self.account_type);
+        self.drawing_manager.set_current_symbol_key(symbol, exchange, account_type);
 
         self.viewport = source.viewport.clone();
         self.price_scale = source.price_scale.clone();
@@ -841,17 +742,21 @@ impl ChartContainer {
         self.scale_settings = source.scale_settings.clone();
         self.price_scale.user_precision = self.scale_settings.user_precision;
 
-        eprintln!("[ChartContainer] Cloned data from window {}: {} bars, symbol={}, tf={}",
-            source.id, self.bars.len(), self.symbol, self.timeframe.name);
+        eprintln!("[ChartContainer] Cloned data from window {}: {} bars", source.id, self.bars.len());
     }
 
-    /// Create ChartRenderState from this window's data
+    /// Create ChartRenderState from this window's data.
+    ///
+    /// `timeframe_minutes` is provided by the caller from `branch_meta` via
+    /// `read_timeframe(...).map(|t| t.minutes)` — the field was removed from
+    /// `ChartContainer` in Phase 4 B.
     pub fn to_render_state<'a>(
         &'a self,
         chart_rect: crate::chart::render::ChartRect,
         theme: &'a crate::chart::render::ChartTheme,
         current_timeframe: Option<&'a str>,
         time_format_settings: Option<&'a crate::TimeFormatSettings>,
+        timeframe_minutes: Option<u32>,
     ) -> crate::chart::render::ChartRenderState<'a> {
         crate::chart::render::ChartRenderState {
             viewport: &self.viewport,
@@ -867,7 +772,7 @@ impl ChartContainer {
             current_timeframe,
             disable_clip: false,
             time_format_settings,
-            timeframe_minutes: Some(self.timeframe.minutes),
+            timeframe_minutes,
             scale_settings: Some(&self.scale_settings),
             body_enabled: true,
             border_enabled: true,
@@ -1252,17 +1157,20 @@ impl ChartContainer {
     // =========================================================================
 
     /// Add a comparison symbol to this chart window.
-    pub fn add_compare_symbol(&mut self, symbol: &str) -> bool {
-        if self.compare_overlay.has_symbol(symbol) || symbol == self.symbol {
+    ///
+    /// `main_symbol` and `main_timeframe` are read from `branch_meta` by the
+    /// caller (Phase 4 B — instrument fields removed from ChartContainer).
+    pub fn add_compare_symbol(&mut self, symbol: &str, main_symbol: &str, main_timeframe: &Timeframe) -> bool {
+        if self.compare_overlay.has_symbol(symbol) || symbol == main_symbol {
             eprintln!("[Compare] Symbol {} already compared or is main symbol", symbol);
             return false;
         }
 
-        let Some(bars) = self.data_provider.get_bars(symbol, &self.timeframe) else {
+        let Some(bars) = self.data_provider.get_bars(symbol, main_timeframe) else {
             eprintln!(
                 "[Compare] Data not available for symbol={} tf={}",
                 symbol,
-                self.timeframe.name
+                main_timeframe.name
             );
             return false;
         };

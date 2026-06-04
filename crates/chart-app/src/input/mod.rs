@@ -7917,43 +7917,73 @@ impl ChartApp {
                 }
             }
             Command::ChangeSymbol { new_symbol, .. } => {
-                // Phase 4 S2.2: capture chart_id BEFORE the mutating block.
+                // Phase 4 B: instrument fields removed from ChartContainer.
+                // Read current tf/exchange/account_type from branch_meta, then
+                // request bars and update branch_meta with new symbol + exchange.
                 let active_chart_id = self.panel_app.panel_grid.active_container_id();
-                let mut mirror_args: Option<(zengeld_chart::state::Timeframe, String, String)> = None;
+                let cur_tf = active_chart_id
+                    .and_then(|cid| crate::branch_meta_bridge::read_timeframe(&self.branch_meta, cid))
+                    .cloned()
+                    .unwrap_or_else(zengeld_chart::state::Timeframe::h1);
+                let cur_at_label = active_chart_id
+                    .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid))
+                    .map(String::from)
+                    .unwrap_or_else(|| "S".to_string());
+                let mut new_exch: Option<String> = None;
                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                    window.change_symbol(new_symbol);
-                    mirror_args = Some((window.timeframe.clone(), window.exchange.clone(), window.account_type.clone()));
-                    eprintln!("[Undo/Redo] Changed symbol to {}", new_symbol);
+                    let exch = window.data_provider.exchange_name(new_symbol);
+                    if let Some(bars) = window.data_provider.get_bars(new_symbol, &cur_tf) {
+                        window.drawing_manager.set_current_symbol_key(new_symbol, &exch, &cur_at_label);
+                        window.set_bars(bars);
+                        new_exch = Some(exch);
+                        eprintln!("[Undo/Redo] Changed symbol to {}", new_symbol);
+                    }
                 }
-                if let (Some(chart_id), Some((tf, exch, at))) = (active_chart_id, mirror_args) {
-                    crate::branch_meta_bridge::mirror_symbol(
+                if let (Some(chart_id), Some(exch)) = (active_chart_id, new_exch) {
+                    crate::branch_meta_bridge::mirror_instrument(
                         &mut self.branch_meta,
                         chart_id,
                         new_symbol,
-                        tf,
+                        cur_tf,
                         &exch,
-                        &at,
+                        &cur_at_label,
                     );
                 }
             }
             Command::ChangeTimeframe { new_timeframe, .. } => {
-                // Phase 4 S2.2: capture chart_id BEFORE the mutating block.
+                // Phase 4 B: instrument fields removed from ChartContainer.
                 let active_chart_id = self.panel_app.panel_grid.active_container_id();
-                let mut mirror_args: Option<(String, String, String)> = None;
+                let cur_sym = active_chart_id
+                    .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                    .map(String::from)
+                    .unwrap_or_default();
+                let cur_exch = active_chart_id
+                    .and_then(|cid| crate::branch_meta_bridge::read_exchange(&self.branch_meta, cid))
+                    .map(String::from)
+                    .unwrap_or_default();
+                let cur_at_label = active_chart_id
+                    .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid))
+                    .map(String::from)
+                    .unwrap_or_else(|| "S".to_string());
+                let mut changed = false;
                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                    window.change_timeframe(new_timeframe.clone());
-                    mirror_args = Some((window.symbol.clone(), window.exchange.clone(), window.account_type.clone()));
-                    eprintln!("[Undo/Redo] Changed timeframe to {:?}", new_timeframe);
+                    if let Some(bars) = window.data_provider.get_bars(&cur_sym, new_timeframe) {
+                        window.set_bars(bars);
+                        changed = true;
+                        eprintln!("[Undo/Redo] Changed timeframe to {:?}", new_timeframe);
+                    }
                 }
-                if let (Some(chart_id), Some((sym, exch, at))) = (active_chart_id, mirror_args) {
-                    crate::branch_meta_bridge::mirror_timeframe(
-                        &mut self.branch_meta,
-                        chart_id,
-                        new_timeframe.clone(),
-                        &sym,
-                        &exch,
-                        &at,
-                    );
+                if changed {
+                    if let Some(chart_id) = active_chart_id {
+                        crate::branch_meta_bridge::mirror_timeframe(
+                            &mut self.branch_meta,
+                            chart_id,
+                            new_timeframe.clone(),
+                            &cur_sym,
+                            &cur_exch,
+                            &cur_at_label,
+                        );
+                    }
                 }
             }
             Command::AddCompareSeries { series } => {
@@ -8602,7 +8632,21 @@ impl ChartApp {
                             .map(|p| zengeld_chart::preset::snapshots::PrimitiveSnapshot::from_primitive(p.as_ref()))
                             .collect())
                         .unwrap_or_default();
-                preset.windows.push(ChartWindowSnapshot::from_window(window, leaf_id.0, gid, ptids, stashed_ch, stashed_prims_snap));
+                // Phase 4 B: read instrument fields from branch_meta for snapshot.
+                let snap_symbol = crate::branch_meta_bridge::read_symbol(&self.branch_meta, chart_id)
+                    .map(String::from).unwrap_or_default();
+                let snap_timeframe = crate::branch_meta_bridge::read_timeframe(&self.branch_meta, chart_id)
+                    .cloned()
+                    .unwrap_or_else(zengeld_chart::state::Timeframe::h1);
+                let snap_exchange = crate::branch_meta_bridge::read_exchange(&self.branch_meta, chart_id)
+                    .map(String::from).unwrap_or_default();
+                let snap_account_type = crate::branch_meta_bridge::read_account_type(&self.branch_meta, chart_id)
+                    .map(String::from)
+                    .unwrap_or_else(|| "S".to_string());
+                preset.windows.push(ChartWindowSnapshot::from_window(
+                    window, leaf_id.0, gid, ptids, stashed_ch, stashed_prims_snap,
+                    snap_symbol, snap_timeframe, snap_exchange, snap_account_type,
+                ));
             }
         }
 

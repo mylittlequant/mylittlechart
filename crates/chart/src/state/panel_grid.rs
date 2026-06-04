@@ -108,9 +108,8 @@ impl ChartPanelGrid {
     /// The window becomes the single visible leaf.
     pub fn new(initial_container: ChartContainer) -> Self {
         let chart_id = initial_container.id;
-        let title = initial_container.title.clone();
 
-        let panel = ChartSubPanel::new(chart_id, title);
+        let panel = ChartSubPanel::new(chart_id, String::new());
         let docking = DockingManager::with_panel(panel);
 
         // Retrieve the leaf ID assigned to the panel we just added.
@@ -744,12 +743,10 @@ impl ChartPanelGrid {
             None => return Vec::new(),
         };
 
-        // Snapshot source title before any mutation.
-        let source_title = self
-            .containers
-            .get(&source_chart_id)
-            .map(|w| w.title.clone())
-            .unwrap_or_default();
+        // Instrument fields (symbol/tf/exchange/account_type) are owned by
+        // branch_meta in chart-app. Titles derived here are empty placeholders;
+        // the toolbar reads the real label from branch_meta at render time.
+        let source_title = String::new();
 
         // Exit expand mode when splitting (the layout changed).
         self.expanded = false;
@@ -764,20 +761,15 @@ impl ChartPanelGrid {
                 // Build the panel for the new sibling before calling split_leaf.
                 let new_chart_id = generate_chart_id();
                 let new_panel = {
-                    let src = match self.containers.get(&source_chart_id) {
-                        Some(w) => w,
-                        None => return Vec::new(),
-                    };
-                    let cloned = src.clone_for_split(new_chart_id, true);
-                    super::sub_panel::ChartSubPanel::new(new_chart_id, cloned.title.clone())
+                    super::sub_panel::ChartSubPanel::new(new_chart_id, String::new())
                 };
 
                 // Clone the window now (before tree mutation borrows self).
                 let cloned_window = match self.containers.get(&source_chart_id) {
-                    Some(w) => w.clone_for_split(new_chart_id, true),
+                    Some(w) => w.clone_for_split(new_chart_id, true, "", "", ""),
                     None => return Vec::new(),
                 };
-                let cloned_title = cloned_window.title.clone();
+                let cloned_title = String::new();
 
                 let new_leaf_id = match self
                     .docking
@@ -845,10 +837,10 @@ impl ChartPanelGrid {
                 for &leaf_id in new_leaf_ids.iter().skip(1) {
                     let new_chart_id = generate_chart_id();
                     let cloned = match self.containers.get(&source_chart_id) {
-                        Some(w) => w.clone_for_split(new_chart_id, true),
+                        Some(w) => w.clone_for_split(new_chart_id, true, "", "", ""),
                         None => continue,
                     };
-                    let cloned_title = cloned.title.clone();
+                    let cloned_title = String::new();
                     self.containers.insert(new_chart_id, cloned);
                     self.leaf_to_chart.insert(leaf_id, new_chart_id);
                     if let Some(leaf) = self.docking.tree_mut().leaf_mut(leaf_id) {

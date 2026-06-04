@@ -1113,29 +1113,43 @@ impl ChartApp {
             );
 
             // Ensure all windows have a data_provider and toolbar config.
-            // Each window uses its own exchange from the saved preset.
-            // S2.7.1 defer (iter_containers tuple-collect): reads w.symbol/exchange/timeframe/account_type
-            // from the struct directly because iter_containers() can't simultaneously access
-            // branch_meta via container_id_for_leaf (complex reborrow). Values are in sync
-            // via S2.2 dual-write. Will be rewritten in S2.7.3 when struct fields drop.
-            let window_data: Vec<(String, String, zengeld_chart::state::Timeframe, String)> = app
-                .panel_app
-                .panel_grid
-                .iter_containers()
-                .map(|(_, w)| (w.symbol.clone(), w.exchange.clone(), w.timeframe.clone(), w.account_type.clone()))
-                .collect();
+            // Phase 4 B: read exchange/account_type from branch_meta (no longer on struct).
+            let window_data: Vec<(String, String, zengeld_chart::state::Timeframe, String)> = {
+                let containers = app.panel_app.panel_grid.containers();
+                containers.keys()
+                    .filter_map(|cid| {
+                        use crate::branch_meta_bridge::{read_symbol, read_exchange, read_timeframe, read_account_type};
+                        let sym = read_symbol(&app.branch_meta, *cid).map(String::from).unwrap_or_default();
+                        let exch = read_exchange(&app.branch_meta, *cid).map(String::from).unwrap_or_default();
+                        let tf = read_timeframe(&app.branch_meta, *cid).cloned().unwrap_or_else(zengeld_chart::state::Timeframe::h1);
+                        let at = read_account_type(&app.branch_meta, *cid).map(String::from).unwrap_or_else(|| "S".to_string());
+                        Some((sym, exch, tf, at))
+                    })
+                    .collect()
+            };
 
-            for window in app.panel_app.panel_grid.containers_mut().values_mut() {
-                // B2-defer: reads window.exchange/account_type inside containers_mut() loop.
-                let win_exchange_id = digdigdig3::ExchangeId::from_str(&window.exchange)
-                    .unwrap_or(digdigdig3::ExchangeId::Binance);
-                let win_exchange_name = win_exchange_id.as_str().to_string();
-                let win_at = account_type_from_label(&window.account_type);
-                let win_provider: SharedDataProvider = std::sync::Arc::new(
-                    LiveDataProvider::new(win_exchange_id, win_exchange_name, win_at, bridge.clone()),
-                );
-                window.data_provider = win_provider;
-                window.toolbar_config = ToolbarConfig::standalone();
+            // Pre-collect (chart_id → exchange, account_type) for data_provider seeding.
+            let provider_seeds: Vec<(zengeld_chart::state::ChartId, String, String)> = {
+                use crate::branch_meta_bridge::{read_exchange, read_account_type};
+                app.panel_app.panel_grid.containers().keys()
+                    .map(|cid| {
+                        let exch = read_exchange(&app.branch_meta, *cid).map(String::from).unwrap_or_default();
+                        let at = read_account_type(&app.branch_meta, *cid).map(String::from).unwrap_or_else(|| "S".to_string());
+                        (*cid, exch, at)
+                    })
+                    .collect()
+            };
+            for (cid, exch, at_label) in provider_seeds {
+                if let Some(window) = app.panel_app.panel_grid.containers_mut().get_mut(&cid) {
+                    let win_exchange_id = digdigdig3::ExchangeId::from_str(&exch)
+                        .unwrap_or(digdigdig3::ExchangeId::Binance);
+                    let win_at = account_type_from_label(&at_label);
+                    let win_provider: SharedDataProvider = std::sync::Arc::new(
+                        LiveDataProvider::new(win_exchange_id, exch, win_at, bridge.clone()),
+                    );
+                    window.data_provider = win_provider;
+                    window.toolbar_config = ToolbarConfig::standalone();
+                }
             }
 
             // Set active_exchange from the active window's exchange.
@@ -1164,18 +1178,14 @@ impl ChartApp {
             // Preset restored successfully.
         } else {
             // ── Fresh state — Binance default ──────────────────────────────
-            // Phase 4 S2.2: capture chart_id BEFORE the mutating block.
+            // Phase 4 B: capture chart_id BEFORE the mutating block.
             let active_chart_id = app.panel_app.panel_grid.active_container_id();
             if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
                 window.data_provider = data_provider.clone();
-                window.exchange = exchange_name.clone();
                 window.toolbar_config = ToolbarConfig::standalone();
-                // Use BTCUSDT as the default symbol.
-                window.symbol = "BTCUSDT".to_string();
-                window.timeframe = zengeld_chart::state::Timeframe::new("1H", 60);
-                window.drawing_manager.set_current_symbol_key(&window.symbol, &window.exchange, &window.account_type);
+                window.drawing_manager.set_current_symbol_key("BTCUSDT", &exchange_name, "S");
             }
-            // Phase 4 S2.2 dual-write: seed branch_meta for the freshly-default chart.
+            // Phase 4 B: seed branch_meta for the freshly-default chart.
             if let Some(chart_id) = active_chart_id {
                 crate::branch_meta_bridge::mirror_instrument(
                     &mut app.branch_meta,
@@ -1406,17 +1416,14 @@ impl ChartApp {
             LiveDataProvider::new(exchange_id, exchange_name.clone(), digdigdig3::AccountType::Spot, bridge.clone()),
         );
 
-        // Phase 4 S2.2: capture chart_id BEFORE the mutating block.
+        // Phase 4 B: capture chart_id BEFORE the mutating block.
         let active_chart_id = app.panel_app.panel_grid.active_container_id();
         if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
             window.data_provider = data_provider.clone();
-            window.exchange = exchange_name.clone();
             window.toolbar_config = ToolbarConfig::standalone();
-            window.symbol = "BTCUSDT".to_string();
-            window.timeframe = zengeld_chart::state::Timeframe::new("1H", 60);
-            window.drawing_manager.set_current_symbol_key(&window.symbol, &window.exchange, &window.account_type);
+            window.drawing_manager.set_current_symbol_key("BTCUSDT", &exchange_name, "S");
         }
-        // Phase 4 S2.2 dual-write: seed branch_meta for the freshly-default chart.
+        // Phase 4 B: seed branch_meta for the freshly-default chart.
         if let Some(chart_id) = active_chart_id {
             crate::branch_meta_bridge::mirror_instrument(
                 &mut app.branch_meta,
@@ -1735,24 +1742,42 @@ impl ChartApp {
                 );
 
                 // Ensure all windows have data_provider and toolbar config.
-                // S2.7.1 defer (iter_containers tuple-collect): same pattern as first constructor
-                // path — reads struct fields directly. Deferred to S2.7.3 when fields drop.
-                let window_data: Vec<(String, String, zengeld_chart::state::Timeframe, String)> = app
-                    .panel_app.panel_grid.iter_containers()
-                    .map(|(_, w)| (w.symbol.clone(), w.exchange.clone(), w.timeframe.clone(), w.account_type.clone()))
-                    .collect();
+                // Phase 4 B: read exchange/account_type from branch_meta.
+                let window_data: Vec<(String, String, zengeld_chart::state::Timeframe, String)> = {
+                    let containers = app.panel_app.panel_grid.containers();
+                    containers.keys()
+                        .filter_map(|cid| {
+                            use crate::branch_meta_bridge::{read_symbol, read_exchange, read_timeframe, read_account_type};
+                            let sym = read_symbol(&app.branch_meta, *cid).map(String::from).unwrap_or_default();
+                            let exch = read_exchange(&app.branch_meta, *cid).map(String::from).unwrap_or_default();
+                            let tf = read_timeframe(&app.branch_meta, *cid).cloned().unwrap_or_else(zengeld_chart::state::Timeframe::h1);
+                            let at = read_account_type(&app.branch_meta, *cid).map(String::from).unwrap_or_else(|| "S".to_string());
+                            Some((sym, exch, tf, at))
+                        })
+                        .collect()
+                };
 
-                for window in app.panel_app.panel_grid.containers_mut().values_mut() {
-                    // B2-defer: reads window.exchange/account_type inside containers_mut() loop.
-                    let win_exchange_id = digdigdig3::ExchangeId::from_str(&window.exchange)
-                        .unwrap_or(digdigdig3::ExchangeId::Binance);
-                    let win_exchange_name = win_exchange_id.as_str().to_string();
-                    let win_at = account_type_from_label(&window.account_type);
-                    let win_provider: SharedDataProvider = std::sync::Arc::new(
-                        LiveDataProvider::new(win_exchange_id, win_exchange_name, win_at, bridge.clone()),
-                    );
-                    window.data_provider = win_provider;
-                    window.toolbar_config = ToolbarConfig::standalone();
+                let provider_seeds_win: Vec<(zengeld_chart::state::ChartId, String, String)> = {
+                    use crate::branch_meta_bridge::{read_exchange, read_account_type};
+                    app.panel_app.panel_grid.containers().keys()
+                        .map(|cid| {
+                            let exch = read_exchange(&app.branch_meta, *cid).map(String::from).unwrap_or_default();
+                            let at = read_account_type(&app.branch_meta, *cid).map(String::from).unwrap_or_else(|| "S".to_string());
+                            (*cid, exch, at)
+                        })
+                        .collect()
+                };
+                for (cid, exch, at_label) in provider_seeds_win {
+                    if let Some(window) = app.panel_app.panel_grid.containers_mut().get_mut(&cid) {
+                        let win_exchange_id = digdigdig3::ExchangeId::from_str(&exch)
+                            .unwrap_or(digdigdig3::ExchangeId::Binance);
+                        let win_at = account_type_from_label(&at_label);
+                        let win_provider: SharedDataProvider = std::sync::Arc::new(
+                            LiveDataProvider::new(win_exchange_id, exch, win_at, bridge.clone()),
+                        );
+                        window.data_provider = win_provider;
+                        window.toolbar_config = ToolbarConfig::standalone();
+                    }
                 }
 
                 // S2.7.1: read exchange via branch_meta instead of struct field.
@@ -1777,16 +1802,14 @@ impl ChartApp {
                 app.needs_initial_viewport_fit = true;
             } else {
                 // Fresh state — Binance default.
-                // Phase 4 S2.2: capture chart_id BEFORE the mutating block.
+                // Phase 4 B: capture chart_id BEFORE the mutating block.
                 let active_chart_id = app.panel_app.panel_grid.active_container_id();
                 if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
                     window.data_provider = data_provider.clone();
-                    window.exchange = exchange_name.clone();
                     window.toolbar_config = ToolbarConfig::standalone();
-                    window.symbol = "BTCUSDT".to_string();
-                    window.timeframe = zengeld_chart::state::Timeframe::new("1H", 60);
+                    window.drawing_manager.set_current_symbol_key("BTCUSDT", &exchange_name, "S");
                 }
-                // Phase 4 S2.2 dual-write: seed branch_meta for the freshly-default chart.
+                // Phase 4 B: seed branch_meta for the freshly-default chart.
                 if let Some(chart_id) = active_chart_id {
                     crate::branch_meta_bridge::mirror_instrument(
                         &mut app.branch_meta,
@@ -2138,15 +2161,26 @@ impl ChartApp {
         // Phase 4 S2.2: capture chart_id BEFORE the mutating block.
         let active_chart_id = self.panel_app.panel_grid.active_container_id();
         // Attach the provider to the active window and request paginated bars.
+        // Phase 4 B: read symbol/timeframe/account_type from branch_meta.
+        let active_cid_exc = self.panel_app.panel_grid.active_container_id();
+        let cur_sym_exc = active_cid_exc
+            .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+            .map(String::from)
+            .unwrap_or_default();
+        let cur_tf_exc = active_cid_exc
+            .and_then(|cid| crate::branch_meta_bridge::read_timeframe(&self.branch_meta, cid))
+            .cloned()
+            .unwrap_or_else(zengeld_chart::state::Timeframe::h1);
+        let cur_at_label_exc = active_cid_exc
+            .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid))
+            .map(String::from)
+            .unwrap_or_else(|| "S".to_string());
         let mut mirror_args: Option<(String, zengeld_chart::state::Timeframe, String, String)> = None;
         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
             window.data_provider = provider;
-            window.exchange = exchange_name.clone();
-            let symbol = window.symbol.clone();
-            let timeframe = window.timeframe.clone();
-            let at = account_type_from_label(&window.account_type);
-            mirror_args = Some((symbol.clone(), timeframe.clone(), exchange_name, window.account_type.clone()));
-            bridge.request_bars(exchange_id, &symbol, &timeframe, at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), false);
+            let at = account_type_from_label(&cur_at_label_exc);
+            mirror_args = Some((cur_sym_exc.clone(), cur_tf_exc.clone(), exchange_name.clone(), cur_at_label_exc.clone()));
+            bridge.request_bars(exchange_id, &cur_sym_exc, &cur_tf_exc, at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), false);
         }
         // Phase 4 S2.2 dual-write: mirror new exchange into branch_meta.
         if let (Some(chart_id), Some((sym, tf, exch, at_label))) = (active_chart_id, mirror_args) {
@@ -2446,10 +2480,11 @@ impl ChartApp {
                 };
                 // S2.7.1: read instrument fields via branch_meta.
                 let chart_id = self.panel_app.panel_grid.container_id_for_leaf(leaf_id);
-                let overlay_tf_name: String = chart_id
+                let overlay_tf = chart_id
                     .and_then(|cid| crate::branch_meta_bridge::read_timeframe(&self.branch_meta, cid))
-                    .map(|tf| tf.name.clone())
-                    .unwrap_or_else(|| window.timeframe.name.clone());
+                    .cloned();
+                let overlay_tf_name: String = overlay_tf.as_ref().map(|tf| tf.name.clone()).unwrap_or_default();
+                let overlay_tf_minutes: Option<u32> = overlay_tf.map(|tf| tf.minutes);
                 let overlay_symbol: String = chart_id
                     .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
                     .map(String::from)
@@ -2467,6 +2502,7 @@ impl ChartApp {
                     &chart_theme,
                     Some(overlay_tf_name.as_str()),
                     Some(&window.scale_settings.time_format),
+                    overlay_tf_minutes,
                 );
                 let crosshair_config = zengeld_chart::chart::CrosshairConfig::default();
                 let render_config = ChartRenderConfig {
@@ -2508,10 +2544,11 @@ impl ChartApp {
             };
             // S2.7.1: read instrument fields via branch_meta for overlay.
             let single_overlay_cid = self.panel_app.panel_grid.active_container_id();
-            let single_overlay_tf_name: String = single_overlay_cid
+            let single_overlay_tf = single_overlay_cid
                 .and_then(|cid| crate::branch_meta_bridge::read_timeframe(&self.branch_meta, cid))
-                .map(|tf| tf.name.clone())
-                .unwrap_or_else(|| window.timeframe.name.clone());
+                .cloned();
+            let single_overlay_tf_name: String = single_overlay_tf.as_ref().map(|tf| tf.name.clone()).unwrap_or_default();
+            let single_overlay_tf_minutes: Option<u32> = single_overlay_tf.map(|tf| tf.minutes);
             let single_overlay_symbol: String = single_overlay_cid
                 .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
                 .map(String::from)
@@ -2528,6 +2565,7 @@ impl ChartApp {
                 &chart_theme,
                 Some(single_overlay_tf_name.as_str()),
                 Some(&window.scale_settings.time_format),
+                single_overlay_tf_minutes,
             );
             let crosshair_config = zengeld_chart::chart::CrosshairConfig::default();
             let render_config = ChartRenderConfig {
@@ -2733,10 +2771,11 @@ impl ChartApp {
                     .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid))
                     .map(String::from)
                     .unwrap_or_default();
-                let split_tf_name: String = leaf_chart_id
+                let split_tf = leaf_chart_id
                     .and_then(|cid| crate::branch_meta_bridge::read_timeframe(&self.branch_meta, cid))
-                    .map(|tf| tf.name.clone())
-                    .unwrap_or_else(|| window.timeframe.name.clone());
+                    .cloned();
+                let split_tf_name: String = split_tf.as_ref().map(|tf| tf.name.clone()).unwrap_or_default();
+                let split_tf_minutes: Option<u32> = split_tf.map(|tf| tf.minutes);
 
                 // Convert sub_rect to absolute LayoutRect.
                 let leaf_rect = LayoutRect {
@@ -2757,6 +2796,7 @@ impl ChartApp {
                     &chart_theme,
                     Some(split_tf_name.as_str()),
                     Some(&window.scale_settings.time_format),
+                    split_tf_minutes,
                 );
                 let crosshair_config = if self.pending_alert_screenshot {
                     zengeld_chart::chart::CrosshairConfig { vert_visible: false, horz_visible: false, ..Default::default() }
@@ -3212,8 +3252,6 @@ impl ChartApp {
                         .map(String::from).unwrap_or_default();
                     let tf_name = crate::branch_meta_bridge::read_timeframe(&self.branch_meta, chart_id)
                         .map(|tf| tf.name.clone())
-                        .or_else(|| self.panel_app.panel_grid.active_container()
-                            .map(|w| w.timeframe.name.clone()))
                         .unwrap_or_default();
                     let exch = crate::branch_meta_bridge::read_exchange(&self.branch_meta, chart_id)
                         .map(String::from).unwrap_or_default();
@@ -3222,6 +3260,9 @@ impl ChartApp {
                     (sym, tf_name, exch, at)
                 })
             };
+            let single_tf_minutes: Option<u32> = self.panel_app.panel_grid.active_container_id()
+                .and_then(|cid| crate::branch_meta_bridge::read_timeframe(&self.branch_meta, cid))
+                .map(|tf| tf.minutes);
 
             // Scope indicator queries to the active window for single-window mode.
             if let Some(chart_id) = self.panel_app.panel_grid.active_container_id() {
@@ -3302,6 +3343,7 @@ impl ChartApp {
                     &chart_theme,
                     Some(single_tf_name),
                     Some(&window.scale_settings.time_format),
+                    single_tf_minutes,
                 );
 
                 let inner_proportions_vec: Vec<f64> = window.inner_layout.proportions.clone();
@@ -3755,8 +3797,6 @@ impl ChartApp {
                     .map(String::from).unwrap_or_default();
                 let tf = cid.and_then(|c| crate::branch_meta_bridge::read_timeframe(&self.branch_meta, c))
                     .map(|tf| tf.name.clone())
-                    .or_else(|| self.panel_app.panel_grid.active_container()
-                        .map(|w| w.timeframe.name.clone()))
                     .unwrap_or_default();
                 let gid = cid.and_then(|c| crate::branch_meta_bridge::read_group_id(&self.branch_meta, c));
                 (sym, tf, gid)
@@ -4422,8 +4462,6 @@ impl ChartApp {
                 .map(String::from).unwrap_or_default();
             let tf = cid.and_then(|c| crate::branch_meta_bridge::read_timeframe(&self.branch_meta, c))
                 .map(|tf| tf.name.clone())
-                .or_else(|| self.panel_app.panel_grid.active_container()
-                    .map(|w| w.timeframe.name.clone()))
                 .unwrap_or_default();
             let gid = cid.and_then(|c| crate::branch_meta_bridge::read_group_id(&self.branch_meta, c));
             (sym, tf, gid)

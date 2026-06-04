@@ -70,16 +70,29 @@ impl App<'_> {
                     .map(|(lid, w)| (lid, w.id))
                     .collect();
 
-            // Charts
-            let charts: Vec<ChartSnapshot> = pw.chart.panel_app.panel_grid
-                .iter_containers()
-                .map(|(leaf_id, cw)| {
+            // Charts — read instrument fields from branch_meta (Phase 4 B).
+            let chart_ids_for_snap: Vec<(zengeld_chart::LeafId, zengeld_chart::ChartId)> =
+                pw.chart.panel_app.panel_grid
+                    .iter_containers()
+                    .map(|(lid, w)| (lid, w.id))
+                    .collect();
+            let charts: Vec<ChartSnapshot> = chart_ids_for_snap.iter()
+                .filter_map(|(leaf_id, chart_id)| {
+                    let cw = pw.chart.panel_app.panel_grid.container_for_leaf(*leaf_id)?;
                     let viewport = &cw.viewport;
                     let bars_visible = if viewport.bar_spacing > 0.0 {
                         (viewport.chart_width / viewport.bar_spacing).ceil() as usize
                     } else {
                         0
                     };
+
+                    use chart_app::branch_meta_bridge::{read_symbol, read_exchange, read_timeframe};
+                    let symbol = read_symbol(&pw.chart.branch_meta, *chart_id)
+                        .map(String::from).unwrap_or_default();
+                    let exchange = read_exchange(&pw.chart.branch_meta, *chart_id)
+                        .map(String::from).unwrap_or_default();
+                    let tf_name = read_timeframe(&pw.chart.branch_meta, *chart_id)
+                        .map(|tf| tf.name.clone()).unwrap_or_default();
 
                     let indicators: Vec<IndicatorSummary> = pw.chart.indicator_manager
                         .instances_iter()
@@ -100,12 +113,12 @@ impl App<'_> {
                         })
                         .collect();
 
-                    ChartSnapshot {
+                    Some(ChartSnapshot {
                         chart_id: cw.id.0,
                         leaf_id: leaf_id.0,
-                        symbol: cw.symbol.clone(),
-                        exchange: cw.exchange.clone(),
-                        timeframe: cw.timeframe.name.clone(),
+                        symbol,
+                        exchange,
+                        timeframe: tf_name,
                         bar_count: cw.bars.len(),
                         viewport: ViewportSnapshot {
                             view_start: viewport.view_start,
@@ -118,7 +131,7 @@ impl App<'_> {
                         primitive_count: primitives.len(),
                         indicators,
                         primitives,
-                    }
+                    })
                 })
                 .collect();
 
@@ -168,8 +181,12 @@ impl App<'_> {
                 .panel_app
                 .panel_grid
                 .containers()
-                .iter()
-                .map(|(cid, cw)| (cid.0, cw.symbol.clone()))
+                .keys()
+                .map(|cid| {
+                    let sym = chart_app::branch_meta_bridge::read_symbol(&pw.chart.branch_meta, *cid)
+                        .map(String::from).unwrap_or_default();
+                    (cid.0, sym)
+                })
                 .collect();
             for inst in pw.chart.indicator_manager.instances_iter() {
                 // Convert params: IndicatorParamValue → serde_json::Value

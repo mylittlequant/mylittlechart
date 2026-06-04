@@ -76,8 +76,6 @@ impl ChartApp {
                         .map(String::from)
                         .unwrap_or_default();
                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                        window.timeframe = tf.clone();
-                        window.update_title();
                         window.bars.clear();
                         window.viewport.bar_count = 0;
                         window.viewport.view_start = 0.0;
@@ -605,8 +603,9 @@ impl ChartApp {
                                     );
 
                                     // Apply all snapshot fields
-                                    window.exchange = snap.exchange.clone();
-                                    window.account_type = snap.account_type.clone();
+                                    window.drawing_manager.set_current_symbol_key(
+                                        &snap.symbol, &snap.exchange, &snap.account_type,
+                                    );
                                     window.viewport = snap.viewport.clone();
                                     window.price_scale = snap.price_scale.clone();
                                     window.grid_options = snap.grid_options.clone();
@@ -829,12 +828,9 @@ impl ChartApp {
                         for snap in &preset.windows {
                             let chart_id = zengeld_chart::state::chart_container::ChartId(snap.window_id);
                             if let Some(window) = windows.get_mut(&chart_id) {
-                                window.symbol = snap.symbol.clone();
-                                window.exchange = snap.exchange.clone();
-                                window.account_type = snap.account_type.clone();
-                                // B2-defer S2.7.3 target: reads window.symbol/exchange/account_type
-                                // immediately after writing from snap.*; inside containers_mut block.
-                                window.drawing_manager.set_current_symbol_key(&window.symbol, &window.exchange, &window.account_type);
+                                window.drawing_manager.set_current_symbol_key(
+                                    &snap.symbol, &snap.exchange, &snap.account_type,
+                                );
                                 // Rebuild data_provider for this window's (possibly new) exchange.
                                 let patch_exchange_id = digdigdig3::ExchangeId::from_str(&snap.exchange)
                                     .unwrap_or(digdigdig3::ExchangeId::Binance);
@@ -847,7 +843,6 @@ impl ChartApp {
                                         std::sync::Arc::clone(&self.bridge),
                                     ),
                                 );
-                                window.timeframe = snap.timeframe.clone();
                                 window.viewport = snap.viewport.clone();
                                 window.price_scale = snap.price_scale.clone();
                                 window.grid_options = snap.grid_options.clone();

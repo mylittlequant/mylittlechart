@@ -3582,19 +3582,28 @@ impl ApplicationHandler for App<'_> {
                 pw.chart.pending_reset_cache = false;
                 pw.chart.pending_reset_storage = false;
 
-                // Collect window info before borrowing bridge.
-                let (symbol, exchange, account_type, timeframe, bar_count) =
-                    if let Some(window) = pw.chart.panel_app.panel_grid.active_container() {
-                        (
-                            window.symbol.clone(),
-                            window.exchange.clone(),
-                            window.account_type.clone(),
-                            window.timeframe.clone(),
-                            pw.chart.panel_app.user_manager.profile.bar_count as usize,
-                        )
-                    } else {
+                // Collect window info from branch_meta (Phase 4 B).
+                let active_cid_rc = pw.chart.panel_app.panel_grid.active_container_id();
+                let (symbol, exchange, account_type, timeframe, bar_count) = {
+                    use chart_app::branch_meta_bridge::{read_symbol, read_exchange, read_account_type, read_timeframe};
+                    let sym = active_cid_rc
+                        .and_then(|cid| read_symbol(&pw.chart.branch_meta, cid))
+                        .map(String::from).unwrap_or_default();
+                    let exch = active_cid_rc
+                        .and_then(|cid| read_exchange(&pw.chart.branch_meta, cid))
+                        .map(String::from).unwrap_or_default();
+                    let at = active_cid_rc
+                        .and_then(|cid| read_account_type(&pw.chart.branch_meta, cid))
+                        .map(String::from).unwrap_or_else(|| "S".to_string());
+                    let tf = active_cid_rc
+                        .and_then(|cid| read_timeframe(&pw.chart.branch_meta, cid))
+                        .cloned()
+                        .unwrap_or_else(zengeld_chart::state::Timeframe::h1);
+                    if sym.is_empty() && active_cid_rc.is_none() {
                         continue;
-                    };
+                    }
+                    (sym, exch, at, tf, pw.chart.panel_app.user_manager.profile.bar_count as usize)
+                };
 
                 // disk persistence removed — delete_storage flag is a no-op now
                 let _ = delete_storage;
@@ -3609,8 +3618,7 @@ impl ApplicationHandler for App<'_> {
 
                 // Reset all other windows in the same sync group that share
                 // the same symbol key, when sync_symbol is enabled.
-                let active_cid = pw.chart.panel_app.panel_grid.active_container_id();
-                let group_info = active_cid
+                let group_info = active_cid_rc
                     .and_then(|cid| {
                         let gid = chart_app::branch_meta_bridge::read_group_id(&pw.chart.branch_meta, cid)?;
                         Some((cid, gid))
@@ -3621,26 +3629,33 @@ impl ApplicationHandler for App<'_> {
                         .map(|g| g.sync_flags.sync_symbol)
                         .unwrap_or(false);
                     if sync_symbol_on {
+                        // Pre-collect peer instrument info from branch_meta.
                         let peer_ids: Vec<zengeld_chart::ChartId> = pw.chart.panel_app.tag_manager
                             .chart_members(group_id)
                             .into_iter()
                             .filter(|&m| m != active_cid)
                             .collect();
-                        for peer_id in peer_ids {
+                        let peers_matching: Vec<zengeld_chart::ChartId> = {
+                            use chart_app::branch_meta_bridge::{read_symbol, read_exchange, read_account_type};
+                            peer_ids.iter()
+                                .filter(|&&pid| {
+                                    read_symbol(&pw.chart.branch_meta, pid).map_or(false, |s| s == symbol)
+                                    && read_exchange(&pw.chart.branch_meta, pid).map_or(false, |e| e == exchange)
+                                    && read_account_type(&pw.chart.branch_meta, pid).map_or(false, |a| a == account_type)
+                                })
+                                .copied()
+                                .collect()
+                        };
+                        for peer_id in peers_matching {
                             if let Some(peer_window) = pw.chart.panel_app.panel_grid.containers_mut().get_mut(&peer_id) {
-                                if peer_window.symbol == symbol
-                                    && peer_window.exchange == exchange
-                                    && peer_window.account_type == account_type
-                                {
-                                    peer_window.bars.clear();
-                                    peer_window.viewport.bar_count = 0;
-                                    peer_window.viewport.view_start = 0.0;
-                                    peer_window.pending_symbol_load = true;
-                                    eprintln!(
-                                        "[App] Reset cache propagated to peer {:?} ({}:{}:{})",
-                                        peer_id, symbol, exchange, account_type
-                                    );
-                                }
+                                peer_window.bars.clear();
+                                peer_window.viewport.bar_count = 0;
+                                peer_window.viewport.view_start = 0.0;
+                                peer_window.pending_symbol_load = true;
+                                eprintln!(
+                                    "[App] Reset cache propagated to peer {:?} ({}:{}:{})",
+                                    peer_id, symbol, exchange, account_type
+                                );
                             }
                         }
                     }

@@ -216,10 +216,13 @@ impl ChartApp {
                 // group.symbol from the prior session and apply_key_to_panels_in_group
                 // overwrites panel state.symbol with that stale value on the very
                 // first frame (when last_active_leaf=None ≠ current_leaf).
-                if let Some(w) = self.panel_app.panel_grid.active_container() {
-                    let sym = w.symbol.clone();
-                    let exch = w.exchange.clone();
-                    let at = w.account_type.clone();
+                if let Some(active_cid_sync) = self.panel_app.panel_grid.active_container_id() {
+                    let sym = crate::branch_meta_bridge::read_symbol(&self.branch_meta, active_cid_sync)
+                        .map(String::from).unwrap_or_default();
+                    let exch = crate::branch_meta_bridge::read_exchange(&self.branch_meta, active_cid_sync)
+                        .map(String::from).unwrap_or_default();
+                    let at = crate::branch_meta_bridge::read_account_type(&self.branch_meta, active_cid_sync)
+                        .map(String::from).unwrap_or_else(|| "S".to_string());
                     if let Some(g) = self.panel_app.tag_manager.group_mut(new_active_group) {
                         g.symbol = sym;
                         g.exchange = exch;
@@ -254,10 +257,19 @@ impl ChartApp {
             };
 
             // Collect active window key fields before any borrows.
-            let (active_window_sym, active_window_exchange, active_window_account_type) =
-                self.panel_app.panel_grid.active_container()
-                    .map(|w| (w.symbol.clone(), w.exchange.clone(), w.account_type.clone()))
-                    .unwrap_or_default();
+            let active_cid_obj = self.panel_app.panel_grid.active_container_id();
+            let (active_window_sym, active_window_exchange, active_window_account_type) = {
+                let sym = active_cid_obj
+                    .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                    .map(String::from).unwrap_or_default();
+                let exch = active_cid_obj
+                    .and_then(|cid| crate::branch_meta_bridge::read_exchange(&self.branch_meta, cid))
+                    .map(String::from).unwrap_or_default();
+                let at = active_cid_obj
+                    .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid))
+                    .map(String::from).unwrap_or_else(|| "S".to_string());
+                (sym, exch, at)
+            };
 
             if let Some(group) = tagged_group {
                 // ----------------------------------------------------------------
@@ -570,8 +582,15 @@ impl ChartApp {
                     .unwrap_or_default();
 
                 for (sym_name, sym_exchange, sym_account_type) in &watchlist_entries {
-                    let price_data = self.panel_app.panel_grid.iter_containers()
-                        .find(|(_, w)| w.symbol == *sym_name && w.exchange == *sym_exchange && w.account_type == *sym_account_type)
+                    let price_data = self.panel_app.panel_grid.containers().iter()
+                        .find(|(cid, _)| {
+                            crate::branch_meta_bridge::read_symbol(&self.branch_meta, **cid)
+                                .map_or(false, |s| s == sym_name)
+                            && crate::branch_meta_bridge::read_exchange(&self.branch_meta, **cid)
+                                .map_or(false, |e| e == sym_exchange)
+                            && crate::branch_meta_bridge::read_account_type(&self.branch_meta, **cid)
+                                .map_or(false, |a| a == sym_account_type)
+                        })
                         .and_then(|(_, w)| w.bars.last())
                         .map(|bar| (bar.close, bar.open, bar.high, bar.low, bar.volume));
 
@@ -880,9 +899,8 @@ impl ChartApp {
                 let mut syncs = Vec::new();
                 for &(leaf_id, _) in &leaf_rects {
                     if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
-                        let window_symbol = self.panel_app.panel_grid
-                            .container_for_leaf(leaf_id)
-                            .map(|w| w.symbol.clone())
+                        let window_symbol = crate::branch_meta_bridge::read_symbol(&self.branch_meta, chart_id)
+                            .map(String::from)
                             .unwrap_or_default();
                         if let Some(group_id) = self.panel_app.panel_grid
                             .container_id_for_leaf(leaf_id)
@@ -921,8 +939,9 @@ impl ChartApp {
 
             // Sync indicator overlay visibility per leaf.
             for &(leaf_id, _) in &leaf_rects {
-                let symbol = self.panel_app.panel_grid.container_for_leaf(leaf_id)
-                    .map(|w| w.symbol.clone())
+                let symbol = self.panel_app.panel_grid.container_id_for_leaf(leaf_id)
+                    .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                    .map(String::from)
                     .unwrap_or_default();
                 let has_compare = self.panel_app.panel_grid.container_for_leaf(leaf_id)
                     .map(|w| !w.compare_overlay.series.is_empty())
@@ -957,10 +976,8 @@ impl ChartApp {
                             // Capture the window's current symbol so we can filter
                             // primitives — stale drawings from the previous symbol
                             // must not be re-injected by the forward sync.
-                            let window_symbol = self.panel_app.panel_grid
-                                .containers()
-                                .get(&chart_id)
-                                .map(|w| w.symbol.clone())
+                            let window_symbol = crate::branch_meta_bridge::read_symbol(&self.branch_meta, chart_id)
+                                .map(String::from)
                                 .unwrap_or_default();
                             let cloned: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
                                 self.panel_app.tag_manager
@@ -982,9 +999,14 @@ impl ChartApp {
             }
 
             // Single pane: sync indicator overlay visibility.
-            let (symbol, has_compare) = self.panel_app.panel_grid.active_container()
-                .map(|w| (w.symbol.clone(), !w.compare_overlay.series.is_empty()))
+            let active_cid_single = self.panel_app.panel_grid.active_container_id();
+            let symbol = active_cid_single
+                .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                .map(String::from)
                 .unwrap_or_default();
+            let has_compare = self.panel_app.panel_grid.active_container()
+                .map(|w| !w.compare_overlay.series.is_empty())
+                .unwrap_or(false);
             let has_indicators = if let Some(chart_id) = self.panel_app.panel_grid.active_container_id() {
                 !self.indicator_manager.get_instances_for_symbol_in_window(&symbol, chart_id.0).is_empty()
             } else {

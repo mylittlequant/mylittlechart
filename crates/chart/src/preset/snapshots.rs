@@ -206,7 +206,22 @@ impl ChartWindowSnapshot {
     ///
     /// `leaf_id` is the docking-tree leaf slot this window occupies; it is
     /// stored so that presets can restore windows to the correct panel slot.
-    pub fn from_window(window: &ChartContainer, leaf_id: u64, group_id: Option<u64>, pre_tag_indicator_ids: Vec<u64>, stashed_command_history: Option<CommandHistory>, stashed_primitives_snap: Vec<PrimitiveSnapshot>) -> Self {
+    ///
+    /// `symbol`, `timeframe`, `exchange`, and `account_type` are read from
+    /// `branch_meta` by the caller (Phase 4 B — instrument fields removed from
+    /// `ChartContainer`).
+    pub fn from_window(
+        window: &ChartContainer,
+        leaf_id: u64,
+        group_id: Option<u64>,
+        pre_tag_indicator_ids: Vec<u64>,
+        stashed_command_history: Option<CommandHistory>,
+        stashed_primitives_snap: Vec<PrimitiveSnapshot>,
+        symbol: String,
+        timeframe: Timeframe,
+        exchange: String,
+        account_type: String,
+    ) -> Self {
         let drawings = DrawingSnapshot::from_manager(window.id.0, &window.drawing_manager);
 
         // Save full viewport — chart_width, bar_spacing, bar_count are all valid
@@ -224,10 +239,10 @@ impl ChartWindowSnapshot {
         Self {
             window_id: window.id.0,
             leaf_id,
-            symbol: window.symbol.clone(),
-            exchange: window.exchange.clone(),
-            account_type: window.account_type.clone(),
-            timeframe: window.timeframe.clone(),
+            symbol,
+            exchange,
+            account_type,
+            timeframe,
             viewport: saved_viewport,
             price_scale: saved_price_scale,
             group_id,

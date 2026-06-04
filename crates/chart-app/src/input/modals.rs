@@ -370,24 +370,28 @@ impl ChartApp {
                     .and_then(|cid| crate::branch_meta_bridge::read_timeframe(&self.branch_meta, cid))
                     .cloned()
                     .unwrap_or_default();
+                let old_sym = active_chart_id
+                    .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                    .map(String::from)
+                    .unwrap_or_default();
+                let old_exchange = active_chart_id
+                    .and_then(|cid| crate::branch_meta_bridge::read_exchange(&self.branch_meta, cid))
+                    .map(String::from)
+                    .unwrap_or_default();
+                let old_account_type = active_chart_id
+                    .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid))
+                    .map(String::from)
+                    .unwrap_or_else(|| "S".to_string());
                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                    let old_sym = window.symbol.clone();
-                    let old_exchange = window.exchange.clone();
-                    let old_account_type = window.account_type.clone();
                     window.snapshot_drawings_for_symbol(&old_sym, &old_exchange, &old_account_type);
-                    window.symbol = sym_part.to_string();
-                    window.exchange = exchange_part.to_string();
-                    window.account_type = wl_at_label.clone();
-                    window.update_title();
-                    window.drawing_manager.set_current_symbol_key(&window.symbol, &window.exchange, &window.account_type);
+                    window.drawing_manager.set_current_symbol_key(sym_part, exchange_part, &wl_at_label);
                     window.bars.clear();
                     window.viewport.bar_count = 0;
                     window.pending_symbol_load = true;
                     window.drawing_manager.clear_all_primitives();
                     window.restore_drawings_for_symbol(sym_part, exchange_part, &wl_at_label);
                 }
-                // Phase 4 S2.2 dual-write: mirror new (symbol, exchange,
-                // account_type) into branch_meta for the active chart.
+                // Phase 4 B: mirror new (symbol, exchange, account_type) into branch_meta.
                 if let Some(chart_id) = active_chart_id {
                     crate::branch_meta_bridge::mirror_instrument(
                         &mut self.branch_meta,
@@ -833,17 +837,21 @@ impl ChartApp {
                             .unwrap_or_default();
                         // account_type is embedded in the item key — use it directly.
                         let search_at_label = item_at_label.clone();
+                        let old_sym_search = active_chart_id
+                            .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                            .map(String::from)
+                            .unwrap_or_default();
+                        let old_exch_search = active_chart_id
+                            .and_then(|cid| crate::branch_meta_bridge::read_exchange(&self.branch_meta, cid))
+                            .map(String::from)
+                            .unwrap_or_default();
+                        let old_at_search = active_chart_id
+                            .and_then(|cid| crate::branch_meta_bridge::read_account_type(&self.branch_meta, cid))
+                            .map(String::from)
+                            .unwrap_or_else(|| "S".to_string());
                         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                            // Snapshot current drawings before switching symbol
-                            let old_sym = window.symbol.clone();
-                            let old_exchange = window.exchange.clone();
-                            let old_account_type = window.account_type.clone();
-                            window.snapshot_drawings_for_symbol(&old_sym, &old_exchange, &old_account_type);
-                            window.symbol = symbol_part.to_string();
-                            window.exchange = resolved_exchange.as_str().to_string();
-                            window.account_type = search_at_label.clone();
-                            window.update_title();
-                            window.drawing_manager.set_current_symbol_key(&window.symbol, &window.exchange, &window.account_type);
+                            window.snapshot_drawings_for_symbol(&old_sym_search, &old_exch_search, &old_at_search);
+                            window.drawing_manager.set_current_symbol_key(symbol_part, resolved_exchange.as_str(), &search_at_label);
                             window.bars.clear();
                             window.viewport.bar_count = 0;
                             window.viewport.view_start = 0.0;
@@ -851,8 +859,7 @@ impl ChartApp {
                             window.drawing_manager.clear_all_primitives();
                             window.restore_drawings_for_symbol(symbol_part, resolved_exchange.as_str(), &search_at_label);
                         }
-                        // Phase 4 S2.2 dual-write: mirror new instrument into
-                        // branch_meta for the active chart.
+                        // Phase 4 B: mirror new instrument into branch_meta.
                         if let Some(chart_id) = active_chart_id {
                             crate::branch_meta_bridge::mirror_instrument(
                                 &mut self.branch_meta,
@@ -909,8 +916,17 @@ impl ChartApp {
                         // ChartContainer::add_compare_symbol() fetches bars via the attached
                         // DemoDataProvider (which generates synthetic data for any symbol) and
                         // adds a CompareSeries with percentage normalization already handled.
+                        let active_cmp_cid = self.panel_app.panel_grid.active_container_id();
+                        let main_sym_for_cmp = active_cmp_cid
+                            .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                            .map(String::from)
+                            .unwrap_or_default();
+                        let main_tf_for_cmp = active_cmp_cid
+                            .and_then(|cid| crate::branch_meta_bridge::read_timeframe(&self.branch_meta, cid))
+                            .cloned()
+                            .unwrap_or_else(zengeld_chart::state::Timeframe::h1);
                         let added_series = if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                            let added = window.add_compare_symbol(symbol_part);
+                            let added = window.add_compare_symbol(symbol_part, &main_sym_for_cmp, &main_tf_for_cmp);
                             eprintln!(
                                 "[ChartApp] Compare symbol {}: {}",
                                 symbol_part,

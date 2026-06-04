@@ -2215,19 +2215,29 @@ impl ChartApp {
                         alert.percentage = percentage;
                         alert.trigger_mode = trigger_mode;
                         alert.transports = transports;
-                        // Stamp scoping fields from the active window so this alert
-                        // is correctly filtered to its symbol:exchange context.
+                        // Stamp scoping fields from branch_meta / active window id.
+                        let active_cid = self.panel_app.panel_grid.active_container_id();
+                        let active_exchange = active_cid
+                            .and_then(|cid| crate::branch_meta_bridge::read_exchange(&self.branch_meta, cid))
+                            .map(String::from)
+                            .unwrap_or_default();
+                        let active_tf_name = active_cid
+                            .and_then(|cid| crate::branch_meta_bridge::read_timeframe(&self.branch_meta, cid))
+                            .map(|tf| tf.name.clone())
+                            .unwrap_or_default();
+                        let active_sym = active_cid
+                            .and_then(|cid| crate::branch_meta_bridge::read_symbol(&self.branch_meta, cid))
+                            .map(String::from)
+                            .unwrap_or_default();
                         if let Some(window) = self.panel_app.panel_grid.active_container() {
-                            alert.exchange = window.exchange.clone();
-                            alert.timeframe = window.timeframe.name.clone();
+                            alert.exchange = active_exchange;
+                            alert.timeframe = active_tf_name;
                             alert.window_id_hint = Some(window.id.0);
-                            alert.group_id = self.panel_app.panel_grid.active_container_id()
+                            alert.group_id = active_cid
                                 .and_then(|cid| crate::branch_meta_bridge::read_group_id(&self.branch_meta, cid))
                                 .map(|g| g.0);
-                            // Drawing/Indicator alerts need symbol stamped explicitly —
-                            // Price alerts carry it inside AlertSource::Price { symbol }.
                             if !matches!(alert.source, alerts::AlertSource::Price { .. }) {
-                                alert.set_symbol(window.symbol.clone());
+                                alert.set_symbol(active_sym);
                             }
                         }
                     }
