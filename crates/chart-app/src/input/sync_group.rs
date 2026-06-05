@@ -233,33 +233,11 @@ impl ChartApp {
 
             eprintln!("[BubbleStore] Desync: chart {:?} re-attached to auto-bubble {:?}", chart_id, auto_bid);
         } else {
-            // auto_bubble_id is BubbleId(0) sentinel — this chart never had a proper
-            // auto-bubble assigned.  Fall back: create a fresh auto-bubble now.
-            eprintln!("[BubbleStore] Desync: chart {:?} had sentinel auto_bubble_id — creating fresh auto-bubble", chart_id);
-            let symbol = self.panel_app.tag_manager.symbol_for_chart(chart_id)
-                .map(String::from)
-                .unwrap_or_default();
-            let timeframe = self.panel_app.tag_manager.timeframe_for_chart(chart_id)
-                .cloned()
-                .unwrap_or_else(zengeld_chart::state::Timeframe::h1);
-            let new_auto_bid = self.panel_app.tag_manager.create_group_auto(
-                [0.0, 0.0, 0.0, 0.0], symbol, timeframe,
+            eprintln!(
+                "[BubbleStore] Desync: chart {:?} has sentinel auto_bubble_id — construction site missed post-init. Skipping desync.",
+                chart_id
             );
-            let _ = self.panel_app.tag_manager.attach_chart_to_bubble(chart_id, new_auto_bid);
-            if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
-                window.auto_bubble_id = new_auto_bid;
-                window.current_bubble_id = new_auto_bid;
-            }
-            if let Some(pid) = pid_desync {
-                if let Some(style_arc) = self.panel_app.tag_manager
-                    .bubble(new_auto_bid)
-                    .map(|g| g.last_used_style.clone())
-                {
-                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                        panel.drawing_manager.bind_style_store(style_arc);
-                    }
-                }
-            }
+            return;
         }
 
         // 5. Recalculate sub-panes so indicator panels stay in sync.

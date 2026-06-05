@@ -859,12 +859,10 @@ impl ChartApp {
                                         window.command_history = history.clone();
                                     }
 
-                                    // Restore stashed primitives into auto_bubble.
-                                    // Fallback path: window already exists in panel_grid, so
-                                    // we read auto_bubble_id from the existing container.
+                                    // Pre-auto-bubble presets serialised no auto_bubble_id —
+                                    // mint one now so stashed primitives have a home.
                                     let existing_auto_bid = window.auto_bubble_id;
-                                    // If auto_bubble_id is still the sentinel, create a fresh one.
-                                    let auto_bid_fallback = if existing_auto_bid == zengeld_chart::tag_manager::BubbleId(0) {
+                                    let auto_bid_for_window = if existing_auto_bid == zengeld_chart::tag_manager::BubbleId(0) {
                                         let fresh = self.panel_app.tag_manager.create_group_auto(
                                             [0.0, 0.0, 0.0, 0.0],
                                             snap.symbol.clone(),
@@ -877,7 +875,7 @@ impl ChartApp {
                                     } else {
                                         existing_auto_bid
                                     };
-                                    if let Some(auto_bub) = self.panel_app.tag_manager.bubble_mut(auto_bid_fallback) {
+                                    if let Some(auto_bub) = self.panel_app.tag_manager.bubble_mut(auto_bid_for_window) {
                                         auto_bub.primitives.clear();
                                         if !snap.stashed_primitives.is_empty() {
                                             if let Ok(reg) = zengeld_chart::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
