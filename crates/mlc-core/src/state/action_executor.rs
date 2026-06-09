@@ -14,7 +14,7 @@
 
 use crate::engine::input::actions::ChartAction;
 use crate::ui::modal_state::{ModalState, OpenModal};
-use crate::layout::ToolbarState;
+use crate::state::toolbar_state::ToolbarState;
 use crate::drawing::DrawingManager;
 use crate::state::chart_container::ChartContainer;
 use crate::state::chart_panel_state::ChartPanelState;

@@ -32,6 +32,7 @@ pub mod branch;
 pub mod chart_panel_state;
 pub mod panel;
 pub mod sub_pane_overlay;
+pub mod toolbar_state;
 
 // Core chart struct
 pub use chart::*;
@@ -128,3 +129,6 @@ pub use geometry::LayoutRect;
 
 // Sub-pane overlay hit-test rect cache
 pub use sub_pane_overlay::SubPaneOverlayResult;
+
+// Toolbar interaction state (pure data — no render logic)
+pub use toolbar_state::{ToolbarState, ToolbarClickResult, ToggleIconPair};
