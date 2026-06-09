@@ -15,17 +15,13 @@
 //! See `docs/plans/chart-subpane-pid-refactor-2026-06-03.md`.
 
 // =============================================================================
-// PanelId
+// PanelId — re-exported from mlc-core (K1 single source of truth)
 // =============================================================================
 
-/// Stable identity for a trading panel instance across restarts.
-///
-/// Held inside each `FreeItem` variant instead of the heavy state type so
-/// that sidebar-content stays free of a `zengeld-panels` dependency. The
-/// actual state lives in `chart-app`'s `TradingPanelsStore`, keyed by
-/// `PanelId`.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct PanelId(pub u64);
+/// Re-export of `mlc_core::state::PanelId`.  Existing
+/// `mlc_sidebar_content::free_slot::PanelId` imports keep compiling; new
+/// code should import from `mlc_core::state` directly.
+pub use mlc_core::state::PanelId;
 
 // =============================================================================
 // FreeItem

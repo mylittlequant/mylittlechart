@@ -29,9 +29,13 @@ pub mod chart_container_leaf;
 pub mod inner_layout;
 pub mod branch;
 pub mod chart_panel_state;
+pub mod panel;
 
 // Core chart struct
 pub use chart::*;
+
+// Unified panel taxonomy (K1 — supersedes PanelLeaf + FreeItem)
+pub use panel::{Panel, PanelId, PanelKind};
 
 // Layout types
 pub use pane::{
