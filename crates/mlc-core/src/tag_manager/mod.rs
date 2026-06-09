@@ -11,7 +11,7 @@ use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
 
-use crate::chart::annotations::markers::MarkerManager;
+use crate::chart::annotations::markers::Marker;
 use crate::chart::types::price_scale::ScaleMode;
 use crate::drawing::primitives_v2::config::TemplateStyle;
 use crate::drawing::primitives_v2::{SystemSignal, StrategySignalConfig};
@@ -207,7 +207,18 @@ pub struct DataBubble {
     pub trade_show_lines: bool,
 
     /// Price / time marker annotations rendered on every member chart.
-    pub marker_manager: MarkerManager,
+    ///
+    /// Written exclusively by [`crate::managers::Managers::marker`].
+    pub markers: Vec<Marker>,
+
+    /// Flag: marker bar-indices need recalculation (set after add/set, cleared after recalc).
+    pub marker_recalculation_required: bool,
+
+    /// Base marker size in pixels. Default: 10.0.
+    pub marker_base_size: f64,
+
+    /// Padding between marker and bar in pixels. Default: 3.0.
+    pub marker_padding: f64,
 }
 
 
@@ -262,7 +273,10 @@ impl Clone for DataBubble {
             trade_next_id: self.trade_next_id,
             trades_visible: self.trades_visible,
             trade_show_lines: self.trade_show_lines,
-            marker_manager: self.marker_manager.clone(),
+            markers: self.markers.clone(),
+            marker_recalculation_required: self.marker_recalculation_required,
+            marker_base_size: self.marker_base_size,
+            marker_padding: self.marker_padding,
         }
     }
 }
@@ -383,7 +397,10 @@ impl BubbleStore {
             trade_next_id: 1,
             trades_visible: true,
             trade_show_lines: true,
-            marker_manager: MarkerManager::default(),
+            markers: Vec::new(),
+            marker_recalculation_required: false,
+            marker_base_size: 10.0,
+            marker_padding: 3.0,
         };
         self.bubbles.insert(id, bubble);
         id
@@ -424,7 +441,10 @@ impl BubbleStore {
             trade_next_id: 1,
             trades_visible: true,
             trade_show_lines: true,
-            marker_manager: MarkerManager::default(),
+            markers: Vec::new(),
+            marker_recalculation_required: false,
+            marker_base_size: 10.0,
+            marker_padding: 3.0,
         };
         self.bubbles.insert(id, bubble);
         id
@@ -1014,7 +1034,10 @@ impl BubbleStore {
             trade_next_id: 1,
             trades_visible: snap.trades_visible,
             trade_show_lines: snap.trade_show_lines,
-            marker_manager: MarkerManager::default(),
+            markers: snap.markers.clone(),
+            marker_recalculation_required: !snap.markers.is_empty(),
+            marker_base_size: 10.0,
+            marker_padding: 3.0,
         };
 
         // Advance ID counters past any restored IDs so new entries never

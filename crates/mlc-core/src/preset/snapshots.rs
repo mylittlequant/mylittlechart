@@ -15,6 +15,7 @@ fn default_account_type_spot() -> String {
 use crate::chart::types::price_scale::ScaleMode;
 use crate::drawing::primitives_v2::{Primitive, StrategySignalConfig, SystemSignal};
 use crate::drawing::primitives_v2::config::TimeframeVisibilityConfig;
+use crate::chart::annotations::markers::Marker;
 use crate::drawing::Trade;
 use crate::drawing::DrawingManager;
 use crate::state::chart_container::ChartContainer;
@@ -488,6 +489,10 @@ pub struct DataBubbleSnapshot {
     /// Show trade connector lines. Absent in old presets → true.
     #[serde(default = "default_true")]
     pub trade_show_lines: bool,
+
+    /// Persisted marker annotations. Absent in old presets → empty vec.
+    #[serde(default)]
+    pub markers: Vec<Marker>,
 }
 
 fn default_true() -> bool {
@@ -582,6 +587,7 @@ impl DataBubbleSnapshot {
             trades: group.trades.clone(),
             trades_visible: group.trades_visible,
             trade_show_lines: group.trade_show_lines,
+            markers: group.markers.clone(),
         }
     }
 }

@@ -1,4 +1,18 @@
-//! Marker system for zengeld-chart
+//! Marker system for zengeld-chart.
+//!
+//! After K2.5 `MarkerManager` is a **stateless dispatcher** that lives in
+//! `Managers.marker`.  All marker data (`markers` vec, `recalculation_required`,
+//! `base_size`, `padding`) now lives on the `DataBubble` data slice
+//! (`bubble.markers`, `bubble.marker_recalculation_required`,
+//! `bubble.marker_base_size`, `bubble.marker_padding`).
+//!
+//! Every mutating method accepts `&mut DataBubble` (or `&DataBubble` for
+//! reads) and writes directly to the bubble.  No method reaches back to a
+//! `marker_manager` field on the bubble — that field is gone.
+//!
+//! NOTE: `crate::state::chart::Chart` retains its own `marker_manager:
+//! MarkerManager` field (render-side copy). After K2.5 that field becomes a
+//! ZST field — harmless and out of scope.
 //!
 //! Markers for annotating chart data with shapes and text.
 //! Supports 4 built-in shapes (circle, square, arrowUp, arrowDown) and 6 positioning modes.
@@ -285,119 +299,102 @@ pub struct MarkerCoordinates {
 // Marker Manager
 // =============================================================================
 
-/// Marker manager with performance optimization
+/// Global service for chart marker annotations.
 ///
-/// Manages marker collection, provides:
-/// - Lazy recalculation (recalc only on changes)
-/// - Time-based sorting
-/// - Visible marker filtering
-/// - Text measurement caching
-#[derive(Clone, Debug)]
-pub struct MarkerManager {
-    /// All markers
-    markers: Vec<Marker>,
-
-    /// Flag for index recalculation requirement
-    recalculation_required: bool,
-
-    /// Base marker size in pixels
-    base_size: f64,
-
-    /// Padding between marker and bar (pixels)
-    padding: f64,
-}
+/// Stateless: all marker data lives on the [`crate::tag_manager::DataBubble`]
+/// data slice (`bubble.markers`, `bubble.marker_recalculation_required`,
+/// `bubble.marker_base_size`, `bubble.marker_padding`).
+/// Lives in [`crate::managers::Managers::marker`].
+///
+/// NOTE: `crate::state::chart::Chart` has its own `marker_manager:
+/// MarkerManager` field (render-side copy). After K2.5 that field is a
+/// ZST — harmless and out of scope for this lift.
+#[derive(Clone, Debug, Default)]
+pub struct MarkerManager;
 
 impl MarkerManager {
-    /// Create a new marker manager
+    /// Create a new marker manager.
     pub fn new() -> Self {
-        Self {
-            markers: Vec::new(),
-            recalculation_required: false,
-            base_size: 10.0,  // Base size for markers
-            padding: 3.0,     // Standard padding
-        }
+        Self
     }
 
-    /// Set all markers (replaces existing)
+    /// Set all markers on a bubble (replaces existing).
     ///
-    /// # Behavior
-    /// - Empty array removes all markers
-    /// - Markers automatically sorted by time
-    /// - Marks index recalculation as required
-    pub fn set_markers(&mut self, markers: Vec<Marker>) {
-        self.markers = markers;
-        self.sort_by_time();
-        self.recalculation_required = true;
+    /// Markers are automatically sorted by time.
+    /// Marks index recalculation as required.
+    pub fn set_markers(&self, bubble: &mut crate::tag_manager::DataBubble, markers: Vec<Marker>) {
+        bubble.markers = markers;
+        Self::sort_by_time_inner(&mut bubble.markers);
+        bubble.marker_recalculation_required = true;
     }
 
-    /// Add one marker
-    pub fn add_marker(&mut self, marker: Marker) {
-        self.markers.push(marker);
-        self.sort_by_time();
-        self.recalculation_required = true;
+    /// Add one marker to a bubble.
+    pub fn add_marker(&self, bubble: &mut crate::tag_manager::DataBubble, marker: Marker) {
+        bubble.markers.push(marker);
+        Self::sort_by_time_inner(&mut bubble.markers);
+        bubble.marker_recalculation_required = true;
     }
 
-    /// Remove all markers
-    pub fn clear(&mut self) {
-        self.markers.clear();
-        self.recalculation_required = false;
+    /// Remove all markers from a bubble.
+    pub fn clear(&self, bubble: &mut crate::tag_manager::DataBubble) {
+        bubble.markers.clear();
+        bubble.marker_recalculation_required = false;
     }
 
-    /// Get all markers
-    pub fn markers(&self) -> &[Marker] {
-        &self.markers
+    /// Get all markers in a bubble.
+    pub fn markers<'b>(&self, bubble: &'b crate::tag_manager::DataBubble) -> &'b [Marker] {
+        &bubble.markers
     }
 
-    /// Number of markers
-    pub fn len(&self) -> usize {
-        self.markers.len()
+    /// Number of markers in a bubble.
+    pub fn len(&self, bubble: &crate::tag_manager::DataBubble) -> usize {
+        bubble.markers.len()
     }
 
-    /// Is empty
-    pub fn is_empty(&self) -> bool {
-        self.markers.is_empty()
+    /// True when a bubble has no markers.
+    pub fn is_empty(&self, bubble: &crate::tag_manager::DataBubble) -> bool {
+        bubble.markers.is_empty()
     }
 
-    /// Sort markers by time (chronological order)
+    /// Sort markers by time (chronological order).
     ///
-    /// CRITICAL: Markers must be sorted for correct display
-    fn sort_by_time(&mut self) {
-        self.markers.sort_by_key(|m| m.time);
+    /// CRITICAL: Markers must be sorted for correct display.
+    fn sort_by_time_inner(markers: &mut Vec<Marker>) {
+        markers.sort_by_key(|m| m.time);
     }
 
-    /// Recalculate bar indices for all markers
+    /// Recalculate bar indices for all markers in a bubble.
     ///
     /// Called only when markers or data changes.
-    /// Uses recalculation_required flag for optimization.
-    ///
-    /// # Arguments
-    /// - `bars`: chart bar array
-    pub fn recalculate_indices(&mut self, bars: &[Bar]) {
-        if !self.recalculation_required {
+    /// Uses `marker_recalculation_required` flag for optimization.
+    pub fn recalculate_indices(&self, bubble: &mut crate::tag_manager::DataBubble, bars: &[Bar]) {
+        if !bubble.marker_recalculation_required {
             return;
         }
 
-        // Create hash map time -> index for fast lookup
         let time_to_index: HashMap<i64, usize> = bars
             .iter()
             .enumerate()
             .map(|(idx, bar)| (bar.timestamp, idx))
             .collect();
 
-        // Update indices for all markers
-        for marker in &mut self.markers {
+        for marker in &mut bubble.markers {
             marker.bar_idx = time_to_index.get(&marker.time).copied();
         }
 
-        self.recalculation_required = false;
+        bubble.marker_recalculation_required = false;
     }
 
-    /// Get visible markers in range
+    /// Get visible markers in a given bar-index range.
     ///
     /// Filters markers for rendering only in visible area.
-    /// Critical for performance with large marker counts.
-    pub fn visible_markers(&self, start_idx: usize, end_idx: usize) -> Vec<&Marker> {
-        self.markers
+    pub fn visible_markers<'b>(
+        &self,
+        bubble: &'b crate::tag_manager::DataBubble,
+        start_idx: usize,
+        end_idx: usize,
+    ) -> Vec<&'b Marker> {
+        bubble.markers
             .iter()
             .filter(|m| {
                 m.bar_idx
@@ -407,30 +404,29 @@ impl MarkerManager {
             .collect()
     }
 
-    /// Find marker by ID
-    pub fn find_by_id(&self, id: &str) -> Option<&Marker> {
-        self.markers.iter().find(|m| {
-            m.id.as_deref() == Some(id)
-        })
+    /// Find a marker by its string ID.
+    pub fn find_by_id<'b>(
+        &self,
+        bubble: &'b crate::tag_manager::DataBubble,
+        id: &str,
+    ) -> Option<&'b Marker> {
+        bubble.markers.iter().find(|m| m.id.as_deref() == Some(id))
     }
 
-    /// Remove marker by ID
-    pub fn remove_by_id(&mut self, id: &str) -> bool {
-        if let Some(pos) = self.markers.iter().position(|m| {
-            m.id.as_deref() == Some(id)
-        }) {
-            self.markers.remove(pos);
-            self.recalculation_required = true;
+    /// Remove a marker by its string ID. Returns `true` when found and removed.
+    pub fn remove_by_id(&self, bubble: &mut crate::tag_manager::DataBubble, id: &str) -> bool {
+        if let Some(pos) = bubble.markers.iter().position(|m| m.id.as_deref() == Some(id)) {
+            bubble.markers.remove(pos);
+            bubble.marker_recalculation_required = true;
             true
         } else {
             false
         }
     }
 
-    /// Validate all markers
-    pub fn validate_all(&self) -> Result<(), Vec<String>> {
-        let errors: Vec<String> = self
-            .markers
+    /// Validate all markers in a bubble.
+    pub fn validate_all(&self, bubble: &crate::tag_manager::DataBubble) -> Result<(), Vec<String>> {
+        let errors: Vec<String> = bubble.markers
             .iter()
             .enumerate()
             .filter_map(|(idx, marker)| {
@@ -445,63 +441,47 @@ impl MarkerManager {
         }
     }
 
-    /// Calculate marker coordinates for rendering
+    /// Calculate marker coordinates for rendering.
     ///
-    /// # Arguments
-    /// - `marker`: marker to calculate
-    /// - `bars`: bar array
-    /// - `viewport`: current viewport
-    /// - `price_scale`: current price scale
-    ///
-    /// # Returns
-    /// - `Some(MarkerCoordinates)` if marker is visible
-    /// - `None` if marker is off-screen or bar_idx not found
+    /// Returns `Some(MarkerCoordinates)` if marker is visible, `None` if
+    /// off-screen or `bar_idx` not found.
     pub fn calc_marker_coords(
         &self,
+        bubble: &crate::tag_manager::DataBubble,
         marker: &Marker,
         bars: &[Bar],
         viewport: &Viewport,
         price_scale: &PriceScale,
     ) -> Option<MarkerCoordinates> {
-        // Get bar index
         let bar_idx = marker.bar_idx?;
         if bar_idx >= bars.len() {
             return None;
         }
 
         let bar = &bars[bar_idx];
-
-        // Calculate X coordinate (bar center)
         let x = viewport.bar_to_x(bar_idx);
+        let marker_size = marker.calc_final_size(bubble.marker_base_size);
 
-        // Calculate final marker size
-        let marker_size = marker.calc_final_size(self.base_size);
-
-        // Calculate Y coordinate based on position
         let y = match marker.position {
-            // --- Data-Relative Positions ---
             MarkerPosition::AboveBar => {
-                // Y = priceToY(bar.high) - marker_height - padding
                 let price_y = viewport.price_to_y(
                     bar.high,
                     price_scale.price_min,
                     price_scale.price_max,
                 );
-                price_y - marker_size - self.padding
+                price_y - marker_size - bubble.marker_padding
             }
 
             MarkerPosition::BelowBar => {
-                // Y = priceToY(bar.low) + marker_height + padding
                 let price_y = viewport.price_to_y(
                     bar.low,
                     price_scale.price_min,
                     price_scale.price_max,
                 );
-                price_y + marker_size + self.padding
+                price_y + marker_size + bubble.marker_padding
             }
 
             MarkerPosition::InBar => {
-                // Y = priceToY((bar.high + bar.low) / 2)
                 let mid_price = (bar.high + bar.low) / 2.0;
                 viewport.price_to_y(
                     mid_price,
@@ -510,9 +490,7 @@ impl MarkerManager {
                 )
             }
 
-            // --- Price-Based Positions ---
             MarkerPosition::AtPriceTop => {
-                // Y = priceToY(marker.price) - marker_height / 2
                 let price = marker.price?;
                 let price_y = viewport.price_to_y(
                     price,
@@ -523,7 +501,6 @@ impl MarkerManager {
             }
 
             MarkerPosition::AtPriceBottom => {
-                // Y = priceToY(marker.price) + marker_height / 2
                 let price = marker.price?;
                 let price_y = viewport.price_to_y(
                     price,
@@ -534,7 +511,6 @@ impl MarkerManager {
             }
 
             MarkerPosition::AtPriceMiddle => {
-                // Y = priceToY(marker.price)
                 let price = marker.price?;
                 viewport.price_to_y(
                     price,
@@ -548,15 +524,20 @@ impl MarkerManager {
     }
 }
 
-impl Default for MarkerManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tag_manager::BubbleStore;
+
+    fn make_bubble() -> crate::tag_manager::DataBubble {
+        let mut store = BubbleStore::new();
+        let id = store.create_group(
+            [0.0; 4],
+            "BTCUSDT".to_string(),
+            crate::state::Timeframe::h1(),
+        );
+        store.bubble_mut(id).unwrap().clone()
+    }
 
     #[test]
     fn test_marker_shape_multipliers() {
@@ -578,7 +559,6 @@ mod tests {
 
     #[test]
     fn test_marker_validation() {
-        // Valid marker without price
         let marker = Marker::new(
             1609459200,
             MarkerPosition::BelowBar,
@@ -587,7 +567,6 @@ mod tests {
         );
         assert!(marker.validate().is_ok());
 
-        // Invalid: price-based position without price
         let marker = Marker::new(
             1609459200,
             MarkerPosition::AtPriceMiddle,
@@ -596,7 +575,6 @@ mod tests {
         );
         assert!(marker.validate().is_err());
 
-        // Valid: price-based position with price
         let marker = Marker::new(
             1609459200,
             MarkerPosition::AtPriceMiddle,
@@ -605,7 +583,6 @@ mod tests {
         ).with_price(42500.0);
         assert!(marker.validate().is_ok());
 
-        // Invalid: negative size
         let marker = Marker::new(
             1609459200,
             MarkerPosition::BelowBar,
@@ -618,23 +595,22 @@ mod tests {
     #[test]
     fn test_marker_calc_final_size() {
         let base_size = 10.0;
-
         let marker = Marker::new(
             1609459200,
             MarkerPosition::BelowBar,
             MarkerShape::Circle,
             "#4caf50",
         ).with_size(2.0);
-
         // Circle multiplier (0.8) * user size (2.0) * base (10.0) = 16.0
         assert_eq!(marker.calc_final_size(base_size), 16.0);
     }
 
     #[test]
     fn test_marker_manager_basic() {
-        let mut manager = MarkerManager::new();
-        assert!(manager.is_empty());
-        assert_eq!(manager.len(), 0);
+        let manager = MarkerManager::new();
+        let mut bubble = make_bubble();
+        assert!(manager.is_empty(&bubble));
+        assert_eq!(manager.len(&bubble), 0);
 
         let marker = Marker::new(
             1609459200,
@@ -643,41 +619,41 @@ mod tests {
             "#4caf50",
         );
 
-        manager.add_marker(marker);
-        assert_eq!(manager.len(), 1);
-        assert!(!manager.is_empty());
+        manager.add_marker(&mut bubble, marker);
+        assert_eq!(manager.len(&bubble), 1);
+        assert!(!manager.is_empty(&bubble));
 
-        manager.clear();
-        assert!(manager.is_empty());
+        manager.clear(&mut bubble);
+        assert!(manager.is_empty(&bubble));
     }
 
     #[test]
     fn test_marker_manager_sorting() {
-        let mut manager = MarkerManager::new();
+        let manager = MarkerManager::new();
+        let mut bubble = make_bubble();
 
-        // Add markers in reverse chronological order
-        manager.add_marker(Marker::new(
+        manager.add_marker(&mut bubble, Marker::new(
             1609545600,
             MarkerPosition::BelowBar,
             MarkerShape::ArrowUp,
             "#4caf50",
         ));
-        manager.add_marker(Marker::new(
+        manager.add_marker(&mut bubble, Marker::new(
             1609459200,
             MarkerPosition::AboveBar,
             MarkerShape::ArrowDown,
             "#f44336",
         ));
 
-        // Should be sorted by time
-        let markers = manager.markers();
+        let markers = manager.markers(&bubble);
         assert_eq!(markers[0].time, 1609459200);
         assert_eq!(markers[1].time, 1609545600);
     }
 
     #[test]
     fn test_marker_manager_recalculate_indices() {
-        let mut manager = MarkerManager::new();
+        let manager = MarkerManager::new();
+        let mut bubble = make_bubble();
 
         let bars = vec![
             Bar::new(1609459200, 100.0, 105.0, 95.0, 102.0),
@@ -685,16 +661,16 @@ mod tests {
             Bar::new(1609632000, 106.0, 110.0, 104.0, 108.0),
         ];
 
-        manager.add_marker(Marker::new(
+        manager.add_marker(&mut bubble, Marker::new(
             1609545600,
             MarkerPosition::BelowBar,
             MarkerShape::ArrowUp,
             "#4caf50",
         ));
 
-        manager.recalculate_indices(&bars);
+        manager.recalculate_indices(&mut bubble, &bars);
 
-        let markers = manager.markers();
+        let markers = manager.markers(&bubble);
         assert_eq!(markers[0].bar_idx, Some(1));
     }
 }

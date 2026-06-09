@@ -32,6 +32,7 @@
 //! - K2.8 — `bubble:    BubbleStore`      (moved from `ChartPanelApp.tag_manager`)
 //! - K3   — `drawing:   DrawingManager`   (lifted to global, was per-canvas)
 
+use crate::chart::annotations::markers::MarkerManager;
 use crate::drawing::SignalManager;
 use crate::drawing::TradeManager;
 
@@ -53,7 +54,14 @@ pub struct Managers {
     /// (`bubble.trades`, `bubble.trade_next_id`, `bubble.trades_visible`,
     /// `bubble.trade_show_lines`).
     pub trade: TradeManager,
-    // K2.5 — marker:    MarkerManager
+
+    /// Global marker annotation service (lifted from `DataBubble.marker_manager` in K2.5).
+    ///
+    /// Stateless dispatcher — all marker data lives on the bubble data slice
+    /// (`bubble.markers`, `bubble.marker_recalculation_required`,
+    /// `bubble.marker_base_size`, `bubble.marker_padding`).
+    pub marker: MarkerManager,
+    // K2.6 — indicator: IndicatorManager
     // K2.6 — indicator: IndicatorManager
     // K2.7 — alert:     AlertManager
     // K2.8 — bubble:    BubbleStore
@@ -66,6 +74,7 @@ impl Managers {
         Self {
             signal: SignalManager::new(),
             trade: TradeManager::new(),
+            marker: MarkerManager::new(),
         }
     }
 }
