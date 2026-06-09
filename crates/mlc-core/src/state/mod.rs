@@ -19,6 +19,7 @@ mod timeframe;
 mod visibility;
 mod lock;
 pub mod geometry;
+pub mod scale_corner;
 pub mod selected_config;
 pub mod command;
 pub mod history;
@@ -125,7 +126,17 @@ pub use panel_grid::{ChartPanelGrid, ChartInputTarget, ChartRightClickHit, Chart
 pub use chart_panel_state::ChartPanelState;
 
 // Pure geometry (no external deps — shared with layout/)
-pub use geometry::LayoutRect;
+pub use geometry::{
+    LayoutRect,
+    ChartAreaLayout,
+    ChartHitZone,
+    FrameLayout,
+    SubPaneLayout,
+    ExtendedFrameLayout,
+};
+
+// Scale-corner button state + hit zones (pure data)
+pub use scale_corner::{ScaleCornerState, ScaleCornerHitZones, ScaleCornerButton};
 
 // Sub-pane overlay hit-test rect cache
 pub use sub_pane_overlay::SubPaneOverlayResult;

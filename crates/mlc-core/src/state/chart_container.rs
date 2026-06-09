@@ -963,8 +963,8 @@ impl ChartContainer {
     }
 
     /// Create ScaleCornerState from this window's data
-    pub fn to_corner_state(&self) -> crate::layout::ScaleCornerState {
-        crate::layout::ScaleCornerState {
+    pub fn to_corner_state(&self) -> crate::state::scale_corner::ScaleCornerState {
+        crate::state::scale_corner::ScaleCornerState {
             scale_mode: self.price_scale.scale_mode,
             mode_label: self.price_scale.mode.short_label().to_string(),
             am_hovered: false,
@@ -992,7 +992,7 @@ impl ChartContainer {
         &mut self,
         global_x: f64,
         global_y: f64,
-        layout: &crate::layout::ExtendedFrameLayout,
+        layout: &crate::state::geometry::ExtendedFrameLayout,
         drag_pane: Option<Option<usize>>,
     ) -> bool {
         let main_chart = &layout.main_chart;

@@ -24,7 +24,6 @@
 //! - `draw_*` - Low-level functions that draw a single element
 //! - `render_*` - High-level functions that compose multiple draw_ calls
 
-use crate::chart::types::price_scale::ScaleMode;
 use crate::render::RenderContext;
 use crate::chart::render::{
     ChartRenderState, ChartTheme, ChartRect,
@@ -113,64 +112,10 @@ impl Default for ChartRenderConfig {
 }
 
 // =============================================================================
-// Scale Corner
+// Scale Corner — types live in state::scale_corner, re-exported here.
 // =============================================================================
 
-/// State needed for rendering scale corner with buttons
-#[derive(Clone, Debug)]
-pub struct ScaleCornerState {
-    /// Current scale corner mode (Manual / Auto / Focus)
-    pub scale_mode: ScaleMode,
-    /// Mode label (e.g., "lin", "log", "%")
-    pub mode_label: String,
-    /// Whether mouse is hovering over A/M button
-    pub am_hovered: bool,
-    /// Whether mouse is hovering over mode button
-    pub mode_hovered: bool,
-}
-
-impl Default for ScaleCornerState {
-    fn default() -> Self {
-        Self {
-            scale_mode: ScaleMode::Auto,
-            mode_label: "lin".to_string(),
-            am_hovered: false,
-            mode_hovered: false,
-        }
-    }
-}
-
-/// Hit zones for scale corner buttons
-#[derive(Clone, Debug, Default)]
-pub struct ScaleCornerHitZones {
-    /// A/M button rect
-    pub am_button: LayoutRect,
-    /// Mode button rect
-    pub mode_button: LayoutRect,
-}
-
-impl ScaleCornerHitZones {
-    /// Check if a point hits the A/M button
-    pub fn hits_am(&self, x: f64, y: f64) -> bool {
-        self.am_button.contains(x, y)
-    }
-
-    /// Check if a point hits the mode button
-    pub fn hits_mode(&self, x: f64, y: f64) -> bool {
-        self.mode_button.contains(x, y)
-    }
-
-    /// Check what button (if any) is hit
-    pub fn hit_test(&self, x: f64, y: f64) -> ScaleCornerButton {
-        if self.hits_am(x, y) {
-            ScaleCornerButton::AutoManual
-        } else if self.hits_mode(x, y) {
-            ScaleCornerButton::Mode
-        } else {
-            ScaleCornerButton::None
-        }
-    }
-}
+pub use crate::state::scale_corner::{ScaleCornerState, ScaleCornerHitZones, ScaleCornerButton};
 
 /// Result returned by [`render_full_chart_panel`].
 #[derive(Clone, Debug)]
@@ -196,17 +141,6 @@ impl ChartPanelRenderResult {
             sub_pane_overlays: Vec::new(),
         }
     }
-}
-
-/// Which button in scale corner was clicked
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ScaleCornerButton {
-    /// A/M toggle button
-    AutoManual,
-    /// Mode cycle button (lin/log/%)
-    Mode,
-    /// No button
-    None,
 }
 
 // =============================================================================

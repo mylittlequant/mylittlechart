@@ -44,7 +44,7 @@ pub enum ChartInputTarget {
     /// Point is on the scale corner button area.
     ScaleCorner {
         leaf_id: LeafId,
-        button: crate::layout::ScaleCornerButton,
+        button: crate::state::scale_corner::ScaleCornerButton,
     },
     /// Point is on a separator between sub-charts.
     Separator {
@@ -1220,14 +1220,14 @@ impl ChartPanelGrid {
             // Build the absolute LayoutRect for this leaf so that
             // ChartAreaLayout::compute works in absolute screen coordinates
             // (matching the absolute `x`, `y` passed in).
-            let available = crate::layout::LayoutRect {
+            let available = crate::state::geometry::LayoutRect {
                 x: content_origin_x + rect.x as f64,
                 y: content_origin_y + rect.y as f64,
                 width: rect.width as f64,
                 height: rect.height as f64,
             };
 
-            let chart_layout = crate::layout::ChartAreaLayout::compute(
+            let chart_layout = crate::state::geometry::ChartAreaLayout::compute(
                 available,
                 window.scale_settings.price_scale_width,
                 window.scale_settings.time_scale_height,
@@ -1242,14 +1242,14 @@ impl ChartPanelGrid {
                 let mode_width = 20.0_f64;
                 let total_width = am_width + spacing + mode_width;
                 let start_x = corner.center_x() - total_width / 2.0;
-                let zones = crate::layout::ScaleCornerHitZones {
-                    am_button: crate::layout::LayoutRect::new(
+                let zones = crate::state::scale_corner::ScaleCornerHitZones {
+                    am_button: crate::state::geometry::LayoutRect::new(
                         start_x,
                         corner.y,
                         am_width,
                         corner.height,
                     ),
-                    mode_button: crate::layout::LayoutRect::new(
+                    mode_button: crate::state::geometry::LayoutRect::new(
                         start_x + am_width + spacing,
                         corner.y,
                         mode_width,
@@ -1334,7 +1334,7 @@ impl ChartPanelGrid {
         &mut self,
         screen_x: f64,
         screen_y: f64,
-        extended: &crate::layout::ExtendedFrameLayout,
+        extended: &crate::state::geometry::ExtendedFrameLayout,
         indicator_overlay_hit: impl Fn(f64, f64, f64) -> Option<u64>,
         indicator_subpane_hit: impl Fn(u64, f64, f64, f64) -> bool,
         active_dm: &mut crate::drawing::DrawingManager,
@@ -1553,7 +1553,7 @@ impl ChartPanelGrid {
         &mut self,
         screen_x: f64,
         screen_y: f64,
-        extended: &crate::layout::ExtendedFrameLayout,
+        extended: &crate::state::geometry::ExtendedFrameLayout,
         active_dm: &mut crate::drawing::DrawingManager,
     ) -> ChartDragStartHit {
         let chart_rect = extended.main_chart.chart;
@@ -1802,7 +1802,7 @@ impl ChartPanelGrid {
         y: f64,
         drag_mode: crate::engine::input::DragMode,
         drawing_active: bool,
-        extended: &crate::layout::ExtendedFrameLayout,
+        extended: &crate::state::geometry::ExtendedFrameLayout,
         active_dm: &crate::drawing::DrawingManager,
     ) -> Option<(i64, f64, bool, Option<usize>)> {
         use crate::engine::input::DragMode;
@@ -1970,7 +1970,7 @@ impl ChartPanelGrid {
         x: f64,
         y: f64,
         leaf_id: LeafId,
-        extended: &crate::layout::ExtendedFrameLayout,
+        extended: &crate::state::geometry::ExtendedFrameLayout,
     ) -> Option<(i64, f64, bool, Option<usize>)> {
         use crate::layout::ExtendedLayoutHitTester;
 
@@ -2039,7 +2039,7 @@ impl ChartPanelGrid {
         &mut self,
         screen_x: f64,
         screen_y: f64,
-        extended: &crate::layout::ExtendedFrameLayout,
+        extended: &crate::state::geometry::ExtendedFrameLayout,
         active_dm: &mut crate::drawing::DrawingManager,
     ) -> bool {
         let is_active = active_dm.is_drawing() && active_dm.is_freehand_tool();
