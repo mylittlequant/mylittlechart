@@ -1295,8 +1295,8 @@ impl ChartApp {
                     // ----------------------------------------------------------------
                     // Step 8: Restore alerts
                     // ----------------------------------------------------------------
-                    self.alert_manager.restore(preset.alerts.clone());
-                    eprintln!("[ChartApp] restored {} alerts", self.alert_manager.len());
+                    self.managers.alert.restore(preset.alerts.clone());
+                    eprintln!("[ChartApp] restored {} alerts", self.managers.alert.len());
 
                     // Step 8b: Restore per-slot Panel docking layouts.
                     // Pre-populate the store with panel state so the closure

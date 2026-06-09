@@ -2312,15 +2312,15 @@ impl ChartApp {
                 let transports = state.build_transports();
 
                 let alert_id = if let Some(existing_id) = state.editing_alert_id {
-                    self.alert_manager.update_full(
+                    self.managers.alert.update_full(
                         existing_id, source, &name, price, price2, percentage,
                         condition, trigger_mode, transports,
                     );
                     existing_id
                 } else {
-                    let id = self.alert_manager.create(source, &name, price, condition);
+                    let id = self.managers.alert.create(source, &name, price, condition);
                     // Set extra fields on the newly created alert
-                    if let Some(alert) = self.alert_manager.get_mut(id) {
+                    if let Some(alert) = self.managers.alert.get_mut(id) {
                         alert.price2 = price2;
                         alert.percentage = percentage;
                         alert.trigger_mode = trigger_mode;
@@ -2394,7 +2394,7 @@ impl ChartApp {
                     // Refresh alerts list when switching to list tab
                     if t == mlc_core::ui::modal_settings::AlertSettingsTab::AlertsList {
                         self.panel_app.alert_settings_state.all_alerts =
-                            self.alert_manager.items().to_vec();
+                            self.managers.alert.items().to_vec();
                     }
                 }
             }
@@ -2544,7 +2544,7 @@ impl ChartApp {
             _ if rest.starts_with("list_item:") => {
                 if let Some(id_str) = rest.strip_prefix("list_item:") {
                     if let Ok(id) = id_str.parse::<u64>() {
-                        if let Some(alert) = self.alert_manager.get(id) {
+                        if let Some(alert) = self.managers.alert.get(id) {
                             self.panel_app.alert_settings_state.open_edit(alert);
                             self.panel_app.alert_settings_state.pin_initial_position(
                                 self.content_rect.width, self.content_rect.height,
@@ -2557,10 +2557,10 @@ impl ChartApp {
             _ if rest.starts_with("list_delete:") => {
                 if let Some(id_str) = rest.strip_prefix("list_delete:") {
                     if let Ok(id) = id_str.parse::<u64>() {
-                        self.alert_manager.remove(id);
+                        self.managers.alert.remove(id);
                         // Refresh the list
                         self.panel_app.alert_settings_state.all_alerts =
-                            self.alert_manager.items().to_vec();
+                            self.managers.alert.items().to_vec();
                         self.sidebar_data_dirty = true;
                         self.autosave_snapshot();
                     }
@@ -2570,7 +2570,7 @@ impl ChartApp {
             _ if rest.starts_with("list_pause:") => {
                 if let Some(id_str) = rest.strip_prefix("list_pause:") {
                     if let Ok(id) = id_str.parse::<u64>() {
-                        if let Some(alert) = self.alert_manager.get_mut(id) {
+                        if let Some(alert) = self.managers.alert.get_mut(id) {
                             alert.status = match alert.status {
                                 mlc_alerts::AlertStatus::Active => mlc_alerts::AlertStatus::Paused,
                                 mlc_alerts::AlertStatus::Paused => mlc_alerts::AlertStatus::Active,
@@ -2578,7 +2578,7 @@ impl ChartApp {
                             };
                         }
                         self.panel_app.alert_settings_state.all_alerts =
-                            self.alert_manager.items().to_vec();
+                            self.managers.alert.items().to_vec();
                         self.sidebar_data_dirty = true;
                         self.autosave_snapshot();
                     }

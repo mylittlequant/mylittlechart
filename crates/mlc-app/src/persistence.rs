@@ -181,7 +181,7 @@ impl ChartApp {
                 IndicatorManager::new(),
             ),
             alert_manager: std::mem::replace(
-                &mut self.alert_manager,
+                &mut self.managers.alert,
                 mlc_alerts::AlertManager::new(),
             ),
             leaf_color_tags: std::mem::take(&mut self.panel_app.leaf_color_tags),
@@ -211,7 +211,7 @@ impl ChartApp {
         self.panel_app.panel_grid = state.panel_grid;
         self.panel_app.tag_manager = state.tag_manager;
         self.indicator_manager = state.indicator_manager;
-        self.alert_manager = state.alert_manager;
+        self.managers.alert = state.alert_manager;
         self.panel_app.leaf_color_tags = state.leaf_color_tags;
         self.panel_app.indicator_overlay_states = state.indicator_overlay_states;
         self.series_handles = state.series_handles;

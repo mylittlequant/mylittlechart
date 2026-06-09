@@ -2483,7 +2483,7 @@ impl ChartApp {
         // Pattern: "alert_delete_{id}"
         if widget_id.starts_with("alert_delete_") {
             if let Some(id) = widget_id.strip_prefix("alert_delete_").and_then(|s| s.parse::<u64>().ok()) {
-                self.alert_manager.remove(id);
+                self.managers.alert.remove(id);
                 eprintln!("[Sidebar] Alert deleted: {}", id);
                 self.sidebar_data_dirty = true;
                 self.autosave_snapshot();
@@ -2512,7 +2512,7 @@ impl ChartApp {
         // Pattern: "alert_{id}" (row click — navigate to alert's window, then open edit modal)
         if let Some(id) = widget_id.strip_prefix("alert_").and_then(|s| s.parse::<u64>().ok()) {
             // Clone alert data we need before taking any mutable borrows.
-            let alert_nav = self.alert_manager.get(id).map(|a| (a.window_id_hint, id));
+            let alert_nav = self.managers.alert.get(id).map(|a| (a.window_id_hint, id));
             if let Some((window_id_hint, alert_id)) = alert_nav {
                 // Navigate to the window that created this alert, if known.
                 if let Some(wid) = window_id_hint {
@@ -2523,7 +2523,7 @@ impl ChartApp {
                     }
                 }
                 // Open the edit modal.
-                if let Some(alert) = self.alert_manager.get(alert_id) {
+                if let Some(alert) = self.managers.alert.get(alert_id) {
                     self.panel_app.alert_settings_state.open_edit(alert);
                     self.panel_app.alert_settings_state.pin_initial_position(
                         self.content_rect.width, self.content_rect.height,
@@ -2832,7 +2832,7 @@ impl ChartApp {
         if widget_id.starts_with("alert_bell_drw_") {
             if let Some(prim_id) = widget_id.strip_prefix("alert_bell_drw_").and_then(|s| s.parse::<u64>().ok()) {
                 // Find the first Active alert bound to this primitive.
-                let alert = self.alert_manager.items()
+                let alert = self.managers.alert.items()
                     .iter()
                     .find(|a| matches!(
                         &a.source,
@@ -2853,7 +2853,7 @@ impl ChartApp {
         // Widget ID: "alert_bell_ind_{indicator_id}"
         if widget_id.starts_with("alert_bell_ind_") {
             if let Some(ind_id) = widget_id.strip_prefix("alert_bell_ind_").and_then(|s| s.parse::<u64>().ok()) {
-                let alert = self.alert_manager.items()
+                let alert = self.managers.alert.items()
                     .iter()
                     .find(|a| matches!(
                         &a.source,

@@ -8614,7 +8614,7 @@ impl ChartApp {
         self.indicator_manager.clear_all();
         self.panel_app.indicator_overlay_states.clear();
         self.panel_app.leaf_color_tags.clear();
-        self.alert_manager.clear();
+        self.managers.alert.clear();
         self.sidebar_data_dirty = true;
 
         // Auto-create a default sync group for the single window so primitives
@@ -8793,7 +8793,7 @@ impl ChartApp {
         }
 
         // Snapshot alerts
-        preset.alerts = self.alert_manager.snapshot();
+        preset.alerts = self.managers.alert.snapshot();
 
         // Snapshot leaf_color_tags
         preset.leaf_color_tags = self.panel_app.leaf_color_tags

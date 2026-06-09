@@ -196,7 +196,7 @@ impl ChartApp {
         // Keep the alert-settings modal's alerts list always in sync.
         if self.panel_app.alert_settings_state.is_open() {
             self.panel_app.alert_settings_state.all_alerts =
-                self.alert_manager.items().to_vec();
+                self.managers.alert.items().to_vec();
         }
 
         // Auto-dirty sidebar when active leaf changes (for object tree refresh).
@@ -774,11 +774,11 @@ impl ChartApp {
             }
 
             // --- Alerts: copy from alert manager ---
-            self.sidebar_state.alert_items = self.alert_manager.items().to_vec();
+            self.sidebar_state.alert_items = self.managers.alert.items().to_vec();
 
             // --- ObjectTree: mark items that have bound alerts ---
             {
-                let alert_items = self.alert_manager.items();
+                let alert_items = self.managers.alert.items();
                 for tree_item in &mut self.sidebar_state.object_tree_items {
                     tree_item.has_alert = alert_items.iter().any(|a| match &a.source {
                         mlc_alerts::AlertSource::Drawing { primitive_id, .. } => {

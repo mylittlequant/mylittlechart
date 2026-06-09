@@ -1045,13 +1045,13 @@ impl ChartApp {
                 .collect();
 
             let indicator_values = Self::build_indicator_values_for_alerts(
-                &self.alert_manager,
+                &self.managers.alert,
                 &self.indicator_manager,
             );
 
             let mut all_triggered_ids: Vec<u64> = Vec::new();
             for wd in &window_data {
-                let triggered = self.alert_manager.check_crossings_dynamic(
+                let triggered = self.managers.alert.check_crossings_dynamic(
                     wd.current_price,
                     wd.current_bar,
                     &wd.symbol,
@@ -1086,7 +1086,7 @@ impl ChartApp {
                     .collect();
 
                 for wd in &window_data {
-                    let triggered = self.alert_manager.check_signal_alerts(
+                    let triggered = self.managers.alert.check_signal_alerts(
                         &wd.symbol,
                         &wd.exchange,
                         &wd.account_type,
@@ -1119,7 +1119,7 @@ impl ChartApp {
                     .unwrap_or(0);
 
                 for id in &triggered_ids {
-                    if let Some(alert) = self.alert_manager.get(*id) {
+                    if let Some(alert) = self.managers.alert.get(*id) {
                         self.pending_delivery_events.push(mlc_alert_delivery::DeliveryEvent {
                             alert_name: alert.name.clone(),
                             symbol: symbol.clone(),

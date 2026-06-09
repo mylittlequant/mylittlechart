@@ -118,7 +118,7 @@ impl ChartApp {
                 }
                 self.sync_drawing_back_to_group();
                 if let Some(pid) = prim_id {
-                    self.alert_manager.remove_alerts_for_drawing(pid);
+                    self.managers.alert.remove_alerts_for_drawing(pid);
                 }
                 self.autosave_snapshot();
             }
@@ -1983,7 +1983,7 @@ impl ChartApp {
                                     eprintln!("[ChartApp] Deleted primitive #{}", idx);
                                 }
                             }
-                            self.alert_manager.remove_alerts_for_drawing(prim_id);
+                            self.managers.alert.remove_alerts_for_drawing(prim_id);
                             self.sync_drawing_back_to_group();
                             self.autosave_snapshot();
                         } else {
@@ -1999,7 +1999,7 @@ impl ChartApp {
                                 }
                             }
                             if let Some(pid) = prim_id {
-                                self.alert_manager.remove_alerts_for_drawing(pid);
+                                self.managers.alert.remove_alerts_for_drawing(pid);
                             }
                             self.sync_drawing_back_to_group();
                             self.autosave_snapshot();

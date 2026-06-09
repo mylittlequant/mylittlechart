@@ -32,6 +32,8 @@
 //! - K2.8 — `bubble:    BubbleStore`      (moved from `ChartPanelApp.tag_manager`)
 //! - K3   — `drawing:   DrawingManager`   (lifted to global, was per-canvas)
 
+use mlc_alerts::AlertManager;
+
 use crate::chart::annotations::markers::MarkerManager;
 use crate::drawing::SignalManager;
 use crate::drawing::TradeManager;
@@ -61,9 +63,13 @@ pub struct Managers {
     /// (`bubble.markers`, `bubble.marker_recalculation_required`,
     /// `bubble.marker_base_size`, `bubble.marker_padding`).
     pub marker: MarkerManager,
-    // K2.6 — indicator: IndicatorManager
-    // K2.6 — indicator: IndicatorManager
-    // K2.7 — alert:     AlertManager
+
+    /// Global alert service (moved from `ChartApp.alert_manager` in K2.7).
+    ///
+    /// Owns all alert items, the ID counter, and per-symbol crossing state.
+    /// K2.6 indicator: IndicatorManager re-scoped — stays host-side (mlc-indicators
+    /// sits above mlc-core; dep direction prevents lifting here).
+    pub alert: AlertManager,
     // K2.8 — bubble:    BubbleStore
     // K3   — drawing:   DrawingManager
 }
@@ -75,6 +81,7 @@ impl Managers {
             signal: SignalManager::new(),
             trade: TradeManager::new(),
             marker: MarkerManager::new(),
+            alert: AlertManager::new(),
         }
     }
 }

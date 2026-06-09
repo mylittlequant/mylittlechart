@@ -302,8 +302,8 @@ pub struct ChartApp {
     /// Applied to windows on initial bar load.
     pub default_scale_mode: ScaleMode,
 
-    /// Alert manager — owns all alert items, crossing detection, and ID generation.
-    alert_manager: mlc_alerts::AlertManager,
+    /// Top-level manager container (K2.7 — alert moved here from ChartApp direct field).
+    pub managers: mlc_core::managers::Managers,
 
     /// Triggered alert events waiting for delivery (Telegram, toast, etc.)
     pub pending_delivery_events: Vec<mlc_alert_delivery::DeliveryEvent>,
@@ -957,7 +957,7 @@ impl ChartApp {
             leaf_tab_hovered_leaf: None,
             last_toolbar_result: None,
             default_scale_mode: ScaleMode::Auto,
-            alert_manager: mlc_alerts::AlertManager::new(),
+            managers: mlc_core::managers::Managers::new(),
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
             sidebar_state: mlc_sidebar_content::state::SidebarState::new(),
@@ -1295,7 +1295,7 @@ impl ChartApp {
             leaf_tab_hovered_leaf: None,
             last_toolbar_result: None,
             default_scale_mode: ScaleMode::Auto,
-            alert_manager: mlc_alerts::AlertManager::new(),
+            managers: mlc_core::managers::Managers::new(),
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
             sidebar_state: mlc_sidebar_content::state::SidebarState::new(),
@@ -1547,7 +1547,7 @@ impl ChartApp {
             leaf_tab_hovered_leaf: None,
             last_toolbar_result: None,
             default_scale_mode: ScaleMode::Auto,
-            alert_manager: mlc_alerts::AlertManager::new(),
+            managers: mlc_core::managers::Managers::new(),
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
             sidebar_state: mlc_sidebar_content::state::SidebarState::new(),
@@ -2770,7 +2770,7 @@ impl ChartApp {
             // window-independent (only depend on alert_manager + indicator_manager)
             // and can be reused across all split-pane leaves.
             let alert_indicator_values_cache = Self::build_indicator_values_for_alerts(
-                &self.alert_manager,
+                &self.managers.alert,
                 &self.indicator_manager,
             );
 
@@ -2892,7 +2892,7 @@ impl ChartApp {
                         .unwrap_or(&empty_pts);
                 // Reuse the indicator values computed once before this loop.
                 let alert_indicator_values = &alert_indicator_values_cache;
-                let alert_render_data: Vec<AlertRenderData> = self.alert_manager.items()
+                let alert_render_data: Vec<AlertRenderData> = self.managers.alert.items()
                     .iter()
                     .filter(|a| a.status == mlc_alerts::AlertStatus::Active)
                     .filter(|a| matches!(a.source, mlc_alerts::AlertSource::Price { .. }))
@@ -3005,7 +3005,7 @@ impl ChartApp {
                         &window.bars,
                         &split_panel.drawing_manager,
                         &self.indicator_manager,
-                        &self.alert_manager,
+                        &self.managers.alert,
                         window_id,
                         &split_symbol,
                         &split_exchange,
@@ -3362,7 +3362,7 @@ impl ChartApp {
                 (0.0, Vec::new())
             };
             let single_alert_indicator_values = Self::build_indicator_values_for_alerts(
-                &self.alert_manager,
+                &self.managers.alert,
                 &self.indicator_manager,
             );
             let single_alert_render_data: Vec<AlertRenderData> = {
@@ -3371,7 +3371,7 @@ impl ChartApp {
                     .as_ref()
                     .map(|(s, tf, e, at)| (s.as_str(), tf.as_str(), e.as_str(), at.as_str()))
                     .unwrap_or(("", "", "", ""));
-                self.alert_manager.items()
+                self.managers.alert.items()
                     .iter()
                     .filter(|a| a.status == mlc_alerts::AlertStatus::Active)
                     .filter(|a| matches!(a.source, mlc_alerts::AlertSource::Price { .. }))
@@ -3528,7 +3528,7 @@ impl ChartApp {
                         &window.bars,
                         &single_window_panel.drawing_manager,
                         &self.indicator_manager,
-                        &self.alert_manager,
+                        &self.managers.alert,
                         window_id,
                         single_sym,
                         single_exch,

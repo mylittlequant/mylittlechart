@@ -835,7 +835,7 @@ impl ChartApp {
 
         for inst_id in &all_to_remove {
             self.indicator_manager.remove_instance(*inst_id);
-            self.alert_manager.remove_alerts_for_indicator(*inst_id);
+            self.managers.alert.remove_alerts_for_indicator(*inst_id);
         }
 
         // Remove stale entries from auto_bubble.pre_tag_indicator_ids for every window
