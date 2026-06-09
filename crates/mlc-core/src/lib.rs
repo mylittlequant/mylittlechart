@@ -150,39 +150,43 @@ pub use types::{
     BOTTOM_TOOLBAR_HEIGHT, TOP_TOOLBAR_HEIGHT, STATUS_BAR_HEIGHT,
 };
 
-// Layout (platform-agnostic layout computation)
+// Layout geometry + interaction state (backend data types).
+//
+// These pure-data types were lifted out of the frontend `layout/` module into
+// `state/` during the mlc-layout split (Phase X + V1). They are re-exported here
+// from `state::` so `mlc_core::LayoutRect` etc keep working. The frontend
+// rendering symbols that used to be re-exported here (render_*, LayoutManager,
+// {Extended,}LayoutHitTester, FrameTheme, ChartRenderConfig, the *Result render
+// outputs, ChartModal*) now live in the `mlc-layout` crate — consumers import
+// those as `mlc_layout::X`.
+pub use state::geometry::{
+    LayoutRect, ChartAreaLayout, FrameLayout, ChartHitZone,
+    ExtendedFrameLayout, SubPaneLayout,
+};
+pub use state::scale_corner::{ScaleCornerState, ScaleCornerHitZones, ScaleCornerButton};
+pub use state::sub_pane_overlay::SubPaneOverlayResult;
+pub use state::toolbar_state::{ToolbarState, ToolbarClickResult, ToggleIconPair};
+pub use state::chart_settings_data::{
+    ChartSettingsData, InstrumentSettings, StatusLineSettings, ScalesLinesSettings,
+};
+
+// Frontend rendering symbols — TEMPORARILY still re-exported from `layout/`.
+// These move to the `mlc-layout` crate in V1.2; the V1.3 sweep then switches
+// all consumers to `mlc_layout::X` and this block is deleted. Kept here only so
+// the V1.1 facade-redirect commit compiles on its own.
 #[allow(deprecated)]
 pub use layout::{
-    // Rectangle types
-    LayoutRect, ChartAreaLayout, FrameLayout, ChartHitZone,
-    // Margins (space consumed by external UI)
     Margins,
-    // Extended layout with sub-panes
-    ExtendedFrameLayout, SubPaneLayout,
-    // Configuration and manager
     LayoutConfig, LayoutManager,
-    // Hit testing
     LayoutHitTester, ExtendedLayoutHitTester,
-    // Rendering
     ChartRenderConfig, render_chart_area, draw_scale_corner, render_scales,
     render_chart_window, render_chart_splits,
-    // Full panel rendering (chart-internal, replaces terminal-assembled path)
     ChartPanelRenderData, ChartPanelRenderResult, render_full_chart_panel,
     render_chart_overlay,
-    // Sub-pane overlay hit-test results (produced each frame, cached on ChartWindow)
-    SubPaneOverlayResult,
     draw_content_borders, draw_frame_borders,
-    // Scale corner with buttons
-    ScaleCornerState, ScaleCornerHitZones, ScaleCornerButton,
     draw_scale_corner_with_buttons, render_chart_area_with_buttons,
-    // Frame rendering
     FrameTheme, render_frame,
-    // Render pass control (for multi-pass rendering with blur effects)
     RenderPass,
-    // Toolbar state (moved from core to avoid circular dep on Icon)
-    // Note: RenderThemes and build_render_themes stay in core (depend on core's types)
-    ToolbarState, ToolbarClickResult, ToggleIconPair,
-    // Frame render result types (moved from core to break circular dependency)
     ContextMenuResult,
     ColorPickerRenderResult,
     InlineConfigResult,
@@ -197,14 +201,8 @@ pub use layout::{
     IndicatorOverlayResult,
     SingleChartPanelResult,
     MultiChartRenderResult,
-    // Chart modal rendering (delegated from core to chart panel)
     ChartModalLayout,
     ChartModalRenderResult,
-};
-
-// Chart settings modal data types (moved from core to chart crate)
-pub use layout::modals::chart_settings::{
-    ChartSettingsData, InstrumentSettings, StatusLineSettings, ScalesLinesSettings,
 };
 
 // Input (unified input handling - events, actions, handlers, objects)
