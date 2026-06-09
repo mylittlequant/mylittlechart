@@ -18,6 +18,7 @@ mod pane;
 mod timeframe;
 mod visibility;
 mod lock;
+pub mod geometry;
 pub mod selected_config;
 pub mod command;
 pub mod history;
@@ -120,3 +121,6 @@ pub use panel_grid::{ChartPanelGrid, ChartInputTarget, ChartRightClickHit, Chart
 
 // Phase 4 S2.7 — per-canvas display-option + series-visibility state
 pub use chart_panel_state::ChartPanelState;
+
+// Pure geometry (no external deps — shared with layout/)
+pub use geometry::LayoutRect;
