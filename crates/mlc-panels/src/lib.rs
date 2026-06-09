@@ -1,6 +1,6 @@
 //! Ported collection of trading panel state + renderers from
 //! zengeld-terminal. Copied wholesale in Phase 4-new of the sidebar docking
-//! refactor so FreeItem slots can host real panels instead of placeholder
+//! refactor so `Panel` slots can host real panels instead of placeholder
 //! stubs. Not all panels are wired into the chart yet — this crate is the
 //! source of truth and the wiring happens incrementally.
 //!

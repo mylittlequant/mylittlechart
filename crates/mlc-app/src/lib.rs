@@ -642,8 +642,8 @@ pub struct ChartApp {
 
     /// Heavy state for all trading panels docked into the free-slot sidebars.
     ///
-    /// Keyed by `PanelId`. The matching `FreeItem` leaves in each slot's
-    /// `DockingManager<FreeItem>` carry only the `PanelId`, keeping
+    /// Keyed by `PanelId`. The matching `Panel` leaves in each slot's
+    /// `DockingManager<Panel>` carry only the `PanelId`, keeping
     /// `sidebar-content` free of `zengeld-panels`.
     pub panels_store: panels_store::TradingPanelsStore,
 
@@ -674,13 +674,13 @@ pub struct ChartApp {
 
     /// Active coordinator-routed panel drag (DOM, L2Tape, Footprint, BigTrades, LiquidityHeatmap, VolumeProfile).
     ///
-    /// `(free_item, local_id, last_x, last_y)` — replaces per-panel fields.
-    pub(crate) active_drag_panel: Option<(mlc_sidebar_content::free_slot::FreeItem, String, f64, f64)>,
+    /// `(panel, local_id, last_x, last_y)` — replaces per-panel fields.
+    pub(crate) active_drag_panel: Option<(mlc_core::state::Panel, String, f64, f64)>,
 
     /// Active TradeTape drag-to-scroll.
     ///
     /// `(panel_id, last_x, last_y)`.
-    pub(crate) slot_tradetape_drag: Option<(mlc_sidebar_content::free_slot::PanelId, f64, f64)>,
+    pub(crate) slot_tradetape_drag: Option<(mlc_core::state::PanelId, f64, f64)>,
 
     /// Trading manager — order routing, position tracking, paper engine.
     pub mlc_trading_manager: Option<mlc_trading_manager::TradingManager>,
@@ -4127,8 +4127,8 @@ impl ChartApp {
                 &mut |item, rect, ctx, coord, slot_prefix| {
                     panels_render::render_free_item(panels_store, item, rect.0, rect.1, rect.2, rect.3, ctx, &panel_theme, coord, slot_prefix);
                 },
-                &|item: &mlc_sidebar_content::free_slot::FreeItem| -> Option<String> {
-                    use mlc_sidebar_content::free_slot::FreeItem;
+                &|item: &mlc_core::state::Panel| -> Option<String> {
+                    use mlc_core::state::Panel;
                     use mlc_panels::trading::SymbolSource;
                     // For account-bound panels that still carry SymbolSource.
                     fn label_from_source(source: &SymbolSource, symbol: &str, exchange: &str, account_type: &str) -> Option<String> {
@@ -4146,42 +4146,42 @@ impl ChartApp {
                         Some(format!("{}:{}:{}", exchange, symbol, account_type))
                     }
                     match item {
-                        FreeItem::Dom(id) => panels_store.dom.get(id)
+                        Panel::Dom(id) => panels_store.dom.get(id)
                             .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
-                        FreeItem::Footprint(id) => panels_store.footprint.get(id)
+                        Panel::Footprint(id) => panels_store.footprint.get(id)
                             .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
-                        FreeItem::VolumeProfile(id) => panels_store.volume_profile.get(id)
+                        Panel::VolumeProfile(id) => panels_store.volume_profile.get(id)
                             .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
-                        FreeItem::LiquidityHeatmap(id) => panels_store.liquidity_heatmap.get(id)
+                        Panel::LiquidityHeatmap(id) => panels_store.liquidity_heatmap.get(id)
                             .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
-                        FreeItem::BigTrades(id) => panels_store.big_trades.get(id)
+                        Panel::BigTrades(id) => panels_store.big_trades.get(id)
                             .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
-                        FreeItem::L2Tape(id) => panels_store.l2_tape.get(id)
+                        Panel::L2Tape(id) => panels_store.l2_tape.get(id)
                             .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
-                        FreeItem::TradeTape(id) => panels_store.trade_tape.get(id)
+                        Panel::TradeTape(id) => panels_store.trade_tape.get(id)
                             .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
-                        FreeItem::OrderEntry(id) => panels_store.order_entry.get(id)
+                        Panel::OrderEntry(id) => panels_store.order_entry.get(id)
                             .and_then(|s| label_from_source(&s.source, &s.symbol, &s.exchange, &s.account_type)),
-                        FreeItem::TradingContainer(id) => panels_store.trading_container.get(id)
+                        Panel::TradingContainer(id) => panels_store.trading_container.get(id)
                             .and_then(|s| label_from_source(&s.source, &s.symbol, &s.exchange, &s.account_type)),
-                        FreeItem::IndicatorPanel(id) => panels_store.indicator_panel.get(id)
+                        Panel::IndicatorPanel(id) => panels_store.indicator_panel.get(id)
                             .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
-                        FreeItem::PositionManager(_)
-                        | FreeItem::TradeLog(_)
-                        | FreeItem::RiskCalculator(_)
+                        Panel::PositionManager(_)
+                        | Panel::TradeLog(_)
+                        | Panel::RiskCalculator(_)
                         // Chart doesn't expose symbol-source / overlay info to
                         // the sidebar header — it renders via dedicated path.
-                        | FreeItem::Chart(_) => None,
+                        | Panel::Chart(_) => None,
                     }
                 },
-                &|item: &mlc_sidebar_content::free_slot::FreeItem| -> Option<(bool, f64, f64)> {
-                    use mlc_sidebar_content::free_slot::FreeItem;
+                &|item: &mlc_core::state::Panel| -> Option<(bool, f64, f64)> {
+                    use mlc_core::state::Panel;
                     match item {
-                        FreeItem::Dom(id) => panels_store.dom.get(id).map(|s| (s.auto_center, s.tick_size, s.min_volume_filter)),
+                        Panel::Dom(id) => panels_store.dom.get(id).map(|s| (s.auto_center, s.tick_size, s.min_volume_filter)),
                         _ => None,
                     }
                 },
-                &|item: &mlc_sidebar_content::free_slot::FreeItem| -> Option<[f32; 4]> {
+                &|item: &mlc_core::state::Panel| -> Option<[f32; 4]> {
                     use mlc_core::tag_manager::SyncMemberId;
                     let panel_id = item.panel_id().0;
                     let member = SyncMemberId::Panel(panel_id);
@@ -4189,7 +4189,7 @@ impl ChartApp {
                     let group = self.panel_app.tag_manager.bubble(gid)?;
                     if group.auto_created { None } else { Some(group.color) }
                 },
-                &|item: &mlc_sidebar_content::free_slot::FreeItem| -> Option<mlc_sidebar_content::render::PanelSyncFlagsSnapshot> {
+                &|item: &mlc_core::state::Panel| -> Option<mlc_sidebar_content::render::PanelSyncFlagsSnapshot> {
                     use mlc_core::tag_manager::SyncMemberId;
                     let panel_id = item.panel_id().0;
                     let member = SyncMemberId::Panel(panel_id);
@@ -4200,59 +4200,59 @@ impl ChartApp {
                         sync_crosshair: group.effective_sync_crosshair(member),
                     })
                 },
-                &|item: &mlc_sidebar_content::free_slot::FreeItem| -> Option<(String, String, String)> {
-                    use mlc_sidebar_content::free_slot::FreeItem;
+                &|item: &mlc_core::state::Panel| -> Option<(String, String, String)> {
+                    use mlc_core::state::Panel;
                     match item {
-                        FreeItem::Dom(id) => panels_store.dom.get(id)
+                        Panel::Dom(id) => panels_store.dom.get(id)
                             .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
-                        FreeItem::Footprint(id) => panels_store.footprint.get(id)
+                        Panel::Footprint(id) => panels_store.footprint.get(id)
                             .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
-                        FreeItem::VolumeProfile(id) => panels_store.volume_profile.get(id)
+                        Panel::VolumeProfile(id) => panels_store.volume_profile.get(id)
                             .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
-                        FreeItem::LiquidityHeatmap(id) => panels_store.liquidity_heatmap.get(id)
+                        Panel::LiquidityHeatmap(id) => panels_store.liquidity_heatmap.get(id)
                             .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
-                        FreeItem::BigTrades(id) => panels_store.big_trades.get(id)
+                        Panel::BigTrades(id) => panels_store.big_trades.get(id)
                             .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
-                        FreeItem::L2Tape(id) => panels_store.l2_tape.get(id)
+                        Panel::L2Tape(id) => panels_store.l2_tape.get(id)
                             .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
-                        FreeItem::TradeTape(id) => panels_store.trade_tape.get(id)
+                        Panel::TradeTape(id) => panels_store.trade_tape.get(id)
                             .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
-                        FreeItem::OrderEntry(id) => panels_store.order_entry.get(id)
+                        Panel::OrderEntry(id) => panels_store.order_entry.get(id)
                             .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
-                        FreeItem::TradingContainer(id) => panels_store.trading_container.get(id)
+                        Panel::TradingContainer(id) => panels_store.trading_container.get(id)
                             .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
-                        FreeItem::IndicatorPanel(id) => panels_store.indicator_panel.get(id)
+                        Panel::IndicatorPanel(id) => panels_store.indicator_panel.get(id)
                             .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
-                        FreeItem::PositionManager(_)
-                        | FreeItem::TradeLog(_)
-                        | FreeItem::RiskCalculator(_)
+                        Panel::PositionManager(_)
+                        | Panel::TradeLog(_)
+                        | Panel::RiskCalculator(_)
                         // Chart doesn't expose symbol-source / overlay info
                         // to the sidebar header — dedicated render path.
-                        | FreeItem::Chart(_) => None,
+                        | Panel::Chart(_) => None,
                     }
                 },
-                &|item: &mlc_sidebar_content::free_slot::FreeItem| -> Option<Vec<bool>> {
-                    use mlc_sidebar_content::free_slot::FreeItem;
+                &|item: &mlc_core::state::Panel| -> Option<Vec<bool>> {
+                    use mlc_core::state::Panel;
                     match item {
-                        FreeItem::Dom(id) => panels_store.dom.get(id).map(|s| vec![
+                        Panel::Dom(id) => panels_store.dom.get(id).map(|s| vec![
                             s.column_config.show_bid_orders,
                             s.column_config.show_sell_trades,
                             s.column_config.show_buy_trades,
                             s.column_config.show_ask_orders,
                         ]),
-                        FreeItem::L2Tape(id) => panels_store.l2_tape.get(id).map(|s| vec![
+                        Panel::L2Tape(id) => panels_store.l2_tape.get(id).map(|s| vec![
                             s.column_config.show_time,
                             s.column_config.show_type,
                             s.column_config.show_side,
                             s.column_config.show_price,
                             s.column_config.show_qty,
                         ]),
-                        FreeItem::TradeTape(id) => panels_store.trade_tape.get(id).map(|s| vec![
+                        Panel::TradeTape(id) => panels_store.trade_tape.get(id).map(|s| vec![
                             s.column_config.show_time,
                             s.column_config.show_price,
                             s.column_config.show_size,
                         ]),
-                        FreeItem::BigTrades(id) => panels_store.big_trades.get(id).map(|s| vec![
+                        Panel::BigTrades(id) => panels_store.big_trades.get(id).map(|s| vec![
                             s.column_config.show_time,
                             s.column_config.show_side,
                             s.column_config.show_price,
@@ -4646,8 +4646,8 @@ impl ChartApp {
             &mut |item, rect, ctx, coord, slot_prefix| {
                 panels_render::render_free_item(panels_store, item, rect.0, rect.1, rect.2, rect.3, ctx, &panel_theme, coord, slot_prefix);
             },
-            &|item: &mlc_sidebar_content::free_slot::FreeItem| -> Option<String> {
-                use mlc_sidebar_content::free_slot::FreeItem;
+            &|item: &mlc_core::state::Panel| -> Option<String> {
+                use mlc_core::state::Panel;
                 use mlc_panels::trading::SymbolSource;
                 // Account-bound panels still use SymbolSource for display labels.
                 fn label_from_source(source: &SymbolSource, symbol: &str, exchange: &str, account_type: &str) -> Option<String> {
@@ -4665,41 +4665,41 @@ impl ChartApp {
                     Some(format!("{}:{}:{}", exchange, symbol, account_type))
                 }
                 match item {
-                    FreeItem::Dom(id) => panels_store.dom.get(id)
+                    Panel::Dom(id) => panels_store.dom.get(id)
                         .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
-                    FreeItem::Footprint(id) => panels_store.footprint.get(id)
+                    Panel::Footprint(id) => panels_store.footprint.get(id)
                         .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
-                    FreeItem::VolumeProfile(id) => panels_store.volume_profile.get(id)
+                    Panel::VolumeProfile(id) => panels_store.volume_profile.get(id)
                         .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
-                    FreeItem::LiquidityHeatmap(id) => panels_store.liquidity_heatmap.get(id)
+                    Panel::LiquidityHeatmap(id) => panels_store.liquidity_heatmap.get(id)
                         .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
-                    FreeItem::BigTrades(id) => panels_store.big_trades.get(id)
+                    Panel::BigTrades(id) => panels_store.big_trades.get(id)
                         .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
-                    FreeItem::L2Tape(id) => panels_store.l2_tape.get(id)
+                    Panel::L2Tape(id) => panels_store.l2_tape.get(id)
                         .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
-                    FreeItem::TradeTape(id) => panels_store.trade_tape.get(id)
+                    Panel::TradeTape(id) => panels_store.trade_tape.get(id)
                         .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
-                    FreeItem::OrderEntry(id) => panels_store.order_entry.get(id)
+                    Panel::OrderEntry(id) => panels_store.order_entry.get(id)
                         .and_then(|s| label_from_source(&s.source, &s.symbol, &s.exchange, &s.account_type)),
-                    FreeItem::TradingContainer(id) => panels_store.trading_container.get(id)
+                    Panel::TradingContainer(id) => panels_store.trading_container.get(id)
                         .and_then(|s| label_from_source(&s.source, &s.symbol, &s.exchange, &s.account_type)),
-                    FreeItem::IndicatorPanel(id) => panels_store.indicator_panel.get(id)
+                    Panel::IndicatorPanel(id) => panels_store.indicator_panel.get(id)
                         .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
-                    FreeItem::PositionManager(_)
-                    | FreeItem::TradeLog(_)
-                    | FreeItem::RiskCalculator(_)
+                    Panel::PositionManager(_)
+                    | Panel::TradeLog(_)
+                    | Panel::RiskCalculator(_)
                     // Chart renders via dedicated path — no symbol-source label.
-                    | FreeItem::Chart(_) => None,
+                    | Panel::Chart(_) => None,
                 }
             },
-            &|item: &mlc_sidebar_content::free_slot::FreeItem| -> Option<(bool, f64, f64)> {
-                use mlc_sidebar_content::free_slot::FreeItem;
+            &|item: &mlc_core::state::Panel| -> Option<(bool, f64, f64)> {
+                use mlc_core::state::Panel;
                 match item {
-                    FreeItem::Dom(id) => panels_store.dom.get(id).map(|s| (s.auto_center, s.tick_size, s.min_volume_filter)),
+                    Panel::Dom(id) => panels_store.dom.get(id).map(|s| (s.auto_center, s.tick_size, s.min_volume_filter)),
                     _ => None,
                 }
             },
-            &|item: &mlc_sidebar_content::free_slot::FreeItem| -> Option<[f32; 4]> {
+            &|item: &mlc_core::state::Panel| -> Option<[f32; 4]> {
                 use mlc_core::tag_manager::SyncMemberId;
                 let panel_id = item.panel_id().0;
                 let member = SyncMemberId::Panel(panel_id);
@@ -4707,7 +4707,7 @@ impl ChartApp {
                 let group = self.panel_app.tag_manager.bubble(gid)?;
                 if group.auto_created { None } else { Some(group.color) }
             },
-            &|item: &mlc_sidebar_content::free_slot::FreeItem| -> Option<mlc_sidebar_content::render::PanelSyncFlagsSnapshot> {
+            &|item: &mlc_core::state::Panel| -> Option<mlc_sidebar_content::render::PanelSyncFlagsSnapshot> {
                 use mlc_core::tag_manager::SyncMemberId;
                 let panel_id = item.panel_id().0;
                 let member = SyncMemberId::Panel(panel_id);
@@ -4718,58 +4718,58 @@ impl ChartApp {
                     sync_crosshair: group.effective_sync_crosshair(member),
                 })
             },
-            &|item: &mlc_sidebar_content::free_slot::FreeItem| -> Option<(String, String, String)> {
-                use mlc_sidebar_content::free_slot::FreeItem;
+            &|item: &mlc_core::state::Panel| -> Option<(String, String, String)> {
+                use mlc_core::state::Panel;
                 match item {
-                    FreeItem::Dom(id) => panels_store.dom.get(id)
+                    Panel::Dom(id) => panels_store.dom.get(id)
                         .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
-                    FreeItem::Footprint(id) => panels_store.footprint.get(id)
+                    Panel::Footprint(id) => panels_store.footprint.get(id)
                         .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
-                    FreeItem::VolumeProfile(id) => panels_store.volume_profile.get(id)
+                    Panel::VolumeProfile(id) => panels_store.volume_profile.get(id)
                         .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
-                    FreeItem::LiquidityHeatmap(id) => panels_store.liquidity_heatmap.get(id)
+                    Panel::LiquidityHeatmap(id) => panels_store.liquidity_heatmap.get(id)
                         .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
-                    FreeItem::BigTrades(id) => panels_store.big_trades.get(id)
+                    Panel::BigTrades(id) => panels_store.big_trades.get(id)
                         .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
-                    FreeItem::L2Tape(id) => panels_store.l2_tape.get(id)
+                    Panel::L2Tape(id) => panels_store.l2_tape.get(id)
                         .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
-                    FreeItem::TradeTape(id) => panels_store.trade_tape.get(id)
+                    Panel::TradeTape(id) => panels_store.trade_tape.get(id)
                         .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
-                    FreeItem::OrderEntry(id) => panels_store.order_entry.get(id)
+                    Panel::OrderEntry(id) => panels_store.order_entry.get(id)
                         .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
-                    FreeItem::TradingContainer(id) => panels_store.trading_container.get(id)
+                    Panel::TradingContainer(id) => panels_store.trading_container.get(id)
                         .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
-                    FreeItem::IndicatorPanel(id) => panels_store.indicator_panel.get(id)
+                    Panel::IndicatorPanel(id) => panels_store.indicator_panel.get(id)
                         .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
-                    FreeItem::PositionManager(_)
-                    | FreeItem::TradeLog(_)
-                    | FreeItem::RiskCalculator(_)
+                    Panel::PositionManager(_)
+                    | Panel::TradeLog(_)
+                    | Panel::RiskCalculator(_)
                     // Chart renders via dedicated path — no overlay info.
-                    | FreeItem::Chart(_) => None,
+                    | Panel::Chart(_) => None,
                 }
             },
-            &|item: &mlc_sidebar_content::free_slot::FreeItem| -> Option<Vec<bool>> {
-                use mlc_sidebar_content::free_slot::FreeItem;
+            &|item: &mlc_core::state::Panel| -> Option<Vec<bool>> {
+                use mlc_core::state::Panel;
                 match item {
-                    FreeItem::Dom(id) => panels_store.dom.get(id).map(|s| vec![
+                    Panel::Dom(id) => panels_store.dom.get(id).map(|s| vec![
                         s.column_config.show_bid_orders,
                         s.column_config.show_sell_trades,
                         s.column_config.show_buy_trades,
                         s.column_config.show_ask_orders,
                     ]),
-                    FreeItem::L2Tape(id) => panels_store.l2_tape.get(id).map(|s| vec![
+                    Panel::L2Tape(id) => panels_store.l2_tape.get(id).map(|s| vec![
                         s.column_config.show_time,
                         s.column_config.show_type,
                         s.column_config.show_side,
                         s.column_config.show_price,
                         s.column_config.show_qty,
                     ]),
-                    FreeItem::TradeTape(id) => panels_store.trade_tape.get(id).map(|s| vec![
+                    Panel::TradeTape(id) => panels_store.trade_tape.get(id).map(|s| vec![
                         s.column_config.show_time,
                         s.column_config.show_price,
                         s.column_config.show_size,
                     ]),
-                    FreeItem::BigTrades(id) => panels_store.big_trades.get(id).map(|s| vec![
+                    Panel::BigTrades(id) => panels_store.big_trades.get(id).map(|s| vec![
                         s.column_config.show_time,
                         s.column_config.show_side,
                         s.column_config.show_price,
@@ -5247,7 +5247,7 @@ impl ChartApp {
         let mut old_depth_subs: Vec<(String, String, String)> = Vec::new();
 
         for pid in &panel_ids {
-            let panel_id = mlc_sidebar_content::free_slot::PanelId(*pid);
+            let panel_id = mlc_core::state::PanelId(*pid);
             // DOM symbol change: unsubscribe old orderbook + trades, subscribe new.
             // Two-pass to avoid holding a mutable borrow while calling bridge.
             let dom_change = self.panels_store.dom.get(&panel_id).and_then(|s| {

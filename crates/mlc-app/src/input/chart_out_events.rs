@@ -1298,9 +1298,9 @@ impl ChartApp {
                     self.alert_manager.restore(preset.alerts.clone());
                     eprintln!("[ChartApp] restored {} alerts", self.alert_manager.len());
 
-                    // Step 8b: Restore per-slot FreeItem docking layouts.
+                    // Step 8b: Restore per-slot Panel docking layouts.
                     // Pre-populate the store with panel state so the closure
-                    // can construct the matching `FreeItem` variants.
+                    // can construct the matching `Panel` variants.
                     {
                         // Determine max panel_id across ALL slots to update next_id.
                         let max_panel_id: u64 = preset.slot_leaves.iter()
@@ -1339,7 +1339,7 @@ impl ChartApp {
                     for i in 0..4 {
                         // Pre-insert state into the store keyed by the saved panel_id.
                         for pl in &preset.slot_leaves[i] {
-                            let pid = mlc_sidebar_content::free_slot::PanelId(pl.panel_id);
+                            let pid = mlc_core::state::PanelId(pl.panel_id);
                             use mlc_core::preset::preset::PersistedFreeItemKind;
                             match &pl.kind {
                                 PersistedFreeItemKind::Dom { source, tick_size, levels_displayed, center_price } => {
@@ -1580,27 +1580,27 @@ impl ChartApp {
                             Some(json) => {
                                 match uzor::panels::serialize::LayoutSnapshot::from_json(json) {
                                     Ok(snap) => {
-                                        match snap.restore_tree_with_id::<mlc_sidebar_content::FreeItem, _>(|leaf_id, _type_id| {
+                                        match snap.restore_tree_with_id::<mlc_core::state::Panel, _>(|leaf_id, _type_id| {
                                             // Look up the persisted leaf descriptor by leaf_id.
                                             // The panel_id and kind are stored there; type_id is
                                             // not used (it only carries the variant kind, no id).
                                             let pl = leaves_by_id.get(&leaf_id)?;
-                                            let pid = mlc_sidebar_content::free_slot::PanelId(pl.panel_id);
-                                            use mlc_sidebar_content::free_slot::FreeItem;
+                                            let pid = mlc_core::state::PanelId(pl.panel_id);
+                                            use mlc_core::state::Panel;
                                             let item = match &pl.kind {
-                                                mlc_core::preset::preset::PersistedFreeItemKind::Dom { .. }               => FreeItem::Dom(pid),
-                                                mlc_core::preset::preset::PersistedFreeItemKind::Footprint { .. }         => FreeItem::Footprint(pid),
-                                                mlc_core::preset::preset::PersistedFreeItemKind::VolumeProfile { .. }     => FreeItem::VolumeProfile(pid),
-                                                mlc_core::preset::preset::PersistedFreeItemKind::LiquidityHeatmap { .. }  => FreeItem::LiquidityHeatmap(pid),
-                                                mlc_core::preset::preset::PersistedFreeItemKind::BigTrades { .. }         => FreeItem::BigTrades(pid),
-                                                mlc_core::preset::preset::PersistedFreeItemKind::L2Tape { .. }            => FreeItem::L2Tape(pid),
-                                                mlc_core::preset::preset::PersistedFreeItemKind::TradeTape { .. }         => FreeItem::TradeTape(pid),
-                                                mlc_core::preset::preset::PersistedFreeItemKind::OrderEntry { .. }        => FreeItem::OrderEntry(pid),
-                                                mlc_core::preset::preset::PersistedFreeItemKind::PositionManager          => FreeItem::PositionManager(pid),
-                                                mlc_core::preset::preset::PersistedFreeItemKind::TradeLog                 => FreeItem::TradeLog(pid),
-                                                mlc_core::preset::preset::PersistedFreeItemKind::RiskCalculator           => FreeItem::RiskCalculator(pid),
-                                                mlc_core::preset::preset::PersistedFreeItemKind::TradingContainer { .. }  => FreeItem::TradingContainer(pid),
-                                                mlc_core::preset::preset::PersistedFreeItemKind::IndicatorPanel { .. }   => FreeItem::IndicatorPanel(pid),
+                                                mlc_core::preset::preset::PersistedFreeItemKind::Dom { .. }               => Panel::Dom(pid),
+                                                mlc_core::preset::preset::PersistedFreeItemKind::Footprint { .. }         => Panel::Footprint(pid),
+                                                mlc_core::preset::preset::PersistedFreeItemKind::VolumeProfile { .. }     => Panel::VolumeProfile(pid),
+                                                mlc_core::preset::preset::PersistedFreeItemKind::LiquidityHeatmap { .. }  => Panel::LiquidityHeatmap(pid),
+                                                mlc_core::preset::preset::PersistedFreeItemKind::BigTrades { .. }         => Panel::BigTrades(pid),
+                                                mlc_core::preset::preset::PersistedFreeItemKind::L2Tape { .. }            => Panel::L2Tape(pid),
+                                                mlc_core::preset::preset::PersistedFreeItemKind::TradeTape { .. }         => Panel::TradeTape(pid),
+                                                mlc_core::preset::preset::PersistedFreeItemKind::OrderEntry { .. }        => Panel::OrderEntry(pid),
+                                                mlc_core::preset::preset::PersistedFreeItemKind::PositionManager          => Panel::PositionManager(pid),
+                                                mlc_core::preset::preset::PersistedFreeItemKind::TradeLog                 => Panel::TradeLog(pid),
+                                                mlc_core::preset::preset::PersistedFreeItemKind::RiskCalculator           => Panel::RiskCalculator(pid),
+                                                mlc_core::preset::preset::PersistedFreeItemKind::TradingContainer { .. }  => Panel::TradingContainer(pid),
+                                                mlc_core::preset::preset::PersistedFreeItemKind::IndicatorPanel { .. }   => Panel::IndicatorPanel(pid),
                                             };
                                             Some(item)
                                         }) {
@@ -1762,7 +1762,7 @@ impl ChartApp {
                     // that mis-route propagate_* / apply_key_to_panels_in_group.
                     {
                         use mlc_core::tag_manager::SyncMemberId;
-                        use mlc_sidebar_content::free_slot::PanelId;
+                        use mlc_core::state::PanelId;
                         // Collect live PanelIds across every panel-state map.
                         let live_panel_ids: std::collections::HashSet<u64> = {
                             let store = &self.panels_store;

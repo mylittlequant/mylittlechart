@@ -58,20 +58,20 @@ pub struct ChartPreset {
     /// Persisted so tags survive preset switching.
     #[serde(default)]
     pub leaf_color_tags: std::collections::HashMap<u64, [f32; 4]>,
-    /// Per-slot `DockingManager<FreeItem>` layout snapshots (4 slots).
+    /// Per-slot `DockingManager<Panel>` layout snapshots (4 slots).
     ///
     /// Each entry is a serialized `uzor::panels::serialize::LayoutSnapshot`
     /// JSON string, or `None` if the slot is empty. Slots host trading panels
-    /// and detached mini-charts (see `mlc_sidebar_content::FreeItem`).
+    /// and detached mini-charts.
     #[serde(default)]
     pub slot_layouts: [Option<String>; 4],
     /// Per-slot leaf descriptors (parallel to `slot_layouts`). Each vec lists
-    /// the `FreeItem` payloads for leaves in the corresponding slot.
+    /// the `Panel` payloads for leaves in the corresponding slot.
     #[serde(default)]
     pub slot_leaves: [Vec<PersistedFreeLeaf>; 4],
 }
 
-/// Serializable descriptor for a single `FreeItem` leaf inside a slot.
+/// Serializable descriptor for a single `Panel` leaf inside a slot.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedFreeLeaf {
     /// Leaf id from `LayoutSnapshot` (maps into the per-slot layout tree).
@@ -79,7 +79,7 @@ pub struct PersistedFreeLeaf {
     /// Stable panel id — unique across restarts, used to key state in the store.
     #[serde(default)]
     pub panel_id: u64,
-    /// Which kind of `FreeItem` this leaf carries, including the minimal state
+    /// Which kind of panel this leaf carries, including the minimal state
     /// snapshot needed to recreate the panel on restore.
     pub kind: PersistedFreeItemKind,
 }
@@ -109,8 +109,8 @@ impl Default for PersistedSymbolSource {
     }
 }
 
-/// Mirror of `mlc_sidebar_content::FreeItem` kept in the chart crate so the preset
-/// schema has no dependency on `sidebar-content`.
+/// Mirror of `mlc_core::state::Panel` kept in the preset module for JSON
+/// persistence — schema has no runtime dependency on `sidebar-content`.
 ///
 /// Each variant stores the minimal fields needed to recreate the matching
 /// panel state via the panel's `new()` constructor. Additional state (live

@@ -2,14 +2,14 @@
 //! sidebar hyperspace (Slot1..Slot4).
 //!
 //! `TradingPanelsStore` is chart-app-owned and holds heavy state keyed by
-//! `PanelId`. The lightweight sidebar docking trees hold only `FreeItem`
+//! `PanelId`. The lightweight sidebar docking trees hold only `Panel`
 //! variants that carry the matching `PanelId`, keeping `sidebar-content`
 //! free of any `zengeld-panels` dependency.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use mlc_sidebar_content::free_slot::PanelId;
+use mlc_core::state::{PanelId, Panel};
 use mlc_trading_manager::SharedTradingSnapshot;
 use mlc_core::state::ChartPanelId;
 use mlc_core::ChartPanelState;
@@ -32,9 +32,6 @@ use mlc_panels::trading::trading::{
     trade_log::TradeLogState,
     trading_container::TradingContainerState,
 };
-
-// Re-export FreeItem for convenience in callers that need it alongside the store.
-use mlc_sidebar_content::free_slot::FreeItem;
 
 /// Owns the heavy state for all 11 trading panel kinds.
 ///
@@ -242,102 +239,102 @@ impl TradingPanelsStore {
     /// Get an immutable reference to a panel's `TradingPanel` impl, if migrated.
     /// Returns `None` for panels not yet migrated to the trait.
     ///
-    /// `FreeItem::Chart` is NOT a trading panel — it has a dedicated render
+    /// `Panel::Chart` is NOT a trading panel — it has a dedicated render
     /// path that resolves through `ChartPanelGrid` / chart-window storage.
-    /// `FreeItem::IndicatorPanel` IS a trading panel — it implements the
+    /// `Panel::IndicatorPanel` IS a trading panel — it implements the
     /// `TradingPanel` trait like DOM/TradeTape/etc. and is dispatched
     /// through this method normally.
-    pub fn get_panel(&self, item: &FreeItem) -> Option<&dyn TradingPanel> {
+    pub fn get_panel(&self, item: &Panel) -> Option<&dyn TradingPanel> {
         match item {
-            FreeItem::Dom(id) => self.dom.get(id).map(|s| s as &dyn TradingPanel),
-            FreeItem::Footprint(id) => self.footprint.get(id).map(|s| s as &dyn TradingPanel),
-            FreeItem::VolumeProfile(id) => self.volume_profile.get(id).map(|s| s as &dyn TradingPanel),
-            FreeItem::LiquidityHeatmap(id) => self.liquidity_heatmap.get(id).map(|s| s as &dyn TradingPanel),
-            FreeItem::BigTrades(id) => self.big_trades.get(id).map(|s| s as &dyn TradingPanel),
-            FreeItem::L2Tape(id) => self.l2_tape.get(id).map(|s| s as &dyn TradingPanel),
-            FreeItem::TradeTape(id) => self.trade_tape.get(id).map(|s| s as &dyn TradingPanel),
-            FreeItem::OrderEntry(id) => self.order_entry.get(id).map(|s| s as &dyn TradingPanel),
-            FreeItem::PositionManager(id) => self.position_manager.get(id).map(|s| s as &dyn TradingPanel),
-            FreeItem::TradeLog(id) => self.trade_log.get(id).map(|s| s as &dyn TradingPanel),
-            FreeItem::RiskCalculator(id) => self.risk_calculator.get(id).map(|s| s as &dyn TradingPanel),
-            FreeItem::TradingContainer(id) => self.trading_container.get(id).map(|s| s as &dyn TradingPanel),
-            FreeItem::IndicatorPanel(id) => self.indicator_panel.get(id).map(|s| s as &dyn TradingPanel),
-            FreeItem::Chart(_) => None,
+            Panel::Dom(id) => self.dom.get(id).map(|s| s as &dyn TradingPanel),
+            Panel::Footprint(id) => self.footprint.get(id).map(|s| s as &dyn TradingPanel),
+            Panel::VolumeProfile(id) => self.volume_profile.get(id).map(|s| s as &dyn TradingPanel),
+            Panel::LiquidityHeatmap(id) => self.liquidity_heatmap.get(id).map(|s| s as &dyn TradingPanel),
+            Panel::BigTrades(id) => self.big_trades.get(id).map(|s| s as &dyn TradingPanel),
+            Panel::L2Tape(id) => self.l2_tape.get(id).map(|s| s as &dyn TradingPanel),
+            Panel::TradeTape(id) => self.trade_tape.get(id).map(|s| s as &dyn TradingPanel),
+            Panel::OrderEntry(id) => self.order_entry.get(id).map(|s| s as &dyn TradingPanel),
+            Panel::PositionManager(id) => self.position_manager.get(id).map(|s| s as &dyn TradingPanel),
+            Panel::TradeLog(id) => self.trade_log.get(id).map(|s| s as &dyn TradingPanel),
+            Panel::RiskCalculator(id) => self.risk_calculator.get(id).map(|s| s as &dyn TradingPanel),
+            Panel::TradingContainer(id) => self.trading_container.get(id).map(|s| s as &dyn TradingPanel),
+            Panel::IndicatorPanel(id) => self.indicator_panel.get(id).map(|s| s as &dyn TradingPanel),
+            Panel::Chart(_) => None,
         }
     }
 
     /// Get a mutable reference to a panel's `TradingPanel` impl, if migrated.
-    /// `FreeItem::Chart` returns `None` — see [`get_panel`].
-    pub fn get_panel_mut(&mut self, item: &FreeItem) -> Option<&mut dyn TradingPanel> {
+    /// `Panel::Chart` returns `None` — see [`get_panel`].
+    pub fn get_panel_mut(&mut self, item: &Panel) -> Option<&mut dyn TradingPanel> {
         match item {
-            FreeItem::Dom(id) => self.dom.get_mut(id).map(|s| s as &mut dyn TradingPanel),
-            FreeItem::Footprint(id) => self.footprint.get_mut(id).map(|s| s as &mut dyn TradingPanel),
-            FreeItem::VolumeProfile(id) => self.volume_profile.get_mut(id).map(|s| s as &mut dyn TradingPanel),
-            FreeItem::LiquidityHeatmap(id) => self.liquidity_heatmap.get_mut(id).map(|s| s as &mut dyn TradingPanel),
-            FreeItem::BigTrades(id) => self.big_trades.get_mut(id).map(|s| s as &mut dyn TradingPanel),
-            FreeItem::L2Tape(id) => self.l2_tape.get_mut(id).map(|s| s as &mut dyn TradingPanel),
-            FreeItem::TradeTape(id) => self.trade_tape.get_mut(id).map(|s| s as &mut dyn TradingPanel),
-            FreeItem::OrderEntry(id) => self.order_entry.get_mut(id).map(|s| s as &mut dyn TradingPanel),
-            FreeItem::PositionManager(id) => self.position_manager.get_mut(id).map(|s| s as &mut dyn TradingPanel),
-            FreeItem::TradeLog(id) => self.trade_log.get_mut(id).map(|s| s as &mut dyn TradingPanel),
-            FreeItem::RiskCalculator(id) => self.risk_calculator.get_mut(id).map(|s| s as &mut dyn TradingPanel),
-            FreeItem::TradingContainer(id) => self.trading_container.get_mut(id).map(|s| s as &mut dyn TradingPanel),
-            FreeItem::IndicatorPanel(id) => self.indicator_panel.get_mut(id).map(|s| s as &mut dyn TradingPanel),
-            FreeItem::Chart(_) => None,
+            Panel::Dom(id) => self.dom.get_mut(id).map(|s| s as &mut dyn TradingPanel),
+            Panel::Footprint(id) => self.footprint.get_mut(id).map(|s| s as &mut dyn TradingPanel),
+            Panel::VolumeProfile(id) => self.volume_profile.get_mut(id).map(|s| s as &mut dyn TradingPanel),
+            Panel::LiquidityHeatmap(id) => self.liquidity_heatmap.get_mut(id).map(|s| s as &mut dyn TradingPanel),
+            Panel::BigTrades(id) => self.big_trades.get_mut(id).map(|s| s as &mut dyn TradingPanel),
+            Panel::L2Tape(id) => self.l2_tape.get_mut(id).map(|s| s as &mut dyn TradingPanel),
+            Panel::TradeTape(id) => self.trade_tape.get_mut(id).map(|s| s as &mut dyn TradingPanel),
+            Panel::OrderEntry(id) => self.order_entry.get_mut(id).map(|s| s as &mut dyn TradingPanel),
+            Panel::PositionManager(id) => self.position_manager.get_mut(id).map(|s| s as &mut dyn TradingPanel),
+            Panel::TradeLog(id) => self.trade_log.get_mut(id).map(|s| s as &mut dyn TradingPanel),
+            Panel::RiskCalculator(id) => self.risk_calculator.get_mut(id).map(|s| s as &mut dyn TradingPanel),
+            Panel::TradingContainer(id) => self.trading_container.get_mut(id).map(|s| s as &mut dyn TradingPanel),
+            Panel::IndicatorPanel(id) => self.indicator_panel.get_mut(id).map(|s| s as &mut dyn TradingPanel),
+            Panel::Chart(_) => None,
         }
     }
 
     // -------------------------------------------------------------------------
-    // clone_item — duplicate a FreeItem with fresh PanelId + copied config
+    // clone_item — duplicate a Panel with fresh PanelId + copied config
     // -------------------------------------------------------------------------
 
-    /// Create a new `FreeItem` of the same variant as `source`, with a fresh
+    /// Create a new `Panel` of the same variant as `source`, with a fresh
     /// `PanelId` and state cloned from the source's config (symbol, tick_size,
     /// etc.). Returns `None` if the source's state is missing from the store.
-    pub fn clone_item(&mut self, source: &FreeItem) -> Option<FreeItem> {
+    pub fn clone_item(&mut self, source: &Panel) -> Option<Panel> {
         match source {
-            FreeItem::Dom(id) => {
+            Panel::Dom(id) => {
                 let s = self.dom.get(id)?;
                 let pid = self.alloc_id();
                 self.dom.insert(pid, DomState::new(s.symbol.clone(), s.tick_size));
-                Some(FreeItem::Dom(pid))
+                Some(Panel::Dom(pid))
             }
-            FreeItem::Footprint(id) => {
+            Panel::Footprint(id) => {
                 let s = self.footprint.get(id)?;
                 let pid = self.alloc_id();
                 self.footprint.insert(pid, FootprintState::new(s.symbol.clone(), s.tick_size));
-                Some(FreeItem::Footprint(pid))
+                Some(Panel::Footprint(pid))
             }
-            FreeItem::VolumeProfile(id) => {
+            Panel::VolumeProfile(id) => {
                 let s = self.volume_profile.get(id)?;
                 let pid = self.alloc_id();
                 self.volume_profile.insert(pid, VolumeProfileState::new(s.symbol.clone(), s.tick_size));
-                Some(FreeItem::VolumeProfile(pid))
+                Some(Panel::VolumeProfile(pid))
             }
-            FreeItem::LiquidityHeatmap(id) => {
+            Panel::LiquidityHeatmap(id) => {
                 let s = self.liquidity_heatmap.get(id)?;
                 let pid = self.alloc_id();
                 self.liquidity_heatmap.insert(pid, LiquidityHeatmapState::new(
                     s.symbol.clone(), s.tick_size, s.snapshot_interval_ms,
                 ));
-                Some(FreeItem::LiquidityHeatmap(pid))
+                Some(Panel::LiquidityHeatmap(pid))
             }
-            FreeItem::BigTrades(_) => {
+            Panel::BigTrades(_) => {
                 let pid = self.alloc_id();
                 self.big_trades.insert(pid, BigTradesState::new());
-                Some(FreeItem::BigTrades(pid))
+                Some(Panel::BigTrades(pid))
             }
-            FreeItem::L2Tape(_) => {
+            Panel::L2Tape(_) => {
                 let pid = self.alloc_id();
                 self.l2_tape.insert(pid, L2TapeState::new());
-                Some(FreeItem::L2Tape(pid))
+                Some(Panel::L2Tape(pid))
             }
-            FreeItem::TradeTape(_) => {
+            Panel::TradeTape(_) => {
                 let pid = self.alloc_id();
                 self.trade_tape.insert(pid, TradeTapeState::new());
-                Some(FreeItem::TradeTape(pid))
+                Some(Panel::TradeTape(pid))
             }
-            FreeItem::OrderEntry(id) => {
+            Panel::OrderEntry(id) => {
                 let s = self.order_entry.get(id)?;
                 let pid = self.alloc_id();
                 let mut state = OrderEntryState::new(s.symbol.clone());
@@ -345,40 +342,40 @@ impl TradingPanelsStore {
                     state.set_snapshot(snap.clone());
                 }
                 self.order_entry.insert(pid, state);
-                Some(FreeItem::OrderEntry(pid))
+                Some(Panel::OrderEntry(pid))
             }
-            FreeItem::PositionManager(_) => {
+            Panel::PositionManager(_) => {
                 let pid = self.alloc_id();
                 let mut state = PositionManagerState::new();
                 if let Some(snap) = &self.trading_snapshot {
                     state.set_snapshot(snap.clone());
                 }
                 self.position_manager.insert(pid, state);
-                Some(FreeItem::PositionManager(pid))
+                Some(Panel::PositionManager(pid))
             }
-            FreeItem::TradeLog(_) => {
+            Panel::TradeLog(_) => {
                 let pid = self.alloc_id();
                 let mut state = TradeLogState::new();
                 if let Some(snap) = &self.trading_snapshot {
                     state.set_snapshot(snap.clone());
                 }
                 self.trade_log.insert(pid, state);
-                Some(FreeItem::TradeLog(pid))
+                Some(Panel::TradeLog(pid))
             }
-            FreeItem::RiskCalculator(_) => {
+            Panel::RiskCalculator(_) => {
                 let pid = self.alloc_id();
                 self.risk_calculator.insert(pid, RiskCalculatorState::new());
-                Some(FreeItem::RiskCalculator(pid))
+                Some(Panel::RiskCalculator(pid))
             }
-            FreeItem::TradingContainer(id) => {
+            Panel::TradingContainer(id) => {
                 let s = self.trading_container.get(id)?;
                 let pid = self.alloc_id();
                 self.trading_container.insert(pid, TradingContainerState::new(
                     s.symbol.clone(), s.tick_size, s.market_price,
                 ));
-                Some(FreeItem::TradingContainer(pid))
+                Some(Panel::TradingContainer(pid))
             }
-            FreeItem::IndicatorPanel(id) => {
+            Panel::IndicatorPanel(id) => {
                 let s = self.indicator_panel.get(id)?;
                 let pid = self.alloc_id();
                 let mut clone = IndicatorPanelState::with_instance(
@@ -395,12 +392,12 @@ impl TradingPanelsStore {
                 clone.auto_scale = s.auto_scale;
                 clone.height_ratio = s.height_ratio;
                 self.indicator_panel.insert(pid, clone);
-                Some(FreeItem::IndicatorPanel(pid))
+                Some(Panel::IndicatorPanel(pid))
             }
             // Chart cloning is not yet wired — Stage 8 (central area cleanup)
             // will give panels_store ownership of ChartWindows.  For now:
             // refuse to clone a Chart leaf.
-            FreeItem::Chart(_) => None,
+            Panel::Chart(_) => None,
         }
     }
 
@@ -408,26 +405,26 @@ impl TradingPanelsStore {
     // remove — delete state when a leaf is closed
     // -------------------------------------------------------------------------
 
-    /// Remove the state associated with the given `FreeItem`, freeing memory.
-    pub fn remove(&mut self, item: &FreeItem) {
+    /// Remove the state associated with the given `Panel`, freeing memory.
+    pub fn remove(&mut self, item: &Panel) {
         match item {
-            FreeItem::Dom(id)              => { self.dom.remove(id); }
-            FreeItem::Footprint(id)        => { self.footprint.remove(id); }
-            FreeItem::VolumeProfile(id)    => { self.volume_profile.remove(id); }
-            FreeItem::LiquidityHeatmap(id) => { self.liquidity_heatmap.remove(id); }
-            FreeItem::BigTrades(id)        => { self.big_trades.remove(id); }
-            FreeItem::L2Tape(id)           => { self.l2_tape.remove(id); }
-            FreeItem::TradeTape(id)        => { self.trade_tape.remove(id); }
-            FreeItem::OrderEntry(id)       => { self.order_entry.remove(id); }
-            FreeItem::PositionManager(id)  => { self.position_manager.remove(id); }
-            FreeItem::TradeLog(id)         => { self.trade_log.remove(id); }
-            FreeItem::RiskCalculator(id)   => { self.risk_calculator.remove(id); }
-            FreeItem::TradingContainer(id) => { self.trading_container.remove(id); }
-            FreeItem::IndicatorPanel(id)   => { self.indicator_panel.remove(id); }
+            Panel::Dom(id)              => { self.dom.remove(id); }
+            Panel::Footprint(id)        => { self.footprint.remove(id); }
+            Panel::VolumeProfile(id)    => { self.volume_profile.remove(id); }
+            Panel::LiquidityHeatmap(id) => { self.liquidity_heatmap.remove(id); }
+            Panel::BigTrades(id)        => { self.big_trades.remove(id); }
+            Panel::L2Tape(id)           => { self.l2_tape.remove(id); }
+            Panel::TradeTape(id)        => { self.trade_tape.remove(id); }
+            Panel::OrderEntry(id)       => { self.order_entry.remove(id); }
+            Panel::PositionManager(id)  => { self.position_manager.remove(id); }
+            Panel::TradeLog(id)         => { self.trade_log.remove(id); }
+            Panel::RiskCalculator(id)   => { self.risk_calculator.remove(id); }
+            Panel::TradingContainer(id) => { self.trading_container.remove(id); }
+            Panel::IndicatorPanel(id)   => { self.indicator_panel.remove(id); }
             // Chart removal is not yet wired — Stage 8 (central area cleanup)
             // will give panels_store ownership of ChartWindows.  For now:
             // no-op so closing a chart leaf doesn't crash.
-            FreeItem::Chart(_) => {}
+            Panel::Chart(_) => {}
         }
     }
 

@@ -1263,7 +1263,7 @@ impl ChartApp {
                                     state.exchange = exchange_str.clone();
                                     state.account_type = account_type_str.clone();
                                 }
-                                Some(mlc_sidebar_content::free_slot::FreeItem::Dom(pid))
+                                Some(mlc_core::state::Panel::Dom(pid))
                             }
                             "footprint" => {
                                 let pid = self.panels_store.create_footprint(symbol.clone(), resolved_tick_size);
@@ -1282,7 +1282,7 @@ impl ChartApp {
                                     state.exchange = exchange_str.clone();
                                     state.account_type = account_type_str.clone();
                                 }
-                                Some(mlc_sidebar_content::free_slot::FreeItem::Footprint(pid))
+                                Some(mlc_core::state::Panel::Footprint(pid))
                             }
                             "volume_profile" => {
                                 let pid = self.panels_store.create_volume_profile(symbol.clone(), resolved_tick_size);
@@ -1301,7 +1301,7 @@ impl ChartApp {
                                     state.exchange = exchange_str.clone();
                                     state.account_type = account_type_str.clone();
                                 }
-                                Some(mlc_sidebar_content::free_slot::FreeItem::VolumeProfile(pid))
+                                Some(mlc_core::state::Panel::VolumeProfile(pid))
                             }
                             "liquidity_heatmap" => {
                                 let pid = self.panels_store.create_liquidity_heatmap(symbol.clone(), resolved_tick_size, 1000);
@@ -1320,7 +1320,7 @@ impl ChartApp {
                                     state.exchange = exchange_str.clone();
                                     state.account_type = account_type_str.clone();
                                 }
-                                Some(mlc_sidebar_content::free_slot::FreeItem::LiquidityHeatmap(pid))
+                                Some(mlc_core::state::Panel::LiquidityHeatmap(pid))
                             }
                             "big_trades" => {
                                 let pid = self.panels_store.create_big_trades();
@@ -1343,7 +1343,7 @@ impl ChartApp {
                                     state.exchange = exchange_str.clone();
                                     state.account_type = account_type_str.clone();
                                 }
-                                Some(mlc_sidebar_content::free_slot::FreeItem::BigTrades(pid))
+                                Some(mlc_core::state::Panel::BigTrades(pid))
                             }
                             "l2_tape" => {
                                 let pid = self.panels_store.create_l2_tape();
@@ -1365,7 +1365,7 @@ impl ChartApp {
                                     state.exchange = exchange_str.clone();
                                     state.account_type = account_type_str.clone();
                                 }
-                                Some(mlc_sidebar_content::free_slot::FreeItem::L2Tape(pid))
+                                Some(mlc_core::state::Panel::L2Tape(pid))
                             }
                             "trade_tape" => {
                                 let pid = self.panels_store.create_trade_tape();
@@ -1386,7 +1386,7 @@ impl ChartApp {
                                     state.exchange = exchange_str.clone();
                                     state.account_type = account_type_str.clone();
                                 }
-                                Some(mlc_sidebar_content::free_slot::FreeItem::TradeTape(pid))
+                                Some(mlc_core::state::Panel::TradeTape(pid))
                             }
                             "order_entry" => {
                                 let pid = self.panels_store.create_order_entry(symbol.clone());
@@ -1395,19 +1395,19 @@ impl ChartApp {
                                     state.exchange = exchange_str.clone();
                                     state.account_type = account_type_str.clone();
                                 }
-                                Some(mlc_sidebar_content::free_slot::FreeItem::OrderEntry(pid))
+                                Some(mlc_core::state::Panel::OrderEntry(pid))
                             }
                             "position_manager" => {
                                 let pid = self.panels_store.create_position_manager();
-                                Some(mlc_sidebar_content::free_slot::FreeItem::PositionManager(pid))
+                                Some(mlc_core::state::Panel::PositionManager(pid))
                             }
                             "trade_log" => {
                                 let pid = self.panels_store.create_trade_log();
-                                Some(mlc_sidebar_content::free_slot::FreeItem::TradeLog(pid))
+                                Some(mlc_core::state::Panel::TradeLog(pid))
                             }
                             "risk_calculator" => {
                                 let pid = self.panels_store.create_risk_calculator();
-                                Some(mlc_sidebar_content::free_slot::FreeItem::RiskCalculator(pid))
+                                Some(mlc_core::state::Panel::RiskCalculator(pid))
                             }
                             "trading_container" => {
                                 let pid = self.panels_store.create_trading_container(symbol.clone(), 0.01, 0.0);
@@ -1416,7 +1416,7 @@ impl ChartApp {
                                     state.exchange = exchange_str.clone();
                                     state.account_type = account_type_str.clone();
                                 }
-                                Some(mlc_sidebar_content::free_slot::FreeItem::TradingContainer(pid))
+                                Some(mlc_core::state::Panel::TradingContainer(pid))
                             }
                             "indicator_panel" => {
                                 // Spawn unbound (instance_id=0).  User picks the
@@ -1426,7 +1426,7 @@ impl ChartApp {
                                     state.exchange = exchange_str.clone();
                                     state.account_type = account_type_str.clone();
                                 }
-                                Some(mlc_sidebar_content::free_slot::FreeItem::IndicatorPanel(pid))
+                                Some(mlc_core::state::Panel::IndicatorPanel(pid))
                             }
                             _ => None,
                         };
@@ -1627,11 +1627,11 @@ impl ChartApp {
                                             .and_then(|l| l.active_panel().cloned());
                                         if let Some(item) = item_opt {
                                             use mlc_panels::trading::SymbolSource;
-                                            use mlc_sidebar_content::free_slot::FreeItem;
+                                            use mlc_core::state::Panel;
                                             let src = SymbolSource::HyperFocus;
                                             match &item {
-                                                FreeItem::OrderEntry(id) => { if let Some(s) = self.panels_store.order_entry.get_mut(id) { s.source = src; } }
-                                                FreeItem::TradingContainer(id) => { if let Some(s) = self.panels_store.trading_container.get_mut(id) { s.source = src; } }
+                                                Panel::OrderEntry(id) => { if let Some(s) = self.panels_store.order_entry.get_mut(id) { s.source = src; } }
+                                                Panel::TradingContainer(id) => { if let Some(s) = self.panels_store.trading_container.get_mut(id) { s.source = src; } }
                                                 _ => {}
                                             }
                                             self.autosave_snapshot();
@@ -1654,7 +1654,7 @@ impl ChartApp {
                                             .and_then(|l| l.active_panel().cloned());
                                         if let Some(item) = item_opt {
                                             use mlc_panels::trading::SymbolSource;
-                                            use mlc_sidebar_content::free_slot::FreeItem;
+                                            use mlc_core::state::Panel;
                                             // S2.7.1e: read instrument fields via branch_meta (B1).
                                             let toggle_u_cid = self.panel_app.panel_grid.active_container_id();
                                             let symbol: String = toggle_u_cid
@@ -1671,8 +1671,8 @@ impl ChartApp {
                                                 .unwrap_or_default();
                                             let src = SymbolSource::Fixed { symbol, exchange, account_type };
                                             match &item {
-                                                FreeItem::OrderEntry(id) => { if let Some(s) = self.panels_store.order_entry.get_mut(id) { s.source = src; } }
-                                                FreeItem::TradingContainer(id) => { if let Some(s) = self.panels_store.trading_container.get_mut(id) { s.source = src; } }
+                                                Panel::OrderEntry(id) => { if let Some(s) = self.panels_store.order_entry.get_mut(id) { s.source = src; } }
+                                                Panel::TradingContainer(id) => { if let Some(s) = self.panels_store.trading_container.get_mut(id) { s.source = src; } }
                                                 _ => {}
                                             }
                                             self.autosave_snapshot();
@@ -1736,7 +1736,7 @@ impl ChartApp {
                                     self.sidebar_state.focused_free_leaf
                                 {
                                     if focused_idx == idx {
-                                        // Retrieve the FreeItem before removing so we can
+                                        // Retrieve the Panel before removing so we can
                                         // clean up the panels store.
                                         let item_opt = self.sidebar_state.slot_dockings[idx]
                                             .inner()
@@ -1754,7 +1754,7 @@ impl ChartApp {
                                             self.panel_app.tag_manager.synced_panels_remove(member);
                                             // Unsubscribe panels from shared data streams
                                             // before dropping their state.
-                                            if let mlc_sidebar_content::free_slot::FreeItem::Dom(pid) = &item {
+                                            if let mlc_core::state::Panel::Dom(pid) = &item {
                                                 if let Some(state) = self.panels_store.dom.get(pid) {
                                                     if !state.symbol.is_empty() {
                                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
@@ -1765,7 +1765,7 @@ impl ChartApp {
                                                     }
                                                 }
                                             }
-                                            if let mlc_sidebar_content::free_slot::FreeItem::BigTrades(pid) = &item {
+                                            if let mlc_core::state::Panel::BigTrades(pid) = &item {
                                                 if let Some(state) = self.panels_store.big_trades.get(pid) {
                                                     if !state.symbol.is_empty() {
                                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
@@ -1775,7 +1775,7 @@ impl ChartApp {
                                                     }
                                                 }
                                             }
-                                            if let mlc_sidebar_content::free_slot::FreeItem::VolumeProfile(pid) = &item {
+                                            if let mlc_core::state::Panel::VolumeProfile(pid) = &item {
                                                 if let Some(state) = self.panels_store.volume_profile.get(pid) {
                                                     if !state.symbol.is_empty() {
                                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
@@ -1785,7 +1785,7 @@ impl ChartApp {
                                                     }
                                                 }
                                             }
-                                            if let mlc_sidebar_content::free_slot::FreeItem::Footprint(pid) = &item {
+                                            if let mlc_core::state::Panel::Footprint(pid) = &item {
                                                 if let Some(state) = self.panels_store.footprint.get(pid) {
                                                     if !state.symbol.is_empty() {
                                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
@@ -1795,7 +1795,7 @@ impl ChartApp {
                                                     }
                                                 }
                                             }
-                                            if let mlc_sidebar_content::free_slot::FreeItem::L2Tape(pid) = &item {
+                                            if let mlc_core::state::Panel::L2Tape(pid) = &item {
                                                 if let Some(state) = self.panels_store.l2_tape.get(pid) {
                                                     if !state.symbol.is_empty() {
                                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
@@ -1805,7 +1805,7 @@ impl ChartApp {
                                                     }
                                                 }
                                             }
-                                            if let mlc_sidebar_content::free_slot::FreeItem::TradeTape(pid) = &item {
+                                            if let mlc_core::state::Panel::TradeTape(pid) = &item {
                                                 if let Some(state) = self.panels_store.trade_tape.get(pid) {
                                                     if !state.symbol.is_empty() {
                                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
@@ -1815,7 +1815,7 @@ impl ChartApp {
                                                     }
                                                 }
                                             }
-                                            if let mlc_sidebar_content::free_slot::FreeItem::LiquidityHeatmap(pid) = &item {
+                                            if let mlc_core::state::Panel::LiquidityHeatmap(pid) = &item {
                                                 if let Some(state) = self.panels_store.liquidity_heatmap.get(pid) {
                                                     if !state.symbol.is_empty() {
                                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
@@ -1862,7 +1862,7 @@ impl ChartApp {
                                 .and_then(|l| l.active_panel().cloned());
                             if let Some(item) = item_opt {
                                 use mlc_panels::trading::SymbolSource;
-                                use mlc_sidebar_content::free_slot::FreeItem;
+                                use mlc_core::state::Panel;
                                 use mlc_sidebar_content::state::SlotSourceMode;
                                 use mlc_core::tag_manager::SyncMemberId;
                                 // For market-data panels: mode reflects the panel's actual
@@ -1870,10 +1870,10 @@ impl ChartApp {
                                 // For account-bound panels: mode reflects their SymbolSource.
                                 let is_market_data = matches!(
                                     &item,
-                                    FreeItem::Dom(_) | FreeItem::Footprint(_)
-                                    | FreeItem::VolumeProfile(_) | FreeItem::LiquidityHeatmap(_)
-                                    | FreeItem::BigTrades(_) | FreeItem::L2Tape(_)
-                                    | FreeItem::TradeTape(_)
+                                    Panel::Dom(_) | Panel::Footprint(_)
+                                    | Panel::VolumeProfile(_) | Panel::LiquidityHeatmap(_)
+                                    | Panel::BigTrades(_) | Panel::L2Tape(_)
+                                    | Panel::TradeTape(_)
                                 );
                                 if is_market_data {
                                     let member = SyncMemberId::Panel(item.panel_id().0);
@@ -1889,8 +1889,8 @@ impl ChartApp {
                                     };
                                 } else {
                                     let source = match &item {
-                                        FreeItem::OrderEntry(id) => self.panels_store.order_entry.get(id).map(|s| s.source.clone()),
-                                        FreeItem::TradingContainer(id) => self.panels_store.trading_container.get(id).map(|s| s.source.clone()),
+                                        Panel::OrderEntry(id) => self.panels_store.order_entry.get(id).map(|s| s.source.clone()),
+                                        Panel::TradingContainer(id) => self.panels_store.trading_container.get(id).map(|s| s.source.clone()),
                                         _ => None,
                                     };
                                     if let Some(src) = source {
@@ -1911,7 +1911,7 @@ impl ChartApp {
                     if let Some(leaf_id_str) = leaf_rest.strip_suffix(":close") {
                         if let Ok(raw) = leaf_id_str.parse::<u64>() {
                             let leaf_id = uzor::panels::LeafId(raw);
-                            // Retrieve the FreeItem before removing so we can clean up the store.
+                            // Retrieve the Panel before removing so we can clean up the store.
                             let item_opt = self.sidebar_state.slot_dockings[idx]
                                 .inner()
                                 .tree()
@@ -1925,7 +1925,7 @@ impl ChartApp {
                                 self.panel_app.tag_manager.synced_panels_remove(member);
                                 // Unsubscribe panels from shared data streams before
                                 // dropping their state.
-                                if let mlc_sidebar_content::free_slot::FreeItem::Dom(pid) = &item {
+                                if let mlc_core::state::Panel::Dom(pid) = &item {
                                     if let Some(state) = self.panels_store.dom.get(pid) {
                                         if !state.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
@@ -1936,7 +1936,7 @@ impl ChartApp {
                                         }
                                     }
                                 }
-                                if let mlc_sidebar_content::free_slot::FreeItem::BigTrades(pid) = &item {
+                                if let mlc_core::state::Panel::BigTrades(pid) = &item {
                                     if let Some(state) = self.panels_store.big_trades.get(pid) {
                                         if !state.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
@@ -1946,7 +1946,7 @@ impl ChartApp {
                                         }
                                     }
                                 }
-                                if let mlc_sidebar_content::free_slot::FreeItem::VolumeProfile(pid) = &item {
+                                if let mlc_core::state::Panel::VolumeProfile(pid) = &item {
                                     if let Some(state) = self.panels_store.volume_profile.get(pid) {
                                         if !state.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
@@ -1956,7 +1956,7 @@ impl ChartApp {
                                         }
                                     }
                                 }
-                                if let mlc_sidebar_content::free_slot::FreeItem::Footprint(pid) = &item {
+                                if let mlc_core::state::Panel::Footprint(pid) = &item {
                                     if let Some(state) = self.panels_store.footprint.get(pid) {
                                         if !state.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
@@ -1966,7 +1966,7 @@ impl ChartApp {
                                         }
                                     }
                                 }
-                                if let mlc_sidebar_content::free_slot::FreeItem::L2Tape(pid) = &item {
+                                if let mlc_core::state::Panel::L2Tape(pid) = &item {
                                     if let Some(state) = self.panels_store.l2_tape.get(pid) {
                                         if !state.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
@@ -1976,7 +1976,7 @@ impl ChartApp {
                                         }
                                     }
                                 }
-                                if let mlc_sidebar_content::free_slot::FreeItem::TradeTape(pid) = &item {
+                                if let mlc_core::state::Panel::TradeTape(pid) = &item {
                                     if let Some(state) = self.panels_store.trade_tape.get(pid) {
                                         if !state.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
@@ -1986,7 +1986,7 @@ impl ChartApp {
                                         }
                                     }
                                 }
-                                if let mlc_sidebar_content::free_slot::FreeItem::LiquidityHeatmap(pid) = &item {
+                                if let mlc_core::state::Panel::LiquidityHeatmap(pid) = &item {
                                     if let Some(state) = self.panels_store.liquidity_heatmap.get(pid) {
                                         if !state.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
@@ -2077,7 +2077,7 @@ impl ChartApp {
                                 .tree()
                                 .leaf(leaf_id)
                                 .and_then(|l| l.active_panel().cloned());
-                            if let Some(mlc_sidebar_content::free_slot::FreeItem::Dom(pid)) = item_opt {
+                            if let Some(mlc_core::state::Panel::Dom(pid)) = item_opt {
                                 if let Some(state) = self.panels_store.dom.get_mut(&pid) {
                                     state.auto_center = !state.auto_center;
                                     if state.auto_center && state.market_price > 0.0 {
@@ -2105,7 +2105,7 @@ impl ChartApp {
                                 .tree()
                                 .leaf(leaf_id)
                                 .and_then(|l| l.active_panel().cloned());
-                            if let Some(mlc_sidebar_content::free_slot::FreeItem::Dom(pid)) = item_opt {
+                            if let Some(mlc_core::state::Panel::Dom(pid)) = item_opt {
                                 if let Some(state) = self.panels_store.dom.get_mut(&pid) {
                                     let next = match state.min_volume_filter {
                                         v if v < 0.5  => 1.0,
@@ -2163,7 +2163,7 @@ impl ChartApp {
 
                             if let Some(item) = item_opt {
                                 match item {
-                                    mlc_sidebar_content::free_slot::FreeItem::Dom(pid) => {
+                                    mlc_core::state::Panel::Dom(pid) => {
                                         if let Some(state) = self.panels_store.dom.get_mut(&pid) {
                                             match col_idx {
                                                 0 => state.column_config.show_bid_orders = !state.column_config.show_bid_orders,
@@ -2174,7 +2174,7 @@ impl ChartApp {
                                             }
                                         }
                                     }
-                                    mlc_sidebar_content::free_slot::FreeItem::L2Tape(pid) => {
+                                    mlc_core::state::Panel::L2Tape(pid) => {
                                         if let Some(state) = self.panels_store.l2_tape.get_mut(&pid) {
                                             match col_idx {
                                                 0 => state.column_config.show_time = !state.column_config.show_time,
@@ -2186,7 +2186,7 @@ impl ChartApp {
                                             }
                                         }
                                     }
-                                    mlc_sidebar_content::free_slot::FreeItem::TradeTape(pid) => {
+                                    mlc_core::state::Panel::TradeTape(pid) => {
                                         if let Some(state) = self.panels_store.trade_tape.get_mut(&pid) {
                                             match col_idx {
                                                 0 => state.column_config.show_time = !state.column_config.show_time,
@@ -2196,7 +2196,7 @@ impl ChartApp {
                                             }
                                         }
                                     }
-                                    mlc_sidebar_content::free_slot::FreeItem::BigTrades(pid) => {
+                                    mlc_core::state::Panel::BigTrades(pid) => {
                                         if let Some(state) = self.panels_store.big_trades.get_mut(&pid) {
                                             match col_idx {
                                                 0 => state.column_config.show_time = !state.column_config.show_time,
@@ -2231,7 +2231,7 @@ impl ChartApp {
                                 .tree()
                                 .leaf(leaf_id)
                                 .and_then(|l| l.active_panel().cloned());
-                            if let Some(mlc_sidebar_content::free_slot::FreeItem::Dom(pid)) = item_opt {
+                            if let Some(mlc_core::state::Panel::Dom(pid)) = item_opt {
                                 if let Some(state) = self.panels_store.dom.get_mut(&pid) {
                                     const TICKS: &[f64] = &[0.001, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 50.0, 100.0];
                                     let cur = state.tick_size;
@@ -2259,7 +2259,7 @@ impl ChartApp {
                         if let Some(leaf_id_str) = leaf_rest.strip_suffix(":source_cycle") {
                             if let Ok(raw) = leaf_id_str.parse::<u64>() {
                                 let leaf_id = uzor::panels::LeafId(raw);
-                                // Resolve the active FreeItem for this leaf.
+                                // Resolve the active Panel for this leaf.
                                 let item_opt = self.sidebar_state.slot_dockings[idx]
                                     .inner()
                                     .tree()
@@ -2271,26 +2271,26 @@ impl ChartApp {
                                     // Fixed → HyperFocus
                                     // BoundToChart → HyperFocus
                                     use mlc_panels::trading::SymbolSource;
-                                    use mlc_sidebar_content::free_slot::FreeItem;
+                                    use mlc_core::state::Panel;
 
                                     // Read the current source from account-bound panel states.
                                     // Market-data panels (dom, footprint, etc.) no longer carry
                                     // SymbolSource — they are managed via TagManager.
                                     let current_source = match &item {
-                                        FreeItem::Dom(_)
-                                        | FreeItem::Footprint(_)
-                                        | FreeItem::VolumeProfile(_)
-                                        | FreeItem::LiquidityHeatmap(_)
-                                        | FreeItem::BigTrades(_)
-                                        | FreeItem::L2Tape(_)
-                                        | FreeItem::TradeTape(_) => None,
-                                        FreeItem::OrderEntry(id) => self.panels_store.order_entry.get(id).map(|s| s.source.clone()),
-                                        FreeItem::TradingContainer(id) => self.panels_store.trading_container.get(id).map(|s| s.source.clone()),
-                                        FreeItem::PositionManager(_) | FreeItem::TradeLog(_) | FreeItem::RiskCalculator(_) => None,
+                                        Panel::Dom(_)
+                                        | Panel::Footprint(_)
+                                        | Panel::VolumeProfile(_)
+                                        | Panel::LiquidityHeatmap(_)
+                                        | Panel::BigTrades(_)
+                                        | Panel::L2Tape(_)
+                                        | Panel::TradeTape(_) => None,
+                                        Panel::OrderEntry(id) => self.panels_store.order_entry.get(id).map(|s| s.source.clone()),
+                                        Panel::TradingContainer(id) => self.panels_store.trading_container.get(id).map(|s| s.source.clone()),
+                                        Panel::PositionManager(_) | Panel::TradeLog(_) | Panel::RiskCalculator(_) => None,
                                         // Chart / IndicatorPanel are sync-group members like other
                                         // market-data panels — no independent SymbolSource field.  Source-
                                         // cycle button is a no-op for them.
-                                        FreeItem::Chart(_) | FreeItem::IndicatorPanel(_) => None,
+                                        Panel::Chart(_) | Panel::IndicatorPanel(_) => None,
                                     };
 
                                     // S2.7.1e: read instrument fields via branch_meta (B1).
@@ -2320,8 +2320,8 @@ impl ChartApp {
 
                                     if let Some(src) = new_source {
                                         match &item {
-                                            FreeItem::OrderEntry(id) => { if let Some(s) = self.panels_store.order_entry.get_mut(id) { s.source = src; } }
-                                            FreeItem::TradingContainer(id) => { if let Some(s) = self.panels_store.trading_container.get_mut(id) { s.source = src; } }
+                                            Panel::OrderEntry(id) => { if let Some(s) = self.panels_store.order_entry.get_mut(id) { s.source = src; } }
+                                            Panel::TradingContainer(id) => { if let Some(s) = self.panels_store.trading_container.get_mut(id) { s.source = src; } }
                                             _ => {}
                                         }
                                         eprintln!("[ChartApp] slot:{}:leaf:{}:source_cycle", idx, raw);
@@ -2342,7 +2342,7 @@ impl ChartApp {
                                     .tree()
                                     .leaf(leaf_id)
                                     .and_then(|l| l.active_panel().cloned());
-                                if let Some(mlc_sidebar_content::free_slot::FreeItem::Dom(pid)) = item_opt {
+                                if let Some(mlc_core::state::Panel::Dom(pid)) = item_opt {
                                     if let Some(state) = self.panels_store.dom.get_mut(&pid) {
                                         state.levels_displayed = (state.levels_displayed + 5).min(100);
                                         eprintln!("[ChartApp] slot:{}:leaf:{}:dom_zoom_in → {}", idx, raw, state.levels_displayed);
@@ -2362,7 +2362,7 @@ impl ChartApp {
                                     .tree()
                                     .leaf(leaf_id)
                                     .and_then(|l| l.active_panel().cloned());
-                                if let Some(mlc_sidebar_content::free_slot::FreeItem::Dom(pid)) = item_opt {
+                                if let Some(mlc_core::state::Panel::Dom(pid)) = item_opt {
                                     if let Some(state) = self.panels_store.dom.get_mut(&pid) {
                                         state.levels_displayed = state.levels_displayed.saturating_sub(5).max(5);
                                         eprintln!("[ChartApp] slot:{}:leaf:{}:dom_zoom_out → {}", idx, raw, state.levels_displayed);
@@ -2382,7 +2382,7 @@ impl ChartApp {
                                     .tree()
                                     .leaf(leaf_id)
                                     .and_then(|l| l.active_panel().cloned());
-                                if let Some(mlc_sidebar_content::free_slot::FreeItem::Dom(pid)) = item_opt {
+                                if let Some(mlc_core::state::Panel::Dom(pid)) = item_opt {
                                     if let Some(state) = self.panels_store.dom.get_mut(&pid) {
                                         state.center_price = state.market_price;
                                         eprintln!("[ChartApp] slot:{}:leaf:{}:dom_center → {:.2}", idx, raw, state.center_price);
@@ -2407,7 +2407,7 @@ impl ChartApp {
                                         .tree()
                                         .leaf(leaf_id)
                                         .and_then(|l| l.active_panel().cloned());
-                                    if let Some(mlc_sidebar_content::free_slot::FreeItem::OrderEntry(pid)) = item_opt {
+                                    if let Some(mlc_core::state::Panel::OrderEntry(pid)) = item_opt {
                                         use mlc_panels::panel_trait::TradingPanel;
                                         if let Some(state) = self.panels_store.order_entry.get_mut(&pid) {
                                             if state.handle_click(local_id, x, y) {
@@ -2433,15 +2433,15 @@ impl ChartApp {
                                     .and_then(|l| l.active_panel().cloned());
                                 if let Some(item) = item_opt {
                                     use mlc_panels::trading::SymbolSource;
-                                    use mlc_sidebar_content::free_slot::FreeItem;
+                                    use mlc_core::state::Panel;
                                     use mlc_sidebar_content::state::SlotSourceMode;
                                     use mlc_core::tag_manager::SyncMemberId;
                                     let is_market_data = matches!(
                                         &item,
-                                        FreeItem::Dom(_) | FreeItem::Footprint(_)
-                                        | FreeItem::VolumeProfile(_) | FreeItem::LiquidityHeatmap(_)
-                                        | FreeItem::BigTrades(_) | FreeItem::L2Tape(_)
-                                        | FreeItem::TradeTape(_)
+                                        Panel::Dom(_) | Panel::Footprint(_)
+                                        | Panel::VolumeProfile(_) | Panel::LiquidityHeatmap(_)
+                                        | Panel::BigTrades(_) | Panel::L2Tape(_)
+                                        | Panel::TradeTape(_)
                                     );
                                     if is_market_data {
                                         let member = SyncMemberId::Panel(item.panel_id().0);
@@ -2457,8 +2457,8 @@ impl ChartApp {
                                         };
                                     } else {
                                         let source = match &item {
-                                            FreeItem::OrderEntry(id) => self.panels_store.order_entry.get(id).map(|s| s.source.clone()),
-                                            FreeItem::TradingContainer(id) => self.panels_store.trading_container.get(id).map(|s| s.source.clone()),
+                                            Panel::OrderEntry(id) => self.panels_store.order_entry.get(id).map(|s| s.source.clone()),
+                                            Panel::TradingContainer(id) => self.panels_store.trading_container.get(id).map(|s| s.source.clone()),
                                             _ => None,
                                         };
                                         if let Some(src) = source {

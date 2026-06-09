@@ -403,7 +403,7 @@ pub struct SidebarState {
     pub agent_leaves: HashMap<uzor::panels::LeafId, AgentLeafDescriptor>,
 
     /// Per-slot docking managers (Slot1..Slot4). Each hosts its own
-    /// `DockingManager<FreeItem>` for trading panels and free mini-charts.
+    /// `DockingManager<Panel>` for trading panels and free mini-charts.
     /// Content is per-chart-preset; these are rebuilt from the active preset's
     /// `slot_layouts` on preset switch.
     pub slot_dockings: [crate::free_slot::SlotDockingManager; 4],

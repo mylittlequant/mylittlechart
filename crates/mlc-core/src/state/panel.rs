@@ -2,10 +2,10 @@
 //!
 //! This module defines the single `Panel` enum used as the docking payload
 //! across BOTH the outer grid (was `DockState<PanelLeaf>`) and the sidebar
-//! slots (was `DockState<FreeItem>`).  It supersedes:
+//! slots (was `DockState<PanelLeaf>` / `DockState<FreeItem>`).  It supersedes:
 //!
-//! - `crate::state::branch::PanelLeaf` (chart-side enum, 13 variants)
-//! - `mlc_sidebar_content::free_slot::FreeItem` (sidebar enum, 14 variants)
+//! - `crate::state::branch::PanelLeaf` (chart-side enum, removed in K1.2)
+//! - `mlc_sidebar_content::free_slot::FreeItem` (sidebar enum, removed in K1.3)
 //!
 //! Owner mandate: "чарт должен стать панелью, как и индикатор панель —
 //! попасть в общий enum панелей".  After K1 the chart is a sibling

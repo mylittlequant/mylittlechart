@@ -1,12 +1,12 @@
-//! Render dispatch for `FreeItem` leaves inside the free-slot sidebars.
+//! Render dispatch for `Panel` leaves inside the free-slot sidebars.
 //!
 //! `render_free_item` is the single entry point: it receives a reference to
-//! the panel store and a `FreeItem`, looks up the matching state, and
+//! the panel store and a `Panel`, looks up the matching state, and
 //! delegates to the `TradingPanel::render()` trait method.
 //!
 //! All 11 trading panels are wired through `get_panel()`.
 
-use mlc_sidebar_content::free_slot::FreeItem;
+use mlc_core::state::Panel;
 use uzor::InputCoordinator;
 use mlc_core::render::RenderContext;
 
@@ -32,10 +32,10 @@ pub struct PanelHeaderInfo {
 }
 
 
-/// Extract header info for a given FreeItem from the store.
+/// Extract header info for a given Panel from the store.
 pub fn panel_header_info(
     store: &TradingPanelsStore,
-    item: &FreeItem,
+    item: &Panel,
 ) -> Option<PanelHeaderInfo> {
     fn source_label(s: &SymbolSource) -> &'static str {
         match s {
@@ -55,7 +55,7 @@ pub fn panel_header_info(
     // Market-data panels are synced via TagManager — they have no SymbolSource field.
     // Use a fixed "Synced" label for all of them.
     match item {
-        FreeItem::Dom(id) => store.dom.get(id).map(|s| PanelHeaderInfo {
+        Panel::Dom(id) => store.dom.get(id).map(|s| PanelHeaderInfo {
             source_label: "Synced",
             source_color: "#374151",
             symbol: s.symbol.clone(),
@@ -63,7 +63,7 @@ pub fn panel_header_info(
             account_type: s.account_type.clone(),
             is_dom: true,
         }),
-        FreeItem::Footprint(id) => store.footprint.get(id).map(|s| PanelHeaderInfo {
+        Panel::Footprint(id) => store.footprint.get(id).map(|s| PanelHeaderInfo {
             source_label: "Synced",
             source_color: "#374151",
             symbol: s.symbol.clone(),
@@ -71,7 +71,7 @@ pub fn panel_header_info(
             account_type: s.account_type.clone(),
             is_dom: false,
         }),
-        FreeItem::VolumeProfile(id) => store.volume_profile.get(id).map(|s| PanelHeaderInfo {
+        Panel::VolumeProfile(id) => store.volume_profile.get(id).map(|s| PanelHeaderInfo {
             source_label: "Synced",
             source_color: "#374151",
             symbol: s.symbol.clone(),
@@ -79,7 +79,7 @@ pub fn panel_header_info(
             account_type: s.account_type.clone(),
             is_dom: false,
         }),
-        FreeItem::LiquidityHeatmap(id) => store.liquidity_heatmap.get(id).map(|s| PanelHeaderInfo {
+        Panel::LiquidityHeatmap(id) => store.liquidity_heatmap.get(id).map(|s| PanelHeaderInfo {
             source_label: "Synced",
             source_color: "#374151",
             symbol: s.symbol.clone(),
@@ -87,7 +87,7 @@ pub fn panel_header_info(
             account_type: s.account_type.clone(),
             is_dom: false,
         }),
-        FreeItem::BigTrades(id) => store.big_trades.get(id).map(|s| PanelHeaderInfo {
+        Panel::BigTrades(id) => store.big_trades.get(id).map(|s| PanelHeaderInfo {
             source_label: "Synced",
             source_color: "#374151",
             symbol: s.symbol.clone(),
@@ -95,7 +95,7 @@ pub fn panel_header_info(
             account_type: s.account_type.clone(),
             is_dom: false,
         }),
-        FreeItem::L2Tape(id) => store.l2_tape.get(id).map(|s| PanelHeaderInfo {
+        Panel::L2Tape(id) => store.l2_tape.get(id).map(|s| PanelHeaderInfo {
             source_label: "Synced",
             source_color: "#374151",
             symbol: s.symbol.clone(),
@@ -103,7 +103,7 @@ pub fn panel_header_info(
             account_type: s.account_type.clone(),
             is_dom: false,
         }),
-        FreeItem::TradeTape(id) => store.trade_tape.get(id).map(|s| PanelHeaderInfo {
+        Panel::TradeTape(id) => store.trade_tape.get(id).map(|s| PanelHeaderInfo {
             source_label: "Synced",
             source_color: "#374151",
             symbol: s.symbol.clone(),
@@ -111,7 +111,7 @@ pub fn panel_header_info(
             account_type: s.account_type.clone(),
             is_dom: false,
         }),
-        FreeItem::OrderEntry(id) => store.order_entry.get(id).map(|s| PanelHeaderInfo {
+        Panel::OrderEntry(id) => store.order_entry.get(id).map(|s| PanelHeaderInfo {
             source_label: source_label(&s.source),
             source_color: source_color(&s.source),
             symbol: s.symbol.clone(),
@@ -119,7 +119,7 @@ pub fn panel_header_info(
             account_type: s.account_type.clone(),
             is_dom: false,
         }),
-        FreeItem::TradingContainer(id) => store.trading_container.get(id).map(|s| PanelHeaderInfo {
+        Panel::TradingContainer(id) => store.trading_container.get(id).map(|s| PanelHeaderInfo {
             source_label: source_label(&s.source),
             source_color: source_color(&s.source),
             symbol: s.symbol.clone(),
@@ -127,7 +127,7 @@ pub fn panel_header_info(
             account_type: s.account_type.clone(),
             is_dom: false,
         }),
-        FreeItem::IndicatorPanel(id) => store.indicator_panel.get(id).map(|s| PanelHeaderInfo {
+        Panel::IndicatorPanel(id) => store.indicator_panel.get(id).map(|s| PanelHeaderInfo {
             source_label: "Synced",
             source_color: "#374151",
             symbol: s.symbol.clone(),
@@ -136,12 +136,12 @@ pub fn panel_header_info(
             is_dom: false,
         }),
         // Panels without SymbolSource — these don't render the source-header strip.
-        FreeItem::PositionManager(_)
-        | FreeItem::TradeLog(_)
-        | FreeItem::RiskCalculator(_)
+        Panel::PositionManager(_)
+        | Panel::TradeLog(_)
+        | Panel::RiskCalculator(_)
         // Chart leaves render their own internal header (chart toolbar) — the
         // panel-header strip is suppressed.
-        | FreeItem::Chart(_) => None,
+        | Panel::Chart(_) => None,
     }
 }
 
@@ -224,13 +224,13 @@ pub fn panel_theme_from_runtime(rt: &mlc_core::theme::RuntimeTheme) -> mlc_panel
     }
 }
 
-/// Render the content of a `FreeItem` leaf into `(x, y, w, h)`.
+/// Render the content of a `Panel` leaf into `(x, y, w, h)`.
 ///
 /// If the item's state is missing from the store (e.g. the panel was removed
 /// between frames), the slot is left blank. The function never panics.
 pub fn render_free_item(
     store: &TradingPanelsStore,
-    item: &FreeItem,
+    item: &Panel,
     x: f32,
     y: f32,
     w: f32,

@@ -252,13 +252,13 @@ pub fn render_right_sidebar(
     sidebar_state: &mut SidebarState,
     toolbar_theme: &ToolbarTheme,
     input_coordinator: &mut InputCoordinator,
-    free_item_renderer: &mut dyn FnMut(&crate::free_slot::FreeItem, (f32, f32, f32, f32), &mut dyn RenderContext, &mut InputCoordinator, &str),
-    panel_source_label_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<String>,
-    panel_dom_info_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<(bool, f64, f64)>,
-    panel_color_tag_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<[f32; 4]>,
-    panel_sync_flags_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<PanelSyncFlagsSnapshot>,
-    panel_overlay_info_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<(String, String, String)>,
-    panel_col_visibility_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<Vec<bool>>,
+    free_item_renderer: &mut dyn FnMut(&mlc_core::state::Panel, (f32, f32, f32, f32), &mut dyn RenderContext, &mut InputCoordinator, &str),
+    panel_source_label_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<String>,
+    panel_dom_info_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<(bool, f64, f64)>,
+    panel_color_tag_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<[f32; 4]>,
+    panel_sync_flags_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<PanelSyncFlagsSnapshot>,
+    panel_overlay_info_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<(String, String, String)>,
+    panel_col_visibility_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<Vec<bool>>,
 ) -> RightSidebarResult {
     let panel = sidebar_state.right_panel;
 
@@ -904,8 +904,8 @@ fn render_watchlist_config_dropdown(
 
 /// Render the slot `[+]` spawn dropdown overlay.
 ///
-/// Appears directly below the sidebar header, right-aligned.  Lists all 11
-/// `FreeItem` variants.  Drawn last so it sits on top of all slot content.
+/// Appears directly below the sidebar header, right-aligned.  Lists all
+/// `Panel` variants.  Drawn last so it sits on top of all slot content.
 fn render_slot_spawn_dropdown(
     ctx: &mut dyn RenderContext,
     rect: &LayoutRect,
@@ -3799,11 +3799,11 @@ fn render_slot_toolbar_in_header(
 /// Renders the performance monitoring panel content.
 /// Phase 3-new: render a free-slot sidebar body.
 ///
-/// Lays out the slot's `DockingManager<FreeItem>` inside the content rect and
+/// Lays out the slot's `DockingManager<Panel>` inside the content rect and
 /// paints each leaf with a placeholder background + title. If the slot is
 /// empty, draws a "Drag panels here" hint instead. Cross-container drag
 /// between Main + Slot1..Slot4 and real leaf rendering land in Phase 4-new
-/// together with the first real `FreeItem` variants.
+/// together with the first real `Panel` variants.
 fn render_slot_panel(
     ctx: &mut dyn RenderContext,
     rect: &LayoutRect,
@@ -3814,13 +3814,13 @@ fn render_slot_panel(
     theme: &ToolbarTheme,
     result: &mut RightSidebarResult,
     input_coordinator: &mut InputCoordinator,
-    free_item_renderer: &mut dyn FnMut(&crate::free_slot::FreeItem, (f32, f32, f32, f32), &mut dyn RenderContext, &mut InputCoordinator, &str),
-    _panel_source_label_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<String>,
-    panel_dom_info_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<(bool, f64, f64)>,
-    panel_color_tag_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<[f32; 4]>,
-    _panel_sync_flags_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<PanelSyncFlagsSnapshot>,
-    panel_overlay_info_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<(String, String, String)>,
-    panel_col_visibility_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<Vec<bool>>,
+    free_item_renderer: &mut dyn FnMut(&mlc_core::state::Panel, (f32, f32, f32, f32), &mut dyn RenderContext, &mut InputCoordinator, &str),
+    _panel_source_label_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<String>,
+    panel_dom_info_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<(bool, f64, f64)>,
+    panel_color_tag_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<[f32; 4]>,
+    _panel_sync_flags_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<PanelSyncFlagsSnapshot>,
+    panel_overlay_info_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<(String, String, String)>,
+    panel_col_visibility_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<Vec<bool>>,
 ) -> f64 {
     use uzor::panels::PanelRect as UzorPanelRect;
 
@@ -3847,11 +3847,11 @@ fn render_slot_panel(
     });
 
     // Collect (leaf_id, active_item, rect) so we can render after the mgr borrow.
-    // `DockingTree::leaves()` gives each `Leaf<FreeItem>`; the active panel
+    // `DockingTree::leaves()` gives each `Leaf<Panel>`; the active panel
     // for this leaf is `leaf.panels[leaf.active_tab]`.
-    let leaves: Vec<(uzor::panels::LeafId, crate::free_slot::FreeItem, UzorPanelRect)> = {
+    let leaves: Vec<(uzor::panels::LeafId, mlc_core::state::Panel, UzorPanelRect)> = {
         let rects = mgr.panel_rects().clone();
-        let tree_leaves: Vec<(uzor::panels::LeafId, crate::free_slot::FreeItem)> = mgr
+        let tree_leaves: Vec<(uzor::panels::LeafId, mlc_core::state::Panel)> = mgr
             .tree()
             .leaves()
             .into_iter()
@@ -3919,10 +3919,10 @@ fn render_slot_panel(
         // [⚙] column config button — only for panels with column config
         let has_col_config = matches!(
             &item,
-            crate::free_slot::FreeItem::Dom(_)
-            | crate::free_slot::FreeItem::L2Tape(_)
-            | crate::free_slot::FreeItem::TradeTape(_)
-            | crate::free_slot::FreeItem::BigTrades(_)
+            mlc_core::state::Panel::Dom(_)
+            | mlc_core::state::Panel::L2Tape(_)
+            | mlc_core::state::Panel::TradeTape(_)
+            | mlc_core::state::Panel::BigTrades(_)
         );
         if has_col_config {
             let gear_w = 20.0_f32;
@@ -4117,16 +4117,16 @@ fn render_slot_panel(
         // ── Column config popup ──────────────────────────────────────────
         if state.panel_col_config_open == Some((slot_idx, leaf_id.0)) {
             let col_labels: Vec<&str> = match &item {
-                crate::free_slot::FreeItem::Dom(_) => vec![
+                mlc_core::state::Panel::Dom(_) => vec![
                     "Bid Orders", "Sell Trades", "Buy Trades", "Ask Orders",
                 ],
-                crate::free_slot::FreeItem::L2Tape(_) => vec![
+                mlc_core::state::Panel::L2Tape(_) => vec![
                     "Time", "Type", "Side", "Price", "Qty",
                 ],
-                crate::free_slot::FreeItem::TradeTape(_) => vec![
+                mlc_core::state::Panel::TradeTape(_) => vec![
                     "Time", "Price", "Size",
                 ],
-                crate::free_slot::FreeItem::BigTrades(_) => vec![
+                mlc_core::state::Panel::BigTrades(_) => vec![
                     "Time", "Side", "Price", "Size", "Notional",
                 ],
                 _ => vec![],
