@@ -1,9 +1,0 @@
-[package]
-name = "tiny-skia-context"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-uzor = "=1.4.5"
-uzor-render-tiny-skia = "=1.4.5"
-zengeld-chart = { path = "../chart" }

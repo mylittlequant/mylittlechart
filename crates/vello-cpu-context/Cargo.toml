@@ -1,9 +1,0 @@
-[package]
-name = "vello-cpu-context"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-uzor = "=1.4.5"
-uzor-render-vello-cpu = "=1.4.5"
-zengeld-chart = { path = "../chart" }

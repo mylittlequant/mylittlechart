@@ -1,0 +1,15 @@
+[package]
+name = "mylittlechart-panels"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "mlc_panels"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+uzor = "=1.4.5"
+mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
+mlc-trade-service = { path = "../mlc-trade-service", package = "mylittlechart-trade-service" }
+mlc-orderbook-service = { path = "../mlc-orderbook-service", package = "mylittlechart-orderbook-service" }
+mlc-trading-manager = { path = "../mlc-trading-manager", package = "mylittlechart-trading-manager" }

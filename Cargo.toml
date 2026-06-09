@@ -1,25 +1,25 @@
 [workspace]
 members = [
-    "crates/chart",
-    "crates/chart-app",
-    "crates/chart-app-vello",
-    "crates/indicators",
-    "crates/sidebar-content",
-    "crates/panels",
-    "crates/alerts",
-    "crates/alert-delivery",
-    "crates/live-data",
-    "crates/zengeld-server",
-    "crates/instanced-context",
-    "crates/vello-context",
-    "crates/vello-cpu-context",
-    "crates/vello-hybrid-context",
-    "crates/tiny-skia-context",
-    "crates/bar-service",
-    "crates/trade-service",
-    "crates/orderbook-service",
-    "crates/diagnostics",
-    "crates/trading-manager",
+    "crates/mlc-core",
+    "crates/mlc-app",
+    "crates/mlc-app-vello",
+    "crates/mlc-indicators",
+    "crates/mlc-sidebar-content",
+    "crates/mlc-panels",
+    "crates/mlc-alerts",
+    "crates/mlc-alert-delivery",
+    "crates/mlc-live-data",
+    "crates/mlc-agentic-server",
+    "crates/mlc-instanced-context",
+    "crates/mlc-vello-context",
+    "crates/mlc-vello-cpu-context",
+    "crates/mlc-vello-hybrid-context",
+    "crates/mlc-tiny-skia-context",
+    "crates/mlc-bar-service",
+    "crates/mlc-trade-service",
+    "crates/mlc-orderbook-service",
+    "crates/mlc-diagnostics",
+    "crates/mlc-trading-manager",
 ]
 resolver = "2"
 
@@ -44,5 +44,5 @@ strip = "none"
 
 # Optimize indicators in dev mode to prevent stack overflow
 # (large enum with 480 variants needs optimization)
-[profile.dev.package.zengeld-terminal-indicators]
+[profile.dev.package.mylittlechart-indicators]
 opt-level = 2

@@ -1,0 +1,12 @@
+[package]
+name = "mylittlechart-tiny-skia-context"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "mlc_tiny_skia_context"
+
+[dependencies]
+uzor = "=1.4.5"
+uzor-render-tiny-skia = "=1.4.5"
+mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }

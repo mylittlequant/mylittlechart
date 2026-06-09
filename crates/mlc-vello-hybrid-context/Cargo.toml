@@ -1,0 +1,12 @@
+[package]
+name = "mylittlechart-vello-hybrid-context"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "mlc_vello_hybrid_context"
+
+[dependencies]
+uzor = "=1.4.5"
+uzor-render-vello-hybrid = "=1.4.5"
+mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }

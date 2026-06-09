@@ -1,7 +1,0 @@
-[package]
-name = "trade-service"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-digdigdig3 = "=0.3.15"

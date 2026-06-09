@@ -1,0 +1,2787 @@
+//! `DataBridge` — async-to-sync bridge with a dedicated tokio runtime.
+//!
+//! Owns a tokio runtime and a connector pool. All async exchange calls happen
+//! on the runtime's threads; results are sent back via an unbounded channel
+//! that the sync chart thread can drain each frame.
+
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::{Arc, Mutex, RwLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use mlc_bar_service::{BarSeries, BarSeriesKey, SharedSeriesMap};
+use mlc_trade_service::{SharedTradeMap, TradeSeries, TradeKey, DEFAULT_CAPACITY};
+use mlc_orderbook_service::{SharedOrderbookMap, OrderbookKey, OrderbookSeries, DEFAULT_HISTORY_CAPACITY};
+
+use tokio::sync::{broadcast, mpsc};
+use tokio::runtime::Runtime;
+
+use digdigdig3::{
+    ExchangeId, AccountType, Symbol, SymbolInfo,
+    Order, Balance, Position,
+    TradingCapabilities, AccountCapabilities,
+    ExchangeError,
+};
+use digdigdig3::core::{
+    OrderRequest, CancelRequest, PlaceOrderResponse, OrderHistoryFilter,
+    BalanceQuery, AccountInfo, PositionQuery, PositionModification,
+    CancelScope, CancelAllResponse, AmendRequest, OrderResult,
+};
+use digdigdig3::connector_manager::ExchangeHub;
+use mlc_core::Bar;
+use mlc_core::state::Timeframe;
+
+use digdigdig3::core::websocket::KlineInterval;
+use crate::convert::{kline_to_bar, timeframe_to_interval};
+
+/// Identifies whether an [`LiveUpdate::OrderbookSnapshot`] originated from the
+/// one-shot REST bootstrap (deep, up to 1000 levels) or from the WebSocket
+/// stream (partial snapshot — only used by exchanges that lack a diff stream).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderbookSource {
+    Rest,
+    Ws,
+}
+
+/// Updates sent from async tasks to the sync chart thread.
+#[derive(Debug, Clone)]
+pub enum LiveUpdate {
+    /// Historical bars loaded from the exchange REST API.
+    BarsLoaded {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        timeframe: String,
+        bars: Vec<Bar>,
+    },
+    /// Live bar update from WebSocket (last bar in-place update or new bar).
+    ///
+    /// `is_closed = true` means the candle closed and a new one has started.
+    /// `is_closed = false` means the current (last) candle is being updated.
+    BarUpdate {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        bar: Bar,
+        is_closed: bool,
+    },
+    /// Live trade update from WebSocket.
+    TradeUpdate {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        price: f64,
+        quantity: f64,
+        timestamp: i64,
+        is_buyer_maker: bool,
+    },
+    /// Mini ticker update from WebSocket (24h stats for watchlist).
+    ///
+    /// Fields other than `last_price` are `Option` so that BBO-only events
+    /// (e.g. KuCoin `trade.ticker`) do not overwrite 24h stats that were
+    /// previously set by a snapshot event.
+    MiniTickerUpdate {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        last_price: f64,
+        /// `None` when the event does not carry 24h stats (BBO-only update).
+        price_change_percent: Option<f64>,
+        /// `None` when the event does not carry 24h stats.
+        high_price: Option<f64>,
+        /// `None` when the event does not carry 24h stats.
+        low_price: Option<f64>,
+        /// `None` when the event does not carry 24h stats.
+        volume: Option<f64>,
+    },
+    /// Exchange symbol list loaded from REST API.
+    SymbolsLoaded {
+        exchange_id: ExchangeId,
+        symbols: Vec<SymbolInfo>,
+    },
+    /// A connector was successfully initialized.
+    ConnectorReady {
+        exchange_id: ExchangeId,
+    },
+    /// Backfill complete — initial historical bars fetched for a newly loaded symbol/TF.
+    ///
+    /// Distinct from `BarsLoaded` so consumers can apply post-backfill logic
+    /// (e.g. unlocking scroll-fetch) without re-checking every `BarsLoaded`.
+    BackfillComplete {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        timeframe: String,
+        bars: Vec<Bar>,
+    },
+    /// Older bars loaded in response to a scroll-left (historical extension) request.
+    ///
+    /// `prepend_count` is how many bars should be prepended before the existing
+    /// series so the consumer can keep the viewport position stable.
+    ScrollBarsLoaded {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        timeframe: String,
+        bars: Vec<Bar>,
+        prepend_count: usize,
+    },
+    /// Full orderbook snapshot — REST bootstrap (deep, up to 1000 levels) or WS partial snapshot.
+    OrderbookSnapshot {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        bids: Vec<(f64, f64)>,
+        asks: Vec<(f64, f64)>,
+        timestamp: i64,
+        /// Whether the snapshot originated from the REST poller or the WS stream.
+        source: OrderbookSource,
+    },
+    /// Incremental orderbook delta from WebSocket.
+    OrderbookDelta {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        bids: Vec<(f64, f64)>,
+        asks: Vec<(f64, f64)>,
+        timestamp: i64,
+    },
+    /// An error occurred during an async operation.
+    Error {
+        exchange_id: ExchangeId,
+        message: String,
+    },
+    /// Connector metrics snapshot collected on-demand (e.g. when a metrics panel renders).
+    ConnectorMetrics {
+        exchange_id: ExchangeId,
+        /// Number of active WebSocket tasks for this exchange.
+        ws_active: usize,
+        /// Total HTTP requests made since the connector was created.
+        http_requests: u64,
+        /// Total HTTP errors (non-2xx responses or transport failures).
+        http_errors: u64,
+        /// Round-trip latency of the most recent HTTP request, in milliseconds.
+        last_latency_ms: u64,
+        /// Number of rate-limit tokens consumed in the current window.
+        rate_used: u32,
+        /// Maximum rate-limit tokens allowed in the window (0 = unknown).
+        rate_max: u32,
+    },
+    /// Private stream: order lifecycle event (new, partial fill, fill, cancel).
+    OrderUpdate {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        event: digdigdig3::OrderUpdateEvent,
+    },
+    /// Private stream: account balance change event.
+    BalanceUpdate {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        event: digdigdig3::BalanceUpdateEvent,
+    },
+    /// Private stream: position change event (futures/margin).
+    PositionUpdate {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        event: digdigdig3::PositionUpdateEvent,
+    },
+}
+
+/// Async-to-sync bridge that owns a tokio runtime and a connector pool.
+///
+/// # Usage
+///
+/// ```ignore
+/// let (bridge, mut rx, _ready_rx) = DataBridge::new(shared_series);
+/// let bridge = Arc::new(bridge);
+///
+/// bridge.ensure_connector(ExchangeId::Binance);
+///
+/// // Each frame, drain updates:
+/// while let Ok(update) = rx.try_recv() { ... }
+/// ```
+pub struct DataBridge {
+    runtime: Runtime,
+    hub: ExchangeHub,
+    tx: broadcast::Sender<LiveUpdate>,
+    /// Dedicated mpsc sender for `ConnectorReady` events.
+    ///
+    /// The app-level `tick_app_state` listens on the paired receiver instead
+    /// of subscribing to the broadcast channel. This prevents the broadcast
+    /// buffer from filling up when the app-level consumer falls behind, which
+    /// would otherwise stall all other broadcast receivers.
+    connector_ready_tx: mpsc::UnboundedSender<ExchangeId>,
+    /// Session-level bar cache.
+    ///
+    /// Key: `BarSeriesKey`. Stores bars from previous requests so that switching
+    /// back to an already-visited exchange+symbol+TF is instant. On each new
+    /// `request_bars`, the cache is sent immediately and then a background fetch
+    /// retrieves only the *newer* bars (after the last cached timestamp).
+    bar_cache: SharedSeriesMap,
+    /// Session-level live trade ring map.
+    ///
+    /// Key: `TradeKey`. Shared with `TradeService` in `App` via `Arc` — both
+    /// sides see the same `HashMap`. The async WS tasks write trades here;
+    /// panels read at render time. Mirrors `bar_cache` semantics.
+    trade_map: SharedTradeMap,
+    /// Session-level symbol cache.
+    ///
+    /// Key: `ExchangeId`. Stores the full list of trading symbols so that
+    /// repeated `request_symbols` calls don't hit the network.
+    symbol_cache: Arc<Mutex<HashMap<ExchangeId, Vec<SymbolInfo>>>>,
+    /// In-flight bar fetch keys.
+    ///
+    /// Prevents duplicate concurrent fetches for the same `(exchange, account_type, symbol,
+    /// timeframe)` combination. A key is inserted before the task is spawned and
+    /// removed at every exit point of the task. The symbol field is prefixed with
+    /// `"backfill:"` or `"scroll:"` for those fetch roles.
+    active_fetches: Arc<Mutex<HashSet<BarSeriesKey>>>,
+    /// Live WS ping RTT handles, keyed by exchange.
+    ///
+    /// Populated when a WebSocket task creates a connector that exposes a
+    /// shared RTT arc (currently OKX only). `collect_metrics` reads from
+    /// these handles via `try_lock` so it never blocks.
+    ws_rtt_handles: Arc<Mutex<HashMap<ExchangeId, Arc<tokio::sync::Mutex<u64>>>>>,
+    /// Oldest bar timestamp fetched per `BarSeriesKey`.
+    ///
+    /// Tracks how far back in history the bridge has already fetched so that
+    /// scroll-left requests can request the correct older window without
+    /// re-fetching data that is already cached.
+    oldest_fetched_ts: Arc<Mutex<HashMap<BarSeriesKey, i64>>>,
+    /// Session-level live orderbook series map.
+    ///
+    /// Key: `OrderbookKey`. Shared with `App` via `Arc` — both sides see the same
+    /// `HashMap`. The async REST/WS tasks write orderbook state here;
+    /// panels read at render time. Mirrors `trade_map` semantics.
+    orderbook_map: SharedOrderbookMap,
+    /// One-shot guard for the all-connector warm-up. Set the first time
+    /// `warmup_all_connectors` runs so the warm-up fires exactly once over the
+    /// lifetime of the (shared, long-lived) bridge — NOT once per ChartApp. The
+    /// bridge outlives the skeleton→live window promote, so the connectors dialed
+    /// during the skeleton screen are reused; the live window's tick sees the flag
+    /// already set and does nothing (no re-dial, no stale per-window cursor).
+    warmup_started: AtomicBool,
+    /// digdigdig3-station instance. Phase 2 of the dig3+mli migration is
+    /// migrating bridge data flow (bars, trades, orderbook, ticker, funding,
+    /// OI, etc.) over to Station so that warm-start, on-disk persistence,
+    /// reconnect, gap-heal, and replay are owned by station instead of
+    /// duplicated ad-hoc in bridge + bar-store + trade-store.
+    ///
+    /// Constructed in [`Self::new`] on the bridge's runtime via `block_on`.
+    /// Bars migrate in phase 2B (this commit is 2A — Station built but no
+    /// subscriptions yet). Three channels stay raw, mimicking hub (NOT
+    /// station) because station does not cover them: private streams
+    /// (OrderUpdate / BalanceUpdate / PositionUpdate — auth required),
+    /// scroll-left pagination (before_ts REST), and exchange_info.
+    station: Arc<digdigdig3_station::Station>,
+    /// C3: tracks which `(exchange_id, account_type, symbol)` keys already have
+    /// a live station trade-subscriber task spawned.
+    ///
+    /// Prevents spawning N parallel station forwarders when `subscribe_trades`
+    /// is called multiple times for the same key (one panel + chart header + etc.).
+    /// Guarded by `std::sync::Mutex` — only held briefly (never across `.await`).
+    station_trade_subscribed: Arc<Mutex<HashSet<TradeKey>>>,
+    /// C4: tracks which `OrderbookKey` entries already have a live station
+    /// orderbook-subscriber task spawned.
+    ///
+    /// Prevents spawning N parallel station forwarders when `subscribe_orderbook`
+    /// is called multiple times for the same key. Guarded by `std::sync::Mutex` —
+    /// only held briefly (never across `.await`).
+    station_orderbook_subscribed: Arc<Mutex<HashSet<OrderbookKey>>>,
+    /// C5: tracks which `(ExchangeId, String, AccountType)` keys already have a
+    /// live station ticker-subscriber task spawned.
+    ///
+    /// Prevents spawning N parallel station forwarders when `subscribe_mini_ticker`
+    /// is called multiple times for the same symbol key.
+    station_ticker_subscribed: Arc<Mutex<HashSet<(ExchangeId, String, AccountType)>>>,
+    /// C5: tracks which `(ExchangeId, AccountType)` pairs already have a live
+    /// station private-subscriber task spawned.
+    ///
+    /// One authenticated WS covers all symbols for that account — keyed by
+    /// `(exchange, account_type)` not per-symbol.
+    station_private_subscribed: Arc<Mutex<HashSet<(ExchangeId, AccountType)>>>,
+}
+
+impl DataBridge {
+    /// Create a new bridge.
+    ///
+    /// Returns:
+    /// - `DataBridge`: the bridge itself
+    /// - `broadcast::Receiver<LiveUpdate>`: receives ALL live updates (bars, symbols, errors, …)
+    /// - `mpsc::UnboundedReceiver<ExchangeId>`: receives ONLY `ConnectorReady` exchange IDs
+    ///
+    /// The separate mpsc receiver lets the app-level consumer handle `ConnectorReady`
+    /// events without subscribing to the full broadcast channel.  This prevents the
+    /// broadcast buffer from backing up when the app-level consumer is slow.
+    ///
+    /// Additional broadcast receivers can be created with [`add_listener`]. The channel
+    /// capacity is 4096 messages; if a slow receiver falls behind, old messages are
+    /// dropped for that receiver only.
+    pub fn new(
+        bar_cache: SharedSeriesMap,
+        trade_map: SharedTradeMap,
+        shared_orderbook: SharedOrderbookMap,
+    ) -> (Self, broadcast::Receiver<LiveUpdate>, mpsc::UnboundedReceiver<ExchangeId>) {
+        // Anchor the process-relative clock here so every [STARTUP-WAVE] timestamp
+        // is measured from bridge construction (≈ app start), giving a stable t=0
+        // shared by the bridge (connect wave) and the main thread (promote).
+        let _ = crate::elapsed_ms();
+        // 4 workers (was 2): the startup connector warm-up spawns ~21 connect +
+        // ~21 symbol-fetch tasks in a burst. With 2 workers, later exchanges
+        // queue behind earlier ones for hundreds of ms, and the wave finishes
+        // landing on the main thread right inside the skeleton→live promote.
+        // 4 workers halve the tail and keep the wave off the promote on
+        // CPU-contended machines (where the freeze was observed). Idle cost is
+        // negligible — tokio worker threads park when there is no work.
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(4)
+            .thread_name("live-data")
+            .enable_all()
+            .build()
+            .expect("failed to create tokio runtime for live-data");
+
+        let (tx, rx) = broadcast::channel(65536);
+        let (connector_ready_tx, connector_ready_rx) = mpsc::unbounded_channel();
+        let hub = ExchangeHub::new();
+
+        // Build the Station on the bridge's runtime. Phase 2A wires Station
+        // into the bridge as a sibling of `hub`; subscriptions arrive in
+        // phase 2B+ (bars, trades, orderbook, ticker). Persistence is on,
+        // warm-start = 1000 most-recent points per series, gap-heal default.
+        // Storage lives under <APPDATA>/mylittlechart/dig3_storage/ so the
+        // existing %APPDATA%/mylittlechart/{bars,trades,orderbook}/ trees
+        // (legacy bar-store / trade-store / orderbook-store) stay untouched
+        // and can be deleted in phase 2C after the migration is verified.
+        let storage_root = mlc_core::app_data_dir().join("dig3_storage");
+        let station = runtime.block_on(async {
+            digdigdig3_station::Station::builder()
+                .storage_root(storage_root)
+                .persistence(digdigdig3_station::PersistenceConfig::on())
+                .warm_start(1000)
+                .unsubscribe_grace(std::time::Duration::from_secs(30))
+                .orderbook_rest_seed(true)
+                .orderbook_seed_depth(1000)
+                .build()
+                .await
+                .expect("failed to build digdigdig3-station")
+        });
+        let station = Arc::new(station);
+
+        (Self {
+            runtime,
+            hub,
+            tx,
+            connector_ready_tx,
+            bar_cache,
+            trade_map,
+            symbol_cache: Arc::new(Mutex::new(HashMap::new())),
+            active_fetches: Arc::new(Mutex::new(HashSet::new())),
+            ws_rtt_handles: Arc::new(Mutex::new(HashMap::new())),
+            oldest_fetched_ts: Arc::new(Mutex::new(HashMap::new())),
+            orderbook_map: shared_orderbook,
+            warmup_started: AtomicBool::new(false),
+            station,
+            station_trade_subscribed: Arc::new(Mutex::new(HashSet::new())),
+            station_orderbook_subscribed: Arc::new(Mutex::new(HashSet::new())),
+            station_ticker_subscribed: Arc::new(Mutex::new(HashSet::new())),
+            station_private_subscribed: Arc::new(Mutex::new(HashSet::new())),
+        }, rx, connector_ready_rx)
+    }
+
+    /// Access to the underlying [`digdigdig3_station::Station`].
+    ///
+    /// Returned as an `Arc` so callers can spawn long-lived consumer tasks
+    /// (subscription drainers, replay UIs) without juggling lifetimes against
+    /// the bridge itself. Currently used only by phase-2 adapters inside this
+    /// crate; downstream chart code keeps consuming the legacy
+    /// [`LiveUpdate`] broadcast.
+    pub fn station(&self) -> Arc<digdigdig3_station::Station> {
+        self.station.clone()
+    }
+
+    /// Get a clone of the shared trade map.
+    ///
+    /// Use this to initialize `TradeService::with_map()` in `App` — both sides
+    /// will share the same underlying `HashMap` via `Arc`.
+    pub fn trade_map(&self) -> SharedTradeMap {
+        self.trade_map.clone()
+    }
+
+    /// Get a clone of the shared orderbook map.
+    ///
+    /// Returns a clone of the shared orderbook map for `App` and panel use.
+    /// Both sides share the same underlying `HashMap` via `Arc`.
+    pub fn orderbook_map(&self) -> SharedOrderbookMap {
+        self.orderbook_map.clone()
+    }
+
+    /// Get a clone of the session bar cache map.
+    ///
+    /// Used by `ChartApp::tick` to create `TrackedSeriesHandle` entries directly
+    /// from the shared map without going through the removed `BarService`.
+    pub fn bar_cache(&self) -> SharedSeriesMap {
+        self.bar_cache.clone()
+    }
+
+    /// Create a new update receiver that receives all future updates.
+    ///
+    /// Use this to attach additional windows (spawned with `new_empty`) to the
+    /// same `DataBridge` without spinning up a second tokio runtime or connector
+    /// pool. Each receiver gets its own independent read position — messages are
+    /// not consumed from other receivers when one drains its queue.
+    pub fn add_listener(&self) -> broadcast::Receiver<LiveUpdate> {
+        self.tx.subscribe()
+    }
+
+    /// Snapshot the bridge's per-exchange symbol cache.
+    ///
+    /// Returns every exchange whose REST `exchange_info` has already resolved
+    /// during this process — i.e. every `SymbolsLoaded` event ever broadcast.
+    /// New `ChartApp` instances (notably the live-window instance created
+    /// during skeleton→live promote) use this to seed their `exchange_symbols`
+    /// map without racing against the broadcast channel: the skeleton's
+    /// receiver caught every `SymbolsLoaded` between connect and promote, but
+    /// dropping the skeleton ChartApp dropped that map with it; the cache
+    /// itself lives on the bridge and survives.
+    pub fn symbols_snapshot(&self) -> HashMap<ExchangeId, Vec<SymbolInfo>> {
+        match self.symbol_cache.lock() {
+            Ok(c) => c.clone(),
+            Err(p) => p.into_inner().clone(),
+        }
+    }
+
+    /// Get a reference to the connector hub.
+    pub fn pool(&self) -> &ExchangeHub {
+        &self.hub
+    }
+
+    /// Record the oldest bar timestamp seen for a given key.
+    ///
+    /// Only updates the stored value when `ts` is strictly older (smaller) than
+    /// whatever was previously recorded. Safe to call from any thread.
+    pub fn record_oldest_ts(
+        &self,
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: &str,
+        timeframe: &str,
+        ts: i64,
+    ) {
+        if let Ok(mut map) = self.oldest_fetched_ts.lock() {
+            let key = make_series_key(exchange_id, account_type, symbol, timeframe);
+            let entry = map.entry(key).or_insert(i64::MAX);
+            if ts < *entry {
+                *entry = ts;
+            }
+        }
+    }
+
+    /// Return the oldest bar timestamp fetched for the given key, or `None` if
+    /// no fetch has been recorded yet.
+    pub fn get_oldest_fetched_ts(
+        &self,
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: &str,
+        timeframe: &str,
+    ) -> Option<i64> {
+        let key = make_series_key(exchange_id, account_type, symbol, timeframe);
+        self.oldest_fetched_ts.lock().ok()?.get(&key).copied()
+    }
+
+    /// Warm up every connector in `exchanges`, exactly ONCE over the bridge's
+    /// lifetime (guarded by an internal one-shot flag).
+    ///
+    /// Each `ensure_connector` is a non-blocking async spawn on the bridge's own
+    /// runtime — the whole set dials concurrently off the UI thread. Because the
+    /// bridge is shared and outlives the skeleton→live window promote, calling
+    /// this on the skeleton window dials all connectors during the (empty) loading
+    /// screen; the live window's call sees the flag already set and returns
+    /// immediately — no re-dial, no per-window progress cursor to reset, no work
+    /// leaking into the visible chart.
+    ///
+    /// Idempotent at two levels: the one-shot flag prevents a second pass, and
+    /// `ensure_connector` itself no-ops for already-connected exchanges.
+    pub fn warmup_all_connectors(&self, exchanges: &[ExchangeId]) {
+        // compare_exchange: only the first caller proceeds; all later calls (e.g.
+        // the promoted live window) short-circuit.
+        if self
+            .warmup_started
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return;
+        }
+        crate::dlog!(
+            "[STARTUP-WAVE bridge] warmup_all_connectors START t={}ms n_exchanges={}",
+            crate::elapsed_ms(),
+            exchanges.len()
+        );
+        for &eid in exchanges {
+            self.ensure_connector(eid);
+        }
+    }
+
+    /// Ensure a connector is initialized for the given exchange.
+    ///
+    /// Non-blocking — spawns an async task. On completion, sends either
+    /// `ConnectorReady` or `Error` through the update channel.
+    pub fn ensure_connector(&self, exchange_id: ExchangeId) {
+        if self.hub.is_connected(exchange_id) {
+            return;
+        }
+        let hub = self.hub.clone();
+        let tx = self.tx.clone();
+        let connector_ready_tx = self.connector_ready_tx.clone();
+        crate::dlog!(
+            "[STARTUP-WAVE bridge] ensure_connector SPAWN {:?} t={}ms",
+            exchange_id,
+            crate::elapsed_ms()
+        );
+        self.runtime.spawn(async move {
+            let _connect_t0 = crate::elapsed_ms();
+            // Creating connector asynchronously. No stagger — the connector
+            // tokio runtime is independent of the UI thread, so a startup burst
+            // of TCP/TLS handshakes does not block rendering (it never did; the
+            // measured present-stall came from a different path). Eager connect
+            // gives the fullest symbol list and fastest first data.
+            match hub.connect_public(exchange_id, false).await {
+                Ok(()) => {
+                    crate::dlog!(
+                        "[STARTUP-WAVE bridge] connect_public DONE {:?} t={}ms took={}ms (firing ConnectorReady)",
+                        exchange_id,
+                        crate::elapsed_ms(),
+                        crate::elapsed_ms().saturating_sub(_connect_t0)
+                    );
+                    let _ = tx.send(LiveUpdate::ConnectorReady { exchange_id });
+                    // Also notify the app-level mpsc consumer so it doesn't
+                    // need to hold a broadcast subscription open.
+                    let _ = connector_ready_tx.send(exchange_id);
+                    // Connector ready.
+                }
+                Err(e) => {
+                    let _ = tx.send(LiveUpdate::Error {
+                        exchange_id,
+                        message: format!("{}", e),
+                    });
+                    // Connector init failed (error sent via channel).
+                }
+            }
+        });
+    }
+
+    /// Request historical bars (klines) from an exchange.
+    ///
+    /// Non-blocking — spawns an async task. On completion, sends either
+    /// `BarsLoaded` or `Error` through the update channel.
+    ///
+    /// **3-level bar loading:**
+    ///
+    /// Level 1 — instant render: if disk cache exists, it was already sent via
+    /// `seed_bar_cache` + an initial `BarsLoaded` before this call.
+    ///
+    /// Level 2 (Phase A) — quick fresh fetch: always fetches 300 bars from now
+    /// backward, merges with any session cache, sends `BarsLoaded`. Viewport
+    /// enters Follow mode.
+    ///
+    /// Level 3 (Phase B) — async heal: if disk cache existed before Phase A and
+    /// there was a gap between the disk tail and the fresh 300 bars, paginate
+    /// backward to fill 2× the gap, merge, send a second `BarsLoaded`.
+    ///
+    /// The `limit` and `total_bars` parameters are retained for API compatibility
+    /// but are no longer used — Phase A always fetches 300 bars.
+    pub fn request_bars(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        timeframe: &Timeframe,
+        account_type: AccountType,
+        _limit: Option<u16>,
+        _total_bars: Option<usize>,
+        force: bool,
+    ) {
+        let hub = self.hub.clone();
+        let tx = self.tx.clone();
+        let symbol_str = symbol.to_string();
+        let interval = timeframe_to_interval(timeframe);
+        let tf_name = timeframe.name.clone();
+        let cache = self.bar_cache.clone();
+        let active_fetches = self.active_fetches.clone();
+
+        let cache_key = make_series_key(exchange_id, account_type, &symbol_str, &tf_name);
+
+        // ── Deduplication guard: skip if a fetch for this key is already running ──
+        {
+            let mut af = active_fetches.lock().unwrap_or_else(|e| e.into_inner());
+            if af.contains(&cache_key) {
+                crate::dlog!("[Bridge] fetch already in flight for {:?} sym={} tf={}, skipping", exchange_id, symbol_str, tf_name);
+                return;
+            }
+            af.insert(cache_key.clone());
+        }
+
+        // Snapshot the disk/session cache BEFORE Phase A so we can detect a gap.
+        let cached_bars: Option<Vec<Bar>> = {
+            let bars = read_series_bars(&self.bar_cache, &cache_key);
+            if bars.is_empty() { None } else { Some(bars) }
+        };
+
+        // If cache exists, send it immediately (Level 1 — instant render while
+        // the network fetch is in flight).
+        if let Some(ref bars) = cached_bars {
+            crate::dlog!("[Bridge] {:?} serving {} cached bars instantly for sym={} tf={}", exchange_id, bars.len(), symbol_str, tf_name);
+            let _ = tx.send(LiveUpdate::BarsLoaded {
+                exchange_id,
+                account_type,
+                symbol: symbol_str.clone(),
+                timeframe: tf_name.clone(),
+                bars: bars.clone(),
+            });
+        }
+
+        // Capture disk cache boundaries for gap detection (Phase B).
+        let disk_last_ts: Option<i64> = cached_bars.as_ref()
+            .and_then(|bars| bars.last())
+            .map(|b| b.timestamp);
+        let had_disk_cache = cached_bars.is_some();
+
+        // ── Station live kline subscriber (side-channel, independent of REST flow) ──
+        {
+            let station = self.station.clone();
+            let station_tx = self.tx.clone();
+            let station_cache = self.bar_cache.clone();
+            let station_cache_key = make_series_key(exchange_id, account_type, &symbol_str, &tf_name);
+            let station_symbol = symbol_str.clone();
+            let station_interval = interval.clone();
+            let station_tf_name = tf_name.clone();
+            let station_period_secs = tf_period_secs(&tf_name);
+            self.runtime.spawn(async move {
+                let kline_iv = KlineInterval::new(&station_interval);
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                    exchange_id,
+                    station_symbol.clone(),
+                    account_type,
+                    [digdigdig3_station::Stream::Kline(kline_iv)],
+                );
+                let mut report = match station.subscribe(sub_set).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        crate::dlog!("[Bridge] station kline subscribe failed for {:?} sym={} tf={}: {:?}",
+                            exchange_id, station_symbol, station_tf_name, e);
+                        return;
+                    }
+                };
+                if !report.failed.is_empty() {
+                    crate::dlog!("[Bridge] station kline partial-fail {:?} sym={} tf={}: {} failed",
+                        exchange_id, station_symbol, station_tf_name, report.failed.len());
+                }
+                while let Some(ev) = report.handle.recv().await {
+                    if let digdigdig3_station::Event::Bar { point, .. } = ev {
+                        let bar = bar_point_to_bar(&point);
+                        upsert_bar_into_cache(&station_cache, &station_cache_key, &bar, station_period_secs);
+                        let _ = station_tx.send(LiveUpdate::BarUpdate {
+                            exchange_id,
+                            account_type,
+                            symbol: station_symbol.clone(),
+                            bar,
+                            is_closed: true,
+                        });
+                    }
+                }
+            });
+        }
+
+        self.runtime.spawn(async move {
+            // Helper macro to remove the in-flight key on every exit path.
+            macro_rules! finish_fetch {
+                () => {
+                    if let Ok(mut af) = active_fetches.lock() {
+                        af.remove(&cache_key);
+                    }
+                };
+            }
+
+            // Wait for connector if ensure_connector is still initializing it.
+            let connector = {
+                let mut attempts = 0;
+                loop {
+                    if let Some(c) = hub.rest(exchange_id) {
+                        break c;
+                    }
+                    attempts += 1;
+                    if attempts > 50 {
+                        let _ = tx.send(LiveUpdate::Error {
+                            exchange_id,
+                            message: format!("connector {:?} not initialized", exchange_id),
+                        });
+                        finish_fetch!();
+                        return;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            };
+
+            let sym = parse_symbol_for_exchange(exchange_id, &symbol_str);
+
+            // ── Phase A: Quick fresh fetch ───────────────────────────────────
+            // Skip the network fetch if the cache is already fresh (last bar
+            // within 2× the interval of now). This avoids redundant API calls
+            // when switching between presets that share the same data.
+            let interval_secs = interval_to_seconds(&interval);
+            let now_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            let cache_is_fresh = disk_last_ts
+                .map(|ts| (now_secs - ts) < interval_secs * 2)
+                .unwrap_or(false);
+
+            if cache_is_fresh && !force {
+                crate::dlog!("[Bridge] Phase A: {:?} sym={} interval={} cache is fresh (age={}s < {}s), skipping fetch",
+                    exchange_id, symbol_str, interval,
+                    now_secs - disk_last_ts.unwrap_or(0),
+                    interval_secs * 2);
+                finish_fetch!();
+                return;
+            }
+
+            crate::dlog!("[Bridge] Phase A: {:?} sym={} interval={} fetching 300 fresh bars", exchange_id, symbol_str, interval);
+
+            let phase_a_result = connector
+                .get_klines((&sym).into(),&interval, Some(300), account_type, None)
+                .await;
+
+            let fresh_300: Vec<Bar> = match phase_a_result {
+                Ok(klines) => {
+                    let bars: Vec<Bar> = klines.iter().map(kline_to_bar).collect();
+                    crate::dlog!("[Bridge] Phase A: got {} bars", bars.len());
+                    bars
+                }
+                Err(e) => {
+                    eprintln!("[Bridge] Phase A error: {:?} {}", exchange_id, e);
+                    let _ = tx.send(LiveUpdate::Error {
+                        exchange_id,
+                        message: format!("get_klines failed: {}", e),
+                    });
+                    finish_fetch!();
+                    return;
+                }
+            };
+
+            let fresh_first_ts: Option<i64> = fresh_300.first().map(|b| b.timestamp);
+            let fresh_last_ts: Option<i64> = fresh_300.last().map(|b| b.timestamp);
+
+            if let (Some(ft), Some(lt)) = (fresh_first_ts, fresh_last_ts) {
+                crate::dlog!("[Bridge] Phase A fresh range: {} -> {} ({} bars)", ft, lt, fresh_300.len());
+            }
+
+            // Merge fresh_300 into any existing session cache.
+            let period_secs = tf_period_secs(&tf_name);
+            let merged_a = {
+                let old = read_series_bars(&cache, &cache_key);
+                if old.is_empty() {
+                    set_series_bars(&cache, &cache_key, fresh_300.clone(), period_secs);
+                    fresh_300.clone()
+                } else {
+                    crate::dlog!("[Bridge] Phase A merging {} fresh + {} cached", fresh_300.len(), old.len());
+                    merge_into_series(&cache, &cache_key, fresh_300.clone(), period_secs)
+                }
+            };
+
+            // Send Phase A BarsLoaded (Level 2 — viewport goes to Follow mode).
+            let _ = tx.send(LiveUpdate::BarsLoaded {
+                exchange_id,
+                account_type,
+                symbol: symbol_str.clone(),
+                timeframe: tf_name.clone(),
+                bars: merged_a.clone(),
+            });
+
+            // ── Phase B: Async heal — fill gap between disk cache and fresh bars ──
+            // Only runs when a disk cache existed before this call.
+            if !had_disk_cache {
+                crate::dlog!("[Bridge] Phase B: skipped (no disk cache)");
+                finish_fetch!();
+                return;
+            }
+
+            let disk_last = match disk_last_ts {
+                Some(ts) => ts,
+                None => {
+                    finish_fetch!();
+                    return;
+                }
+            };
+            let fresh_first = match fresh_first_ts {
+                Some(ts) => ts,
+                None => {
+                    finish_fetch!();
+                    return;
+                }
+            };
+
+            let gap_seconds = fresh_first - disk_last;
+            if gap_seconds <= 0 {
+                crate::dlog!("[Bridge] Phase B: no gap (disk_last={} fresh_first={}), done", disk_last, fresh_first);
+                finish_fetch!();
+                return;
+            }
+
+            let interval_secs = interval_to_seconds(&interval);
+            let gap_bars = if interval_secs > 0 { gap_seconds / interval_secs } else { gap_seconds };
+            let heal_target = (gap_bars * 2).max(100) as usize;
+
+            crate::dlog!(
+                "[Bridge] Phase B: gap={}s = ~{} bars, heal_target={} bars (disk_last={} fresh_first={})",
+                gap_seconds, gap_bars, heal_target, disk_last, fresh_first
+            );
+
+            // Paginate backward from fresh_first to fill the gap toward disk_last.
+            // end_time cursor starts just before the earliest fresh bar (in ms).
+            let mut end_time_cursor: Option<i64> = Some(fresh_first * 1000 - 1);
+            let mut heal_bars: Vec<Bar> = Vec::with_capacity(heal_target);
+            let mut pages: usize = 0;
+
+            'heal: loop {
+                let result = connector
+                    .get_klines((&sym).into(),&interval, Some(500), account_type, end_time_cursor)
+                    .await;
+
+                match result {
+                    Ok(klines) => {
+                        if klines.is_empty() {
+                            crate::dlog!("[Bridge] Phase B: empty page, stopping");
+                            break 'heal;
+                        }
+                        pages += 1;
+                        let batch: Vec<Bar> = klines.iter().map(kline_to_bar).collect();
+
+                        // Move cursor to before the oldest bar in this page.
+                        if let Some(oldest_ms) = klines.iter().map(|k| k.open_time).min() {
+                            end_time_cursor = Some(oldest_ms - 1);
+                        }
+
+                        let oldest_bar_ts = batch.first().map(|b| b.timestamp).unwrap_or(0);
+                        // batch is fresh REST data and wins on conflicts (second arg wins).
+                        heal_bars = merge_bars(heal_bars, batch);
+
+                        crate::dlog!("[Bridge] Phase B: page {} -> {} heal bars (oldest_ts={})", pages, heal_bars.len(), oldest_bar_ts);
+
+                        if heal_bars.len() >= heal_target {
+                            crate::dlog!("[Bridge] Phase B: reached heal_target={}", heal_target);
+                            break 'heal;
+                        }
+                        // Stop when we've reached into the disk cache range.
+                        if oldest_bar_ts <= disk_last {
+                            crate::dlog!("[Bridge] Phase B: reached disk_last={}, gap covered", disk_last);
+                            break 'heal;
+                        }
+                        if pages >= 20 {
+                            crate::dlog!("[Bridge] Phase B: capped at 20 pages");
+                            break 'heal;
+                        }
+                    }
+                    Err(e) => {
+                        crate::dlog!("[Bridge] Phase B error at page {}: {}", pages, e);
+                        break 'heal;
+                    }
+                }
+            }
+
+            if heal_bars.is_empty() {
+                crate::dlog!("[Bridge] Phase B: no heal bars fetched, done");
+                finish_fetch!();
+                return;
+            }
+
+            crate::dlog!("[Bridge] Phase B: fetched {} heal bars over {} pages, merging", heal_bars.len(), pages);
+
+            // Merge heal bars into current cache (which already has Phase A result).
+            // heal_bars goes as "old" so that the already-cached Phase A data wins on conflicts.
+            let merged_b = merge_into_series(&cache, &cache_key, heal_bars, period_secs);
+
+            crate::dlog!("[Bridge] Phase B done: sending {} bars (fully healed)", merged_b.len());
+
+            // Send Phase B BarsLoaded (Level 3 — fully healed dataset).
+            let _ = tx.send(LiveUpdate::BarsLoaded {
+                exchange_id,
+                account_type,
+                symbol: symbol_str,
+                timeframe: tf_name,
+                bars: merged_b,
+            });
+
+            finish_fetch!();
+        });
+    }
+
+    /// Request bars synchronously (blocking).
+    ///
+    /// Use only at startup or from non-render threads. Blocks until the
+    /// async call completes.
+    pub fn request_bars_blocking(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        timeframe: &Timeframe,
+        account_type: AccountType,
+        limit: Option<u16>,
+        _total_bars: Option<usize>,
+    ) -> Option<Vec<Bar>> {
+        let connector = self.hub.rest(exchange_id)?;
+        let sym = parse_symbol_for_exchange(exchange_id, symbol);
+        let interval = timeframe_to_interval(timeframe);
+
+        self.runtime.block_on(async move {
+            let page_size: u16 = limit.unwrap_or(500).min(500);
+            let result = connector.get_klines((&sym).into(), &interval, Some(page_size), account_type, None).await;
+
+            match result {
+                Ok(klines) => {
+                    let bars: Vec<Bar> = klines.iter().map(kline_to_bar).collect();
+                    Some(bars)
+                }
+                Err(_e) => {
+                    // Error not propagated in blocking mode.
+                    None
+                }
+            }
+        })
+    }
+
+    /// Request the full list of trading symbols from an exchange.
+    ///
+    /// Non-blocking — spawns an async task. On completion, sends
+    /// `SymbolsLoaded` through the update channel. Results are cached for the
+    /// session — subsequent calls return the cached list immediately without a
+    /// network request.
+    pub fn request_symbols(&self, exchange_id: ExchangeId) {
+        let hub = self.hub.clone();
+        let tx = self.tx.clone();
+        let cache = self.symbol_cache.clone();
+
+        // Instant cache hit.
+        if let Ok(c) = cache.lock() {
+            if let Some(symbols) = c.get(&exchange_id) {
+                crate::dlog!(
+                    "[STARTUP-WAVE bridge] request_symbols CACHE-HIT {:?} t={}ms n={}",
+                    exchange_id, crate::elapsed_ms(), symbols.len()
+                );
+                let _ = tx.send(LiveUpdate::SymbolsLoaded {
+                    exchange_id,
+                    symbols: symbols.clone(),
+                });
+                return;
+            }
+        }
+
+        crate::dlog!(
+            "[STARTUP-WAVE bridge] request_symbols NET-FETCH {:?} t={}ms (cache miss — two of these for the same exchange back-to-back == the double request_symbols bug)",
+            exchange_id, crate::elapsed_ms()
+        );
+        self.runtime.spawn(async move {
+            let connector = match hub.rest(exchange_id) {
+                Some(c) => c,
+                None => {
+                    let _ = tx.send(LiveUpdate::Error {
+                        exchange_id,
+                        message: format!("connector {:?} not initialized", exchange_id),
+                    });
+                    return;
+                }
+            };
+
+            // Fetch Spot and Futures symbols independently; merge into one list.
+            // If an exchange doesn't support a given account type it returns an
+            // error which we silently ignore — we keep whatever succeeded.
+            let mut all_symbols: Vec<SymbolInfo> = Vec::new();
+
+            if let Ok(spot) = connector.get_exchange_info(AccountType::Spot).await {
+                all_symbols.extend(spot);
+            }
+
+            if let Ok(futures) = connector.get_exchange_info(AccountType::FuturesCross).await {
+                all_symbols.extend(futures);
+            }
+
+            if all_symbols.is_empty() {
+                let _ = tx.send(LiveUpdate::Error {
+                    exchange_id,
+                    message: "get_exchange_info failed for all account types".to_string(),
+                });
+                return;
+            }
+
+            // Cache for session.
+            if let Ok(mut c) = cache.lock() {
+                c.insert(exchange_id, all_symbols.clone());
+            }
+            let _ = tx.send(LiveUpdate::SymbolsLoaded {
+                exchange_id,
+                symbols: all_symbols,
+            });
+        });
+    }
+
+    /// Subscribe to live trade updates via WebSocket.
+    ///
+    /// Routes the symbol to the shared per-exchange trade actor, which
+    /// multiplexes all symbols over a single WS connection.  If no actor
+    /// exists yet for this exchange it is spawned automatically.
+    ///
+    /// Also registers (or re-uses) a `TradeSeries` in the `SharedTradeMap` for
+    /// this `(exchange_id, symbol, account_type)` key, incrementing its
+    /// refcount. Returns the `Arc<RwLock<TradeSeries>>` handle so the caller
+    /// can attach it to a panel state.
+    pub fn subscribe_trades(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) -> Arc<RwLock<TradeSeries>> {
+        // Get-or-create the TradeSeries in the shared map, incrementing refcount.
+        let trade_key = TradeKey::new(exchange_id, account_type, symbol);
+        let handle = {
+            let mut map = self.trade_map.write().unwrap_or_else(|e| e.into_inner());
+            let h = map
+                .entry(trade_key.clone())
+                .or_insert_with(|| {
+                    Arc::new(RwLock::new(TradeSeries::new(DEFAULT_CAPACITY)))
+                })
+                .clone();
+            h
+        };
+        // Increment the logical refcount inside the series.
+        if let Ok(mut series) = handle.write() {
+            series.refcount += 1;
+        }
+
+        // C3: spawn a station trade-subscriber once per (exchange_id, account_type, symbol).
+        // Subsequent calls for the same key (multiple panels sharing the same stream) skip
+        // the spawn — the existing forwarder is still alive (or in 30s grace window).
+        {
+            let mut subs = self.station_trade_subscribed
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if subs.insert(trade_key.clone()) {
+                // First subscriber for this key: spawn the station forwarder.
+                let station = self.station.clone();
+                let tx = self.tx.clone();
+                let station_trade_subscribed = self.station_trade_subscribed.clone();
+                let symbol_owned = symbol.to_string();
+                self.runtime.spawn(async move {
+                    let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                        exchange_id,
+                        symbol_owned.clone(),
+                        account_type,
+                        [digdigdig3_station::Stream::Trade],
+                    );
+                    let mut report = match station.subscribe(sub_set).await {
+                        Ok(r) => r,
+                        Err(e) => {
+                            crate::dlog!(
+                                "[Bridge] station trade subscribe failed {:?} sym={}: {:?}",
+                                exchange_id, symbol_owned, e
+                            );
+                            // Remove gate key so a future subscribe_trades can retry.
+                            let mut subs = station_trade_subscribed
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner());
+                            subs.remove(&trade_key);
+                            return;
+                        }
+                    };
+                    if !report.failed.is_empty() {
+                        crate::dlog!(
+                            "[Bridge] station trade partial-fail {:?} sym={}: {} failed",
+                            exchange_id, symbol_owned, report.failed.len()
+                        );
+                    }
+                    // Drain station trade events and re-emit on the bridge broadcast.
+                    // tick.rs already writes received TradeUpdate events into trade_map, so
+                    // we only need to emit on the broadcast channel here (no direct map write).
+                    while let Some(ev) = report.handle.recv().await {
+                        if let digdigdig3_station::Event::Trade { point, .. } = ev {
+                            let _ = tx.send(LiveUpdate::TradeUpdate {
+                                exchange_id,
+                                account_type,
+                                symbol: symbol_owned.clone(),
+                                price: point.price,
+                                quantity: point.quantity,
+                                timestamp: point.ts_ms,
+                                // TradePoint.side 0 = buyer maker, 1 = seller maker.
+                                // is_buyer_maker=true when side==0 (buyer made the trade).
+                                is_buyer_maker: point.side == 0,
+                            });
+                        }
+                    }
+                    // Forwarder handle dropped (unsubscribe/grace expired).
+                    // Remove from gate so a future subscribe_trades can re-spawn.
+                    let mut subs = station_trade_subscribed
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    subs.remove(&trade_key);
+                    crate::dlog!(
+                        "[Bridge] station trade forwarder exited {:?} sym={}, gate removed",
+                        exchange_id, symbol_owned
+                    );
+                });
+            }
+        }
+
+        handle
+    }
+
+    /// Subscribe to a single symbol's mini ticker stream via WebSocket.
+    ///
+    /// Routes the symbol to the station ticker stream (C5).
+    pub fn subscribe_mini_ticker(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        // C5: spawn station ticker side-channel once per (exchange_id, symbol, account_type).
+        let ticker_key = (exchange_id, symbol.to_string(), account_type);
+        {
+            let mut subs = self.station_ticker_subscribed
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if !subs.insert(ticker_key.clone()) {
+                return;
+            }
+        }
+        let station = self.station.clone();
+        let tx = self.tx.clone();
+        let subs_set = self.station_ticker_subscribed.clone();
+        let symbol_owned = symbol.to_string();
+        let key_for_cleanup = ticker_key;
+        self.runtime.spawn(async move {
+            let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                exchange_id,
+                symbol_owned.clone(),
+                account_type,
+                [digdigdig3_station::Stream::Ticker],
+            );
+            let mut report = match station.subscribe(sub_set).await {
+                Ok(r) => r,
+                Err(e) => {
+                    crate::dlog!("[Bridge] station ticker subscribe failed {:?} sym={}: {:?}",
+                        exchange_id, symbol_owned, e);
+                    if let Ok(mut s) = subs_set.lock() {
+                        s.remove(&key_for_cleanup);
+                    }
+                    return;
+                }
+            };
+            if !report.failed.is_empty() {
+                crate::dlog!("[Bridge] station ticker partial-fail {:?} sym={}: {} failed",
+                    exchange_id, symbol_owned, report.failed.len());
+            }
+            while let Some(ev) = report.handle.recv().await {
+                if let digdigdig3_station::Event::Ticker { point, .. } = ev {
+                    // NaN sentinel → None for optional 24h-stats fields.
+                    let opt = |v: f64| if v.is_nan() { None } else { Some(v) };
+                    let _ = tx.send(LiveUpdate::MiniTickerUpdate {
+                        exchange_id,
+                        account_type,
+                        symbol: symbol_owned.clone(),
+                        last_price: point.last,
+                        price_change_percent: opt(point.change_pct_24h),
+                        high_price: opt(point.high_24h),
+                        low_price: opt(point.low_24h),
+                        volume: opt(point.vol_24h),
+                    });
+                }
+            }
+            // Forwarder handle dropped. Remove gate so a future subscribe_mini_ticker can re-spawn.
+            if let Ok(mut s) = subs_set.lock() {
+                s.remove(&key_for_cleanup);
+            }
+            crate::dlog!("[Bridge] station ticker forwarder exited {:?} sym={}, gate removed",
+                exchange_id, symbol_owned);
+        });
+    }
+
+    /// Subscribe to L2 orderbook depth updates via WebSocket.
+    ///
+    /// Ensures an `OrderbookSeries` exists in the shared map for this key and
+    /// triggers the station orderbook subscriber (C4), which handles REST seed
+    /// and incremental WS deltas via `Station` (with `orderbook_rest_seed(true)`).
+    pub fn subscribe_depth(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        // Ensure the OrderbookSeries entry exists (subscribe_orderbook may not have been called).
+        let ob_key = OrderbookKey::new(exchange_id, account_type, symbol);
+        {
+            let mut map = self.orderbook_map.write().unwrap_or_else(|e| e.into_inner());
+            map.entry(ob_key.clone())
+                .or_insert_with(|| Arc::new(RwLock::new(OrderbookSeries::new(DEFAULT_HISTORY_CAPACITY))));
+        }
+
+        // C4: station orderbook subscriber (idempotent — gate on station_orderbook_subscribed).
+        let mut subs = self.station_orderbook_subscribed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if subs.insert(ob_key.clone()) {
+            let station = self.station.clone();
+            let tx = self.tx.clone();
+            let station_orderbook_subscribed = self.station_orderbook_subscribed.clone();
+            let symbol_owned = symbol.to_string();
+            let key_for_cleanup = ob_key.clone();
+            self.runtime.spawn(async move {
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                    exchange_id,
+                    symbol_owned.clone(),
+                    account_type,
+                    [digdigdig3_station::Stream::OrderbookDelta],
+                );
+                let mut report = match station.subscribe(sub_set).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        crate::dlog!(
+                            "[Bridge] station ob subscribe failed {:?} sym={}: {:?}",
+                            exchange_id, symbol_owned, e
+                        );
+                        if let Ok(mut subs) = station_orderbook_subscribed.lock() {
+                            subs.remove(&key_for_cleanup);
+                        }
+                        return;
+                    }
+                };
+                if !report.failed.is_empty() {
+                    crate::dlog!(
+                        "[Bridge] station ob partial-fail {:?} sym={}: {} failed",
+                        exchange_id, symbol_owned, report.failed.len()
+                    );
+                }
+                while let Some(ev) = report.handle.recv().await {
+                    match ev {
+                        digdigdig3_station::Event::OrderbookSnapshot { point, .. } => {
+                            let bids = strip_ob_padding(&point.bids);
+                            let asks = strip_ob_padding(&point.asks);
+                            let _ = tx.send(LiveUpdate::OrderbookSnapshot {
+                                exchange_id,
+                                account_type,
+                                symbol: symbol_owned.clone(),
+                                bids,
+                                asks,
+                                timestamp: point.ts_ms,
+                                source: OrderbookSource::Rest,
+                            });
+                        }
+                        digdigdig3_station::Event::OrderbookDelta { point, .. } => {
+                            let bids = strip_ob_padding(&point.bid_changes);
+                            let asks = strip_ob_padding(&point.ask_changes);
+                            let _ = tx.send(LiveUpdate::OrderbookDelta {
+                                exchange_id,
+                                account_type,
+                                symbol: symbol_owned.clone(),
+                                bids,
+                                asks,
+                                timestamp: point.ts_ms,
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+                if let Ok(mut subs) = station_orderbook_subscribed.lock() {
+                    subs.remove(&key_for_cleanup);
+                }
+                crate::dlog!(
+                    "[Bridge] station ob forwarder exited {:?} sym={}, gate removed",
+                    exchange_id, symbol_owned
+                );
+            });
+        }
+    }
+
+    /// Subscribe to the shared `OrderbookSeries` for `(exchange, symbol, account_type)`.
+    ///
+    /// Mirrors `subscribe_trades`: increments `refcount`, starts the station
+    /// orderbook subscriber (via `subscribe_depth`), and returns a cloned `Arc`
+    /// so the caller (DOM panel) can read the live snapshot without going through
+    /// the broadcast channel.
+    pub fn subscribe_orderbook(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) -> Arc<RwLock<OrderbookSeries>> {
+        // Start station depth subscriber + ensure series entry exists (idempotent).
+        self.subscribe_depth(exchange_id, symbol, account_type);
+
+        // Increment refcount on the series created by subscribe_depth.
+        let ob_key = OrderbookKey::new(exchange_id, account_type, symbol);
+        let handle = {
+            let map = self.orderbook_map.read().unwrap_or_else(|e| e.into_inner());
+            map.get(&ob_key).cloned()
+        };
+        let handle = handle.unwrap_or_else(|| {
+            let mut map = self.orderbook_map.write().unwrap_or_else(|e| e.into_inner());
+            map.entry(ob_key)
+                .or_insert_with(|| Arc::new(RwLock::new(OrderbookSeries::new(DEFAULT_HISTORY_CAPACITY))))
+                .clone()
+        });
+        if let Ok(mut series) = handle.write() {
+            series.refcount += 1;
+        }
+        handle
+    }
+
+    /// Unsubscribe one consumer from the shared `OrderbookSeries`.
+    ///
+    /// Decrements `refcount`; removes the series from the map when it hits zero.
+    /// Also calls `unsubscribe_depth` to manage the underlying WS actor.
+    pub fn unsubscribe_orderbook(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) {
+        self.unsubscribe_depth(exchange_id, symbol, account_type);
+
+        let ob_key = OrderbookKey::new(exchange_id, account_type, symbol);
+        if let Ok(mut map) = self.orderbook_map.write() {
+            let remove = if let Some(handle) = map.get(&ob_key) {
+                if let Ok(mut series) = handle.write() {
+                    series.refcount = series.refcount.saturating_sub(1);
+                    series.refcount == 0
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            if remove {
+                map.remove(&ob_key);
+            }
+        }
+    }
+
+    /// Connect a private (authenticated) WebSocket stream for the given exchange.
+    ///
+    /// Spawns a dedicated private-stream actor that authenticates with the
+    /// exchange and subscribes to order updates, balance changes, and position
+    /// changes.  Events are broadcast as [`LiveUpdate::OrderUpdate`],
+    /// [`LiveUpdate::BalanceUpdate`], and [`LiveUpdate::PositionUpdate`].
+    ///
+    /// Calling this when a private actor is already running for the same
+    /// `(exchange_id, account_type)` pair is a no-op — the existing actor is
+    /// reused.
+    pub fn connect_private(
+        &self,
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        credentials: digdigdig3::Credentials,
+    ) {
+        // C5: spawn station private subscriber once per (exchange_id, account_type).
+        // One authenticated WS covers all private streams (order/balance/position).
+        // WASM: add_authenticated returns UnsupportedOperation → subscribe fails → silent skip.
+        let private_key = (exchange_id, account_type);
+        {
+            let mut subs = self.station_private_subscribed
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if !subs.insert(private_key) {
+                return;
+            }
+        }
+        let station = self.station.clone();
+        let tx = self.tx.clone();
+        let subs_set = self.station_private_subscribed.clone();
+        self.runtime.spawn(async move {
+            let sub_set = digdigdig3_station::SubscriptionSet::new().add_authenticated(
+                exchange_id,
+                account_type,
+                credentials,
+                [
+                    digdigdig3_station::Stream::OrderUpdate,
+                    digdigdig3_station::Stream::BalanceUpdate,
+                    digdigdig3_station::Stream::PositionUpdate,
+                ],
+            );
+            let mut report = match station.subscribe(sub_set).await {
+                Ok(r) => r,
+                Err(e) => {
+                    crate::dlog!("[Bridge] station private subscribe failed {:?} at={:?}: {:?}",
+                        exchange_id, account_type, e);
+                    if let Ok(mut s) = subs_set.lock() {
+                        s.remove(&private_key);
+                    }
+                    return;
+                }
+            };
+            if !report.failed.is_empty() {
+                crate::dlog!("[Bridge] station private partial-fail {:?} at={:?}: {} failed",
+                    exchange_id, account_type, report.failed.len());
+            }
+            while let Some(ev) = report.handle.recv().await {
+                match ev {
+                    digdigdig3_station::Event::OrderUpdate { symbol, point, .. } => {
+                        use digdigdig3::{OrderSide, OrderStatus, OrderType};
+                        let side = if point.side == 0 { OrderSide::Buy } else { OrderSide::Sell };
+                        let order_type = match point.order_type {
+                            1 => OrderType::Limit { price: point.price },
+                            _ => OrderType::Market,
+                        };
+                        let status = match point.status {
+                            1 => OrderStatus::PartiallyFilled,
+                            2 => OrderStatus::Filled,
+                            3 => OrderStatus::Canceled,
+                            4 => OrderStatus::Rejected,
+                            _ => OrderStatus::New,
+                        };
+                        // order_id string is lost in point (hashed); use hash as surrogate.
+                        let event = digdigdig3::OrderUpdateEvent {
+                            order_id: format!("{}", point.order_id_hash),
+                            client_order_id: if point.client_id_hash != 0 {
+                                Some(format!("{}", point.client_id_hash))
+                            } else {
+                                None
+                            },
+                            side,
+                            order_type,
+                            status,
+                            price: if point.price != 0.0 { Some(point.price) } else { None },
+                            quantity: point.qty,
+                            filled_quantity: point.filled_qty,
+                            average_price: if point.avg_price != 0.0 { Some(point.avg_price) } else { None },
+                            last_fill_price: if point.last_fill_price != 0.0 { Some(point.last_fill_price) } else { None },
+                            last_fill_quantity: if point.last_fill_qty != 0.0 { Some(point.last_fill_qty) } else { None },
+                            last_fill_commission: if point.last_fill_commission != 0.0 { Some(point.last_fill_commission) } else { None },
+                            commission_asset: None,
+                            trade_id: None,
+                            timestamp: point.ts_ms,
+                        };
+                        let _ = tx.send(LiveUpdate::OrderUpdate {
+                            exchange_id,
+                            account_type,
+                            symbol,
+                            event,
+                        });
+                    }
+                    digdigdig3_station::Event::BalanceUpdate { symbol, point, .. } => {
+                        // asset string is lost in point (hashed); use symbol from event or hash.
+                        // Station BalanceUpdate symbol = asset ticker (e.g. "USDT") per Event docs.
+                        let asset = if symbol.is_empty() {
+                            format!("{}", point.asset_hash)
+                        } else {
+                            symbol
+                        };
+                        let event = digdigdig3::BalanceUpdateEvent {
+                            asset,
+                            free: point.free,
+                            locked: point.locked,
+                            total: point.total,
+                            delta: if point.delta != 0.0 { Some(point.delta) } else { None },
+                            reason: None,
+                            timestamp: point.ts_ms,
+                        };
+                        let _ = tx.send(LiveUpdate::BalanceUpdate {
+                            exchange_id,
+                            account_type,
+                            event,
+                        });
+                    }
+                    digdigdig3_station::Event::PositionUpdate { symbol, point, .. } => {
+                        use digdigdig3::PositionSide;
+                        let side = match point.side {
+                            1 => PositionSide::Short,
+                            2 => PositionSide::Both,
+                            _ => PositionSide::Long,
+                        };
+                        let event = digdigdig3::PositionUpdateEvent {
+                            side,
+                            quantity: point.qty,
+                            entry_price: point.entry_price,
+                            mark_price: if point.mark_price != 0.0 { Some(point.mark_price) } else { None },
+                            unrealized_pnl: point.unrealized_pnl,
+                            realized_pnl: if point.realized_pnl != 0.0 { Some(point.realized_pnl) } else { None },
+                            liquidation_price: if point.liquidation_price != 0.0 { Some(point.liquidation_price) } else { None },
+                            leverage: None,
+                            margin_type: None,
+                            reason: None,
+                            timestamp: point.ts_ms,
+                        };
+                        let _ = tx.send(LiveUpdate::PositionUpdate {
+                            exchange_id,
+                            account_type,
+                            symbol,
+                            event,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            // Forwarder handle dropped. Remove gate so a future connect_private can re-spawn.
+            if let Ok(mut s) = subs_set.lock() {
+                s.remove(&private_key);
+            }
+            crate::dlog!("[Bridge] station private forwarder exited {:?} at={:?}, gate removed",
+                exchange_id, account_type);
+        });
+    }
+
+    /// Remove one consumer interest in depth stream for this symbol.
+    ///
+    /// Station manages unsubscribe lifecycle via the 30s grace window configured
+    /// in the builder. The gate key is removed when the forwarder task exits.
+    pub fn unsubscribe_depth(&self, _exchange_id: ExchangeId, _symbol: &str, _account_type: AccountType) {
+        // Station unsubscription is handled by the station_orderbook_subscribed gate:
+        // the forwarder task exits when station drops the handle after the grace period.
+    }
+
+    /// Remove one consumer interest in trade stream for this symbol.
+    ///
+    /// Sends a `RemoveSymbol` command to the trade actor; the actor applies a
+    /// 30-second grace period before actually unsubscribing from the exchange.
+    ///
+    /// Also decrements the `TradeSeries` refcount in the `SharedTradeMap`.
+    /// When the refcount reaches zero the series is removed from the map,
+    /// freeing memory.
+    pub fn unsubscribe_trades(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        // Decrement TradeSeries refcount; remove when it hits zero.
+        let trade_key = TradeKey::new(exchange_id, account_type, symbol);
+        if let Ok(mut map) = self.trade_map.write() {
+            let remove = if let Some(handle) = map.get(&trade_key) {
+                if let Ok(mut series) = handle.write() {
+                    series.refcount = series.refcount.saturating_sub(1);
+                    series.refcount == 0
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            if remove {
+                map.remove(&trade_key);
+            }
+        }
+    }
+
+    /// Abort trade WebSocket subscriptions (not mini ticker).
+    ///
+    /// Call this when switching symbols to stop old trade streams.
+    /// Mini ticker subscriptions (watchlist) are preserved.
+    pub fn unsubscribe_all(&self) {
+        // Station manages trade subscription lifecycle via grace windows.
+        // No legacy ws_actor trade streams remain.
+    }
+
+    /// Unsubscribe a single mini-ticker symbol (when symbol removed from watchlist).
+    ///
+    /// Sends a `RemoveSymbol` command to the ticker actor; the actor applies a
+    /// 30-second grace period before actually unsubscribing from the exchange.
+    pub fn unsubscribe_mini_ticker(&self, _exchange_id: ExchangeId, _symbol: &str, _account_type: AccountType) {
+        // Station manages ticker subscription lifecycle via grace windows.
+    }
+
+    /// Stop all WebSocket subscriptions for a specific exchange.
+    ///
+    /// Station manages subscription lifecycle; legacy ws_actor maps are removed.
+    pub fn unsubscribe_exchange(&self, _exchange_id: ExchangeId) {
+        // No legacy ws_actor map remains. Station grace windows handle cleanup.
+    }
+
+    /// Disable a connector — remove from pool and stop all WS tasks.
+    pub fn disable_connector(&self, exchange_id: ExchangeId) {
+        self.unsubscribe_exchange(exchange_id);
+        let was_connected = self.hub.is_connected(exchange_id);
+        self.hub.shutdown(exchange_id);
+        if was_connected {
+            crate::dlog!("[Bridge] Removed connector: {:?}", exchange_id);
+        }
+    }
+
+    /// Enable a connector — initialize it if not already in pool.
+    pub fn enable_connector(&self, exchange_id: ExchangeId) {
+        self.ensure_connector(exchange_id);
+    }
+
+    /// Count active WebSocket tasks for a specific exchange.
+    ///
+    /// Returns 0 — legacy ws_actor map removed. Station reports liveness via `ws_health`.
+    pub fn ws_task_count(&self, _exchange_id: ExchangeId) -> usize {
+        0
+    }
+
+    /// Count total active WebSocket tasks across all exchanges.
+    ///
+    /// Returns 0 — legacy ws_actor map removed. Station reports liveness via `ws_health`.
+    pub fn ws_task_count_total(&self) -> usize {
+        0
+    }
+
+    /// Get summary metrics for all active connectors.
+    ///
+    /// Returns one entry per exchange currently in the connector pool,
+    /// containing the exchange ID, its `ConnectorStats`, and the number
+    /// of active WebSocket tasks.
+    ///
+    /// Note: depends on `ConnectorStats` and `AnyConnector::metrics()` which
+    /// are added by a parallel implementation task. This method will not
+    /// compile until those additions are present.
+    pub fn collect_metrics(&self) -> Vec<(ExchangeId, digdigdig3::core::types::ConnectorStats, usize)> {
+        let mut results = Vec::new();
+        let rtt_handles_snapshot = self.ws_rtt_handles.lock().ok()
+            .map(|g| g.clone());
+        for eid in self.hub.list_connected() {
+            let mut stats = if let Some(connector) = self.hub.rest(eid) {
+                connector.metrics()
+            } else {
+                digdigdig3::core::types::ConnectorStats::default()
+            };
+            // Overlay WS ping RTT if a live handle exists for this exchange.
+            if let Some(ref handles) = rtt_handles_snapshot {
+                if let Some(rtt_handle) = handles.get(&eid) {
+                    if let Ok(rtt) = rtt_handle.try_lock() {
+                        stats.ws_ping_rtt_ms = *rtt;
+                    }
+                }
+            }
+            let ws_count = self.ws_task_count(eid);
+            results.push((eid, stats, ws_count));
+        }
+        results
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Agent API accessors
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Get cached bars for a specific (exchange, account_type, symbol, timeframe) key.
+    ///
+    /// Returns `None` if the key is not in the cache.
+    pub fn get_cached_bars(
+        &self,
+        exchange_id: &ExchangeId,
+        account_type: AccountType,
+        symbol: &str,
+        timeframe: &str,
+    ) -> Option<Vec<Bar>> {
+        let key = make_series_key(*exchange_id, account_type, symbol, timeframe);
+        let bars = read_series_bars(&self.bar_cache, &key);
+        if bars.is_empty() { None } else { Some(bars) }
+    }
+
+    /// Return all keys currently stored in the bar cache.
+    pub fn cached_bar_keys(&self) -> Vec<(ExchangeId, AccountType, String, String)> {
+        let guard = self.bar_cache.read().unwrap_or_else(|e| e.into_inner());
+        guard
+            .keys()
+            .map(|k| (k.exchange_id, k.account_type, k.symbol.clone(), k.timeframe.clone()))
+            .collect()
+    }
+
+    /// Request background backfill of historical bars for a symbol/timeframe.
+    ///
+    /// Non-blocking — spawns an async task that pages backward through history
+    /// until `target_bars` are accumulated in the cache. On completion, sends
+    /// `BackfillComplete` through the update channel.
+    ///
+    /// This is Layer 2 of the data loading pipeline. It is designed to run
+    /// silently after `request_bars` (Layer 1) has already populated the cache
+    /// with recent bars, extending history further into the past.
+    ///
+    /// If the cache already holds `>= target_bars`, or a backfill for this key
+    /// is already in-flight, the call returns immediately without spawning a task.
+    pub fn request_background_backfill(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        timeframe: &Timeframe,
+        account_type: AccountType,
+        target_bars: u32,
+    ) {
+        let hub = self.hub.clone();
+        let tx = self.tx.clone();
+        let symbol_str = symbol.to_string();
+        let interval = timeframe_to_interval(timeframe);
+        let tf_name = timeframe.name.clone();
+        let cache = self.bar_cache.clone();
+        let active_fetches = self.active_fetches.clone();
+        let oldest_fetched_ts = self.oldest_fetched_ts.clone();
+
+        let cache_key = make_series_key(exchange_id, account_type, &symbol_str, &tf_name);
+
+        // Backfill dedup key: encode the "backfill" role by prefixing the symbol.
+        // This avoids colliding with the regular request_bars fetch key while
+        // reusing the same HashSet type.
+        let backfill_fetch_key = make_series_key(
+            exchange_id,
+            account_type,
+            &format!("backfill:{}", symbol_str),
+            &tf_name,
+        );
+
+        // ── Deduplication guard ───────────────────────────────────────────────
+        {
+            let mut af = active_fetches.lock().unwrap_or_else(|e| e.into_inner());
+            if af.contains(&backfill_fetch_key) {
+                crate::dlog!(
+                    "[Bridge] backfill already in flight for {:?} sym={} tf={}, skipping",
+                    exchange_id, symbol_str, tf_name
+                );
+                return;
+            }
+            af.insert(backfill_fetch_key.clone());
+        }
+
+        // ── Early-exit if cache is already satisfied ─────────────────────────
+        let cached_len = read_series_len(&cache, &cache_key);
+
+        if cached_len >= target_bars as usize {
+            crate::dlog!(
+                "[Bridge] backfill {:?} sym={} tf={}: cache already has {} >= {} bars, skipping",
+                exchange_id, symbol_str, tf_name, cached_len, target_bars
+            );
+            if let Ok(mut af) = active_fetches.lock() {
+                af.remove(&backfill_fetch_key);
+            }
+            return;
+        }
+
+        self.runtime.spawn(async move {
+            macro_rules! finish_backfill {
+                () => {
+                    if let Ok(mut af) = active_fetches.lock() {
+                        af.remove(&backfill_fetch_key);
+                    }
+                };
+            }
+
+            // Wait for connector (same pattern as request_bars).
+            let connector = {
+                let mut attempts = 0;
+                loop {
+                    if let Some(c) = hub.rest(exchange_id) {
+                        break c;
+                    }
+                    attempts += 1;
+                    if attempts > 50 {
+                        eprintln!(
+                            "[Bridge] backfill: connector {:?} not initialized after 5s",
+                            exchange_id
+                        );
+                        let _ = tx.send(LiveUpdate::Error {
+                            exchange_id,
+                            message: format!(
+                                "backfill: connector {:?} not initialized",
+                                exchange_id
+                            ),
+                        });
+                        finish_backfill!();
+                        return;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            };
+
+            let sym = parse_symbol_for_exchange(exchange_id, &symbol_str);
+
+            // Re-check cache length after connector wait — another task may have
+            // already satisfied the target while we were waiting.
+            let (still_need, end_time_cursor_init) = {
+                let bars = read_series_bars(&cache, &cache_key);
+                if bars.len() >= target_bars as usize {
+                    crate::dlog!(
+                        "[Bridge] backfill {:?} sym={} tf={}: satisfied after connector wait ({} bars)",
+                        exchange_id, symbol_str, tf_name, bars.len()
+                    );
+                    finish_backfill!();
+                    return;
+                } else if bars.is_empty() {
+                    (target_bars as usize, None)
+                } else {
+                    let need = target_bars as usize - bars.len();
+                    // Cursor: just before the oldest cached bar (in ms).
+                    let oldest_ms = bars.first().map(|b| b.timestamp * 1000 - 1);
+                    (need, oldest_ms)
+                }
+            };
+
+            crate::dlog!(
+                "[Bridge] backfill {:?} sym={} tf={}: need {} more bars, cursor={:?}",
+                exchange_id, symbol_str, tf_name, still_need, end_time_cursor_init
+            );
+
+            // Effective limit accounts for exchange-specific per-request caps
+            // (e.g. OKX returns at most 300 bars regardless of what we request).
+            let effective_limit = hub.max_kline_limit(exchange_id, 500);
+
+            let mut end_time_cursor = end_time_cursor_init;
+            let mut accumulated: Vec<Bar> = Vec::with_capacity(still_need.min(20_000));
+            let mut pages: usize = 0;
+
+            'backfill: loop {
+                let result = connector
+                    .get_klines((&sym).into(),&interval, Some(effective_limit), account_type, end_time_cursor)
+                    .await;
+
+                match result {
+                    Ok(klines) => {
+                        if klines.is_empty() {
+                            // Exchange has no more data — record oldest_ts so scroll
+                            // can stop asking for more.
+                            crate::dlog!("[Bridge] backfill: empty page at page {}, stopping", pages);
+                            if let Some(oldest_so_far) = accumulated.first().map(|b| b.timestamp) {
+                                if let Ok(mut map) = oldest_fetched_ts.lock() {
+                                    let entry = map.entry(cache_key.clone()).or_insert(i64::MAX);
+                                    if oldest_so_far < *entry {
+                                        *entry = oldest_so_far;
+                                    }
+                                }
+                            }
+                            break 'backfill;
+                        }
+
+                        let page_len = klines.len();
+                        pages += 1;
+                        let batch: Vec<Bar> = klines.iter().map(kline_to_bar).collect();
+
+                        // Move cursor to before the oldest bar in this page.
+                        if let Some(oldest_ms) = klines.iter().map(|k| k.open_time).min() {
+                            end_time_cursor = Some(oldest_ms - 1);
+                        }
+
+                        let oldest_bar_ts = batch.first().map(|b| b.timestamp).unwrap_or(0);
+
+                        // If the exchange returned fewer bars than its effective limit, it has
+                        // run out of history — record oldest_ts so scroll-left stops requesting
+                        // more.  A full page (page_len == effective_limit) means there is more
+                        // data available further back; recording oldest_ts here would
+                        // incorrectly block future fetches.
+                        if page_len < effective_limit as usize && oldest_bar_ts > 0 {
+                            if let Ok(mut map) = oldest_fetched_ts.lock() {
+                                let entry = map.entry(cache_key.clone()).or_insert(i64::MAX);
+                                if oldest_bar_ts < *entry {
+                                    *entry = oldest_bar_ts;
+                                }
+                            }
+                        }
+
+                        accumulated = merge_bars(batch, accumulated);
+
+                        crate::dlog!(
+                            "[Bridge] backfill: page {} -> {} accumulated bars (oldest_ts={}, page_len={})",
+                            pages,
+                            accumulated.len(),
+                            oldest_bar_ts,
+                            page_len,
+                        );
+
+                        if accumulated.len() >= still_need {
+                            crate::dlog!(
+                                "[Bridge] backfill: reached target ({} >= {}), more data may exist on exchange",
+                                accumulated.len(),
+                                still_need
+                            );
+                            // Do NOT record oldest_ts here — we stopped by choice, not
+                            // because the exchange ran out of data.
+                            break 'backfill;
+                        }
+                        if pages >= 40 {
+                            crate::dlog!("[Bridge] backfill: capped at 40 pages (~20k bars)");
+                            // Page cap also does not mean exchange ran out.
+                            break 'backfill;
+                        }
+                    }
+                    Err(e) => {
+                        crate::dlog!("[Bridge] backfill: error at page {}: {}", pages, e);
+                        break 'backfill;
+                    }
+                }
+            }
+
+            if accumulated.is_empty() {
+                crate::dlog!("[Bridge] backfill: no bars fetched, done");
+                finish_backfill!();
+                return;
+            }
+
+            crate::dlog!(
+                "[Bridge] backfill {:?} sym={} tf={}: fetched {} bars over {} pages, merging into cache",
+                exchange_id, symbol_str, tf_name, accumulated.len(), pages
+            );
+
+            // Merge accumulated into current cache — hold the lock across the entire
+            // read-merge-write to prevent a race with concurrent tasks.
+            let period_secs = tf_period_secs(&tf_name);
+            let merged = merge_into_series(&cache, &cache_key, accumulated, period_secs);
+
+            crate::dlog!(
+                "[Bridge] backfill done: sending BackfillComplete with {} bars",
+                merged.len()
+            );
+
+            let _ = tx.send(LiveUpdate::BackfillComplete {
+                exchange_id,
+                account_type,
+                symbol: symbol_str,
+                timeframe: tf_name,
+                bars: merged,
+            });
+
+            finish_backfill!();
+        });
+    }
+
+    /// Request a single page of bars older than `before_ts` for scroll-left (infinite scroll).
+    ///
+    /// Non-blocking — spawns an async task. On completion, sends
+    /// `ScrollBarsLoaded` through the update channel.
+    ///
+    /// This is Layer 3 of the data loading pipeline. It is triggered when the
+    /// user scrolls left past the oldest bar currently in the viewport. The
+    /// caller should fire it again when the user scrolls further left; the
+    /// dedup guard ensures only one in-flight scroll fetch exists per key at
+    /// any time.
+    ///
+    /// # Parameters
+    ///
+    /// - `before_ts`: oldest timestamp currently in the window's bar series
+    ///   (seconds). The fetch retrieves bars strictly older than this.
+    /// - `batch_size`: number of bars to request per page (typically 500).
+    ///
+    /// # Behaviour
+    ///
+    /// 1. Dedup: if a scroll fetch for this key is already in-flight, returns immediately.
+    /// 2. Cache hit: if the session bar cache already contains bars older than
+    ///    `before_ts`, extracts them and sends `ScrollBarsLoaded` without a
+    ///    network request.
+    /// 3. Oldest-ts guard: if we already know the exchange has no data before
+    ///    `before_ts` (recorded by a previous scroll fetch), returns immediately.
+    /// 4. REST fetch: fetches one page ending just before `before_ts`, merges
+    ///    the result into the cache, and sends `ScrollBarsLoaded`.
+    pub fn request_scroll_bars(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        timeframe: &Timeframe,
+        account_type: AccountType,
+        before_ts: i64,
+        batch_size: usize,
+    ) {
+        let hub = self.hub.clone();
+        let tx = self.tx.clone();
+        let symbol_str = symbol.to_string();
+        let interval = timeframe_to_interval(timeframe);
+        let tf_name = timeframe.name.clone();
+        let cache = self.bar_cache.clone();
+        let active_fetches = self.active_fetches.clone();
+        let oldest_fetched_ts = self.oldest_fetched_ts.clone();
+
+        let cache_key = make_series_key(exchange_id, account_type, &symbol_str, &tf_name);
+
+        // Scroll dedup key: encode "scroll:" role by prefixing the symbol,
+        // matching the pattern used by "backfill:" in request_background_backfill.
+        let scroll_fetch_key = make_series_key(
+            exchange_id,
+            account_type,
+            &format!("scroll:{}", symbol_str),
+            &tf_name,
+        );
+
+        // ── Deduplication guard ───────────────────────────────────────────────
+        {
+            let mut af = active_fetches.lock().unwrap_or_else(|e| e.into_inner());
+            if af.contains(&scroll_fetch_key) {
+                crate::dlog!(
+                    "[Bridge] scroll fetch already in flight for {:?} sym={} tf={}, skipping",
+                    exchange_id, symbol_str, tf_name
+                );
+                return;
+            }
+            af.insert(scroll_fetch_key.clone());
+        }
+
+        // ── Cache check: do we already have bars older than before_ts? ────────
+        let all_cached_bars = read_series_bars(&cache, &cache_key);
+        let cached_older: Option<Vec<Bar>> = if all_cached_bars.is_empty() {
+            None
+        } else {
+            Some(
+                all_cached_bars
+                    .iter()
+                    .filter(|b| b.timestamp < before_ts)
+                    .copied()
+                    .collect::<Vec<Bar>>(),
+            )
+        };
+
+        if let Some(ref older_bars) = cached_older {
+            if !older_bars.is_empty() {
+                let prepend_count = older_bars.len().min(batch_size);
+                // Full merged set is whatever is in cache (already sorted).
+                let full_bars: Vec<Bar> = all_cached_bars;
+
+                crate::dlog!(
+                    "[Bridge] scroll {:?} sym={} tf={}: {} cached bars older than {}, serving {} from cache",
+                    exchange_id, symbol_str, tf_name, older_bars.len(), before_ts, prepend_count
+                );
+
+                let _ = tx.send(LiveUpdate::ScrollBarsLoaded {
+                    exchange_id,
+                    account_type,
+                    symbol: symbol_str.clone(),
+                    timeframe: tf_name.clone(),
+                    bars: full_bars,
+                    prepend_count,
+                });
+
+                if let Ok(mut af) = active_fetches.lock() {
+                    af.remove(&scroll_fetch_key);
+                }
+                return;
+            }
+        }
+
+        // ── Oldest-ts guard: no point fetching if exchange has no more data ───
+        let known_oldest = oldest_fetched_ts
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&cache_key).copied());
+
+        if let Some(oldest) = known_oldest {
+            if before_ts <= oldest {
+                // This is correct behavior: the exchange returned an empty page or error
+                // at this timestamp in a previous fetch, so there are no older bars.
+                // All available bars are already loaded — scroll has reached the beginning
+                // of the exchange's history for this symbol/timeframe.
+                crate::dlog!(
+                    "[Bridge] scroll {}: all available bars already loaded (oldest_fetched={}, before_ts={})",
+                    symbol_str, oldest, before_ts
+                );
+                if let Ok(mut af) = active_fetches.lock() {
+                    af.remove(&scroll_fetch_key);
+                }
+                return;
+            }
+        }
+
+        // ── REST fetch ────────────────────────────────────────────────────────
+        self.runtime.spawn(async move {
+            macro_rules! finish_scroll {
+                () => {
+                    if let Ok(mut af) = active_fetches.lock() {
+                        af.remove(&scroll_fetch_key);
+                    }
+                };
+            }
+
+            // Wait for connector — ensures the exchange is connected before
+            // fetch_history attempts its REST call (fetch_history returns Err
+            // immediately if hub has no connector for this exchange).
+            {
+                let mut attempts = 0;
+                loop {
+                    if hub.rest(exchange_id).is_some() {
+                        break;
+                    }
+                    attempts += 1;
+                    if attempts > 50 {
+                        eprintln!(
+                            "[Bridge] scroll: connector {:?} not initialized after 5s",
+                            exchange_id
+                        );
+                        finish_scroll!();
+                        return;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            }
+
+            // end_time = just before the oldest timestamp the caller has (ms).
+            let end_time_ms = before_ts * 1000 - 1;
+
+            crate::dlog!(
+                "[Bridge] scroll fetch (station): {:?} sym={} tf={} end_time_ms={} batch={}",
+                exchange_id, symbol_str, tf_name, end_time_ms, batch_size
+            );
+
+            // Clamp to the exchange's actual per-request maximum so we request
+            // exactly what the exchange will return, and can correctly distinguish
+            // a full page from an exhausted-history short page.
+            let limit = hub.max_kline_limit(exchange_id, (batch_size as u16).min(500));
+            let kline_iv = KlineInterval::new(&interval);
+            let hub_arc = std::sync::Arc::new(hub);
+            let result = digdigdig3_station::fetch_history(
+                &hub_arc,
+                exchange_id,
+                &symbol_str,
+                account_type,
+                &kline_iv,
+                end_time_ms,
+                limit,
+            ).await;
+
+            match result {
+                Err(e) => {
+                    eprintln!(
+                        "[Bridge] scroll fetch error: {:?} sym={} tf={}: {}",
+                        exchange_id, symbol_str, tf_name, e
+                    );
+                    // Do NOT record oldest_fetched_ts — this may be a temporary error
+                    // (e.g. rate limit). The scroll trigger will retry on the next frame.
+                    finish_scroll!();
+                }
+                Ok(points) if points.is_empty() => {
+                    crate::dlog!(
+                        "[Bridge] scroll fetch: {:?} sym={} tf={}: empty page, no more history",
+                        exchange_id, symbol_str, tf_name
+                    );
+                    // Record before_ts as the oldest known — exchange has nothing older.
+                    if let Ok(mut map) = oldest_fetched_ts.lock() {
+                        let entry = map.entry(cache_key.clone()).or_insert(i64::MAX);
+                        if before_ts < *entry {
+                            *entry = before_ts;
+                        }
+                    }
+                    finish_scroll!();
+                }
+                Ok(points) => {
+                    let page_len = points.len();
+                    let new_page: Vec<Bar> = points.iter().map(bar_point_to_bar).collect();
+                    let prepend_count = new_page.len();
+
+                    crate::dlog!(
+                        "[Bridge] scroll fetch: {:?} sym={} tf={}: got {} bars",
+                        exchange_id, symbol_str, tf_name, prepend_count
+                    );
+
+                    // Only record oldest_fetched_ts when the exchange returned fewer bars
+                    // than requested — that means it ran out of history.  A full page
+                    // (page_len == limit) means there is more data available further back;
+                    // recording oldest_ts here would incorrectly block future scroll requests.
+                    let oldest_bar_ts = new_page.first().map(|b| b.timestamp).unwrap_or(0);
+                    if oldest_bar_ts > 0 && page_len < limit as usize {
+                        if let Ok(mut map) = oldest_fetched_ts.lock() {
+                            let entry = map.entry(cache_key.clone()).or_insert(i64::MAX);
+                            if oldest_bar_ts < *entry {
+                                *entry = oldest_bar_ts;
+                            }
+                        }
+                    }
+
+                    // Merge new page into bar cache atomically.
+                    let period_secs = tf_period_secs(&tf_name);
+                    let merged = merge_into_series(&cache, &cache_key, new_page, period_secs);
+
+                    let _ = tx.send(LiveUpdate::ScrollBarsLoaded {
+                        exchange_id,
+                        account_type,
+                        symbol: symbol_str,
+                        timeframe: tf_name,
+                        bars: merged,
+                        prepend_count,
+                    });
+
+                    finish_scroll!();
+                }
+            }
+        });
+    }
+
+    /// Get a reference to the tokio runtime owned by this bridge.
+    pub fn runtime(&self) -> &Runtime {
+        &self.runtime
+    }
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXCHANGE KLINE LIMIT
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ACCOUNT TYPE HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Convert an account type short label string back to an [`AccountType`] enum.
+///
+/// Unknown labels fall back to [`AccountType::Spot`] — the safe default and
+/// backward-compatible case (old disk files without an account_type prefix).
+pub fn account_type_from_short_label(s: &str) -> AccountType {
+    match s {
+        "M"  => AccountType::Margin,
+        "F"  => AccountType::FuturesCross,
+        "FI" => AccountType::FuturesIsolated,
+        "E"  => AccountType::Earn,
+        "L"  => AccountType::Lending,
+        "O"  => AccountType::Options,
+        "CV" => AccountType::Convert,
+        _    => AccountType::Spot, // "S" and unknown → Spot
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INTERVAL HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Parse an interval string to seconds.
+///
+/// Handles standard exchange interval notation: "1s"→1, "1m"→60, "5m"→300,
+/// "15m"→900, "1h"→3600, "4h"→14400, "1d"→86400, "1w"→604800.
+/// Falls back to minutes when the unit is unrecognised.
+fn interval_to_seconds(interval: &str) -> i64 {
+    let s = interval.trim();
+    if s.is_empty() {
+        return 60;
+    }
+    // Case-sensitive: 'm' = minutes, 'M' = months.
+    // All other units are case-insensitive.
+    let unit = s.chars().last().unwrap_or('m');
+    let num_part = &s[..s.len() - unit.len_utf8()];
+    let num: i64 = num_part.parse().unwrap_or(1);
+    match unit {
+        's' | 'S' => num,
+        'm' => num * 60,             // minutes (lowercase)
+        'M' => num * 2_592_000,      // months (uppercase) ≈ 30 days
+        'h' | 'H' => num * 3_600,
+        'd' | 'D' => num * 86_400,
+        'w' | 'W' => num * 604_800,
+        _ => num * 60,
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SHARED SERIES HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Build a `BarSeriesKey` from the bridge's internal key components.
+fn make_series_key(exchange_id: ExchangeId, account_type: AccountType, symbol: &str, timeframe: &str) -> BarSeriesKey {
+    BarSeriesKey::new(exchange_id, account_type, symbol, timeframe)
+}
+
+/// Parse a timeframe name string (e.g. "1m", "4h", "1d") to period in seconds.
+fn tf_period_secs(tf_name: &str) -> i64 {
+    // Timeframe names use uppercase suffix ("1D", "1H", "1W") — must be
+    // case-insensitive.  Without this, "1D" falls through to the default
+    // 60-second period, causing trade bars to be created with 1-minute
+    // boundaries inside a daily series (phantom bar bug).
+    interval_to_seconds(tf_name.trim())
+}
+
+/// Get or create a `BarSeries` entry in the shared map, returning a clone of
+/// its `Arc<RwLock<BarSeries>>`.
+fn get_or_create_series(map: &SharedSeriesMap, key: &BarSeriesKey, period_secs: i64) -> Arc<RwLock<BarSeries>> {
+    // Try a read-only path first to avoid write-lock contention.
+    {
+        let guard = map.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(handle) = guard.get(key) {
+            return handle.clone();
+        }
+    }
+    // Not found — grab a write lock and insert.
+    let mut guard = map.write().unwrap_or_else(|e| e.into_inner());
+    guard
+        .entry(key.clone())
+        .or_insert_with(|| Arc::new(RwLock::new(BarSeries::new(10_000, period_secs))))
+        .clone()
+}
+
+/// Read all bars from a series as a `Vec<Bar>`. Returns an empty `Vec` if the
+/// key is not present in the map.
+fn read_series_bars(map: &SharedSeriesMap, key: &BarSeriesKey) -> Vec<Bar> {
+    let guard = map.read().unwrap_or_else(|e| e.into_inner());
+    match guard.get(key) {
+        Some(handle) => handle.read().unwrap_or_else(|e| e.into_inner()).to_vec(),
+        None => Vec::new(),
+    }
+}
+
+/// Return the bar count for a series. Returns 0 if the key is not present.
+fn read_series_len(map: &SharedSeriesMap, key: &BarSeriesKey) -> usize {
+    let guard = map.read().unwrap_or_else(|e| e.into_inner());
+    match guard.get(key) {
+        Some(handle) => handle.read().unwrap_or_else(|e| e.into_inner()).len(),
+        None => 0,
+    }
+}
+
+/// Replace the bars in a series (creating it if needed). Bumps version and
+/// marks the series dirty.
+fn set_series_bars(map: &SharedSeriesMap, key: &BarSeriesKey, mut bars: Vec<Bar>, period_secs: i64) {
+    bars.sort_by_key(|b| b.timestamp);
+    bars.dedup_by_key(|b| b.timestamp);
+    bars.retain(|b| b.timestamp >= 1_000_000_000 && b.timestamp <= 9_999_999_999);
+    let handle = get_or_create_series(map, key, period_secs);
+    let mut series = handle.write().unwrap_or_else(|e| e.into_inner());
+    series.bars = VecDeque::from(bars);
+    series.version += 1;
+    series.dirty = true;
+}
+
+/// Atomically read–merge–write bars in a series. Returns the merged result.
+fn merge_into_series(map: &SharedSeriesMap, key: &BarSeriesKey, new_bars: Vec<Bar>, period_secs: i64) -> Vec<Bar> {
+    let handle = get_or_create_series(map, key, period_secs);
+    let mut series = handle.write().unwrap_or_else(|e| e.into_inner());
+    let existing = series.to_vec();
+    let merged = merge_bars(existing, new_bars);
+    series.bars = VecDeque::from(merged.clone());
+    series.version += 1;
+    series.dirty = true;
+    merged
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BAR CACHE MERGE
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Merge two sorted bar vectors by timestamp, keeping the *newer* version of
+/// any bar that appears in both (same timestamp). The result is sorted
+/// ascending by timestamp.
+fn merge_bars(old: Vec<Bar>, fresh: Vec<Bar>) -> Vec<Bar> {
+    if fresh.is_empty() {
+        return old;
+    }
+    if old.is_empty() {
+        return fresh;
+    }
+
+    // Always merge via HashMap (fresh wins on conflicts) + sort.
+    // This is self-healing: even if old is unsorted, the result is always sorted.
+    let mut map: HashMap<i64, Bar> = HashMap::with_capacity(old.len() + fresh.len());
+    for bar in old {
+        map.insert(bar.timestamp, bar);
+    }
+    for bar in fresh {
+        map.insert(bar.timestamp, bar);
+    }
+    let mut merged: Vec<Bar> = map.into_values().collect();
+    merged.sort_by_key(|b| b.timestamp);
+    merged.retain(|b| b.timestamp >= 1_000_000_000 && b.timestamp <= 9_999_999_999);
+    merged
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STATION BAR CONVERSION
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Convert a `digdigdig3_station::BarPoint` to a chart `Bar`.
+///
+/// `BarPoint.open_time` is in milliseconds; `Bar.timestamp` is in seconds.
+fn bar_point_to_bar(point: &digdigdig3_station::data::BarPoint) -> Bar {
+    Bar {
+        timestamp: point.open_time / 1000,
+        open: point.open,
+        high: point.high,
+        low: point.low,
+        close: point.close,
+        volume: point.volume,
+    }
+}
+
+/// Upsert a single bar into the shared bar cache.
+///
+/// - If the last bar in the series has the same timestamp, overwrite it
+///   (in-progress bar update).
+/// - If the new bar is newer, append it.
+/// - If the new bar is older, skip silently (late delivery, already covered
+///   by the REST flow).
+fn upsert_bar_into_cache(
+    cache: &SharedSeriesMap,
+    key: &BarSeriesKey,
+    bar: &Bar,
+    period_secs: i64,
+) {
+    let handle = get_or_create_series(cache, key, period_secs);
+    let write_result = handle.write();
+    if let Ok(mut series) = write_result {
+        if let Some(last) = series.bars.back_mut() {
+            if last.timestamp == bar.timestamp {
+                *last = *bar;
+                series.version += 1;
+                series.dirty = true;
+            } else if bar.timestamp > last.timestamp {
+                series.bars.push_back(*bar);
+                series.version += 1;
+                series.dirty = true;
+            }
+            // older bar — skip silently
+        } else {
+            series.bars.push_back(*bar);
+            series.version += 1;
+            series.dirty = true;
+        }
+    };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SYMBOL PARSING
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Exchange-aware symbol parser.
+///
+/// Handles exchange-specific raw symbol formats before falling back to
+/// the generic `parse_symbol()`. This avoids the lossy
+/// raw → Symbol{base,quote} → format_symbol round-trip that breaks
+/// exchanges with non-standard symbol conventions.
+pub(crate) fn parse_symbol_for_exchange(exchange_id: ExchangeId, s: &str) -> Symbol {
+    let mut sym = match exchange_id {
+        // Lighter uses USDC as quote currency (not USDT).
+        // Raw symbols: "BTC", "ETH", "BTCUSDC", "BTC/USDC"
+        ExchangeId::Lighter => {
+            // If already has separator, use generic parser
+            if s.contains('/') || s.contains('-') || s.contains('_') {
+                let sym = parse_symbol(s);
+                // Fix: if generic parser defaulted quote to USDT, change to USDC
+                if sym.quote == "USDT" {
+                    Symbol::new(&sym.base, "USDC")
+                } else {
+                    sym
+                }
+            } else {
+                let upper = s.to_uppercase();
+                // Strip USDC/USDT suffix if present
+                if upper.ends_with("USDC") && upper.len() > 4 {
+                    Symbol::new(&upper[..upper.len() - 4], "USDC")
+                } else if upper.ends_with("USDT") && upper.len() > 4 {
+                    Symbol::new(&upper[..upper.len() - 4], "USDC")
+                } else {
+                    // Bare coin name like "BTC" → use USDC as default quote
+                    Symbol::new(s, "USDC")
+                }
+            }
+        }
+
+        // HyperLiquid uses USDC as default quote (data-feed only uses base).
+        // Raw symbols: "BTC", "ETH", "HYPE"
+        ExchangeId::HyperLiquid => {
+            let sym = parse_symbol(s);
+            // HyperLiquid only uses base, but correct quote is USDC for display
+            if sym.quote == "USDT" {
+                Symbol::new(&sym.base, "USDC")
+            } else {
+                sym
+            }
+        }
+
+        // Upbit uses REVERSED format: QUOTE-BASE (e.g., "KRW-BTC" means BTC priced in KRW).
+        // Known Upbit quote currencies: KRW, BTC, USDT, SGD, THB, IDR
+        ExchangeId::Upbit => {
+            if let Some(idx) = s.find('-') {
+                let left = &s[..idx];
+                let right = &s[idx + 1..];
+                let upper_left = left.to_uppercase();
+                // Upbit quotes: KRW, BTC, USDT, SGD, THB, IDR
+                let upbit_quotes = ["KRW", "BTC", "USDT", "SGD", "THB", "IDR"];
+                if upbit_quotes.iter().any(|q| upper_left == *q) {
+                    // Reversed: left is quote, right is base
+                    Symbol::new(right, left)
+                } else {
+                    // Fallback: try generic parser, but default to KRW instead of USDT
+                    let sym = parse_symbol(s);
+                    if sym.quote == "USDT" {
+                        Symbol::new(&sym.base, "KRW")
+                    } else {
+                        sym
+                    }
+                }
+            } else {
+                // Fallback: try generic parser, but default to KRW instead of USDT
+                let sym = parse_symbol(s);
+                if sym.quote == "USDT" {
+                    Symbol::new(&sym.base, "KRW")
+                } else {
+                    sym
+                }
+            }
+        }
+
+        // Deribit: "BTC-PERPETUAL", "ETH-PERPETUAL", "SOL_USDC-PERPETUAL"
+        // The generic parser handles this OK for now — "BTC-PERPETUAL" → {base:"BTC", quote:"PERPETUAL"}
+        // and the Deribit connector knows how to handle quote="PERPETUAL"
+        ExchangeId::Deribit => parse_symbol(s),
+
+        // All other exchanges: use generic parser
+        _ => parse_symbol(s),
+    };
+    // Always preserve the original raw input string
+    sym.raw = Some(s.to_string());
+    sym
+}
+
+/// Parse a symbol string like `"BTCUSDT"` into a V5 `Symbol`.
+///
+/// Tries common separator characters first, then falls back to matching
+/// well-known quote currency suffixes. If nothing matches, returns
+/// the whole string as the base with `"USDT"` as the quote.
+///
+/// The raw input string is always preserved in `Symbol::raw`.
+fn parse_symbol(s: &str) -> Symbol {
+    let original = s;
+
+    let mut result = 'parse: {
+        if let Some(idx) = s.find('/') {
+            break 'parse Symbol::new(&s[..idx], &s[idx + 1..]);
+        }
+        // Handle Paradex-style perpetual symbols: BASE-QUOTE-PERP or BASE-QUOTE-PERP_OPTION.
+        // Split on '-' but strip trailing "-PERP" / "-PERP_OPTION" suffixes so that
+        // `quote` ends up as plain "USD" rather than "USD-PERP", allowing
+        // `format_symbol` to reconstruct the correct "BTC-USD-PERP" market identifier.
+        if let Some(idx) = s.find('-') {
+            let remainder = &s[idx + 1..];
+            // Check if remainder itself contains another '-', indicating a 3-part symbol.
+            if let Some(second_dash) = remainder.find('-') {
+                let quote = &remainder[..second_dash];
+                let suffix = &remainder[second_dash + 1..];
+                // Only treat as a perpetual symbol if the trailing component looks like
+                // a known derivative suffix (PERP, SWAP, PERP_OPTION, etc.).
+                let upper_suffix = suffix.to_uppercase();
+                if upper_suffix == "PERP"
+                    || upper_suffix == "SWAP"
+                    || upper_suffix.starts_with("PERP_")
+                {
+                    break 'parse Symbol::new(&s[..idx], quote);
+                }
+            }
+            break 'parse Symbol::new(&s[..idx], remainder);
+        }
+        if let Some(idx) = s.find('_') {
+            break 'parse Symbol::new(&s[..idx], &s[idx + 1..]);
+        }
+
+        // Handle Bitfinex tXXXYYY format — strip the leading 't' prefix so that
+        // "tBTCUSD" and "tbtcusd" both parse as base="BTC" quote="USD" rather
+        // than base="tbtc" quote="usd", which would cause format_symbol to emit
+        // a double-prefixed "tTBTCUSD" that Bitfinex rejects.
+        let s = if (s.starts_with('t') || s.starts_with('T')) && s.len() > 4 {
+            let without_t = &s[1..];
+            let upper_without_t = without_t.to_uppercase();
+            let has_known_quote = ["USDT", "BUSD", "USDC", "USD", "BTC", "ETH", "BNB", "EUR", "GBP", "JPY"]
+                .iter()
+                .any(|q| upper_without_t.ends_with(q) && upper_without_t.len() > q.len());
+            if has_known_quote { without_t } else { s }
+        } else {
+            s
+        };
+
+        // Try common quote-currency suffixes (longest match first to avoid
+        // "BTC" matching the tail of "BTCETH" incorrectly).
+        let upper = s.to_uppercase();
+        for quote in &["USDT", "BUSD", "USDC", "USD", "BTC", "ETH", "BNB", "EUR", "GBP", "JPY", "RUB"] {
+            if upper.ends_with(quote) && upper.len() > quote.len() {
+                let base_len = upper.len() - quote.len();
+                break 'parse Symbol::new(&s[..base_len], &s[base_len..]);
+            }
+        }
+
+        // Fallback: treat entire string as base asset
+        Symbol::new(s, "USDT")
+    };
+
+    // Always preserve the original raw input string
+    result.raw = Some(original.to_string());
+    result
+}
+
+
+// ── Trading / Account / Position bridge methods ─────────────────────────────
+
+impl DataBridge {
+    /// Returns a handle to the tokio runtime owned by this bridge.
+    ///
+    /// Useful for callers that need to block_on or spawn onto the same runtime
+    /// without holding a reference to the bridge itself.
+    pub fn runtime_handle(&self) -> tokio::runtime::Handle {
+        self.runtime.handle().clone()
+    }
+
+    // ── Trading ──────────────────────────────────────────────────────────────
+
+    /// Place an order on the given exchange.
+    pub async fn place_order(
+        &self,
+        exchange_id: ExchangeId,
+        req: OrderRequest,
+    ) -> digdigdig3::ExchangeResult<PlaceOrderResponse> {
+        let connector = self.hub.rest(exchange_id).ok_or_else(|| {
+            ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
+        })?;
+        connector.place_order(req).await
+    }
+
+    /// Cancel an order on the given exchange.
+    pub async fn cancel_order(
+        &self,
+        exchange_id: ExchangeId,
+        req: CancelRequest,
+    ) -> digdigdig3::ExchangeResult<Order> {
+        let connector = self.hub.rest(exchange_id).ok_or_else(|| {
+            ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
+        })?;
+        connector.cancel_order(req).await
+    }
+
+    /// Fetch a single order by symbol and order ID.
+    pub async fn get_order(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        order_id: &str,
+        account_type: AccountType,
+    ) -> digdigdig3::ExchangeResult<Order> {
+        let connector = self.hub.rest(exchange_id).ok_or_else(|| {
+            ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
+        })?;
+        connector.get_order(symbol, order_id, account_type).await
+    }
+
+    /// Fetch all open orders, optionally filtered by symbol.
+    pub async fn get_open_orders(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: Option<&str>,
+        account_type: AccountType,
+    ) -> digdigdig3::ExchangeResult<Vec<Order>> {
+        let connector = self.hub.rest(exchange_id).ok_or_else(|| {
+            ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
+        })?;
+        connector.get_open_orders(symbol, account_type).await
+    }
+
+    /// Fetch historical orders matching the given filter.
+    pub async fn get_order_history(
+        &self,
+        exchange_id: ExchangeId,
+        filter: OrderHistoryFilter,
+        account_type: AccountType,
+    ) -> digdigdig3::ExchangeResult<Vec<Order>> {
+        let connector = self.hub.rest(exchange_id).ok_or_else(|| {
+            ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
+        })?;
+        connector.get_order_history(filter, account_type).await
+    }
+
+    // ── Account ──────────────────────────────────────────────────────────────
+
+    /// Fetch account balances.
+    pub async fn get_balance(
+        &self,
+        exchange_id: ExchangeId,
+        query: BalanceQuery,
+    ) -> digdigdig3::ExchangeResult<Vec<Balance>> {
+        let connector = self.hub.rest(exchange_id).ok_or_else(|| {
+            ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
+        })?;
+        connector.get_balance(query).await
+    }
+
+    /// Fetch account metadata (fees, permissions, …).
+    pub async fn get_account_info(
+        &self,
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+    ) -> digdigdig3::ExchangeResult<AccountInfo> {
+        let connector = self.hub.rest(exchange_id).ok_or_else(|| {
+            ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
+        })?;
+        connector.get_account_info(account_type).await
+    }
+
+    // ── Positions ────────────────────────────────────────────────────────────
+
+    /// Fetch open positions matching the given query.
+    pub async fn get_positions(
+        &self,
+        exchange_id: ExchangeId,
+        query: PositionQuery,
+    ) -> digdigdig3::ExchangeResult<Vec<Position>> {
+        let connector = self.hub.rest(exchange_id).ok_or_else(|| {
+            ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
+        })?;
+        connector.get_positions(query).await
+    }
+
+    /// Modify an open position (e.g. change TP/SL).
+    pub async fn modify_position(
+        &self,
+        exchange_id: ExchangeId,
+        req: PositionModification,
+    ) -> digdigdig3::ExchangeResult<()> {
+        let connector = self.hub.rest(exchange_id).ok_or_else(|| {
+            ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
+        })?;
+        connector.modify_position(req).await
+    }
+
+    // ── Optional operations ──────────────────────────────────────────────────
+
+    /// Cancel all orders matching the given scope on the given exchange.
+    pub async fn cancel_all_orders(
+        &self,
+        exchange_id: ExchangeId,
+        scope: CancelScope,
+        account_type: AccountType,
+    ) -> digdigdig3::ExchangeResult<CancelAllResponse> {
+        let connector = self.hub.rest(exchange_id).ok_or_else(|| {
+            ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
+        })?;
+        connector.cancel_all_orders(scope, account_type).await
+    }
+
+    /// Amend an existing order (price, quantity, or other fields).
+    pub async fn amend_order(
+        &self,
+        exchange_id: ExchangeId,
+        req: AmendRequest,
+    ) -> digdigdig3::ExchangeResult<Order> {
+        let connector = self.hub.rest(exchange_id).ok_or_else(|| {
+            ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
+        })?;
+        connector.amend_order(req).await
+    }
+
+    /// Place multiple orders in a single batch request.
+    pub async fn place_orders_batch(
+        &self,
+        exchange_id: ExchangeId,
+        orders: Vec<OrderRequest>,
+    ) -> digdigdig3::ExchangeResult<Vec<OrderResult>> {
+        let connector = self.hub.rest(exchange_id).ok_or_else(|| {
+            ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
+        })?;
+        connector.place_orders_batch(orders).await
+    }
+
+    // ── Capability queries (synchronous) ─────────────────────────────────────
+
+    /// Returns trading capabilities for the given exchange and account type,
+    /// or `None` if the connector is not yet ready.
+    pub fn trading_capabilities(
+        &self,
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+    ) -> Option<TradingCapabilities> {
+        self.hub.rest(exchange_id).map(|c| c.trading_capabilities(account_type))
+    }
+
+    /// Returns account capabilities for the given exchange and account type,
+    /// or `None` if the connector is not yet ready.
+    pub fn account_capabilities(
+        &self,
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+    ) -> Option<AccountCapabilities> {
+        self.hub.rest(exchange_id).map(|c| c.account_capabilities(account_type))
+    }
+
+    /// Returns the list of account types supported by the connector,
+    /// or `None` if the connector is not yet ready.
+    pub fn supported_account_types(&self, exchange_id: ExchangeId) -> Option<Vec<AccountType>> {
+        self.hub.rest(exchange_id).map(|c| c.supported_account_types())
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ORDERBOOK HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Strip zero-padded tail from an orderbook side returned by station.
+///
+/// Per station 0.3.9 convention:
+/// - `(0.0, 0.0)` = padding sentinel (skip).
+/// - `(price, 0.0)` where `price != 0.0` = explicit removal (keep — consumer needs it).
+/// - `(price, qty)` where both nonzero = add/update (keep).
+fn strip_ob_padding(arr: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    arr.iter()
+        .filter(|(p, q)| !(*p == 0.0 && *q == 0.0))
+        .copied()
+        .collect()
+}

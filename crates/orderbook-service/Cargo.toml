@@ -1,9 +1,0 @@
-[package]
-name = "orderbook-service"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-digdigdig3 = "=0.3.15"
-ordered-float = "4"
-arc-swap = "1"

@@ -1,0 +1,17 @@
+[package]
+name = "mylittlechart-sidebar-content"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "mlc_sidebar_content"
+
+[dependencies]
+mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
+uzor = "=1.4.5"
+mlc-alerts = { path = "../mlc-alerts", package = "mylittlechart-alerts" }
+serde = { version = "1.0", features = ["derive"] }
+gate4agent = "=0.2.37"
+
+[dev-dependencies]
+serde_json = "1.0"

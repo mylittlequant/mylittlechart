@@ -1,0 +1,15 @@
+[package]
+name = "mylittlechart-vello-context"
+version.workspace = true
+edition.workspace = true
+description = "VelloGpuRenderContext — chart-aware wrapper delegating to uzor-backend-vello-gpu"
+
+[lib]
+name = "mlc_vello_context"
+
+[dependencies]
+mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
+uzor = "=1.4.5"
+uzor-render-vello-gpu = "=1.4.5"
+vello = "0.8"
+skrifa = "0.40"
