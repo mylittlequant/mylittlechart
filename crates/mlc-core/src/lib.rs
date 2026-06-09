@@ -75,7 +75,6 @@ pub mod layout;
 
 // Organized modules
 pub mod chart;
-pub mod demo;
 pub mod drawing;
 pub mod scale_settings;
 pub mod state;
@@ -415,17 +414,6 @@ pub use panel_app::{
 };
 pub use ui::toolbar_render::{ToolbarRect, ToolbarTheme, ToolbarRenderResult};
 pub use ui::dropdown::DropdownTheme;
-
-// Demo Data (for testing - can be replaced with real API)
-pub use demo::{
-    // Symbols
-    DemoSymbol, demo_symbols, get_demo_symbol, demo_symbol_tickers,
-    // Data Generation
-    DemoTimeframe, DemoDataGenerator, generate_demo_bars, generate_all_timeframes,
-    // Demo Indicator Calculations (stubs - real indicators from nemo library)
-    calculate_sma, calculate_ema, calculate_rsi, calculate_bollinger,
-    calculate_volume, calculate_macd, calculate_atr, calculate_stochastic,
-};
 
 // Render Module (new - platform-agnostic rendering foundation)
 pub use render::{
