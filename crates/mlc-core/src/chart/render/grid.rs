@@ -99,7 +99,7 @@ pub fn draw_grid(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
 pub fn draw_grid_extended(
     ctx: &mut dyn RenderContext,
     state: &ChartRenderState,
-    extended_bounds: &crate::layout::LayoutRect,
+    extended_bounds: &crate::state::geometry::LayoutRect,
 ) {
     let rect = &state.chart_rect;
     let grid = state.grid;
