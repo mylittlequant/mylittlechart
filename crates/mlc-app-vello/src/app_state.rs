@@ -59,7 +59,7 @@ pub(crate) struct AppState {
 
     /// Encryption key for zero-trust storage. Derived from passphrase at startup.
     /// `None` during migration or when running without a passphrase (plaintext mode).
-    pub(crate) vault_key: Option<mlc_core::vault::VaultKey>,
+    pub(crate) vault_key: Option<mlc_crypto::vault::VaultKey>,
 }
 
 impl AppState {
@@ -69,7 +69,7 @@ impl AppState {
         presets: std::collections::HashMap<String, mlc_core::preset::preset::ChartPreset>,
         snapshots: mlc_core::user_manager::manager::SettingsSnapshots,
         template_manager: mlc_core::templates::manager::TemplateManager,
-        vault_key: Option<mlc_core::vault::VaultKey>,
+        vault_key: Option<mlc_crypto::vault::VaultKey>,
     ) -> Self {
         let default_wl = || {
             mlc_app::WatchlistManager::new(vec![

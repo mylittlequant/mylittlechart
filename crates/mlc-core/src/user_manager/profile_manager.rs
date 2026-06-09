@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::crypto;
+use mlc_crypto::crypto;
 use crate::preset::preset::ChartPreset;
 use crate::preset::storage::{list_presets, load_preset};
 use crate::templates::TemplateManager;
@@ -17,7 +17,7 @@ use crate::user_profile::storage::{
     active_profile_data_dir, create_profile, delete_profile, load_json, load_profile,
     load_profile_index, profiles_dir, save_profile, save_profile_index,
 };
-use crate::vault::{self, VaultKey};
+use mlc_crypto::vault::{self, VaultKey};
 
 use super::manager::SettingsSnapshots;
 

@@ -19,6 +19,7 @@ mlc-trade-service = { path = "../mlc-trade-service", package = "mylittlechart-tr
 mlc-orderbook-service = { path = "../mlc-orderbook-service", package = "mylittlechart-orderbook-service" }
 mlc-vello-context = { path = "../mlc-vello-context", package = "mylittlechart-vello-context" }
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
+mlc-crypto = { path = "../mlc-crypto", package = "mylittlechart-crypto" }
 uzor = "=1.4.5"
 vello = "0.8"
 winit = "0.30"

@@ -388,7 +388,7 @@ struct App<'s> {
     pending_profile_switch: Option<String>,
     /// Vault key pre-validated during Branch A (pre-switch passphrase check), so
     /// `execute_profile_switch` can inject it directly and skip the unlock screen.
-    pending_switch_vault_key: Option<mlc_core::vault::VaultKey>,
+    pending_switch_vault_key: Option<mlc_crypto::vault::VaultKey>,
     /// ID of a newly created profile awaiting vault setup. Set by `profile_create:`
     /// handler; consumed by the `e2e_setup:` handler once the user enters a passphrase
     /// and vault creation succeeds, after which the actual profile switch happens.
@@ -401,14 +401,14 @@ struct App<'s> {
     /// Set by the `e2e_setup:` handler for Path C (new profile vault creation) when
     /// a recovery key must be shown before completing the profile switch.  Consumed
     /// by `recovery_key_confirmed` to trigger the actual switch.
-    pending_switch_after_recovery: Option<(String, mlc_core::vault::VaultKey)>,
+    pending_switch_after_recovery: Option<(String, mlc_crypto::vault::VaultKey)>,
 
     /// Master key recovered from `recovery_key.enc` during a `recovery_unlock:` command.
     ///
     /// Stored temporarily so the `set_new_passphrase:` handler can re-derive a new
     /// master key hierarchy and re-encrypt the vault without needing the old passphrase.
     /// Cleared immediately after `set_new_passphrase:` completes (or on any error).
-    pending_recovery_master_key: Option<mlc_core::crypto::MasterKey>,
+    pending_recovery_master_key: Option<mlc_crypto::crypto::MasterKey>,
 
     /// True when the user confirms they have saved the new recovery key after a
     /// recovery re-key.  Skeleton promote is deferred until this flag is set.
@@ -2973,7 +2973,7 @@ impl ApplicationHandler for App<'_> {
                                 let vault_path = target_dir.join("vault.enc");
                                 if salt_path.exists() && vault_path.exists() {
                                     // Validate passphrase against the target vault
-                                    match mlc_core::vault::validate_passphrase_at(&salt_path, &vault_path, passphrase) {
+                                    match mlc_crypto::vault::validate_passphrase_at::<mlc_core::user_profile::VaultSecrets>(&salt_path, &vault_path, passphrase) {
                                         Ok(key) => {
                                             eprintln!("[App] pre-switch: passphrase validated for profile {}", target_id);
                                             // Store the pre-validated key so execute_profile_switch
@@ -3001,10 +3001,10 @@ impl ApplicationHandler for App<'_> {
                                 } else {
                                     // Target profile has no vault — create vault with this passphrase
                                     eprintln!("[App] pre-switch: creating vault for unencrypted profile {}", target_id);
-                                    if let Ok(salt) = mlc_core::vault::load_or_create_salt(&salt_path) {
-                                        let key = mlc_core::vault::derive_key(passphrase, &salt);
+                                    if let Ok(salt) = mlc_crypto::vault::load_or_create_salt(&salt_path) {
+                                        let key = mlc_crypto::vault::derive_key(passphrase, &salt);
                                         let empty_secrets = mlc_core::user_profile::VaultSecrets::default();
-                                        if let Ok(()) = mlc_core::vault::save_encrypted(&key, &vault_path, &empty_secrets) {
+                                        if let Ok(()) = mlc_crypto::vault::save_encrypted(&key, &vault_path, &empty_secrets) {
                                             eprintln!("[App] pre-switch: vault created, switching to profile {}", target_id);
                                             // Store the derived key so execute_profile_switch
                                             // can inject it directly and skip the unlock screen.
@@ -3118,7 +3118,7 @@ impl ApplicationHandler for App<'_> {
                     };
 
                     if let Some(profile_dir) = profile_dir {
-                        match mlc_core::crypto::parse_recovery_key(recovery_key_text) {
+                        match mlc_crypto::crypto::parse_recovery_key(recovery_key_text) {
                             Ok(recovery_key_bytes) => {
                                 let salt_path = profile_dir.join("salt.hex");
                                 let recovery_enc_path = profile_dir.join("recovery_key.enc");
@@ -3130,16 +3130,16 @@ impl ApplicationHandler for App<'_> {
                                             Some("No recovery data found for this profile".to_string());
                                     }
                                 } else {
-                                    let salt_result = mlc_core::crypto::load_or_create_salt(&salt_path);
+                                    let salt_result = mlc_crypto::crypto::load_or_create_salt(&salt_path);
                                     let enc_blob = std::fs::read(&recovery_enc_path);
 
                                     match (salt_result, enc_blob) {
                                         (Ok(salt), Ok(blob)) => {
-                                            match mlc_core::crypto::decrypt_master_key_with_recovery(
+                                            match mlc_crypto::crypto::decrypt_master_key_with_recovery(
                                                 &blob, &recovery_key_bytes, &salt,
                                             ) {
                                                 Ok(master_key) => {
-                                                    let vault_key = mlc_core::crypto::derive_vault_key(&master_key, &salt);
+                                                    let vault_key = mlc_crypto::crypto::derive_vault_key(&master_key, &salt);
                                                     eprintln!("[App] recovery_unlock: master key recovered — vault key derived");
 
                                                     if self.needs_vault_unlock {

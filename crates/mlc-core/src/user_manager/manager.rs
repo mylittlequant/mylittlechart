@@ -11,7 +11,7 @@ use crate::user_profile::storage::{
     active_profile_data_dir, load_json, load_profile, save_profile,
 };
 use crate::user_profile::UserProfile;
-use crate::vault::VaultKey;
+use mlc_crypto::vault::VaultKey;
 
 // =============================================================================
 // SettingsSnapshots

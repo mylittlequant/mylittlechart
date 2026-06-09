@@ -29,7 +29,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use super::profile::{ProfileIndex, ProfileMeta, UserProfile, VaultSecrets};
-use crate::vault::{self, VaultKey};
+use mlc_crypto::vault::{self, VaultKey};
 
 // =============================================================================
 // ProfileError
@@ -426,7 +426,7 @@ pub fn create_profile(name: &str, avatar: &str) -> Result<ProfileMeta, String> {
 
     // Generate and persist a random 16-byte salt for future vault key derivation.
     // The salt is safe to store in plaintext — it is only useful with the passphrase.
-    let salt = crate::vault::generate_salt();
+    let salt = mlc_crypto::vault::generate_salt();
     let salt_hex = salt.iter().map(|b| format!("{:02x}", b)).collect::<String>();
     fs::write(profile_dir.join("salt.hex"), salt_hex).map_err(|e| e.to_string())?;
 

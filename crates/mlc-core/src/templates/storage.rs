@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use crate::vault::{self, VaultKey};
+use mlc_crypto::vault::{self, VaultKey};
 
 // =============================================================================
 // TemplateError

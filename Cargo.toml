@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/mlc-core",
+    "crates/mlc-crypto",
     "crates/mlc-app",
     "crates/mlc-app-vello",
     "crates/mlc-indicators",

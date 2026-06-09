@@ -17,13 +17,9 @@ serde_json = "1.0"
 uzor = "=1.4.5"
 mlc-alerts = { path = "../mlc-alerts", package = "mylittlechart-alerts" }
 mlc-alert-delivery = { path = "../mlc-alert-delivery", package = "mylittlechart-alert-delivery" }
+mlc-crypto = { path = "../mlc-crypto", package = "mylittlechart-crypto" }
 uuid = { version = "1", features = ["v4"] }
-aes-gcm.workspace = true
-pbkdf2.workspace = true
-hkdf.workspace = true
-hex.workspace = true
 rand.workspace = true
-sha2 = "0.10"
 
 [features]
 default = []

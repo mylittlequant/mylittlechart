@@ -110,12 +110,6 @@ pub mod user_profile;
 // Unified user state manager (single entry point for all user persistence)
 pub mod user_manager;
 
-// Unified cryptography module (key derivation, encryption, domain separation)
-pub mod crypto;
-
-// Zero-trust local encryption vault for profile data
-pub mod vault;
-
 // Indicator source trait (abstraction for indicator data access)
 pub mod indicator_source;
 

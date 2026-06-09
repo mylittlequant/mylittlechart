@@ -1,0 +1,15 @@
+//! mylittlechart-crypto — zero-trust blob primitives.
+//!
+//! Two modules:
+//! - `crypto` — AES-GCM, HKDF, PBKDF2 key derivation, salt management.
+//! - `vault`  — sealed-blob encrypt/decrypt helpers + passphrase validation.
+//!
+//! This crate is a pure leaf: depends only on `aes-gcm`, `pbkdf2`, `hkdf`,
+//! `rand`, `sha2`, `hex`, `serde`. No workspace deps.
+
+pub mod crypto;
+pub mod vault;
+
+pub use crypto::{MasterKey, derive_master_key, load_or_create_salt};
+pub use vault::{VaultKey, VaultError, derive_key, encrypt_json, decrypt_json,
+                load_encrypted, save_encrypted, validate_passphrase_at};

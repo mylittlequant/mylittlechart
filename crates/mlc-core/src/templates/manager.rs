@@ -15,7 +15,7 @@ use super::storage::{
     category_dir, delete_template, load_all_templates,
     save_template, templates_root, TemplateError,
 };
-use crate::vault::VaultKey;
+use mlc_crypto::vault::VaultKey;
 
 // =============================================================================
 // Category constants

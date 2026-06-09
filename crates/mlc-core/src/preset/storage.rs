@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use super::preset::ChartPreset;
-use crate::vault::{self, VaultKey};
+use mlc_crypto::vault::{self, VaultKey};
 
 // =============================================================================
 // PresetMeta
