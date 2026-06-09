@@ -76,6 +76,7 @@ pub mod layout;
 // Organized modules
 pub mod chart;
 pub mod drawing;
+pub mod managers;
 pub mod scale_settings;
 pub mod state;
 pub mod theme;
