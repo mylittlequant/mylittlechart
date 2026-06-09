@@ -7,4 +7,4 @@ edition.workspace = true
 name = "mlc_trade_service"
 
 [dependencies]
-digdigdig3 = "=0.3.15"
+digdigdig3 = "=0.3.17"
