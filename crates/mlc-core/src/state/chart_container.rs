@@ -19,7 +19,7 @@ use crate::tag_manager::BubbleId;
 use crate::{Bar, Viewport, PriceScale, TimeScale};
 use crate::chart::types::price_scale::ScaleMode;
 use crate::state::Timeframe;
-use crate::{Crosshair, CrosshairOptions, KineticState, DragMode};
+use crate::{Crosshair, KineticState, DragMode};
 use crate::{GridOptions, Legend, Watermark, PriceLine};
 use crate::state::chart_panel_state::ChartPanelState;
 use crate::chart::{CompareOverlay, CompareSeries, get_compare_color};
@@ -848,10 +848,6 @@ impl ChartContainer {
         }
     }
 
-    /// Create ChartRenderConfig from this window's options and render flags.
-    ///
-    /// `crosshair_options` and `chart_type` are supplied by the caller from
-    /// `ChartPanelState` (removed from `ChartContainer` in Phase 4 C).
     /// Create a minimal clone of this chart window for use in `panel_grid::split_active`.
     ///
     /// Unlike `clone_for_split`, this variant does **not** take a source
@@ -920,45 +916,6 @@ impl ChartContainer {
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
             inner_docking: make_inner_docking_with_main_chart(new_panel_id),
-        }
-    }
-
-    /// `is_drawing_dragging` should be `panel.drawing_manager.is_dragging()` where
-    /// `panel` is the `ChartPanelState` for this window (S2.8 migration).
-    pub fn to_render_config(
-        &self,
-        scale_theme: crate::chart::render::ScaleTheme,
-        render_crosshair: bool,
-        crosshair_options: &CrosshairOptions,
-        chart_type: &'static str,
-        is_drawing_dragging: bool,
-    ) -> crate::layout::ChartRenderConfig {
-        let crosshair_config = if render_crosshair {
-            crate::chart::render::CrosshairConfig {
-                vert_visible: crosshair_options.vert_line.visible,
-                vert_width: crosshair_options.vert_line.width,
-                vert_style: crosshair_options.vert_line.style,
-                horz_visible: crosshair_options.horz_line.visible,
-                horz_width: crosshair_options.horz_line.width,
-                horz_style: crosshair_options.horz_line.style,
-            }
-        } else {
-            crate::chart::render::CrosshairConfig {
-                vert_visible: false,
-                vert_width: crosshair_options.vert_line.width,
-                vert_style: crosshair_options.vert_line.style,
-                horz_visible: false,
-                horz_width: crosshair_options.horz_line.width,
-                horz_style: crosshair_options.horz_line.style,
-            }
-        };
-
-        crate::layout::ChartRenderConfig {
-            scale_config: crate::chart::render::ScaleConfig::default(),
-            scale_theme,
-            crosshair_config,
-            is_dragging: self.drag_mode.is_dragging() || is_drawing_dragging,
-            chart_type,
         }
     }
 
