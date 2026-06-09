@@ -113,11 +113,7 @@ pub use chart_container_leaf::{
 pub use inner_layout::InnerLayout;
 
 // Branch-level docking payload types.
-pub use branch::{
-    InstanceId,
-    PanelLeaf,
-    PanelLeafKind,
-};
+pub use branch::InstanceId;
 
 // Panel grid — input-aware layout manager
 pub use panel_grid::{ChartPanelGrid, ChartInputTarget, ChartRightClickHit, ChartDragStartHit, SplitHitResult, FreehandCompleteResult};

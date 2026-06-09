@@ -14,8 +14,7 @@ type DockingManager<P> = DockState<P>;
 use crate::state::{ChartContainer, ChartId, Timeframe};
 use crate::state::generate_chart_id;
 use crate::ChartHitTester;
-use crate::state::branch::PanelLeaf;
-use crate::state::chart_container_leaf::ChartPanelId;
+use crate::state::panel::Panel;
 
 // Re-export so callers that import from this module get everything they need.
 pub use uzor::panels::SeparatorOrientation as PanelSeparatorOrientation;
@@ -85,16 +84,11 @@ pub enum SplitHitResult {
 /// [`resolve_input`](ChartPanelGrid::resolve_input) for unified hit-testing.
 pub struct ChartPanelGrid {
     /// Panel tree (geometry + panel metadata).
-    docking: DockingManager<PanelLeaf>,
+    docking: DockingManager<Panel>,
     /// All chart containers keyed by their `ChartId`.
     containers: HashMap<ChartId, ChartContainer>,
     /// Leaf-to-ChartId mapping (mirrors the tree's leaves).
     leaf_to_chart: HashMap<LeafId, ChartId>,
-    /// Reverse map: `ChartPanelId → ChartId` (updated alongside `containers`).
-    ///
-    /// Avoids O(n) scans on paths that receive a `ChartPanelId` (e.g. from
-    /// `PanelLeaf::ChartPanel`) and need the corresponding `ChartId`.
-    panel_id_to_chart: HashMap<ChartPanelId, ChartId>,
     /// Whether expand mode is active (all but active leaf hidden).
     expanded: bool,
     /// Per-leaf minimum pixel width used as a lower bound during separator drag.
@@ -114,9 +108,8 @@ impl ChartPanelGrid {
     /// The window becomes the single visible leaf.
     pub fn new(initial_container: ChartContainer) -> Self {
         let chart_id = initial_container.id;
-        let chart_panel_id = initial_container.chart_panel_id;
 
-        let panel = PanelLeaf::ChartPanel(chart_panel_id);
+        let panel = Panel::Chart(chart_id);
         let docking = DockingManager::with_panel(panel);
 
         // Retrieve the leaf ID assigned to the panel we just added.
@@ -130,14 +123,10 @@ impl ChartPanelGrid {
         let mut leaf_to_chart = HashMap::new();
         leaf_to_chart.insert(leaf_id, chart_id);
 
-        let mut panel_id_to_chart = HashMap::new();
-        panel_id_to_chart.insert(chart_panel_id, chart_id);
-
         Self {
             docking,
             containers,
             leaf_to_chart,
-            panel_id_to_chart,
             expanded: false,
             leaf_min_widths: HashMap::new(),
         }
@@ -233,18 +222,9 @@ impl ChartPanelGrid {
             .find_map(|(&leaf, &cid)| if cid == chart_id { Some(leaf) } else { None })
     }
 
-    /// Resolve a `ChartPanelId` to the `ChartId` that owns it.
+    /// Resolve a `ChartId` to the `LeafId` of the docking tree node that hosts it.
     ///
-    /// O(1) via the `panel_id_to_chart` reverse map.
-    pub fn chart_id_for_panel_id(&self, panel_id: ChartPanelId) -> Option<ChartId> {
-        self.panel_id_to_chart.get(&panel_id).copied()
-    }
-
-    /// Resolve a `ChartId` to the `LeafId` of the docking tree node whose
-    /// `PanelLeaf::ChartPanel` payload corresponds to `chart_id`.
-    ///
-    /// Used by `branch_meta_bridge` to find the real `BranchId` parent of a
-    /// chart's outer leaf.  O(1) via the `leaf_to_chart` map.
+    /// O(1) via the `leaf_to_chart` map.
     pub fn leaf_id_for_chart(&self, chart_id: ChartId) -> Option<LeafId> {
         self.leaf_for_container_id(chart_id)
     }
@@ -272,7 +252,7 @@ impl ChartPanelGrid {
     /// For a leaf node: looks up `leaf_min_widths`.
     /// For a branch node: returns the maximum of all leaf min-widths in the subtree
     /// (because the branch as a whole cannot be smaller than its widest required leaf).
-    fn min_width_for_node(&self, node: &uzor::panels::PanelNode<PanelLeaf>) -> f32 {
+    fn min_width_for_node(&self, node: &uzor::panels::PanelNode<Panel>) -> f32 {
         use uzor::panels::PanelNode;
         match node {
             PanelNode::Leaf(l) => {
@@ -306,7 +286,7 @@ impl ChartPanelGrid {
     /// Mirror of `min_width_for_node` but with axes swapped:
     /// - stacked layouts (horizontal separators) sum children
     /// - side-by-side layouts take the max
-    fn min_height_for_node(&self, node: &uzor::panels::PanelNode<PanelLeaf>) -> f32 {
+    fn min_height_for_node(&self, node: &uzor::panels::PanelNode<Panel>) -> f32 {
         use uzor::panels::PanelNode;
         match node {
             PanelNode::Leaf(_) => Self::LEAF_MIN_HEIGHT,
@@ -358,7 +338,7 @@ impl ChartPanelGrid {
             leaf_min_w.insert(leaf_id, leaf_w.max(Self::LEAF_MIN_WIDTH));
         }
         fn walk(
-            node: &PanelNode<PanelLeaf>,
+            node: &PanelNode<Panel>,
             leaf_min_w: &HashMap<LeafId, f32>,
         ) -> f32 {
             match node {
@@ -384,12 +364,12 @@ impl ChartPanelGrid {
     }
 
     /// Immutable reference to the underlying `DockingManager`.
-    pub fn docking(&self) -> &DockingManager<PanelLeaf> {
+    pub fn docking(&self) -> &DockingManager<Panel> {
         &self.docking
     }
 
     /// Mutable reference to the underlying `DockingManager`.
-    pub fn docking_mut(&mut self) -> &mut DockingManager<PanelLeaf> {
+    pub fn docking_mut(&mut self) -> &mut DockingManager<Panel> {
         &mut self.docking
     }
 
@@ -398,24 +378,19 @@ impl ChartPanelGrid {
     /// This is the primary method for loading a saved layout.  The caller is
     /// responsible for building the `DockingTree` (typically via
     /// [`LayoutSnapshot::restore_tree_with_id`]) and for keeping `containers` /
-    /// `leaf_to_chart` / `panel_id_to_chart` in sync with the new leaf IDs.
+    /// `leaf_to_chart` in sync with the new leaf IDs.
     ///
     /// After this call the derived geometry (separators, rects, etc.) is
     /// cleared.  Call [`layout`](Self::layout) once before the next render to
     /// recompute positions.
-    pub fn replace_docking(&mut self, tree: DockingTree<PanelLeaf>) {
+    pub fn replace_docking(&mut self, tree: DockingTree<Panel>) {
         self.docking = DockingManager::from_tree(tree);
     }
 
     /// Replace the entire containers map with the given one.
     ///
-    /// Used during preset restore.  Also rebuilds `panel_id_to_chart` from the
-    /// new map so the reverse lookup stays consistent.
+    /// Used during preset restore.
     pub fn replace_containers(&mut self, containers: HashMap<ChartId, ChartContainer>) {
-        self.panel_id_to_chart = containers
-            .iter()
-            .map(|(&cid, c)| (c.chart_panel_id, cid))
-            .collect();
         self.containers = containers;
     }
 
@@ -439,13 +414,16 @@ impl ChartPanelGrid {
         };
         let new_chart_id = generate_chart_id();
         if let Some(mut window) = self.containers.remove(&old_chart_id) {
-            // Update reverse map: old mapping is stale, insert under same panel_id.
-            self.panel_id_to_chart.remove(&window.chart_panel_id);
             window.id = new_chart_id;
-            self.panel_id_to_chart.insert(window.chart_panel_id, new_chart_id);
             self.containers.insert(new_chart_id, window);
         }
         self.leaf_to_chart.insert(active_leaf, new_chart_id);
+        // Update the docking leaf payload to reflect the new ChartId.
+        if let Some(leaf) = self.docking.tree_mut().leaf_mut(active_leaf) {
+            if let Some(panel) = leaf.active_panel_mut() {
+                *panel = Panel::Chart(new_chart_id);
+            }
+        }
     }
 
     // =========================================================================
@@ -512,7 +490,7 @@ impl ChartPanelGrid {
 
         // Snapshot min sizes per child so we can water-fill.
         fn min_w(
-            node: &PanelNode<PanelLeaf>,
+            node: &PanelNode<Panel>,
             leaf_min_w: &HashMap<LeafId, f32>,
         ) -> f32 {
             match node {
@@ -530,7 +508,7 @@ impl ChartPanelGrid {
                 }
             }
         }
-        fn min_h(node: &PanelNode<PanelLeaf>) -> f32 {
+        fn min_h(node: &PanelNode<Panel>) -> f32 {
             match node {
                 PanelNode::Leaf(_) => ChartPanelGrid::LEAF_MIN_HEIGHT,
                 PanelNode::Branch(b) => {
@@ -654,7 +632,7 @@ impl ChartPanelGrid {
         // rects using the freshly-computed proportions (so descendants see
         // the correct parent size).
         fn walk(
-            node: &PanelNode<PanelLeaf>,
+            node: &PanelNode<Panel>,
             rect_w: f32,
             rect_h: f32,
             pending: &mut Vec<Pending>,
@@ -795,8 +773,7 @@ impl ChartPanelGrid {
                     Some(w) => w.clone_for_split_shell(new_chart_id),
                     None => return Vec::new(),
                 };
-                let new_panel_id = cloned_window.chart_panel_id;
-                let new_panel = PanelLeaf::ChartPanel(new_panel_id);
+                let new_panel = Panel::Chart(new_chart_id);
 
                 let new_leaf_id = match self
                     .docking
@@ -808,7 +785,6 @@ impl ChartPanelGrid {
                 };
 
                 // Register the new window and leaf.
-                self.panel_id_to_chart.insert(new_panel_id, new_chart_id);
                 self.containers.insert(new_chart_id, cloned_window);
                 self.leaf_to_chart.insert(new_leaf_id, new_chart_id);
 
@@ -855,14 +831,12 @@ impl ChartPanelGrid {
                         Some(w) => w.clone_for_split_shell(new_chart_id),
                         None => continue,
                     };
-                    let new_panel_id = cloned.chart_panel_id;
-                    // Update docking leaf payload to the new ChartPanelId.
+                    // Update docking leaf payload to the new ChartId.
                     if let Some(leaf) = self.docking.tree_mut().leaf_mut(leaf_id) {
                         if let Some(panel) = leaf.active_panel_mut() {
-                            *panel = PanelLeaf::ChartPanel(new_panel_id);
+                            *panel = Panel::Chart(new_chart_id);
                         }
                     }
-                    self.panel_id_to_chart.insert(new_panel_id, new_chart_id);
                     self.containers.insert(new_chart_id, cloned);
                     self.leaf_to_chart.insert(leaf_id, new_chart_id);
                 }
@@ -895,9 +869,6 @@ impl ChartPanelGrid {
             None => return false,
         };
 
-        if let Some(c) = self.containers.get(&chart_id) {
-            self.panel_id_to_chart.remove(&c.chart_panel_id);
-        }
         self.containers.remove(&chart_id);
         self.docking.tree_mut().remove_leaf(leaf_id);
 

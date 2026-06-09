@@ -26,7 +26,7 @@ use crate::ui::z_order::ZLayer;
 use uzor::panels::{LeafId, BranchId, PanelNode, Leaf};
 use uzor::panels::DockPanel;
 use crate::state::panel_grid::ChartPanelGrid;
-use crate::state::branch::PanelLeaf;
+use crate::state::panel::Panel;
 use crate::i18n::{ModalKey, TextKey, t_modal, t_text};
 
 // =============================================================================
@@ -370,7 +370,7 @@ pub fn render_tags_tabs_modal(
 // Helper: count tree nodes recursively
 // =============================================================================
 
-fn count_nodes(children: &[PanelNode<PanelLeaf>]) -> usize {
+fn count_nodes(children: &[PanelNode<Panel>]) -> usize {
     let mut count = 0;
     for child in children {
         count += 1;
@@ -388,7 +388,7 @@ fn count_nodes(children: &[PanelNode<PanelLeaf>]) -> usize {
 #[allow(clippy::too_many_arguments)]
 fn render_tree_nodes(
     ctx: &mut dyn RenderContext,
-    children: &[PanelNode<PanelLeaf>],
+    children: &[PanelNode<Panel>],
     content_left: f64,
     row_y: &mut f64,
     row_height: f64,
@@ -651,8 +651,8 @@ fn render_tabs_section(
     // Data gathering from panel_grid
     // =========================================================================
     let tree = panel_grid.docking().tree();
-    let all_leaves: Vec<&Leaf<PanelLeaf>> = tree.leaves();
-    let hidden_leaves: Vec<&Leaf<PanelLeaf>> = all_leaves.iter()
+    let all_leaves: Vec<&Leaf<Panel>> = tree.leaves();
+    let hidden_leaves: Vec<&Leaf<Panel>> = all_leaves.iter()
         .filter(|l| l.hidden)
         .copied()
         .collect();
@@ -934,7 +934,7 @@ fn render_map_section(
     let mut row_y = content_y + MODAL_PADDING;
 
     let tree = panel_grid.docking().tree();
-    let all_leaves: Vec<&Leaf<PanelLeaf>> = tree.leaves();
+    let all_leaves: Vec<&Leaf<Panel>> = tree.leaves();
     let expanded_leaf_id: Option<LeafId> = if panel_grid.is_expanded() {
         panel_grid.docking().active_leaf()
     } else {
@@ -1109,7 +1109,7 @@ fn render_map_section(
         }
 
         // ── Hidden panels list ──────────────────────────────────────────────
-        let hidden_leaves_map: Vec<&Leaf<PanelLeaf>> = all_leaves.iter()
+        let hidden_leaves_map: Vec<&Leaf<Panel>> = all_leaves.iter()
             .filter(|l| l.hidden)
             .copied()
             .collect();

@@ -17,7 +17,7 @@ impl App<'_> {
 
         // Recursive helper: convert a PanelNode into a LayoutNode.
         fn build_layout_node(
-            node: &uzor::panels::PanelNode<mlc_core::state::PanelLeaf>,
+            node: &uzor::panels::PanelNode<mlc_core::state::Panel>,
             leaf_to_chart: &StdHashMap<uzor::panels::LeafId, mlc_core::ChartId>,
         ) -> LayoutNode {
             match node {

@@ -20,7 +20,7 @@ use crate::ui::z_order::ZLayer;
 use crate::render::{TextAlign, TextBaseline};
 use uzor::panels::DockPanel;
 use crate::state::panel_grid::ChartPanelGrid;
-use crate::state::branch::PanelLeaf;
+use crate::state::panel::Panel;
 use crate::theme::ThemeManager;
 use uzor::types::Rect as WidgetRect;
 use uzor::input::Sense;
@@ -53,7 +53,7 @@ pub struct OverlaySettingsResult {
 // Helper: count tree nodes recursively
 // =============================================================================
 
-fn count_nodes(children: &[PanelNode<PanelLeaf>]) -> usize {
+fn count_nodes(children: &[PanelNode<Panel>]) -> usize {
     let mut count = 0;
     for child in children {
         count += 1;
@@ -71,7 +71,7 @@ fn count_nodes(children: &[PanelNode<PanelLeaf>]) -> usize {
 #[allow(clippy::too_many_arguments)]
 fn render_tree_nodes(
     ctx: &mut dyn RenderContext,
-    children: &[PanelNode<PanelLeaf>],
+    children: &[PanelNode<Panel>],
     content_left: f64,
     row_y: &mut f64,
     row_height: f64,
@@ -270,8 +270,8 @@ pub fn render_overlay_settings_modal(
     // Data gathering
     // =========================================================================
     let tree = panel_grid.docking().tree();
-    let all_leaves: Vec<&Leaf<PanelLeaf>> = tree.leaves();
-    let hidden_leaves: Vec<&Leaf<PanelLeaf>> = all_leaves.iter()
+    let all_leaves: Vec<&Leaf<Panel>> = tree.leaves();
+    let hidden_leaves: Vec<&Leaf<Panel>> = all_leaves.iter()
         .filter(|l| l.hidden)
         .copied()
         .collect();

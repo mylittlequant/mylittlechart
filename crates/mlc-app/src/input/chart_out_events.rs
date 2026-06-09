@@ -782,24 +782,19 @@ impl ChartApp {
 
                                 // Step 3: Restore the docking tree.
                                 //
-                                // The factory returns a placeholder PanelLeaf  -  actual
-                                // ChartPanelId for each leaf is patched below by walking
-                                // the restored tree and matching its LeafId against
-                                // `new_leaf_to_chart` -> `new_containers.chart_panel_id`.
+                                // The factory emits a placeholder Panel::Chart(ChartId(0))
+                                // for every leaf; each leaf is then patched with the real
+                                // ChartId by walking `new_leaf_to_chart`.
                                 match layout_snap.restore_tree(|_type_id| {
-                                    Some(mlc_core::state::PanelLeaf::ChartPanel(
-                                        mlc_core::state::ChartPanelId(0),
+                                    Some(mlc_core::state::Panel::Chart(
+                                        mlc_core::state::ChartId(0),
                                     ))
                                 }) {
                                     Ok(mut restored_tree) => {
                                         for (&leaf_id, &chart_id) in &new_leaf_to_chart {
-                                            let Some(panel_id) = new_containers
-                                                .get(&chart_id)
-                                                .map(|w| w.chart_panel_id)
-                                            else { continue };
                                             if let Some(leaf) = restored_tree.leaf_mut(leaf_id) {
                                                 if let Some(panel) = leaf.active_panel_mut() {
-                                                    *panel = mlc_core::state::PanelLeaf::ChartPanel(panel_id);
+                                                    *panel = mlc_core::state::Panel::Chart(chart_id);
                                                 }
                                             }
                                         }
