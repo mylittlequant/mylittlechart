@@ -1,15 +1,14 @@
-//! Manager types for indicators, signals, and trades.
+//! Indicator-side managers.
 //!
-//! This module contains the high-level managers that live in the indicators crate:
-//! - `IndicatorManager` — manages indicator definitions and instances
-//! - `SignalManager` — manages strategy-generated system signals
-//! - `TradeManager` — manages trade visualization data
+//! `SignalManager` and `TradeManager` previously lived here as dead
+//! duplicates of the active copies on `mlc_core::drawing` (which are
+//! owned by `DataBubble`).  K2.1 deleted them — the live signal/trade
+//! state path is `DataBubble.signal_manager` / `DataBubble.trade_manager`
+//! today, and will move to top-level `Managers` in K2.3/K2.4.
 
 pub mod indicator_bridge;
 pub mod indicator_calculator;
 pub mod indicator_manager;
-pub mod signal_manager;
-pub mod trade_manager;
 
 pub use indicator_manager::{
     IndicatorManager, IndicatorDefinition, IndicatorInstance, IndicatorParam,
@@ -18,5 +17,3 @@ pub use indicator_manager::{
 };
 pub use indicator_bridge::IndicatorBridge;
 pub use indicator_calculator::{IndicatorCalculator, CalculationResult};
-pub use signal_manager::SignalManager;
-pub use trade_manager::{Trade, TradeDirection, TradeManager};

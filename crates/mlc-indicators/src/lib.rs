@@ -89,7 +89,9 @@ pub use signals::{
     Signal, Direction, BarConfirmation, SignalSource,
 };
 
-// Manager types: IndicatorManager, SignalManager, TradeManager + support types
+// Manager types: IndicatorManager + support types. SignalManager and
+// TradeManager were dead duplicates of `mlc_core::drawing::{SignalManager,
+// TradeManager}` — deleted in K2.1.
 pub mod managers;
 
 pub use managers::{
@@ -102,6 +104,4 @@ pub use managers::{
     RecalcMode,
     IndicatorBridge,
     IndicatorCalculator, CalculationResult,
-    SignalManager,
-    Trade, TradeDirection, TradeManager,
 };
