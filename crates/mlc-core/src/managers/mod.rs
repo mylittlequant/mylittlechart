@@ -37,6 +37,7 @@ use mlc_alerts::AlertManager;
 use crate::chart::annotations::markers::MarkerManager;
 use crate::drawing::SignalManager;
 use crate::drawing::TradeManager;
+use crate::tag_manager::BubbleStore;
 
 /// Top-level container for every backend manager service.
 ///
@@ -70,7 +71,13 @@ pub struct Managers {
     /// K2.6 indicator: IndicatorManager re-scoped — stays host-side (mlc-indicators
     /// sits above mlc-core; dep direction prevents lifting here).
     pub alert: AlertManager,
-    // K2.8 — bubble:    BubbleStore
+
+    /// Global sync-group / bubble store (moved from `ChartPanelApp.tag_manager` in K2.8).
+    ///
+    /// Owns all synchronisation bubbles, chart-to-bubble membership, and
+    /// per-bubble metadata (symbol, timeframe, exchange, account-type, color,
+    /// sync flags).
+    pub bubble: BubbleStore,
     // K3   — drawing:   DrawingManager
 }
 
@@ -82,6 +89,7 @@ impl Managers {
             trade: TradeManager::new(),
             marker: MarkerManager::new(),
             alert: AlertManager::new(),
+            bubble: BubbleStore::new(),
         }
     }
 }

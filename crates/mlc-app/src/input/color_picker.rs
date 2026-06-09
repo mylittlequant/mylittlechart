@@ -535,9 +535,9 @@ impl ChartApp {
                     } else if let Some(panel_id) = self.panel_app.sync_color_grid.target_panel {
                         use mlc_core::tag_manager::SyncMemberId;
                         let member = SyncMemberId::Panel(panel_id);
-                        let old_color = self.panel_app.tag_manager
+                        let old_color = self.managers.bubble
                             .group_for_member(member)
-                            .and_then(|gid| self.panel_app.tag_manager.bubble(gid))
+                            .and_then(|gid| self.managers.bubble.bubble(gid))
                             .filter(|g| !g.auto_created)
                             .map(|g| g.color);
                         let same_color = old_color.is_some_and(|oc|
@@ -546,18 +546,18 @@ impl ChartApp {
                             && (oc[2] - new_color[2]).abs() < 0.01
                         );
                         if !same_color {
-                            self.panel_app.tag_manager.disconnect(member);
-                            let target_gid = self.panel_app.tag_manager
+                            self.managers.bubble.disconnect(member);
+                            let target_gid = self.managers.bubble
                                 .find_group_by_color(new_color)
                                 .unwrap_or_else(|| {
-                                    self.panel_app.tag_manager.create_group(
+                                    self.managers.bubble.create_group(
                                         new_color,
                                         String::new(),
                                         mlc_core::state::Timeframe::m1(),
                                     )
                                 });
-                            let _ = self.panel_app.tag_manager.connect(member, target_gid);
-                            self.panel_app.tag_manager.synced_panels_remove(member);
+                            let _ = self.managers.bubble.connect(member, target_gid);
+                            self.managers.bubble.synced_panels_remove(member);
                             eprintln!(
                                 "[ChartApp] Panel {} → color group [{:.2},{:.2},{:.2}]",
                                 panel_id, new_color[0], new_color[1], new_color[2]

@@ -3585,16 +3585,16 @@ impl ApplicationHandler for App<'_> {
                 let active_cid_rc = pw.chart.panel_app.panel_grid.active_container_id();
                 let (symbol, exchange, account_type, timeframe, bar_count) = {
                     let sym = active_cid_rc
-                        .and_then(|cid| pw.chart.panel_app.tag_manager.symbol_for_chart(cid))
+                        .and_then(|cid| pw.chart.managers.bubble.symbol_for_chart(cid))
                         .map(String::from).unwrap_or_default();
                     let exch = active_cid_rc
-                        .and_then(|cid| pw.chart.panel_app.tag_manager.exchange_for_chart(cid))
+                        .and_then(|cid| pw.chart.managers.bubble.exchange_for_chart(cid))
                         .map(String::from).unwrap_or_default();
                     let at = active_cid_rc
-                        .and_then(|cid| pw.chart.panel_app.tag_manager.account_type_for_chart(cid))
+                        .and_then(|cid| pw.chart.managers.bubble.account_type_for_chart(cid))
                         .map(String::from).unwrap_or_else(|| "S".to_string());
                     let tf = active_cid_rc
-                        .and_then(|cid| pw.chart.panel_app.tag_manager.timeframe_for_chart(cid))
+                        .and_then(|cid| pw.chart.managers.bubble.timeframe_for_chart(cid))
                         .cloned()
                         .unwrap_or_else(mlc_core::state::Timeframe::h1);
                     if sym.is_empty() && active_cid_rc.is_none() {
@@ -3618,16 +3618,16 @@ impl ApplicationHandler for App<'_> {
                 // the same symbol key, when sync_symbol is enabled.
                 let group_info = active_cid_rc
                     .and_then(|cid| {
-                        let gid = pw.chart.panel_app.tag_manager.bubble_for_chart(cid)?;
+                        let gid = pw.chart.managers.bubble.bubble_for_chart(cid)?;
                         Some((cid, gid))
                     });
                 if let Some((active_cid, group_id)) = group_info {
-                    let sync_symbol_on = pw.chart.panel_app.tag_manager
+                    let sync_symbol_on = pw.chart.managers.bubble
                         .bubble(group_id)
                         .map(|g| g.sync_flags.sync_symbol)
                         .unwrap_or(false);
                     if sync_symbol_on {
-                        let peer_ids: Vec<mlc_core::ChartId> = pw.chart.panel_app.tag_manager
+                        let peer_ids: Vec<mlc_core::ChartId> = pw.chart.managers.bubble
                             .chart_member_ids(group_id)
                             .into_iter()
                             .filter(|&m| m != active_cid)
@@ -3635,9 +3635,9 @@ impl ApplicationHandler for App<'_> {
                         let peers_matching: Vec<mlc_core::ChartId> = {
                             peer_ids.iter()
                                 .filter(|&&pid| {
-                                    pw.chart.panel_app.tag_manager.symbol_for_chart(pid).map_or(false, |s| s == symbol)
-                                    && pw.chart.panel_app.tag_manager.exchange_for_chart(pid).map_or(false, |e| e == exchange)
-                                    && pw.chart.panel_app.tag_manager.account_type_for_chart(pid).map_or(false, |a| a == account_type)
+                                    pw.chart.managers.bubble.symbol_for_chart(pid).map_or(false, |s| s == symbol)
+                                    && pw.chart.managers.bubble.exchange_for_chart(pid).map_or(false, |e| e == exchange)
+                                    && pw.chart.managers.bubble.account_type_for_chart(pid).map_or(false, |a| a == account_type)
                                 })
                                 .copied()
                                 .collect()

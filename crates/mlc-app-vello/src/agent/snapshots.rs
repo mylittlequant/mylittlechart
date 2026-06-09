@@ -86,11 +86,11 @@ impl App<'_> {
                         0
                     };
 
-                    let symbol = pw.chart.panel_app.tag_manager.symbol_for_chart(*chart_id)
+                    let symbol = pw.chart.managers.bubble.symbol_for_chart(*chart_id)
                         .map(String::from).unwrap_or_default();
-                    let exchange = pw.chart.panel_app.tag_manager.exchange_for_chart(*chart_id)
+                    let exchange = pw.chart.managers.bubble.exchange_for_chart(*chart_id)
                         .map(String::from).unwrap_or_default();
-                    let tf_name = pw.chart.panel_app.tag_manager.timeframe_for_chart(*chart_id)
+                    let tf_name = pw.chart.managers.bubble.timeframe_for_chart(*chart_id)
                         .map(|tf| tf.name.clone()).unwrap_or_default();
 
                     let indicators: Vec<IndicatorSummary> = pw.chart.indicator_manager
@@ -183,7 +183,7 @@ impl App<'_> {
                 .containers()
                 .keys()
                 .map(|cid| {
-                    let sym = pw.chart.panel_app.tag_manager.symbol_for_chart(*cid)
+                    let sym = pw.chart.managers.bubble.symbol_for_chart(*cid)
                         .map(String::from).unwrap_or_default();
                     (cid.0, sym)
                 })

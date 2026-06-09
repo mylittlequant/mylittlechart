@@ -423,9 +423,9 @@ impl ChartApp {
                             // group remembers the mode for new joiners.
                             let viewport_sync_on = self.panel_app.panel_grid
                                 .container_id_for_leaf(leaf_id)
-                                .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid))
+                                .and_then(|cid| self.managers.bubble.bubble_for_chart(cid))
                                 .and_then(|gid| {
-                                    self.panel_app.tag_manager.bubble_mut(gid).map(|g| {
+                                    self.managers.bubble.bubble_mut(gid).map(|g| {
                                         g.scale_mode = next_mode;
                                         g.sync_flags.sync_viewport
                                     })
@@ -541,7 +541,7 @@ impl ChartApp {
         // S2.7.1e: read symbol via branch_meta (B6 — closure capture).
         let active_cid_rc = self.panel_app.panel_grid.active_container_id();
         let symbol: String = active_cid_rc
-            .and_then(|cid| self.panel_app.tag_manager.symbol_for_chart(cid))
+            .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
             .map(String::from)
             .unwrap_or_default();
         let (viewport, price_scale, sub_pane_ranges) = {
@@ -4276,9 +4276,9 @@ impl ChartApp {
             } else {
                 // Grouped path — record undo for the freehand primitive placed into the group.
                 let group_create_cmd = self.panel_app.panel_grid.active_container_id()
-                    .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid))
+                    .and_then(|cid| self.managers.bubble.bubble_for_chart(cid))
                     .and_then(|gid| {
-                        let group = self.panel_app.tag_manager.bubble(gid)?;
+                        let group = self.managers.bubble.bubble(gid)?;
                         let idx = group.primitives.len().saturating_sub(1);
                         let prim = group.primitives.get(idx)?;
                         Some(mlc_core::Command::CreatePrimitive {
@@ -7857,7 +7857,7 @@ impl ChartApp {
         // Determine up front whether we are operating in grouped or standalone mode.
         // We must not hold a borrow on panel_grid across the mutable tag_manager calls below.
         let group_id = self.panel_app.panel_grid.active_container_id()
-            .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid));
+            .and_then(|cid| self.managers.bubble.bubble_for_chart(cid));
         let active_pid_cmd = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
 
         match cmd {
@@ -7867,7 +7867,7 @@ impl ChartApp {
                     if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
                         if let Some(mut prim) = reg.create(type_id, points, Some(&data.color.stroke)) {
                             *prim.data_mut() = data.clone();
-                            if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
+                            if let Some(group) = self.managers.bubble.bubble_mut(gid) {
                                 let insert_pos = (*index).min(group.primitives.len());
                                 group.primitives.insert(insert_pos, prim);
                             }
@@ -7881,7 +7881,7 @@ impl ChartApp {
             }
             Command::DeletePrimitive { index, .. } => {
                 if let Some(gid) = group_id {
-                    if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
+                    if let Some(group) = self.managers.bubble.bubble_mut(gid) {
                         if *index < group.primitives.len() {
                             group.primitives.remove(*index);
                         }
@@ -7894,7 +7894,7 @@ impl ChartApp {
             }
             Command::DeleteAllPrimitives { .. } => {
                 if let Some(gid) = group_id {
-                    if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
+                    if let Some(group) = self.managers.bubble.bubble_mut(gid) {
                         group.primitives.clear();
                     }
                 } else if let Some(pid) = active_pid_cmd {
@@ -7906,7 +7906,7 @@ impl ChartApp {
             Command::RestoreAllPrimitives { primitives } => {
                 if let Some(gid) = group_id {
                     if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
-                        if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
+                        if let Some(group) = self.managers.bubble.bubble_mut(gid) {
                             group.primitives.clear();
                             for (type_id, points, data) in primitives {
                                 if let Some(mut prim) = reg.create(type_id, points, Some(&data.color.stroke)) {
@@ -7927,7 +7927,7 @@ impl ChartApp {
             }
             Command::MovePrimitive { index, new_points, .. } => {
                 if let Some(gid) = group_id {
-                    if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
+                    if let Some(group) = self.managers.bubble.bubble_mut(gid) {
                         if let Some(prim) = group.primitives.get_mut(*index) {
                             prim.set_points(new_points);
                         }
@@ -7940,7 +7940,7 @@ impl ChartApp {
             }
             Command::SetPrimitiveVisibility { index, visible, .. } => {
                 if let Some(gid) = group_id {
-                    if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
+                    if let Some(group) = self.managers.bubble.bubble_mut(gid) {
                         if let Some(prim) = group.primitives.get_mut(*index) {
                             prim.data_mut().visible = *visible;
                         }
@@ -7953,7 +7953,7 @@ impl ChartApp {
             }
             Command::SetPrimitiveLock { index, locked, .. } => {
                 if let Some(gid) = group_id {
-                    if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
+                    if let Some(group) = self.managers.bubble.bubble_mut(gid) {
                         if let Some(prim) = group.primitives.get_mut(*index) {
                             prim.data_mut().locked = *locked;
                         }
@@ -7966,7 +7966,7 @@ impl ChartApp {
             }
             Command::ModifyPrimitiveData { index, new_data, .. } => {
                 if let Some(gid) = group_id {
-                    if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
+                    if let Some(group) = self.managers.bubble.bubble_mut(gid) {
                         if let Some(prim) = group.primitives.get_mut(*index) {
                             *prim.data_mut() = new_data.clone();
                         }
@@ -7980,7 +7980,7 @@ impl ChartApp {
             }
             Command::ReorderPrimitive { old_index, new_index } => {
                 if let Some(gid) = group_id {
-                    if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
+                    if let Some(group) = self.managers.bubble.bubble_mut(gid) {
                         if *old_index < group.primitives.len() {
                             let prim = group.primitives.remove(*old_index);
                             let insert_pos = (*new_index).min(group.primitives.len());
@@ -8018,11 +8018,11 @@ impl ChartApp {
                 // request bars and update branch_meta with new symbol + exchange.
                 let active_chart_id = self.panel_app.panel_grid.active_container_id();
                 let cur_tf = active_chart_id
-                    .and_then(|cid| self.panel_app.tag_manager.timeframe_for_chart(cid))
+                    .and_then(|cid| self.managers.bubble.timeframe_for_chart(cid))
                     .cloned()
                     .unwrap_or_else(mlc_core::state::Timeframe::h1);
                 let cur_at_label = active_chart_id
-                    .and_then(|cid| self.panel_app.tag_manager.account_type_for_chart(cid))
+                    .and_then(|cid| self.managers.bubble.account_type_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_else(|| "S".to_string());
                 let mut new_exch: Option<String> = None;
@@ -8040,8 +8040,8 @@ impl ChartApp {
                     }
                 }
                 if let (Some(chart_id), Some(exch)) = (active_chart_id, new_exch) {
-                    if let Some(bid) = self.panel_app.tag_manager.bubble_for_chart(chart_id) {
-                        if let Some(bubble) = self.panel_app.tag_manager.bubble_mut(bid) {
+                    if let Some(bid) = self.managers.bubble.bubble_for_chart(chart_id) {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
                             bubble.symbol = new_symbol.to_string();
                             bubble.timeframe = cur_tf;
                             bubble.exchange = exch;
@@ -8054,7 +8054,7 @@ impl ChartApp {
                 // Phase 4 B: instrument fields removed from ChartContainer.
                 let active_chart_id = self.panel_app.panel_grid.active_container_id();
                 let cur_sym = active_chart_id
-                    .and_then(|cid| self.panel_app.tag_manager.symbol_for_chart(cid))
+                    .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_default();
                 let mut changed = false;
@@ -8067,8 +8067,8 @@ impl ChartApp {
                 }
                 if changed {
                     if let Some(chart_id) = active_chart_id {
-                        if let Some(bid) = self.panel_app.tag_manager.bubble_for_chart(chart_id) {
-                            if let Some(bubble) = self.panel_app.tag_manager.bubble_mut(bid) {
+                        if let Some(bid) = self.managers.bubble.bubble_for_chart(chart_id) {
+                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
                                 bubble.timeframe = new_timeframe.clone();
                             }
                         }
@@ -8132,7 +8132,7 @@ impl ChartApp {
                         .get(&chart_id_val)
                         .map(|w| w.auto_bubble_id);
                     if let Some(bid) = auto_bid {
-                        if let Some(auto_bub) = self.panel_app.tag_manager.bubble_mut(bid) {
+                        if let Some(auto_bub) = self.managers.bubble.bubble_mut(bid) {
                             if !auto_bub.pre_tag_indicator_ids.contains(instance_id) {
                                 auto_bub.pre_tag_indicator_ids.push(*instance_id);
                             }
@@ -8155,7 +8155,7 @@ impl ChartApp {
                         .filter(|&bid| bid != mlc_core::tag_manager::BubbleId(0))
                         .collect();
                     for bid in auto_bids {
-                        if let Some(auto_bub) = self.panel_app.tag_manager.bubble_mut(bid) {
+                        if let Some(auto_bub) = self.managers.bubble.bubble_mut(bid) {
                             auto_bub.pre_tag_indicator_ids.retain(|iid| *iid != removed_id);
                         }
                     }
@@ -8220,7 +8220,7 @@ impl ChartApp {
         let visible_set: std::collections::HashSet<u64> = {
             let active_chart_id = self.panel_app.panel_grid.active_container_id();
             let symbol: String = active_chart_id
-                .and_then(|cid| self.panel_app.tag_manager.symbol_for_chart(cid))
+                .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
                 .map(String::from)
                 .unwrap_or_default();
             let chart_id = active_chart_id.map(|cid| cid.0);
@@ -8283,7 +8283,7 @@ impl ChartApp {
         let visible_set: std::collections::HashSet<u64> = {
             let chart_id = self.panel_app.panel_grid.container_id_for_leaf(leaf_id);
             let symbol: String = chart_id
-                .and_then(|cid| self.panel_app.tag_manager.symbol_for_chart(cid))
+                .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
                 .map(String::from)
                 .unwrap_or_default();
             if let Some(cid) = chart_id {
@@ -8367,11 +8367,11 @@ impl ChartApp {
     fn perform_undo_with_group(&mut self) {
         // Extract group_id before any mutable borrows.
         let group_id = self.panel_app.panel_grid.active_container_id()
-            .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid));
+            .and_then(|cid| self.managers.bubble.bubble_for_chart(cid));
 
         if let Some(gid) = group_id {
             // Try group history first (shared: primitives, indicators).
-            let group_cmd = self.panel_app.tag_manager
+            let group_cmd = self.managers.bubble
                 .bubble_mut(gid)
                 .and_then(|g| g.command_history.undo());
             if let Some(cmd) = group_cmd {
@@ -8403,11 +8403,11 @@ impl ChartApp {
     fn perform_redo_with_group(&mut self) {
         // Extract group_id before any mutable borrows.
         let group_id = self.panel_app.panel_grid.active_container_id()
-            .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid));
+            .and_then(|cid| self.managers.bubble.bubble_for_chart(cid));
 
         if let Some(gid) = group_id {
             // Try group history first (shared: primitives, indicators).
-            let group_cmd = self.panel_app.tag_manager
+            let group_cmd = self.managers.bubble
                 .bubble_mut(gid)
                 .and_then(|g| g.command_history.redo());
             if let Some(cmd) = group_cmd {
@@ -8454,11 +8454,11 @@ impl ChartApp {
                 if let Some(leaf) = self.panel_app.panel_grid.docking().active_leaf() {
                     let active_cid_prop = self.panel_app.panel_grid.active_container_id();
                     let exchange: String = active_cid_prop
-                        .and_then(|cid| self.panel_app.tag_manager.exchange_for_chart(cid))
+                        .and_then(|cid| self.managers.bubble.exchange_for_chart(cid))
                         .map(String::from)
                         .unwrap_or_default();
                     let account_type: String = active_cid_prop
-                        .and_then(|cid| self.panel_app.tag_manager.account_type_for_chart(cid))
+                        .and_then(|cid| self.managers.bubble.account_type_for_chart(cid))
                         .map(String::from)
                         .unwrap_or_default();
                     self.propagate_symbol_to_sync_group(leaf, new_symbol, &exchange, &account_type);
@@ -8536,13 +8536,13 @@ impl ChartApp {
 
         let group_id = if is_shared {
             self.panel_app.panel_grid.active_container_id()
-                .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid))
+                .and_then(|cid| self.managers.bubble.bubble_for_chart(cid))
         } else {
             None
         };
 
         if let Some(gid) = group_id {
-            if let Some(group) = self.panel_app.tag_manager.bubble_mut(gid) {
+            if let Some(group) = self.managers.bubble.bubble_mut(gid) {
                 group.command_history.push(cmd);
                 return;
             }
@@ -8610,7 +8610,7 @@ impl ChartApp {
         for panel in self.panels_store.chart_panel.values_mut() {
             panel.drawing_manager.clear_all_primitives();
         }
-        self.panel_app.tag_manager.clear();
+        self.managers.bubble.clear();
         self.indicator_manager.clear_all();
         self.panel_app.indicator_overlay_states.clear();
         self.panel_app.leaf_color_tags.clear();
@@ -8628,15 +8628,15 @@ impl ChartApp {
                     eprintln!("[sync_group] new_pane: container_for_leaf({:?}) returned None — skipping auto group", active_leaf);
                     return;
                 }
-                let symbol: String = self.panel_app.tag_manager.symbol_for_chart(chart_id)
+                let symbol: String = self.managers.bubble.symbol_for_chart(chart_id)
                     .map(String::from)
                     .unwrap_or_default();
-                let timeframe = self.panel_app.tag_manager.timeframe_for_chart(chart_id)
+                let timeframe = self.managers.bubble.timeframe_for_chart(chart_id)
                     .cloned()
                     .unwrap_or_default();
-                let group_id = self.panel_app.tag_manager.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
-                let _ = self.panel_app.tag_manager.attach_chart_to_bubble(chart_id, group_id);
-                if let Some(style_arc) = self.panel_app.tag_manager.bubble(group_id).map(|g| g.last_used_style.clone()) {
+                let group_id = self.managers.bubble.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
+                let _ = self.managers.bubble.attach_chart_to_bubble(chart_id, group_id);
+                if let Some(style_arc) = self.managers.bubble.bubble(group_id).map(|g| g.last_used_style.clone()) {
                     if let Some(pid) = self.panel_app.panel_grid.container_for_leaf(active_leaf).map(|w| w.chart_panel_id) {
                         if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
                             panel.drawing_manager.bind_style_store(style_arc);
@@ -8706,12 +8706,12 @@ impl ChartApp {
             .collect();
         for (leaf_id, chart_id) in snapshot_pairs {
             if let Some(window) = self.panel_app.panel_grid.container_for_leaf(leaf_id) {
-                let gid = self.panel_app.tag_manager.bubble_for_chart(chart_id)
+                let gid = self.managers.bubble.bubble_for_chart(chart_id)
                     .map(|g| g.0);
                 // Read stash data from the chart's permanent auto-bubble.
                 let auto_bid = window.auto_bubble_id;
                 let (ptids, stashed_ch, stashed_prims_snap) =
-                    if let Some(auto_bub) = self.panel_app.tag_manager.bubble(auto_bid) {
+                    if let Some(auto_bub) = self.managers.bubble.bubble(auto_bid) {
                         let ptids = auto_bub.pre_tag_indicator_ids.clone();
                         // The auto_bubble holds the stashed command_history only while
                         // the chart is IN a color group (joined). When ungrouped the
@@ -8731,14 +8731,14 @@ impl ChartApp {
                         (Vec::new(), None, Vec::new())
                     };
                 // Phase 4 B: read instrument fields from branch_meta for snapshot.
-                let snap_symbol = self.panel_app.tag_manager.symbol_for_chart(chart_id)
+                let snap_symbol = self.managers.bubble.symbol_for_chart(chart_id)
                     .map(String::from).unwrap_or_default();
-                let snap_timeframe = self.panel_app.tag_manager.timeframe_for_chart(chart_id)
+                let snap_timeframe = self.managers.bubble.timeframe_for_chart(chart_id)
                     .cloned()
                     .unwrap_or_else(mlc_core::state::Timeframe::h1);
-                let snap_exchange = self.panel_app.tag_manager.exchange_for_chart(chart_id)
+                let snap_exchange = self.managers.bubble.exchange_for_chart(chart_id)
                     .map(String::from).unwrap_or_default();
-                let snap_account_type = self.panel_app.tag_manager.account_type_for_chart(chart_id)
+                let snap_account_type = self.managers.bubble.account_type_for_chart(chart_id)
                     .map(String::from)
                     .unwrap_or_else(|| "S".to_string());
                 // Phase 4 C: panel state (18 display/series fields) is in panels_store.
@@ -8755,8 +8755,8 @@ impl ChartApp {
 
         // Snapshot sync groups (with synced_panels cross-reference so each
         // group's persisted synced_panel_ids list survives restore).
-        let synced_snapshot = self.panel_app.tag_manager.synced_panels_snapshot();
-        for group in self.panel_app.tag_manager.bubbles() {
+        let synced_snapshot = self.managers.bubble.synced_panels_snapshot();
+        for group in self.managers.bubble.bubbles() {
             preset.bubbles.push(DataBubbleSnapshot::from_group(group, &synced_snapshot));
         }
 

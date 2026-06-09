@@ -94,7 +94,7 @@ impl ChartApp {
                         .map(|b| b.close)
                         .unwrap_or(0.0);
                     let symbol = self.panel_app.panel_grid.active_container_id()
-                        .and_then(|cid| self.panel_app.tag_manager.symbol_for_chart(cid))
+                        .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
                         .map(String::from)
                         .unwrap_or_else(|| "BTCUSD".to_string());
                     let source_name = self.panel_app.panel_grid.active_container()
@@ -173,7 +173,7 @@ impl ChartApp {
                         .map(|b| b.close)
                         .unwrap_or(0.0);
                     let symbol = self.panel_app.panel_grid.active_container_id()
-                        .and_then(|cid| self.panel_app.tag_manager.symbol_for_chart(cid))
+                        .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
                         .map(String::from)
                         .unwrap_or_else(|| "BTCUSD".to_string());
                     let source_name = self.panel_app.panel_grid.active_container()
@@ -672,7 +672,7 @@ impl ChartApp {
                             .map(|inst| inst.name.clone())
                             .unwrap_or_else(|| format!("Indicator {}", id));
                         let symbol = self.panel_app.panel_grid.active_container_id()
-                            .and_then(|cid| self.panel_app.tag_manager.symbol_for_chart(cid))
+                            .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
                             .map(String::from)
                             .unwrap_or_else(|| "BTCUSD".to_string());
                         let source = mlc_alerts::AlertSource::Signal {
@@ -737,7 +737,7 @@ impl ChartApp {
                             .map(|inst| inst.name.clone())
                             .unwrap_or_else(|| format!("Indicator {}", id));
                         let symbol = self.panel_app.panel_grid.active_container_id()
-                            .and_then(|cid| self.panel_app.tag_manager.symbol_for_chart(cid))
+                            .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
                             .map(String::from)
                             .unwrap_or_else(|| "BTCUSD".to_string());
                         let source = mlc_alerts::AlertSource::Signal {
@@ -786,8 +786,8 @@ impl ChartApp {
         let group_members: Vec<u64> = self.panel_app.panel_grid.docking()
             .active_leaf()
             .and_then(|leaf| self.panel_app.panel_grid.container_id_for_leaf(leaf))
-            .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid))
-            .and_then(|gid| self.panel_app.tag_manager.bubble(gid))
+            .and_then(|cid| self.managers.bubble.bubble_for_chart(cid))
+            .and_then(|gid| self.managers.bubble.bubble(gid))
             .map(|g| g.members.iter().filter_map(|m| m.as_chart()).collect())
             .unwrap_or_default();
 
@@ -796,8 +796,8 @@ impl ChartApp {
         // of the same type (e.g. two "ac" indicators on the same window).
         if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
             if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(active_leaf) {
-                if let Some(group_id) = self.panel_app.tag_manager.bubble_for_chart(chart_id) {
-                    if let Some(group) = self.panel_app.tag_manager.bubble_mut(group_id) {
+                if let Some(group_id) = self.managers.bubble.bubble_for_chart(chart_id) {
+                    if let Some(group) = self.managers.bubble.bubble_mut(group_id) {
                         if let Some(pos) = group.indicator_configs.iter().position(|c| c.type_id == type_id) {
                             group.indicator_configs.remove(pos);
                             eprintln!(
@@ -848,7 +848,7 @@ impl ChartApp {
                 .filter(|&bid| bid != mlc_core::tag_manager::BubbleId(0))
                 .collect();
             for bid in auto_bids {
-                if let Some(auto_bub) = self.panel_app.tag_manager.bubble_mut(bid) {
+                if let Some(auto_bub) = self.managers.bubble.bubble_mut(bid) {
                     auto_bub.pre_tag_indicator_ids.retain(|iid| !all_to_remove.contains(iid));
                 }
             }

@@ -2328,15 +2328,15 @@ impl ChartApp {
                         // Stamp scoping fields from branch_meta / active window id.
                         let active_cid = self.panel_app.panel_grid.active_container_id();
                         let active_exchange = active_cid
-                            .and_then(|cid| self.panel_app.tag_manager.exchange_for_chart(cid))
+                            .and_then(|cid| self.managers.bubble.exchange_for_chart(cid))
                             .map(String::from)
                             .unwrap_or_default();
                         let active_tf_name = active_cid
-                            .and_then(|cid| self.panel_app.tag_manager.timeframe_for_chart(cid))
+                            .and_then(|cid| self.managers.bubble.timeframe_for_chart(cid))
                             .map(|tf| tf.name.clone())
                             .unwrap_or_default();
                         let active_sym = active_cid
-                            .and_then(|cid| self.panel_app.tag_manager.symbol_for_chart(cid))
+                            .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
                             .map(String::from)
                             .unwrap_or_default();
                         if let Some(window) = self.panel_app.panel_grid.active_container() {
@@ -2344,7 +2344,7 @@ impl ChartApp {
                             alert.timeframe = active_tf_name;
                             alert.window_id_hint = Some(window.id.0);
                             alert.group_id = active_cid
-                                .and_then(|cid| self.panel_app.tag_manager.bubble_for_chart(cid))
+                                .and_then(|cid| self.managers.bubble.bubble_for_chart(cid))
                                 .map(|g| g.0);
                             if !matches!(alert.source, mlc_alerts::AlertSource::Price { .. }) {
                                 alert.set_symbol(active_sym);

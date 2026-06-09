@@ -112,7 +112,7 @@ impl ChartApp {
                 Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
                     self.lag_event_count += 1;
                     crate::dlog!("[ChartApp:{}] broadcast LAGGED — skipped {} messages (total lag events: {})",
-                        self.panel_app.tag_manager.bubbles()
+                        self.managers.bubble.bubbles()
                             .find(|b| !b.symbol.is_empty())
                             .map(|b| b.symbol.as_str())
                             .unwrap_or("?"),
@@ -187,10 +187,10 @@ impl ChartApp {
                         let matched_cids: Vec<u64> = self.panel_app.panel_grid.containers().iter()
                             .filter(|(cid, _window)| {
                 
-                                self.panel_app.tag_manager.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
-                                    && self.panel_app.tag_manager.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
-                                    && self.panel_app.tag_manager.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
-                                    && self.panel_app.tag_manager.account_type_for_chart(**cid).map_or(false, |at| at == account_type.short_label())
+                                self.managers.bubble.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
+                                    && self.managers.bubble.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
+                                    && self.managers.bubble.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
+                                    && self.managers.bubble.account_type_for_chart(**cid).map_or(false, |at| at == account_type.short_label())
                             })
                             .map(|(cid, _window)| cid.0)
                             .collect();
@@ -223,10 +223,10 @@ impl ChartApp {
                     let instrument_by_cid: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::state::Timeframe, String, String)> = {
                         self.panel_app.panel_grid.containers().keys()
                             .filter_map(|cid| {
-                                let sym = self.panel_app.tag_manager.symbol_for_chart(*cid).map(String::from)?;
-                                let tf = self.panel_app.tag_manager.timeframe_for_chart(*cid).cloned()?;
-                                let exch = self.panel_app.tag_manager.exchange_for_chart(*cid).map(String::from)?;
-                                let at = self.panel_app.tag_manager.account_type_for_chart(*cid).map(String::from)?;
+                                let sym = self.managers.bubble.symbol_for_chart(*cid).map(String::from)?;
+                                let tf = self.managers.bubble.timeframe_for_chart(*cid).cloned()?;
+                                let exch = self.managers.bubble.exchange_for_chart(*cid).map(String::from)?;
+                                let at = self.managers.bubble.account_type_for_chart(*cid).map(String::from)?;
                                                                 Some((*cid, (sym, tf, exch, at)))
                             })
                             .collect()
@@ -281,8 +281,8 @@ impl ChartApp {
                         }
                     }
                     for (chart_id, prev_close) in prev_close_mirrors {
-                        if let Some(bid) = self.panel_app.tag_manager.bubble_for_chart(chart_id) {
-                            if let Some(bubble) = self.panel_app.tag_manager.bubble_mut(bid) {
+                        if let Some(bid) = self.managers.bubble.bubble_for_chart(chart_id) {
+                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
                                 bubble.prev_close_price = prev_close;
                             }
                         }
@@ -302,10 +302,10 @@ impl ChartApp {
                         if let Some(w) = self.panel_app.panel_grid.containers().iter()
                             .find(|(cid, _w)| {
                 
-                                self.panel_app.tag_manager.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
-                                    && self.panel_app.tag_manager.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
-                                    && self.panel_app.tag_manager.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
-                                    && self.panel_app.tag_manager.account_type_for_chart(**cid).map_or(false, |at| at == account_type.short_label())
+                                self.managers.bubble.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
+                                    && self.managers.bubble.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
+                                    && self.managers.bubble.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
+                                    && self.managers.bubble.account_type_for_chart(**cid).map_or(false, |at| at == account_type.short_label())
                             })
                             .map(|(_cid, w)| w)
                         {
@@ -325,10 +325,10 @@ impl ChartApp {
                         .iter()
                         .filter(|(cid, _w)| {
             
-                            self.panel_app.tag_manager.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
-                                && self.panel_app.tag_manager.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
-                                && self.panel_app.tag_manager.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
-                                && self.panel_app.tag_manager.account_type_for_chart(**cid).map_or(false, |at| at == account_type.short_label())
+                            self.managers.bubble.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
+                                && self.managers.bubble.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
+                                && self.managers.bubble.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
+                                && self.managers.bubble.account_type_for_chart(**cid).map_or(false, |at| at == account_type.short_label())
                         })
                         .map(|(cid, w)| (cid.0, w.bars.clone()))
                         .collect();
@@ -354,10 +354,10 @@ impl ChartApp {
                     let instrument_by_cid_bc: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::state::Timeframe, String, String)> = {
                         self.panel_app.panel_grid.containers().keys()
                             .filter_map(|cid| {
-                                let sym = self.panel_app.tag_manager.symbol_for_chart(*cid).map(String::from)?;
-                                let tf = self.panel_app.tag_manager.timeframe_for_chart(*cid).cloned()?;
-                                let exch = self.panel_app.tag_manager.exchange_for_chart(*cid).map(String::from)?;
-                                let at = self.panel_app.tag_manager.account_type_for_chart(*cid).map(String::from)?;
+                                let sym = self.managers.bubble.symbol_for_chart(*cid).map(String::from)?;
+                                let tf = self.managers.bubble.timeframe_for_chart(*cid).cloned()?;
+                                let exch = self.managers.bubble.exchange_for_chart(*cid).map(String::from)?;
+                                let at = self.managers.bubble.account_type_for_chart(*cid).map(String::from)?;
                                                                 Some((*cid, (sym, tf, exch, at)))
                             })
                             .collect()
@@ -383,8 +383,8 @@ impl ChartApp {
                         prev_close_mirrors.push((*chart_id_key, window.bars.first().map(|b| b.open)));
                     }
                     for (chart_id, prev_close) in prev_close_mirrors {
-                        if let Some(bid) = self.panel_app.tag_manager.bubble_for_chart(chart_id) {
-                            if let Some(bubble) = self.panel_app.tag_manager.bubble_mut(bid) {
+                        if let Some(bid) = self.managers.bubble.bubble_for_chart(chart_id) {
+                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
                                 bubble.prev_close_price = prev_close;
                             }
                         }
@@ -398,10 +398,10 @@ impl ChartApp {
                         .iter()
                         .filter(|(cid, _w)| {
             
-                            self.panel_app.tag_manager.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
-                                && self.panel_app.tag_manager.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
-                                && self.panel_app.tag_manager.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
-                                && self.panel_app.tag_manager.account_type_for_chart(**cid).map_or(false, |at| at == account_type.short_label())
+                            self.managers.bubble.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
+                                && self.managers.bubble.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
+                                && self.managers.bubble.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
+                                && self.managers.bubble.account_type_for_chart(**cid).map_or(false, |at| at == account_type.short_label())
                         })
                         .map(|(cid, w)| (cid.0, w.bars.clone()))
                         .collect();
@@ -422,10 +422,10 @@ impl ChartApp {
                     let instrument_by_cid_sb: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::state::Timeframe, String, String)> = {
                         self.panel_app.panel_grid.containers().keys()
                             .filter_map(|cid| {
-                                let sym = self.panel_app.tag_manager.symbol_for_chart(*cid).map(String::from)?;
-                                let tf = self.panel_app.tag_manager.timeframe_for_chart(*cid).cloned()?;
-                                let exch = self.panel_app.tag_manager.exchange_for_chart(*cid).map(String::from)?;
-                                let at = self.panel_app.tag_manager.account_type_for_chart(*cid).map(String::from)?;
+                                let sym = self.managers.bubble.symbol_for_chart(*cid).map(String::from)?;
+                                let tf = self.managers.bubble.timeframe_for_chart(*cid).cloned()?;
+                                let exch = self.managers.bubble.exchange_for_chart(*cid).map(String::from)?;
+                                let at = self.managers.bubble.account_type_for_chart(*cid).map(String::from)?;
                                                                 Some((*cid, (sym, tf, exch, at)))
                             })
                             .collect()
@@ -469,8 +469,8 @@ impl ChartApp {
                         prev_close_mirrors.push((*chart_id_key, window.bars.first().map(|b| b.open)));
                     }
                     for (chart_id, prev_close) in prev_close_mirrors {
-                        if let Some(bid) = self.panel_app.tag_manager.bubble_for_chart(chart_id) {
-                            if let Some(bubble) = self.panel_app.tag_manager.bubble_mut(bid) {
+                        if let Some(bid) = self.managers.bubble.bubble_for_chart(chart_id) {
+                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
                                 bubble.prev_close_price = prev_close;
                             }
                         }
@@ -483,9 +483,9 @@ impl ChartApp {
                             .containers()
                             .iter()
                             .filter(|(cid, _w)| {
-                                self.panel_app.tag_manager.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
-                                    && self.panel_app.tag_manager.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
-                                    && self.panel_app.tag_manager.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
+                                self.managers.bubble.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
+                                    && self.managers.bubble.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
+                                    && self.managers.bubble.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
                             })
                             .map(|(cid, w)| (cid.0, w.bars.clone()))
                             .collect();
@@ -516,10 +516,10 @@ impl ChartApp {
                     let instrument_by_cid_tu: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::state::Timeframe, String, String)> = {
                         self.panel_app.panel_grid.containers().keys()
                             .filter_map(|cid| {
-                                let sym = self.panel_app.tag_manager.symbol_for_chart(*cid).map(String::from)?;
-                                let tf = self.panel_app.tag_manager.timeframe_for_chart(*cid).cloned()?;
-                                let exch = self.panel_app.tag_manager.exchange_for_chart(*cid).map(String::from)?;
-                                let at = self.panel_app.tag_manager.account_type_for_chart(*cid).map(String::from)?;
+                                let sym = self.managers.bubble.symbol_for_chart(*cid).map(String::from)?;
+                                let tf = self.managers.bubble.timeframe_for_chart(*cid).cloned()?;
+                                let exch = self.managers.bubble.exchange_for_chart(*cid).map(String::from)?;
+                                let at = self.managers.bubble.account_type_for_chart(*cid).map(String::from)?;
                                                                 Some((*cid, (sym, tf, exch, at)))
                             })
                             .collect()
@@ -622,13 +622,13 @@ impl ChartApp {
                         crate::dlog!("[ChartApp] Multi-bar gap detected for {} — requesting REST backfill", symbol);
                         let bridge = self.bridge.clone();
                         for cid in self.panel_app.panel_grid.containers().keys() {
-                            let sym_match = self.panel_app.tag_manager.symbol_for_chart(*cid).map_or(false, |s| s == symbol);
-                            let at_match = self.panel_app.tag_manager.account_type_for_chart(*cid).map_or(false, |at| at == account_type.short_label());
+                            let sym_match = self.managers.bubble.symbol_for_chart(*cid).map_or(false, |s| s == symbol);
+                            let at_match = self.managers.bubble.account_type_for_chart(*cid).map_or(false, |at| at == account_type.short_label());
                             if sym_match && at_match {
                                 let at = account_type_from_label(
-                                    self.panel_app.tag_manager.account_type_for_chart(*cid).unwrap_or("")
+                                    self.managers.bubble.account_type_for_chart(*cid).unwrap_or("")
                                 );
-                                if let Some(tf) = self.panel_app.tag_manager.timeframe_for_chart(*cid) {
+                                if let Some(tf) = self.managers.bubble.timeframe_for_chart(*cid) {
                                     bridge.request_bars(exchange_id, &symbol, tf, at, None, None, false);
                                 }
                             }
@@ -804,16 +804,16 @@ impl ChartApp {
                     // force=true bypasses the cache_is_fresh guard so a reconnect always
                     // fetches fresh data even if the last cached bar is recent.
                     for (cid, _window) in self.panel_app.panel_grid.containers().iter() {
-                        let sym = self.panel_app.tag_manager.symbol_for_chart(*cid).unwrap_or("");
+                        let sym = self.managers.bubble.symbol_for_chart(*cid).unwrap_or("");
                         if sym.is_empty() { continue; }
-                        let exch = self.panel_app.tag_manager.exchange_for_chart(*cid).unwrap_or("");
+                        let exch = self.managers.bubble.exchange_for_chart(*cid).unwrap_or("");
                         let win_eid = digdigdig3::ExchangeId::from_str(exch)
                             .unwrap_or(digdigdig3::ExchangeId::Binance);
                         if win_eid == exchange_id {
                             let at = account_type_from_label(
-                                self.panel_app.tag_manager.account_type_for_chart(*cid).unwrap_or("")
+                                self.managers.bubble.account_type_for_chart(*cid).unwrap_or("")
                             );
-                            if let Some(tf) = self.panel_app.tag_manager.timeframe_for_chart(*cid) {
+                            if let Some(tf) = self.managers.bubble.timeframe_for_chart(*cid) {
                                 bridge.request_bars(exchange_id, sym, tf, at, None, None, true);
                             }
                         }
@@ -1010,9 +1010,9 @@ impl ChartApp {
             let window_data: Vec<WindowAlertData> = self.panel_app.panel_grid.containers()
                 .iter()
                 .filter_map(|(cid, window)| {
-                    let sym = self.panel_app.tag_manager.symbol_for_chart(*cid).unwrap_or("").to_string();
-                    let exch = self.panel_app.tag_manager.exchange_for_chart(*cid).unwrap_or("").to_string();
-                    let at = self.panel_app.tag_manager.account_type_for_chart(*cid).unwrap_or("").to_string();
+                    let sym = self.managers.bubble.symbol_for_chart(*cid).unwrap_or("").to_string();
+                    let exch = self.managers.bubble.exchange_for_chart(*cid).unwrap_or("").to_string();
+                    let at = self.managers.bubble.account_type_for_chart(*cid).unwrap_or("").to_string();
                     let triple = (sym.clone(), exch.clone(), at.clone());
                     if seen_pairs.contains(&triple) {
                         return None;
@@ -1110,7 +1110,7 @@ impl ChartApp {
             // Build delivery events for triggered alerts.
             if !triggered_ids.is_empty() {
                 let symbol = self.panel_app.panel_grid.active_container_id()
-                    .and_then(|cid| self.panel_app.tag_manager.symbol_for_chart(cid))
+                    .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_default();
                 let now = std::time::SystemTime::now()
@@ -1160,7 +1160,7 @@ impl ChartApp {
                     .panel_grid
                     .containers()
                     .keys()
-                    .filter(|cid| self.panel_app.tag_manager.symbol_for_chart(**cid)
+                    .filter(|cid| self.managers.bubble.symbol_for_chart(**cid)
                         .map_or(false, |s| s == *symbol))
                     .map(|cid| cid.0)
                     .collect();
@@ -1208,10 +1208,10 @@ impl ChartApp {
             let instrument_by_cid_scroll: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::state::Timeframe, String, String)> = {
                 self.panel_app.panel_grid.containers().keys()
                     .filter_map(|cid| {
-                        let sym = self.panel_app.tag_manager.symbol_for_chart(*cid).map(String::from)?;
-                        let tf = self.panel_app.tag_manager.timeframe_for_chart(*cid).cloned()?;
-                        let exch = self.panel_app.tag_manager.exchange_for_chart(*cid).map(String::from)?;
-                        let at = self.panel_app.tag_manager.account_type_for_chart(*cid).map(String::from)?;
+                        let sym = self.managers.bubble.symbol_for_chart(*cid).map(String::from)?;
+                        let tf = self.managers.bubble.timeframe_for_chart(*cid).cloned()?;
+                        let exch = self.managers.bubble.exchange_for_chart(*cid).map(String::from)?;
+                        let at = self.managers.bubble.account_type_for_chart(*cid).map(String::from)?;
                                                 Some((*cid, (sym, tf, exch, at)))
                     })
                     .collect()

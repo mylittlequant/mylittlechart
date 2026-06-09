@@ -173,7 +173,7 @@ impl ChartApp {
                 mlc_core::state::panel_grid::ChartPanelGrid::placeholder(),
             ),
             tag_manager: std::mem::replace(
-                &mut self.panel_app.tag_manager,
+                &mut self.managers.bubble,
                 mlc_core::tag_manager::BubbleStore::new(),
             ),
             indicator_manager: std::mem::replace(
@@ -209,7 +209,7 @@ impl ChartApp {
     pub(crate) fn unpark_preset(&mut self, id: &str) -> bool {
         let Some(state) = self.live_preset_cache.remove(id) else { return false; };
         self.panel_app.panel_grid = state.panel_grid;
-        self.panel_app.tag_manager = state.tag_manager;
+        self.managers.bubble = state.tag_manager;
         self.indicator_manager = state.indicator_manager;
         self.managers.alert = state.alert_manager;
         self.panel_app.leaf_color_tags = state.leaf_color_tags;
