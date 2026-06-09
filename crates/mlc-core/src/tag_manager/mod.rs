@@ -14,7 +14,8 @@ use serde::{Deserialize, Serialize};
 use crate::chart::annotations::markers::MarkerManager;
 use crate::chart::types::price_scale::ScaleMode;
 use crate::drawing::primitives_v2::config::TemplateStyle;
-use crate::drawing::{SignalManager, TradeManager};
+use crate::drawing::primitives_v2::{SystemSignal, StrategySignalConfig};
+use crate::drawing::TradeManager;
 use crate::state::chart_container::{ChartId, ConnectionStatus};
 use crate::state::{CommandHistory, Timeframe};
 
@@ -175,8 +176,20 @@ pub struct DataBubble {
     /// Live / Delayed / Disconnected indicator for this bubble's data feed.
     pub connection_status: ConnectionStatus,
 
-    /// Trade signal annotations rendered on every member chart.
-    pub signal_manager: SignalManager,
+    /// Strategy-generated signal annotations keyed by signal ID.
+    ///
+    /// Written exclusively by [`crate::managers::Managers::signal`].
+    pub signals: std::collections::HashMap<u64, SystemSignal>,
+
+    /// Next signal ID. Advanced by `SignalManager::add_signal`.
+    /// Starts at 1; repaired after snapshot restore via `SignalManager::repair_next_id`.
+    pub signal_next_id: u64,
+
+    /// Per-strategy rendering configuration (color, size, visibility).
+    pub signal_strategies: std::collections::HashMap<String, StrategySignalConfig>,
+
+    /// Global on/off toggle for all signals on this bubble. Default: `false`.
+    pub signals_visible: bool,
 
     /// Trade fill / position overlays rendered on every member chart.
     pub trade_manager: TradeManager,
@@ -229,7 +242,10 @@ impl Clone for DataBubble {
             last_used_style: Arc::clone(&self.last_used_style),
             prev_close_price: self.prev_close_price,
             connection_status: self.connection_status,
-            signal_manager: self.signal_manager.clone(),
+            signals: self.signals.clone(),
+            signal_next_id: self.signal_next_id,
+            signal_strategies: self.signal_strategies.clone(),
+            signals_visible: self.signals_visible,
             trade_manager: self.trade_manager.clone(),
             marker_manager: self.marker_manager.clone(),
         }
@@ -344,7 +360,10 @@ impl BubbleStore {
             last_used_style: Arc::new(RwLock::new(HashMap::new())),
             prev_close_price: None,
             connection_status: ConnectionStatus::default(),
-            signal_manager: SignalManager::default(),
+            signals: std::collections::HashMap::new(),
+            signal_next_id: 1,
+            signal_strategies: std::collections::HashMap::new(),
+            signals_visible: false,
             trade_manager: TradeManager::default(),
             marker_manager: MarkerManager::default(),
         };
@@ -379,7 +398,10 @@ impl BubbleStore {
             last_used_style: Arc::new(RwLock::new(HashMap::new())),
             prev_close_price: None,
             connection_status: ConnectionStatus::default(),
-            signal_manager: SignalManager::default(),
+            signals: std::collections::HashMap::new(),
+            signal_next_id: 1,
+            signal_strategies: std::collections::HashMap::new(),
+            signals_visible: false,
             trade_manager: TradeManager::default(),
             marker_manager: MarkerManager::default(),
         };
@@ -944,7 +966,7 @@ impl BubbleStore {
             }
         }
 
-        DataBubble {
+        let mut bubble = DataBubble {
             id: BubbleId(snap.id),
             color: snap.color,
             primitives: Vec::new(),
@@ -963,10 +985,21 @@ impl BubbleStore {
             last_used_style: Arc::new(RwLock::new(style_map)),
             prev_close_price: None,
             connection_status: ConnectionStatus::default(),
-            signal_manager: SignalManager::default(),
+            signals: snap.signals.clone(),
+            signal_next_id: 1,
+            signal_strategies: snap.signal_strategies.clone(),
+            signals_visible: snap.signals_visible,
             trade_manager: TradeManager::default(),
             marker_manager: MarkerManager::default(),
+        };
+
+        // Advance the ID counter past any restored signal IDs so that new
+        // signals never collide with persisted ones.
+        if let Some(&max_id) = bubble.signals.keys().max() {
+            bubble.signal_next_id = max_id + 1;
         }
+
+        bubble
     }
 }
 

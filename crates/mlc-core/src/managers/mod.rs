@@ -31,24 +31,40 @@
 //! - K2.7 — `alert:     AlertManager`     (moved from `ChartApp`)
 //! - K2.8 — `bubble:    BubbleStore`      (moved from `ChartPanelApp.tag_manager`)
 //! - K3   — `drawing:   DrawingManager`   (lifted to global, was per-canvas)
-//!
-//! Until K2.3 lands the struct is empty — it exists so call sites that
-//! want to depend on `mlc_core::managers::Managers` can do so without
-//! waiting for the lift cascade.
+
+use crate::drawing::SignalManager;
 
 /// Top-level container for every backend manager service.
 ///
 /// Hosted by the application (e.g. `ChartApp.managers` in mlc-app).
 /// Headless services compose the same struct directly.
-#[derive(Default)]
 pub struct Managers {
-    // Fields added incrementally by K2.3-K2.8 + K3.
+    /// Global signal annotation service (lifted from `DataBubble.signal_manager` in K2.3).
+    ///
+    /// Stateless dispatcher — all signal data lives on the bubble data slice
+    /// (`bubble.signals`, `bubble.signal_next_id`, `bubble.signal_strategies`,
+    /// `bubble.signals_visible`).
+    pub signal: SignalManager,
+    // K2.4 — trade:     TradeManager
+    // K2.5 — marker:    MarkerManager
+    // K2.6 — indicator: IndicatorManager
+    // K2.7 — alert:     AlertManager
+    // K2.8 — bubble:    BubbleStore
+    // K3   — drawing:   DrawingManager
 }
 
 impl Managers {
     /// Construct a fresh top-level manager container.
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            signal: SignalManager::new(),
+        }
+    }
+}
+
+impl Default for Managers {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
