@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::layout::modals::chart_settings::ChartSettingsData;
+use crate::state::chart_settings_data::ChartSettingsData;
 use crate::preset::preset::unix_timestamp_parts;
 use crate::scale_settings::TimeFormatSettings;
 
@@ -60,7 +60,7 @@ impl ChartTemplate {
     /// These values are hardcoded in source and used to restore "По умолчанию"
     /// without relying on any runtime snapshot.
     pub fn developer_defaults() -> Self {
-        use crate::layout::modals::chart_settings::{
+        use crate::state::chart_settings_data::{
             ChartSettingsData, InstrumentSettings, ScalesLinesSettings, StatusLineSettings,
         };
         let data = ChartSettingsData {

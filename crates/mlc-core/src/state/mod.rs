@@ -34,6 +34,7 @@ pub mod chart_panel_state;
 pub mod panel;
 pub mod sub_pane_overlay;
 pub mod toolbar_state;
+pub mod chart_settings_data;
 
 // Core chart struct
 pub use chart::*;
@@ -143,3 +144,6 @@ pub use sub_pane_overlay::SubPaneOverlayResult;
 
 // Toolbar interaction state (pure data — no render logic)
 pub use toolbar_state::{ToolbarState, ToolbarClickResult, ToggleIconPair};
+
+// Chart-settings data bags (pure serde — consumed by templates + app)
+pub use chart_settings_data::{ChartSettingsData, InstrumentSettings, ScalesLinesSettings, StatusLineSettings};
