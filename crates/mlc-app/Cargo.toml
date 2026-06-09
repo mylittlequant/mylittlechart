@@ -8,6 +8,7 @@ name = "mlc_app"
 
 [dependencies]
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
+mlc-layout = { path = "../mlc-layout", package = "mylittlechart-layout" }
 mlc-indicators = { path = "../mlc-indicators", package = "mylittlechart-indicators" }
 uzor = "=1.4.5"
 mlc-sidebar-content = { path = "../mlc-sidebar-content", package = "mylittlechart-sidebar-content" }

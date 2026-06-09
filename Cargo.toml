@@ -2,6 +2,7 @@
 members = [
     "crates/mlc-core",
     "crates/mlc-crypto",
+    "crates/mlc-layout",
     "crates/mlc-app",
     "crates/mlc-app-vello",
     "crates/mlc-indicators",
