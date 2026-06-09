@@ -7,7 +7,7 @@
 use crate::input::{ChartHitTester, HitResult};
 use crate::ui::modal_settings::SubPaneButton;
 use super::rects::{ChartAreaLayout, ChartHitZone, ExtendedFrameLayout};
-use super::render_frame::SubPaneOverlayResult;
+use crate::state::sub_pane_overlay::SubPaneOverlayResult;
 
 /// Adapter that implements ChartHitTester for ChartAreaLayout
 ///

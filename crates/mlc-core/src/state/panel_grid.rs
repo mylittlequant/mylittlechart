@@ -2154,7 +2154,7 @@ impl ChartPanelGrid {
         screen_x: f64,
         screen_y: f64,
         extended: &crate::ExtendedFrameLayout,
-        overlay_results: &[crate::layout::SubPaneOverlayResult],
+        overlay_results: &[crate::state::sub_pane_overlay::SubPaneOverlayResult],
     ) -> bool {
         use crate::ui::modal_settings::SubPaneButton;
 

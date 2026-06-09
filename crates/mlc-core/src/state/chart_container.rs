@@ -28,7 +28,7 @@ use crate::data_provider::{SharedDataProvider, NullDataProvider};
 use crate::scale_settings::ScaleSettings;
 use crate::panel_app::{ChartToolbarState, ToolbarConfig};
 use crate::ui::modal_settings::SubPaneOverlayState;
-use crate::layout::SubPaneOverlayResult;
+use crate::state::sub_pane_overlay::SubPaneOverlayResult;
 
 /// Per-instance Y-axis state for indicator sub-panes.
 ///

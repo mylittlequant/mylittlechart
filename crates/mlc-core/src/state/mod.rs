@@ -31,6 +31,7 @@ pub mod inner_layout;
 pub mod branch;
 pub mod chart_panel_state;
 pub mod panel;
+pub mod sub_pane_overlay;
 
 // Core chart struct
 pub use chart::*;
@@ -124,3 +125,6 @@ pub use chart_panel_state::ChartPanelState;
 
 // Pure geometry (no external deps — shared with layout/)
 pub use geometry::LayoutRect;
+
+// Sub-pane overlay hit-test rect cache
+pub use sub_pane_overlay::SubPaneOverlayResult;

@@ -60,5 +60,5 @@ pub use render_frame::{
     MultiChartRenderResult,
     ChartModalLayout,
     ChartModalRenderResult,
-    SubPaneOverlayResult,
 };
+pub use crate::state::sub_pane_overlay::SubPaneOverlayResult;
