@@ -13,7 +13,6 @@ type DockingManager<P> = DockState<P>;
 
 use crate::state::{ChartContainer, ChartId, Timeframe};
 use crate::state::generate_chart_id;
-use crate::ChartHitTester;
 use crate::state::panel::Panel;
 
 // Re-export so callers that import from this module get everything they need.
@@ -1803,10 +1802,10 @@ impl ChartPanelGrid {
         drag_mode: crate::engine::input::DragMode,
         drawing_active: bool,
         extended: &crate::state::geometry::ExtendedFrameLayout,
+        is_over_separator: bool,
         active_dm: &crate::drawing::DrawingManager,
     ) -> Option<(i64, f64, bool, Option<usize>)> {
         use crate::engine::input::DragMode;
-        use crate::layout::ExtendedLayoutHitTester;
 
         if drawing_active {
             // Unclamped crosshair — preview must extend beyond chart area.
@@ -1921,11 +1920,6 @@ impl ChartPanelGrid {
             };
 
             // Hide crosshair when cursor is over a pane separator.
-            let is_over_separator = matches!(
-                ExtendedLayoutHitTester::new(extended).hit_test(x, y),
-                crate::engine::input::HitResult::PaneSeparator { .. }
-            );
-
             if is_over_separator {
                 if let Some(window) = self.active_container_mut() {
                     window.crosshair.visible = false;
@@ -1971,15 +1965,9 @@ impl ChartPanelGrid {
         y: f64,
         leaf_id: LeafId,
         extended: &crate::state::geometry::ExtendedFrameLayout,
+        is_over_separator: bool,
     ) -> Option<(i64, f64, bool, Option<usize>)> {
-        use crate::layout::ExtendedLayoutHitTester;
-
-        let is_over_sub_separator = matches!(
-            ExtendedLayoutHitTester::new(extended).hit_test(x, y),
-            crate::engine::input::HitResult::PaneSeparator { .. }
-        );
-
-        if is_over_sub_separator {
+        if is_over_separator {
             if let Some(window) = self.container_for_leaf_mut(leaf_id) {
                 window.crosshair.visible = false;
             }

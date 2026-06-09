@@ -3548,8 +3548,12 @@ impl ChartApp {
                                 .cloned()
                                 .or_else(|| self.build_extended_layout_for_leaf(active_leaf, &leaf_rect));
                             if let Some(ext) = ext_opt {
+                                let is_over_separator = matches!(
+                                    ExtendedLayoutHitTester::new(&ext).hit_test(x, y),
+                                    mlc_core::engine::input::HitResult::PaneSeparator { .. }
+                                );
                                 if let Some((ts, price, vis, pane_idx)) = self.panel_app.panel_grid
-                                    .update_crosshair_split(x, y, active_leaf, &ext)
+                                    .update_crosshair_split(x, y, active_leaf, &ext, is_over_separator)
                                 {
                                     // Propagate to sync-group peers (F11).
                                     self.propagate_crosshair_to_sync_group(
@@ -3563,8 +3567,12 @@ impl ChartApp {
                     let active_pid_ch1 = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                     if let Some(pid) = active_pid_ch1 {
                         if let Some(panel) = self.panels_store.chart_panel.get(&pid) {
+                            let is_over_separator = matches!(
+                                ExtendedLayoutHitTester::new(extended).hit_test(x, y),
+                                mlc_core::engine::input::HitResult::PaneSeparator { .. }
+                            );
                             self.panel_app.panel_grid.update_crosshair(
-                                x, y, drag_mode, /* drawing_active */ true, &extended, &panel.drawing_manager,
+                                x, y, drag_mode, /* drawing_active */ true, extended, is_over_separator, &panel.drawing_manager,
                             );
                         }
                     }
@@ -3627,8 +3635,12 @@ impl ChartApp {
                         .cloned()
                         .or_else(|| self.build_extended_layout_for_leaf(leaf_id, &leaf_rect));
                     if let Some(ext) = ext_opt {
+                        let is_over_separator = matches!(
+                            ExtendedLayoutHitTester::new(&ext).hit_test(x, y),
+                            mlc_core::engine::input::HitResult::PaneSeparator { .. }
+                        );
                         if let Some((ts, price, vis, pane_idx)) = self.panel_app.panel_grid
-                            .update_crosshair_split(x, y, leaf_id, &ext)
+                            .update_crosshair_split(x, y, leaf_id, &ext, is_over_separator)
                         {
                             self.propagate_crosshair_to_sync_group(leaf_id, ts, price, vis, pane_idx);
                         }
@@ -3637,10 +3649,14 @@ impl ChartApp {
             }
         } else if let Some((timestamp, price, crosshair_visible, pane_index)) = {
             let active_pid_ch2 = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+            let is_over_separator2 = matches!(
+                ExtendedLayoutHitTester::new(extended2).hit_test(x, y),
+                mlc_core::engine::input::HitResult::PaneSeparator { .. }
+            );
             active_pid_ch2
                 .and_then(|pid| self.panels_store.chart_panel.get(&pid))
                 .and_then(|panel| self.panel_app.panel_grid
-                    .update_crosshair(x, y, drag_mode, false, extended2, &panel.drawing_manager))
+                    .update_crosshair(x, y, drag_mode, false, extended2, is_over_separator2, &panel.drawing_manager))
         } {
             let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
             if let Some(active_leaf) = active_leaf_opt {
@@ -4815,8 +4831,12 @@ impl ChartApp {
                         .cloned()
                         .or_else(|| leaf_rect_opt.and_then(|r| self.build_extended_layout_for_leaf(leaf_id, &r)));
                     if let Some(extended) = extended_opt {
+                        let is_over_separator = matches!(
+                            ExtendedLayoutHitTester::new(&extended).hit_test(x, y),
+                            mlc_core::engine::input::HitResult::PaneSeparator { .. }
+                        );
                         if let Some((ts, price, vis, pane_idx)) = self.panel_app.panel_grid
-                            .update_crosshair_split(x, y, leaf_id, &extended)
+                            .update_crosshair_split(x, y, leaf_id, &extended, is_over_separator)
                         {
                             // Propagate to sync-group peers (handles order-flow panels too).
                             self.propagate_crosshair_to_sync_group(leaf_id, ts, price, vis, pane_idx);
@@ -4936,12 +4956,16 @@ impl ChartApp {
         let extended = self.active_frame_layout.clone()
             .unwrap_or_else(|| self.build_extended_layout());
         let drag_mode = self.input_handler.state.drag_mode;
+        let is_over_separator_mm = matches!(
+            ExtendedLayoutHitTester::new(&extended).hit_test(x, y),
+            mlc_core::engine::input::HitResult::PaneSeparator { .. }
+        );
         if let Some((timestamp, price, crosshair_visible, pane_index)) = {
             let active_pid_ch3 = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
             active_pid_ch3
                 .and_then(|pid| self.panels_store.chart_panel.get(&pid))
                 .and_then(|panel| self.panel_app.panel_grid
-                    .update_crosshair(x, y, drag_mode, is_drawing, &extended, &panel.drawing_manager))
+                    .update_crosshair(x, y, drag_mode, is_drawing, &extended, is_over_separator_mm, &panel.drawing_manager))
         } {
             let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
             if let Some(active_leaf) = active_leaf_opt {
