@@ -26,7 +26,7 @@ use crate::chart::{CompareOverlay, CompareSeries, get_compare_color};
 use crate::state::{CommandHistory, Command};
 use crate::data_provider::{SharedDataProvider, NullDataProvider};
 use crate::scale_settings::ScaleSettings;
-use crate::panel_app::{ChartToolbarState, ToolbarConfig};
+use crate::state::toolbar_state::{ChartToolbarState, ToolbarConfig};
 use crate::ui::modal_settings::SubPaneOverlayState;
 use crate::state::sub_pane_overlay::SubPaneOverlayResult;
 

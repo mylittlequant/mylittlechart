@@ -143,7 +143,19 @@ pub use scale_corner::{ScaleCornerState, ScaleCornerHitZones, ScaleCornerButton}
 pub use sub_pane_overlay::SubPaneOverlayResult;
 
 // Toolbar interaction state (pure data — no render logic)
-pub use toolbar_state::{ToolbarState, ToolbarClickResult, ToggleIconPair};
+// Also includes chart-toolbar types (moved from panel_app — Phase X.4 back-edge removal).
+pub use toolbar_state::{
+    ToolbarState, ToolbarClickResult, ToggleIconPair,
+    ToolbarConfig,
+    ChartToolbarState,
+    ChartToolbarRenderResult,
+    FloatingInlineBar,
+    InlineDockEdge,
+    InlineSlideContainer,
+    DropdownRenderInfo,
+    InlineDropdownResult,
+    InlineConfigResult as ChartInlineConfigResult,
+};
 
 // Chart-settings data bags (pure serde — consumed by templates + app)
 pub use chart_settings_data::{ChartSettingsData, InstrumentSettings, ScalesLinesSettings, StatusLineSettings};
