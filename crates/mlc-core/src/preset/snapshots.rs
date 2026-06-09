@@ -15,6 +15,7 @@ fn default_account_type_spot() -> String {
 use crate::chart::types::price_scale::ScaleMode;
 use crate::drawing::primitives_v2::{Primitive, StrategySignalConfig, SystemSignal};
 use crate::drawing::primitives_v2::config::TimeframeVisibilityConfig;
+use crate::drawing::Trade;
 use crate::drawing::DrawingManager;
 use crate::state::chart_container::ChartContainer;
 use crate::state::chart_panel_state::ChartPanelState;
@@ -475,6 +476,22 @@ pub struct DataBubbleSnapshot {
     /// Global signal visibility toggle. Absent in old presets → false (hidden by default).
     #[serde(default)]
     pub signals_visible: bool,
+
+    /// Persisted trade annotations. Absent in old presets → empty map.
+    #[serde(default)]
+    pub trades: std::collections::HashMap<u64, Trade>,
+
+    /// Global trade visibility toggle. Absent in old presets → true (visible by default).
+    #[serde(default = "default_true")]
+    pub trades_visible: bool,
+
+    /// Show trade connector lines. Absent in old presets → true.
+    #[serde(default = "default_true")]
+    pub trade_show_lines: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl DataBubbleSnapshot {
@@ -562,6 +579,9 @@ impl DataBubbleSnapshot {
             signals: group.signals.clone(),
             signal_strategies: group.signal_strategies.clone(),
             signals_visible: group.signals_visible,
+            trades: group.trades.clone(),
+            trades_visible: group.trades_visible,
+            trade_show_lines: group.trade_show_lines,
         }
     }
 }

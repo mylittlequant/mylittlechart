@@ -1,9 +1,14 @@
-//! Trade visualization - displays completed trades on chart
+//! Trade visualization — displays completed trades on chart.
 //!
-//! Trade represents a completed trade with entry/exit points and PnL.
-//! This is for visualization only - actual trade logic lives in nemo.
+//! After K2.4 `TradeManager` is a **stateless dispatcher** that lives in
+//! `Managers.trade`.  All trade data (`trades` map, `trade_next_id`,
+//! `trades_visible`, `trade_show_lines`) now lives on the `DataBubble`
+//! data slice.
+//!
+//! Every mutating method accepts `&mut DataBubble` (or `&DataBubble` for
+//! reads) and writes directly to the bubble.  No method reaches back to a
+//! `trade_manager` field — that field is gone.
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 /// Trade direction
@@ -108,36 +113,28 @@ impl Trade {
     }
 }
 
-/// Manager for trade visualization
+/// Global service for trade visualization annotations.
+///
+/// Stateless: all trade data lives on the [`crate::tag_manager::DataBubble`]
+/// data slice (`bubble.trades`, `bubble.trade_next_id`,
+/// `bubble.trades_visible`, `bubble.trade_show_lines`).
+/// Lives in [`crate::managers::Managers::trade`].
 #[derive(Clone, Debug, Default)]
-pub struct TradeManager {
-    /// All trades, keyed by trade ID
-    trades: HashMap<u64, Trade>,
-    /// Next trade ID
-    next_id: u64,
-    /// Global visibility toggle
-    visible: bool,
-    /// Show trade lines on chart
-    show_lines: bool,
-}
+pub struct TradeManager;
 
 impl TradeManager {
     pub fn new() -> Self {
-        Self {
-            trades: HashMap::new(),
-            next_id: 1,
-            visible: true,
-            show_lines: true,
-        }
+        Self
     }
 
     // =========================================================================
     // Trade Management
     // =========================================================================
 
-    /// Add a trade
+    /// Add a trade. Returns the assigned trade ID.
     pub fn add_trade(
-        &mut self,
+        &self,
+        bubble: &mut crate::tag_manager::DataBubble,
         direction: TradeDirection,
         entry_bar: f64,
         entry_price: f64,
@@ -146,8 +143,8 @@ impl TradeManager {
         pnl: f64,
         strategy_tag: &str,
     ) -> u64 {
-        let id = self.next_id;
-        self.next_id += 1;
+        let id = bubble.trade_next_id;
+        bubble.trade_next_id += 1;
 
         let trade = Trade::new(
             id,
@@ -160,118 +157,122 @@ impl TradeManager {
             strategy_tag,
         );
 
-        self.trades.insert(id, trade);
+        bubble.trades.insert(id, trade);
         id
     }
 
-    /// Remove a trade by ID
-    pub fn remove_trade(&mut self, id: u64) -> Option<Trade> {
-        self.trades.remove(&id)
+    /// Remove a trade by ID.
+    pub fn remove_trade(&self, bubble: &mut crate::tag_manager::DataBubble, id: u64) -> Option<Trade> {
+        bubble.trades.remove(&id)
     }
 
-    /// Remove all trades from a strategy
-    pub fn remove_strategy_trades(&mut self, strategy_tag: &str) {
-        self.trades.retain(|_, t| t.strategy_tag != strategy_tag);
+    /// Remove all trades belonging to a strategy.
+    pub fn remove_strategy_trades(&self, bubble: &mut crate::tag_manager::DataBubble, strategy_tag: &str) {
+        bubble.trades.retain(|_, t| t.strategy_tag != strategy_tag);
     }
 
-    /// Clear all trades
-    pub fn clear(&mut self) {
-        self.trades.clear();
+    /// Clear all trades from a bubble.
+    pub fn clear(&self, bubble: &mut crate::tag_manager::DataBubble) {
+        bubble.trades.clear();
     }
 
-    /// Get trade by ID
-    pub fn get(&self, id: u64) -> Option<&Trade> {
-        self.trades.get(&id)
+    /// Get trade by ID (immutable).
+    pub fn get<'b>(&self, bubble: &'b crate::tag_manager::DataBubble, id: u64) -> Option<&'b Trade> {
+        bubble.trades.get(&id)
     }
 
-    /// Get all trades
-    pub fn trades(&self) -> impl Iterator<Item = &Trade> + '_ {
-        self.trades.values()
+    /// Iterate over all trades in a bubble.
+    pub fn trades<'b>(&self, bubble: &'b crate::tag_manager::DataBubble) -> impl Iterator<Item = &'b Trade> {
+        bubble.trades.values()
     }
 
-    /// Get trades for a specific strategy
-    pub fn trades_for_strategy<'a>(&'a self, strategy_tag: &'a str) -> impl Iterator<Item = &'a Trade> + 'a {
-        self.trades.values().filter(move |t| t.strategy_tag == strategy_tag)
+    /// Iterate over trades belonging to a specific strategy.
+    pub fn trades_for_strategy<'b>(
+        &self,
+        bubble: &'b crate::tag_manager::DataBubble,
+        strategy_tag: &'b str,
+    ) -> impl Iterator<Item = &'b Trade> + 'b {
+        bubble.trades.values().filter(move |t| t.strategy_tag == strategy_tag)
     }
 
-    /// Get trade count
-    pub fn count(&self) -> usize {
-        self.trades.len()
+    /// Total trade count in a bubble.
+    pub fn count(&self, bubble: &crate::tag_manager::DataBubble) -> usize {
+        bubble.trades.len()
     }
 
     // =========================================================================
     // Statistics
     // =========================================================================
 
-    /// Get total PnL
-    pub fn total_pnl(&self) -> f64 {
-        self.trades.values().map(|t| t.pnl).sum()
+    /// Get total PnL across all trades in a bubble.
+    pub fn total_pnl(&self, bubble: &crate::tag_manager::DataBubble) -> f64 {
+        bubble.trades.values().map(|t| t.pnl).sum()
     }
 
-    /// Get win count
-    pub fn win_count(&self) -> usize {
-        self.trades.values().filter(|t| t.pnl > 0.0).count()
+    /// Get win count (PnL > 0).
+    pub fn win_count(&self, bubble: &crate::tag_manager::DataBubble) -> usize {
+        bubble.trades.values().filter(|t| t.pnl > 0.0).count()
     }
 
-    /// Get loss count
-    pub fn loss_count(&self) -> usize {
-        self.trades.values().filter(|t| t.pnl <= 0.0).count()
+    /// Get loss count (PnL <= 0).
+    pub fn loss_count(&self, bubble: &crate::tag_manager::DataBubble) -> usize {
+        bubble.trades.values().filter(|t| t.pnl <= 0.0).count()
     }
 
-    /// Get win rate (0.0 - 1.0)
-    pub fn win_rate(&self) -> f64 {
-        let total = self.trades.len();
+    /// Get win rate (0.0 – 1.0).
+    pub fn win_rate(&self, bubble: &crate::tag_manager::DataBubble) -> f64 {
+        let total = bubble.trades.len();
         if total == 0 {
             return 0.0;
         }
-        self.win_count() as f64 / total as f64
+        self.win_count(bubble) as f64 / total as f64
     }
 
     // =========================================================================
     // Visibility
     // =========================================================================
 
-    /// Get global visibility
-    pub fn is_visible(&self) -> bool {
-        self.visible
+    /// Get global visibility for a bubble.
+    pub fn is_visible(&self, bubble: &crate::tag_manager::DataBubble) -> bool {
+        bubble.trades_visible
     }
 
-    /// Set global visibility
-    pub fn set_visible(&mut self, visible: bool) {
-        self.visible = visible;
+    /// Set global visibility for a bubble.
+    pub fn set_visible(&self, bubble: &mut crate::tag_manager::DataBubble, visible: bool) {
+        bubble.trades_visible = visible;
     }
 
-    /// Get show lines setting
-    pub fn show_lines(&self) -> bool {
-        self.show_lines
+    /// Get show-lines setting for a bubble.
+    pub fn show_lines(&self, bubble: &crate::tag_manager::DataBubble) -> bool {
+        bubble.trade_show_lines
     }
 
-    /// Set show lines setting
-    pub fn set_show_lines(&mut self, show: bool) {
-        self.show_lines = show;
+    /// Set show-lines setting for a bubble.
+    pub fn set_show_lines(&self, bubble: &mut crate::tag_manager::DataBubble, show: bool) {
+        bubble.trade_show_lines = show;
     }
 
     // =========================================================================
     // Serialization
     // =========================================================================
 
-    /// Get all trades as JSON array
-    pub fn to_json(&self) -> String {
-        let trades: Vec<String> = self.trades.values()
+    /// Get all trades as JSON array.
+    pub fn to_json(&self, bubble: &crate::tag_manager::DataBubble) -> String {
+        let trades: Vec<String> = bubble.trades.values()
             .map(|t| t.to_json())
             .collect();
         format!("[{}]", trades.join(","))
     }
 
-    /// Load trades from JSON array
-    pub fn load_json(&mut self, json: &str) {
+    /// Load trades from JSON array. Advances `trade_next_id` past loaded ids.
+    pub fn load_json(&self, bubble: &mut crate::tag_manager::DataBubble, json: &str) {
         if let Ok(trades) = serde_json::from_str::<Vec<Trade>>(json) {
             for trade in trades {
                 let id = trade.id;
-                if id >= self.next_id {
-                    self.next_id = id + 1;
+                if id >= bubble.trade_next_id {
+                    bubble.trade_next_id = id + 1;
                 }
-                self.trades.insert(id, trade);
+                bubble.trades.insert(id, trade);
             }
         }
     }
@@ -280,33 +281,47 @@ impl TradeManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tag_manager::BubbleStore;
+
+    fn make_bubble() -> crate::tag_manager::DataBubble {
+        let mut store = BubbleStore::new();
+        let id = store.create_group(
+            [0.0; 4],
+            "BTCUSDT".to_string(),
+            crate::state::Timeframe::h1(),
+        );
+        store.bubble_mut(id).unwrap().clone()
+    }
 
     #[test]
     fn test_add_trade() {
-        let mut manager = TradeManager::new();
+        let manager = TradeManager::new();
+        let mut bubble = make_bubble();
         let id = manager.add_trade(
+            &mut bubble,
             TradeDirection::Long,
             100.0, 50000.0,
             110.0, 51000.0,
             1000.0,
-            "test_strategy"
+            "test_strategy",
         );
         assert_eq!(id, 1);
-        assert_eq!(manager.count(), 1);
+        assert_eq!(manager.count(&bubble), 1);
     }
 
     #[test]
     fn test_trade_stats() {
-        let mut manager = TradeManager::new();
-        manager.add_trade(TradeDirection::Long, 100.0, 50000.0, 110.0, 51000.0, 1000.0, "test");
-        manager.add_trade(TradeDirection::Long, 120.0, 51000.0, 130.0, 50500.0, -500.0, "test");
-        manager.add_trade(TradeDirection::Short, 140.0, 50500.0, 150.0, 49500.0, 1000.0, "test");
+        let manager = TradeManager::new();
+        let mut bubble = make_bubble();
+        manager.add_trade(&mut bubble, TradeDirection::Long, 100.0, 50000.0, 110.0, 51000.0, 1000.0, "test");
+        manager.add_trade(&mut bubble, TradeDirection::Long, 120.0, 51000.0, 130.0, 50500.0, -500.0, "test");
+        manager.add_trade(&mut bubble, TradeDirection::Short, 140.0, 50500.0, 150.0, 49500.0, 1000.0, "test");
 
-        assert_eq!(manager.count(), 3);
-        assert_eq!(manager.win_count(), 2);
-        assert_eq!(manager.loss_count(), 1);
-        assert!((manager.win_rate() - 0.6666).abs() < 0.01);
-        assert!((manager.total_pnl() - 1500.0).abs() < 0.01);
+        assert_eq!(manager.count(&bubble), 3);
+        assert_eq!(manager.win_count(&bubble), 2);
+        assert_eq!(manager.loss_count(&bubble), 1);
+        assert!((manager.win_rate(&bubble) - 0.6666).abs() < 0.01);
+        assert!((manager.total_pnl(&bubble) - 1500.0).abs() < 0.01);
     }
 
     #[test]
@@ -314,7 +329,7 @@ mod tests {
         let trade = Trade::new(
             1, TradeDirection::Long,
             100.0, 50000.0, 110.0, 51000.0,
-            1000.0, "test"
+            1000.0, "test",
         );
         let json = trade.to_json();
         let restored = Trade::from_json(&json).unwrap();

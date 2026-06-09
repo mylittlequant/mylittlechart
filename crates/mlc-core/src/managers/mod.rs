@@ -33,6 +33,7 @@
 //! - K3   — `drawing:   DrawingManager`   (lifted to global, was per-canvas)
 
 use crate::drawing::SignalManager;
+use crate::drawing::TradeManager;
 
 /// Top-level container for every backend manager service.
 ///
@@ -45,7 +46,13 @@ pub struct Managers {
     /// (`bubble.signals`, `bubble.signal_next_id`, `bubble.signal_strategies`,
     /// `bubble.signals_visible`).
     pub signal: SignalManager,
-    // K2.4 — trade:     TradeManager
+
+    /// Global trade visualization service (lifted from `DataBubble.trade_manager` in K2.4).
+    ///
+    /// Stateless dispatcher — all trade data lives on the bubble data slice
+    /// (`bubble.trades`, `bubble.trade_next_id`, `bubble.trades_visible`,
+    /// `bubble.trade_show_lines`).
+    pub trade: TradeManager,
     // K2.5 — marker:    MarkerManager
     // K2.6 — indicator: IndicatorManager
     // K2.7 — alert:     AlertManager
@@ -58,6 +65,7 @@ impl Managers {
     pub fn new() -> Self {
         Self {
             signal: SignalManager::new(),
+            trade: TradeManager::new(),
         }
     }
 }

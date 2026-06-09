@@ -15,7 +15,7 @@ use crate::chart::annotations::markers::MarkerManager;
 use crate::chart::types::price_scale::ScaleMode;
 use crate::drawing::primitives_v2::config::TemplateStyle;
 use crate::drawing::primitives_v2::{SystemSignal, StrategySignalConfig};
-use crate::drawing::TradeManager;
+use crate::drawing::Trade;
 use crate::state::chart_container::{ChartId, ConnectionStatus};
 use crate::state::{CommandHistory, Timeframe};
 
@@ -191,8 +191,20 @@ pub struct DataBubble {
     /// Global on/off toggle for all signals on this bubble. Default: `false`.
     pub signals_visible: bool,
 
-    /// Trade fill / position overlays rendered on every member chart.
-    pub trade_manager: TradeManager,
+    /// Trade fill / position overlays keyed by trade ID.
+    ///
+    /// Written exclusively by [`crate::managers::Managers::trade`].
+    pub trades: std::collections::HashMap<u64, Trade>,
+
+    /// Next trade ID. Advanced by `TradeManager::add_trade`.
+    /// Starts at 1; repaired after snapshot restore.
+    pub trade_next_id: u64,
+
+    /// Global on/off toggle for all trades on this bubble. Default: `true`.
+    pub trades_visible: bool,
+
+    /// Show trade connector lines on chart. Default: `true`.
+    pub trade_show_lines: bool,
 
     /// Price / time marker annotations rendered on every member chart.
     pub marker_manager: MarkerManager,
@@ -246,7 +258,10 @@ impl Clone for DataBubble {
             signal_next_id: self.signal_next_id,
             signal_strategies: self.signal_strategies.clone(),
             signals_visible: self.signals_visible,
-            trade_manager: self.trade_manager.clone(),
+            trades: self.trades.clone(),
+            trade_next_id: self.trade_next_id,
+            trades_visible: self.trades_visible,
+            trade_show_lines: self.trade_show_lines,
             marker_manager: self.marker_manager.clone(),
         }
     }
@@ -364,7 +379,10 @@ impl BubbleStore {
             signal_next_id: 1,
             signal_strategies: std::collections::HashMap::new(),
             signals_visible: false,
-            trade_manager: TradeManager::default(),
+            trades: std::collections::HashMap::new(),
+            trade_next_id: 1,
+            trades_visible: true,
+            trade_show_lines: true,
             marker_manager: MarkerManager::default(),
         };
         self.bubbles.insert(id, bubble);
@@ -402,7 +420,10 @@ impl BubbleStore {
             signal_next_id: 1,
             signal_strategies: std::collections::HashMap::new(),
             signals_visible: false,
-            trade_manager: TradeManager::default(),
+            trades: std::collections::HashMap::new(),
+            trade_next_id: 1,
+            trades_visible: true,
+            trade_show_lines: true,
             marker_manager: MarkerManager::default(),
         };
         self.bubbles.insert(id, bubble);
@@ -989,14 +1010,20 @@ impl BubbleStore {
             signal_next_id: 1,
             signal_strategies: snap.signal_strategies.clone(),
             signals_visible: snap.signals_visible,
-            trade_manager: TradeManager::default(),
+            trades: snap.trades.clone(),
+            trade_next_id: 1,
+            trades_visible: snap.trades_visible,
+            trade_show_lines: snap.trade_show_lines,
             marker_manager: MarkerManager::default(),
         };
 
-        // Advance the ID counter past any restored signal IDs so that new
-        // signals never collide with persisted ones.
+        // Advance ID counters past any restored IDs so new entries never
+        // collide with persisted ones.
         if let Some(&max_id) = bubble.signals.keys().max() {
             bubble.signal_next_id = max_id + 1;
+        }
+        if let Some(&max_id) = bubble.trades.keys().max() {
+            bubble.trade_next_id = max_id + 1;
         }
 
         bubble
