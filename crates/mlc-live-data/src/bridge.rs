@@ -225,11 +225,6 @@ pub struct DataBridge {
     /// sides see the same `HashMap`. The async WS tasks write trades here;
     /// panels read at render time. Mirrors `bar_cache` semantics.
     trade_map: SharedTradeMap,
-    /// Session-level symbol cache.
-    ///
-    /// Key: `ExchangeId`. Stores the full list of trading symbols so that
-    /// repeated `request_symbols` calls don't hit the network.
-    symbol_cache: Arc<Mutex<HashMap<ExchangeId, Vec<SymbolInfo>>>>,
     /// In-flight bar fetch keys.
     ///
     /// Prevents duplicate concurrent fetches for the same `(exchange, account_type, symbol,
@@ -374,7 +369,6 @@ impl DataBridge {
             connector_ready_tx,
             bar_cache,
             trade_map,
-            symbol_cache: Arc::new(Mutex::new(HashMap::new())),
             active_fetches: Arc::new(Mutex::new(HashSet::new())),
             ws_rtt_handles: Arc::new(Mutex::new(HashMap::new())),
             oldest_fetched_ts: Arc::new(Mutex::new(HashMap::new())),
@@ -444,10 +438,18 @@ impl DataBridge {
     /// dropping the skeleton ChartApp dropped that map with it; the cache
     /// itself lives on the bridge and survives.
     pub fn symbols_snapshot(&self) -> HashMap<ExchangeId, Vec<SymbolInfo>> {
-        match self.symbol_cache.lock() {
-            Ok(c) => c.clone(),
-            Err(p) => p.into_inner().clone(),
+        // Phase 2B: read straight from the station's exchange_info cache
+        // (populated by Station::warmup / request_symbols) — the bridge no
+        // longer keeps its own symbol cache.
+        let hub = self.station.hub();
+        let mut out = HashMap::new();
+        for eid in hub.list_connected() {
+            let syms = self.station.symbols(eid);
+            if !syms.is_empty() {
+                out.insert(eid, syms);
+            }
         }
+        out
     }
 
     /// Get a reference to the connector hub.
@@ -1020,73 +1022,56 @@ impl DataBridge {
     /// Request the full list of trading symbols from an exchange.
     ///
     /// Non-blocking — spawns an async task. On completion, sends
-    /// `SymbolsLoaded` through the update channel. Results are cached for the
-    /// session — subsequent calls return the cached list immediately without a
-    /// network request.
+    /// `SymbolsLoaded` through the update channel.
+    ///
+    /// Phase 2B: the symbol source is the station's `exchange_info` cache
+    /// (Spot + FuturesCross, fetched once by `Station::warmup`). The bridge no
+    /// longer issues its own `get_exchange_info` REST calls — the old path
+    /// duplicated the warm-up fetch for every exchange at startup. If the
+    /// cache is cold for this exchange (warm-up still in flight, or an
+    /// exchange outside the warm-up set), a targeted `station.warmup` runs —
+    /// it is idempotent: already-connected exchanges short-circuit and
+    /// already-cached symbol lists re-broadcast without REST.
     pub fn request_symbols(&self, exchange_id: ExchangeId) {
-        let hub = self.hub.clone();
+        let station = self.station.clone();
         let tx = self.tx.clone();
-        let cache = self.symbol_cache.clone();
 
-        // Instant cache hit.
-        if let Ok(c) = cache.lock() {
-            if let Some(symbols) = c.get(&exchange_id) {
-                crate::dlog!(
-                    "[STARTUP-WAVE bridge] request_symbols CACHE-HIT {:?} t={}ms n={}",
-                    exchange_id, crate::elapsed_ms(), symbols.len()
-                );
-                let _ = tx.send(LiveUpdate::SymbolsLoaded {
-                    exchange_id,
-                    symbols: symbols.clone(),
-                });
-                return;
-            }
+        // Instant cache hit from the station's exchange_info cache.
+        let cached = station.symbols(exchange_id);
+        if !cached.is_empty() {
+            crate::dlog!(
+                "[STARTUP-WAVE bridge] request_symbols CACHE-HIT {:?} t={}ms n={}",
+                exchange_id, crate::elapsed_ms(), cached.len()
+            );
+            let _ = tx.send(LiveUpdate::SymbolsLoaded {
+                exchange_id,
+                symbols: cached,
+            });
+            return;
         }
 
         crate::dlog!(
-            "[STARTUP-WAVE bridge] request_symbols NET-FETCH {:?} t={}ms (cache miss — two of these for the same exchange back-to-back == the double request_symbols bug)",
+            "[STARTUP-WAVE bridge] request_symbols STATION-WARMUP {:?} t={}ms (exchange_info cache cold)",
             exchange_id, crate::elapsed_ms()
         );
         self.runtime.spawn(async move {
-            let connector = match hub.rest(exchange_id) {
-                Some(c) => c,
-                None => {
-                    let _ = tx.send(LiveUpdate::Error {
-                        exchange_id,
-                        message: format!("connector {:?} not initialized", exchange_id),
-                    });
-                    return;
-                }
-            };
-
-            // Fetch Spot and Futures symbols independently; merge into one list.
-            // If an exchange doesn't support a given account type it returns an
-            // error which we silently ignore — we keep whatever succeeded.
-            let mut all_symbols: Vec<SymbolInfo> = Vec::new();
-
-            if let Ok(spot) = connector.get_exchange_info(AccountType::Spot).await {
-                all_symbols.extend(spot);
-            }
-
-            if let Ok(futures) = connector.get_exchange_info(AccountType::FuturesCross).await {
-                all_symbols.extend(futures);
-            }
-
-            if all_symbols.is_empty() {
+            let report = station.warmup(&[exchange_id]).await;
+            let symbols = station.symbols(exchange_id);
+            if symbols.is_empty() {
+                let failed_msg = report
+                    .failed
+                    .first()
+                    .map(|(_, e)| e.clone())
+                    .unwrap_or_else(|| "exchange_info empty after station warmup".to_string());
                 let _ = tx.send(LiveUpdate::Error {
                     exchange_id,
-                    message: "get_exchange_info failed for all account types".to_string(),
+                    message: failed_msg,
                 });
                 return;
             }
-
-            // Cache for session.
-            if let Ok(mut c) = cache.lock() {
-                c.insert(exchange_id, all_symbols.clone());
-            }
             let _ = tx.send(LiveUpdate::SymbolsLoaded {
                 exchange_id,
-                symbols: all_symbols,
+                symbols,
             });
         });
     }
