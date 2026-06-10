@@ -24,10 +24,6 @@ pub struct BarSeries {
     /// Used for candle boundary detection in trade aggregation.
     pub last_trade_ts: i64,
 
-    /// True when in-memory bars have been mutated since the last disk flush.
-    /// Set by every mutation; cleared by `BarService` on flush.
-    pub dirty: bool,
-
     /// Timestamp of the oldest bar that was rotated out.
     /// `None` until the first rotation happens.
     pub oldest_rotated_ts: Option<i64>,
@@ -44,7 +40,6 @@ impl BarSeries {
             version: 0,
             capacity,
             last_trade_ts: 0,
-            dirty: false,
             oldest_rotated_ts: None,
             period_secs,
         }

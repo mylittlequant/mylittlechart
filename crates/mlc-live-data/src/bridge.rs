@@ -2379,8 +2379,7 @@ fn read_series_len(map: &SharedSeriesMap, key: &BarSeriesKey) -> usize {
     }
 }
 
-/// Replace the bars in a series (creating it if needed). Bumps version and
-/// marks the series dirty.
+/// Replace the bars in a series (creating it if needed). Bumps version.
 fn set_series_bars(map: &SharedSeriesMap, key: &BarSeriesKey, mut bars: Vec<Bar>, period_secs: i64) {
     bars.sort_by_key(|b| b.timestamp);
     bars.dedup_by_key(|b| b.timestamp);
@@ -2389,7 +2388,6 @@ fn set_series_bars(map: &SharedSeriesMap, key: &BarSeriesKey, mut bars: Vec<Bar>
     let mut series = handle.write().unwrap_or_else(|e| e.into_inner());
     series.bars = VecDeque::from(bars);
     series.version += 1;
-    series.dirty = true;
 }
 
 /// Atomically read–merge–write bars in a series. Returns the merged result.
@@ -2400,7 +2398,6 @@ fn merge_into_series(map: &SharedSeriesMap, key: &BarSeriesKey, new_bars: Vec<Ba
     let merged = merge_bars(existing, new_bars);
     series.bars = VecDeque::from(merged.clone());
     series.version += 1;
-    series.dirty = true;
     merged
 }
 
@@ -2472,188 +2469,16 @@ fn upsert_bar_into_cache(
             if last.timestamp == bar.timestamp {
                 *last = *bar;
                 series.version += 1;
-                series.dirty = true;
             } else if bar.timestamp > last.timestamp {
                 series.bars.push_back(*bar);
                 series.version += 1;
-                series.dirty = true;
             }
             // older bar — skip silently
         } else {
             series.bars.push_back(*bar);
             series.version += 1;
-            series.dirty = true;
         }
     };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// SYMBOL PARSING
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Exchange-aware symbol parser.
-///
-/// Handles exchange-specific raw symbol formats before falling back to
-/// the generic `parse_symbol()`. This avoids the lossy
-/// raw → Symbol{base,quote} → format_symbol round-trip that breaks
-/// exchanges with non-standard symbol conventions.
-pub(crate) fn parse_symbol_for_exchange(exchange_id: ExchangeId, s: &str) -> Symbol {
-    let mut sym = match exchange_id {
-        // Lighter uses USDC as quote currency (not USDT).
-        // Raw symbols: "BTC", "ETH", "BTCUSDC", "BTC/USDC"
-        ExchangeId::Lighter => {
-            // If already has separator, use generic parser
-            if s.contains('/') || s.contains('-') || s.contains('_') {
-                let sym = parse_symbol(s);
-                // Fix: if generic parser defaulted quote to USDT, change to USDC
-                if sym.quote == "USDT" {
-                    Symbol::new(&sym.base, "USDC")
-                } else {
-                    sym
-                }
-            } else {
-                let upper = s.to_uppercase();
-                // Strip USDC/USDT suffix if present
-                if upper.ends_with("USDC") && upper.len() > 4 {
-                    Symbol::new(&upper[..upper.len() - 4], "USDC")
-                } else if upper.ends_with("USDT") && upper.len() > 4 {
-                    Symbol::new(&upper[..upper.len() - 4], "USDC")
-                } else {
-                    // Bare coin name like "BTC" → use USDC as default quote
-                    Symbol::new(s, "USDC")
-                }
-            }
-        }
-
-        // HyperLiquid uses USDC as default quote (data-feed only uses base).
-        // Raw symbols: "BTC", "ETH", "HYPE"
-        ExchangeId::HyperLiquid => {
-            let sym = parse_symbol(s);
-            // HyperLiquid only uses base, but correct quote is USDC for display
-            if sym.quote == "USDT" {
-                Symbol::new(&sym.base, "USDC")
-            } else {
-                sym
-            }
-        }
-
-        // Upbit uses REVERSED format: QUOTE-BASE (e.g., "KRW-BTC" means BTC priced in KRW).
-        // Known Upbit quote currencies: KRW, BTC, USDT, SGD, THB, IDR
-        ExchangeId::Upbit => {
-            if let Some(idx) = s.find('-') {
-                let left = &s[..idx];
-                let right = &s[idx + 1..];
-                let upper_left = left.to_uppercase();
-                // Upbit quotes: KRW, BTC, USDT, SGD, THB, IDR
-                let upbit_quotes = ["KRW", "BTC", "USDT", "SGD", "THB", "IDR"];
-                if upbit_quotes.iter().any(|q| upper_left == *q) {
-                    // Reversed: left is quote, right is base
-                    Symbol::new(right, left)
-                } else {
-                    // Fallback: try generic parser, but default to KRW instead of USDT
-                    let sym = parse_symbol(s);
-                    if sym.quote == "USDT" {
-                        Symbol::new(&sym.base, "KRW")
-                    } else {
-                        sym
-                    }
-                }
-            } else {
-                // Fallback: try generic parser, but default to KRW instead of USDT
-                let sym = parse_symbol(s);
-                if sym.quote == "USDT" {
-                    Symbol::new(&sym.base, "KRW")
-                } else {
-                    sym
-                }
-            }
-        }
-
-        // Deribit: "BTC-PERPETUAL", "ETH-PERPETUAL", "SOL_USDC-PERPETUAL"
-        // The generic parser handles this OK for now — "BTC-PERPETUAL" → {base:"BTC", quote:"PERPETUAL"}
-        // and the Deribit connector knows how to handle quote="PERPETUAL"
-        ExchangeId::Deribit => parse_symbol(s),
-
-        // All other exchanges: use generic parser
-        _ => parse_symbol(s),
-    };
-    // Always preserve the original raw input string
-    sym.raw = Some(s.to_string());
-    sym
-}
-
-/// Parse a symbol string like `"BTCUSDT"` into a V5 `Symbol`.
-///
-/// Tries common separator characters first, then falls back to matching
-/// well-known quote currency suffixes. If nothing matches, returns
-/// the whole string as the base with `"USDT"` as the quote.
-///
-/// The raw input string is always preserved in `Symbol::raw`.
-fn parse_symbol(s: &str) -> Symbol {
-    let original = s;
-
-    let mut result = 'parse: {
-        if let Some(idx) = s.find('/') {
-            break 'parse Symbol::new(&s[..idx], &s[idx + 1..]);
-        }
-        // Handle Paradex-style perpetual symbols: BASE-QUOTE-PERP or BASE-QUOTE-PERP_OPTION.
-        // Split on '-' but strip trailing "-PERP" / "-PERP_OPTION" suffixes so that
-        // `quote` ends up as plain "USD" rather than "USD-PERP", allowing
-        // `format_symbol` to reconstruct the correct "BTC-USD-PERP" market identifier.
-        if let Some(idx) = s.find('-') {
-            let remainder = &s[idx + 1..];
-            // Check if remainder itself contains another '-', indicating a 3-part symbol.
-            if let Some(second_dash) = remainder.find('-') {
-                let quote = &remainder[..second_dash];
-                let suffix = &remainder[second_dash + 1..];
-                // Only treat as a perpetual symbol if the trailing component looks like
-                // a known derivative suffix (PERP, SWAP, PERP_OPTION, etc.).
-                let upper_suffix = suffix.to_uppercase();
-                if upper_suffix == "PERP"
-                    || upper_suffix == "SWAP"
-                    || upper_suffix.starts_with("PERP_")
-                {
-                    break 'parse Symbol::new(&s[..idx], quote);
-                }
-            }
-            break 'parse Symbol::new(&s[..idx], remainder);
-        }
-        if let Some(idx) = s.find('_') {
-            break 'parse Symbol::new(&s[..idx], &s[idx + 1..]);
-        }
-
-        // Handle Bitfinex tXXXYYY format — strip the leading 't' prefix so that
-        // "tBTCUSD" and "tbtcusd" both parse as base="BTC" quote="USD" rather
-        // than base="tbtc" quote="usd", which would cause format_symbol to emit
-        // a double-prefixed "tTBTCUSD" that Bitfinex rejects.
-        let s = if (s.starts_with('t') || s.starts_with('T')) && s.len() > 4 {
-            let without_t = &s[1..];
-            let upper_without_t = without_t.to_uppercase();
-            let has_known_quote = ["USDT", "BUSD", "USDC", "USD", "BTC", "ETH", "BNB", "EUR", "GBP", "JPY"]
-                .iter()
-                .any(|q| upper_without_t.ends_with(q) && upper_without_t.len() > q.len());
-            if has_known_quote { without_t } else { s }
-        } else {
-            s
-        };
-
-        // Try common quote-currency suffixes (longest match first to avoid
-        // "BTC" matching the tail of "BTCETH" incorrectly).
-        let upper = s.to_uppercase();
-        for quote in &["USDT", "BUSD", "USDC", "USD", "BTC", "ETH", "BNB", "EUR", "GBP", "JPY", "RUB"] {
-            if upper.ends_with(quote) && upper.len() > quote.len() {
-                let base_len = upper.len() - quote.len();
-                break 'parse Symbol::new(&s[..base_len], &s[base_len..]);
-            }
-        }
-
-        // Fallback: treat entire string as base asset
-        Symbol::new(s, "USDT")
-    };
-
-    // Always preserve the original raw input string
-    result.raw = Some(original.to_string());
-    result
 }
 
 

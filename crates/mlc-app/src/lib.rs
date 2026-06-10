@@ -411,9 +411,6 @@ pub struct ChartApp {
     /// Set to true when this window's tab/preset state changed and needs saving.
     /// Checked and cleared by App each frame.
     pub profile_dirty: bool,
-    /// Set to true when backfill or scroll-load added bars to the bridge cache.
-    /// Checked and cleared by App in about_to_wait() to trigger a bar-store flush.
-    pub bars_cache_dirty: bool,
     /// Per-window tracked series handles from BarService.
     /// Key = (chart_id, BarSeriesKey) → handle.
     /// Used for version-based change detection in future phases.
@@ -989,7 +986,6 @@ impl ChartApp {
             window_width: None,
             window_height: None,
             profile_dirty: false,
-            bars_cache_dirty: false,
             profile_geometry_dirty: false,
             watchlists_dirty: false,
             watchlist_actions: Vec::new(),
@@ -1334,7 +1330,6 @@ impl ChartApp {
             window_width: None,
             window_height: None,
             profile_dirty: false,
-            bars_cache_dirty: false,
             profile_geometry_dirty: false,
             watchlists_dirty: false,
             watchlist_actions: Vec::new(),
@@ -1577,7 +1572,6 @@ impl ChartApp {
             window_width: None,
             window_height: None,
             profile_dirty: false,
-            bars_cache_dirty: false,
             profile_geometry_dirty: false,
             watchlists_dirty: false,
             watchlist_actions: Vec::new(),

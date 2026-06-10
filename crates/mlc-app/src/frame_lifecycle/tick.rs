@@ -408,8 +408,6 @@ impl ChartApp {
                     for (wid, bars_for_window) in &matched_ids {
                         self.indicator_manager.calculate_for_window(*wid, bars_for_window);
                     }
-                    // Backfill wrote new bars into the bridge cache — mark for disk flush.
-                    self.bars_cache_dirty = true;
                 }
                 LiveUpdate::ScrollBarsLoaded { exchange_id, account_type, symbol, timeframe: tf_name, bars, prepend_count } => {
                     crate::dlog!("[ChartApp] ScrollBarsLoaded: {} {} tf={} bars={} prepend={}",
@@ -492,10 +490,6 @@ impl ChartApp {
                         for (wid, bars_for_window) in &matched_ids {
                             self.indicator_manager.calculate_for_window(*wid, bars_for_window);
                         }
-                    }
-                    // Scroll-load wrote new bars into the bridge cache — mark for disk flush.
-                    if any_matched {
-                        self.bars_cache_dirty = true;
                     }
                 }
                 LiveUpdate::BarUpdate { .. } => {
