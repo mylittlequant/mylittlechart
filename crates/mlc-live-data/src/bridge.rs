@@ -296,6 +296,12 @@ pub struct DataBridge {
     /// One authenticated WS covers all symbols for that account — keyed by
     /// `(exchange, account_type)` not per-symbol.
     station_private_subscribed: Arc<Mutex<HashSet<(ExchangeId, AccountType)>>>,
+    /// Exchanges with a targeted symbols-warmup currently in flight
+    /// (`request_symbols` cold path). Prevents concurrent/looping re-warmups
+    /// of the same venue: every pass would re-issue exchange_info REST calls
+    /// with no backoff, which on a persistently-failing venue snowballed into
+    /// an OOM-level request storm.
+    symbols_warmup_inflight: Arc<Mutex<HashSet<ExchangeId>>>,
 }
 
 impl DataBridge {
@@ -386,11 +392,21 @@ impl DataBridge {
             let fwd_station = station.clone();
             runtime.spawn(async move {
                 let mut events = station_events;
+                // Per-exchange dedup. Station emits ConnectorReady on EVERY
+                // warmup pass over an exchange, including the targeted
+                // re-warmups request_symbols spawns — forwarding repeats
+                // would loop: ready → app calls request_symbols → cold cache
+                // → targeted warmup → ready again, hammering REST with no
+                // backoff (observed as a 6 GB / OOM exchange_info storm on
+                // venues whose exchange_info request kept failing).
+                let mut ready_seen: HashSet<ExchangeId> = HashSet::new();
                 loop {
                     match events.recv().await {
                         Ok(digdigdig3_station::Event::ConnectorReady { exchange }) => {
-                            let _ = fwd_tx.send(LiveUpdate::ConnectorReady { exchange_id: exchange });
-                            let _ = fwd_ready_tx.send(exchange);
+                            if ready_seen.insert(exchange) {
+                                let _ = fwd_tx.send(LiveUpdate::ConnectorReady { exchange_id: exchange });
+                                let _ = fwd_ready_tx.send(exchange);
+                            }
                         }
                         Ok(digdigdig3_station::Event::SymbolsLoaded { exchange, .. }) => {
                             // Emit the MERGED snapshot across account types
@@ -430,6 +446,7 @@ impl DataBridge {
             station_orderbook_subscribed: Arc::new(Mutex::new(HashSet::new())),
             station_ticker_subscribed: Arc::new(Mutex::new(HashSet::new())),
             station_private_subscribed: Arc::new(Mutex::new(HashSet::new())),
+            symbols_warmup_inflight: Arc::new(Mutex::new(HashSet::new())),
         }, rx, connector_ready_rx)
     }
 
@@ -1106,14 +1123,38 @@ impl DataBridge {
             return;
         }
 
+        // In-flight guard: one targeted warmup per venue at a time. A second
+        // request while the first is still running (or after it failed) would
+        // re-issue the exchange_info REST pair immediately — on a venue whose
+        // exchange_info persistently fails that loops into a request storm.
+        // NOTE: the id is inserted and NEVER removed on failure — a venue
+        // that failed its targeted warmup stays parked until app restart
+        // (manual retry would need an explicit user action path anyway).
+        {
+            let mut inflight = self
+                .symbols_warmup_inflight
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if !inflight.insert(exchange_id) {
+                crate::dlog!(
+                    "[STARTUP-WAVE bridge] request_symbols SKIP {:?} (warmup already in flight)",
+                    exchange_id
+                );
+                return;
+            }
+        }
+
         crate::dlog!(
             "[STARTUP-WAVE bridge] request_symbols STATION-WARMUP {:?} t={}ms (exchange_info cache cold)",
             exchange_id, crate::elapsed_ms()
         );
+        let inflight_set = self.symbols_warmup_inflight.clone();
         self.runtime.spawn(async move {
             let report = station.warmup(&[exchange_id]).await;
             let symbols = station.symbols(exchange_id);
             if symbols.is_empty() {
+                // Intentionally keep the in-flight marker set — see guard
+                // comment above (prevents retry storms on broken venues).
                 let failed_msg = report
                     .failed
                     .first()
@@ -1125,6 +1166,12 @@ impl DataBridge {
                 });
                 return;
             }
+            // Success: clear the marker so later calls take the cache-hit
+            // fast path (and a genuine refresh stays possible).
+            inflight_set
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&exchange_id);
             let _ = tx.send(LiveUpdate::SymbolsLoaded {
                 exchange_id,
                 symbols,
