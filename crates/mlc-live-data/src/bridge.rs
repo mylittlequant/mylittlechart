@@ -1774,12 +1774,14 @@ impl DataBridge {
                 };
             }
 
-            // Wait for connector (same pattern as request_bars).
-            let connector = {
+            // Wait for the connector to be dialed (readiness barrier — dig3
+            // fetch_history resolves hub.rest itself; same pattern as
+            // request_bars / request_scroll_bars).
+            {
                 let mut attempts = 0;
                 loop {
-                    if let Some(c) = hub.rest(exchange_id) {
-                        break c;
+                    if hub.rest(exchange_id).is_some() {
+                        break;
                     }
                     attempts += 1;
                     if attempts > 50 {
@@ -1799,9 +1801,7 @@ impl DataBridge {
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
-            };
-
-            let sym = parse_symbol_for_exchange(exchange_id, &symbol_str);
+            }
 
             // Re-check cache length after connector wait — another task may have
             // already satisfied the target while we were waiting.
@@ -1833,18 +1833,35 @@ impl DataBridge {
             // (e.g. OKX returns at most 300 bars regardless of what we request).
             let effective_limit = hub.max_kline_limit(exchange_id, 500);
 
-            let mut end_time_cursor = end_time_cursor_init;
+            // Phase 2B: pages come from dig3 `backfill::fetch_history`
+            // (exclusive `end_time_ms`, raw symbol, sorted+deduped). The cursor
+            // is `i64` (ms): when the cache is empty there is no oldest bar, so
+            // the first page ends at "now".
+            let kline_iv = KlineInterval::new(interval.as_str());
+            let hub_arc = Arc::new(hub.clone());
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(i64::MAX);
+            let mut end_time_cursor: i64 = end_time_cursor_init.unwrap_or(now_ms);
             let mut accumulated: Vec<Bar> = Vec::with_capacity(still_need.min(20_000));
             let mut pages: usize = 0;
 
             'backfill: loop {
-                let result = connector
-                    .get_klines((&sym).into(),&interval, Some(effective_limit), account_type, end_time_cursor)
-                    .await;
+                let result = digdigdig3_station::backfill::fetch_history(
+                    &hub_arc,
+                    exchange_id,
+                    &symbol_str,
+                    account_type,
+                    &kline_iv,
+                    end_time_cursor,
+                    effective_limit,
+                )
+                .await;
 
                 match result {
-                    Ok(klines) => {
-                        if klines.is_empty() {
+                    Ok(points) => {
+                        if points.is_empty() {
                             // Exchange has no more data — record oldest_ts so scroll
                             // can stop asking for more.
                             crate::dlog!("[Bridge] backfill: empty page at page {}, stopping", pages);
@@ -1859,13 +1876,14 @@ impl DataBridge {
                             break 'backfill;
                         }
 
-                        let page_len = klines.len();
+                        let page_len = points.len();
                         pages += 1;
-                        let batch: Vec<Bar> = klines.iter().map(kline_to_bar).collect();
+                        let batch: Vec<Bar> = points.iter().map(bar_point_to_bar).collect();
 
-                        // Move cursor to before the oldest bar in this page.
-                        if let Some(oldest_ms) = klines.iter().map(|k| k.open_time).min() {
-                            end_time_cursor = Some(oldest_ms - 1);
+                        // Move cursor to before the oldest bar in this page
+                        // (`open_time` ms; cursor exclusive ms).
+                        if let Some(oldest_ms) = points.iter().map(|p| p.open_time).min() {
+                            end_time_cursor = oldest_ms - 1;
                         }
 
                         let oldest_bar_ts = batch.first().map(|b| b.timestamp).unwrap_or(0);
