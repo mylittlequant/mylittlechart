@@ -493,16 +493,21 @@ impl DataBridge {
     /// Warm up every connector in `exchanges`, exactly ONCE over the bridge's
     /// lifetime (guarded by an internal one-shot flag).
     ///
-    /// Each `ensure_connector` is a non-blocking async spawn on the bridge's own
-    /// runtime — the whole set dials concurrently off the UI thread. Because the
-    /// bridge is shared and outlives the skeleton→live window promote, calling
-    /// this on the skeleton window dials all connectors during the (empty) loading
-    /// screen; the live window's call sees the flag already set and returns
-    /// immediately — no re-dial, no per-window progress cursor to reset, no work
-    /// leaking into the visible chart.
+    /// Phase 2B: warm-up now runs through dig3 `Station::warmup`, which dials
+    /// `connect_public` on the STATION's `ExchangeHub` (Phase 1: concurrent
+    /// JoinSet) and loads symbol lists (Phase 2). Routing the dial through the
+    /// station hub means historical backfill (which also goes through
+    /// `station.hub()` now) and live WS subscriptions share ONE connector pool
+    /// — one dial-wave, one rate-limit budget, no duplicate parallel hub.
+    ///
+    /// The app layer still listens on the mlc `connector_ready` mpsc + the
+    /// `LiveUpdate::ConnectorReady` broadcast, so after the station warm-up
+    /// completes we re-emit those signals per successfully-connected exchange
+    /// (the station broadcasts `Event::ConnectorReady` on its OWN channel,
+    /// which the app does not consume — the re-emit bridges that gap).
     ///
     /// Idempotent at two levels: the one-shot flag prevents a second pass, and
-    /// `ensure_connector` itself no-ops for already-connected exchanges.
+    /// `Station::warmup` itself short-circuits already-connected exchanges.
     pub fn warmup_all_connectors(&self, exchanges: &[ExchangeId]) {
         // compare_exchange: only the first caller proceeds; all later calls (e.g.
         // the promoted live window) short-circuit.
@@ -518,9 +523,31 @@ impl DataBridge {
             crate::elapsed_ms(),
             exchanges.len()
         );
-        for &eid in exchanges {
-            self.ensure_connector(eid);
-        }
+
+        let station = self.station.clone();
+        let tx = self.tx.clone();
+        let connector_ready_tx = self.connector_ready_tx.clone();
+        let exchanges = exchanges.to_vec();
+        self.runtime.spawn(async move {
+            let report = station.warmup(&exchanges).await;
+            crate::dlog!(
+                "[STARTUP-WAVE bridge] station warmup DONE t={}ms ok={} failed={}",
+                crate::elapsed_ms(),
+                report.ok.len(),
+                report.failed.len()
+            );
+            // Re-emit readiness on the channels the app layer listens to.
+            for eid in report.ok {
+                let _ = tx.send(LiveUpdate::ConnectorReady { exchange_id: eid });
+                let _ = connector_ready_tx.send(eid);
+            }
+            for (eid, err) in report.failed {
+                let _ = tx.send(LiveUpdate::Error {
+                    exchange_id: eid,
+                    message: format!("warmup failed: {}", err),
+                });
+            }
+        });
     }
 
     /// Ensure a connector is initialized for the given exchange.
@@ -601,7 +628,11 @@ impl DataBridge {
         _total_bars: Option<usize>,
         force: bool,
     ) {
-        let hub = self.hub.clone();
+        // Phase 2B: historical fetch (Phase A + Phase B) runs through the
+        // STATION's shared hub so it reuses the same connector pool as live
+        // WS subscriptions (one dial-wave, one rate budget). `station.hub()`
+        // is an O(1) Arc clone of that pool.
+        let fetch_hub = self.station.hub();
         let tx = self.tx.clone();
         let symbol_str = symbol.to_string();
         let interval = timeframe_to_interval(timeframe);
@@ -711,7 +742,7 @@ impl DataBridge {
             {
                 let mut attempts = 0;
                 loop {
-                    if hub.rest(exchange_id).is_some() {
+                    if fetch_hub.rest(exchange_id).is_some() {
                         break;
                     }
                     attempts += 1;
@@ -762,9 +793,8 @@ impl DataBridge {
             // live-kline subscriber feeds via `add_raw`), NOT the canonical
             // `sym` — dig3 `klines_recent` is a raw-passthrough path
             // (`SymbolInput::Raw`) and applies no normalization internally.
-            let hub_arc = Arc::new(hub.clone());
             let fresh_points = digdigdig3_station::backfill::klines_recent(
-                &hub_arc,
+                &fetch_hub,
                 exchange_id,
                 account_type,
                 &symbol_str,
@@ -866,7 +896,7 @@ impl DataBridge {
 
             'heal: loop {
                 let result = digdigdig3_station::backfill::fetch_history(
-                    &hub_arc,
+                    &fetch_hub,
                     exchange_id,
                     &symbol_str,
                     account_type,
@@ -1717,7 +1747,9 @@ impl DataBridge {
         account_type: AccountType,
         target_bars: u32,
     ) {
-        let hub = self.hub.clone();
+        // Phase 2B: background backfill paginates through the STATION hub
+        // (shared connector pool with live WS + Phase A/B fetch).
+        let fetch_hub = self.station.hub();
         let tx = self.tx.clone();
         let symbol_str = symbol.to_string();
         let interval = timeframe_to_interval(timeframe);
@@ -1780,7 +1812,7 @@ impl DataBridge {
             {
                 let mut attempts = 0;
                 loop {
-                    if hub.rest(exchange_id).is_some() {
+                    if fetch_hub.rest(exchange_id).is_some() {
                         break;
                     }
                     attempts += 1;
@@ -1831,14 +1863,13 @@ impl DataBridge {
 
             // Effective limit accounts for exchange-specific per-request caps
             // (e.g. OKX returns at most 300 bars regardless of what we request).
-            let effective_limit = hub.max_kline_limit(exchange_id, 500);
+            let effective_limit = fetch_hub.max_kline_limit(exchange_id, 500);
 
             // Phase 2B: pages come from dig3 `backfill::fetch_history`
             // (exclusive `end_time_ms`, raw symbol, sorted+deduped). The cursor
             // is `i64` (ms): when the cache is empty there is no oldest bar, so
             // the first page ends at "now".
             let kline_iv = KlineInterval::new(interval.as_str());
-            let hub_arc = Arc::new(hub.clone());
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as i64)
@@ -1849,7 +1880,7 @@ impl DataBridge {
 
             'backfill: loop {
                 let result = digdigdig3_station::backfill::fetch_history(
-                    &hub_arc,
+                    &fetch_hub,
                     exchange_id,
                     &symbol_str,
                     account_type,
@@ -2004,7 +2035,9 @@ impl DataBridge {
         before_ts: i64,
         batch_size: usize,
     ) {
-        let hub = self.hub.clone();
+        // Phase 2B: scroll-left pagination uses the STATION hub (shared pool
+        // with live WS + Phase A/B + background backfill).
+        let fetch_hub = self.station.hub();
         let tx = self.tx.clone();
         let symbol_str = symbol.to_string();
         let interval = timeframe_to_interval(timeframe);
@@ -2117,7 +2150,7 @@ impl DataBridge {
             {
                 let mut attempts = 0;
                 loop {
-                    if hub.rest(exchange_id).is_some() {
+                    if fetch_hub.rest(exchange_id).is_some() {
                         break;
                     }
                     attempts += 1;
@@ -2144,11 +2177,10 @@ impl DataBridge {
             // Clamp to the exchange's actual per-request maximum so we request
             // exactly what the exchange will return, and can correctly distinguish
             // a full page from an exhausted-history short page.
-            let limit = hub.max_kline_limit(exchange_id, (batch_size as u16).min(500));
+            let limit = fetch_hub.max_kline_limit(exchange_id, (batch_size as u16).min(500));
             let kline_iv = KlineInterval::new(&interval);
-            let hub_arc = std::sync::Arc::new(hub);
             let result = digdigdig3_station::fetch_history(
-                &hub_arc,
+                &fetch_hub,
                 exchange_id,
                 &symbol_str,
                 account_type,

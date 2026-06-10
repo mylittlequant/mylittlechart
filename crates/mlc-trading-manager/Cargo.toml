@@ -7,7 +7,7 @@ edition.workspace = true
 name = "mlc_trading_manager"
 
 [dependencies]
-digdigdig3 = "=0.3.17"
+digdigdig3 = "=0.3.18"
 mlc-live-data = { path = "../mlc-live-data", package = "mylittlechart-live-data" }
 mlc-orderbook-service = { path = "../mlc-orderbook-service", package = "mylittlechart-orderbook-service" }
 tokio = { version = "1", features = ["sync", "rt"] }
