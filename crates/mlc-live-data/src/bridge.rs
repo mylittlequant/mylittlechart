@@ -338,7 +338,6 @@ impl DataBridge {
 
         let (tx, rx) = broadcast::channel(65536);
         let (connector_ready_tx, connector_ready_rx) = mpsc::unbounded_channel();
-        let hub = ExchangeHub::new();
 
         // Build the Station on the bridge's runtime. Persistence is on,
         // warm-start = 1000 most-recent points per series, gap-heal default.
@@ -361,6 +360,58 @@ impl DataBridge {
                 .expect("failed to build digdigdig3-station")
         });
         let station = Arc::new(station);
+
+        // The bridge's hub IS the station's hub. `ExchangeHub::clone` is O(1)
+        // and SHARES the underlying Arc-backed connector pools, so every
+        // legacy path (trading methods, private streams, ensure_connector,
+        // the sidebar's `pool()` view) operates on the same connectors the
+        // station dials during warm-up — one pool, one dial-wave. Before this
+        // unification the bridge kept a second, never-dialed hub, which left
+        // trading/sidebar looking at an empty pool after Phase 2B moved the
+        // startup dial onto the station.
+        let hub = (*station.hub()).clone();
+
+        // Stream the station's connector lifecycle events (ConnectorReady per
+        // exchange as Phase-1 connect lands, SymbolsLoaded per exchange as
+        // Phase-2 exchange_info lands) into the bridge's channels AS THEY
+        // ARRIVE. Without this forwarder the app would only learn about
+        // connectors after `Station::warmup` finishes for the WHOLE fleet —
+        // and the fleet pass is serialized over ~21 exchanges where
+        // geo-blocked venues (MOEX, Dukascopy) sit on long timeouts, so
+        // fast venues' symbols would be held hostage for minutes.
+        {
+            let station_events = station.connector_events();
+            let fwd_tx = tx.clone();
+            let fwd_ready_tx = connector_ready_tx.clone();
+            let fwd_station = station.clone();
+            runtime.spawn(async move {
+                let mut events = station_events;
+                loop {
+                    match events.recv().await {
+                        Ok(digdigdig3_station::Event::ConnectorReady { exchange }) => {
+                            let _ = fwd_tx.send(LiveUpdate::ConnectorReady { exchange_id: exchange });
+                            let _ = fwd_ready_tx.send(exchange);
+                        }
+                        Ok(digdigdig3_station::Event::SymbolsLoaded { exchange, .. }) => {
+                            // Emit the MERGED snapshot across account types
+                            // cached so far (the app overwrites its per-
+                            // exchange entry on every SymbolsLoaded, so each
+                            // later emit must be a superset of the earlier).
+                            let symbols = fwd_station.symbols(exchange);
+                            if !symbols.is_empty() {
+                                let _ = fwd_tx.send(LiveUpdate::SymbolsLoaded {
+                                    exchange_id: exchange,
+                                    symbols,
+                                });
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+            });
+        }
 
         (Self {
             runtime,
@@ -501,11 +552,14 @@ impl DataBridge {
     /// `station.hub()` now) and live WS subscriptions share ONE connector pool
     /// — one dial-wave, one rate-limit budget, no duplicate parallel hub.
     ///
-    /// The app layer still listens on the mlc `connector_ready` mpsc + the
-    /// `LiveUpdate::ConnectorReady` broadcast, so after the station warm-up
-    /// completes we re-emit those signals per successfully-connected exchange
-    /// (the station broadcasts `Event::ConnectorReady` on its OWN channel,
-    /// which the app does not consume — the re-emit bridges that gap).
+    /// Per-exchange readiness streams LIVE through the connector-events
+    /// forwarder spawned in [`Self::new`]: the station broadcasts
+    /// `Event::ConnectorReady` the moment each exchange's Phase-1 connect
+    /// lands and `Event::SymbolsLoaded` as each Phase-2 exchange_info lands;
+    /// the forwarder relays both into the mlc `LiveUpdate` broadcast + the
+    /// `connector_ready` mpsc. This function therefore only kicks the warm-up
+    /// off and reports terminal failures — it does NOT gate readiness on the
+    /// whole fleet finishing (geo-blocked venues sit on long timeouts).
     ///
     /// Idempotent at two levels: the one-shot flag prevents a second pass, and
     /// `Station::warmup` itself short-circuits already-connected exchanges.
@@ -527,7 +581,6 @@ impl DataBridge {
 
         let station = self.station.clone();
         let tx = self.tx.clone();
-        let connector_ready_tx = self.connector_ready_tx.clone();
         let exchanges = exchanges.to_vec();
         self.runtime.spawn(async move {
             let report = station.warmup(&exchanges).await;
@@ -537,11 +590,7 @@ impl DataBridge {
                 report.ok.len(),
                 report.failed.len()
             );
-            // Re-emit readiness on the channels the app layer listens to.
-            for eid in report.ok {
-                let _ = tx.send(LiveUpdate::ConnectorReady { exchange_id: eid });
-                let _ = connector_ready_tx.send(eid);
-            }
+            // Successes already streamed via the connector-events forwarder.
             for (eid, err) in report.failed {
                 let _ = tx.send(LiveUpdate::Error {
                     exchange_id: eid,
