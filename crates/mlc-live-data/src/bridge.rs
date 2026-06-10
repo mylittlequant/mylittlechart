@@ -16,7 +16,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::runtime::Runtime;
 
 use digdigdig3::{
-    ExchangeId, AccountType, Symbol, SymbolInfo,
+    ExchangeId, AccountType, SymbolInfo,
     Order, Balance, Position,
     TradingCapabilities, AccountCapabilities,
     ExchangeError,
@@ -262,18 +262,18 @@ pub struct DataBridge {
     /// during the skeleton screen are reused; the live window's tick sees the flag
     /// already set and does nothing (no re-dial, no stale per-window cursor).
     warmup_started: AtomicBool,
-    /// digdigdig3-station instance. Phase 2 of the dig3+mli migration is
-    /// migrating bridge data flow (bars, trades, orderbook, ticker, funding,
-    /// OI, etc.) over to Station so that warm-start, on-disk persistence,
-    /// reconnect, gap-heal, and replay are owned by station instead of
-    /// duplicated ad-hoc in bridge + bar-store + trade-store.
+    /// digdigdig3-station instance — owns warm-start, on-disk persistence
+    /// (dig3_storage DiskStore), reconnect, and gap-heal for all market data.
     ///
     /// Constructed in [`Self::new`] on the bridge's runtime via `block_on`.
-    /// Bars migrate in phase 2B (this commit is 2A — Station built but no
-    /// subscriptions yet). Three channels stay raw, mimicking hub (NOT
-    /// station) because station does not cover them: private streams
-    /// (OrderUpdate / BalanceUpdate / PositionUpdate — auth required),
-    /// scroll-left pagination (before_ts REST), and exchange_info.
+    /// Phase 2B (2026-06-10): COMPLETE for bars — live klines subscribe via
+    /// Station; ALL REST history (Phase A fresh / Phase B heal / background
+    /// backfill / scroll-left / blocking startup) goes through dig3
+    /// `backfill::{klines_recent, fetch_history}` on `station.hub()` — one
+    /// shared connector pool, one dial-wave. Trades / orderbook / ticker
+    /// live-subscribe via Station too. Still raw-hub (NOT station): private
+    /// streams (OrderUpdate / BalanceUpdate / PositionUpdate — auth required)
+    /// and exchange_info.
     station: Arc<digdigdig3_station::Station>,
     /// C3: tracks which `(exchange_id, account_type, symbol)` keys already have
     /// a live station trade-subscriber task spawned.
@@ -345,14 +345,13 @@ impl DataBridge {
         let (connector_ready_tx, connector_ready_rx) = mpsc::unbounded_channel();
         let hub = ExchangeHub::new();
 
-        // Build the Station on the bridge's runtime. Phase 2A wires Station
-        // into the bridge as a sibling of `hub`; subscriptions arrive in
-        // phase 2B+ (bars, trades, orderbook, ticker). Persistence is on,
+        // Build the Station on the bridge's runtime. Persistence is on,
         // warm-start = 1000 most-recent points per series, gap-heal default.
-        // Storage lives under <APPDATA>/mylittlechart/dig3_storage/ so the
-        // existing %APPDATA%/mylittlechart/{bars,trades,orderbook}/ trees
-        // (legacy bar-store / trade-store / orderbook-store) stay untouched
-        // and can be deleted in phase 2C after the migration is verified.
+        // Storage lives under <APPDATA>/mylittlechart/dig3_storage/.
+        // NOTE: the old %APPDATA%/mylittlechart/{bars,trades,orderbook}/
+        // trees are dead — no code reads or writes them anymore (the legacy
+        // store readers/writers were removed before Phase 2B); they are just
+        // leftover files safe to wipe on user machines.
         let storage_root = mlc_core::app_data_dir().join("dig3_storage");
         let station = runtime.block_on(async {
             digdigdig3_station::Station::builder()
@@ -605,8 +604,11 @@ impl DataBridge {
     ///
     /// **3-level bar loading:**
     ///
-    /// Level 1 — instant render: if disk cache exists, it was already sent via
-    /// `seed_bar_cache` + an initial `BarsLoaded` before this call.
+    /// Level 1 — instant render: if the session cache (`SharedSeriesMap`)
+    /// already holds bars for this key — from a previous request this session
+    /// or from the dig3 Station warm-start (last-1000 replay out of
+    /// dig3_storage on subscribe) — they are sent as an immediate
+    /// `BarsLoaded` below, before any network round-trip.
     ///
     /// Level 2 (Phase A) — quick fresh fetch: always fetches 300 bars from now
     /// backward, merges with any session cache, sends `BarsLoaded`. Viewport
