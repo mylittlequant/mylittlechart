@@ -15,7 +15,7 @@ pub struct LivePresetState {
     pub indicator_manager: IndicatorManager,
     pub alert_manager: mlc_alerts::AlertManager,
     pub leaf_color_tags: HashMap<LeafId, [f32; 4]>,
-    pub indicator_overlay_states: HashMap<LeafId, mlc_core::ui::modal_settings::IndicatorOverlayState>,
+    pub indicator_overlay_states: HashMap<LeafId, mlc_layout::ui::modal_settings::IndicatorOverlayState>,
     pub series_handles: HashMap<(u64, mlc_bar_service::BarSeriesKey), mlc_bar_service::TrackedSeriesHandle>,
     pub pending_sub_pane_ratios: HashMap<u64, HashMap<u64, f32>>,
     pub pending_sub_pane_above_main: HashMap<u64, HashSet<u64>>,

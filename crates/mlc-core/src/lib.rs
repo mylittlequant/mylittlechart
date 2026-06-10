@@ -70,9 +70,6 @@ pub mod i18n;
 // Engine (rendering + input handling)
 pub mod engine;
 
-// Layout (platform-agnostic layout computation)
-pub mod layout;
-
 // Organized modules
 pub mod chart;
 pub mod drawing;
@@ -87,14 +84,8 @@ pub mod utils;
 // Chart panel toolbar definitions
 pub mod toolbar;
 
-// Chart UI rendering (self-contained toolbars and overlays, no core dependency)
-pub mod ui;
-
 // Chart-local modal state
 pub mod modal;
-
-// PanelApp implementation for the chart panel
-pub mod panel_app;
 
 // Tag / sync-group manager (Step 1–2 of the TagManager architecture)
 pub mod tag_manager;
@@ -162,6 +153,7 @@ pub use types::{
 pub use state::geometry::{
     LayoutRect, ChartAreaLayout, FrameLayout, ChartHitZone,
     ExtendedFrameLayout, SubPaneLayout,
+    Margins, LayoutConfig, LayoutManager,
 };
 pub use state::scale_corner::{ScaleCornerState, ScaleCornerHitZones, ScaleCornerButton};
 pub use state::sub_pane_overlay::SubPaneOverlayResult;
@@ -170,40 +162,10 @@ pub use state::chart_settings_data::{
     ChartSettingsData, InstrumentSettings, StatusLineSettings, ScalesLinesSettings,
 };
 
-// Frontend rendering symbols — TEMPORARILY still re-exported from `layout/`.
-// These move to the `mlc-layout` crate in V1.2; the V1.3 sweep then switches
-// all consumers to `mlc_layout::X` and this block is deleted. Kept here only so
-// the V1.1 facade-redirect commit compiles on its own.
-#[allow(deprecated)]
-pub use layout::{
-    Margins,
-    LayoutConfig, LayoutManager,
-    LayoutHitTester, ExtendedLayoutHitTester,
-    ChartRenderConfig, render_chart_area, draw_scale_corner, render_scales,
-    render_chart_window, render_chart_splits,
-    ChartPanelRenderData, ChartPanelRenderResult, render_full_chart_panel,
-    render_chart_overlay,
-    draw_content_borders, draw_frame_borders,
-    draw_scale_corner_with_buttons, render_chart_area_with_buttons,
-    FrameTheme, render_frame,
-    RenderPass,
-    ContextMenuResult,
-    ColorPickerRenderResult,
-    InlineConfigResult,
-    SliderTrackInfo,
-    PrimitiveSettingsResult,
-    PanelTreeManagerResult,
-    ModalSearchResult,
-    RightSidebarResult,
-    ChartSettingsModalResult,
-    IndicatorSettingsModalResult,
-    IndicatorRowResult,
-    IndicatorOverlayResult,
-    SingleChartPanelResult,
-    MultiChartRenderResult,
-    ChartModalLayout,
-    ChartModalRenderResult,
-};
+// Frontend rendering symbols (LayoutHitTester, ExtendedLayoutHitTester,
+// ChartRenderConfig, render_*, FrameTheme, RenderPass, the *Result render
+// outputs, ChartModal*) moved to the `mlc-layout` crate in V1. Consumers now
+// import them as `mlc_layout::X`. They are NOT re-exported from mlc-core.
 
 // Input (unified input handling - events, actions, handlers, objects)
 pub use input::{
@@ -347,8 +309,8 @@ pub use uzor::panels::SeparatorOrientation;
 pub use uzor::panels::PanelRect;
 pub use uzor::panels::LeafId;
 
-// Overlay tab headers for split panel leaves.
-pub use layout::panel_overlay::{render_leaf_tab, LeafTabHoverZone, LeafTabHitZones};
+// Overlay tab headers (render_leaf_tab, LeafTabHoverZone, LeafTabHitZones)
+// moved to mlc-layout in V1 — consumers import them as mlc_layout::X.
 
 // Drawing System (v2 - trait-based primitives)
 pub use drawing::{
@@ -398,15 +360,12 @@ pub use events::ChartOutEvent;
 // Chart-local modal state
 pub use modal::ChartOpenModal;
 
-// Panel layout and toolbar rendering
-pub use panel_app::{
-    ChartPanelLayout, ChartToolbarRenderResult,
-    ChartInternalLayout, compute_chart_internal_layout,
-    ToolbarConfig,
-    InlineDockEdge,
-};
-pub use ui::toolbar_render::{ToolbarRect, ToolbarTheme, ToolbarRenderResult};
-pub use ui::dropdown::DropdownTheme;
+// Toolbar interaction state + geometry (backend data). The frontend rendering
+// pieces — ChartPanelLayout, ChartInternalLayout, compute_chart_internal_layout
+// (panel_app), ToolbarTheme, DropdownTheme (ui widgets) — moved to mlc-layout
+// in V1; consumers import those as mlc_layout::X.
+pub use state::toolbar_state::{ChartToolbarRenderResult, ToolbarConfig, InlineDockEdge};
+pub use state::toolbar_geometry::{ToolbarRect, ToolbarRenderResult};
 
 // Render Module (new - platform-agnostic rendering foundation)
 pub use render::{

@@ -37,7 +37,7 @@ impl ChartApp {
                 if !in_skeleton && !self.panel_app.user_settings_state.runtime_profile_id.is_empty() {
                     self.panel_app.user_settings_state.show_profile_manager = false;
                     self.panel_app.user_settings_state.profile_manager_page =
-                        mlc_core::ui::modal_settings::ProfileManagerPage::ProfileList;
+                        mlc_layout::ui::modal_settings::ProfileManagerPage::ProfileList;
                     self.panel_app.user_settings_state.vault_unlock_error = None;
                     self.panel_app.user_settings_state.new_passphrase_editing.text.clear();
                     eprintln!("[ChartApp] profile_manager: dimmer clicked, dismissing (live profile exists)");
@@ -3192,7 +3192,7 @@ impl ChartApp {
                     // No-op — absorb click to prevent fall-through.
                 }
                 tab_id if tab_id.starts_with("tab:") => {
-                    use mlc_core::ui::modal_settings::OverlayPanelTreeTab;
+                    use mlc_layout::ui::modal_settings::OverlayPanelTreeTab;
                     let tab = match &tab_id["tab:".len()..] {
                         "tree_view"  => OverlayPanelTreeTab::TreeView,
                         "eliminate"  => OverlayPanelTreeTab::Eliminate,
@@ -3267,7 +3267,7 @@ impl ChartApp {
 
         // === Tags & Tabs modal clicks ===
         if let Some(rest) = widget_id.strip_prefix("tags_tabs:") {
-            use mlc_core::ui::modal_settings::{TagsTabsSidebar, TagsTabsTagsTab};
+            use mlc_layout::ui::modal_settings::{TagsTabsSidebar, TagsTabsTagsTab};
             use mlc_core::tag_manager::BubbleId;
             match rest {
                 "close" => {
@@ -3287,7 +3287,7 @@ impl ChartApp {
                     self.panel_app.tags_tabs_state.set_sidebar(TagsTabsSidebar::Map);
                 }
                 id if id.starts_with("tab:") => {
-                    use mlc_core::ui::modal_settings::OverlayPanelTreeTab;
+                    use mlc_layout::ui::modal_settings::OverlayPanelTreeTab;
                     let tab = match &id["tab:".len()..] {
                         "tree_view"  => OverlayPanelTreeTab::TreeView,
                         "eliminate"  => OverlayPanelTreeTab::Eliminate,
@@ -3455,7 +3455,7 @@ impl ChartApp {
                 "save" => {
                     let name = self.wl_group_name_input.editing.text.trim().to_string();
                     if !name.is_empty() {
-                        use mlc_core::ui::modal_settings::WatchlistGroupNameMode;
+                        use mlc_layout::ui::modal_settings::WatchlistGroupNameMode;
                         match self.wl_group_name_input.mode.clone() {
                             WatchlistGroupNameMode::CreateNew => {
                                 let new_id = self.sidebar_state.watchlist_manager.create_list(name.clone());
@@ -3485,7 +3485,7 @@ impl ChartApp {
                 "input" => {
                     // Click-to-cursor using pre-computed character positions
                     if let Some(ref gni) = self.last_wl_group_name_result {
-                        let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(
+                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
                             &gni.char_x_positions,
                             x,
                         );
@@ -3588,7 +3588,7 @@ impl ChartApp {
                 "save" => {
                     let name = self.panel_app.preset_name_input.name().to_string();
                     if !name.trim().is_empty() {
-                        use mlc_core::ui::modal_settings::PresetNameInputMode;
+                        use mlc_layout::ui::modal_settings::PresetNameInputMode;
                         match self.panel_app.preset_name_input.mode {
                             PresetNameInputMode::SaveAs => {
                                 self.process_chart_out_event(
@@ -3627,7 +3627,7 @@ impl ChartApp {
                 "input" => {
                     // Click-to-cursor using pre-computed character positions
                     if let Some(pni) = self.frame_result.as_ref().and_then(|r| r.preset_name_input.as_ref()) {
-                        let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(
+                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
                             &pni.char_x_positions,
                             x,
                         );
@@ -3659,7 +3659,7 @@ impl ChartApp {
                     .and_then(|r| r.chart_browser.as_ref())
                     .map(|br| br.search_char_positions.clone());
                 if let Some(positions) = char_positions {
-                    let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(&positions, x);
+                    let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&positions, x);
                     self.panel_app.chart_browser.search_editing.cursor = new_cursor;
                     self.panel_app.chart_browser.search_editing.selection_start = None;
                     self.panel_app.chart_browser.search_editing.reset_blink(0);
@@ -3702,7 +3702,7 @@ impl ChartApp {
 
         // === User settings modal clicks ===
         if let Some(action) = widget_id.strip_prefix("user_settings:") {
-            use mlc_core::ui::modal_settings::UserSettingsTab;
+            use mlc_layout::ui::modal_settings::UserSettingsTab;
             match action {
                 "close" => {
                     self.panel_app.user_settings_state.close();
@@ -3773,7 +3773,7 @@ impl ChartApp {
                         .map(|(_, v)| v.clone())
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
-                        let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                         self.panel_app.user_settings_state.new_passphrase_editing.cursor = new_cursor;
                         self.panel_app.user_settings_state.new_passphrase_editing.selection_start = None;
                     }
@@ -3875,7 +3875,7 @@ impl ChartApp {
                         .map(|(_, v)| v.clone())
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
-                        let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                         self.panel_app.user_settings_state.new_profile_name_editing.cursor = new_cursor;
                         self.panel_app.user_settings_state.new_profile_name_editing.selection_start = None;
                     }
@@ -3896,7 +3896,7 @@ impl ChartApp {
                         .map(|(_, v)| v.clone())
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
-                        let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                         self.panel_app.user_settings_state.new_passphrase_editing.cursor = new_cursor;
                         self.panel_app.user_settings_state.new_passphrase_editing.selection_start = None;
                     }
@@ -3916,7 +3916,7 @@ impl ChartApp {
                         .map(|(_, v)| v.clone())
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
-                        let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                         self.panel_app.user_settings_state.confirm_passphrase_editing.cursor = new_cursor;
                         self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
                     }
@@ -3998,13 +3998,13 @@ impl ChartApp {
                     // × button — dismiss profile manager, return to live chart
                     self.panel_app.user_settings_state.show_profile_manager = false;
                     self.panel_app.user_settings_state.profile_manager_page =
-                        mlc_core::ui::modal_settings::ProfileManagerPage::ProfileList;
+                        mlc_layout::ui::modal_settings::ProfileManagerPage::ProfileList;
                     self.panel_app.user_settings_state.vault_unlock_error = None;
                     self.panel_app.user_settings_state.new_passphrase_editing.text.clear();
                     eprintln!("[ChartApp] profile_mgr: close button clicked, dismissing");
                 }
                 "profile_mgr:back" => {
-                    use mlc_core::ui::modal_settings::ProfileManagerPage;
+                    use mlc_layout::ui::modal_settings::ProfileManagerPage;
                     // Only block Back on ShowRecoveryKey — user MUST acknowledge recovery key
                     if matches!(self.panel_app.user_settings_state.profile_manager_page, ProfileManagerPage::ShowRecoveryKey) {
                         eprintln!("[ChartApp] profile_mgr: back blocked — must acknowledge recovery key");
@@ -4025,7 +4025,7 @@ impl ChartApp {
                     }
                 }
                 "profile_mgr:create_new" => {
-                    use mlc_core::ui::modal_settings::ProfileManagerPage;
+                    use mlc_layout::ui::modal_settings::ProfileManagerPage;
                     self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreateNew;
                     self.panel_app.user_settings_state.new_profile_name_editing.text.clear();
                     self.panel_app.user_settings_state.new_profile_name_editing.cursor = 0;
@@ -4068,14 +4068,14 @@ impl ChartApp {
                         .map(|(_, v)| v.clone())
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
-                        let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                         self.panel_app.user_settings_state.new_profile_name_editing.cursor = new_cursor;
                         self.panel_app.user_settings_state.new_profile_name_editing.selection_start = None;
                     }
                     eprintln!("[ChartApp] profile_mgr: name input focused");
                 }
                 "profile_mgr:use_recovery_key" => {
-                    use mlc_core::ui::modal_settings::ProfileManagerPage;
+                    use mlc_layout::ui::modal_settings::ProfileManagerPage;
                     self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::UseRecoveryKey;
                     self.panel_app.user_settings_state.recovery_key_display_editing.text.clear();
                     self.panel_app.user_settings_state.recovery_key_display_editing.cursor = 0;
@@ -4096,7 +4096,7 @@ impl ChartApp {
                         .map(|(_, v)| v.clone())
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
-                        let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                         self.panel_app.user_settings_state.recovery_key_display_editing.cursor = new_cursor;
                         self.panel_app.user_settings_state.recovery_key_display_editing.selection_start = None;
                     }
@@ -4115,7 +4115,7 @@ impl ChartApp {
                         .map(|(_, v)| v.clone())
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
-                        let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                         self.panel_app.user_settings_state.new_passphrase_editing.cursor = new_cursor;
                         self.panel_app.user_settings_state.new_passphrase_editing.selection_start = None;
                     }
@@ -4134,7 +4134,7 @@ impl ChartApp {
                         .map(|(_, v)| v.clone())
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
-                        let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                         self.panel_app.user_settings_state.confirm_passphrase_editing.cursor = new_cursor;
                         self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
                     }
@@ -4153,7 +4153,7 @@ impl ChartApp {
                         .map(|(_, v)| v.clone())
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
-                        let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                         self.panel_app.user_settings_state.confirm_passphrase_editing.cursor = new_cursor;
                         self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
                     }
@@ -4202,7 +4202,7 @@ impl ChartApp {
                         .map(|(_, v)| v.clone())
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
-                        let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                         self.panel_app.user_settings_state.recovery_key_display_editing.cursor = new_cursor;
                         self.panel_app.user_settings_state.recovery_key_display_editing.selection_start = None;
                     }
@@ -4291,7 +4291,7 @@ impl ChartApp {
                     eprintln!("[ChartApp] profile_new_cancel");
                 }
                 rest if rest.starts_with("vault_picker_profile:") => {
-                    use mlc_core::ui::modal_settings::ProfileManagerPage;
+                    use mlc_layout::ui::modal_settings::ProfileManagerPage;
                     let profile_id = &rest["vault_picker_profile:".len()..];
                     let target_has_vault = self.panel_app.user_settings_state.profiles_with_vault_status
                         .iter()
@@ -4330,7 +4330,7 @@ impl ChartApp {
                     self.panel_app.user_settings_state.new_passphrase_focused = false;
                 }
                 rest if rest.starts_with("profile_mgr:select:") => {
-                    use mlc_core::ui::modal_settings::ProfileManagerPage;
+                    use mlc_layout::ui::modal_settings::ProfileManagerPage;
                     let profile_id = &rest["profile_mgr:select:".len()..];
                     // Check if target profile has vault (encrypted)
                     let target_has_vault = self.panel_app.user_settings_state.profiles_with_vault_status
@@ -4416,7 +4416,7 @@ impl ChartApp {
                     );
                 }
                 rest if rest.starts_with("profile_switch:") => {
-                    use mlc_core::ui::modal_settings::ProfileManagerPage;
+                    use mlc_layout::ui::modal_settings::ProfileManagerPage;
                     let profile_id = &rest["profile_switch:".len()..];
                     // Check if target profile has vault
                     let target_has_vault = self.panel_app.user_settings_state.profiles_with_vault_status

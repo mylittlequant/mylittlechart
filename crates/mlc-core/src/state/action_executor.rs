@@ -13,7 +13,7 @@
 //! require terminal coordination (symbol change, theme change, etc.).
 
 use crate::engine::input::actions::ChartAction;
-use crate::ui::modal_state::{ModalState, OpenModal};
+use crate::state::modal_state::{ModalState, OpenModal};
 use crate::state::toolbar_state::ToolbarState;
 use crate::drawing::DrawingManager;
 use crate::state::chart_container::ChartContainer;

@@ -16,7 +16,7 @@ pub use crate::BarIndicatorId;
 // Signal system imports
 pub use crate::signals::signal::Signal;
 // IndicatorCategory comes from zengeld-chart
-pub use mlc_core::ui::modal_state::IndicatorCategory;
+pub use mlc_core::state::modal_state::IndicatorCategory;
 
 /// Controls when indicators are recalculated relative to incoming trade data.
 ///
@@ -1852,7 +1852,7 @@ impl mlc_core::indicator_source::IndicatorSource for IndicatorManager {
         instance_id: u64,
     ) -> Option<mlc_core::indicator_source::IndicatorSettingsData> {
         use mlc_core::indicator_source::IndicatorSettingsData;
-        use mlc_core::ui::modal_settings::{
+        use mlc_core::state::modal_data::{
             IndicatorDisplayInfo, IndicatorParamDef,
             IndicatorParamType as ChartParamType,
             IndicatorOutputDef, IndicatorOutputType as ChartOutputType,

@@ -8,12 +8,13 @@
 
 use mlc_core::render::{RenderContext, TextAlign, TextBaseline, draw_svg_icon};
 use mlc_core::LayoutRect;
-use mlc_core::ui::{Icon, scroll_widget::{ScrollableContainer, ScrollableConfig, ScrollbarConfig, ScrollbarState as SbState, draw_scrollbar}};
-use mlc_core::ui::widgets::types::{WidgetState, WidgetTheme};
-use mlc_core::ui::widgets::input::{InputConfig, draw_input, draw_input_cursor};
-use mlc_core::ToolbarTheme;
+use mlc_core::state::icons::Icon;
+use mlc_layout::ui::scroll_widget::{ScrollableContainer, ScrollableConfig, ScrollbarConfig, ScrollbarState as SbState, draw_scrollbar};
+use mlc_layout::ui::widgets::types::{WidgetState, WidgetTheme};
+use mlc_layout::ui::widgets::input::{InputConfig, draw_input, draw_input_cursor};
+use mlc_layout::ui::toolbar_render::ToolbarTheme;
 use mlc_core::state::command::ObjectCategory;
-use mlc_core::{render_leaf_tab, LeafTabHoverZone, LeafTabHitZones};
+use mlc_layout::layout::panel_overlay::{render_leaf_tab, LeafTabHoverZone, LeafTabHitZones};
 use mlc_core::i18n::{SidebarKey, current_language};
 use uzor::input::InputCoordinator;
 use uzor::panels::DockPanel;
@@ -701,7 +702,7 @@ pub fn render_right_sidebar(
     if owns_full_width {
         content_height = viewport_rect.height;
     }
-    let widget_theme = mlc_core::ui::widgets::types::WidgetTheme::default();
+    let widget_theme = mlc_layout::ui::widgets::types::WidgetTheme::default();
     let scroll_result = scrollable.end(ctx, content_height, &widget_theme);
 
     result.content_height = scroll_result.content_height;
@@ -5511,7 +5512,7 @@ fn render_agents_pty_grid(
         let sb_rect = uzor::types::Rect::new(scrollbar_x, y, sb_w, h);
         let sb_config = ScrollbarConfig::new(pty_content_h, h, scroll_offset);
         let sb_state = SbState::Active;
-        let widget_theme = mlc_core::ui::widgets::types::WidgetTheme::default();
+        let widget_theme = mlc_layout::ui::widgets::types::WidgetTheme::default();
         let sb_result = draw_scrollbar(ctx, &sb_config, sb_state, sb_rect, &widget_theme, None);
         if sb_config.needs_scrollbar() {
             Some((sb_result.handle_rect, sb_result.track_rect))
@@ -6409,7 +6410,7 @@ fn render_agents_chat_bubbles(
         let sb_rect = uzor::types::Rect::new(scrollbar_x, y, sb_w, h);
         let sb_config = ScrollbarConfig::new(total_content_h, h, scroll_offset);
         let sb_state = SbState::Active;
-        let widget_theme = mlc_core::ui::widgets::types::WidgetTheme::default();
+        let widget_theme = mlc_layout::ui::widgets::types::WidgetTheme::default();
         let sb_result = draw_scrollbar(ctx, &sb_config, sb_state, sb_rect, &widget_theme, None);
         if sb_config.needs_scrollbar() {
             Some((sb_result.handle_rect, sb_result.track_rect))

@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
-use crate::ui::modal_settings::IndicatorDisplayInfo;
+use crate::state::modal_data::IndicatorDisplayInfo;
 use crate::drawing::TimeframeVisibilityConfig;
 
 // =============================================================================

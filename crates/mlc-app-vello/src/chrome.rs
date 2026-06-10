@@ -16,7 +16,7 @@ use uzor::render::{draw_svg_icon, RenderContext, TextAlign, TextBaseline};
 use uzor::WidgetId;
 use crate::tooltip::{TooltipState, calculate_tooltip_position};
 use mlc_core::i18n::{TooltipKey, current_language};
-use mlc_core::ui::icons::icon_svg;
+use mlc_core::state::icons::icon_svg;
 
 // ── Public constants ──────────────────────────────────────────────────────────
 

@@ -8,7 +8,7 @@ use uzor::WidgetId;
 impl ChartApp {
     /// Route a click on a color picker widget to the appropriate hit test and handler.
     pub(super) fn handle_color_picker_click(&mut self, widget_id: &str, x: f64, y: f64, source: &str) {
-        use mlc_core::ui::widgets::color_picker::{
+        use mlc_layout::ui::widgets::color_picker::{
             color_picker_l1_hit_test, color_picker_l2_hit_test,
             ColorPickerL1HitResult, ColorPickerL2HitResult,
         };
@@ -61,8 +61,8 @@ impl ChartApp {
     }
 
     /// Handle an L1 (quick palette) hit result.
-    fn handle_l1_hit(&mut self, hit: mlc_core::ui::widgets::color_picker::ColorPickerL1HitResult, source: &str, _x: f64, _y: f64) {
-        use mlc_core::ui::widgets::color_picker::ColorPickerL1HitResult;
+    fn handle_l1_hit(&mut self, hit: mlc_layout::ui::widgets::color_picker::ColorPickerL1HitResult, source: &str, _x: f64, _y: f64) {
+        use mlc_layout::ui::widgets::color_picker::ColorPickerL1HitResult;
 
         match hit {
             ColorPickerL1HitResult::Color(color) => {
@@ -220,8 +220,8 @@ impl ChartApp {
     }
 
     /// Handle an L2 (HSV full picker) hit result.
-    fn handle_l2_hit(&mut self, hit: mlc_core::ui::widgets::color_picker::ColorPickerL2HitResult, source: &str, x: f64, y: f64) {
-        use mlc_core::ui::widgets::color_picker::ColorPickerL2HitResult;
+    fn handle_l2_hit(&mut self, hit: mlc_layout::ui::widgets::color_picker::ColorPickerL2HitResult, source: &str, x: f64, y: f64) {
+        use mlc_layout::ui::widgets::color_picker::ColorPickerL2HitResult;
 
         match hit {
             ColorPickerL2HitResult::SVSquare(s, v) => {
@@ -433,7 +433,7 @@ impl ChartApp {
 
     /// Handle clicks on widgets registered with the "sync_color_grid:" prefix.
     pub(super) fn handle_sync_color_grid_click(&mut self, widget_id: &str, x: f64, y: f64) {
-        use mlc_core::ui::sync_color_grid::{hit_test_sync_color_grid, SyncColorGridHitResult};
+        use mlc_layout::ui::sync_color_grid::{hit_test_sync_color_grid, SyncColorGridHitResult};
 
         // Backdrop click (full-screen transparent rect behind the popup) — close.
         if widget_id == "sync_color_grid:backdrop" {

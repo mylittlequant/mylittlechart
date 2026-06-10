@@ -5,7 +5,7 @@
 
 use std::collections::{HashSet, HashMap, VecDeque};
 use std::time::Instant;
-use mlc_core::ui::scroll_state::ScrollState;
+use mlc_core::state::scroll_state::ScrollState;
 use crate::types::{ObjectTreeItem, AlertItem, IndicatorsTabData, WatchlistItem, ConnectorStatusItem};
 use crate::watchlist::WatchlistManager;
 use crate::agents_dock::{AgentLeafDescriptor, AgentDockingManager};
@@ -441,13 +441,13 @@ pub struct SidebarState {
     pub agent_perm_dropdown: Option<uzor::panels::LeafId>,
 
     /// Scroll offset for model dropdown popup.
-    pub agent_model_scroll: HashMap<uzor::panels::LeafId, mlc_core::ui::scroll_state::ScrollState>,
+    pub agent_model_scroll: HashMap<uzor::panels::LeafId, mlc_core::state::scroll_state::ScrollState>,
 
     /// Scroll offset for permission dropdown popup.
-    pub agent_perm_scroll: HashMap<uzor::panels::LeafId, mlc_core::ui::scroll_state::ScrollState>,
+    pub agent_perm_scroll: HashMap<uzor::panels::LeafId, mlc_core::state::scroll_state::ScrollState>,
 
     /// Scroll offset for sessions dropdown popup.
-    pub agent_sessions_scroll: HashMap<uzor::panels::LeafId, mlc_core::ui::scroll_state::ScrollState>,
+    pub agent_sessions_scroll: HashMap<uzor::panels::LeafId, mlc_core::state::scroll_state::ScrollState>,
 
     /// Per-leaf selected model ID override. `None` = use CLI default.
     pub agent_selected_model: HashMap<uzor::panels::LeafId, String>,
@@ -473,7 +473,7 @@ pub struct SidebarState {
     /// Updated by `chart-app` on every `CursorMoved` event using the hit zones returned from
     /// `RightSidebarResult::panel_overlay_zones`.  Drives the gear icon visibility in
     /// `render_leaf_tab`.
-    pub free_leaf_overlay_hover: std::collections::HashMap<(usize, uzor::panels::LeafId), mlc_core::LeafTabHoverZone>,
+    pub free_leaf_overlay_hover: std::collections::HashMap<(usize, uzor::panels::LeafId), mlc_layout::layout::panel_overlay::LeafTabHoverZone>,
 }
 
 /// A host-side PTY text selection in cell coordinates.

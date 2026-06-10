@@ -1127,7 +1127,7 @@ impl App<'_> {
         // Show the profile list when vault needs unlocking (returning user with encrypted data).
         // User picks their profile from the list, then gets the passphrase form.
         if self.needs_vault_unlock {
-            use mlc_core::ui::modal_settings::ProfileManagerPage;
+            use mlc_layout::ui::modal_settings::ProfileManagerPage;
             chart.panel_app.user_settings_state.needs_vault_unlock = true;
             chart.panel_app.user_settings_state.show_profile_manager = true;
             chart.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::ProfileList;
@@ -1153,7 +1153,7 @@ impl App<'_> {
         // Show the profile manager create passphrase page so the user sets a passphrase.
         // Their existing data will be encrypted on completion via save_all().
         if self.needs_migration {
-            use mlc_core::ui::modal_settings::ProfileManagerPage;
+            use mlc_layout::ui::modal_settings::ProfileManagerPage;
             chart.panel_app.user_settings_state.needs_vault_unlock = true;
             chart.panel_app.user_settings_state.show_profile_manager = true;
             chart.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreatePassphrase;
@@ -1337,7 +1337,7 @@ impl App<'_> {
 
         if has_vault && has_salt && self.needs_vault_unlock {
             // Profile has vault and key was NOT pre-injected — need unlock
-            use mlc_core::ui::modal_settings::ProfileManagerPage;
+            use mlc_layout::ui::modal_settings::ProfileManagerPage;
             for pw in self.windows.values_mut() {
                 pw.chart.panel_app.user_settings_state.show_profile_manager = true;
                 pw.chart.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::UnlockPassphrase;
@@ -1346,7 +1346,7 @@ impl App<'_> {
             }
         } else if !has_vault && !self.is_first_run {
             // Existing profile with no encryption — offer to set up
-            use mlc_core::ui::modal_settings::ProfileManagerPage;
+            use mlc_layout::ui::modal_settings::ProfileManagerPage;
             self.needs_vault_unlock = true;
             for pw in self.windows.values_mut() {
                 pw.chart.panel_app.user_settings_state.show_profile_manager = true;
@@ -2749,7 +2749,7 @@ impl ApplicationHandler for App<'_> {
                             self.sync_profiles_to_windows();
                             // Show passphrase setup in the current window — no profile switch yet.
                             // The switch happens only after the user successfully creates the vault.
-                            use mlc_core::ui::modal_settings::ProfileManagerPage;
+                            use mlc_layout::ui::modal_settings::ProfileManagerPage;
                             self.pending_new_profile_id = Some(meta.id.clone());
                             for pw in self.windows.values_mut() {
                                 pw.chart.panel_app.user_settings_state.show_profile_manager = true;
@@ -2907,7 +2907,7 @@ impl ApplicationHandler for App<'_> {
                                             self.pending_switch_after_recovery = Some((new_profile_id.clone(), key));
                                             self.pending_new_profile_id = None;
                                             for pw in self.windows.values_mut() {
-                                                use mlc_core::ui::modal_settings::ProfileManagerPage;
+                                                use mlc_layout::ui::modal_settings::ProfileManagerPage;
                                                 pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
                                                 pw.chart.panel_app.user_settings_state.new_passphrase_editing.text.clear();
                                                 pw.chart.panel_app.user_settings_state.new_passphrase_editing.cursor = 0;
@@ -3067,7 +3067,7 @@ impl ApplicationHandler for App<'_> {
                                 if recovery_key.is_some() {
                                     // Show recovery key on skeleton first; promote after user confirms.
                                     for pw in self.windows.values_mut() {
-                                        use mlc_core::ui::modal_settings::ProfileManagerPage;
+                                        use mlc_layout::ui::modal_settings::ProfileManagerPage;
                                         pw.chart.panel_app.user_settings_state.needs_vault_unlock = false;
                                         pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
                                         pw.chart.panel_app.user_settings_state.recovery_key_display =
@@ -3159,7 +3159,7 @@ impl ApplicationHandler for App<'_> {
                                                         self.pending_recovery_master_key = Some(master_key);
 
                                                         // Navigate to the mandatory SetNewPassphrase page.
-                                                        use mlc_core::ui::modal_settings::ProfileManagerPage;
+                                                        use mlc_layout::ui::modal_settings::ProfileManagerPage;
                                                         for pw in self.windows.values_mut() {
                                                             pw.chart.panel_app.user_settings_state.needs_vault_unlock = false;
                                                             pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
@@ -3256,7 +3256,7 @@ impl ApplicationHandler for App<'_> {
                 // Re-keys the vault: new passphrase + same salt → new master_key + vault_key,
                 // re-encrypts vault.enc, generates a fresh recovery key, then shows ShowRecoveryKey.
                 if let Some(new_passphrase) = cmd_str.strip_prefix("set_new_passphrase:") {
-                    use mlc_core::ui::modal_settings::ProfileManagerPage;
+                    use mlc_layout::ui::modal_settings::ProfileManagerPage;
 
                     match self.pending_recovery_master_key.take() {
                         None => {

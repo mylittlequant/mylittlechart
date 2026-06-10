@@ -5,7 +5,7 @@
 
 use super::super::events::ChartInputAction;
 use super::super::objects::CursorStyle;
-use crate::ui::modal_settings::SubPaneButton;
+use crate::state::modal_data::SubPaneButton;
 
 /// Result of a hit test on the chart.
 ///

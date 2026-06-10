@@ -60,35 +60,38 @@ pub(crate) use dlog;
 use std::cell::RefCell;
 
 use mlc_core::{
-    ChartPanelRenderData, render_full_chart_panel,
-    ChartModalLayout, ChartModalRenderResult,
-    ChartPanelLayout, ToolbarConfig,
+    ToolbarConfig,
     LayoutRect,
     ScaleCornerHitZones,
-    layout::ToolbarState,
+    ToolbarState,
     render::RenderContext,
-    layout::ChartRenderConfig,
     DefaultChartInputHandler, ChartOutputAction, UndoAction,
     Command, ViewportState,
     data_provider::SharedDataProvider,
-    ContextMenuResult,
     ScaleMode,
     ChartId,
 };
-use mlc_core::layout::modals::context_menu::render_context_menu;
-use mlc_core::layout::modals::indicator_overlay::render_indicator_overlay;
-use mlc_core::layout::modals::search_overlay::render_search_overlay;
-use mlc_core::ModalSearchResult;
-use mlc_core::layout::render_ui::IndicatorOverlayInfo;
+use mlc_layout::layout::{
+    ChartPanelRenderData, render_full_chart_panel,
+    ChartModalLayout, ChartModalRenderResult,
+    ChartRenderConfig,
+    ContextMenuResult,
+};
+use mlc_layout::panel_app::ChartPanelLayout;
+use mlc_layout::layout::modals::context_menu::render_context_menu;
+use mlc_layout::layout::modals::indicator_overlay::render_indicator_overlay;
+use mlc_layout::layout::modals::search_overlay::render_search_overlay;
+use mlc_layout::layout::ModalSearchResult;
+use mlc_layout::layout::render_ui::IndicatorOverlayInfo;
 use mlc_core::indicator_source::{IndicatorSource, AlertRenderData, AlertRenderStatus};
-use mlc_core::ui::modal_state::{ModalState, IndicatorCatalogItem};
-use mlc_core::ui::modal_settings::{ChartScreenArea, WatchlistModalState, WatchlistGroupNameInputState};
-use mlc_core::layout::modals::watchlist_modal::{render_watchlist_modal, WatchlistEntry, WatchlistGroupInfo, render_wl_group_name_input, WlGroupNameInputResult};
-use mlc_core::layout::modals::clock_popup::render_clock_popup;
+use mlc_core::state::modal_state::{ModalState, IndicatorCatalogItem};
+use mlc_layout::ui::modal_settings::{ChartScreenArea, WatchlistModalState, WatchlistGroupNameInputState};
+use mlc_layout::layout::modals::watchlist_modal::{render_watchlist_modal, WatchlistEntry, WatchlistGroupInfo, render_wl_group_name_input, WlGroupNameInputResult};
+use mlc_layout::layout::modals::clock_popup::render_clock_popup;
 use mlc_indicators::IndicatorManager;
 use mlc_live_data::{DataBridge, LiveUpdate, LiveDataProvider};
 
-use mlc_core::panel_app::ChartPanelApp;
+use mlc_layout::panel_app::ChartPanelApp;
 use uzor::input::{InputCoordinator, InputState};
 
 /// Every exchange whose connector is warmed up at startup (in small batches from
@@ -286,10 +289,10 @@ pub struct ChartApp {
 
     /// Stored overlay-tab hit zones per leaf (from last render frame).
     /// In single mode, only one entry with the active leaf id.
-    pub(crate) leaf_tab_hit_zones: std::collections::HashMap<mlc_core::LeafId, mlc_core::LeafTabHitZones>,
+    pub(crate) leaf_tab_hit_zones: std::collections::HashMap<mlc_core::LeafId, mlc_layout::layout::panel_overlay::LeafTabHitZones>,
 
     /// Currently hovered overlay-tab zone (shared across all tabs — only one can be hovered at a time).
-    pub(crate) leaf_tab_hover: mlc_core::LeafTabHoverZone,
+    pub(crate) leaf_tab_hover: mlc_layout::layout::panel_overlay::LeafTabHoverZone,
 
     /// LeafId of the tab currently being hovered (if any).
     pub(crate) leaf_tab_hovered_leaf: Option<mlc_core::LeafId>,
@@ -348,7 +351,7 @@ pub struct ChartApp {
     pub watchlist_modal: WatchlistModalState,
 
     /// Render result from the last watchlist modal frame (hit zones for click/scroll dispatch).
-    pub(crate) last_watchlist_modal_result: Option<mlc_core::layout::modals::watchlist_modal::WatchlistModalResult>,
+    pub(crate) last_watchlist_modal_result: Option<mlc_layout::layout::modals::watchlist_modal::WatchlistModalResult>,
 
     /// State for the watchlist group name input modal (create new / rename).
     pub wl_group_name_input: WatchlistGroupNameInputState,
@@ -872,17 +875,17 @@ pub struct RenderOutput {
     /// Modal render result (settings panels, color pickers).
     pub frame_result: Option<ChartModalRenderResult>,
     /// Search-overlay render result (indicator / symbol search).
-    pub search_modal_result: Option<mlc_core::ModalSearchResult>,
+    pub search_modal_result: Option<mlc_layout::layout::ModalSearchResult>,
     /// Context-menu render result.
     pub context_menu_result: Option<ContextMenuResult>,
     /// Right-sidebar render result.
     pub last_sidebar_result: Option<mlc_sidebar_content::render::RightSidebarResult>,
     /// Watchlist-modal render result.
-    pub last_watchlist_modal_result: Option<mlc_core::layout::modals::watchlist_modal::WatchlistModalResult>,
+    pub last_watchlist_modal_result: Option<mlc_layout::layout::modals::watchlist_modal::WatchlistModalResult>,
     /// Watchlist group-name input result.
     pub last_wl_group_name_result: Option<WlGroupNameInputResult>,
     /// Per-leaf tab hit zones, rebuilt every frame.
-    pub leaf_tab_hit_zones: std::collections::HashMap<mlc_core::LeafId, mlc_core::LeafTabHitZones>,
+    pub leaf_tab_hit_zones: std::collections::HashMap<mlc_core::LeafId, mlc_layout::layout::panel_overlay::LeafTabHitZones>,
     /// Frame timing breakdown (chart_us, toolbar_us, sidebar_us, setup_us).
     pub render_timing_us: (u64, u64, u64, u64),
     /// Content rect (chart area minus sidebar) computed this frame.
@@ -953,7 +956,7 @@ impl ChartApp {
             drag_dismissed_popup: false,
             split_separator_drag: None,
             leaf_tab_hit_zones: std::collections::HashMap::new(),
-            leaf_tab_hover: mlc_core::LeafTabHoverZone::None,
+            leaf_tab_hover: mlc_layout::layout::panel_overlay::LeafTabHoverZone::None,
             leaf_tab_hovered_leaf: None,
             last_toolbar_result: None,
             default_scale_mode: ScaleMode::Auto,
@@ -1291,7 +1294,7 @@ impl ChartApp {
             drag_dismissed_popup: false,
             split_separator_drag: None,
             leaf_tab_hit_zones: std::collections::HashMap::new(),
-            leaf_tab_hover: mlc_core::LeafTabHoverZone::None,
+            leaf_tab_hover: mlc_layout::layout::panel_overlay::LeafTabHoverZone::None,
             leaf_tab_hovered_leaf: None,
             last_toolbar_result: None,
             default_scale_mode: ScaleMode::Auto,
@@ -1543,7 +1546,7 @@ impl ChartApp {
             drag_dismissed_popup: false,
             split_separator_drag: None,
             leaf_tab_hit_zones: std::collections::HashMap::new(),
-            leaf_tab_hover: mlc_core::LeafTabHoverZone::None,
+            leaf_tab_hover: mlc_layout::layout::panel_overlay::LeafTabHoverZone::None,
             leaf_tab_hovered_leaf: None,
             last_toolbar_result: None,
             default_scale_mode: ScaleMode::Auto,
@@ -2499,7 +2502,7 @@ impl ChartApp {
     /// The cached [`ExtendedFrameLayout`] built during [`prepare_frame`] is used
     /// directly — no geometry is recomputed here.
     pub fn render_overlay(&self, ctx: &mut dyn RenderContext) {
-        use mlc_core::render_chart_overlay;
+        use mlc_layout::layout::render_chart_overlay;
         use mlc_core::chart::render::ChartRect;
 
         let chart_theme = self.panel_app.chart_theme_for_render();
@@ -2705,7 +2708,7 @@ impl ChartApp {
         //    When not split, use the original single-window path.
 
         // Local leaf tab hit zones for this frame — returned via RenderOutput.
-        let mut out_leaf_tab_hit_zones: std::collections::HashMap<mlc_core::LeafId, mlc_core::LeafTabHitZones> = std::collections::HashMap::new();
+        let mut out_leaf_tab_hit_zones: std::collections::HashMap<mlc_core::LeafId, mlc_layout::layout::panel_overlay::LeafTabHitZones> = std::collections::HashMap::new();
         // Submenu state update from toolbar dropdown rendering.
         let mut out_open_submenu_update: Option<Option<String>> = None;
         // Sub-pane range writebacks: render computes symmetrized+padded ranges,
@@ -2738,7 +2741,7 @@ impl ChartApp {
             // dispatched by the chart's own hit-tester via panel_grid.resolve_input.
             {
                 use uzor::input::{Sense, WidgetKind};
-                use mlc_core::ui::z_order::ZLayer;
+                use mlc_layout::ui::z_order::ZLayer;
                 let chart_layer = ZLayer::ChartCanvas.push(&mut self.input_coordinator.borrow_mut());
                 for &(leaf_id, sub_rect) in &leaf_rects {
                     if sub_rect.width > 0.0 && sub_rect.height > 0.0 {
@@ -3037,11 +3040,11 @@ impl ChartApp {
                 let hover_zone = if self.leaf_tab_hovered_leaf == Some(leaf_id) {
                     self.leaf_tab_hover
                 } else {
-                    mlc_core::LeafTabHoverZone::None
+                    mlc_layout::layout::panel_overlay::LeafTabHoverZone::None
                 };
                 let color_tag = self.panel_app.leaf_color_tags.get(&leaf_id).copied();
                 // S2.7.1: use split_symbol/tf_name/exchange/account_type from branch_meta.
-                let hit_zones = mlc_core::render_leaf_tab(
+                let hit_zones = mlc_layout::layout::panel_overlay::render_leaf_tab(
                     ctx,
                     leaf_rect.x + 2.0,
                     main_chart_y + 2.0,
@@ -3167,7 +3170,7 @@ impl ChartApp {
                             // Register indicator overlay hit zones for this leaf.
                             {
                                 use uzor::input::Sense;
-                                use mlc_core::ui::z_order::ZLayer;
+                                use mlc_layout::ui::z_order::ZLayer;
 
                                 let prefix = format!("ind_overlay:leaf{}:", leaf_id.0);
                                 let cmp_prefix = format!("cmp_overlay:leaf{}:", leaf_id.0);
@@ -3556,7 +3559,7 @@ impl ChartApp {
             // Register single chart pane as BlackboxPanel — see split-mode comment above.
             if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
                 use uzor::input::{Sense, WidgetKind};
-                use mlc_core::ui::z_order::ZLayer;
+                use mlc_layout::ui::z_order::ZLayer;
                 let chart_layer = ZLayer::ChartCanvas.push(&mut self.input_coordinator.borrow_mut());
                 self.input_coordinator.borrow_mut().register_composite(
                     format!("chart:pane:{}", active_leaf.0),
@@ -3606,10 +3609,10 @@ impl ChartApp {
                 let hover_zone = if self.leaf_tab_hovered_leaf == Some(single_leaf_id) {
                     self.leaf_tab_hover
                 } else {
-                    mlc_core::LeafTabHoverZone::None
+                    mlc_layout::layout::panel_overlay::LeafTabHoverZone::None
                 };
                 let single_color_tag = self.panel_app.leaf_color_tags.get(&single_leaf_id).copied();
-                let hit_zones = mlc_core::render_leaf_tab(
+                let hit_zones = mlc_layout::layout::panel_overlay::render_leaf_tab(
                     ctx,
                     content_rect.x + 2.0,
                     main_chart_y_single + 2.0,
@@ -3784,7 +3787,7 @@ impl ChartApp {
                     // Register indicator overlay hit zones with InputCoordinator.
                     {
                         use uzor::input::Sense;
-                        use mlc_core::ui::z_order::ZLayer;
+                        use mlc_layout::ui::z_order::ZLayer;
 
                         let ov_layer = ZLayer::Toolbar.push_named(&mut self.input_coordinator.borrow_mut(), "ind_overlay");
 
@@ -3905,7 +3908,7 @@ impl ChartApp {
         let mut out_last_inline_bar_rect: Option<LayoutRect> = None;
         if let Some(ref toolbar_result) = out_last_toolbar_result {
             use uzor::input::Sense;
-            use mlc_core::ui::z_order::ZLayer;
+            use mlc_layout::ui::z_order::ZLayer;
 
             let tb_layer = ZLayer::Toolbar.push(&mut self.input_coordinator.borrow_mut());
 
@@ -4035,7 +4038,7 @@ impl ChartApp {
             // Register dropdown hit zones (higher z-order)
             if let Some(ref dd) = toolbar_result.dropdown_result {
                 use uzor::input::Sense;
-                use mlc_core::ui::z_order::ZLayer;
+                use mlc_layout::ui::z_order::ZLayer;
 
                 let dd_layer = ZLayer::Dropdown.push_named(&mut self.input_coordinator.borrow_mut(), "chart_dropdown");
 
@@ -4086,7 +4089,7 @@ impl ChartApp {
         // For non-VelloGpu backends, render_modal_layer() is called on the same ctx
         // immediately after render() returns (see scene_builder.rs).
         let out_frame_result: Option<ChartModalRenderResult> = None;
-        let out_search_modal_result: Option<mlc_core::ModalSearchResult> = None;
+        let out_search_modal_result: Option<mlc_layout::layout::ModalSearchResult> = None;
         let out_context_menu_result: Option<ContextMenuResult> = None;
 
         // 8. Render right sidebar if a panel is open.
@@ -4272,7 +4275,7 @@ impl ChartApp {
 
         // 8a-8d. Modals (color pickers, watchlist, clock popup) moved to render_modal_layer().
 
-        let out_last_watchlist_modal_result: Option<mlc_core::layout::modals::watchlist_modal::WatchlistModalResult> = None;
+        let out_last_watchlist_modal_result: Option<mlc_layout::layout::modals::watchlist_modal::WatchlistModalResult> = None;
         let out_last_wl_group_name_result: Option<WlGroupNameInputResult> = None;
 
         // 9. End frame — dispatch widget responses (clicks / drag / scroll).
@@ -4874,7 +4877,7 @@ impl ChartApp {
 
         // Panel-targeting sync color grid popup.
         if self.panel_app.sync_color_grid.is_open() && self.panel_app.sync_color_grid.target_is_panel() {
-            use mlc_core::ChartModalLayout;
+            use mlc_layout::layout::ChartModalLayout;
             let modal_layout = ChartModalLayout {
                 prim_screen_w: w,
                 prim_screen_h: h,
@@ -5013,7 +5016,7 @@ impl ChartApp {
         let mut frame_result: Option<ChartModalRenderResult> = Some(modal_result);
 
         // 5b. Search overlay (indicator / symbol / compare)
-        let search_modal_result: Option<mlc_core::ModalSearchResult> =
+        let search_modal_result: Option<mlc_layout::layout::ModalSearchResult> =
             if self.modal_state.current.is_search_overlay() {
                 let screen = ChartScreenArea { x: 0.0, y: 0.0, width: modal_right_edge, height: h };
                 let indicator_catalog = self.build_indicator_catalog();
@@ -5039,9 +5042,9 @@ impl ChartApp {
         // 5c. Preset name input (CreateIndicatorSet mode)
         if self.panel_app.preset_name_input.is_open
             && self.panel_app.preset_name_input.mode
-                == mlc_core::ui::modal_settings::PresetNameInputMode::CreateIndicatorSet
+                == mlc_layout::ui::modal_settings::PresetNameInputMode::CreateIndicatorSet
         {
-            use mlc_core::layout::modals::preset_name_input::render_preset_name_input;
+            use mlc_layout::layout::modals::preset_name_input::render_preset_name_input;
             let pni_result = render_preset_name_input(
                 ctx,
                 w, h,
@@ -5093,7 +5096,7 @@ impl ChartApp {
         }
 
         // 8b. Watchlist modal
-        let last_watchlist_modal_result: Option<mlc_core::layout::modals::watchlist_modal::WatchlistModalResult> =
+        let last_watchlist_modal_result: Option<mlc_layout::layout::modals::watchlist_modal::WatchlistModalResult> =
             if self.watchlist_modal.is_open() {
                 let color_flags: Vec<String> = self.sidebar_state.watchlist_items.iter()
                     .map(|item| {
@@ -5792,8 +5795,8 @@ impl ChartApp {
         query: &str,
         watchlist_manager: &mlc_sidebar_content::watchlist::WatchlistManager,
         exchange_symbols: &std::collections::HashMap<digdigdig3::ExchangeId, Vec<mlc_live_data::SymbolInfo>>,
-    ) -> Vec<mlc_core::ui::modal_state::SearchResult> {
-        use mlc_core::ui::modal_state::SearchResult;
+    ) -> Vec<mlc_core::state::modal_state::SearchResult> {
+        use mlc_core::state::modal_state::SearchResult;
 
         let q = query.to_lowercase();
 
@@ -5867,7 +5870,7 @@ impl ChartApp {
         query: &str,
         watchlist_manager: &mlc_sidebar_content::watchlist::WatchlistManager,
         exchange_symbols: &std::collections::HashMap<digdigdig3::ExchangeId, Vec<mlc_live_data::SymbolInfo>>,
-    ) -> Vec<mlc_core::ui::modal_state::SearchResult> {
+    ) -> Vec<mlc_core::state::modal_state::SearchResult> {
         Self::build_symbol_search_results(query, watchlist_manager, exchange_symbols)
     }
 
@@ -6799,8 +6802,8 @@ impl ChartApp {
     ///
     /// This is the same logic used during rendering so that templates saved via
     /// the "Save As…" button capture exactly what the render pass would show.
-    pub fn build_chart_settings_data(&self) -> mlc_core::layout::modals::chart_settings::ChartSettingsData {
-        use mlc_core::layout::modals::chart_settings::{
+    pub fn build_chart_settings_data(&self) -> mlc_layout::layout::modals::chart_settings::ChartSettingsData {
+        use mlc_layout::layout::modals::chart_settings::{
             ChartSettingsData, InstrumentSettings, StatusLineSettings, ScalesLinesSettings,
         };
 

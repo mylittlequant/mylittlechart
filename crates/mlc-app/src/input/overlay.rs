@@ -2,7 +2,7 @@
 //! Handles overlay popups, settings clicks, and indicator instance lifecycle.
 
 use crate::ChartApp;
-use mlc_core::ui::modal_settings::DualSliderHandle;
+use mlc_layout::ui::modal_settings::DualSliderHandle;
 
 impl ChartApp {
     /// Handle clicks on widgets registered with the "ind_overlay:" prefix.
@@ -250,7 +250,7 @@ impl ChartApp {
             }
             id if id.starts_with("tab:") => {
                 self.panel_app.compare_settings_state.template_dropdown_open = false;
-                use mlc_core::ui::modal_settings::CompareSettingsTab;
+                use mlc_layout::ui::modal_settings::CompareSettingsTab;
                 if let Some(tab) = CompareSettingsTab::from_id(&id["tab:".len()..]) {
                     self.panel_app.compare_settings_state.set_tab(tab);
                     eprintln!("[ChartApp] cmp_settings tab: {:?}", tab);
@@ -399,7 +399,7 @@ impl ChartApp {
                     let text = current_val.to_string();
                     let cursor = text.len();
                     self.panel_app.compare_settings_state.editing_text = Some(
-                        mlc_core::ui::modal_settings::TextEditingState {
+                        mlc_core::state::modal_data::TextEditingState {
                             field_id,
                             text,
                             cursor,
@@ -428,7 +428,7 @@ impl ChartApp {
                 let default_name = format!("{}{}", prefix, max_n + 1);
                 let default_cursor = default_name.chars().count();
                 self.panel_app.compare_settings_state.template_name_editing = Some(
-                    mlc_core::ui::modal_settings::TextEditingState {
+                    mlc_core::state::modal_data::TextEditingState {
                         field_id: "template_name".to_string(),
                         text: default_name,
                         cursor: default_cursor,
@@ -524,7 +524,7 @@ impl ChartApp {
     /// Apply a committed min/max value from the compare settings text input.
     pub(super) fn apply_cmp_tf_text_commit(&mut self, field_id: &str, text: &str) {
         use mlc_core::drawing::TimeframeVisibilityConfig;
-        use mlc_core::ui::modal_settings::DualSliderHandle;
+        use mlc_layout::ui::modal_settings::DualSliderHandle;
 
         let tf_idx_result: Option<(usize, DualSliderHandle)> = if let Some(inner) = field_id.strip_prefix("tf_").and_then(|s| s.strip_suffix("_min")) {
             inner.parse::<usize>().ok().map(|i| (i, DualSliderHandle::Min))

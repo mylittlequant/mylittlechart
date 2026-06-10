@@ -1,7 +1,7 @@
 //! Slider value appliers — translate slider drag/scroll deltas into state mutations.
 
 use crate::ChartApp;
-use mlc_core::ui::modal_settings::DualSliderHandle;
+use mlc_layout::ui::modal_settings::DualSliderHandle;
 use mlc_core::drawing::TimeframeVisibilityConfig;
 
 impl ChartApp {

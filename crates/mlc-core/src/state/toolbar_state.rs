@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 
-use crate::ui::icons::Icon;
+use crate::state::icons::Icon;
 
 // =============================================================================
 // Toolbar State
@@ -307,8 +307,8 @@ pub struct ToggleIconPair {
 use std::time::Instant;
 
 use crate::state::geometry::LayoutRect;
-use crate::ui::toolbar_render::ToolbarRenderResult;
-use crate::ui::toolbar_core::WidgetRect;
+use crate::state::toolbar_geometry::ToolbarRenderResult;
+use crate::state::toolbar_geometry::WidgetRect;
 use crate::chart::types::crosshair::Crosshair;
 use crate::drawing::DrawingManager;
 use crate::events::ChartOutEvent;
@@ -532,7 +532,7 @@ pub struct InlineDropdownResult {
 #[derive(Clone, Debug, Default)]
 pub struct InlineConfigResult {
     /// Item rectangles for hit testing: (item_id, rect)
-    pub item_rects: Vec<(String, crate::ui::toolbar_render::ToolbarRect)>,
+    pub item_rects: Vec<(String, crate::state::toolbar_geometry::ToolbarRect)>,
     /// The bar's bounding rect (for drag hit-testing).
     pub bar_rect: LayoutRect,
 }

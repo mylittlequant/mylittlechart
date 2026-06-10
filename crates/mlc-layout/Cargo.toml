@@ -11,3 +11,6 @@ path = "src/lib.rs"
 
 [dependencies]
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
+mlc-alerts = { path = "../mlc-alerts", package = "mylittlechart-alerts" }
+mlc-alert-delivery = { path = "../mlc-alert-delivery", package = "mylittlechart-alert-delivery" }
+uzor = "=1.4.5"

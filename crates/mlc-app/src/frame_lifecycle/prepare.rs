@@ -5,9 +5,10 @@
 use crate::ChartApp;
 use uzor::WidgetId;
 use mlc_core::{
-    ChartId, ChartPanelLayout, LayoutRect, localize_primitive_name,
+    ChartId, LayoutRect, localize_primitive_name,
 };
-use mlc_core::ui::modal_state::OpenModal;
+use mlc_layout::panel_app::ChartPanelLayout;
+use mlc_core::state::modal_state::OpenModal;
 use mlc_indicators::RecalcMode;
 
 impl ChartApp {
@@ -118,8 +119,8 @@ impl ChartApp {
             ] {
                 if !picker.is_open() { continue; }
                 let (pw, ph) = match picker.level {
-                    mlc_core::ui::color_picker_state::ColorPickerLevel::L1 => picker.l1_config().calculate_size(),
-                    mlc_core::ui::color_picker_state::ColorPickerLevel::L2 => picker.l2_config().calculate_size(),
+                    mlc_layout::ui::color_picker_state::ColorPickerLevel::L1 => picker.l1_config().calculate_size(),
+                    mlc_layout::ui::color_picker_state::ColorPickerLevel::L2 => picker.l2_config().calculate_size(),
                     _ => continue,
                 };
                 let min_x = cr.x + margin;

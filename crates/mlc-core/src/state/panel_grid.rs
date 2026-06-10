@@ -2144,7 +2144,7 @@ impl ChartPanelGrid {
         extended: &crate::ExtendedFrameLayout,
         overlay_results: &[crate::state::sub_pane_overlay::SubPaneOverlayResult],
     ) -> bool {
-        use crate::ui::modal_settings::SubPaneButton;
+        use crate::state::modal_data::SubPaneButton;
 
         let mut hide_crosshair = false;
         if let Some(window) = self.active_container_mut() {

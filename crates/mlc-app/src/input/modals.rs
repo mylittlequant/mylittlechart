@@ -6,14 +6,14 @@ use crate::ChartApp;
 use mlc_core::{
     ChartInputAction,
     ChartOutputAction,
-    ExtendedLayoutHitTester,
     ScaleCornerButton,
     input::MouseButton,
     ScaleMode,
     localize_primitive_name,
 };
-use mlc_core::ui::context_menu::ContextMenuTarget;
-use mlc_core::ui::modal_state::{OpenModal, IndicatorCategoryFilter};
+use mlc_layout::layout::ExtendedLayoutHitTester;
+use mlc_layout::ui::context_menu::ContextMenuTarget;
+use mlc_core::state::modal_state::{OpenModal, IndicatorCategoryFilter};
 
 impl ChartApp {
     /// Handle a click on an inline primitive toolbar action.
@@ -318,7 +318,7 @@ impl ChartApp {
             "search_input" => {
                 // Click-to-cursor using pre-computed character positions
                 if let Some(ref wl) = self.last_watchlist_modal_result {
-                    let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(
+                    let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
                         &wl.search_char_positions,
                         x,
                     );
@@ -328,7 +328,7 @@ impl ChartApp {
                 }
             }
             _ if rest.starts_with("tab:") => {
-                use mlc_core::ui::modal_settings::WatchlistModalTab;
+                use mlc_layout::ui::modal_settings::WatchlistModalTab;
                 let tab = &rest["tab:".len()..];
                 match tab {
                     "overview" => self.watchlist_modal.active_tab = WatchlistModalTab::Overview,
@@ -756,7 +756,7 @@ impl ChartApp {
                 let char_positions = self.search_modal_result.as_ref()
                     .map(|ms| ms.search_char_positions.clone());
                 if let Some(positions) = char_positions {
-                    let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(&positions, x);
+                    let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&positions, x);
                     // Start editing if not already
                     if self.modal_state.editing_text.is_none() {
                         self.modal_state.start_editing(0);
@@ -1204,7 +1204,7 @@ impl ChartApp {
                             .position(|&iid| iid == instance_id)
                     });
 
-                use mlc_core::ui::modal_settings::SubPaneButton;
+                use mlc_core::state::modal_data::SubPaneButton;
                 match button {
                     SubPaneButton::Delete => {
                         self.delete_indicator_instance(instance_id);
@@ -1879,7 +1879,7 @@ impl ChartApp {
                     if !self.panel_app.user_settings_state.needs_vault_unlock {
                         self.panel_app.user_settings_state.show_profile_manager = false;
                         self.panel_app.user_settings_state.profile_manager_page =
-                            mlc_core::ui::modal_settings::ProfileManagerPage::ProfileList;
+                            mlc_layout::ui::modal_settings::ProfileManagerPage::ProfileList;
                     }
                     eprintln!("[ChartApp] close_topmost_modal_layer: profile_manager (needs_vault_unlock={})", self.panel_app.user_settings_state.needs_vault_unlock);
                 }

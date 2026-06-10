@@ -8,3 +8,7 @@
 //! uzor-tessera app shell) can compose against.
 //!
 //! Empty skeleton (Phase D). Frontend modules land in V1-V4.
+
+pub mod layout;
+pub mod ui;
+pub mod panel_app;

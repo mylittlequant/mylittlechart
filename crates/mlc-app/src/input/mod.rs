@@ -85,19 +85,20 @@ use mlc_core::{
     ChartInputAction,
     ChartOutputAction,
     ChartHitTester,
-    ExtendedFrameLayout, ExtendedLayoutHitTester,
+    ExtendedFrameLayout,
     LayoutRect,
-    ChartPanelLayout,
     CursorStyle,
     input::DragMode,
     localize_primitive_name,
 };
-use mlc_core::ui::context_menu::{
+use mlc_layout::layout::ExtendedLayoutHitTester;
+use mlc_layout::panel_app::ChartPanelLayout;
+use mlc_layout::ui::context_menu::{
     ContextMenuTarget, ContextMenuItemState,
     build_primitive_context_menu,
 };
-use mlc_core::ui::modal_state::OpenModal;
-use mlc_core::ui::modal_settings::DualSliderHandle;
+use mlc_core::state::modal_state::OpenModal;
+use mlc_layout::ui::modal_settings::DualSliderHandle;
 use mlc_core::drawing::TimeframeVisibilityConfig;
 use uzor::input::TextAction;
 use uzor::WidgetId;
@@ -1087,12 +1088,12 @@ impl ChartApp {
         // This treats on_drag_start as a click for popup dismissal purposes,
         // preventing the UX issue where dragging outside doesn't close the picker.
         {
-            fn outside_popup(picker: &mlc_core::ui::color_picker_state::ColorPickerState, x: f64, y: f64) -> bool {
+            fn outside_popup(picker: &mlc_layout::ui::color_picker_state::ColorPickerState, x: f64, y: f64) -> bool {
                 if !picker.is_open() { return false; }
                 let (ox, oy) = picker.origin;
                 let (pw, ph) = match picker.level {
-                    mlc_core::ui::color_picker_state::ColorPickerLevel::L1 => picker.l1_config().calculate_size(),
-                    mlc_core::ui::color_picker_state::ColorPickerLevel::L2 => picker.l2_config().calculate_size(),
+                    mlc_layout::ui::color_picker_state::ColorPickerLevel::L1 => picker.l1_config().calculate_size(),
+                    mlc_layout::ui::color_picker_state::ColorPickerLevel::L2 => picker.l2_config().calculate_size(),
                     _ => return false,
                 };
                 x < ox || x > ox + pw || y < oy || y > oy + ph
@@ -1562,7 +1563,7 @@ impl ChartApp {
                     scroll_state.start_drag(y);
                     true
                 } else if prefix == "user_settings" {
-                    use mlc_core::ui::modal_settings::UserSettingsTab;
+                    use mlc_layout::ui::modal_settings::UserSettingsTab;
                     let scroll = match self.panel_app.user_settings_state.active_tab {
                         UserSettingsTab::General => &mut self.panel_app.user_settings_state.general_tab_scroll,
                         UserSettingsTab::Sync => &mut self.panel_app.user_settings_state.sync_tab_scroll,
@@ -1739,7 +1740,7 @@ impl ChartApp {
                         // Find the matching content_item rect.
                         if let Some((_, input_rect)) = us.content_items.iter().find(|(k, _)| k == field_id) {
                             if input_rect.contains(x, y) && !char_positions.is_empty() {
-                                let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(char_positions, x);
+                                let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(char_positions, x);
                                 drag_field = Some(field_id.clone());
                                 drag_cursor = new_cursor;
                                 break;
@@ -1828,7 +1829,7 @@ impl ChartApp {
             // Preset name input — text select drag on the input field
             if let Some(ref pni) = result.preset_name_input {
                 if pni.input_rect.contains(x, y) && self.panel_app.preset_name_input.is_open {
-                    let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(
+                    let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
                         &pni.char_x_positions,
                         x,
                     );
@@ -1842,7 +1843,7 @@ impl ChartApp {
             // Chart browser — text select drag on the search input field
             if let Some(ref br) = result.chart_browser {
                 if br.search_input_rect.contains(x, y) && self.panel_app.chart_browser.is_open {
-                    let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(
+                    let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
                         &br.search_char_positions,
                         x,
                     );
@@ -1860,7 +1861,7 @@ impl ChartApp {
                         && self.panel_app.primitive_settings_state.is_open()
                         && self.panel_app.primitive_settings_state.editing_text.is_some()
                     {
-                        let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(
+                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
                             &ps.active_input_char_positions,
                             x,
                         );
@@ -1880,7 +1881,7 @@ impl ChartApp {
                         && self.panel_app.indicator_settings_state.is_open()
                         && self.panel_app.indicator_settings_state.editing_text_state.is_some()
                     {
-                        let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(
+                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
                             &is.active_input_char_positions,
                             x,
                         );
@@ -1900,7 +1901,7 @@ impl ChartApp {
                         && self.panel_app.chart_settings_state.is_open
                         && self.panel_app.chart_settings_state.editing_text.is_some()
                     {
-                        let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(
+                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
                             &cs.active_input_char_positions,
                             x,
                         );
@@ -1920,7 +1921,7 @@ impl ChartApp {
                         && self.panel_app.compare_settings_state.is_open()
                         && self.panel_app.compare_settings_state.editing_text.is_some()
                     {
-                        let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(
+                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
                             &cs_result.tf_active_input_char_positions,
                             x,
                         );
@@ -1939,7 +1940,7 @@ impl ChartApp {
         if self.wl_group_name_input.is_open() {
             if let Some(ref gni) = self.last_wl_group_name_result {
                 if gni.input_rect.contains(x, y) {
-                    let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(
+                    let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
                         &gni.char_x_positions,
                         x,
                     );
@@ -1954,11 +1955,11 @@ impl ChartApp {
 
         // Watchlist modal — text select drag on the search input field (Overview tab only).
         if self.watchlist_modal.is_open() {
-            use mlc_core::ui::modal_settings::WatchlistModalTab;
+            use mlc_layout::ui::modal_settings::WatchlistModalTab;
             if self.watchlist_modal.active_tab == WatchlistModalTab::Overview {
                 if let Some(ref wl) = self.last_watchlist_modal_result {
                     if wl.search_input_rect.contains(x, y) {
-                        let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(
+                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
                             &wl.search_char_positions,
                             x,
                         );
@@ -2013,7 +2014,7 @@ impl ChartApp {
         if self.modal_state.current.is_search_overlay() {
             if let Some(ref smr) = self.search_modal_result {
                 if smr.input_rect.contains(x, y) && self.modal_state.editing_text.is_some() {
-                    let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(
+                    let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
                         &smr.search_char_positions,
                         x,
                     );
@@ -2109,7 +2110,7 @@ impl ChartApp {
             if self.panel_app.user_settings_state.is_open {
                 if let Some(ref us) = result.user_settings {
                     use crate::scroll_dispatch::{ScrollableInfo, try_handle_track_click};
-                    use mlc_core::ui::modal_settings::UserSettingsTab;
+                    use mlc_layout::ui::modal_settings::UserSettingsTab;
 
                     let info = ScrollableInfo {
                         handle_rect: us.scrollbar_handle_rect,
@@ -2134,7 +2135,7 @@ impl ChartApp {
             }
             // User settings DATA & CACHE slider drag start
             if self.panel_app.user_settings_state.is_open {
-                use mlc_core::ui::modal_settings::UserSettingsTab;
+                use mlc_layout::ui::modal_settings::UserSettingsTab;
                 if self.panel_app.user_settings_state.active_tab == UserSettingsTab::Performance {
                     if let Some(ref us) = result.user_settings {
                         for track in &us.slider_tracks {
@@ -3059,7 +3060,7 @@ impl ChartApp {
                 .map(|(_, v)| v.clone())
                 .unwrap_or_default();
             if !char_positions.is_empty() {
-                let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                 match field_id.as_str() {
                     "e2e_passphrase_input" | "wizard_passphrase_input" => {
                         self.panel_app.user_settings_state.new_passphrase_editing.cursor = new_cursor;
@@ -3090,7 +3091,7 @@ impl ChartApp {
         if self.panel_app.preset_name_input.text_select_dragging {
             // Update text selection cursor from mouse X position.
             if let Some(pni) = self.frame_result.as_ref().and_then(|r| r.preset_name_input.as_ref()) {
-                let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(
+                let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
                     &pni.char_x_positions,
                     x,
                 );
@@ -3106,7 +3107,7 @@ impl ChartApp {
         if self.panel_app.chart_browser.search_text_select_dragging {
             // Update search text selection cursor from mouse X position.
             if let Some(br) = self.frame_result.as_ref().and_then(|r| r.chart_browser.as_ref()) {
-                let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(
+                let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
                     &br.search_char_positions,
                     x,
                 );
@@ -3138,7 +3139,7 @@ impl ChartApp {
         if self.watchlist_modal.search_text_select_dragging {
             // Update search text selection cursor from mouse X position.
             if let Some(ref wl) = self.last_watchlist_modal_result {
-                let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(
+                let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
                     &wl.search_char_positions,
                     x,
                 );
@@ -3154,7 +3155,7 @@ impl ChartApp {
         if self.wl_group_name_input.text_select_dragging {
             // Update text selection cursor from mouse X position.
             if let Some(ref gni) = self.last_wl_group_name_result {
-                let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(
+                let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
                     &gni.char_x_positions,
                     x,
                 );
@@ -3170,7 +3171,7 @@ impl ChartApp {
                 .map(|ps| ps.active_input_char_positions.clone())
                 .unwrap_or_default();
             if !char_positions.is_empty() {
-                let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(
+                let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
                     &char_positions,
                     x,
                 );
@@ -3188,7 +3189,7 @@ impl ChartApp {
                 .map(|is| is.active_input_char_positions.clone())
                 .unwrap_or_default();
             if !char_positions.is_empty() {
-                let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(
+                let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
                     &char_positions,
                     x,
                 );
@@ -3206,7 +3207,7 @@ impl ChartApp {
                 .map(|cs| cs.active_input_char_positions.clone())
                 .unwrap_or_default();
             if !char_positions.is_empty() {
-                let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(
+                let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
                     &char_positions,
                     x,
                 );
@@ -3224,7 +3225,7 @@ impl ChartApp {
                 .map(|cs| cs.tf_active_input_char_positions.clone())
                 .unwrap_or_default();
             if !char_positions.is_empty() {
-                let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(
+                let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
                     &char_positions,
                     x,
                 );
@@ -3243,7 +3244,7 @@ impl ChartApp {
         // === Search overlay modal search input text select drag move ===
         if self.modal_state.text_select_dragging {
             if let Some(ref smr) = self.search_modal_result {
-                let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(
+                let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
                     &smr.search_char_positions,
                     x,
                 );
@@ -3262,13 +3263,14 @@ impl ChartApp {
 
         // === Floating inline bar drag move ===
         if self.panel_app.toolbar_state.floating_inline_bar.dragging {
-            let panel_layout = mlc_core::ChartPanelLayout::compute(
+            let panel_layout = mlc_layout::panel_app::ChartPanelLayout::compute(
                 &mlc_core::LayoutRect::new(0.0, 0.0, self.width as f64, self.height as f64),
                 &self.panel_app.toolbar_config,
             );
             let bar_width = self.last_inline_bar_rect.map(|r| r.width).unwrap_or(400.0);
             let sidebar_w = self.sidebar_state.right_width();
-            self.panel_app.toolbar_state.floating_inline_bar.update_drag(
+            mlc_layout::panel_app::floating_inline_update_drag(
+                &mut self.panel_app.toolbar_state.floating_inline_bar,
                 x, y,
                 &panel_layout,
                 bar_width,
@@ -3348,7 +3350,7 @@ impl ChartApp {
         // User settings scrollbar drag move
         {
             use crate::scroll_dispatch::{ScrollableInfo, try_handle_scrollbar_drag};
-            use mlc_core::ui::modal_settings::UserSettingsTab;
+            use mlc_layout::ui::modal_settings::UserSettingsTab;
 
             if let Some(ref result) = self.frame_result {
                 if let Some(ref us) = result.user_settings {
@@ -4385,7 +4387,7 @@ impl ChartApp {
         self.last_mouse_pos = (x, y);
 
         // --- Overlay tab hover state is derived from InputCoordinator below ---
-        self.leaf_tab_hover = mlc_core::LeafTabHoverZone::None;
+        self.leaf_tab_hover = mlc_layout::layout::panel_overlay::LeafTabHoverZone::None;
         self.leaf_tab_hovered_leaf = None;
 
         // --- Update panel overlay tab hover state (free-slot leaves) ---
@@ -4398,14 +4400,14 @@ impl ChartApp {
                         let [dx, dy, dw, dh] = zones.dots_rect;
                         let [cx, cy, cw, ch] = zones.color_tag_rect;
                         if x >= dx && x < dx + dw && y >= dy && y < dy + dh {
-                            mlc_core::LeafTabHoverZone::GearMenu
+                            mlc_layout::layout::panel_overlay::LeafTabHoverZone::GearMenu
                         } else if x >= cx && x < cx + cw && y >= cy && y < cy + ch {
-                            mlc_core::LeafTabHoverZone::ColorTag
+                            mlc_layout::layout::panel_overlay::LeafTabHoverZone::ColorTag
                         } else {
-                            mlc_core::LeafTabHoverZone::Body
+                            mlc_layout::layout::panel_overlay::LeafTabHoverZone::Body
                         }
                     } else {
-                        mlc_core::LeafTabHoverZone::None
+                        mlc_layout::layout::panel_overlay::LeafTabHoverZone::None
                     };
                     // Find which slot contains this leaf_id.
                     let slot_idx_opt = self.sidebar_state.slot_dockings.iter().enumerate()
@@ -4478,9 +4480,9 @@ impl ChartApp {
                     if let Ok(lid) = leaf_id_str.parse::<u64>() {
                         self.leaf_tab_hovered_leaf = Some(mlc_core::LeafId(lid));
                         self.leaf_tab_hover = match sub_zone {
-                            "gear" => mlc_core::LeafTabHoverZone::GearMenu,
-                            "color_tag" => mlc_core::LeafTabHoverZone::ColorTag,
-                            _ => mlc_core::LeafTabHoverZone::Body,
+                            "gear" => mlc_layout::layout::panel_overlay::LeafTabHoverZone::GearMenu,
+                            "color_tag" => mlc_layout::layout::panel_overlay::LeafTabHoverZone::ColorTag,
+                            _ => mlc_layout::layout::panel_overlay::LeafTabHoverZone::Body,
                         };
                     }
                 }
@@ -4614,20 +4616,20 @@ impl ChartApp {
         if self.panel_app.sync_color_grid.is_open() {
             if let Some(ref result) = self.frame_result {
                 if let Some(ref grid_draw) = result.sync_color_grid {
-                    use mlc_core::ui::sync_color_grid::hit_test_sync_color_grid;
+                    use mlc_layout::ui::sync_color_grid::hit_test_sync_color_grid;
                     let hit = hit_test_sync_color_grid(grid_draw, x, y);
                     match hit {
-                        mlc_core::ui::sync_color_grid::SyncColorGridHitResult::Color(idx) => {
+                        mlc_layout::ui::sync_color_grid::SyncColorGridHitResult::Color(idx) => {
                             self.panel_app.sync_color_grid.hovered_index = Some(idx);
                             self.panel_app.sync_color_grid.hovered_remove = false;
                             self.panel_app.sync_color_grid.hovered_add = false;
                         }
-                        mlc_core::ui::sync_color_grid::SyncColorGridHitResult::Remove => {
+                        mlc_layout::ui::sync_color_grid::SyncColorGridHitResult::Remove => {
                             self.panel_app.sync_color_grid.hovered_index = None;
                             self.panel_app.sync_color_grid.hovered_remove = true;
                             self.panel_app.sync_color_grid.hovered_add = false;
                         }
-                        mlc_core::ui::sync_color_grid::SyncColorGridHitResult::AddCustom => {
+                        mlc_layout::ui::sync_color_grid::SyncColorGridHitResult::AddCustom => {
                             self.panel_app.sync_color_grid.hovered_index = None;
                             self.panel_app.sync_color_grid.hovered_remove = false;
                             self.panel_app.sync_color_grid.hovered_add = true;
@@ -4880,7 +4882,7 @@ impl ChartApp {
                                 }
                                 window.sub_pane_overlay_states[real_idx].visible = true;
                                 if layout_idx < overlay_results_split.len() {
-                                    use mlc_core::ui::modal_settings::SubPaneButton;
+                                    use mlc_core::state::modal_data::SubPaneButton;
                                     let overlay = &overlay_results_split[layout_idx];
                                     let hovered = if overlay.delete_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
                                         Some(SubPaneButton::Delete)
@@ -5237,7 +5239,7 @@ impl ChartApp {
                         .cloned()
                         .or_else(|| leaf_rect_opt.and_then(|r| self.build_extended_layout_for_leaf(leaf_id, &r)));
                     if let Some(extended) = ext_opt {
-                        let tester = mlc_core::layout::ExtendedLayoutHitTester::new(&extended);
+                        let tester = mlc_layout::layout::ExtendedLayoutHitTester::new(&extended);
                         use mlc_core::input::ChartHitTester;
                         let hit = tester.hit_test(x, y);
                         return hit.cursor();
@@ -5255,7 +5257,7 @@ impl ChartApp {
             Some(e) => e,
             None => { _fallback_cursor = self.build_extended_layout(); &_fallback_cursor }
         };
-        let tester = mlc_core::layout::ExtendedLayoutHitTester::new(extended);
+        let tester = mlc_layout::layout::ExtendedLayoutHitTester::new(extended);
         use mlc_core::input::ChartHitTester;
         let hit = tester.hit_test(x, y);
         hit.cursor()
@@ -5438,7 +5440,7 @@ impl ChartApp {
                                 .cloned()
                             {
                                 use crate::scroll_dispatch::{ScrollableInfo, try_handle_wheel};
-                                use mlc_core::ui::modal_settings::UserSettingsTab;
+                                use mlc_layout::ui::modal_settings::UserSettingsTab;
                                 let info = ScrollableInfo {
                                     handle_rect: us.scrollbar_handle_rect,
                                     track_rect: us.scrollbar_track_rect,
@@ -5598,7 +5600,7 @@ impl ChartApp {
 
                 // compare_settings sliders — guard: modal must be open
                 if self.panel_app.compare_settings_state.is_open() {
-                    use mlc_core::ui::modal_settings::CompareSettingsTab;
+                    use mlc_layout::ui::modal_settings::CompareSettingsTab;
                     let delta = dy.signum();
 
                     if let Some(ref wid) = hovered_wid {
@@ -6191,7 +6193,7 @@ impl ChartApp {
 
         // Handle watchlist modal search input (Overview tab only)
         {
-            use mlc_core::ui::modal_settings::WatchlistModalTab;
+            use mlc_layout::ui::modal_settings::WatchlistModalTab;
             if self.watchlist_modal.is_open()
                 && self.watchlist_modal.active_tab == WatchlistModalTab::Overview
             {
@@ -6249,7 +6251,7 @@ impl ChartApp {
                 }
                 TextAction::TextChanged(ref new_hex) => {
                     // Live-apply: sync the new hex text to the active picker.
-                    let pickers: [(&mut mlc_core::ui::color_picker_state::ColorPickerState, &str); 5] = [
+                    let pickers: [(&mut mlc_layout::ui::color_picker_state::ColorPickerState, &str); 5] = [
                         (&mut self.panel_app.primitive_settings_state.color_picker, "primitive"),
                         (&mut self.panel_app.indicator_settings_state.color_picker, "indicator"),
                         (&mut self.panel_app.chart_settings_state.color_picker, "chart"),
@@ -6334,7 +6336,7 @@ impl ChartApp {
                     // Commit — extract the name and mode, then close
                     let name = self.panel_app.preset_name_input.name().to_string();
                     if !name.trim().is_empty() {
-                        use mlc_core::ui::modal_settings::PresetNameInputMode;
+                        use mlc_layout::ui::modal_settings::PresetNameInputMode;
                         match self.panel_app.preset_name_input.mode {
                             PresetNameInputMode::SaveAs => {
                                 self.process_chart_out_event(
@@ -6396,7 +6398,7 @@ impl ChartApp {
                     // sync tab / wizard).  On the ProfileList or CreateNew
                     // pages the passphrase field should not be active, but
                     // guard against stale focus just in case.
-                    use mlc_core::ui::modal_settings::ProfileManagerPage;
+                    use mlc_layout::ui::modal_settings::ProfileManagerPage;
                     let on_passphrase_page = if self.panel_app.user_settings_state.show_profile_manager {
                         matches!(
                             self.panel_app.user_settings_state.profile_manager_page,
@@ -6716,7 +6718,7 @@ impl ChartApp {
                     // Commit
                     let name = self.wl_group_name_input.editing.text.trim().to_string();
                     if !name.is_empty() {
-                        use mlc_core::ui::modal_settings::WatchlistGroupNameMode;
+                        use mlc_layout::ui::modal_settings::WatchlistGroupNameMode;
                         match self.wl_group_name_input.mode.clone() {
                             WatchlistGroupNameMode::CreateNew => {
                                 let new_id = self.sidebar_state.watchlist_manager.create_list(name.clone());
@@ -7296,7 +7298,7 @@ impl ChartApp {
 
         // Helper closure operating on a mutable TextEditingState reference.
         // Returns true if the key was consumed.
-        fn apply_key(editing: &mut mlc_core::ui::modal_settings::TextEditingState, key: KeyPress) -> bool {
+        fn apply_key(editing: &mut mlc_core::state::modal_data::TextEditingState, key: KeyPress) -> bool {
             let char_count = editing.text.chars().count();
             match key {
                 // ── Delete (forward) ──────────────────────────────────────────
@@ -7498,7 +7500,7 @@ impl ChartApp {
                         self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     }
                     TextAction::TextChanged(ref new_hex) => {
-                        let pickers: [(&mut mlc_core::ui::color_picker_state::ColorPickerState, &str); 5] = [
+                        let pickers: [(&mut mlc_layout::ui::color_picker_state::ColorPickerState, &str); 5] = [
                             (&mut self.panel_app.primitive_settings_state.color_picker, "primitive"),
                             (&mut self.panel_app.indicator_settings_state.color_picker, "indicator"),
                             (&mut self.panel_app.chart_settings_state.color_picker, "chart"),
@@ -7580,7 +7582,7 @@ impl ChartApp {
 
         // 0b. Watchlist modal search input (Overview tab only)
         {
-            use mlc_core::ui::modal_settings::WatchlistModalTab;
+            use mlc_layout::ui::modal_settings::WatchlistModalTab;
             if self.watchlist_modal.is_open()
                 && self.watchlist_modal.active_tab == WatchlistModalTab::Overview
             {
@@ -7775,7 +7777,7 @@ impl ChartApp {
     /// The platform runner calls this on Ctrl+C to obtain text to place on the
     /// system clipboard.
     pub fn on_copy_selection(&self) -> Option<String> {
-        fn get_selection(editing: &mlc_core::ui::modal_settings::TextEditingState) -> Option<String> {
+        fn get_selection(editing: &mlc_core::state::modal_data::TextEditingState) -> Option<String> {
             let (start, end) = editing.selection_range()?;
             let start_byte = editing.char_to_byte_pos(start);
             let end_byte = editing.char_to_byte_pos(end);
@@ -7819,7 +7821,7 @@ impl ChartApp {
 
         // Watchlist modal search input (Overview tab only)
         {
-            use mlc_core::ui::modal_settings::WatchlistModalTab;
+            use mlc_layout::ui::modal_settings::WatchlistModalTab;
             if self.watchlist_modal.is_open()
                 && self.watchlist_modal.active_tab == WatchlistModalTab::Overview
             {
@@ -9053,9 +9055,9 @@ pub(super) fn hex_str_to_rgba(hex: &str) -> [f32; 4] {
 /// - TAGS sidebar, Details sub-tab → `tags_details_scroll`
 /// - MAP sidebar → `tabs_scroll` (MAP section has no scrollable content)
 fn tags_tabs_active_scroll(
-    state: &mut mlc_core::ui::modal_settings::TagsTabsState,
-) -> &mut mlc_core::ui::scroll_state::ScrollState {
-    use mlc_core::ui::modal_settings::{TagsTabsSidebar, TagsTabsTagsTab};
+    state: &mut mlc_layout::ui::modal_settings::TagsTabsState,
+) -> &mut mlc_core::state::scroll_state::ScrollState {
+    use mlc_layout::ui::modal_settings::{TagsTabsSidebar, TagsTabsTagsTab};
     match state.sidebar {
         TagsTabsSidebar::Tabs => &mut state.tabs_scroll,
         TagsTabsSidebar::Tags => match state.tags_tab {

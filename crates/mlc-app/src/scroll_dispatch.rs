@@ -4,7 +4,7 @@
 //! track click) to the correct ScrollState, eliminating per-scrollbar copy-paste
 //! in input handlers.
 
-use mlc_core::ui::scroll_state::ScrollState;
+use mlc_core::state::scroll_state::ScrollState;
 use uzor::types::Rect as WidgetRect;
 
 /// Info about one scrollable area, collected from render results.

@@ -14,7 +14,7 @@ use mlc_core::{
     ThemeSettingsPanel,
     UIStyle,
 };
-use mlc_core::ui::modal_settings::DualSliderHandle;
+use mlc_layout::ui::modal_settings::DualSliderHandle;
 use mlc_core::drawing::TimeframeVisibilityConfig;
 
 impl ChartApp {
@@ -24,7 +24,7 @@ impl ChartApp {
 
     /// Handle clicks on widgets registered with the "chart_settings:" prefix.
     pub(super) fn handle_chart_settings_click(&mut self, rest: &str, x: f64, _y: f64) {
-        use mlc_core::ui::modal_settings::ChartSettingsTab;
+        use mlc_layout::ui::modal_settings::ChartSettingsTab;
 
         // Auto-commit: if an input field is being edited and the click lands on a
         // DIFFERENT widget inside the same modal, commit the value (same as Enter).
@@ -73,7 +73,7 @@ impl ChartApp {
                         .map(|cs| cs.active_input_char_positions.clone())
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
-                        let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                         if let Some(ref mut edit) = self.panel_app.chart_settings_state.editing_text {
                             edit.cursor = new_cursor;
                             edit.selection_start = None;
@@ -112,7 +112,7 @@ impl ChartApp {
                         let default_name = format!("{}{}", prefix, max_n + 1);
                         let default_cursor = default_name.chars().count();
                         self.panel_app.chart_settings_state.template_name_editing = Some(
-                            mlc_core::ui::modal_settings::TextEditingState {
+                            mlc_core::state::modal_data::TextEditingState {
                                 field_id: "template_name".to_string(),
                                 text: default_name,
                                 cursor: default_cursor,
@@ -193,7 +193,7 @@ impl ChartApp {
     /// and updates both the `chart_settings_state` cached flags and the active
     /// chart window's live state.
     fn apply_chart_template(&mut self, tmpl: &mlc_core::templates::ChartTemplate) {
-        use mlc_core::layout::modals::chart_settings::{
+        use mlc_layout::layout::modals::chart_settings::{
             InstrumentSettings, ScalesLinesSettings, StatusLineSettings,
         };
 
@@ -636,7 +636,7 @@ impl ChartApp {
                     eprintln!("[ChartApp] chart_settings opened color picker for watermark_color");
                 }
                 "watermark_text" => {
-                    use mlc_core::ui::modal_settings::TextEditingState;
+                    use mlc_core::state::modal_data::TextEditingState;
                     let pid2 = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                     let current_text = pid2
                         .and_then(|pid| self.panels_store.chart_panel.get(&pid))
@@ -928,7 +928,7 @@ impl ChartApp {
 
     /// Handle clicks on widgets registered with the "prim_settings:" prefix.
     pub(super) fn handle_prim_settings_click(&mut self, rest: &str, x: f64, y: f64) {
-        use mlc_core::ui::modal_settings::PrimitiveSettingsTab;
+        use mlc_layout::ui::modal_settings::PrimitiveSettingsTab;
 
         // Auto-commit: if an input field is being edited and the click lands on a
         // DIFFERENT widget inside the same modal, commit the value (same as Enter).
@@ -985,7 +985,7 @@ impl ChartApp {
                         .map(|ps| ps.active_input_char_positions.clone())
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
-                        let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                         if let Some(ref mut edit) = self.panel_app.primitive_settings_state.editing_text {
                             edit.cursor = new_cursor;
                             edit.selection_start = None;
@@ -1389,7 +1389,7 @@ impl ChartApp {
 
         // ── Stroke width value — start inline text editing ───────────────────
         if item_id == "stroke_width_value" {
-            use mlc_core::ui::modal_settings::TextEditingState;
+            use mlc_core::state::modal_data::TextEditingState;
             let current_width = active_pid_prim
                 .and_then(|pid| self.panels_store.chart_panel.get(&pid))
                 .and_then(|panel| panel.drawing_manager.get_data_at(idx))
@@ -1408,7 +1408,7 @@ impl ChartApp {
 
         // ── Text content — start inline text editing ──────────────────────────
         if item_id == "text_content" {
-            use mlc_core::ui::modal_settings::TextEditingState;
+            use mlc_core::state::modal_data::TextEditingState;
             // Read the current text value from the primitive
             let current_text = active_pid_prim
                 .and_then(|pid| self.panels_store.chart_panel.get(&pid))
@@ -1429,7 +1429,7 @@ impl ChartApp {
 
         // ── Text font size — start inline text editing ────────────────────────
         if item_id == "text_font_size" {
-            use mlc_core::ui::modal_settings::TextEditingState;
+            use mlc_core::state::modal_data::TextEditingState;
             let current_font_size = active_pid_prim
                 .and_then(|pid| self.panels_store.chart_panel.get(&pid))
                 .and_then(|panel| panel.drawing_manager.get_data_at(idx))
@@ -1555,7 +1555,7 @@ impl ChartApp {
 
         // ── Timeframe min/max inputs — start inline text editing ─────────────
         if item_id.starts_with("tf_") && (item_id.ends_with("_min") || item_id.ends_with("_max")) {
-            use mlc_core::ui::modal_settings::TextEditingState;
+            use mlc_core::state::modal_data::TextEditingState;
             use mlc_core::drawing::TimeframeVisibilityConfig;
 
             let is_min = item_id.ends_with("_min");
@@ -1738,7 +1738,7 @@ impl ChartApp {
 
         // ── Level value: level_{i}_value ─ start inline text editing ─────────
         if item_id.starts_with("level_") && item_id.ends_with("_value") && !item_id.starts_with("level_prop:") {
-            use mlc_core::ui::modal_settings::TextEditingState;
+            use mlc_core::state::modal_data::TextEditingState;
             let parts: Vec<&str> = item_id.split('_').collect();
             let current_val: String = if parts.len() >= 3 {
                 if let Ok(level_idx) = parts[1].parse::<usize>() {
@@ -1776,7 +1776,7 @@ impl ChartApp {
 
         // ── Coordinate editing: coord_{idx}_{price|bar} ── start inline editing
         if item_id.starts_with("coord_") {
-            use mlc_core::ui::modal_settings::TextEditingState;
+            use mlc_core::state::modal_data::TextEditingState;
             let is_price = item_id.ends_with("_price");
             let current_val: String = if let Some(pt_idx) = item_id.strip_prefix("coord_")
                 .and_then(|s| if is_price { s.strip_suffix("_price") } else { s.strip_suffix("_bar") })
@@ -1872,7 +1872,7 @@ impl ChartApp {
                         eprintln!("[ChartApp] prim_settings style_prop '{}' color picker opened", prop_id);
                     }
                     PropertyType::Number { .. } => {
-                        use mlc_core::ui::modal_settings::TextEditingState;
+                        use mlc_core::state::modal_data::TextEditingState;
                         let current_val = match prop_value {
                             PropertyValue::Number(f) => format!("{}", f),
                             PropertyValue::Integer(i) => format!("{}", i),
@@ -2014,7 +2014,7 @@ impl ChartApp {
                         eprintln!("[ChartApp] prim_settings text_prop '{}' color picker opened", prop_id);
                     }
                     PropertyType::Text { .. } | PropertyType::Number { .. } => {
-                        use mlc_core::ui::modal_settings::TextEditingState;
+                        use mlc_core::state::modal_data::TextEditingState;
                         let current_val = match &prop_value {
                             PropertyValue::String(s) => s.clone(),
                             PropertyValue::Number(f) => format!("{}", f),
@@ -2100,7 +2100,7 @@ impl ChartApp {
             let default_name = format!("{}{}", prefix, max_n + 1);
             let default_cursor = default_name.chars().count();
             self.panel_app.primitive_settings_state.template_name_editing = Some(
-                mlc_core::ui::modal_settings::TextEditingState {
+                mlc_core::state::modal_data::TextEditingState {
                     field_id: "template_name".to_string(),
                     text: default_name,
                     cursor: default_cursor,
@@ -2367,7 +2367,7 @@ impl ChartApp {
                 // Condition dropdown selection
                 if let Some(idx_str) = rest.strip_prefix("cond:") {
                     if let Ok(idx) = idx_str.parse::<usize>() {
-                        use mlc_core::ui::modal_settings::AlertCondition;
+                        use mlc_layout::ui::modal_settings::AlertCondition;
                         let conditions = AlertCondition::all();
                         if idx < conditions.len() {
                             self.panel_app.alert_settings_state.condition = conditions[idx];
@@ -2379,7 +2379,7 @@ impl ChartApp {
             }
             // --- Tab switching ---
             _ if rest.starts_with("tab:") => {
-                use mlc_core::ui::modal_settings::AlertSettingsTab;
+                use mlc_layout::ui::modal_settings::AlertSettingsTab;
                 let tab = match rest.strip_prefix("tab:").unwrap_or("") {
                     "settings" => Some(AlertSettingsTab::Settings),
                     "notifications" => Some(AlertSettingsTab::Notifications),
@@ -2392,7 +2392,7 @@ impl ChartApp {
                     self.panel_app.alert_settings_state.condition_dropdown_open = false;
                     self.panel_app.alert_settings_state.trigger_mode_dropdown_open = false;
                     // Refresh alerts list when switching to list tab
-                    if t == mlc_core::ui::modal_settings::AlertSettingsTab::AlertsList {
+                    if t == mlc_layout::ui::modal_settings::AlertSettingsTab::AlertsList {
                         self.panel_app.alert_settings_state.all_alerts =
                             self.managers.alert.items().to_vec();
                     }
@@ -2529,7 +2529,7 @@ impl ChartApp {
             }
             // --- Alerts list filter ---
             _ if rest.starts_with("filter:") => {
-                use mlc_core::ui::modal_settings::AlertListFilter;
+                use mlc_layout::ui::modal_settings::AlertListFilter;
                 let filter = match rest.strip_prefix("filter:").unwrap_or("") {
                     "all" => Some(AlertListFilter::All),
                     "active" => Some(AlertListFilter::Active),
@@ -2592,7 +2592,7 @@ impl ChartApp {
 
     /// Handle clicks on widgets registered with the "ind_settings:" prefix.
     pub(super) fn handle_ind_settings_click(&mut self, rest: &str, x: f64, y: f64) {
-        use mlc_core::ui::modal_settings::IndicatorSettingsTab;
+        use mlc_layout::ui::modal_settings::IndicatorSettingsTab;
 
         // Auto-commit: if a param input is being edited and the click lands on a
         // DIFFERENT widget inside the same modal, commit the value (same as Enter).
@@ -2668,7 +2668,7 @@ impl ChartApp {
                         .map(|is| is.active_input_char_positions.clone())
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
-                        let new_cursor = mlc_core::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                         if let Some(ref mut edit) = self.panel_app.indicator_settings_state.editing_text_state {
                             edit.cursor = new_cursor;
                             edit.selection_start = None;
@@ -2705,7 +2705,7 @@ impl ChartApp {
                         let default_name = format!("{}{}", prefix, max_n + 1);
                         let default_cursor = default_name.chars().count();
                         self.panel_app.indicator_settings_state.template_name_editing = Some(
-                            mlc_core::ui::modal_settings::TextEditingState {
+                            mlc_core::state::modal_data::TextEditingState {
                                 field_id: "template_name".to_string(),
                                 text: default_name,
                                 cursor: default_cursor,
@@ -3034,7 +3034,7 @@ impl ChartApp {
 
         // ── Timeframe min/max inputs — start inline text editing ─────────────
         if item_id.starts_with("tf_") && (item_id.ends_with("_min") || item_id.ends_with("_max")) {
-            use mlc_core::ui::modal_settings::TextEditingState;
+            use mlc_core::state::modal_data::TextEditingState;
             use mlc_core::drawing::TimeframeVisibilityConfig;
 
             let is_min = item_id.ends_with("_min");
@@ -3085,7 +3085,7 @@ impl ChartApp {
             let cursor = current_value.chars().count();
             let field_id = format!("indicator_param:{}", param_name);
             self.panel_app.indicator_settings_state.editing_text_state = Some(
-                mlc_core::ui::modal_settings::TextEditingState {
+                mlc_core::state::modal_data::TextEditingState {
                     field_id,
                     text: current_value,
                     cursor,

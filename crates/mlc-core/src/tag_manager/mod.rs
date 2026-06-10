@@ -911,7 +911,7 @@ impl BubbleStore {
     ///
     /// Falls back to the first preset color if all are taken.
     pub fn next_unused_color(&self) -> [f32; 4] {
-        use crate::ui::sync_color_grid::PRESET_COLORS;
+        use crate::state::toolbar_geometry::PRESET_COLORS;
         // Only visible (non-auto) bubbles occupy palette colors
         let used_colors: Vec<[f32; 4]> = self.bubbles.values()
             .filter(|b| !b.auto_created)

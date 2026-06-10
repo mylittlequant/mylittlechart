@@ -385,7 +385,7 @@ impl ChartApp {
 
         mlc_core::render::draw_svg_icon(
             ctx,
-            mlc_core::ui::Icon::Alert.svg(),
+            mlc_core::state::icons::Icon::Alert.svg(),
             icon_x,
             icon_y,
             size,

@@ -35,6 +35,11 @@ pub mod panel;
 pub mod sub_pane_overlay;
 pub mod toolbar_state;
 pub mod chart_settings_data;
+pub mod icons;
+pub mod scroll_state;
+pub mod modal_state;
+pub mod modal_data;
+pub mod toolbar_geometry;
 
 // Core chart struct
 pub use chart::*;
@@ -134,6 +139,9 @@ pub use geometry::{
     FrameLayout,
     SubPaneLayout,
     ExtendedFrameLayout,
+    Margins,
+    LayoutConfig,
+    LayoutManager,
 };
 
 // Scale-corner button state + hit zones (pure data)
@@ -159,3 +167,10 @@ pub use toolbar_state::{
 
 // Chart-settings data bags (pure serde — consumed by templates + app)
 pub use chart_settings_data::{ChartSettingsData, InstrumentSettings, ScalesLinesSettings, StatusLineSettings};
+
+// UI data types relocated from mlc-layout/src/ui/ — pure data consumed by backend
+pub use icons::Icon;
+pub use scroll_state::ScrollState;
+pub use modal_state::{ModalState, OpenModal, SearchResult, IndicatorCategory, IndicatorCategoryFilter, IndicatorCatalogItem, ClockPopupState};
+pub use modal_data::{TextEditingState, SubPaneButton, SubPaneOverlayState, IndicatorDisplayInfo, IndicatorParamDef, IndicatorParamType, IndicatorOutputDef, IndicatorOutputType};
+pub use toolbar_geometry::{WidgetRect, ToolbarRect, ToolbarRenderResult, PRESET_COLORS};

@@ -4,7 +4,7 @@
 
 use crate::ChartApp;
 use mlc_core::UIStyle;
-use mlc_core::ui::modal_state::OpenModal;
+use mlc_core::state::modal_state::OpenModal;
 
 impl ChartApp {
     /// Process a `ChartOutEvent`  -  route high-level outcomes back to state.
