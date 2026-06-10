@@ -56,11 +56,15 @@ pub enum ChartContainerLeaf {
     MainChart {
         chart_panel_id: ChartPanelId,
     },
-    /// An indicator panel rendered as a sub-pane of the container's chart.
+    /// A sub-pane of the container's chart, rendering one indicator below the
+    /// candles. Inherits X-axis / bars / crosshair from the parent chart.
+    ///
+    /// (Distinct from the standalone `Panel::IndicatorPanel`, which is its own
+    /// top-level panel with its own symbol/viewport — see `state/panel.rs`.)
     ///
     /// `instance_id` matches `IndicatorInstance::id` from the indicator
     /// manager and `sub_pane_height_ratios` keys in presets.
-    IndicatorPanel {
+    SubPane {
         instance_id: u64,
     },
 }
@@ -72,7 +76,7 @@ impl ChartContainerLeaf {
 
     pub fn indicator_instance_id(&self) -> Option<u64> {
         match self {
-            ChartContainerLeaf::IndicatorPanel { instance_id } => Some(*instance_id),
+            ChartContainerLeaf::SubPane { instance_id } => Some(*instance_id),
             _ => None,
         }
     }
@@ -82,14 +86,14 @@ impl DockPanel for ChartContainerLeaf {
     fn title(&self) -> &str {
         match self {
             ChartContainerLeaf::MainChart { .. } => "Chart",
-            ChartContainerLeaf::IndicatorPanel { .. } => "Indicator",
+            ChartContainerLeaf::SubPane { .. } => "Indicator",
         }
     }
 
     fn type_id(&self) -> &'static str {
         match self {
             ChartContainerLeaf::MainChart { .. } => "container_main_chart",
-            ChartContainerLeaf::IndicatorPanel { .. } => "container_indicator_panel",
+            ChartContainerLeaf::SubPane { .. } => "container_indicator_panel",
         }
     }
 
@@ -98,14 +102,14 @@ impl DockPanel for ChartContainerLeaf {
         // indicator panels match the existing 30 px floor for sub-pane content.
         match self {
             ChartContainerLeaf::MainChart { .. } => (80.0, 80.0),
-            ChartContainerLeaf::IndicatorPanel { .. } => (80.0, 30.0),
+            ChartContainerLeaf::SubPane { .. } => (80.0, 30.0),
         }
     }
 
     fn closable(&self) -> bool {
         match self {
             ChartContainerLeaf::MainChart { .. } => false,
-            ChartContainerLeaf::IndicatorPanel { .. } => true,
+            ChartContainerLeaf::SubPane { .. } => true,
         }
     }
 }

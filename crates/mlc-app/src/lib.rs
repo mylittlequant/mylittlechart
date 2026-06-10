@@ -5636,7 +5636,7 @@ impl ChartApp {
                             .or(main_leaf_id);
                         if let Some(anchor) = last_leaf_id {
                             window.inner_docking.tree_mut().add_leaf_near(
-                                ChartContainerLeaf::IndicatorPanel { instance_id: iid },
+                                ChartContainerLeaf::SubPane { instance_id: iid },
                                 anchor,
                             );
                         }

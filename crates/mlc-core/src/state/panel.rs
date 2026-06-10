@@ -82,8 +82,10 @@ pub enum Panel {
     /// Chart container (1 OHLC canvas + N indicator sub-panes, all bound
     /// to one bubble).  Payload is the container's `ChartId`.
     Chart(ChartId),
-    /// Standalone indicator-visualisation panel.  Distinct from a chart
-    /// sub-pane (which lives inside a `Chart` via `ChartContainerLeaf`).
+    /// Standalone indicator-visualisation panel — own symbol/viewport, same
+    /// level as DOM / TradeTape.  Distinct from a chart sub-pane (the embedded
+    /// `ChartContainerLeaf::SubPane`, which inherits X-axis/bars/crosshair from
+    /// its parent `Chart`).
     IndicatorPanel(PanelId),
     Dom(PanelId),
     L2Tape(PanelId),

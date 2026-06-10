@@ -2,7 +2,7 @@
 //!
 //! `PanelLeaf` and `PanelLeafKind` have been replaced by the unified `Panel`
 //! enum (K1.2).  This module now only contains `InstanceId`, which is still
-//! used by `ChartContainerLeaf::IndicatorPanel` for indicator-manager keying.
+//! used by `ChartContainerLeaf::SubPane` for indicator-manager keying.
 
 use serde::{Deserialize, Serialize};
 

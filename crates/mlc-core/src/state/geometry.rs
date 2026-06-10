@@ -439,7 +439,7 @@ impl ExtendedFrameLayout {
     /// inner uzor docking tree.
     ///
     /// The inner tree's root branch holds children in vertical SplitBottom
-    /// order: `[MainChart, IndicatorPanel_1, IndicatorPanel_2, ...]`. The
+    /// order: `[MainChart, SubPane_1, SubPane_2, ...]`. The
     /// branch's `proportions` Vec is the single source of truth for how
     /// vertical space is split between the chart canvas and its sub-panes.
     ///

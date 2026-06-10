@@ -281,7 +281,7 @@ pub struct ChartContainer {
     /// so mode is tightly coupled to viewport sync state.
     pub stashed_scale_mode: Option<ScaleMode>,
 
-    /// Inner uzor docking tree: [MainChart leaf, IndicatorPanel leaf, ...].
+    /// Inner uzor docking tree: [MainChart leaf, SubPane leaf, ...].
     /// Single source of truth for sub-pane identity, proportions, and
     /// separator drag. Replaces `inner_layout` (which is kept only during
     /// the dual-write transition and deleted once all reads migrate here).
@@ -431,7 +431,7 @@ impl ChartContainer {
     // =========================================================================
 
     /// Return the separator index in `inner_docking.separators()` for the
-    /// separator that sits above the `IndicatorPanel` leaf with `instance_id`.
+    /// separator that sits above the `SubPane` leaf with `instance_id`.
     ///
     /// The separators list is only valid after `inner_docking.layout(...)` has
     /// been called. The caller must ensure layout is fresh before calling this.
