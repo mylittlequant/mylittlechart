@@ -817,15 +817,15 @@ impl ChartContainer {
     /// `ChartContainer` in Phase 4 B.
     pub fn to_render_state<'a>(
         &'a self,
-        chart_rect: crate::chart::render::ChartRect,
-        theme: &'a crate::chart::render::ChartTheme,
+        chart_rect: crate::chart::render_data::ChartRect,
+        theme: &'a crate::chart::render_data::ChartTheme,
         current_timeframe: Option<&'a str>,
         time_format_settings: Option<&'a crate::TimeFormatSettings>,
         timeframe_minutes: Option<u32>,
         grid: &'a GridOptions,
         legend: &'a Legend,
-    ) -> crate::chart::render::ChartRenderState<'a> {
-        crate::chart::render::ChartRenderState {
+    ) -> crate::chart::render_data::ChartRenderState<'a> {
+        crate::chart::render_data::ChartRenderState {
             viewport: &self.viewport,
             price_scale: &self.price_scale,
             time_scale: &self.time_scale,

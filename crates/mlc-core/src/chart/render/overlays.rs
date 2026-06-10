@@ -12,9 +12,12 @@
 
 use crate::render::{RenderContext, TextAlign, TextBaseline};
 use crate::chart::{Watermark, Legend, Tooltip, HorzAlign, VertAlign, LegendPosition};
-use super::super::annotations::LineStyle;
-use crate::Bar;
-use super::{ChartRenderState, ChartRect, draw_styled_line};
+use crate::chart::render_data::{
+    ChartRenderState, ChartRect,
+    LegendData, TooltipLines,
+    RenderPriceLine, RenderMarker, RenderMarkerShape,
+};
+use super::draw_styled_line;
 
 /// Draw watermark text (symbol, exchange info) behind chart
 ///
@@ -65,23 +68,6 @@ pub fn draw_watermark(
         ctx.fill_text(&line.text, rect.x + text_x, rect.y + current_y);
         current_y += line.font_size * 1.2;
     }
-}
-
-/// Legend data for rendering
-#[derive(Clone, Debug)]
-pub struct LegendData {
-    /// Symbol name
-    pub symbol: String,
-    /// Timeframe label
-    pub timeframe: String,
-    /// Current bar data
-    pub bar: Bar,
-    /// Change from open
-    pub change: f64,
-    /// Percent change
-    pub percent: f64,
-    /// Is bullish
-    pub is_bullish: bool,
 }
 
 /// Draw OHLC legend in corner of chart
@@ -162,48 +148,6 @@ pub fn draw_legend(
     ctx.fill_text(&legend_text, base_x, base_y);
 }
 
-/// Tooltip content lines
-#[derive(Clone, Debug)]
-pub struct TooltipLines {
-    pub lines: Vec<String>,
-}
-
-impl TooltipLines {
-    pub fn from_bar(bar: &Bar) -> Self {
-        Self {
-            lines: vec![
-                format!("O: {}", Self::fmt_price(bar.open)),
-                format!("H: {}", Self::fmt_price(bar.high)),
-                format!("L: {}", Self::fmt_price(bar.low)),
-                format!("C: {}", Self::fmt_price(bar.close)),
-                format!("V: {:.0}", bar.volume),
-            ],
-        }
-    }
-
-    /// Format price with appropriate precision for tooltip display
-    fn fmt_price(price: f64) -> String {
-        if price == 0.0 {
-            "0".to_string()
-        } else if price.abs() < 1e-8 {
-            // Scientific notation for extremely small prices
-            let exp = price.abs().log10().floor() as i32;
-            let mantissa = price / 10f64.powi(exp);
-            format!("{:.2}e{}", mantissa, exp)
-        } else if price.abs() < 0.01 {
-            format!("{:.8}", price)
-        } else if price.abs() < 1.0 {
-            format!("{:.6}", price)
-        } else if price.abs() < 100.0 {
-            format!("{:.4}", price)
-        } else if price.abs() < 10000.0 {
-            format!("{:.2}", price)
-        } else {
-            format!("{:.2}", price)
-        }
-    }
-}
-
 /// Draw tooltip with OHLC info near cursor
 pub fn draw_tooltip(
     ctx: &mut dyn RenderContext,
@@ -266,22 +210,11 @@ pub fn draw_tooltip(
     }
 }
 
-/// Price line configuration
-#[derive(Clone, Debug)]
-pub struct PriceLine {
-    pub price: f64,
-    pub color: String,
-    pub line_width: f64,
-    pub line_style: LineStyle,
-    pub title: String,
-    pub visible: bool,
-}
-
 /// Draw horizontal price lines with labels
 pub fn draw_price_lines(
     ctx: &mut dyn RenderContext,
     state: &ChartRenderState,
-    price_lines: &[PriceLine],
+    price_lines: &[RenderPriceLine],
 ) {
     let rect = &state.chart_rect;
     let viewport = state.viewport;
@@ -320,31 +253,11 @@ pub fn draw_price_lines(
     }
 }
 
-/// Marker shape
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MarkerShape {
-    Circle,
-    Square,
-    ArrowUp,
-    ArrowDown,
-}
-
-/// Chart marker
-#[derive(Clone, Debug)]
-pub struct Marker {
-    pub bar_idx: usize,
-    pub price: f64,
-    pub shape: MarkerShape,
-    pub color: String,
-    pub size: f64,
-    pub text: Option<String>,
-}
-
 /// Draw chart markers (arrows, circles, squares)
 pub fn draw_markers(
     ctx: &mut dyn RenderContext,
     state: &ChartRenderState,
-    markers: &[Marker],
+    markers: &[RenderMarker],
 ) {
     let rect = &state.chart_rect;
     let viewport = state.viewport;
@@ -375,12 +288,12 @@ pub fn draw_markers(
         ctx.set_fill_color(&marker.color);
 
         match marker.shape {
-            MarkerShape::Circle => {
+            RenderMarkerShape::Circle => {
                 ctx.begin_path();
                 ctx.arc(screen_x, screen_y, size / 2.0, 0.0, std::f64::consts::TAU);
                 ctx.fill();
             }
-            MarkerShape::Square => {
+            RenderMarkerShape::Square => {
                 ctx.fill_rect(
                     screen_x - size / 2.0,
                     screen_y - size / 2.0,
@@ -388,7 +301,7 @@ pub fn draw_markers(
                     size,
                 );
             }
-            MarkerShape::ArrowUp => {
+            RenderMarkerShape::ArrowUp => {
                 ctx.begin_path();
                 ctx.move_to(screen_x, screen_y - size * 0.5);
                 ctx.line_to(screen_x - size * 0.5, screen_y + size * 0.5);
@@ -396,7 +309,7 @@ pub fn draw_markers(
                 ctx.close_path();
                 ctx.fill();
             }
-            MarkerShape::ArrowDown => {
+            RenderMarkerShape::ArrowDown => {
                 ctx.begin_path();
                 ctx.move_to(screen_x, screen_y + size * 0.5);
                 ctx.line_to(screen_x - size * 0.5, screen_y - size * 0.5);
@@ -513,6 +426,7 @@ pub fn draw_last_price_line(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Bar;
 
     #[test]
     fn test_tooltip_lines_from_bar() {
@@ -522,8 +436,8 @@ mod tests {
     }
 
     #[test]
-    fn test_marker_shape() {
-        assert_eq!(MarkerShape::Circle, MarkerShape::Circle);
-        assert_ne!(MarkerShape::Circle, MarkerShape::Square);
+    fn test_render_marker_shape() {
+        assert_eq!(RenderMarkerShape::Circle, RenderMarkerShape::Circle);
+        assert_ne!(RenderMarkerShape::Circle, RenderMarkerShape::Square);
     }
 }

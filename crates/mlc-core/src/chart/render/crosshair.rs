@@ -7,38 +7,8 @@
 //! - `draw_crosshair()` - Draw vertical and horizontal crosshair lines
 
 use crate::render::{RenderContext, crisp};
-use super::super::annotations::LineStyle;
-use super::{ChartRenderState, draw_styled_line};
-
-/// Configuration for crosshair rendering
-#[derive(Clone, Debug)]
-pub struct CrosshairConfig {
-    /// Whether vertical line is visible
-    pub vert_visible: bool,
-    /// Vertical line width
-    pub vert_width: f64,
-    /// Vertical line style
-    pub vert_style: LineStyle,
-    /// Whether horizontal line is visible
-    pub horz_visible: bool,
-    /// Horizontal line width
-    pub horz_width: f64,
-    /// Horizontal line style
-    pub horz_style: LineStyle,
-}
-
-impl Default for CrosshairConfig {
-    fn default() -> Self {
-        Self {
-            vert_visible: true,
-            vert_width: 1.0,
-            vert_style: LineStyle::Dashed,
-            horz_visible: true,
-            horz_width: 1.0,
-            horz_style: LineStyle::Dashed,
-        }
-    }
-}
+use crate::chart::render_data::{ChartRenderState, CrosshairConfig};
+use super::draw_styled_line;
 
 /// Draw crosshair lines (vertical time line, horizontal price line)
 ///

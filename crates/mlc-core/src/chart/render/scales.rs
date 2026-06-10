@@ -9,68 +9,8 @@
 
 use crate::render::{RenderContext, TextAlign, TextBaseline};
 use crate::chart::format_time_full_with_settings;
-use crate::{PRICE_SCALE_WIDTH, TIME_SCALE_HEIGHT, TimeFormatSettings};
-use super::ChartRenderState;
-
-/// Configuration for scale rendering
-#[derive(Clone, Debug)]
-pub struct ScaleConfig {
-    /// Price scale width in pixels
-    pub price_scale_width: f64,
-    /// Time scale height in pixels
-    pub time_scale_height: f64,
-    /// Font size for scale labels
-    pub font_size: f64,
-    /// Crosshair label font size
-    pub crosshair_font_size: f64,
-}
-
-impl Default for ScaleConfig {
-    fn default() -> Self {
-        Self {
-            price_scale_width: PRICE_SCALE_WIDTH,
-            time_scale_height: TIME_SCALE_HEIGHT,
-            font_size: 11.0,
-            crosshair_font_size: 11.0,
-        }
-    }
-}
-
-/// Extended theme for scales (includes scale-specific colors)
-#[derive(Clone, Debug)]
-pub struct ScaleTheme {
-    /// Scale background color
-    pub scale_bg: String,
-    /// Scale border color
-    pub scale_border: String,
-    /// Scale text color
-    pub scale_text: String,
-    /// Scale text color (medium weight)
-    pub scale_text_medium: String,
-    /// Scale text color (muted)
-    pub scale_text_muted: String,
-    /// Crosshair label background
-    pub crosshair_label_bg: String,
-    /// Crosshair label background (styled with opacity)
-    pub crosshair_label_bg_styled: String,
-    /// Crosshair label text
-    pub crosshair_label_text: String,
-}
-
-impl Default for ScaleTheme {
-    fn default() -> Self {
-        Self {
-            scale_bg: "#1e222d".to_string(),
-            scale_border: "#2a2e39".to_string(),
-            scale_text: "#d1d4dc".to_string(),
-            scale_text_medium: "#9598a1".to_string(),
-            scale_text_muted: "#6a6d78".to_string(),
-            crosshair_label_bg: "#363a45".to_string(),
-            crosshair_label_bg_styled: "#363a45".to_string(),
-            crosshair_label_text: "#d1d4dc".to_string(),
-        }
-    }
-}
+use crate::TimeFormatSettings;
+use crate::chart::render_data::{ChartRenderState, ScaleConfig, ScaleTheme};
 
 /// Draw the price scale (Y-axis) on the right side of the chart
 ///
@@ -473,8 +413,8 @@ mod tests {
     #[test]
     fn test_scale_config_default() {
         let config = ScaleConfig::default();
-        assert_eq!(config.price_scale_width, PRICE_SCALE_WIDTH);
-        assert_eq!(config.time_scale_height, TIME_SCALE_HEIGHT);
+        assert_eq!(config.price_scale_width, crate::PRICE_SCALE_WIDTH);
+        assert_eq!(config.time_scale_height, crate::TIME_SCALE_HEIGHT);
     }
 
     #[test]

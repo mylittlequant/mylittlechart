@@ -53,29 +53,38 @@
 
 pub mod annotations;
 pub mod render;
+pub mod render_data;
 pub mod series;
 pub mod types;
 
 // Re-export all types for convenience
 pub use types::*;
 
-// Re-export render types
+// Re-export pure-data render types from their canonical location
+pub use render_data::{
+    ChartRect, ChartBounds, ChartTheme, ChartRenderState,
+    ScaleConfig, ScaleTheme,
+    CrosshairConfig,
+    LegendData, TooltipLines,
+    RenderPriceLine, RenderMarker, RenderMarkerShape,
+    PaneGeom, PaneTheme, HistogramStyle,
+    GridRenderOptions, LineRenderStyle,
+};
+
+// Re-export render functions + shim data paths (shim in render/mod.rs keeps
+// mlc_core::chart::render::ChartRect etc. resolving for existing consumers)
 pub use render::{
-    render_chart_frame, ChartRenderState, ChartRect, ChartTheme,
+    render_chart_frame,
     draw_grid, draw_styled_line, draw_dashed_line,
     draw_candles, draw_bars, draw_hollow_candles, draw_heikin_ashi,
     draw_line_series, draw_area_series, draw_histogram,
     draw_baseline_series, draw_step_line, draw_line_with_markers,
     draw_line_from_data, draw_compare_overlay,
-    draw_price_scale, draw_time_scale, ScaleConfig, ScaleTheme,
-    draw_crosshair, draw_pane_crosshair, CrosshairConfig,
+    draw_price_scale, draw_time_scale,
+    draw_crosshair, draw_pane_crosshair,
     // Overlays
     draw_watermark, draw_legend, draw_tooltip, draw_price_lines, draw_markers,
-    LegendData, TooltipLines, PriceLine, Marker, MarkerShape,
     // Panes
     draw_pane_separator, draw_pane_background, draw_pane_grid,
     draw_pane_line, draw_pane_histogram, draw_pane_price_scale,
-    PaneGeom, PaneTheme, HistogramStyle,
-    // Utils
-    GridRenderOptions, LineRenderStyle,
 };
