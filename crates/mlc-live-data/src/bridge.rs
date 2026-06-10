@@ -702,12 +702,17 @@ impl DataBridge {
                 };
             }
 
-            // Wait for connector if ensure_connector is still initializing it.
-            let connector = {
+            // Wait for the connector to be dialed before fetching. The dig3
+            // backfill helpers below resolve `hub.rest(exchange_id)` themselves
+            // and return empty/Err if it's absent, so this loop is purely a
+            // readiness barrier — it does not hand a connector handle to the
+            // fetch (Phase 2B routes all REST history through dig3 + the shared
+            // hub, not a directly-held connector).
+            {
                 let mut attempts = 0;
                 loop {
-                    if let Some(c) = hub.rest(exchange_id) {
-                        break c;
+                    if hub.rest(exchange_id).is_some() {
+                        break;
                     }
                     attempts += 1;
                     if attempts > 50 {
@@ -720,9 +725,7 @@ impl DataBridge {
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
-            };
-
-            let sym = parse_symbol_for_exchange(exchange_id, &symbol_str);
+            }
 
             // ── Phase A: Quick fresh fetch ───────────────────────────────────
             // Skip the network fetch if the cache is already fresh (last bar
@@ -853,27 +856,39 @@ impl DataBridge {
 
             // Paginate backward from fresh_first to fill the gap toward disk_last.
             // end_time cursor starts just before the earliest fresh bar (in ms).
-            let mut end_time_cursor: Option<i64> = Some(fresh_first * 1000 - 1);
+            // Phase 2B: each page comes from dig3 `backfill::fetch_history`
+            // (REST `get_klines` with exclusive `end_time_ms`, raw-symbol
+            // passthrough, oldest→newest, deduped+sorted inside dig3).
+            let kline_iv = KlineInterval::new(interval.as_str());
+            let mut end_time_cursor: i64 = fresh_first * 1000 - 1;
             let mut heal_bars: Vec<Bar> = Vec::with_capacity(heal_target);
             let mut pages: usize = 0;
 
             'heal: loop {
-                let result = connector
-                    .get_klines((&sym).into(),&interval, Some(500), account_type, end_time_cursor)
-                    .await;
+                let result = digdigdig3_station::backfill::fetch_history(
+                    &hub_arc,
+                    exchange_id,
+                    &symbol_str,
+                    account_type,
+                    &kline_iv,
+                    end_time_cursor,
+                    500,
+                )
+                .await;
 
                 match result {
-                    Ok(klines) => {
-                        if klines.is_empty() {
+                    Ok(points) => {
+                        if points.is_empty() {
                             crate::dlog!("[Bridge] Phase B: empty page, stopping");
                             break 'heal;
                         }
                         pages += 1;
-                        let batch: Vec<Bar> = klines.iter().map(kline_to_bar).collect();
+                        let batch: Vec<Bar> = points.iter().map(bar_point_to_bar).collect();
 
-                        // Move cursor to before the oldest bar in this page.
-                        if let Some(oldest_ms) = klines.iter().map(|k| k.open_time).min() {
-                            end_time_cursor = Some(oldest_ms - 1);
+                        // Move cursor to before the oldest bar in this page
+                        // (`open_time` is ms; cursor is exclusive ms).
+                        if let Some(oldest_ms) = points.iter().map(|p| p.open_time).min() {
+                            end_time_cursor = oldest_ms - 1;
                         }
 
                         let oldest_bar_ts = batch.first().map(|b| b.timestamp).unwrap_or(0);
