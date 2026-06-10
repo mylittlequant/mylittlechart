@@ -7,10 +7,10 @@
 //! - `draw_price_scale()` - Y-axis with price labels and crosshair indicator
 //! - `draw_time_scale()` - X-axis with time labels and crosshair indicator
 
-use crate::render::{RenderContext, TextAlign, TextBaseline};
-use crate::chart::format_time_full_with_settings;
-use crate::TimeFormatSettings;
-use crate::chart::render_data::{ChartRenderState, ScaleConfig, ScaleTheme};
+use mlc_core::render::{RenderContext, TextAlign, TextBaseline};
+use mlc_core::chart::format_time_full_with_settings;
+use mlc_core::TimeFormatSettings;
+use mlc_core::chart::render_data::{ChartRenderState, ScaleConfig, ScaleTheme};
 
 /// Draw the price scale (Y-axis) on the right side of the chart
 ///
@@ -188,11 +188,11 @@ pub fn draw_price_scale(
 /// - `dynamic_font_size` – Font size computed in the static pass
 pub fn draw_price_scale_cursor_label(
     ctx: &mut dyn RenderContext,
-    price_scale: &crate::chart::types::PriceScale,
-    viewport: &crate::chart::types::Viewport,
+    price_scale: &mlc_core::chart::types::PriceScale,
+    viewport: &mlc_core::chart::types::Viewport,
     config: &ScaleConfig,
     scale_theme: &ScaleTheme,
-    crosshair: &crate::chart::types::Crosshair,
+    crosshair: &mlc_core::chart::types::Crosshair,
     origin_x: f64,
     origin_y: f64,
     text_x: f64,
@@ -268,7 +268,7 @@ pub fn draw_time_scale(
 
     // Use pre-computed ticks if available, otherwise generate on-demand
     let owned_ticks;
-    let ticks: &[crate::chart::types::TimeTick] = if let Some(t) = state.time_ticks {
+    let ticks: &[mlc_core::chart::types::TimeTick] = if let Some(t) = state.time_ticks {
         t
     } else {
         owned_ticks = time_scale.generate_ticks(
@@ -328,11 +328,11 @@ pub fn draw_time_scale(
 /// - `label_y`        – Vertical center of the time scale (for text placement)
 pub fn draw_time_scale_cursor_label(
     ctx: &mut dyn RenderContext,
-    viewport: &crate::chart::types::Viewport,
-    bars: &[crate::Bar],
+    viewport: &mlc_core::chart::types::Viewport,
+    bars: &[mlc_core::Bar],
     config: &ScaleConfig,
     scale_theme: &ScaleTheme,
-    crosshair: &crate::chart::types::Crosshair,
+    crosshair: &mlc_core::chart::types::Crosshair,
     time_format_settings: Option<&TimeFormatSettings>,
     origin_x: f64,
     origin_y: f64,
@@ -413,8 +413,8 @@ mod tests {
     #[test]
     fn test_scale_config_default() {
         let config = ScaleConfig::default();
-        assert_eq!(config.price_scale_width, crate::PRICE_SCALE_WIDTH);
-        assert_eq!(config.time_scale_height, crate::TIME_SCALE_HEIGHT);
+        assert_eq!(config.price_scale_width, mlc_core::PRICE_SCALE_WIDTH);
+        assert_eq!(config.time_scale_height, mlc_core::TIME_SCALE_HEIGHT);
     }
 
     #[test]

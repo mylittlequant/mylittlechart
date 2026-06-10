@@ -11,9 +11,9 @@
 //! - `draw_pane_background()` - Pane background and title
 //! - `draw_pane_price_scale()` - Y-axis labels for sub-pane
 
-use crate::render::{RenderContext, TextAlign, TextBaseline, crisp};
-use crate::chart::format_price;
-use crate::chart::render_data::{PaneGeom, HistogramStyle, PaneTheme};
+use mlc_core::render::{RenderContext, TextAlign, TextBaseline, crisp};
+use mlc_core::chart::format_price;
+use mlc_core::chart::render_data::{PaneGeom, HistogramStyle, PaneTheme};
 
 /// Draw separator between panes
 pub fn draw_pane_separator(

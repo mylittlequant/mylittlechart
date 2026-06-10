@@ -9,7 +9,7 @@
 //! - `draw_hollow_candles()` - Hollow bullish, filled bearish
 //! - `draw_heikin_ashi()` - Smoothed Heikin Ashi candles
 
-use crate::render::{RenderContext, crisp, crisp_rect};
+use mlc_core::render::{RenderContext, crisp, crisp_rect};
 use super::ChartRenderState;
 
 /// Draw standard candlestick bars (filled bodies, wicks)
@@ -438,7 +438,7 @@ mod tests {
 
     #[test]
     fn test_chart_bounds() {
-        use super::super::ChartRect;
+        use super::ChartRect;
 
         let rect = ChartRect::new(10.0, 20.0, 100.0, 80.0);
         let bounds = rect.bounds();

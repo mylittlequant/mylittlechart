@@ -15,7 +15,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! use mlc_core::chart::render::{render_chart_frame, ChartRenderState};
+//! use mlc_layout::chart_render::{render_chart_frame, ChartRenderState};
 //! use mlc_core::render::{RenderContext, InputState};
 //!
 //! fn render(ctx: &mut dyn RenderContext, input: &InputState, state: &ChartRenderState) {
@@ -54,9 +54,9 @@ pub use panes::{
     draw_pane_line, draw_pane_histogram, draw_pane_price_scale,
 };
 
-// Shim: re-export all DATA types from render_data so that existing
-// `mlc_core::chart::render::ChartRect` etc. paths continue to resolve.
-pub use crate::chart::render_data::{
+// Re-export all DATA types from mlc_core::chart::render_data so that
+// intra-layout code can use `crate::chart_render::ChartRect` etc.
+pub use mlc_core::chart::render_data::{
     ChartRect, ChartBounds, ChartTheme, ChartRenderState,
     ScaleConfig, ScaleTheme,
     CrosshairConfig,
@@ -66,11 +66,7 @@ pub use crate::chart::render_data::{
     GridRenderOptions, LineRenderStyle,
 };
 
-// Legacy path shims: the old names PriceLine/Marker/MarkerShape are no longer
-// exported from this module (they were renamed to Render* to resolve collisions).
-// Consumers that were using these names within chart/render/ have been updated in-place.
-
-use crate::render::{RenderContext, InputState, FrameResult};
+use mlc_core::render::{RenderContext, InputState, FrameResult};
 
 /// Main chart rendering entry point
 ///

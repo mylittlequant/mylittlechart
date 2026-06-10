@@ -2,8 +2,8 @@
 //!
 //! Platform-agnostic grid drawing using RenderContext.
 
-use crate::render::RenderContext;
-use super::super::annotations::LineStyle;
+use mlc_core::render::RenderContext;
+use mlc_core::chart::annotations::LineStyle;
 use super::{ChartRenderState, LineRenderStyle};
 
 /// Draw chart grid (horizontal price lines, vertical time lines)
@@ -67,7 +67,7 @@ pub fn draw_grid(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
 
         // Use pre-computed ticks if available, otherwise generate on-demand
         let owned_ticks;
-        let ticks: &[crate::chart::types::TimeTick] = if let Some(t) = state.time_ticks {
+        let ticks: &[mlc_core::chart::types::TimeTick] = if let Some(t) = state.time_ticks {
             t
         } else {
             owned_ticks = state.time_scale.generate_ticks(
@@ -99,7 +99,7 @@ pub fn draw_grid(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
 pub fn draw_grid_extended(
     ctx: &mut dyn RenderContext,
     state: &ChartRenderState,
-    extended_bounds: &crate::state::geometry::LayoutRect,
+    extended_bounds: &mlc_core::state::geometry::LayoutRect,
 ) {
     let rect = &state.chart_rect;
     let grid = state.grid;
@@ -151,7 +151,7 @@ pub fn draw_grid_extended(
         ctx.set_stroke_width(1.0);
 
         let owned_ticks;
-        let ticks: &[crate::chart::types::TimeTick] = if let Some(t) = state.time_ticks {
+        let ticks: &[mlc_core::chart::types::TimeTick] = if let Some(t) = state.time_ticks {
             t
         } else {
             owned_ticks = state.time_scale.generate_ticks(

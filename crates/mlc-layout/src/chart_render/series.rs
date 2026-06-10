@@ -11,7 +11,7 @@
 //! - `draw_step_line()` - Staircase pattern line
 //! - `draw_line_with_markers()` - Line with dot markers
 
-use crate::render::RenderContext;
+use mlc_core::render::RenderContext;
 use super::ChartRenderState;
 
 /// Draw simple line series using bar close prices
@@ -614,9 +614,9 @@ pub fn draw_columns(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
 pub fn draw_compare_overlay(
     ctx: &mut dyn RenderContext,
     state: &ChartRenderState,
-    compare_overlay: &crate::CompareOverlay,
+    compare_overlay: &mlc_core::CompareOverlay,
 ) {
-    use crate::PriceScaleMode;
+    use mlc_core::PriceScaleMode;
     use std::collections::HashMap;
 
     if !compare_overlay.active || compare_overlay.series.is_empty() {
@@ -683,7 +683,7 @@ pub fn draw_compare_overlay(
         }
 
         // Build a timestamp -> bar map for the compare series
-        let compare_map: HashMap<i64, &crate::Bar> =
+        let compare_map: HashMap<i64, &mlc_core::Bar> =
             series.bars.iter().map(|b| (b.timestamp, b)).collect();
 
         let mut in_path = false;

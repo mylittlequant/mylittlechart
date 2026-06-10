@@ -2503,7 +2503,7 @@ impl ChartApp {
     /// directly — no geometry is recomputed here.
     pub fn render_overlay(&self, ctx: &mut dyn RenderContext) {
         use mlc_layout::layout::render_chart_overlay;
-        use mlc_core::chart::render::ChartRect;
+        use mlc_core::chart::ChartRect;
 
         let chart_theme = self.panel_app.chart_theme_for_render();
         let is_split = self.panel_app.panel_grid.is_split();
@@ -2845,7 +2845,7 @@ impl ChartApp {
                     height: sub_rect.height as f64,
                 };
 
-                use mlc_core::chart::render::ChartRect;
+                use mlc_core::chart::ChartRect;
                 let chart_rect = ChartRect::new(
                     leaf_rect.x, leaf_rect.y,
                     leaf_rect.width, leaf_rect.height,
@@ -3413,7 +3413,7 @@ impl ChartApp {
                 .unwrap_or(&single_fallback_panel);
             let window_opt = self.panel_app.panel_grid.active_container();
             let corner_zones_single = if let Some(window) = window_opt {
-                use mlc_core::chart::render::ChartRect;
+                use mlc_core::chart::ChartRect;
                 let chart_rect = ChartRect::new(
                     content_rect.x,
                     content_rect.y,

@@ -25,7 +25,7 @@
 //! - `render_*` - High-level functions that compose multiple draw_ calls
 
 use mlc_core::render::RenderContext;
-use mlc_core::chart::render::{
+use crate::chart_render::{
     ChartRenderState, ChartTheme, ChartRect,
     draw_grid, draw_grid_extended, draw_candles, draw_bars, draw_hollow_candles, draw_heikin_ashi,
     draw_line_series, draw_area_series, draw_baseline_series,
@@ -949,7 +949,7 @@ pub fn draw_alert_lines(
     alert_items: &[mlc_core::indicator_source::AlertRenderData],
 ) {
     use mlc_core::indicator_source::AlertRenderStatus;
-    use mlc_core::chart::render::draw_styled_line;
+    use crate::chart_render::draw_styled_line;
     use mlc_core::chart::annotations::LineStyle;
 
     let rect = &state.chart_rect;
@@ -2953,7 +2953,7 @@ pub fn render_full_chart_panel(
 
     // Bug 3 fix: build a ChartRect that matches the layout we just computed so
     // that all draw calls (series, overlays, scales, …) use the correct origin.
-    let corrected_chart_rect = mlc_core::chart::render::ChartRect {
+    let corrected_chart_rect = crate::chart_render::ChartRect {
         x: main_chart.chart.x,
         y: main_chart.chart.y,
         width: main_chart.chart.width,
@@ -2961,7 +2961,7 @@ pub fn render_full_chart_panel(
     };
 
     // Assemble a corrected render state referencing the local corrected values.
-    let corrected_state = mlc_core::chart::render::ChartRenderState {
+    let corrected_state = crate::chart_render::ChartRenderState {
         viewport: &corrected_viewport,
         chart_rect: corrected_chart_rect,
         price_scale: data.state.price_scale,

@@ -10,9 +10,9 @@
 //! - `draw_price_lines()` - Horizontal price level lines
 //! - `draw_markers()` - Chart markers (arrows, circles, etc.)
 
-use crate::render::{RenderContext, TextAlign, TextBaseline};
-use crate::chart::{Watermark, Legend, Tooltip, HorzAlign, VertAlign, LegendPosition};
-use crate::chart::render_data::{
+use mlc_core::render::{RenderContext, TextAlign, TextBaseline};
+use mlc_core::chart::{Watermark, Legend, Tooltip, HorzAlign, VertAlign, LegendPosition};
+use mlc_core::chart::render_data::{
     ChartRenderState, ChartRect,
     LegendData, TooltipLines,
     RenderPriceLine, RenderMarker, RenderMarkerShape,
@@ -426,7 +426,7 @@ pub fn draw_last_price_line(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Bar;
+    use mlc_core::Bar;
 
     #[test]
     fn test_tooltip_lines_from_bar() {

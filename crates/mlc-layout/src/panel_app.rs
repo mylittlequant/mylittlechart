@@ -11,8 +11,7 @@ use uzor::panel_api::{
 use uzor::render::{RenderContext, draw_svg_icon};
 use crate::layout::LayoutRect;
 use crate::layout::{ChartAreaLayout, ChartRenderConfig, ScaleCornerState, render_chart_window, ExtendedFrameLayout, FrameTheme};
-use mlc_core::chart::render::ScaleTheme;
-use mlc_core::chart::render::{ChartRenderState, ChartTheme, ChartRect};
+use crate::chart_render::{ScaleTheme, ChartRenderState, ChartTheme, ChartRect};
 use mlc_core::state::{ChartPanelGrid, ChartContainer, ChartPanelState, Timeframe};
 use mlc_core::scale_settings::ScaleSettings;
 use mlc_core::toolbar;

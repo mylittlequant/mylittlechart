@@ -6,8 +6,8 @@
 //!
 //! - `draw_crosshair()` - Draw vertical and horizontal crosshair lines
 
-use crate::render::{RenderContext, crisp};
-use crate::chart::render_data::{ChartRenderState, CrosshairConfig};
+use mlc_core::render::{RenderContext, crisp};
+use mlc_core::chart::render_data::{ChartRenderState, CrosshairConfig};
 use super::draw_styled_line;
 
 /// Draw crosshair lines (vertical time line, horizontal price line)
