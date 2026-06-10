@@ -836,37 +836,44 @@ impl DataBridge {
             crate::dlog!("[Bridge] Phase A: {:?} sym={} interval={} fetching 300 fresh bars", exchange_id, symbol_str, interval);
 
             // Phase 2B: route Phase A historical fetch through dig3-station's
-            // `backfill::klines_recent` (REST `get_klines` under the hood, but
-            // owned by station so warm-start/dedup/sort semantics match the
-            // disk-persisted path). `klines_recent` returns `Vec<BarPoint>`
-            // oldest→newest; convert to chart `Bar`. The shared `ExchangeHub`
-            // is the same pool the connector above came from (O(1) clone), so
-            // the connector is guaranteed already dialed.
-            // Use the RAW exchange-native symbol string (same one the Station
-            // live-kline subscriber feeds via `add_raw`), NOT the canonical
-            // `sym` — dig3 `klines_recent` is a raw-passthrough path
-            // (`SymbolInput::Raw`) and applies no normalization internally.
-            let fresh_points = digdigdig3_station::backfill::klines_recent(
+            // `backfill::fetch_history` (REST `get_klines` under the hood;
+            // oldest→newest, deduped+sorted inside dig3). `fetch_history` is
+            // used rather than `klines_recent` because it RETURNS the error —
+            // `klines_recent` swallows REST failures into an empty vec, which
+            // left the chart silently stuck on "Loading..." for symbols whose
+            // raw string the connector can't resolve (e.g. HyperLiquid spot
+            // pairs pending the dig3-side coin->index fix). The symbol is the
+            // RAW exchange-native string (same one the Station live-kline
+            // subscriber feeds via `add_raw`) — no normalization applied.
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(i64::MAX);
+            let phase_a_result = digdigdig3_station::backfill::fetch_history(
                 &fetch_hub,
                 exchange_id,
-                account_type,
                 &symbol_str,
-                &interval,
+                account_type,
+                &KlineInterval::new(interval.as_str()),
+                now_ms,
                 300,
             )
             .await;
 
-            // `klines_recent` swallows errors into an empty vec. An empty
-            // result here means either a genuinely empty range or a REST
-            // failure — treat empty-after-fetch as a soft miss (Phase B / live
-            // WS still fill in), but surface it so the viewport doesn't hang.
-            let fresh_300: Vec<Bar> = if fresh_points.is_empty() {
-                crate::dlog!("[Bridge] Phase A: dig3 klines_recent returned 0 bars for {:?} sym={}", exchange_id, symbol_str);
-                Vec::new()
-            } else {
-                let bars: Vec<Bar> = fresh_points.iter().map(bar_point_to_bar).collect();
-                crate::dlog!("[Bridge] Phase A: got {} bars (dig3)", bars.len());
-                bars
+            let fresh_300: Vec<Bar> = match phase_a_result {
+                Ok(points) => {
+                    crate::dlog!("[Bridge] Phase A: got {} bars (dig3)", points.len());
+                    points.iter().map(bar_point_to_bar).collect()
+                }
+                Err(e) => {
+                    eprintln!("[Bridge] Phase A error: {:?} sym={} {}", exchange_id, symbol_str, e);
+                    let _ = tx.send(LiveUpdate::Error {
+                        exchange_id,
+                        message: format!("get_klines failed: {}", e),
+                    });
+                    finish_fetch!();
+                    return;
+                }
             };
 
             let fresh_first_ts: Option<i64> = fresh_300.first().map(|b| b.timestamp);

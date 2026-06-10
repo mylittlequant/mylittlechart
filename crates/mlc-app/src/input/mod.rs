@@ -8630,6 +8630,31 @@ impl ChartApp {
             self.autosave_snapshot();
         }
 
+        // Capture the active chart's symbol/timeframe BEFORE the reset: the
+        // wipe below clears every bubble and reassign_active_chart_id hands
+        // out a fresh ChartId, so reading them back afterwards (the old code
+        // did) always yields an EMPTY symbol — which then propagates into the
+        // auto-group, the corner tag, the toolbar selector and the saved
+        // preset. The new blank chart inherits the current symbol, falling
+        // back to BTCUSDT for a cold start.
+        let (prior_symbol, prior_timeframe) = {
+            let prior_chart_id = self
+                .panel_app
+                .panel_grid
+                .docking()
+                .active_leaf()
+                .and_then(|leaf| self.panel_app.panel_grid.container_id_for_leaf(leaf));
+            let sym = prior_chart_id
+                .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                .map(String::from)
+                .unwrap_or_else(|| "BTCUSDT".to_string());
+            let tf = prior_chart_id
+                .and_then(|cid| self.managers.bubble.timeframe_for_chart(cid))
+                .cloned()
+                .unwrap_or_default();
+            (sym, tf)
+        };
+
         // Full reset — single pane, no indicators, no primitives.
         self.panel_app.panel_grid.set_layout_single();
         self.panel_app.panel_grid.reassign_active_chart_id();
@@ -8654,13 +8679,11 @@ impl ChartApp {
                     eprintln!("[sync_group] new_pane: container_for_leaf({:?}) returned None — skipping auto group", active_leaf);
                     return;
                 }
-                let symbol: String = self.managers.bubble.symbol_for_chart(chart_id)
-                    .map(String::from)
-                    .unwrap_or_default();
-                let timeframe = self.managers.bubble.timeframe_for_chart(chart_id)
-                    .cloned()
-                    .unwrap_or_default();
-                let group_id = self.managers.bubble.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
+                let group_id = self.managers.bubble.create_group_auto(
+                    [0.0, 0.0, 0.0, 0.0],
+                    prior_symbol.clone(),
+                    prior_timeframe.clone(),
+                );
                 let _ = self.managers.bubble.attach_chart_to_bubble(chart_id, group_id);
                 if let Some(style_arc) = self.managers.bubble.bubble(group_id).map(|g| g.last_used_style.clone()) {
                     if let Some(pid) = self.panel_app.panel_grid.container_for_leaf(active_leaf).map(|w| w.chart_panel_id) {

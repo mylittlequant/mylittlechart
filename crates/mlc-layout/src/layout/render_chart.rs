@@ -2991,9 +2991,12 @@ pub fn render_full_chart_panel(
     // Loading state — when there are no bars yet (e.g. after a symbol or
     // timeframe switch), show a centred "Loading..." label and skip all
     // chart content so primitives don't render over an empty canvas.
+    // Centre against the FULL leaf rect (window_rect), not the bar canvas —
+    // with no content there are no scales, so canvas-relative centring looks
+    // visibly off-centre in the pane.
     if corrected_state.bars.is_empty() {
-        let cx = corrected_chart_rect.x + corrected_chart_rect.width / 2.0;
-        let cy = corrected_chart_rect.y + corrected_chart_rect.height / 2.0;
+        let cx = window_rect.x + window_rect.width / 2.0;
+        let cy = window_rect.y + window_rect.height / 2.0;
         ctx.set_fill_color(&corrected_state.theme.text);
         ctx.set_font("14px sans-serif");
         ctx.set_text_align(mlc_core::render::TextAlign::Center);
