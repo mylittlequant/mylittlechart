@@ -31,7 +31,7 @@ use mlc_core::Bar;
 use mlc_core::state::Timeframe;
 
 use digdigdig3::core::websocket::KlineInterval;
-use crate::convert::{kline_to_bar, timeframe_to_interval};
+use crate::convert::timeframe_to_interval;
 
 /// Identifies whether an [`LiveUpdate::OrderbookSnapshot`] originated from the
 /// one-shot REST bootstrap (deep, up to 1000 levels) or from the WebSocket
@@ -988,23 +988,29 @@ impl DataBridge {
         limit: Option<u16>,
         _total_bars: Option<usize>,
     ) -> Option<Vec<Bar>> {
-        let connector = self.hub.rest(exchange_id)?;
-        let sym = parse_symbol_for_exchange(exchange_id, symbol);
+        // Phase 2B: routed through dig3 `backfill::klines_recent` on the
+        // station hub (raw-symbol passthrough, same pool as live WS).
+        let fetch_hub = self.station.hub();
+        fetch_hub.rest(exchange_id)?;
         let interval = timeframe_to_interval(timeframe);
+        let symbol_str = symbol.to_string();
 
         self.runtime.block_on(async move {
-            let page_size: u16 = limit.unwrap_or(500).min(500);
-            let result = connector.get_klines((&sym).into(), &interval, Some(page_size), account_type, None).await;
-
-            match result {
-                Ok(klines) => {
-                    let bars: Vec<Bar> = klines.iter().map(kline_to_bar).collect();
-                    Some(bars)
-                }
-                Err(_e) => {
-                    // Error not propagated in blocking mode.
-                    None
-                }
+            let page_size = limit.unwrap_or(500).min(500) as usize;
+            let points = digdigdig3_station::backfill::klines_recent(
+                &fetch_hub,
+                exchange_id,
+                account_type,
+                &symbol_str,
+                &interval,
+                page_size,
+            )
+            .await;
+            if points.is_empty() {
+                // Error or genuinely empty — not propagated in blocking mode.
+                None
+            } else {
+                Some(points.iter().map(bar_point_to_bar).collect())
             }
         })
     }
