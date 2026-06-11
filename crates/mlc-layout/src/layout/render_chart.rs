@@ -2880,6 +2880,11 @@ pub struct ChartPanelRenderData<'a> {
     /// the panel instead of the generic "Loading..." label.  Cleared by the
     /// app on any successful bar delivery.
     pub data_error: Option<&'a str>,
+    /// When `Some`, this sub-pane instance id is currently maximized (fills
+    /// the sub-pane area; all other panes have near-zero proportions).  The
+    /// overlay button for this pane renders as Restore instead of Expand.
+    /// `None` means no pane is maximized (normal mode).
+    pub maximized_sub_pane_id: Option<u64>,
 }
 
 /// Render a complete chart panel — background, grid, series, scales, indicators,
@@ -3113,8 +3118,7 @@ pub fn render_full_chart_panel(
                 .unwrap_or_default();
             // is_hidden is always false here — hidden panes are filtered out of
             // sub_pane_ids via instance.visible check, so only visible panes render.
-            // Maximized is deferred to S7; always false for now.
-            let is_maximized = false;
+            let is_maximized = data.maximized_sub_pane_id == Some(pane_layout.instance_id);
             let overlay_result = render_sub_pane_overlay(
                 ctx,
                 &pane_layout.content,
@@ -3373,6 +3377,11 @@ pub fn render_chart_splits(
             inner_proportions: &mlc_core::state::chart_container::collect_inner_proportions(&window.inner_docking),
             inner_sub_instance_ids: &mlc_core::state::chart_container::collect_inner_instance_ids(&window.inner_docking),
             data_error: window.data_error.as_deref(),
+            // Maximize state is not tracked from this render path (render_chart_splits
+            // has no access to ChartApp state).  Sub-pane overlays are suppressed here
+            // anyway (sub_pane_overlay_states: &[]), so Expand/Restore buttons do not
+            // appear and the field is irrelevant.
+            maximized_sub_pane_id: None,
         };
 
         // sub_pane_ranges writeback is not performed here because render_chart_splits

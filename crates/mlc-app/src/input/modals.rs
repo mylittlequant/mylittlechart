@@ -1218,25 +1218,99 @@ impl ChartApp {
                         self.autosave_snapshot();
                     }
                     SubPaneButton::MoveUp => {
-                        // TODO S6-uzor-gap1: wire reorder_children once S6 lands.
-                        // MoveUp is a no-op in S4; the button renders but does nothing.
-                        let _ = real_index;
+                        // Swap this sub-pane with the previous one in the root
+                        // branch of inner_docking.  The root children are
+                        // [MainChart(0), SubPane0(1), SubPane1(2), ...].
+                        // MoveUp moves index N to N-1, but never above slot 1
+                        // (slot 0 is the main chart and must stay first).
+                        if let Some(tree_idx) = real_index {
+                            // tree_idx is 0-based within collect_inner_instance_ids,
+                            // which skips the main chart leaf.  Actual root child index
+                            // is tree_idx + 1.  Swap with previous sub-pane = tree_idx.
+                            let from = tree_idx + 1;
+                            if from > 1 {
+                                let to = from - 1;
+                                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                                    let root_id = window.inner_docking.tree().root().id;
+                                    window.inner_docking.tree_mut().reorder_children(root_id, from, to);
+                                }
+                            }
+                        }
                         self.autosave_snapshot();
                     }
                     SubPaneButton::MoveDown => {
-                        // TODO S6-uzor-gap1: wire reorder_children once S6 lands.
-                        // MoveDown is a no-op in S4; the button renders but does nothing.
-                        let _ = real_index;
+                        // Swap this sub-pane with the next one in the root branch.
+                        if let Some(tree_idx) = real_index {
+                            let from = tree_idx + 1;
+                            // Total root children = 1 (main chart) + number of sub-panes.
+                            let total = self.panel_app.panel_grid.active_container()
+                                .map(|w| w.inner_docking.tree().root().children.len())
+                                .unwrap_or(0);
+                            let to = from + 1;
+                            if to < total {
+                                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                                    let root_id = window.inner_docking.tree().root().id;
+                                    window.inner_docking.tree_mut().reorder_children(root_id, from, to);
+                                }
+                            }
+                        }
                         self.autosave_snapshot();
                     }
                     SubPaneButton::Expand => {
-                        // Maximized state deferred to S7 — no-op for now.
-                        let _ = instance_id;
+                        // Maximize this sub-pane: save current proportions, then
+                        // set proportions so only this pane has visible height
+                        // (near-zero main chart share, near-zero other sub-panes).
+                        if let Some(cid) = self.panel_app.panel_grid.active_container_id() {
+                            let pre_props = self.panel_app.panel_grid.active_container()
+                                .map(|w| w.inner_docking.tree().root().proportions.clone())
+                                .unwrap_or_default();
+                            // Build maximized proportions: main chart gets 0.05,
+                            // this pane gets the rest, all others get near-zero.
+                            let sub_count = self.panel_app.panel_grid.active_container()
+                                .map(|w| mlc_core::state::chart_container::collect_inner_instance_ids(&w.inner_docking).len())
+                                .unwrap_or(0);
+                            if sub_count > 0 {
+                                let instance_ids = self.panel_app.panel_grid.active_container()
+                                    .map(|w| mlc_core::state::chart_container::collect_inner_instance_ids(&w.inner_docking))
+                                    .unwrap_or_default();
+                                const MAIN_MIN: f64 = 0.05;
+                                const OTHER_MIN: f64 = 0.001;
+                                let other_total = OTHER_MIN * (sub_count.saturating_sub(1)) as f64;
+                                let this_share = (1.0 - MAIN_MIN - other_total).max(0.1);
+                                let mut new_props = vec![MAIN_MIN];
+                                for &iid in &instance_ids {
+                                    if iid == instance_id {
+                                        new_props.push(this_share);
+                                    } else {
+                                        new_props.push(OTHER_MIN);
+                                    }
+                                }
+                                // Normalize to sum = 1.0.
+                                let total: f64 = new_props.iter().sum();
+                                if total > 0.0 {
+                                    for v in &mut new_props { *v /= total; }
+                                }
+                                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                                    let root_id = window.inner_docking.tree().root().id;
+                                    window.inner_docking.tree_mut().set_branch_proportions(root_id, new_props);
+                                }
+                                self.maximized_sub_panes.insert(cid.0, (instance_id, pre_props));
+                            }
+                        }
                         self.autosave_snapshot();
                     }
                     SubPaneButton::Restore => {
-                        // Restore from maximized deferred to S7 — no-op for now.
-                        let _ = real_index;
+                        // Restore proportions saved before Expand.
+                        if let Some(cid) = self.panel_app.panel_grid.active_container_id() {
+                            if let Some((_, saved_props)) = self.maximized_sub_panes.remove(&cid.0) {
+                                if !saved_props.is_empty() {
+                                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                                        let root_id = window.inner_docking.tree().root().id;
+                                        window.inner_docking.tree_mut().set_branch_proportions(root_id, saved_props);
+                                    }
+                                }
+                            }
+                        }
                         self.autosave_snapshot();
                     }
                     SubPaneButton::IndicatorEye => {
@@ -1245,7 +1319,30 @@ impl ChartApp {
                         self.autosave_snapshot();
                     }
                     SubPaneButton::IndicatorAlert => {
-                        // TODO: open alert creation for this indicator
+                        // Open the alert creation modal for this indicator instance.
+                        // Uses AlertSource::Indicator with output_index=0 (first output line).
+                        // The indicator's display name is used as the alert label.
+                        let alert_symbol: String = self.panel_app.panel_grid.active_container_id()
+                            .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                            .map(String::from)
+                            .unwrap_or_default();
+                        let price_fallback = self.panel_app.panel_grid.active_container()
+                            .and_then(|w| w.bars.last())
+                            .map(|b| b.close)
+                            .unwrap_or(0.0);
+                        let label = self.indicator_manager
+                            .get_instance(instance_id)
+                            .map(|inst| inst.name.clone())
+                            .unwrap_or_else(|| format!("Indicator #{}", instance_id));
+                        let source = mlc_alerts::AlertSource::Indicator {
+                            indicator_id: instance_id,
+                            output_index: 0,
+                            label,
+                        };
+                        self.panel_app.alert_settings_state.open_new(source, &alert_symbol, price_fallback);
+                        self.panel_app.alert_settings_state.pin_initial_position(
+                            self.content_rect.width, self.content_rect.height,
+                        );
                     }
                     SubPaneButton::IndicatorSettings => {
                         self.panel_app.indicator_settings_state.open(instance_id);

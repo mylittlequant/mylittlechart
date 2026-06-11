@@ -1517,6 +1517,11 @@ impl App<'_> {
                 pw.sidebar_dirty_scene = true;
                 pw.chart_dirty = true;
                 pw.overlay_dirty = true;
+                // Warm background tabs now that presets + open_tabs are
+                // populated in the live chart.  new_window ran warm_background_tabs
+                // for the non-skeleton path; the skeleton->live promote path runs it
+                // here instead (presets were empty during skeleton construction).
+                pw.chart.warm_background_tabs();
             }
         }
 

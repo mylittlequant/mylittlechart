@@ -72,12 +72,17 @@ pub fn draw_price_scale(
 
     ctx.restore();
 
-    // Draw last price label (always visible, not just on hover)
+    // Draw last price label (always visible, not just on hover).
+    // Use state.chart_rect.height as the height basis so the chip hides and
+    // shows together with the last-price line in overlays.rs (which also uses
+    // rect.height rather than viewport.chart_height to avoid escaping the chart
+    // after a viewport pan where chart_height may not match the rendered area).
     if let Some(last_bar) = state.bars.last() {
         let last_price = last_bar.close;
-        let display_y = price_scale.price_to_y(last_price, viewport.chart_height);
+        let chart_h = state.chart_rect.height;
+        let display_y = price_scale.price_to_y(last_price, chart_h);
 
-        if display_y > 0.0 && display_y < viewport.chart_height {
+        if display_y > 0.0 && display_y < chart_h {
             // Determine if bullish or bearish
             let is_bullish = last_bar.close >= last_bar.open;
 
@@ -88,7 +93,7 @@ pub fn draw_price_scale(
                 "#ef5350" // Red for bearish
             };
 
-            let label = price_scale.format_label(last_price, viewport.chart_height);
+            let label = price_scale.format_label(last_price, chart_h);
 
             // Compute countdown text when enabled
             let countdown_opt: Option<String> =
@@ -126,10 +131,11 @@ pub fn draw_price_scale(
             // Center the taller box on the price line
             let label_y = origin_y + display_y - height / 2.0;
 
-            // Clip to price scale column so the label never overflows above/below the chart area
+            // Clip to price scale column so the label never overflows above/below the chart area.
+            // Use chart_h (state.chart_rect.height) to match the hide-guard basis above.
             ctx.save();
             ctx.begin_path();
-            ctx.rect(origin_x, origin_y, config.price_scale_width, viewport.chart_height);
+            ctx.rect(origin_x, origin_y, config.price_scale_width, chart_h);
             ctx.clip();
 
             // Draw blur background (for FrostedGlass/LiquidGlass styles)

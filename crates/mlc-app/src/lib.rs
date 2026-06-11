@@ -572,6 +572,17 @@ pub struct ChartApp {
     /// Format: `window_id → HashSet<instance_id>`.  Cleared after applied.
     pub(crate) pending_sub_pane_hidden: std::collections::HashMap<u64, std::collections::HashSet<u64>>,
 
+    /// Per-window maximized sub-pane state.
+    ///
+    /// When a sub-pane is expanded (maximized), this map stores:
+    /// - key: `window.id.0` (ChartId)
+    /// - value: `(maximized_instance_id, pre_maximize_proportions)`
+    ///
+    /// The pre-maximize proportions are the `inner_docking` root proportions
+    /// before the maximize, used to restore the original layout on Restore.
+    /// Runtime-only — not persisted to disk.
+    pub(crate) maximized_sub_panes: std::collections::HashMap<u64, (u64, Vec<f64>)>,
+
     /// Agent session manager — owns PTY and pipe sessions.
     ///
     /// Call `drain_events` each frame (in `tick`) to process incoming terminal
@@ -1019,6 +1030,7 @@ impl ChartApp {
             pending_sub_pane_above_main: std::collections::HashMap::new(),
             pending_sub_pane_order: std::collections::HashMap::new(),
             pending_sub_pane_hidden: std::collections::HashMap::new(),
+            maximized_sub_panes: std::collections::HashMap::new(),
             series_handles: std::collections::HashMap::new(),
             live_preset_cache: std::collections::HashMap::new(),
             agent: agent::AgentSessionManager::default(),
@@ -1128,59 +1140,6 @@ impl ChartApp {
                     );
                     window.data_provider = win_provider;
                     window.toolbar_config = ToolbarConfig::standalone();
-                }
-            }
-
-            // Warm the OTHER open tabs in the background: request bars for
-            // every window of every non-active open preset so the bridge
-            // cache is hot before the user ever switches there. Without this
-            // an idle tab shows "Loading..." even minutes into the session.
-            // Cheap: Phase A reads the disk cache first; request_bars is
-            // per-series deduped by the bridge's in-flight guard.
-            {
-                let active_id = app.panel_app.active_preset_id.clone();
-                let bar_count = app.panel_app.user_manager.profile.bar_count as usize;
-                let warm_targets: Vec<(String, String, mlc_core::state::Timeframe, String)> = app
-                    .panel_app
-                    .open_tabs
-                    .iter()
-                    .filter(|tab| **tab != active_id)
-                    .filter_map(|tab| app.panel_app.presets.get(tab))
-                    .flat_map(|preset| {
-                        preset.windows.iter().map(move |w| {
-                            // Prefer the owning group's identity so the warm-up
-                            // request matches the key the live restore will use.
-                            // A window snapshot may carry stale account_type (e.g.
-                            // "S") when the group's is "F" — using the window's
-                            // snapshot would produce a cache-miss on restore.
-                            if let Some(bid) = w.bubble_id {
-                                if let Some(b) = preset.bubbles.iter().find(|b| b.id == bid) {
-                                    if !b.symbol.is_empty() {
-                                        return (
-                                            b.symbol.clone(),
-                                            b.exchange.clone(),
-                                            b.timeframe.clone(),
-                                            b.account_type.clone(),
-                                        );
-                                    }
-                                }
-                            }
-                            (w.symbol.clone(), w.exchange.clone(), w.timeframe.clone(), w.account_type.clone())
-                        })
-                    })
-                    .filter(|(sym, _, _, _)| !sym.is_empty())
-                    .collect();
-                let mut warmed = 0usize;
-                for (sym, exch, tf, at_label) in warm_targets {
-                    let eid = digdigdig3::ExchangeId::from_str(&exch)
-                        .unwrap_or(digdigdig3::ExchangeId::Binance);
-                    let at = account_type_from_label(&at_label);
-                    app.bridge.ensure_connector(eid);
-                    app.bridge.request_bars(eid, &sym, &tf, at, None, Some(bar_count), false);
-                    warmed += 1;
-                }
-                if warmed > 0 {
-                    eprintln!("[ChartApp] startup: warmed {} background tab series", warmed);
                 }
             }
 
@@ -1416,6 +1375,7 @@ impl ChartApp {
             pending_sub_pane_above_main: std::collections::HashMap::new(),
             pending_sub_pane_order: std::collections::HashMap::new(),
             pending_sub_pane_hidden: std::collections::HashMap::new(),
+            maximized_sub_panes: std::collections::HashMap::new(),
             series_handles: std::collections::HashMap::new(),
             live_preset_cache: std::collections::HashMap::new(),
             agent: agent::AgentSessionManager::default(),
@@ -1658,6 +1618,7 @@ impl ChartApp {
             pending_sub_pane_above_main: std::collections::HashMap::new(),
             pending_sub_pane_order: std::collections::HashMap::new(),
             pending_sub_pane_hidden: std::collections::HashMap::new(),
+            maximized_sub_panes: std::collections::HashMap::new(),
             series_handles: std::collections::HashMap::new(),
             live_preset_cache: std::collections::HashMap::new(),
             agent: agent::AgentSessionManager::default(),
@@ -1871,6 +1832,9 @@ impl ChartApp {
                 }
 
                 app.needs_initial_viewport_fit = true;
+                // Warm background tabs: request bars for every non-active open
+                // preset so the bridge cache is hot before the user clicks them.
+                app.warm_background_tabs();
             } else {
                 // Fresh state — Binance default.
                 // Phase 4 B: capture chart_id BEFORE the mutating block.
@@ -2984,6 +2948,9 @@ impl ChartApp {
                     inner_proportions: &inner_proportions_vec,
                     inner_sub_instance_ids: &inner_sub_ids_vec,
                     data_error: window.data_error.as_deref(),
+                    maximized_sub_pane_id: self.maximized_sub_panes
+                        .get(&window.id.0)
+                        .map(|(iid, _)| *iid),
                 };
 
                 let render_result = render_full_chart_panel(ctx, &leaf_rect, &panel_data);
@@ -3501,6 +3468,9 @@ impl ChartApp {
                     inner_proportions: &inner_proportions_vec,
                     inner_sub_instance_ids: &inner_sub_ids_vec,
                     data_error: window.data_error.as_deref(),
+                    maximized_sub_pane_id: self.maximized_sub_panes
+                        .get(&window.id.0)
+                        .map(|(iid, _)| *iid),
                 };
 
                 // Render chart into content_rect (shrunk by sidebar).
@@ -5581,6 +5551,58 @@ impl ChartApp {
         }
     }
 
+    /// Request bars for every non-active open preset so the bridge cache is
+    /// populated before the user clicks a background tab.
+    ///
+    /// Safe to call repeatedly: `request_bars` is deduped by the bridge's
+    /// in-flight guard, so a double-call never creates a duplicate fetch.
+    /// Call this once per startup after presets and open_tabs are populated
+    /// (i.e. after `LoadPreset` completes in `new_window`).
+    pub fn warm_background_tabs(&mut self) {
+        let active_id = self.panel_app.active_preset_id.clone();
+        let bar_count = self.panel_app.user_manager.profile.bar_count as usize;
+        let warm_targets: Vec<(String, String, mlc_core::state::Timeframe, String)> = self
+            .panel_app
+            .open_tabs
+            .iter()
+            .filter(|tab| **tab != active_id)
+            .filter_map(|tab| self.panel_app.presets.get(tab))
+            .flat_map(|preset| {
+                preset.windows.iter().map(move |w| {
+                    // Prefer the owning group's identity so the warm-up
+                    // request matches the key the live restore will use.
+                    // A window snapshot may carry stale account_type (e.g.
+                    // "S") when the group's is "F" — using the window's
+                    // snapshot would produce a cache-miss on restore.
+                    if let Some(bid) = w.bubble_id {
+                        if let Some(b) = preset.bubbles.iter().find(|b| b.id == bid) {
+                            if !b.symbol.is_empty() {
+                                return (
+                                    b.symbol.clone(),
+                                    b.exchange.clone(),
+                                    b.timeframe.clone(),
+                                    b.account_type.clone(),
+                                );
+                            }
+                        }
+                    }
+                    (w.symbol.clone(), w.exchange.clone(), w.timeframe.clone(), w.account_type.clone())
+                })
+            })
+            .filter(|(sym, _, _, _)| !sym.is_empty())
+            .collect();
+        let mut warmed = 0usize;
+        for (sym, exch, tf, at_label) in warm_targets {
+            let eid = digdigdig3::ExchangeId::from_str(&exch)
+                .unwrap_or(digdigdig3::ExchangeId::Binance);
+            let at = account_type_from_label(&at_label);
+            self.bridge.ensure_connector(eid);
+            self.bridge.request_bars(eid, &sym, &tf, at, None, Some(bar_count), false);
+            warmed += 1;
+        }
+        eprintln!("[ChartApp] startup: warmed {} background tab series", warmed);
+    }
+
     /// Synchronise `window.inner_docking` with the external `IndicatorManager`.
     ///
     /// Reads desired sub-pane instance ids from `indicator_manager`, walks the
@@ -5753,6 +5775,37 @@ impl ChartApp {
                     let total: f64 = props.iter().sum();
                     if total > 0.0 {
                         for v in &mut props { *v /= total; }
+                    }
+                    let root_branch_id = window.inner_docking.tree().root().id;
+                    window.inner_docking.tree_mut().set_branch_proportions(root_branch_id, props);
+                }
+            } else {
+                // Seed proportions when none have been set yet (e.g. after
+                // add_leaf_near clears them on every structural change).
+                // Without seeding, drag_separator falls back to equal 1/N
+                // shares which differs from the rendered layout (main large,
+                // sub-panes ~0.2 each) causing a visible jump on first grab.
+                //
+                // Rule: each sub-pane gets 0.2 of total, main gets the rest,
+                // clamped so main is never below 0.4. This mirrors
+                // InnerLayout::add_indicator which also carves 0.2 per pane.
+                let root_child_count = window.inner_docking.tree().root().children.len();
+                let stored_props_len = window.inner_docking.tree().root().proportions.len();
+                if stored_props_len != root_child_count && root_child_count >= 2 {
+                    let n_panes = root_child_count - 1; // subtract main-chart leaf
+                    // 0.2 per sub-pane, main = remainder, clamped to [0.4, 1.0].
+                    let sub_share_each = 0.2_f64;
+                    let main_share = (1.0 - sub_share_each * n_panes as f64).max(0.4);
+                    let mut props = vec![main_share];
+                    for _ in 0..n_panes {
+                        props.push(sub_share_each);
+                    }
+                    // Normalize so sum == 1.0.
+                    let total: f64 = props.iter().sum();
+                    if total > 0.0 {
+                        for v in &mut props {
+                            *v /= total;
+                        }
                     }
                     let root_branch_id = window.inner_docking.tree().root().id;
                     window.inner_docking.tree_mut().set_branch_proportions(root_branch_id, props);

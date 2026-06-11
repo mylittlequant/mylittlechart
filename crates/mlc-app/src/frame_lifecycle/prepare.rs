@@ -918,6 +918,51 @@ impl ChartApp {
             // Sync group primitives into split windows, filtered to each
             // window's current symbol so stale drawings don't bleed through
             // after a symbol switch.
+            //
+            // Sub-pane pane_id remap: primitives drawn in a sub-pane carry
+            // pane_id = Some(source_instance_id). Peer windows have DIFFERENT
+            // instance ids for the same indicator type+ordinal, so we remap
+            // before cloning instead of distributing the raw source id (which
+            // the peer render filter would never match).
+            //
+            // Remap tables are built once per frame from indicator_manager,
+            // outside the per-peer loop.
+
+            // Step 1: reverse map — any known sub-pane instance_id -> (type_id, ordinal).
+            // "ordinal" = position among instances of the same type_id on that
+            // window, sorted by pane number then instance id for stability.
+            // Covers ALL member windows so remap works regardless of which peer
+            // originally drew the primitive.
+            let pane_id_to_type_ord: std::collections::HashMap<u64, (String, usize)> = {
+                let mut map = std::collections::HashMap::new();
+                for leaf_entry in &leaf_rects {
+                    let lid = leaf_entry.0;
+                    if let Some(cid) = self.panel_app.panel_grid.container_id_for_leaf(lid) {
+                        let mut sub_pane_insts: Vec<(u64, String, usize, u64)> =
+                            self.indicator_manager
+                                .get_instances_for_window(cid.0)
+                                .into_iter()
+                                .filter(|i| i.pane > 0)
+                                .map(|i| (i.id, i.type_id.clone(), i.pane, i.id))
+                                .collect();
+                        // Stable ordering: primary by pane index, secondary by id.
+                        sub_pane_insts.sort_by(|a, b| a.2.cmp(&b.2).then(a.3.cmp(&b.3)));
+                        // Track per-type ordinal within this window.
+                        let mut type_count: std::collections::HashMap<String, usize> =
+                            std::collections::HashMap::new();
+                        for (iid, type_id, _pane, _) in &sub_pane_insts {
+                            let ord = type_count.entry(type_id.clone()).or_insert(0);
+                            map.entry(*iid).or_insert_with(|| (type_id.clone(), *ord));
+                            *ord += 1;
+                        }
+                    }
+                }
+                map
+            };
+
+            // Step 2: forward map per peer window — (type_id, ordinal) -> peer_instance_id.
+            // Built per-peer inside the loop below (cheap: one HashMap per peer per frame).
+
             let group_prim_sync: Vec<(mlc_core::ChartId, Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>>)> = {
                 let mut syncs = Vec::new();
                 for &(leaf_id, _) in &leaf_rects {
@@ -936,13 +981,72 @@ impl ChartApp {
                                 // sync so group.primitives are visible after preset restore.
                                 let is_auto_mono = group.auto_created && group.members.len() <= 1;
                                 if group.sync_flags.sync_drawings && !is_auto_mono {
+                                    // Build the forward remap for this peer window.
+                                    // peer_type_ord_to_id[(type_id, ordinal)] = peer_instance_id
+                                    let peer_type_ord: std::collections::HashMap<(String, usize), u64> = {
+                                        let mut m = std::collections::HashMap::new();
+                                        let mut sub_pane_insts: Vec<(u64, String, usize, u64)> =
+                                            self.indicator_manager
+                                                .get_instances_for_window(chart_id.0)
+                                                .into_iter()
+                                                .filter(|i| i.pane > 0)
+                                                .map(|i| (i.id, i.type_id.clone(), i.pane, i.id))
+                                                .collect();
+                                        sub_pane_insts.sort_by(|a, b| a.2.cmp(&b.2).then(a.3.cmp(&b.3)));
+                                        let mut type_count: std::collections::HashMap<String, usize> =
+                                            std::collections::HashMap::new();
+                                        for (iid, type_id, _pane, _) in &sub_pane_insts {
+                                            let ord = type_count.entry(type_id.clone()).or_insert(0);
+                                            m.entry((type_id.clone(), *ord)).or_insert(*iid);
+                                            *ord += 1;
+                                        }
+                                        m
+                                    };
+
                                     let cloned: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
                                         group.primitives.iter()
                                             .filter(|p| {
                                                 let sym = &p.data().symbol;
                                                 sym.is_empty() || sym == &window_symbol
                                             })
-                                            .map(|p| p.clone_box())
+                                            .filter_map(|p| {
+                                                let data = p.data();
+                                                match data.pane_id {
+                                                    None => {
+                                                        // Main-chart primitive — clone as-is.
+                                                        Some(p.clone_box())
+                                                    }
+                                                    Some(src_id) => {
+                                                        // Sub-pane primitive: remap to peer's instance id.
+                                                        // If the source id is not in the reverse map (primitive
+                                                        // from an unknown window) keep it unchanged so it is not
+                                                        // silently dropped during a partial-sync window.
+                                                        let maybe_peer_id = pane_id_to_type_ord
+                                                            .get(&src_id)
+                                                            .and_then(|(type_id, ord)| {
+                                                                peer_type_ord.get(&(type_id.clone(), *ord)).copied()
+                                                            });
+                                                        match maybe_peer_id {
+                                                            Some(peer_id) => {
+                                                                // Indicator exists on this peer — remap pane_id.
+                                                                let mut cloned_prim = p.clone_box();
+                                                                cloned_prim.data_mut().pane_id = Some(peer_id);
+                                                                Some(cloned_prim)
+                                                            }
+                                                            None => {
+                                                                if pane_id_to_type_ord.contains_key(&src_id) {
+                                                                    // Source is known but peer has no matching
+                                                                    // indicator — skip this primitive for this peer.
+                                                                    None
+                                                                } else {
+                                                                    // Source id not in any known window; pass through.
+                                                                    Some(p.clone_box())
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            })
                                             .collect();
                                     syncs.push((chart_id, cloned));
                                 }

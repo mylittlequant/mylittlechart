@@ -364,9 +364,19 @@ pub fn draw_last_price_line(
         base_color.clone()
     };
 
-    // Calculate Y position using same function as candles (viewport.price_to_y)
+    // Calculate Y position using rect.height as the height basis so that
+    // the mapping and the hide-guard both operate on the same value.
+    // Using viewport.price_to_y here would scale by viewport.chart_height
+    // which may differ from rect.height when the viewport has not been
+    // corrected to the per-pane reduced area, causing the line to escape the
+    // chart or be hidden while still visible.
     let close_price = last_bar.close;
-    let y = viewport.price_to_y(close_price, price_scale.price_min, price_scale.price_max);
+    let range = price_scale.price_max - price_scale.price_min;
+    let y = if range <= 0.0 {
+        rect.height / 2.0
+    } else {
+        rect.height * (1.0 - (close_price - price_scale.price_min) / range)
+    };
 
     // Price outside the visible range — don't draw at all. Clamping to the
     // edge here painted a line pinned to the chart border while the actual
