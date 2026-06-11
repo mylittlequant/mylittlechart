@@ -868,6 +868,30 @@ impl IndicatorManager {
         self.get_instances_for_window(window_id)
     }
 
+    /// Swap the display order of two sub-pane indicator instances within a window.
+    ///
+    /// Finds the positions of `id_a` and `id_b` in the `by_window_id[window_id]`
+    /// insertion-order Vec and swaps them.  `sync_sub_panes_from_manager` reads
+    /// that Vec as `desired_ids` on every tick, so the swap persists across
+    /// re-syncs without reverting.
+    ///
+    /// Returns `true` if both ids were found and swapped, `false` otherwise.
+    pub fn swap_pane_order(&mut self, window_id: u64, id_a: u64, id_b: u64) -> bool {
+        let ids = match self.by_window_id.get_mut(&window_id) {
+            Some(v) => v,
+            None => return false,
+        };
+        let pos_a = ids.iter().position(|&x| x == id_a);
+        let pos_b = ids.iter().position(|&x| x == id_b);
+        match (pos_a, pos_b) {
+            (Some(i), Some(j)) => {
+                ids.swap(i, j);
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Pick a distinct palette color for a new overlay indicator instance.
     ///
     /// Returns `Some(color)` when:

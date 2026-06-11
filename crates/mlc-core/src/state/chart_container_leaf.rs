@@ -98,11 +98,14 @@ impl DockPanel for ChartContainerLeaf {
     }
 
     fn min_size(&self) -> (f32, f32) {
-        // Main chart min matches min_main_chart floor used in rects.rs;
-        // indicator panels match the existing 30 px floor for sub-pane content.
+        // Minimum heights derived from the sub-pane label/button strip geometry:
+        // - left pill: margin_top(2) + pill_height(22) = 24 px
+        // - right overlay: margin(4) + bar_height(18) + pill overhang(2) = 24 px
+        // Add 2 px breathing room -> 26 px minimum for any pane.
+        // Both variants use the same value so uzor drag and InnerLayout agree.
         match self {
-            ChartContainerLeaf::MainChart { .. } => (80.0, 80.0),
-            ChartContainerLeaf::SubPane { .. } => (80.0, 30.0),
+            ChartContainerLeaf::MainChart { .. } => (80.0, 26.0),
+            ChartContainerLeaf::SubPane { .. } => (80.0, 26.0),
         }
     }
 

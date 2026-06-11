@@ -1218,28 +1218,42 @@ impl ChartApp {
                         self.autosave_snapshot();
                     }
                     SubPaneButton::MoveUp => {
-                        // Swap this sub-pane with the previous one in the root
-                        // branch of inner_docking.  The root children are
-                        // [MainChart(0), SubPane0(1), SubPane1(2), ...].
-                        // MoveUp moves index N to N-1, but never above slot 1
-                        // (slot 0 is the main chart and must stay first).
+                        // Swap this sub-pane with the previous one.
+                        //
+                        // Two-layer swap for durability:
+                        // 1. Reorder the inner_docking tree immediately so the
+                        //    current frame renders the updated order.
+                        // 2. Swap in indicator_manager.by_window_id so
+                        //    sync_sub_panes_from_manager (called every tick)
+                        //    preserves the new order rather than reverting it.
                         if let Some(tree_idx) = real_index {
-                            // tree_idx is 0-based within collect_inner_instance_ids,
-                            // which skips the main chart leaf.  Actual root child index
-                            // is tree_idx + 1.  Swap with previous sub-pane = tree_idx.
+                            // tree_idx is 0-based within collect_inner_instance_ids
+                            // (main chart leaf excluded).  Root child index = tree_idx + 1.
+                            // MoveUp: swap with tree_idx (previous sub-pane), but
+                            // never go above slot 1 (slot 0 = main chart, immovable).
                             let from = tree_idx + 1;
                             if from > 1 {
                                 let to = from - 1;
+                                // Resolve the neighbor's instance_id before the mutable borrow.
+                                let all_ids = self.panel_app.panel_grid.active_container()
+                                    .map(|w| mlc_core::state::chart_container::collect_inner_instance_ids(&w.inner_docking))
+                                    .unwrap_or_default();
+                                let neighbor_id = all_ids.get(tree_idx.saturating_sub(1)).copied();
+                                // 1. Update the docking tree for immediate visual effect.
                                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                                     let root_id = window.inner_docking.tree().root().id;
                                     window.inner_docking.tree_mut().reorder_children(root_id, from, to);
+                                }
+                                // 2. Durably update indicator_manager insertion order.
+                                if let (Some(nbr_id), Some(cid)) = (neighbor_id, self.panel_app.panel_grid.active_container_id()) {
+                                    self.indicator_manager.swap_pane_order(cid.0, instance_id, nbr_id);
                                 }
                             }
                         }
                         self.autosave_snapshot();
                     }
                     SubPaneButton::MoveDown => {
-                        // Swap this sub-pane with the next one in the root branch.
+                        // Swap this sub-pane with the next one.  Mirrors MoveUp.
                         if let Some(tree_idx) = real_index {
                             let from = tree_idx + 1;
                             // Total root children = 1 (main chart) + number of sub-panes.
@@ -1248,68 +1262,51 @@ impl ChartApp {
                                 .unwrap_or(0);
                             let to = from + 1;
                             if to < total {
+                                // Resolve the neighbor's instance_id before the mutable borrow.
+                                let all_ids = self.panel_app.panel_grid.active_container()
+                                    .map(|w| mlc_core::state::chart_container::collect_inner_instance_ids(&w.inner_docking))
+                                    .unwrap_or_default();
+                                let neighbor_id = all_ids.get(tree_idx + 1).copied();
+                                // 1. Update the docking tree for immediate visual effect.
                                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                                     let root_id = window.inner_docking.tree().root().id;
                                     window.inner_docking.tree_mut().reorder_children(root_id, from, to);
+                                }
+                                // 2. Durably update indicator_manager insertion order.
+                                if let (Some(nbr_id), Some(cid)) = (neighbor_id, self.panel_app.panel_grid.active_container_id()) {
+                                    self.indicator_manager.swap_pane_order(cid.0, instance_id, nbr_id);
                                 }
                             }
                         }
                         self.autosave_snapshot();
                     }
                     SubPaneButton::Expand => {
-                        // Maximize this sub-pane: save current proportions, then
-                        // set proportions so only this pane has visible height
-                        // (near-zero main chart share, near-zero other sub-panes).
+                        // Maximize this sub-pane so it fills the ENTIRE container area
+                        // (main chart and other sub-panes hidden).
+                        //
+                        // The layout override happens in render_full_chart_panel and
+                        // build_extended_layout[_for_leaf] when maximized_sub_panes
+                        // contains the entry — no tree proportion manipulation needed.
+                        // We save the current tree proportions here so Restore can
+                        // put them back exactly.
                         if let Some(cid) = self.panel_app.panel_grid.active_container_id() {
-                            let pre_props = self.panel_app.panel_grid.active_container()
-                                .map(|w| w.inner_docking.tree().root().proportions.clone())
-                                .unwrap_or_default();
-                            // Build maximized proportions: main chart gets 0.05,
-                            // this pane gets the rest, all others get near-zero.
                             let sub_count = self.panel_app.panel_grid.active_container()
                                 .map(|w| mlc_core::state::chart_container::collect_inner_instance_ids(&w.inner_docking).len())
                                 .unwrap_or(0);
                             if sub_count > 0 {
-                                let instance_ids = self.panel_app.panel_grid.active_container()
-                                    .map(|w| mlc_core::state::chart_container::collect_inner_instance_ids(&w.inner_docking))
+                                let pre_props = self.panel_app.panel_grid.active_container()
+                                    .map(|w| w.inner_docking.tree().root().proportions.clone())
                                     .unwrap_or_default();
-                                const MAIN_MIN: f64 = 0.05;
-                                const OTHER_MIN: f64 = 0.001;
-                                let other_total = OTHER_MIN * (sub_count.saturating_sub(1)) as f64;
-                                let this_share = (1.0 - MAIN_MIN - other_total).max(0.1);
-                                let mut new_props = vec![MAIN_MIN];
-                                for &iid in &instance_ids {
-                                    if iid == instance_id {
-                                        new_props.push(this_share);
-                                    } else {
-                                        new_props.push(OTHER_MIN);
-                                    }
-                                }
-                                // Normalize to sum = 1.0.
-                                let total: f64 = new_props.iter().sum();
-                                if total > 0.0 {
-                                    for v in &mut new_props { *v /= total; }
-                                }
-                                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                                    let root_id = window.inner_docking.tree().root().id;
-                                    window.inner_docking.tree_mut().set_branch_proportions(root_id, new_props);
-                                }
                                 self.maximized_sub_panes.insert(cid.0, (instance_id, pre_props));
                             }
                         }
                         self.autosave_snapshot();
                     }
                     SubPaneButton::Restore => {
-                        // Restore proportions saved before Expand.
+                        // Remove the maximized entry — layout reverts to normal tree
+                        // proportions on the next frame automatically.
                         if let Some(cid) = self.panel_app.panel_grid.active_container_id() {
-                            if let Some((_, saved_props)) = self.maximized_sub_panes.remove(&cid.0) {
-                                if !saved_props.is_empty() {
-                                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                                        let root_id = window.inner_docking.tree().root().id;
-                                        window.inner_docking.tree_mut().set_branch_proportions(root_id, saved_props);
-                                    }
-                                }
-                            }
+                            self.maximized_sub_panes.remove(&cid.0);
                         }
                         self.autosave_snapshot();
                     }

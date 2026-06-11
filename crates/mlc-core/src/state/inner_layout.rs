@@ -41,8 +41,13 @@ impl Default for InnerLayout {
         Self {
             proportions: vec![1.0],
             sub_instance_ids: Vec::new(),
-            min_main_px: 80.0,
-            min_sub_px: 30.0,
+            // Minimum heights derived from the sub-pane label/button strip geometry:
+            // - left pill: margin_top(2) + pill_height(22) = 24 px
+            // - right overlay: margin(4) + bar_height(18) + bar margin(2) = 24 px
+            // Add 2 px breathing room -> 26 px minimum for any pane.
+            // The main chart uses the same floor so drag stops at a readable size.
+            min_main_px: 26.0,
+            min_sub_px: 26.0,
             separator_px: 1.0,
         }
     }

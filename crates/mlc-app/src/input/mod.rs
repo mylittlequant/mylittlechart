@@ -8364,13 +8364,31 @@ impl ChartApp {
                 }
             })
             .unwrap_or_default();
-        ExtendedFrameLayout::from_proportions(
-            &content_rect,
-            &sub_pane_ids,
-            &sub_proportions,
-            &scale_settings,
-            1.0,
-        )
+        // When a sub-pane is maximized, mirror the same override that
+        // render_full_chart_panel applies so input hit-testing (clicks, hover,
+        // separator drag) operates on the correct fullscreen geometry.
+        let maximized_id = self.panel_app.panel_grid.active_container_id()
+            .and_then(|cid| self.maximized_sub_panes.get(&cid.0))
+            .map(|(iid, _)| *iid)
+            .filter(|iid| sub_pane_ids.contains(iid));
+
+        if let Some(max_iid) = maximized_id {
+            ExtendedFrameLayout::from_proportions(
+                &content_rect,
+                &[max_iid],
+                &[1.0],
+                &scale_settings,
+                1.0,
+            )
+        } else {
+            ExtendedFrameLayout::from_proportions(
+                &content_rect,
+                &sub_pane_ids,
+                &sub_proportions,
+                &scale_settings,
+                1.0,
+            )
+        }
     }
 
     /// Build an `ExtendedFrameLayout` for a specific split leaf.
@@ -8433,13 +8451,32 @@ impl ChartApp {
                 .collect();
             (filtered_ids, Vec::new())
         };
-        Some(ExtendedFrameLayout::from_proportions(
-            leaf_rect,
-            &sub_pane_ids,
-            &sub_proportions,
-            scale_settings,
-            1.0,
-        ))
+        // When a sub-pane is maximized, mirror the same override that
+        // render_full_chart_panel applies so input hit-testing operates on
+        // the correct fullscreen geometry for this leaf.
+        let container_id = self.panel_app.panel_grid.container_id_for_leaf(leaf_id);
+        let maximized_id = container_id
+            .and_then(|cid| self.maximized_sub_panes.get(&cid.0))
+            .map(|(iid, _)| *iid)
+            .filter(|iid| sub_pane_ids.contains(iid));
+
+        if let Some(max_iid) = maximized_id {
+            Some(ExtendedFrameLayout::from_proportions(
+                leaf_rect,
+                &[max_iid],
+                &[1.0],
+                scale_settings,
+                1.0,
+            ))
+        } else {
+            Some(ExtendedFrameLayout::from_proportions(
+                leaf_rect,
+                &sub_pane_ids,
+                &sub_proportions,
+                scale_settings,
+                1.0,
+            ))
+        }
     }
 
     /// Convert a leaf's panel-relative rect to an absolute screen rect.

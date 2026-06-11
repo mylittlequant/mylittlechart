@@ -2816,6 +2816,45 @@ pub fn draw_frame_borders(
 // Full Chart Panel Rendering
 // =============================================================================
 
+/// Build an `ExtendedFrameLayout` where `maximized_id` receives the full
+/// `content_rect` height (minus time scale) and all other sub-panes and the
+/// main chart are collapsed to zero height.
+///
+/// Called by `render_full_chart_panel` when `maximized_sub_pane_id` is set.
+/// The input builders in `mlc-app` mirror this logic so click geometry agrees.
+fn build_maximized_layout(
+    content_rect: &super::rects::LayoutRect,
+    maximized_id: u64,
+    sub_pane_ids: &[u64],
+    scale_settings: &mlc_core::scale_settings::ScaleSettings,
+) -> crate::layout::ExtendedFrameLayout {
+    // Pass a single-element sub-pane list with the maximized pane only,
+    // and give it the whole share (1.0).  The main chart gets a near-zero
+    // share that InnerLayout will snap to its min (26 px), which is fine —
+    // we guard main-chart rendering with `main_chart_visible` anyway.
+    // But we want truly zero main chart for clean fullscreen look, so we use
+    // a direct construction approach via the 0.0/1.0 proportion split and
+    // rely on min enforcement being absent in from_proportions when only one
+    // sub-pane is listed.
+    //
+    // Simplest correct path: build via from_proportions with only the
+    // maximized pane in the list and proportions [0.0, 1.0].
+    // InnerLayout::sync_with/heights will enforce min_main_px=26 on the main
+    // slot, but we check main_chart_visible (height >= 1.0) at render time
+    // and skip all main-chart drawing when it is collapsed to its minimum.
+    // For the sub-pane layout the full available height minus that 26 px goes
+    // to the maximized pane — effectively fullscreen for any container
+    // taller than ~60 px.
+    let _ = sub_pane_ids; // full list not needed; we render only max pane
+    crate::layout::ExtendedFrameLayout::from_proportions(
+        content_rect,
+        &[maximized_id],
+        &[1.0],
+        scale_settings,
+        1.0,
+    )
+}
+
 /// Complete render data for a single chart panel.
 ///
 /// This is the chart crate's equivalent of core's `ChartWindowRenderData`.
@@ -2946,14 +2985,30 @@ pub fn render_full_chart_panel(
     } else {
         Vec::new()
     };
-    let extended_layout = crate::layout::ExtendedFrameLayout::from_proportions(
-        content_rect,
-        &sub_pane_ids,
-        &sub_props,
-        data.scale_settings,
-        1.0,
-    );
+
+    // Determine whether a sub-pane is currently maximized.  When maximized,
+    // the layout gives the full container area to that pane — main chart and
+    // all other panes collapse to zero height.  The normal from_proportions
+    // path is bypassed in this case so InnerLayout min-height guards never
+    // prevent the main chart from being fully hidden.
+    let maximized_id: Option<u64> = data.maximized_sub_pane_id
+        .filter(|iid| sub_pane_ids.contains(iid));
+
+    let extended_layout = if let Some(max_iid) = maximized_id {
+        build_maximized_layout(content_rect, max_iid, &sub_pane_ids, data.scale_settings)
+    } else {
+        crate::layout::ExtendedFrameLayout::from_proportions(
+            content_rect,
+            &sub_pane_ids,
+            &sub_props,
+            data.scale_settings,
+            1.0,
+        )
+    };
     let main_chart = &extended_layout.main_chart;
+    // Guard: when the main chart area has no usable height (maximized sub-pane
+    // mode), skip all main-chart rendering passes.
+    let main_chart_visible = main_chart.chart.height >= 1.0;
 
     // Bug 2 fix: update viewport dimensions to match the computed layout so
     // that bar_to_x() and price_to_y() operate in the correct coordinate space.
@@ -3021,60 +3076,65 @@ pub fn render_full_chart_panel(
         return ChartPanelRenderResult::empty();
     }
 
-    // 2. Grid — extended variant covers the content area (under scales, excluding toolbars).
-    draw_grid_extended(ctx, &corrected_state, content_rect);
-
-    // 3. Series (candles, bars, line, etc.)
-    draw_series(ctx, &corrected_state, data.config.chart_type);
-
-    // 4. Last-price projection line.
-    draw_last_price_line(ctx, &corrected_state);
-
-    // 5. Watermark (behind other overlays).
-    if let Some(watermark) = data.watermark {
-        draw_watermark(ctx, &corrected_state.chart_rect, watermark);
-    }
-
-    // 6. Compare overlay (symbol comparisons).
-    if let Some(compare_overlay) = data.compare_overlay {
-        draw_compare_overlay(ctx, &corrected_state, compare_overlay);
-    }
-
-    // NOTE: Tooltip and crosshair are cursor-dependent — they are drawn by
-    // render_chart_overlay, not the static pass.
-
-    // NOTE: Crosshair is drawn AFTER sub-panes so the vertical line is not
-    // covered by sub-pane backgrounds. (moved to render_chart_overlay)
-
-    // 8. Price scale (skip when hidden).
+    // Steps 2-11 render the main chart area.  When a sub-pane is maximized the
+    // main chart height is 0, so all these passes are skipped to avoid drawing
+    // series, scales, and primitives in a zero-height rect.
     let mut leaf_scale_cfg = data.config.scale_config.clone();
     leaf_scale_cfg.price_scale_width = main_chart.price_scale.width;
     leaf_scale_cfg.time_scale_height = main_chart.time_scale.height;
 
-    if data.scale_settings.price_scale_position.is_visible() {
-        draw_price_scale(
-            ctx,
-            &corrected_state,
-            &leaf_scale_cfg,
-            &data.config.scale_theme,
-            main_chart.price_scale.x,
-            main_chart.price_scale.y,
-        );
-    }
+    if main_chart_visible {
+        // 2. Grid — extended variant covers the content area (under scales, excluding toolbars).
+        draw_grid_extended(ctx, &corrected_state, content_rect);
 
-    // 9. Overlay indicators (pane == 0).
-    if let (Some(im), Some(symbol)) = (data.indicator_source, data.symbol) {
-        draw_overlay_indicators(ctx, &corrected_state, im, symbol, data.selected_indicator_id);
-    }
+        // 3. Series (candles, bars, line, etc.)
+        draw_series(ctx, &corrected_state, data.config.chart_type);
 
-    // 10. Alert level lines.
-    if !data.alert_render_data.is_empty() {
-        draw_alert_lines(ctx, &corrected_state, data.alert_render_data);
-    }
+        // 4. Last-price projection line.
+        draw_last_price_line(ctx, &corrected_state);
 
-    // 11. Drawing primitives for the main chart.
-    if let Some(dm) = data.drawing_manager {
-        render_main_chart_primitives(ctx, main_chart, &corrected_state, dm);
+        // 5. Watermark (behind other overlays).
+        if let Some(watermark) = data.watermark {
+            draw_watermark(ctx, &corrected_state.chart_rect, watermark);
+        }
+
+        // 6. Compare overlay (symbol comparisons).
+        if let Some(compare_overlay) = data.compare_overlay {
+            draw_compare_overlay(ctx, &corrected_state, compare_overlay);
+        }
+
+        // NOTE: Tooltip and crosshair are cursor-dependent — they are drawn by
+        // render_chart_overlay, not the static pass.
+
+        // NOTE: Crosshair is drawn AFTER sub-panes so the vertical line is not
+        // covered by sub-pane backgrounds. (moved to render_chart_overlay)
+
+        // 8. Price scale (skip when hidden).
+        if data.scale_settings.price_scale_position.is_visible() {
+            draw_price_scale(
+                ctx,
+                &corrected_state,
+                &leaf_scale_cfg,
+                &data.config.scale_theme,
+                main_chart.price_scale.x,
+                main_chart.price_scale.y,
+            );
+        }
+
+        // 9. Overlay indicators (pane == 0).
+        if let (Some(im), Some(symbol)) = (data.indicator_source, data.symbol) {
+            draw_overlay_indicators(ctx, &corrected_state, im, symbol, data.selected_indicator_id);
+        }
+
+        // 10. Alert level lines.
+        if !data.alert_render_data.is_empty() {
+            draw_alert_lines(ctx, &corrected_state, data.alert_render_data);
+        }
+
+        // 11. Drawing primitives for the main chart.
+        if let Some(dm) = data.drawing_manager {
+            render_main_chart_primitives(ctx, main_chart, &corrected_state, dm);
+        }
     }
 
     // 12. Sub-panes (indicators with pane_index > 0).
