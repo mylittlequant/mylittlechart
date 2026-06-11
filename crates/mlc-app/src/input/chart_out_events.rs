@@ -1216,6 +1216,59 @@ impl ChartApp {
                         eprintln!("[ChartApp] Auto-created invisible sync group {:?} for {} orphaned windows", group_id, leaf_chart_ids.len());
                     }
 
+                    // Step 5c: membership safety net. Step 5b only fires when the
+                    // preset has NO groups at all — but poisoned files (startup-
+                    // autosave bug) carry orphaned groups whose member lists do
+                    // NOT include the windows. A window without bubble membership
+                    // is a dead chart: symbol_for_chart=None -> empty tag/toolbar,
+                    // no bars requested, the preset is never considered
+                    // materialized so it never parks. Give every orphaned window
+                    // its own auto group seeded from its (recovered) snapshot.
+                    {
+                        let orphan_windows: Vec<(mlc_core::LeafId, mlc_core::ChartId)> =
+                            self.panel_app.panel_grid.iter_containers()
+                                .filter(|(_, w)| self.managers.bubble.bubble_for_chart(w.id).is_none())
+                                .map(|(leaf_id, w)| (leaf_id, w.id))
+                                .collect();
+                        for &(leaf_id, chart_id) in &orphan_windows {
+                            let snap = preset.windows.iter().find(|s| s.window_id == chart_id.0);
+                            let (sym, exch, at, tf) = snap
+                                .map(|s| (
+                                    s.symbol.clone(),
+                                    s.exchange.clone(),
+                                    s.account_type.clone(),
+                                    s.timeframe.clone(),
+                                ))
+                                .unwrap_or_else(|| (
+                                    "BTCUSDT".to_string(),
+                                    "binance".to_string(),
+                                    "S".to_string(),
+                                    mlc_core::state::Timeframe::h1(),
+                                ));
+                            let group_id = self.managers.bubble.create_group_auto(
+                                [0.0, 0.0, 0.0, 0.0],
+                                sym.clone(),
+                                tf,
+                            );
+                            if let Some(bubble) = self.managers.bubble.bubble_mut(group_id) {
+                                bubble.exchange = exch.clone();
+                                bubble.account_type = if at.is_empty() { "S".to_string() } else { at };
+                            }
+                            let _ = self.managers.bubble.attach_chart_to_bubble(chart_id, group_id);
+                            if let Some(pid) = self.panel_app.panel_grid.container_for_leaf(leaf_id).map(|w| w.chart_panel_id) {
+                                let panel = crate::chart_panel_bridge::ensure_chart_panel_state(
+                                    &mut self.panels_store,
+                                    pid,
+                                );
+                                panel.drawing_manager.set_current_symbol_key(&sym, &exch, "S");
+                            }
+                            eprintln!(
+                                "[ChartApp] Step 5c: re-membered orphaned window {:?} into auto group {:?} ({})",
+                                chart_id, group_id, sym
+                            );
+                        }
+                    }
+
                     // ----------------------------------------------------------------
                     // Step 6: Restore indicators
                     // ----------------------------------------------------------------

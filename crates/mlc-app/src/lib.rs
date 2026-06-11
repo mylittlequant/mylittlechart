@@ -1131,6 +1131,39 @@ impl ChartApp {
                 }
             }
 
+            // Warm the OTHER open tabs in the background: request bars for
+            // every window of every non-active open preset so the bridge
+            // cache is hot before the user ever switches there. Without this
+            // an idle tab shows "Loading..." even minutes into the session.
+            // Cheap: Phase A reads the disk cache first; request_bars is
+            // per-series deduped by the bridge's in-flight guard.
+            {
+                let active_id = app.panel_app.active_preset_id.clone();
+                let bar_count = app.panel_app.user_manager.profile.bar_count as usize;
+                let warm_targets: Vec<(String, String, mlc_core::state::Timeframe, String)> = app
+                    .panel_app
+                    .open_tabs
+                    .iter()
+                    .filter(|tab| **tab != active_id)
+                    .filter_map(|tab| app.panel_app.presets.get(tab))
+                    .flat_map(|preset| preset.windows.iter())
+                    .filter(|w| !w.symbol.is_empty())
+                    .map(|w| (w.symbol.clone(), w.exchange.clone(), w.timeframe.clone(), w.account_type.clone()))
+                    .collect();
+                let mut warmed = 0usize;
+                for (sym, exch, tf, at_label) in warm_targets {
+                    let eid = digdigdig3::ExchangeId::from_str(&exch)
+                        .unwrap_or(digdigdig3::ExchangeId::Binance);
+                    let at = account_type_from_label(&at_label);
+                    app.bridge.ensure_connector(eid);
+                    app.bridge.request_bars(eid, &sym, &tf, at, None, Some(bar_count), false);
+                    warmed += 1;
+                }
+                if warmed > 0 {
+                    eprintln!("[ChartApp] startup: warmed {} background tab series", warmed);
+                }
+            }
+
             // Set active_exchange from the active window's exchange.
             // S2.7.1: read exchange via branch_meta instead of struct field.
             if let Some(cid) = app.panel_app.panel_grid.active_container_id() {
