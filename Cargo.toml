@@ -48,11 +48,3 @@ strip = "none"
 # (large enum with 480 variants needs optimization)
 [profile.dev.package.mylittlechart-indicators]
 opt-level = 2
-
-[patch.crates-io]
-# VERIFICATION MODE: local dig3 carries the HyperLiquid spot-kline fix
-# (display pair -> spotMeta wire name). Owner click-verifies in mlc, THEN
-# dig3 0.3.19 gets published and this patch block is removed again.
-digdigdig3 = { path = "../digdigdig3/crates/digdigdig3" }
-digdigdig3-station = { path = "../digdigdig3/crates/digdigdig3-station" }
-digdigdig3-core = { path = "../digdigdig3/crates/dig3-core" }
