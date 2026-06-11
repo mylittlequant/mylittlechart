@@ -589,6 +589,39 @@ impl ChartApp {
                     bubble.account_type = source_at.clone();
                 }
             }
+            // Containers born in this split carry a fresh ChartPanelId with NO
+            // ChartPanelState behind it — the restore cycle (LoadPreset) inserts
+            // panels explicitly, but the live cycle never did. Every non-lazy
+            // panel read (drawing clicks, toolbar tool activation, sub-pane
+            // interactions) then silently no-ops on the sibling leaf — proven
+            // live: canvas_click pid=ChartPanelId(11) panel_exists=false.
+            // Create the panel and stamp it with the source instrument.
+            let pid_opt = self
+                .panel_app
+                .panel_grid
+                .containers()
+                .get(&chart_id)
+                .map(|w| w.chart_panel_id);
+            if let Some(pid) = pid_opt {
+                let style_arc = self
+                    .managers
+                    .bubble
+                    .bubble_for_chart(chart_id)
+                    .and_then(|bid| self.managers.bubble.bubble(bid))
+                    .map(|g| g.last_used_style.clone());
+                let panel = crate::chart_panel_bridge::ensure_chart_panel_state(
+                    &mut self.panels_store,
+                    pid,
+                );
+                panel.drawing_manager.set_current_symbol_key(
+                    &source_sym,
+                    &source_exch,
+                    &source_at,
+                );
+                if let Some(style_arc) = style_arc {
+                    panel.drawing_manager.bind_style_store(style_arc);
+                }
+            }
         }
 
         // When "Split Without Group" is enabled, the mother window (new_leaves[0])
