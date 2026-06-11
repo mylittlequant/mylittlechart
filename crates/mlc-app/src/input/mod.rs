@@ -453,6 +453,10 @@ impl ChartApp {
                 | ChartInputTarget::PriceScale { leaf_id }
                 | ChartInputTarget::TimeScale { leaf_id } => {
                     self.panel_app.panel_grid.set_active_leaf(leaf_id);
+                    // Invalidate the cached layout so the commit path below
+                    // rebuilds it for the newly active leaf's rect, not the
+                    // previous leaf's (mirrors the right-click invalidation at ~522).
+                    self.active_frame_layout = None;
                     // Fall through to handle_canvas_click using the now-active leaf.
                 }
                 ChartInputTarget::None => return,
@@ -2461,6 +2465,9 @@ impl ChartApp {
                 | ChartInputTarget::TimeScale { leaf_id }
                 | ChartInputTarget::ScaleCorner { leaf_id, .. } => {
                     self.panel_app.panel_grid.set_active_leaf(leaf_id);
+                    // Invalidate so the drag path decodes bar/price with the
+                    // newly active leaf's rect (mirrors right-click at ~522).
+                    self.active_frame_layout = None;
                     // Fall through to chart engine drag handling.
                 }
                 ChartInputTarget::None => return false,

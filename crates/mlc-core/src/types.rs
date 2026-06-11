@@ -358,10 +358,25 @@ pub fn find_bar_for_timestamp_ms(bars: &[Bar], ts_ms: i64) -> Option<usize> {
 
 /// Convert a timestamp in **milliseconds** to a fractional bar index.
 ///
-/// Returns `0.0` when `bars` is empty.  Extrapolates beyond the last bar
-/// using the bar interval so primitives drawn in "future" space remain stable.
+/// Returns `0.0` when `bars` is empty.
+/// Extrapolates RIGHT beyond the last bar and LEFT before the first bar using
+/// the bar interval, so rays and extended lines anchored outside the loaded
+/// window project correctly instead of collapsing to bar 0.
+/// Negative return values are valid: `bar_to_x_f64` renders them off-screen left.
 #[inline]
 pub fn timestamp_ms_to_bar_f64(bars: &[Bar], ts_ms: i64) -> f64 {
+    if bars.is_empty() {
+        return 0.0;
+    }
+    let first_ts_ms = bars[0].timestamp * 1000;
+    if ts_ms < first_ts_ms {
+        // Pre-history: extrapolate left using the bar interval.
+        let interval_ms = bar_interval_seconds(bars) * 1000;
+        if interval_ms > 0 {
+            return (ts_ms - first_ts_ms) as f64 / interval_ms as f64;
+        }
+        return 0.0;
+    }
     match find_bar_for_timestamp_ms(bars, ts_ms) {
         Some(idx) => idx as f64,
         None => 0.0,
