@@ -680,22 +680,23 @@ impl ChartApp {
                 eprintln!("[sync_group] split tagged: container_for_leaf({:?}) returned None — skipping split tag", new_leaves[0]);
                 return;
             }
-            // B1 S2.7.1d: pre-read first-leaf symbol/timeframe from branch_meta for group creation.
             let first_leaf_chart_id = self.panel_app.panel_grid.container_id_for_leaf(new_leaves[0]);
-            let first_leaf_symbol = first_leaf_chart_id
-                .and_then(|c| self.managers.bubble.symbol_for_chart(c))
-                .map(String::from)
-                .unwrap_or_default();
-            let first_leaf_timeframe = first_leaf_chart_id
-                .and_then(|c| self.managers.bubble.timeframe_for_chart(c))
-                .cloned()
-                .unwrap_or_else(mlc_core::state::Timeframe::h1);
+            // Use the source instrument captured BEFORE the detach above:
+            // re-reading symbol_for_chart at this point always returned None
+            // (the chart's bubble membership was just severed), so every
+            // freshly-split group was created with an EMPTY symbol — which
+            // then became the authority for all leaves (blank corner tags,
+            // broken sym:exch:AT panel keys, dead routing in secondary leaves).
+            let first_leaf_symbol = source_sym.clone();
+            let first_leaf_timeframe = source_tf.clone();
+            let mut created_fresh_group = false;
             let group_id = if let Some(existing_group) = pre_split_group_id {
                 if pre_split_is_auto {
                     // Was untagged (auto group) — split promotes to a real color tag.
                     // Create a NEW visible group with the first free color.
                     let color = self.managers.bubble.next_unused_color();
                     let gid = self.managers.bubble.create_group(color, first_leaf_symbol, first_leaf_timeframe);
+                    created_fresh_group = true;
                     eprintln!("[BubbleStore] Split promoted auto group to visible tag {:?}", gid);
                     gid
                 } else {
@@ -706,8 +707,19 @@ impl ChartApp {
                 // No existing group — pick color from TagManager's palette.
                 let color = pre_split_color
                     .unwrap_or_else(|| self.managers.bubble.next_unused_color());
+                created_fresh_group = true;
                 self.managers.bubble.create_group(color, first_leaf_symbol, first_leaf_timeframe)
             };
+
+            // create_group leaves exchange/account_type empty — complete the
+            // identity record from the source instrument for groups born here.
+            // (Existing user-tagged groups keep their own identity untouched.)
+            if created_fresh_group {
+                if let Some(bubble) = self.managers.bubble.bubble_mut(group_id) {
+                    bubble.exchange = source_exch.clone();
+                    bubble.account_type = source_at.clone();
+                }
+            }
 
             // --- Shared group path (user-tagged groups or brand-new groups) ---
 

@@ -368,8 +368,13 @@ pub fn draw_last_price_line(
     let close_price = last_bar.close;
     let y = viewport.price_to_y(close_price, price_scale.price_min, price_scale.price_max);
 
-    // Clamp to chart area bounds (guard against collapsed/negative-height rects)
-    let screen_y = (rect.y + y).clamp(rect.y, (rect.y + rect.height).max(rect.y));
+    // Price outside the visible range — don't draw at all. Clamping to the
+    // edge here painted a line pinned to the chart border while the actual
+    // price was far off-viewport.
+    if y < 0.0 || y > rect.height {
+        return;
+    }
+    let screen_y = rect.y + y;
 
     // Calculate X start position (from last bar's center)
     let last_bar_idx = bars.len() - 1;
