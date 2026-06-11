@@ -704,7 +704,11 @@ impl DataBridge {
         // is an O(1) Arc clone of that pool.
         let fetch_hub = self.station.hub();
         let tx = self.tx.clone();
+        // Canonical key — used for cache keys and event symbols so app-side
+        // lookups always match bubble.symbol (which is now canonical).
         let symbol_str = symbol.to_string();
+        // Wire string — venue-native form required by dig3 connectors.
+        let wire_sym = self.wire_symbol(exchange_id, account_type, symbol);
         let interval = timeframe_to_interval(timeframe);
         let tf_name = timeframe.name.clone();
         let cache = self.bar_cache.clone();
@@ -753,7 +757,10 @@ impl DataBridge {
             let station_tx = self.tx.clone();
             let station_cache = self.bar_cache.clone();
             let station_cache_key = make_series_key(exchange_id, account_type, &symbol_str, &tf_name);
-            let station_symbol = symbol_str.clone();
+            // Canonical form — emitted back to the app so bubble.symbol lookups match.
+            let station_symbol_canonical = symbol_str.clone();
+            // Wire form — passed to dig3 station for the actual subscription.
+            let station_symbol_wire = wire_sym.clone();
             let station_interval = interval.clone();
             let station_tf_name = tf_name.clone();
             let station_period_secs = tf_period_secs(&tf_name);
@@ -761,7 +768,7 @@ impl DataBridge {
                 let kline_iv = KlineInterval::new(&station_interval);
                 let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                     exchange_id,
-                    station_symbol.clone(),
+                    station_symbol_wire.clone(),
                     account_type,
                     [digdigdig3_station::Stream::Kline(kline_iv)],
                 );
@@ -769,13 +776,13 @@ impl DataBridge {
                     Ok(r) => r,
                     Err(e) => {
                         crate::dlog!("[Bridge] station kline subscribe failed for {:?} sym={} tf={}: {:?}",
-                            exchange_id, station_symbol, station_tf_name, e);
+                            exchange_id, station_symbol_wire, station_tf_name, e);
                         return;
                     }
                 };
                 if !report.failed.is_empty() {
                     crate::dlog!("[Bridge] station kline partial-fail {:?} sym={} tf={}: {} failed",
-                        exchange_id, station_symbol, station_tf_name, report.failed.len());
+                        exchange_id, station_symbol_wire, station_tf_name, report.failed.len());
                 }
                 while let Some(ev) = report.handle.recv().await {
                     if let digdigdig3_station::Event::Bar { point, .. } = ev {
@@ -784,7 +791,8 @@ impl DataBridge {
                         let _ = station_tx.send(LiveUpdate::BarUpdate {
                             exchange_id,
                             account_type,
-                            symbol: station_symbol.clone(),
+                            // Emit canonical form so app-side symbol == bubble.symbol.
+                            symbol: station_symbol_canonical.clone(),
                             bar,
                             is_closed: true,
                         });
@@ -850,7 +858,8 @@ impl DataBridge {
                 return;
             }
 
-            crate::dlog!("[Bridge] Phase A: {:?} sym={} interval={} fetching 300 fresh bars", exchange_id, symbol_str, interval);
+            crate::dlog!("[Bridge] Phase A: {:?} sym={} wire={} interval={} fetching 300 fresh bars",
+                exchange_id, symbol_str, wire_sym, interval);
 
             // Phase 2B: route Phase A historical fetch through dig3-station's
             // `backfill::fetch_history` (REST `get_klines` under the hood;
@@ -858,10 +867,8 @@ impl DataBridge {
             // used rather than `klines_recent` because it RETURNS the error —
             // `klines_recent` swallows REST failures into an empty vec, which
             // left the chart silently stuck on "Loading..." for symbols whose
-            // raw string the connector can't resolve (e.g. HyperLiquid spot
-            // pairs pending the dig3-side coin->index fix). The symbol is the
-            // RAW exchange-native string (same one the Station live-kline
-            // subscriber feeds via `add_raw`) — no normalization applied.
+            // raw string the connector can't resolve. The wire_sym is the
+            // venue-native string (resolved from canonical by wire_symbol()).
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as i64)
@@ -869,7 +876,7 @@ impl DataBridge {
             let phase_a_result = digdigdig3_station::backfill::fetch_history(
                 &fetch_hub,
                 exchange_id,
-                &symbol_str,
+                &wire_sym,
                 account_type,
                 &KlineInterval::new(interval.as_str()),
                 now_ms,
@@ -975,7 +982,7 @@ impl DataBridge {
                 let result = digdigdig3_station::backfill::fetch_history(
                     &fetch_hub,
                     exchange_id,
-                    &symbol_str,
+                    &wire_sym,
                     account_type,
                     &kline_iv,
                     end_time_cursor,
@@ -1070,7 +1077,8 @@ impl DataBridge {
         let fetch_hub = self.station.hub();
         fetch_hub.rest(exchange_id)?;
         let interval = timeframe_to_interval(timeframe);
-        let symbol_str = symbol.to_string();
+        // Resolve wire form for the dig3 REST call.
+        let wire_sym = self.wire_symbol(exchange_id, account_type, symbol);
 
         self.runtime.block_on(async move {
             let page_size = limit.unwrap_or(500).min(500) as usize;
@@ -1078,7 +1086,7 @@ impl DataBridge {
                 &fetch_hub,
                 exchange_id,
                 account_type,
-                &symbol_str,
+                &wire_sym,
                 &interval,
                 page_size,
             )
@@ -1224,11 +1232,14 @@ impl DataBridge {
                 let station = self.station.clone();
                 let tx = self.tx.clone();
                 let station_trade_subscribed = self.station_trade_subscribed.clone();
-                let symbol_owned = symbol.to_string();
+                // Canonical form — emitted back in TradeUpdate.symbol so map lookups match.
+                let symbol_canonical = symbol.to_string();
+                // Wire form — passed to dig3 station add_raw.
+                let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
                 self.runtime.spawn(async move {
                     let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                         exchange_id,
-                        symbol_owned.clone(),
+                        symbol_wire.clone(),
                         account_type,
                         [digdigdig3_station::Stream::Trade],
                     );
@@ -1237,7 +1248,7 @@ impl DataBridge {
                         Err(e) => {
                             crate::dlog!(
                                 "[Bridge] station trade subscribe failed {:?} sym={}: {:?}",
-                                exchange_id, symbol_owned, e
+                                exchange_id, symbol_wire, e
                             );
                             // Remove gate key so a future subscribe_trades can retry.
                             let mut subs = station_trade_subscribed
@@ -1250,7 +1261,7 @@ impl DataBridge {
                     if !report.failed.is_empty() {
                         crate::dlog!(
                             "[Bridge] station trade partial-fail {:?} sym={}: {} failed",
-                            exchange_id, symbol_owned, report.failed.len()
+                            exchange_id, symbol_wire, report.failed.len()
                         );
                     }
                     // Drain station trade events and re-emit on the bridge broadcast.
@@ -1261,7 +1272,8 @@ impl DataBridge {
                             let _ = tx.send(LiveUpdate::TradeUpdate {
                                 exchange_id,
                                 account_type,
-                                symbol: symbol_owned.clone(),
+                                // Emit canonical form so app-side TradeKey lookup matches.
+                                symbol: symbol_canonical.clone(),
                                 price: point.price,
                                 quantity: point.quantity,
                                 timestamp: point.ts_ms,
@@ -1279,7 +1291,7 @@ impl DataBridge {
                     subs.remove(&trade_key);
                     crate::dlog!(
                         "[Bridge] station trade forwarder exited {:?} sym={}, gate removed",
-                        exchange_id, symbol_owned
+                        exchange_id, symbol_wire
                     );
                 });
             }
@@ -1293,6 +1305,7 @@ impl DataBridge {
     /// Routes the symbol to the station ticker stream (C5).
     pub fn subscribe_mini_ticker(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
         // C5: spawn station ticker side-channel once per (exchange_id, symbol, account_type).
+        // The gate key uses the canonical symbol (what the app tracks in the watchlist).
         let ticker_key = (exchange_id, symbol.to_string(), account_type);
         {
             let mut subs = self.station_ticker_subscribed
@@ -1305,12 +1318,15 @@ impl DataBridge {
         let station = self.station.clone();
         let tx = self.tx.clone();
         let subs_set = self.station_ticker_subscribed.clone();
-        let symbol_owned = symbol.to_string();
+        // Canonical form — emitted back in MiniTickerUpdate.symbol.
+        let symbol_canonical = symbol.to_string();
+        // Wire form — passed to dig3 station add_raw.
+        let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
         let key_for_cleanup = ticker_key;
         self.runtime.spawn(async move {
             let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                 exchange_id,
-                symbol_owned.clone(),
+                symbol_wire.clone(),
                 account_type,
                 [digdigdig3_station::Stream::Ticker],
             );
@@ -1318,7 +1334,7 @@ impl DataBridge {
                 Ok(r) => r,
                 Err(e) => {
                     crate::dlog!("[Bridge] station ticker subscribe failed {:?} sym={}: {:?}",
-                        exchange_id, symbol_owned, e);
+                        exchange_id, symbol_wire, e);
                     if let Ok(mut s) = subs_set.lock() {
                         s.remove(&key_for_cleanup);
                     }
@@ -1327,7 +1343,7 @@ impl DataBridge {
             };
             if !report.failed.is_empty() {
                 crate::dlog!("[Bridge] station ticker partial-fail {:?} sym={}: {} failed",
-                    exchange_id, symbol_owned, report.failed.len());
+                    exchange_id, symbol_wire, report.failed.len());
             }
             while let Some(ev) = report.handle.recv().await {
                 if let digdigdig3_station::Event::Ticker { point, .. } = ev {
@@ -1336,7 +1352,8 @@ impl DataBridge {
                     let _ = tx.send(LiveUpdate::MiniTickerUpdate {
                         exchange_id,
                         account_type,
-                        symbol: symbol_owned.clone(),
+                        // Emit canonical form so watchlist ticker map keyed by canonical symbol matches.
+                        symbol: symbol_canonical.clone(),
                         last_price: point.last,
                         price_change_percent: opt(point.change_pct_24h),
                         high_price: opt(point.high_24h),
@@ -1350,7 +1367,7 @@ impl DataBridge {
                 s.remove(&key_for_cleanup);
             }
             crate::dlog!("[Bridge] station ticker forwarder exited {:?} sym={}, gate removed",
-                exchange_id, symbol_owned);
+                exchange_id, symbol_wire);
         });
     }
 
@@ -1376,12 +1393,15 @@ impl DataBridge {
             let station = self.station.clone();
             let tx = self.tx.clone();
             let station_orderbook_subscribed = self.station_orderbook_subscribed.clone();
-            let symbol_owned = symbol.to_string();
+            // Canonical form — emitted back in orderbook events so app-side lookups match.
+            let symbol_canonical = symbol.to_string();
+            // Wire form — passed to dig3 station add_raw.
+            let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
             let key_for_cleanup = ob_key.clone();
             self.runtime.spawn(async move {
                 let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                     exchange_id,
-                    symbol_owned.clone(),
+                    symbol_wire.clone(),
                     account_type,
                     [digdigdig3_station::Stream::OrderbookDelta],
                 );
@@ -1390,7 +1410,7 @@ impl DataBridge {
                     Err(e) => {
                         crate::dlog!(
                             "[Bridge] station ob subscribe failed {:?} sym={}: {:?}",
-                            exchange_id, symbol_owned, e
+                            exchange_id, symbol_wire, e
                         );
                         if let Ok(mut subs) = station_orderbook_subscribed.lock() {
                             subs.remove(&key_for_cleanup);
@@ -1401,7 +1421,7 @@ impl DataBridge {
                 if !report.failed.is_empty() {
                     crate::dlog!(
                         "[Bridge] station ob partial-fail {:?} sym={}: {} failed",
-                        exchange_id, symbol_owned, report.failed.len()
+                        exchange_id, symbol_wire, report.failed.len()
                     );
                 }
                 while let Some(ev) = report.handle.recv().await {
@@ -1412,7 +1432,8 @@ impl DataBridge {
                             let _ = tx.send(LiveUpdate::OrderbookSnapshot {
                                 exchange_id,
                                 account_type,
-                                symbol: symbol_owned.clone(),
+                                // Canonical form for app-side OrderbookKey lookup.
+                                symbol: symbol_canonical.clone(),
                                 bids,
                                 asks,
                                 timestamp: point.ts_ms,
@@ -1425,7 +1446,8 @@ impl DataBridge {
                             let _ = tx.send(LiveUpdate::OrderbookDelta {
                                 exchange_id,
                                 account_type,
-                                symbol: symbol_owned.clone(),
+                                // Canonical form for app-side OrderbookKey lookup.
+                                symbol: symbol_canonical.clone(),
                                 bids,
                                 asks,
                                 timestamp: point.ts_ms,
@@ -1439,7 +1461,7 @@ impl DataBridge {
                 }
                 crate::dlog!(
                     "[Bridge] station ob forwarder exited {:?} sym={}, gate removed",
-                    exchange_id, symbol_owned
+                    exchange_id, symbol_wire
                 );
             });
         }
@@ -1848,6 +1870,8 @@ impl DataBridge {
         let fetch_hub = self.station.hub();
         let tx = self.tx.clone();
         let symbol_str = symbol.to_string();
+        // Wire form for dig3 REST calls.
+        let wire_sym = self.wire_symbol(exchange_id, account_type, symbol);
         let interval = timeframe_to_interval(timeframe);
         let tf_name = timeframe.name.clone();
         let cache = self.bar_cache.clone();
@@ -1978,7 +2002,7 @@ impl DataBridge {
                 let result = digdigdig3_station::backfill::fetch_history(
                     &fetch_hub,
                     exchange_id,
-                    &symbol_str,
+                    &wire_sym,
                     account_type,
                     &kline_iv,
                     end_time_cursor,
@@ -2136,6 +2160,8 @@ impl DataBridge {
         let fetch_hub = self.station.hub();
         let tx = self.tx.clone();
         let symbol_str = symbol.to_string();
+        // Wire form for dig3 REST calls.
+        let wire_sym = self.wire_symbol(exchange_id, account_type, symbol);
         let interval = timeframe_to_interval(timeframe);
         let tf_name = timeframe.name.clone();
         let cache = self.bar_cache.clone();
@@ -2278,7 +2304,7 @@ impl DataBridge {
             let result = digdigdig3_station::fetch_history(
                 &fetch_hub,
                 exchange_id,
-                &symbol_str,
+                &wire_sym,
                 account_type,
                 &kline_iv,
                 end_time_ms,
@@ -2355,6 +2381,71 @@ impl DataBridge {
     /// Get a reference to the tokio runtime owned by this bridge.
     pub fn runtime(&self) -> &Runtime {
         &self.runtime
+    }
+
+    /// Resolve a (possibly canonical) symbol key to the venue-native wire string.
+    ///
+    /// Canonical keys are of the form `"BTCUSDT"` (base+quote uppercased, no
+    /// separator) as produced by `build_symbol_search_results`. Venue-native
+    /// strings vary by exchange: `"BTC-USDT"` on OKX, `"KRW-BTC"` on Upbit,
+    /// `"ETH/USDC"` on Lighter, etc.
+    ///
+    /// Resolution order:
+    /// 1. Exact match on `SymbolInfo.symbol` → return `requested` unchanged
+    ///    (native passthrough — covers old presets/watchlists and venues where
+    ///    canonical == native).
+    /// 2. Match on `format!("{}{}", base_asset, quote_asset).to_uppercase()` with
+    ///    `account_type` filter → return the raw `SymbolInfo.symbol`.
+    /// 3. Same as (2) but ignoring `account_type` when exactly one match exists.
+    /// 4. Fallback → return `requested` unchanged.
+    fn wire_symbol(
+        &self,
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        requested: &str,
+    ) -> String {
+        let symbols = self.station.symbols(exchange_id);
+
+        // (1) Exact native match — covers old watchlist/preset entries and venues
+        // where the canonical form is identical to the native form (e.g. Binance).
+        if symbols.iter().any(|s| s.symbol == requested) {
+            return requested.to_string();
+        }
+
+        // (2) Canonical → native with account_type filter.
+        let req_upper = requested.to_uppercase();
+        let with_at: Vec<&SymbolInfo> = symbols
+            .iter()
+            .filter(|s| {
+                s.account_type == account_type
+                    && !s.base_asset.is_empty()
+                    && !s.quote_asset.is_empty()
+                    && format!("{}{}", s.base_asset, s.quote_asset).to_uppercase() == req_upper
+            })
+            .collect();
+
+        if with_at.len() == 1 {
+            return with_at[0].symbol.clone();
+        }
+
+        // (3) Relaxed: ignore account_type when exactly one match.
+        if with_at.is_empty() {
+            let any_at: Vec<&SymbolInfo> = symbols
+                .iter()
+                .filter(|s| {
+                    !s.base_asset.is_empty()
+                        && !s.quote_asset.is_empty()
+                        && format!("{}{}", s.base_asset, s.quote_asset).to_uppercase() == req_upper
+                })
+                .collect();
+
+            if any_at.len() == 1 {
+                return any_at[0].symbol.clone();
+            }
+        }
+
+        // (4) Fallback — return the requested string unchanged.
+        requested.to_string()
     }
 }
 
@@ -2620,7 +2711,8 @@ impl DataBridge {
         let connector = self.hub.rest(exchange_id).ok_or_else(|| {
             ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
         })?;
-        connector.get_order(symbol, order_id, account_type).await
+        let wire = self.wire_symbol(exchange_id, account_type, symbol);
+        connector.get_order(&wire, order_id, account_type).await
     }
 
     /// Fetch all open orders, optionally filtered by symbol.
@@ -2633,7 +2725,8 @@ impl DataBridge {
         let connector = self.hub.rest(exchange_id).ok_or_else(|| {
             ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
         })?;
-        connector.get_open_orders(symbol, account_type).await
+        let wire_opt: Option<String> = symbol.map(|s| self.wire_symbol(exchange_id, account_type, s));
+        connector.get_open_orders(wire_opt.as_deref(), account_type).await
     }
 
     /// Fetch historical orders matching the given filter.

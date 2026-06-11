@@ -5791,16 +5791,39 @@ impl ChartApp {
         exchange_symbols: &std::collections::HashMap<digdigdig3::ExchangeId, Vec<mlc_live_data::SymbolInfo>>,
     ) -> Vec<mlc_core::state::modal_state::SearchResult> {
         use mlc_core::state::modal_state::SearchResult;
+        use std::collections::HashMap;
 
         let q = query.to_lowercase();
+
+        /// Compute the canonical key for a symbol when base+quote are non-empty.
+        /// Returns `None` when either asset field is empty (no canonicalization).
+        fn canonical_key(s: &mlc_live_data::SymbolInfo) -> Option<String> {
+            if s.base_asset.is_empty() || s.quote_asset.is_empty() {
+                return None;
+            }
+            Some(format!("{}{}", s.base_asset, s.quote_asset).to_uppercase())
+        }
 
         if !exchange_symbols.is_empty() {
             let mut results: Vec<SearchResult> = Vec::new();
 
             for (exchange_id, symbols) in exchange_symbols {
                 // Canonical lowercase slug — used for both storage and display.
-                // The display layer can uppercase it when rendering if desired.
                 let exchange_slug = exchange_id.as_str();
+
+                // Build uniqueness count: (account_type_label, canonical_form) → count.
+                // Only symbols with a computable canonical form are counted.
+                // Symbols whose canonical form appears more than once within this
+                // (exchange, account_type) group are NOT canonicalized — the raw
+                // venue-native string keeps them distinct.
+                let mut canonical_counts: HashMap<(String, String), usize> = HashMap::new();
+                for s in symbols.iter() {
+                    if let Some(canon) = canonical_key(s) {
+                        *canonical_counts
+                            .entry((s.account_type.short_label().to_string(), canon))
+                            .or_insert(0) += 1;
+                    }
+                }
 
                 let filtered: Vec<&mlc_live_data::SymbolInfo> = symbols
                     .iter()
@@ -5808,18 +5831,41 @@ impl ChartApp {
                         if q.is_empty() {
                             true
                         } else {
+                            // Match against raw symbol, base asset, OR the canonical
+                            // form so that e.g. "btcusdt" finds OKX "BTC-USDT".
+                            let canon_match = canonical_key(s)
+                                .map(|c| c.to_lowercase().contains(&q))
+                                .unwrap_or(false);
                             s.symbol.to_lowercase().contains(&q)
                                 || s.base_asset.to_lowercase().contains(&q)
+                                || canon_match
                         }
                     })
                     .collect();
 
                 for s in filtered.iter().take(100) {
-                    let in_watchlist = watchlist_manager.contains_with_type(&s.symbol, exchange_slug, s.account_type.short_label());
+                    // Decide the canonical symbol key for this search result.
+                    // Use the canonical form only when it is unique within this
+                    // (exchange, account_type) group; otherwise fall back to raw.
+                    let symbol_key = canonical_key(s)
+                        .filter(|c| {
+                            canonical_counts
+                                .get(&(s.account_type.short_label().to_string(), c.clone()))
+                                .copied()
+                                .unwrap_or(0)
+                                == 1
+                        })
+                        .unwrap_or_else(|| s.symbol.clone());
+
+                    let in_watchlist = watchlist_manager.contains_with_type(
+                        &symbol_key,
+                        exchange_slug,
+                        s.account_type.short_label(),
+                    );
                     let asset_type = if exchange_slug == "moex" { "Stock" } else { "Crypto" };
                     let category_icon = if exchange_slug == "moex" { "S" } else { "C" };
                     results.push(SearchResult {
-                        symbol: s.symbol.clone(),
+                        symbol: symbol_key,
                         name: format!("{}/{}", s.base_asset, s.quote_asset),
                         exchange: exchange_slug.to_string(),
                         exchange_id: exchange_slug.to_string(),
