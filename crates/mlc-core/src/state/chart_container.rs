@@ -796,7 +796,25 @@ impl ChartContainer {
     /// Used for backfill / WebSocket reconnect — the user's current pan/zoom
     /// and scale mode are preserved.  Only `bar_count` and derived data
     /// (prev-close) are recalculated.
+    ///
+    /// Viewport anchor: the bar at `view_start` is identified by timestamp
+    /// before the replacement and restored by timestamp afterwards.  This
+    /// prevents the viewport from drifting when the new series has a different
+    /// length or offset (e.g. a longer merged cache or a fresh fetch arriving
+    /// after a tab switch).
     pub fn update_bars(&mut self, bars: Vec<Bar>) {
+        // Capture the timestamp of the bar currently at view_start so we can
+        // re-anchor after the replacement.  Clamp the lookup index to [0, len-1]
+        // so out-of-range view_start values still produce a valid anchor.
+        let anchor: Option<(i64, f64)> = if !self.bars.is_empty() {
+            let vs = self.viewport.view_start;
+            let clamped_idx = (vs.floor() as usize).min(self.bars.len().saturating_sub(1));
+            let frac = vs - vs.floor();
+            self.bars.get(clamped_idx).map(|b| (b.timestamp, frac))
+        } else {
+            None
+        };
+
         self.bars = bars;
 
         self.update_prev_close_line();
@@ -807,6 +825,19 @@ impl ChartContainer {
         // preserve the user's pan/zoom. Snapping to the end on every prepend
         // makes scroll-left appear to "jump back to newest" once the user has
         // scrolled past the snap margin.
+
+        // Re-anchor view_start by the timestamp captured above.  If the anchor
+        // bar is still present in the new series, keep the exact fractional
+        // offset so the render position is stable.  If it is missing (the new
+        // series starts later than the anchor), leave view_start unchanged —
+        // the caller can decide how to handle that edge case.
+        if let Some((anchor_ts, frac)) = anchor {
+            if let Some(new_i) = self.bars.iter().position(|b| b.timestamp >= anchor_ts) {
+                self.viewport.view_start = new_i as f64 + frac;
+            }
+            // else: new series does not reach the anchor timestamp; leave
+            // view_start as-is so the viewport at least stays within the new data.
+        }
 
         if self.price_scale.scale_mode.is_auto_y() {
             self.calc_auto_scale();

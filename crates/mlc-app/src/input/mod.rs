@@ -2527,11 +2527,27 @@ impl ChartApp {
             let sep_info: Vec<String> = extended.sub_panes.iter()
                 .map(|sp| format!("sep(y={:.1},h={:.1})", sp.separator.y, sp.separator.height))
                 .collect();
+            // Also dump the layout inputs: which window is active, what the
+            // inner docking tree holds, and what the indicator manager returns
+            // for that window (id/window_id/pane/visible) — pinpoints which
+            // side of the visible_set intersection drops the panes.
+            let active_cid = self.panel_app.panel_grid.active_container_id();
+            let inner_ids: Vec<u64> = self.panel_app.panel_grid.active_container()
+                .map(|w| mlc_core::state::chart_container::collect_inner_instance_ids(&w.inner_docking))
+                .unwrap_or_default();
+            let inst_dump: Vec<String> = active_cid
+                .map(|cid| self.indicator_manager
+                    .get_instances_for_symbol_in_window("", cid.0)
+                    .into_iter()
+                    .map(|i| format!("inst(id={},win={:?},pane={},vis={})", i.id, i.window_id, i.pane, i.visible))
+                    .collect())
+                .unwrap_or_default();
             eprintln!(
-                "[TEMP-DIAG drag-start] x={:.1} y={:.1} main_chart(x={:.1},y={:.1},w={:.1},h={:.1}) sub_panes={} {}",
+                "[TEMP-DIAG drag-start] x={:.1} y={:.1} main_chart(x={:.1},y={:.1},w={:.1},h={:.1}) sub_panes={} {} | active_cid={:?} inner_ids={:?} {}",
                 x, y, mc.x, mc.y, mc.width, mc.height,
                 extended.sub_panes.len(),
-                sep_info.join(" ")
+                sep_info.join(" "),
+                active_cid, inner_ids, inst_dump.join(" ")
             );
         }
 
@@ -8316,17 +8332,36 @@ impl ChartApp {
 
         // Both order and proportions from the container's inner_docking tree,
         // filtered by indicator_manager visibility.
+        // When root.proportions is empty (default before any separator drag),
+        // pass empty sub_proportions so from_proportions falls back to the
+        // same InnerLayout::sync_with defaults the renderer uses — avoids
+        // collapsing panes to minimum height (30px) when proportions are zeros.
         let (sub_pane_ids, sub_proportions): (Vec<u64>, Vec<f64>) = self.panel_app.panel_grid
             .active_container()
             .map(|win| {
                 use mlc_core::state::chart_container::{collect_inner_instance_ids, collect_inner_proportions};
                 let ids = collect_inner_instance_ids(&win.inner_docking);
                 let props = collect_inner_proportions(&win.inner_docking);
-                ids.iter()
-                    .enumerate()
-                    .filter(|(_, id)| visible_set.contains(id))
-                    .map(|(i, &id)| (id, props.get(i + 1).copied().unwrap_or(0.0)))
-                    .unzip()
+                // props is [main_share, sub0_share, ...]; empty when the uzor
+                // docking tree root.proportions has not been written yet.
+                // Mirror the renderer: only pass sub-proportions when there is
+                // at least one real value (props.len() > 1, same guard the
+                // renderer uses in render_chart.rs).
+                if props.len() > 1 {
+                    ids.iter()
+                        .enumerate()
+                        .filter(|(_, id)| visible_set.contains(id))
+                        .map(|(i, &id)| (id, props.get(i + 1).copied().unwrap_or(0.0)))
+                        .unzip()
+                } else {
+                    let filtered_ids: Vec<u64> = ids
+                        .iter()
+                        .filter(|id| visible_set.contains(*id))
+                        .copied()
+                        .collect();
+                    let empty_props = vec![0.0_f64; 0];
+                    (filtered_ids, empty_props)
+                }
             })
             .unwrap_or_default();
         ExtendedFrameLayout::from_proportions(
@@ -8379,12 +8414,25 @@ impl ChartApp {
         use mlc_core::state::chart_container::{collect_inner_instance_ids, collect_inner_proportions};
         let all_ids = collect_inner_instance_ids(&window.inner_docking);
         let all_props = collect_inner_proportions(&window.inner_docking);
-        let (sub_pane_ids, sub_proportions): (Vec<u64>, Vec<f64>) = all_ids
-            .iter()
-            .enumerate()
-            .filter(|(_, id)| visible_set.contains(id))
-            .map(|(i, &id)| (id, all_props.get(i + 1).copied().unwrap_or(0.0)))
-            .unzip();
+        // Mirror the renderer: only pass sub-proportions when the uzor docking
+        // tree root has real values (len > 1).  Empty root.proportions must
+        // produce an empty Vec here so from_proportions falls back to
+        // InnerLayout::sync_with defaults — the same path the renderer takes.
+        let (sub_pane_ids, sub_proportions): (Vec<u64>, Vec<f64>) = if all_props.len() > 1 {
+            all_ids
+                .iter()
+                .enumerate()
+                .filter(|(_, id)| visible_set.contains(id))
+                .map(|(i, &id)| (id, all_props.get(i + 1).copied().unwrap_or(0.0)))
+                .unzip()
+        } else {
+            let filtered_ids: Vec<u64> = all_ids
+                .iter()
+                .filter(|id| visible_set.contains(*id))
+                .copied()
+                .collect();
+            (filtered_ids, Vec::new())
+        };
         Some(ExtendedFrameLayout::from_proportions(
             leaf_rect,
             &sub_pane_ids,

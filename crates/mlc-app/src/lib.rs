@@ -6861,7 +6861,6 @@ impl ChartApp {
                     .and_then(|ts| mlc_core::find_bar_for_timestamp(&window.bars, ts))
                     .map(|idx| idx as f64 + frac)
                     .unwrap_or(view_start);
-                window.viewport.view_start = peer_view_start;
                 // Sync visible bar count: peer gets the same number of bars in view,
                 // but its own bar_spacing adapts to its chart_width.
                 let peer_spacing = if visible_bars > 0.0 && window.viewport.chart_width > 0.0 {
@@ -6872,8 +6871,23 @@ impl ChartApp {
                 } else {
                     bar_spacing
                 };
-                window.viewport.bar_spacing = peer_spacing;
-                if window.price_scale.scale_mode.is_auto_y() {
+                // Only write + rescale when the peer's viewport actually moves.
+                // An unconditional per-frame write made calc_auto_scale here race
+                // the per-tick TradeUpdate autoscale on the same peer: the two
+                // paths compute slightly different price ranges, the last-price
+                // projection lands alternately inside/outside the range, and the
+                // line + scale chip blink (owner report: right window of a
+                // 2-chart sync group ripples).
+                let moved = (window.viewport.view_start - peer_view_start).abs() > 1e-9
+                    || (window.viewport.bar_spacing - peer_spacing).abs() > 1e-9;
+                if moved {
+                    window.viewport.view_start = peer_view_start;
+                    window.viewport.bar_spacing = peer_spacing;
+                    if window.price_scale.scale_mode.is_auto_y() {
+                        window.calc_auto_scale();
+                    }
+                } else if scale_mode.is_some() && window.price_scale.scale_mode.is_auto_y() {
+                    // Mode flip without viewport movement still needs one rescale.
                     window.calc_auto_scale();
                 }
             }

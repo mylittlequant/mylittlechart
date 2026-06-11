@@ -318,9 +318,71 @@ impl ChartApp {
                         self.bridge.request_background_backfill(exchange_id, &sym, &tf, at, bg_target);
                     }
 
-                    // No-match diagnostic: if zero windows matched, log the event key and
-                    // each window's key so routing mismatches are visible in the console.
-                    if !any_matched {
+                    // Before diagnosing a true no-match, try to deliver bars to
+                    // any parked (tab-switched-away) preset whose windows match
+                    // this event.  Parked presets have their own panel_grid and
+                    // tag_manager stored in live_preset_cache.  Bars delivered
+                    // here are held in-memory so that unparking the preset
+                    // renders immediately without re-fetching.
+                    let mut parked_matched = false;
+                    {
+                        // Collect matching (preset_key, Vec<ChartId>) pairs first
+                        // to avoid borrowing live_preset_cache and its inner fields
+                        // simultaneously with the mutable containers pass.
+                        let matching_parked: Vec<(String, Vec<mlc_core::state::ChartId>)> =
+                            self.live_preset_cache
+                                .iter()
+                                .map(|(preset_key, parked)| {
+                                    let cids: Vec<mlc_core::state::ChartId> = parked
+                                        .panel_grid
+                                        .containers()
+                                        .keys()
+                                        .filter(|cid| {
+                                            parked
+                                                .tag_manager
+                                                .symbol_for_chart(**cid)
+                                                .map_or(false, |s| s == symbol)
+                                                && parked
+                                                    .tag_manager
+                                                    .exchange_for_chart(**cid)
+                                                    .map_or(false, |e| e == exchange_id.as_str())
+                                                && parked
+                                                    .tag_manager
+                                                    .timeframe_for_chart(**cid)
+                                                    .map_or(false, |tf| tf.name == tf_name)
+                                                && parked
+                                                    .tag_manager
+                                                    .account_type_for_chart(**cid)
+                                                    .map_or(false, |at| at == account_type.short_label())
+                                        })
+                                        .copied()
+                                        .collect();
+                                    (preset_key.clone(), cids)
+                                })
+                                .filter(|(_, cids)| !cids.is_empty())
+                                .collect();
+
+                        for (preset_key, cids) in matching_parked {
+                            if let Some(parked) = self.live_preset_cache.get_mut(&preset_key) {
+                                for cid in cids {
+                                    if let Some(window) = parked.panel_grid.containers_mut().get_mut(&cid) {
+                                        let is_backfill = !window.pending_symbol_load && !window.bars.is_empty();
+                                        if is_backfill {
+                                            window.update_bars(bars.clone());
+                                        } else {
+                                            window.set_bars(bars.clone());
+                                            window.pending_symbol_load = false;
+                                        }
+                                        parked_matched = true;
+                                        crate::dlog!("[BarsLoaded] delivered to parked preset '{}' cid={:?} is_backfill={}", preset_key, cid, is_backfill);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // No-match diagnostic: log only when neither live nor parked windows matched.
+                    if !any_matched && !parked_matched {
                         let window_keys: Vec<String> = self.panel_app.panel_grid.containers().keys()
                             .map(|cid| {
                                 let sym = self.managers.bubble.symbol_for_chart(*cid).unwrap_or("?");
@@ -418,25 +480,14 @@ impl ChartApp {
                         {
                             continue;
                         }
-                        // Backfill can PREPEND history: the bars array is fully
-                        // replaced, so compensate view_start by the number of
-                        // bars added in front (same contract as ScrollBarsLoaded)
-                        // or the viewport silently shifts left by the prepend.
-                        let old_first_ts = window.bars.first().map(|b| b.timestamp);
+                        // update_bars anchors view_start by timestamp before
+                        // replacing self.bars, so no manual prepend compensation
+                        // is needed here (the old per-caller offset was removed
+                        // when the anchor logic was added to update_bars).
                         window.update_bars(bars.clone());
                         if window.needs_snap_after_backfill {
                             window.consume_cold_snap();
                         } else {
-                            if let Some(old_first) = old_first_ts {
-                                let prepended = window
-                                    .bars
-                                    .iter()
-                                    .take_while(|b| b.timestamp < old_first)
-                                    .count();
-                                if prepended > 0 {
-                                    window.viewport.view_start += prepended as f64;
-                                }
-                            }
                             if window.price_scale.scale_mode.is_auto_y() {
                                 window.calc_auto_scale();
                             }
@@ -508,12 +559,11 @@ impl ChartApp {
                         window.scroll_fetch_in_flight = false;
                         window.scroll_fetch_started = None;
 
-                        // Viewport shift: prepending N bars pushes all existing indices up by N.
-                        window.viewport.view_start += prepend_count as f64;
-
-                        // Replace bars with the full merged set from the bridge.
-                        window.update_bars(bars.clone());
-
+                        // update_bars anchors view_start by the timestamp of
+                        // the bar currently at view_start before replacing bars,
+                        // so no manual "view_start += prepend_count" is needed
+                        // here (removed when anchor logic was added to update_bars).
+                        //
                         // NOTE: do NOT evict here. The scroll-trigger gate at
                         // line ~1077 already refuses to request more bars once
                         // window.bars.len() >= max_loaded_bars, so this branch
@@ -521,6 +571,7 @@ impl ChartApp {
                         // drop the bars we just prepended (oldest end) and
                         // visually "snap" the viewport back to newer data —
                         // exactly the opposite of the user's intent.
+                        window.update_bars(bars.clone());
 
                         if window.price_scale.scale_mode.is_auto_y() {
                             window.calc_auto_scale();

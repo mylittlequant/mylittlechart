@@ -734,21 +734,37 @@ impl DataBridge {
 
         let cache_key = make_series_key(exchange_id, account_type, &symbol_str, &tf_name);
 
-        // ── Deduplication guard: skip if a fetch for this key is already running ──
-        {
-            let mut af = active_fetches.lock().unwrap_or_else(|e| e.into_inner());
-            if af.contains(&cache_key) {
-                crate::dlog!("[Bridge] fetch already in flight for {:?} sym={} tf={}, skipping", exchange_id, symbol_str, tf_name);
-                return;
-            }
-            af.insert(cache_key.clone());
-        }
-
-        // Snapshot the disk/session cache BEFORE Phase A so we can detect a gap.
+        // Snapshot the disk/session cache BEFORE the dedup guard so we can emit
+        // it immediately on force=true even when a fetch is already in flight.
         let cached_bars: Option<Vec<Bar>> = {
             let bars = read_series_bars(&self.bar_cache, &cache_key);
             if bars.is_empty() { None } else { Some(bars) }
         };
+
+        // ── Deduplication guard: skip if a fetch for this key is already running ──
+        // When force=true (tab-switch cure), still emit cached bars for instant
+        // display before skipping — the network refetch was already launched by
+        // whoever set the in-flight flag.
+        {
+            let mut af = active_fetches.lock().unwrap_or_else(|e| e.into_inner());
+            if af.contains(&cache_key) {
+                crate::dlog!("[Bridge] fetch already in flight for {:?} sym={} tf={}, skipping", exchange_id, symbol_str, tf_name);
+                if force {
+                    if let Some(ref bars) = cached_bars {
+                        crate::dlog!("[Bridge] {:?} force=true: serving {} cached bars despite in-flight fetch sym={} tf={}", exchange_id, bars.len(), symbol_str, tf_name);
+                        let _ = tx.send(LiveUpdate::BarsLoaded {
+                            exchange_id,
+                            account_type,
+                            symbol: symbol_str.clone(),
+                            timeframe: tf_name.clone(),
+                            bars: bars.clone(),
+                        });
+                    }
+                }
+                return;
+            }
+            af.insert(cache_key.clone());
+        }
 
         // If cache exists, send it immediately (Level 1 — instant render while
         // the network fetch is in flight).
