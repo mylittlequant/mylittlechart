@@ -5793,7 +5793,58 @@ impl ChartApp {
         use mlc_core::state::modal_state::SearchResult;
         use std::collections::HashMap;
 
-        let q = query.to_lowercase();
+        let q_full = query.to_lowercase();
+
+        // Composite query syntax: "SYMBOL[:EXCHANGE[:AT]]" — TradingView-style.
+        // Part 1 filters exchanges (full slug, slug prefix, or a short alias),
+        // part 2 filters account type ("s"/"f", also "spot"/"fut"/"futures"/"perp").
+        let mut q_parts = q_full.splitn(3, ':');
+        let q = q_parts.next().unwrap_or("").to_string();
+        let q_exchange = q_parts.next().map(str::trim).filter(|p| !p.is_empty());
+        let q_at = q_parts.next().map(str::trim).filter(|p| !p.is_empty());
+
+        /// Short exchange aliases for the composite search syntax.
+        fn exchange_alias(alias: &str) -> Option<&'static str> {
+            Some(match alias {
+                "bn" => "binance",
+                "bb" => "bybit",
+                "kc" => "kucoin",
+                "gt" => "gateio",
+                "hl" => "hyperliquid",
+                "ltr" => "lighter",
+                "dr" => "deribit",
+                "up" => "upbit",
+                "cc" => "cryptocom",
+                "cb" => "coinbase",
+                "bg" => "bitget",
+                "bf" => "bitfinex",
+                "bs" => "bitstamp",
+                "bx" => "bingx",
+                "gm" => "gemini",
+                "kr" => "kraken",
+                "dy" => "dydx",
+                "mx" => "mexc",
+                _ => return None,
+            })
+        }
+
+        /// Does the exchange slug match the query's exchange part?
+        /// Accepts an exact alias ("hl") or any prefix of the full slug ("hyp").
+        fn exchange_matches(slug: &str, part: &str) -> bool {
+            if let Some(full) = exchange_alias(part) {
+                return slug == full;
+            }
+            slug.starts_with(part)
+        }
+
+        /// Does the account-type short label ("S"/"F") match the query's AT part?
+        fn at_matches(short_label: &str, part: &str) -> bool {
+            match part {
+                "s" | "spot" => short_label.eq_ignore_ascii_case("S"),
+                "f" | "fut" | "futures" | "perp" => short_label.eq_ignore_ascii_case("F"),
+                other => short_label.eq_ignore_ascii_case(other),
+            }
+        }
 
         /// Compute the canonical key for a symbol when base+quote are non-empty.
         /// Returns `None` when either asset field is empty (no canonicalization).
@@ -5810,6 +5861,13 @@ impl ChartApp {
             for (exchange_id, symbols) in exchange_symbols {
                 // Canonical lowercase slug — used for both storage and display.
                 let exchange_slug = exchange_id.as_str();
+
+                // Composite-query exchange filter.
+                if let Some(part) = q_exchange {
+                    if !exchange_matches(&exchange_slug.to_lowercase(), part) {
+                        continue;
+                    }
+                }
 
                 // Build uniqueness count: (account_type_label, canonical_form) → count.
                 // Only symbols with a computable canonical form are counted.
@@ -5828,6 +5886,12 @@ impl ChartApp {
                 let filtered: Vec<&mlc_live_data::SymbolInfo> = symbols
                     .iter()
                     .filter(|s| {
+                        // Composite-query account-type filter ("...:S" / "...:F").
+                        if let Some(part) = q_at {
+                            if !at_matches(s.account_type.short_label(), part) {
+                                return false;
+                            }
+                        }
                         if q.is_empty() {
                             true
                         } else {
