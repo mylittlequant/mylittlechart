@@ -520,19 +520,37 @@ impl ChartApp {
                 eprintln!("[ChartApp] load preset: {}", id);
                 let prev_id = self.panel_app.active_preset_id.clone();
 
-                // Same tab  -  no-op.
-                if prev_id == id {
+                // Is the CURRENT live state actually a materialized preset?
+                // At startup active_preset_id is already set from the profile
+                // BEFORE the restore runs, so a LoadPreset for that same id
+                // must NOT be treated as a no-op — the windows have no bubble
+                // membership yet. Treating it as a no-op both skipped the real
+                // restore (eternal "Loading...", empty toolbar) and let the
+                // trailing autosave bake the EMPTY state into the preset file.
+                let already_materialized = self
+                    .panel_app
+                    .panel_grid
+                    .iter_containers()
+                    .any(|(_, w)| self.managers.bubble.bubble_for_chart(w.id).is_some());
+
+                // Same tab AND live state real  -  no-op (and nothing changed,
+                // so no autosave either).
+                if prev_id == id && already_materialized {
                     eprintln!("[ChartApp] LoadPreset: already active, skipping");
-                    state_mutated = true;
                 } else {
 
-                // Save the outgoing preset (with bars) before switching away.
-                if !prev_id.is_empty() && prev_id != "__default__" {
+                // Save the outgoing preset (with bars) before switching away —
+                // but never snapshot a non-materialized placeholder state over
+                // a real preset file.
+                if !prev_id.is_empty() && prev_id != "__default__" && already_materialized {
                     self.autosave_snapshot();
                 }
 
-                // Park outgoing state into live cache.
-                if !prev_id.is_empty() {
+                // Park outgoing state into live cache — only a materialized
+                // state. Parking the startup placeholder under the SAME id we
+                // are about to load would make unpark return the placeholder
+                // and skip the cold restore entirely.
+                if !prev_id.is_empty() && already_materialized {
                     self.park_active_preset(&prev_id);
                 }
 
@@ -580,7 +598,23 @@ impl ChartApp {
 
                     self.sidebar_data_dirty = true;
                     state_mutated = true;
-                } else if let Some(preset) = self.panel_app.presets.get(&id).cloned() {
+                } else if let Some(mut preset) = self.panel_app.presets.get(&id).cloned() {
+                    // Recovery: preset files written by the startup-autosave bug
+                    // carry empty symbol/exchange. Resurrect them with the
+                    // standard default instead of an eternally-loading empty
+                    // chart; the next (now-guarded) autosave heals the file.
+                    for w in preset.windows.iter_mut() {
+                        if w.symbol.is_empty() {
+                            w.symbol = "BTCUSDT".to_string();
+                            w.exchange = "binance".to_string();
+                        }
+                    }
+                    for b in preset.bubbles.iter_mut() {
+                        if b.symbol.is_empty() {
+                            b.symbol = "BTCUSDT".to_string();
+                            b.exchange = "binance".to_string();
+                        }
+                    }
                     eprintln!(
                         "[ChartApp] applying preset '{}': {} windows, {} groups, {} indicators",
                         preset.name, preset.windows.len(), preset.bubbles.len(), preset.indicators.len()
