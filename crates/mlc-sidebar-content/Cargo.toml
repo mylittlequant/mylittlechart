@@ -9,7 +9,7 @@ name = "mlc_sidebar_content"
 [dependencies]
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 mlc-layout = { path = "../mlc-layout", package = "mylittlechart-layout" }
-uzor = "=1.4.5"
+uzor = "=1.4.11"
 mlc-alerts = { path = "../mlc-alerts", package = "mylittlechart-alerts" }
 serde = { version = "1.0", features = ["derive"] }
 gate4agent = "=0.2.37"

@@ -48,3 +48,9 @@ strip = "none"
 # (large enum with 480 variants needs optimization)
 [profile.dev.package.mylittlechart-indicators]
 opt-level = 2
+
+[patch.crates-io]
+# VERIFICATION MODE: local uzor carries the N-ary separator-drag fix
+# (Grid2x2 cross_ratio). Owner click-verifies, THEN uzor 1.4.6 gets
+# published and this block is removed + pins bumped.
+uzor = { path = "../uzor/uzor" }
