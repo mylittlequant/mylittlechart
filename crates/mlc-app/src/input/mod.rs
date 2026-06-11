@@ -4748,7 +4748,7 @@ impl ChartApp {
             // fresh frame_layouts/active_frame_layout, so we always run it and use
             // the widget-name check only as an ADDITIONAL suppressor (i.e. when a
             // known non-chart widget is explicitly hovered, trust that over geometry).
-            let on_canvas = {
+            let (on_canvas, over_subpane_widget) = {
                 use mlc_core::input::ChartHitTester;
                 use mlc_core::engine::input::HitResult;
                 // Resolve the layout and overlay for the relevant leaf.
@@ -4769,33 +4769,54 @@ impl ChartApp {
                         .unwrap_or_default();
                     (ext, ovl)
                 };
-                let geometry_says_canvas = if let Some(ext) = extended {
+                let hit = if let Some(ext) = extended {
                     let tester = ExtendedLayoutHitTester::new(&ext).with_overlays(&overlays);
-                    matches!(
-                        tester.hit_test(x, y),
-                        HitResult::Chart
-                            | HitResult::SubPaneChart { .. }
-                            | HitResult::PriceScale
-                            | HitResult::SubPanePriceScale { .. }
-                    )
+                    tester.hit_test(x, y)
                 } else {
-                    false
+                    HitResult::None
                 };
+                let geometry_says_canvas = matches!(
+                    hit,
+                    HitResult::Chart
+                        | HitResult::SubPaneChart { .. }
+                        | HitResult::PriceScale
+                        | HitResult::SubPanePriceScale { .. }
+                );
+                // Sub-pane overlay buttons and pane separators are NOT canvas
+                // (the crosshair must hide over them), but the hover pipeline
+                // below must still run: it drives button hover highlight and
+                // sub-pane overlay visibility. Early-returning for them left
+                // sub-pane buttons and separators permanently hover-dead.
+                let over_subpane_widget = matches!(
+                    hit,
+                    HitResult::SubPaneOverlayButton { .. } | HitResult::PaneSeparator { .. }
+                );
                 // A non-chart widget is explicitly hovered → trust that, suppress crosshair.
                 // An empty/stale hover (None) → trust the geometry instead.
                 let explicit_non_chart = self.input_coordinator.borrow().hovered_widget()
                     .map(|w| !w.as_str().starts_with("chart:pane:"))
                     .unwrap_or(false);
-                geometry_says_canvas && !explicit_non_chart
+                (geometry_says_canvas && !explicit_non_chart, over_subpane_widget)
             };
 
-            if !on_canvas && !is_drawing {
+            if !on_canvas && !is_drawing && !over_subpane_widget {
                 if self.panel_app.panel_grid.is_split() {
                     self.hide_all_split_crosshairs();
                 } else {
                     self.hide_crosshair();
                 }
                 return;
+            }
+            if over_subpane_widget && !is_drawing {
+                // Keep the crosshair hidden over sub-pane widgets, but fall
+                // through so the overlay hover state updates below still run
+                // (downstream is_over_separator / hide_crosshair_for_overlay
+                // keep it suppressed during the rest of this handler).
+                if self.panel_app.panel_grid.is_split() {
+                    self.hide_all_split_crosshairs();
+                } else {
+                    self.hide_crosshair();
+                }
             }
         }
 

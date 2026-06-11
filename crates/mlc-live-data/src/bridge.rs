@@ -145,9 +145,16 @@ pub enum LiveUpdate {
         asks: Vec<(f64, f64)>,
         timestamp: i64,
     },
-    /// An error occurred during an async operation.
+    /// An error occurred during an async data fetch.
+    ///
+    /// `account_type`, `symbol`, and `timeframe` identify the instrument that
+    /// failed (empty string when the error is not tied to a specific series,
+    /// e.g. a warmup or connector-dial failure).
     Error {
         exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        timeframe: String,
         message: String,
     },
     /// Connector metrics snapshot collected on-demand (e.g. when a metrics panel renders).
@@ -611,6 +618,9 @@ impl DataBridge {
             for (eid, err) in report.failed {
                 let _ = tx.send(LiveUpdate::Error {
                     exchange_id: eid,
+                    account_type: digdigdig3::AccountType::Spot,
+                    symbol: String::new(),
+                    timeframe: String::new(),
                     message: format!("warmup failed: {}", err),
                 });
             }
@@ -657,6 +667,9 @@ impl DataBridge {
                 Err(e) => {
                     let _ = tx.send(LiveUpdate::Error {
                         exchange_id,
+                        account_type: digdigdig3::AccountType::Spot,
+                        symbol: String::new(),
+                        timeframe: String::new(),
                         message: format!("{}", e),
                     });
                     // Connector init failed (error sent via channel).
@@ -708,7 +721,12 @@ impl DataBridge {
         // lookups always match bubble.symbol (which is now canonical).
         let symbol_str = symbol.to_string();
         // Wire string — venue-native form required by dig3 connectors.
+        // Resolved eagerly for the station kline subscriber; the main REST task
+        // retries resolution inside the connector-wait loop if the symbol list
+        // is still empty at spawn time (Fix 2 — MUUSDC@hyperliquid race).
         let wire_sym = self.wire_symbol(exchange_id, account_type, symbol);
+        // Station handle cloned for the resolution retry inside the main task.
+        let station_for_retry = self.station.clone();
         let interval = timeframe_to_interval(timeframe);
         let tf_name = timeframe.name.clone();
         let cache = self.bar_cache.clone();
@@ -811,27 +829,59 @@ impl DataBridge {
                 };
             }
 
-            // Wait for the connector to be dialed before fetching. The dig3
-            // backfill helpers below resolve `hub.rest(exchange_id)` themselves
-            // and return empty/Err if it's absent, so this loop is purely a
-            // readiness barrier — it does not hand a connector handle to the
-            // fetch (Phase 2B routes all REST history through dig3 + the shared
-            // hub, not a directly-held connector).
+            // Wait for the connector to be dialed and, if necessary, for the
+            // symbol list to arrive so wire_symbol can resolve canonical →
+            // native (e.g. "MUUSDC" → "MU/USDC" on Hyperliquid Spot).
+            //
+            // Both conditions share the same 150-step × 100 ms = 15 s budget.
+            // The dig3 backfill helpers resolve hub.rest themselves, so this
+            // is purely a readiness + resolution barrier.
+            let mut wire_sym = wire_sym; // shadow with mutable local
             {
-                let mut attempts = 0;
+                const MAX_ATTEMPTS: u32 = 150; // 15 s total budget
+                let mut attempts = 0u32;
+                let mut connector_ready = false;
+                let mut symbol_resolved = false;
                 loop {
-                    if fetch_hub.rest(exchange_id).is_some() {
+                    if !connector_ready && fetch_hub.rest(exchange_id).is_some() {
+                        connector_ready = true;
+                    }
+                    if connector_ready && !symbol_resolved {
+                        // Attempt a confident resolution now that the symbol
+                        // list may have arrived from the warmup task.
+                        if let Some(resolved) = try_resolve_wire_symbol(
+                            &station_for_retry, exchange_id, account_type, &symbol_str,
+                        ) {
+                            wire_sym = resolved;
+                            symbol_resolved = true;
+                        }
+                    }
+                    if connector_ready && symbol_resolved {
                         break;
                     }
-                    attempts += 1;
-                    if attempts > 50 {
+                    // If connector is ready but symbol list is still empty, keep
+                    // polling until the budget runs out — then proceed with the
+                    // passthrough fallback (symbol_str unchanged) which matches
+                    // venues where canonical == native (e.g. Binance).
+                    if connector_ready && attempts >= MAX_ATTEMPTS {
+                        eprintln!(
+                            "[Bridge] wire_symbol unresolved after {}ms: exchange={:?} sym={} at={:?} — using passthrough",
+                            attempts * 100, exchange_id, symbol_str, account_type
+                        );
+                        break;
+                    }
+                    if !connector_ready && attempts >= MAX_ATTEMPTS {
                         let _ = tx.send(LiveUpdate::Error {
                             exchange_id,
+                            account_type,
+                            symbol: symbol_str.clone(),
+                            timeframe: tf_name.clone(),
                             message: format!("connector {:?} not initialized", exchange_id),
                         });
                         finish_fetch!();
                         return;
                     }
+                    attempts += 1;
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
             }
@@ -893,6 +943,9 @@ impl DataBridge {
                     eprintln!("[Bridge] Phase A error: {:?} sym={} {}", exchange_id, symbol_str, e);
                     let _ = tx.send(LiveUpdate::Error {
                         exchange_id,
+                        account_type,
+                        symbol: symbol_str.clone(),
+                        timeframe: tf_name.clone(),
                         message: format!("get_klines failed: {}", e),
                     });
                     finish_fetch!();
@@ -1170,6 +1223,9 @@ impl DataBridge {
                     .unwrap_or_else(|| "exchange_info empty after station warmup".to_string());
                 let _ = tx.send(LiveUpdate::Error {
                     exchange_id,
+                    account_type: digdigdig3::AccountType::Spot,
+                    symbol: String::new(),
+                    timeframe: String::new(),
                     message: failed_msg,
                 });
                 return;
@@ -1943,6 +1999,9 @@ impl DataBridge {
                         );
                         let _ = tx.send(LiveUpdate::Error {
                             exchange_id,
+                            account_type,
+                            symbol: symbol_str.clone(),
+                            timeframe: tf_name.clone(),
                             message: format!(
                                 "backfill: connector {:?} not initialized",
                                 exchange_id
@@ -2447,6 +2506,69 @@ impl DataBridge {
         // (4) Fallback — return the requested string unchanged.
         requested.to_string()
     }
+
+}
+
+/// Attempt a confident wire-symbol resolution for `requested` against the
+/// symbol catalogue held by `station`.
+///
+/// Returns `Some(wire_string)` when a confident match is found (exact native
+/// or unique canonical→native match).  Returns `None` when the symbol list is
+/// still empty (station warm-up in progress) or when no match was found
+/// (caller should fall back to the passthrough form).
+///
+/// Unlike `wire_symbol` this never returns the passthrough fallback — `None`
+/// explicitly means "not ready or not found", letting the caller retry.
+fn try_resolve_wire_symbol(
+    station: &digdigdig3_station::Station,
+    exchange_id: ExchangeId,
+    account_type: AccountType,
+    requested: &str,
+) -> Option<String> {
+    let symbols = station.symbols(exchange_id);
+    if symbols.is_empty() {
+        return None;
+    }
+
+    // Exact native match — confident.
+    if symbols.iter().any(|s| s.symbol == requested) {
+        return Some(requested.to_string());
+    }
+
+    // Canonical → native with account_type filter.
+    let req_upper = requested.to_uppercase();
+    let with_at: Vec<&SymbolInfo> = symbols
+        .iter()
+        .filter(|s| {
+            s.account_type == account_type
+                && !s.base_asset.is_empty()
+                && !s.quote_asset.is_empty()
+                && format!("{}{}", s.base_asset, s.quote_asset).to_uppercase() == req_upper
+        })
+        .collect();
+
+    if with_at.len() == 1 {
+        return Some(with_at[0].symbol.clone());
+    }
+
+    // Relaxed: ignore account_type when exactly one match.
+    if with_at.is_empty() {
+        let any_at: Vec<&SymbolInfo> = symbols
+            .iter()
+            .filter(|s| {
+                !s.base_asset.is_empty()
+                    && !s.quote_asset.is_empty()
+                    && format!("{}{}", s.base_asset, s.quote_asset).to_uppercase() == req_upper
+            })
+            .collect();
+
+        if any_at.len() == 1 {
+            return Some(any_at[0].symbol.clone());
+        }
+    }
+
+    // Symbol list non-empty but no confident match.
+    None
 }
 
 

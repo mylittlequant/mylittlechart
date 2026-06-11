@@ -266,6 +266,15 @@ impl ChartApp {
                                 window.price_scale.scale_mode = self.default_scale_mode;
                                 window.set_bars(bars.clone());
                                 window.pending_symbol_load = false;
+                                // Cold-snap: if width is already known, consume the
+                                // one-shot flag immediately; otherwise leave it set
+                                // for the deferred path in prepare_frame.
+                                if window.needs_snap_after_backfill
+                                    && !window.bars.is_empty()
+                                    && window.viewport.chart_width > 0.0
+                                {
+                                    window.consume_cold_snap();
+                                }
                                 let target = self.panel_app.user_manager.profile.data_load.background_bar_count;
                                 if target > 300 {
                                     backfill_requests.push((
@@ -294,6 +303,26 @@ impl ChartApp {
                     for (sym, tf, at) in backfill_requests {
                         crate::dlog!("[ChartApp] Scheduling background backfill: {} {} tf={} target={}", exchange_id.as_str(), sym, tf.name, bg_target);
                         self.bridge.request_background_backfill(exchange_id, &sym, &tf, at, bg_target);
+                    }
+
+                    // No-match diagnostic: if zero windows matched, log the event key and
+                    // each window's key so routing mismatches are visible in the console.
+                    if !any_matched {
+                        let window_keys: Vec<String> = self.panel_app.panel_grid.containers().keys()
+                            .map(|cid| {
+                                let sym = self.managers.bubble.symbol_for_chart(*cid).unwrap_or("?");
+                                let exch = self.managers.bubble.exchange_for_chart(*cid).unwrap_or("?");
+                                let at = self.managers.bubble.account_type_for_chart(*cid).unwrap_or("?");
+                                let tf = self.managers.bubble.timeframe_for_chart(*cid)
+                                    .map(|t| t.name.as_str()).unwrap_or("?");
+                                format!("{}@{}:{}/{}", sym, exch, at, tf)
+                            })
+                            .collect();
+                        eprintln!(
+                            "[BarsLoaded] no-match: event={}@{}:{}/{} windows=[{}]",
+                            symbol, exchange_id.as_str(), account_type.short_label(), tf_name,
+                            window_keys.join(", ")
+                        );
                     }
 
                     // Populate data_provider cache so future LoadPreset calls
@@ -383,17 +412,7 @@ impl ChartApp {
                         let old_first_ts = window.bars.first().map(|b| b.timestamp);
                         window.update_bars(bars.clone());
                         if window.needs_snap_after_backfill {
-                            window.snap_to_end(mlc_core::DEFAULT_SNAP_MARGIN);
-                            window.needs_snap_after_backfill = false;
-                            // One-shot Y recompute bypassing the Manual-mode
-                            // gate: the snapshot's price range belongs to a
-                            // different viewport position — keeping it renders
-                            // the fresh bars as a flat line. Mirrors set_bars,
-                            // which auto-scales BEFORE restoring the saved mode.
-                            let saved_mode = window.price_scale.scale_mode;
-                            window.price_scale.scale_mode = mlc_core::ScaleMode::Auto;
-                            window.calc_auto_scale();
-                            window.price_scale.scale_mode = saved_mode;
+                            window.consume_cold_snap();
                         } else {
                             if let Some(old_first) = old_first_ts {
                                 let prepended = window
@@ -850,8 +869,35 @@ impl ChartApp {
                     self.exchange_symbols.insert(exchange_id, symbols);
                     symbols_insert_us += _t.elapsed().as_micros() as u64;
                 }
-                LiveUpdate::Error { exchange_id, message } => {
+                LiveUpdate::Error { exchange_id, account_type, symbol, timeframe: tf_name_err, message } => {
                     eprintln!("[ChartApp] live-data error ({:?}): {}", exchange_id, message);
+                    // Propagate to matching windows so the UI shows the error
+                    // instead of a perpetual "Loading..." label.
+                    if !symbol.is_empty() {
+                        let at_label = account_type.short_label();
+                        // Pre-collect matching chart ids to avoid double-borrow
+                        // (bubble is immutable, panel_grid needs mutable for data_error).
+                        let error_instrument_map: std::collections::HashMap<mlc_core::state::ChartId, bool> = {
+                            self.panel_app.panel_grid.containers().keys()
+                                .filter_map(|cid| {
+                                    let win_exch = self.managers.bubble.exchange_for_chart(*cid)?;
+                                    let win_sym = self.managers.bubble.symbol_for_chart(*cid)?;
+                                    let win_at = self.managers.bubble.account_type_for_chart(*cid)?;
+                                    let win_tf = self.managers.bubble.timeframe_for_chart(*cid)?;
+                                    let matches = win_exch == exchange_id.as_str()
+                                        && win_sym == symbol
+                                        && win_at == at_label
+                                        && win_tf.name == tf_name_err;
+                                    if matches { Some((*cid, true)) } else { None }
+                                })
+                                .collect()
+                        };
+                        for (cid_err, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+                            if error_instrument_map.contains_key(cid_err) && window.bars.is_empty() {
+                                window.data_error = Some(message.clone());
+                            }
+                        }
+                    }
                 }
                 LiveUpdate::OrderbookSnapshot { exchange_id, account_type, symbol, bids: _, asks: _, timestamp: _, source } => {
                     self.last_ob_event_count += 1;

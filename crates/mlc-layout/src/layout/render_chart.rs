@@ -2874,6 +2874,12 @@ pub struct ChartPanelRenderData<'a> {
     /// legacy `sub_panes` Vec) as the order and identity source for
     /// sub-panes, intersected with `indicator_source` visibility.
     pub inner_sub_instance_ids: &'a [u64],
+    /// Last data-fetch error for this window, if any.
+    ///
+    /// When `Some` and bars are empty, the error text is rendered centred in
+    /// the panel instead of the generic "Loading..." label.  Cleared by the
+    /// app on any successful bar delivery.
+    pub data_error: Option<&'a str>,
 }
 
 /// Render a complete chart panel — background, grid, series, scales, indicators,
@@ -2988,20 +2994,25 @@ pub fn render_full_chart_panel(
     ctx.set_fill_color(&corrected_state.theme.background);
     ctx.fill_rect(window_rect.x, window_rect.y, window_rect.width, window_rect.height);
 
-    // Loading state — when there are no bars yet (e.g. after a symbol or
-    // timeframe switch), show a centred "Loading..." label and skip all
-    // chart content so primitives don't render over an empty canvas.
-    // Centre against the FULL leaf rect (window_rect), not the bar canvas —
-    // with no content there are no scales, so canvas-relative centring looks
-    // visibly off-centre in the pane.
+    // Loading / error state — when there are no bars yet, show a centred
+    // label and skip all chart content so primitives don't render over an
+    // empty canvas.  Centre against the FULL leaf rect (window_rect), not
+    // the bar canvas — with no content there are no scales, so canvas-relative
+    // centring looks visibly off-centre in the pane.
     if corrected_state.bars.is_empty() {
         let cx = window_rect.x + window_rect.width / 2.0;
         let cy = window_rect.y + window_rect.height / 2.0;
-        ctx.set_fill_color(&corrected_state.theme.text);
         ctx.set_font("14px sans-serif");
         ctx.set_text_align(mlc_core::render::TextAlign::Center);
         ctx.set_text_baseline(mlc_core::render::TextBaseline::Middle);
-        ctx.fill_text(mlc_core::i18n::TextKey::Loading.get(mlc_core::i18n::current_language()), cx, cy);
+        if let Some(err_msg) = data.data_error {
+            // Show fetch error in the down-candle color (consistent "bearish red").
+            ctx.set_fill_color(&corrected_state.theme.candle_down);
+            ctx.fill_text(err_msg, cx, cy);
+        } else {
+            ctx.set_fill_color(&corrected_state.theme.text);
+            ctx.fill_text(mlc_core::i18n::TextKey::Loading.get(mlc_core::i18n::current_language()), cx, cy);
+        }
         return ChartPanelRenderResult::empty();
     }
 
@@ -3361,6 +3372,7 @@ pub fn render_chart_splits(
             is_split: true,
             inner_proportions: &mlc_core::state::chart_container::collect_inner_proportions(&window.inner_docking),
             inner_sub_instance_ids: &mlc_core::state::chart_container::collect_inner_instance_ids(&window.inner_docking),
+            data_error: window.data_error.as_deref(),
         };
 
         // sub_pane_ranges writeback is not performed here because render_chart_splits

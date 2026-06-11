@@ -289,6 +289,14 @@ pub struct ChartContainer {
     /// so mode is tightly coupled to viewport sync state.
     pub stashed_scale_mode: Option<ScaleMode>,
 
+    /// Last data-fetch error for this window, if any.
+    ///
+    /// Set by the `LiveUpdate::Error` handler when an error is matched to this
+    /// window's instrument key.  Cleared on any successful `set_bars` call and
+    /// on symbol/timeframe change (`pending_symbol_load = true` sites).
+    /// Runtime-only — not persisted to disk.
+    pub data_error: Option<String>,
+
     /// Inner uzor docking tree: [MainChart leaf, SubPane leaf, ...].
     /// Single source of truth for sub-pane identity, proportions, and
     /// separator drag. Replaces `inner_layout` (which is kept only during
@@ -419,6 +427,7 @@ impl ChartContainer {
             needs_snap_after_backfill: false,
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
+            data_error: None,
             inner_docking: make_inner_docking_with_main_chart(panel_id),
         }
     }
@@ -685,6 +694,8 @@ impl ChartContainer {
             // Split child has no in-flight scroll fetch.
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
+            // Split child inherits no data error — it will get its own on failure.
+            data_error: None,
             // Clone starts with only MainChart leaf; sync_sub_panes_from_manager
             // re-adds indicator leaves on the next tick.
             inner_docking: make_inner_docking_with_main_chart(new_panel_id),
@@ -723,6 +734,26 @@ impl ChartContainer {
         );
     }
 
+    /// Consume the `needs_snap_after_backfill` one-shot flag.
+    ///
+    /// Snaps the viewport to the newest bar (+DEFAULT_SNAP_MARGIN) and forces
+    /// a Y autoscale bypassing the Manual-mode gate (the deserialized price
+    /// range belongs to a stale viewport position; keeping it renders the fresh
+    /// bars as a flat line).  Then clears the flag so the snap fires exactly once
+    /// regardless of which delivery path (cache-served BarsLoaded, first-frame
+    /// deferred, or BackfillComplete) arrives first.
+    pub fn consume_cold_snap(&mut self) {
+        self.snap_to_end(DEFAULT_SNAP_MARGIN);
+        // One-shot Y recompute bypassing the Manual-mode gate: the snapshot's
+        // price range belongs to a different viewport position — keeping it
+        // renders the fresh bars as a flat line.
+        let saved_mode = self.price_scale.scale_mode;
+        self.price_scale.scale_mode = crate::chart::types::price_scale::ScaleMode::Auto;
+        self.calc_auto_scale();
+        self.price_scale.scale_mode = saved_mode;
+        self.needs_snap_after_backfill = false;
+    }
+
     /// Set bars for initial load — resets viewport position and auto-scales.
     ///
     /// Use this only for the first data load. For backfill / incremental
@@ -734,6 +765,9 @@ impl ChartContainer {
     /// `needs_auto_scale_after_bars`.
     pub fn set_bars(&mut self, bars: Vec<Bar>) {
         self.bars = bars;
+
+        // A successful delivery clears any prior fetch error.
+        self.data_error = None;
 
         // Update prev close line if enabled (derives prev_close from bars[0].open)
         self.update_prev_close_line();
@@ -927,6 +961,7 @@ impl ChartContainer {
             needs_snap_after_backfill: false,
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
+            data_error: None,
             inner_docking: make_inner_docking_with_main_chart(new_panel_id),
         }
     }

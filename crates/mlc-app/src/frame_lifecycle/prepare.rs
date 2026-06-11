@@ -169,12 +169,18 @@ impl ChartApp {
             for (&chart_id, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                 if window.needs_auto_scale_after_bars && !window.bars.is_empty() && window.viewport.chart_width > 0.0 {
                     window.needs_auto_scale_after_bars = false;
-                    // Snap to end with standard margin.
-                    window.snap_to_end(mlc_core::DEFAULT_SNAP_MARGIN);
-                    // No snap_cooldown needed: snap fires in prepare_frame AFTER
-                    // sync_viewport_from_layout, so bar_shift cannot undo it this frame.
-                    // Next frame old_width == new_width → bar_shift = 0.
-                    window.calc_auto_scale();
+                    if window.needs_snap_after_backfill {
+                        // Cold-restore snap supersedes the plain deferred snap:
+                        // consume_cold_snap snaps + force-autoscales + clears the flag.
+                        window.consume_cold_snap();
+                    } else {
+                        // Snap to end with standard margin.
+                        window.snap_to_end(mlc_core::DEFAULT_SNAP_MARGIN);
+                        // No snap_cooldown needed: snap fires in prepare_frame AFTER
+                        // sync_viewport_from_layout, so bar_shift cannot undo it this frame.
+                        // Next frame old_width == new_width → bar_shift = 0.
+                        window.calc_auto_scale();
+                    }
                     // restore_scale_mode is already consumed inside set_bars() for the eager
                     // path; for the deferred path (chart_width was 0 at set_bars time),
                     // consume it here.

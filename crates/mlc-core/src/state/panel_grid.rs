@@ -1025,18 +1025,29 @@ impl ChartPanelGrid {
             },
         };
 
-        // Grid2x2 is a TWO-axis layout: a 1D proportions vector cannot express
-        // it, and uzor's layout pass deliberately ignores proportions for
-        // multi-axis layouts (the no-flatten guard). Route the drag to
-        // cross_ratio instead: vertical separator moves the X split,
-        // horizontal moves the Y split.
+        // Grid2x2 and the four L-shaped layouts are multi-axis: a 1D
+        // proportions vector cannot express them, and uzor's layout pass
+        // deliberately ignores proportions for multi-axis layouts (the
+        // no-flatten guard). Route the drag to cross_ratio instead:
+        // vertical separator moves the X split, horizontal moves the Y
+        // split. Default ratios match uzor presets.rs fixed shapes.
         {
+            use uzor::panels::WindowLayout as WL;
             let grid_info = self
                 .docking
                 .tree()
                 .find_branch(parent_id)
-                .filter(|b| b.layout == uzor::panels::WindowLayout::Grid2x2)
-                .map(|b| b.cross_ratio.unwrap_or((0.5, 0.5)));
+                .and_then(|b| {
+                    let default_cr = match b.layout {
+                        WL::Grid2x2 => (0.5, 0.5),
+                        WL::OneLeftTwoRight => (0.6, 0.5),
+                        WL::TwoLeftOneRight => (0.4, 0.5),
+                        WL::OneTopTwoBottom => (0.5, 0.6),
+                        WL::TwoTopOneBottom => (0.5, 0.4),
+                        _ => return None,
+                    };
+                    Some(b.cross_ratio.unwrap_or(default_cr))
+                });
             if let Some((xr, yr)) = grid_info {
                 if branch_size <= 0.0 {
                     return;

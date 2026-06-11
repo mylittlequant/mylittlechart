@@ -1146,9 +1146,29 @@ impl ChartApp {
                     .iter()
                     .filter(|tab| **tab != active_id)
                     .filter_map(|tab| app.panel_app.presets.get(tab))
-                    .flat_map(|preset| preset.windows.iter())
-                    .filter(|w| !w.symbol.is_empty())
-                    .map(|w| (w.symbol.clone(), w.exchange.clone(), w.timeframe.clone(), w.account_type.clone()))
+                    .flat_map(|preset| {
+                        preset.windows.iter().map(move |w| {
+                            // Prefer the owning group's identity so the warm-up
+                            // request matches the key the live restore will use.
+                            // A window snapshot may carry stale account_type (e.g.
+                            // "S") when the group's is "F" — using the window's
+                            // snapshot would produce a cache-miss on restore.
+                            if let Some(bid) = w.bubble_id {
+                                if let Some(b) = preset.bubbles.iter().find(|b| b.id == bid) {
+                                    if !b.symbol.is_empty() {
+                                        return (
+                                            b.symbol.clone(),
+                                            b.exchange.clone(),
+                                            b.timeframe.clone(),
+                                            b.account_type.clone(),
+                                        );
+                                    }
+                                }
+                            }
+                            (w.symbol.clone(), w.exchange.clone(), w.timeframe.clone(), w.account_type.clone())
+                        })
+                    })
+                    .filter(|(sym, _, _, _)| !sym.is_empty())
                     .collect();
                 let mut warmed = 0usize;
                 for (sym, exch, tf, at_label) in warm_targets {
@@ -2963,6 +2983,7 @@ impl ChartApp {
                     is_split: true,
                     inner_proportions: &inner_proportions_vec,
                     inner_sub_instance_ids: &inner_sub_ids_vec,
+                    data_error: window.data_error.as_deref(),
                 };
 
                 let render_result = render_full_chart_panel(ctx, &leaf_rect, &panel_data);
@@ -3479,6 +3500,7 @@ impl ChartApp {
                     is_split: false,
                     inner_proportions: &inner_proportions_vec,
                     inner_sub_instance_ids: &inner_sub_ids_vec,
+                    data_error: window.data_error.as_deref(),
                 };
 
                 // Render chart into content_rect (shrunk by sidebar).
