@@ -815,14 +815,23 @@ impl ChartApp {
 
     /// Handle drag start at `(x, y)`.
     pub fn on_drag_start(&mut self, x: f64, y: f64) -> bool {
+        // Compute live hit-test results once and drop the borrow immediately.
+        // Using stale hovered_widget()/is_over_ui() snapshots here caused the
+        // "first gesture lost after focus" bug — the snapshot is one frame stale
+        // and arbitrarily stale right after OS window focus.
+        let (live_over_ui, live_hover): (bool, Option<String>) = {
+            let coord = self.input_coordinator.borrow();
+            (coord.is_over_ui_now(x, y), coord.hit_test_now(x, y).map(|h| h.as_str().to_string()))
+        };
+
         // Track whether this drag started on a UI element (for crosshair suppression).
-        self.ui_drag_active = self.input_coordinator.borrow_mut().is_over_ui();
+        self.ui_drag_active = live_over_ui;
 
         // ── Agent-panel separator drag initiation ────────────────────────────
         // MUST run BEFORE PTY/Chat drag so separator hit zones take priority
         // over the leaf content areas that may overlap the separator zone.
         if self.agent_sep_drag.is_none() {
-            let hovered_wid = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.as_str().to_string());
+            let hovered_wid = live_hover.clone();
             if let Some(ref wid) = hovered_wid {
                 if let Some(idx_str) = wid.strip_prefix("agent:sep:") {
                     if let Ok(sep_idx) = idx_str.parse::<usize>() {
@@ -1135,9 +1144,7 @@ impl ChartApp {
         // Check if drag starts on the sidebar separator — if so, begin sidebar resize.
         // This must be checked BEFORE the modal guard so the separator is reachable
         // even when a sidebar panel is open (which registers the sidebar as a UI widget).
-        let on_sidebar_separator = self.input_coordinator.borrow_mut().hovered_widget()
-            .map(|h| h.as_str() == "right_sidebar_separator")
-            .unwrap_or(false);
+        let on_sidebar_separator = live_hover.as_deref() == Some("right_sidebar_separator");
         if on_sidebar_separator {
             self.sidebar_separator_drag_active = true;
             return false;
@@ -1147,8 +1154,8 @@ impl ChartApp {
         // Must be checked before the watchlist row drag so separators win the hit-test.
         if self.sidebar_state.right_panel == mlc_sidebar_content::state::RightSidebarPanel::Watchlist {
             // Widget ids use 1-based indexing; strip prefix and subtract 1 for 0-based sep index.
-            let on_sep = self.input_coordinator.borrow_mut().hovered_widget()
-                .and_then(|h| h.as_str().strip_prefix("watchlist_sep_").and_then(|s| s.parse::<usize>().ok()))
+            let on_sep = live_hover.as_deref()
+                .and_then(|h| h.strip_prefix("watchlist_sep_").and_then(|s| s.parse::<usize>().ok()))
                 .map(|one_based| one_based.saturating_sub(1));
             // Skip separator drag when columns are in equal-width (aligned) mode.
             let align_cols = self.sidebar_state.watchlist_manager
@@ -1214,13 +1221,11 @@ impl ChartApp {
         // Check if drag starts on a watchlist row — begin drag-to-reorder.
         // Must be checked before the modal guard so it works while the sidebar is open.
         if self.sidebar_state.right_panel == mlc_sidebar_content::state::RightSidebarPanel::Watchlist {
-            let on_watchlist_row = self.input_coordinator.borrow_mut().hovered_widget()
-                .and_then(|h| h.as_str().strip_prefix("watchlist_").and_then(|s| s.parse::<usize>().ok()));
+            let on_watchlist_row = live_hover.as_deref()
+                .and_then(|h| h.strip_prefix("watchlist_").and_then(|s| s.parse::<usize>().ok()));
             if let Some(idx) = on_watchlist_row {
                 // Verify this is a plain index (not "watchlist_delete_N" etc.).
-                let hovered_id = self.input_coordinator.borrow_mut().hovered_widget()
-                    .map(|h| h.as_str().to_string())
-                    .unwrap_or_default();
+                let hovered_id = live_hover.as_deref().unwrap_or_default();
                 if hovered_id == format!("watchlist_{}", idx) {
                     self.sidebar_state.watchlist_drag_index = Some(idx);
                     self.sidebar_state.watchlist_drag_y = y;
@@ -1283,7 +1288,7 @@ impl ChartApp {
         // ── Free-slot separator drag initiation ──────────────────────────────
         // Detect `"slot:{slot_idx}:sep:{sep_idx}"` widget hover → begin separator resize drag.
         if self.slot_sep_drag.is_none() {
-            let hovered_wid = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.as_str().to_string());
+            let hovered_wid = live_hover.clone();
             if let Some(ref wid) = hovered_wid {
                 if let Some(rest) = wid.strip_prefix("slot:") {
                     if let Some((slot_str, sep_str)) = rest.split_once(":sep:") {
@@ -1325,7 +1330,7 @@ impl ChartApp {
         // or `slot:{idx}:leaf:{leaf_id}:focus_content` (other panel types).
         // DOM is now registered as a BlackboxPanel widget with id `slot:N:leaf:M:dom:body`.
         if self.active_drag_panel.is_none() {
-            let hovered_wid = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.as_str().to_string());
+            let hovered_wid = live_hover.clone();
             if let Some(ref wid) = hovered_wid {
                 // Check for DOM BlackboxPanel widget: slot:N:leaf:M:dom:body
                 if let Some(rest) = wid.strip_prefix("slot:") {
@@ -1410,9 +1415,7 @@ impl ChartApp {
                 let sr = &sidebar_result.sidebar_rect;
                 if x >= sr.x && x <= sr.x + sr.width && y >= sr.y && y <= sr.y + sr.height {
                     // Only start scroll-drag when not on the separator widget.
-                    let on_sep = self.input_coordinator.borrow_mut().hovered_widget()
-                        .map(|h| h.as_str() == "right_sidebar_separator")
-                        .unwrap_or(false);
+                    let on_sep = live_hover.as_deref() == Some("right_sidebar_separator");
                     if !on_sep {
                         self.sidebar_state.sidebar_drag_active = true;
                         self.sidebar_state.sidebar_drag_last_y = y;
@@ -1978,9 +1981,9 @@ impl ChartApp {
             if let Some(ref wl) = self.last_watchlist_modal_result {
                 // Watchlist modal item row drag — begin drag-to-reorder.
                 // Guard: if the pointer is over a delete button, don't start drag — let it be a click.
-                // Check hovered widget AND check delete_btn_rects directly (hovered_widget can lag).
-                let over_delete_hovered = self.input_coordinator.borrow_mut().hovered_widget()
-                    .map(|h| h.as_str().starts_with("wl_modal:delete:"))
+                // Check hovered widget AND check delete_btn_rects directly.
+                let over_delete_hovered = live_hover.as_deref()
+                    .map(|h| h.starts_with("wl_modal:delete:"))
                     .unwrap_or(false);
                 let over_delete_rect = wl.delete_btn_rects.iter()
                     .any(|(_sym, r)| r.contains(x, y));
@@ -2032,9 +2035,7 @@ impl ChartApp {
         if !self.panel_app.toolbar_state.floating_inline_bar.dragging {
             if let Some(bar_rect) = self.last_inline_bar_rect {
                 // Check if we're on the name label specifically
-                let on_name_label = self.input_coordinator.borrow_mut().hovered_widget()
-                    .map(|h| h.as_str() == "ilb:inline:name")
-                    .unwrap_or(false);
+                let on_name_label = live_hover.as_deref() == Some("ilb:inline:name");
                 if on_name_label {
                     self.panel_app.toolbar_state.floating_inline_bar.start_drag(x, y, &bar_rect);
                     self.ui_drag_active = true;
@@ -2484,7 +2485,7 @@ impl ChartApp {
         // the undo/redo action and push a spurious ViewportChange — creating an
         // infinite undo loop.  When a widget is hovered the drag is NOT a chart
         // pan/zoom, so there is nothing to record.
-        let on_widget = self.input_coordinator.borrow_mut().hovered_widget().is_some();
+        let on_widget = live_hover.is_some();
         if !on_widget {
             self.viewport_before_drag = self.panel_app.panel_grid.active_container().map(|w| {
                 mlc_core::ViewportState::new(
@@ -5286,7 +5287,9 @@ impl ChartApp {
             // Each scroll notch changes opacity by 1% (0.01). Scroll up = more opaque.
             {
                 let opacity_step = 0.01 * -dy.signum();
-                let source = self.input_coordinator.borrow().hovered_widget().and_then(|wid| {
+                // Live hit-test so opacity scroll works on the first wheel event
+                // even when the frame-end snapshot hasn't been updated yet.
+                let source = self.input_coordinator.borrow().hit_test_now(x, y).and_then(|wid| {
                     wid.as_str().strip_prefix("color_picker_")
                         .and_then(|s| s.strip_suffix(":opacity_slider"))
                         .map(|s| s.to_string())

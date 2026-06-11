@@ -43,6 +43,13 @@ impl App<'_> {
         match event {
             WindowEvent::CloseRequested => unreachable!(), // handled above
 
+            // ─── Focus gain ───────────────────────────────────────────────
+            // Trigger a render+end_frame so hovered_widget snapshots are fresh
+            // before the first gesture (drag/scroll) after the window regains focus.
+            WindowEvent::Focused(true) => {
+                pw.chart_dirty = true;
+            }
+
             // ─── Resize ───────────────────────────────────────────────────
             WindowEvent::Resized(size) => {
                 if size.width > 0 && size.height > 0 {
