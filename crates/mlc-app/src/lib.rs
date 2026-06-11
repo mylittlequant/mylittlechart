@@ -2951,6 +2951,7 @@ impl ChartApp {
                     maximized_sub_pane_id: self.maximized_sub_panes
                         .get(&window.id.0)
                         .map(|(iid, _)| *iid),
+                    above_main_ids: Some(&window.sub_pane_above_main),
                 };
 
                 let render_result = render_full_chart_panel(ctx, &leaf_rect, &panel_data);
@@ -2999,6 +3000,7 @@ impl ChartApp {
                         &sub_proportions,
                         &window.scale_settings,
                         1.0,
+                        &window.sub_pane_above_main,
                     );
                     let main = &extended.main_chart;
                     let chart_area = LayoutRect {
@@ -3471,6 +3473,7 @@ impl ChartApp {
                     maximized_sub_pane_id: self.maximized_sub_panes
                         .get(&window.id.0)
                         .map(|(iid, _)| *iid),
+                    above_main_ids: Some(&window.sub_pane_above_main),
                 };
 
                 // Render chart into content_rect (shrunk by sidebar).
@@ -3523,6 +3526,7 @@ impl ChartApp {
                         &sub_proportions,
                         &window.scale_settings,
                         1.0,
+                        &window.sub_pane_above_main,
                     );
                     let main = &extended.main_chart;
                     let chart_area = LayoutRect {
@@ -5660,6 +5664,12 @@ impl ChartApp {
             let pending_ratios = self.pending_sub_pane_ratios.get(&window.id.0).cloned();
             let pending_order = self.pending_sub_pane_order.get(&window.id.0).cloned();
             let pending_hidden = self.pending_sub_pane_hidden.get(&window.id.0).cloned();
+            let pending_above = self.pending_sub_pane_above_main.get(&window.id.0).cloned();
+
+            // Apply above-main set from preset restore (one-shot via pending map).
+            if let Some(ref above_set) = pending_above {
+                window.sub_pane_above_main = above_set.clone();
+            }
 
             // Determine the desired order (from preset restore or indicator_manager order).
             let desired_ids: Vec<u64> = if let Some(ref order) = pending_order {

@@ -1218,63 +1218,155 @@ impl ChartApp {
                         self.autosave_snapshot();
                     }
                     SubPaneButton::MoveUp => {
-                        // Swap this sub-pane with the previous one.
+                        // Move this sub-pane up by one visual position.
                         //
-                        // Two-layer swap for durability:
-                        // 1. Reorder the inner_docking tree immediately so the
-                        //    current frame renders the updated order.
-                        // 2. Swap in indicator_manager.by_window_id so
-                        //    sync_sub_panes_from_manager (called every tick)
-                        //    preserves the new order rather than reverting it.
+                        // Three cases:
+                        //   A. Pane is BELOW main and is the topmost below-pane
+                        //      -> promote to above-main (insert at the BOTTOM of the
+                        //         above group, i.e. closest to the main chart).
+                        //   B. Pane is already ABOVE main (not the topmost above-pane)
+                        //      -> swap within the inner_docking tree so it renders
+                        //         higher in the above group.
+                        //   C. Pane is the topmost above-pane -> no-op (already at top).
+                        //
+                        // The inner_docking tree stores ALL panes in below order and
+                        // drives proportions/identity. above_main is a presentation
+                        // overlay on the geometry side; no tree reorder is needed for
+                        // promotion — only for intra-above visual ordering.
                         if let Some(tree_idx) = real_index {
-                            // tree_idx is 0-based within collect_inner_instance_ids
-                            // (main chart leaf excluded).  Root child index = tree_idx + 1.
-                            // MoveUp: swap with tree_idx (previous sub-pane), but
-                            // never go above slot 1 (slot 0 = main chart, immovable).
-                            let from = tree_idx + 1;
-                            if from > 1 {
-                                let to = from - 1;
-                                // Resolve the neighbor's instance_id before the mutable borrow.
-                                let all_ids = self.panel_app.panel_grid.active_container()
-                                    .map(|w| mlc_core::state::chart_container::collect_inner_instance_ids(&w.inner_docking))
-                                    .unwrap_or_default();
-                                let neighbor_id = all_ids.get(tree_idx.saturating_sub(1)).copied();
-                                // 1. Update the docking tree for immediate visual effect.
-                                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                                    let root_id = window.inner_docking.tree().root().id;
-                                    window.inner_docking.tree_mut().reorder_children(root_id, from, to);
+                            let is_above = self.panel_app.panel_grid.active_container()
+                                .map(|w| w.sub_pane_above_main.contains(&instance_id))
+                                .unwrap_or(false);
+
+                            if is_above {
+                                // Case B/C: already above. Swap in tree so the pane
+                                // moves to a lower tree_idx (= visually higher since
+                                // above panes are rendered from tree order top-to-bottom).
+                                let from = tree_idx + 1;
+                                if from > 1 {
+                                    let to = from - 1;
+                                    let all_ids = self.panel_app.panel_grid.active_container()
+                                        .map(|w| mlc_core::state::chart_container::collect_inner_instance_ids(&w.inner_docking))
+                                        .unwrap_or_default();
+                                    let neighbor_id = all_ids.get(tree_idx.saturating_sub(1)).copied();
+                                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                                        let root_id = window.inner_docking.tree().root().id;
+                                        window.inner_docking.tree_mut().reorder_children(root_id, from, to);
+                                    }
+                                    if let (Some(nbr_id), Some(cid)) = (neighbor_id, self.panel_app.panel_grid.active_container_id()) {
+                                        self.indicator_manager.swap_pane_order(cid.0, instance_id, nbr_id);
+                                    }
                                 }
-                                // 2. Durably update indicator_manager insertion order.
-                                if let (Some(nbr_id), Some(cid)) = (neighbor_id, self.panel_app.panel_grid.active_container_id()) {
-                                    self.indicator_manager.swap_pane_order(cid.0, instance_id, nbr_id);
+                            } else {
+                                // Case A: below main. Check if this is the topmost below pane.
+                                // "Topmost below" means no other below pane has a lower tree_idx.
+                                let is_topmost_below = self.panel_app.panel_grid.active_container()
+                                    .map(|w| {
+                                        let all_ids = mlc_core::state::chart_container::collect_inner_instance_ids(&w.inner_docking);
+                                        // tree_idx is the index of this pane in all_ids.
+                                        // It is the topmost below pane if all panes with
+                                        // lower tree_idx are already above main.
+                                        all_ids.iter().take(tree_idx).all(|id| w.sub_pane_above_main.contains(id))
+                                    })
+                                    .unwrap_or(false);
+
+                                if is_topmost_below {
+                                    // Promote: add to above_main set.
+                                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                                        window.sub_pane_above_main.insert(instance_id);
+                                    }
+                                    // No tree reorder needed — above-main is presentation only.
+                                } else {
+                                    // Normal within-below swap.
+                                    let from = tree_idx + 1;
+                                    if from > 1 {
+                                        let to = from - 1;
+                                        let all_ids = self.panel_app.panel_grid.active_container()
+                                            .map(|w| mlc_core::state::chart_container::collect_inner_instance_ids(&w.inner_docking))
+                                            .unwrap_or_default();
+                                        let neighbor_id = all_ids.get(tree_idx.saturating_sub(1)).copied();
+                                        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                                            let root_id = window.inner_docking.tree().root().id;
+                                            window.inner_docking.tree_mut().reorder_children(root_id, from, to);
+                                        }
+                                        if let (Some(nbr_id), Some(cid)) = (neighbor_id, self.panel_app.panel_grid.active_container_id()) {
+                                            self.indicator_manager.swap_pane_order(cid.0, instance_id, nbr_id);
+                                        }
+                                    }
                                 }
                             }
                         }
                         self.autosave_snapshot();
                     }
                     SubPaneButton::MoveDown => {
-                        // Swap this sub-pane with the next one.  Mirrors MoveUp.
+                        // Move this sub-pane down by one visual position. Mirrors MoveUp.
+                        //
+                        // Three cases:
+                        //   A. Pane is ABOVE main and is the bottommost above-pane
+                        //      -> demote back to below-main (top of the below group).
+                        //   B. Pane is ABOVE main and not the bottommost
+                        //      -> swap in tree to move it visually lower (higher tree_idx).
+                        //   C. Pane is BELOW main -> normal swap within below group.
                         if let Some(tree_idx) = real_index {
-                            let from = tree_idx + 1;
-                            // Total root children = 1 (main chart) + number of sub-panes.
-                            let total = self.panel_app.panel_grid.active_container()
-                                .map(|w| w.inner_docking.tree().root().children.len())
-                                .unwrap_or(0);
-                            let to = from + 1;
-                            if to < total {
-                                // Resolve the neighbor's instance_id before the mutable borrow.
-                                let all_ids = self.panel_app.panel_grid.active_container()
-                                    .map(|w| mlc_core::state::chart_container::collect_inner_instance_ids(&w.inner_docking))
-                                    .unwrap_or_default();
-                                let neighbor_id = all_ids.get(tree_idx + 1).copied();
-                                // 1. Update the docking tree for immediate visual effect.
-                                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                                    let root_id = window.inner_docking.tree().root().id;
-                                    window.inner_docking.tree_mut().reorder_children(root_id, from, to);
+                            let is_above = self.panel_app.panel_grid.active_container()
+                                .map(|w| w.sub_pane_above_main.contains(&instance_id))
+                                .unwrap_or(false);
+
+                            if is_above {
+                                // Check if this is the bottommost above-pane (all panes
+                                // after tree_idx are below-main or there are none).
+                                let is_bottommost_above = self.panel_app.panel_grid.active_container()
+                                    .map(|w| {
+                                        let all_ids = mlc_core::state::chart_container::collect_inner_instance_ids(&w.inner_docking);
+                                        all_ids.iter().skip(tree_idx + 1).all(|id| !w.sub_pane_above_main.contains(id))
+                                    })
+                                    .unwrap_or(false);
+
+                                if is_bottommost_above {
+                                    // Demote: remove from above_main set.
+                                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                                        window.sub_pane_above_main.remove(&instance_id);
+                                    }
+                                } else {
+                                    // Swap within above group (move to higher tree_idx = lower on screen).
+                                    let from = tree_idx + 1;
+                                    let total = self.panel_app.panel_grid.active_container()
+                                        .map(|w| w.inner_docking.tree().root().children.len())
+                                        .unwrap_or(0);
+                                    let to = from + 1;
+                                    if to < total {
+                                        let all_ids = self.panel_app.panel_grid.active_container()
+                                            .map(|w| mlc_core::state::chart_container::collect_inner_instance_ids(&w.inner_docking))
+                                            .unwrap_or_default();
+                                        let neighbor_id = all_ids.get(tree_idx + 1).copied();
+                                        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                                            let root_id = window.inner_docking.tree().root().id;
+                                            window.inner_docking.tree_mut().reorder_children(root_id, from, to);
+                                        }
+                                        if let (Some(nbr_id), Some(cid)) = (neighbor_id, self.panel_app.panel_grid.active_container_id()) {
+                                            self.indicator_manager.swap_pane_order(cid.0, instance_id, nbr_id);
+                                        }
+                                    }
                                 }
-                                // 2. Durably update indicator_manager insertion order.
-                                if let (Some(nbr_id), Some(cid)) = (neighbor_id, self.panel_app.panel_grid.active_container_id()) {
-                                    self.indicator_manager.swap_pane_order(cid.0, instance_id, nbr_id);
+                            } else {
+                                // Normal within-below swap.
+                                let from = tree_idx + 1;
+                                let total = self.panel_app.panel_grid.active_container()
+                                    .map(|w| w.inner_docking.tree().root().children.len())
+                                    .unwrap_or(0);
+                                let to = from + 1;
+                                if to < total {
+                                    let all_ids = self.panel_app.panel_grid.active_container()
+                                        .map(|w| mlc_core::state::chart_container::collect_inner_instance_ids(&w.inner_docking))
+                                        .unwrap_or_default();
+                                    let neighbor_id = all_ids.get(tree_idx + 1).copied();
+                                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                                        let root_id = window.inner_docking.tree().root().id;
+                                        window.inner_docking.tree_mut().reorder_children(root_id, from, to);
+                                    }
+                                    if let (Some(nbr_id), Some(cid)) = (neighbor_id, self.panel_app.panel_grid.active_container_id()) {
+                                        self.indicator_manager.swap_pane_order(cid.0, instance_id, nbr_id);
+                                    }
                                 }
                             }
                         }

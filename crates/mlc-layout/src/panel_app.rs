@@ -192,6 +192,7 @@ pub fn compute_chart_internal_layout(
         sub_proportions,
         scale_settings,
         separator_height,
+        &std::collections::HashSet::new(),
     );
     ChartInternalLayout {
         panel_layout,

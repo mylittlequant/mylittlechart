@@ -2846,12 +2846,14 @@ fn build_maximized_layout(
     // to the maximized pane — effectively fullscreen for any container
     // taller than ~60 px.
     let _ = sub_pane_ids; // full list not needed; we render only max pane
+    // Maximized layout ignores above-main placement.
     crate::layout::ExtendedFrameLayout::from_proportions(
         content_rect,
         &[maximized_id],
         &[1.0],
         scale_settings,
         1.0,
+        &std::collections::HashSet::new(),
     )
 }
 
@@ -2924,6 +2926,9 @@ pub struct ChartPanelRenderData<'a> {
     /// overlay button for this pane renders as Restore instead of Expand.
     /// `None` means no pane is maximized (normal mode).
     pub maximized_sub_pane_id: Option<u64>,
+    /// Set of sub-pane instance_ids that should render ABOVE the main chart.
+    /// Pass `None` (or `Some` of an empty set) for all-below behaviour.
+    pub above_main_ids: Option<&'a std::collections::HashSet<u64>>,
 }
 
 /// Render a complete chart panel — background, grid, series, scales, indicators,
@@ -2994,6 +2999,11 @@ pub fn render_full_chart_panel(
     let maximized_id: Option<u64> = data.maximized_sub_pane_id
         .filter(|iid| sub_pane_ids.contains(iid));
 
+    // Resolve above-main set. When maximized, above-main is ignored — the
+    // maximized pane covers the whole area regardless.
+    let empty_above: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    let above_main_ids = data.above_main_ids.unwrap_or(&empty_above);
+
     let extended_layout = if let Some(max_iid) = maximized_id {
         build_maximized_layout(content_rect, max_iid, &sub_pane_ids, data.scale_settings)
     } else {
@@ -3003,6 +3013,7 @@ pub fn render_full_chart_panel(
             &sub_props,
             data.scale_settings,
             1.0,
+            above_main_ids,
         )
     };
     let main_chart = &extended_layout.main_chart;
@@ -3442,6 +3453,7 @@ pub fn render_chart_splits(
             // anyway (sub_pane_overlay_states: &[]), so Expand/Restore buttons do not
             // appear and the field is irrelevant.
             maximized_sub_pane_id: None,
+            above_main_ids: Some(&window.sub_pane_above_main),
         };
 
         // sub_pane_ranges writeback is not performed here because render_chart_splits

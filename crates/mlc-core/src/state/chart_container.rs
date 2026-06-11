@@ -302,6 +302,14 @@ pub struct ChartContainer {
     /// separator drag. Replaces `inner_layout` (which is kept only during
     /// the dual-write transition and deleted once all reads migrate here).
     pub inner_docking: uzor::layout::DockState<crate::state::chart_container_leaf::ChartContainerLeaf>,
+
+    /// Set of sub-pane instance_ids that are positioned ABOVE the main chart.
+    /// Runtime state — not backed by the inner_docking tree (which always stores
+    /// panes in below order for proportion/identity purposes). The layout builder
+    /// reads this set to reorder panes into above-main positions in the emitted
+    /// geometry. Populated from snapshots via `pending_sub_pane_above_main` in
+    /// `ChartApp::sync_sub_panes_from_manager`.
+    pub sub_pane_above_main: std::collections::HashSet<u64>,
 }
 
 /// Default number of empty bars shown to the right of the last candle
@@ -429,6 +437,7 @@ impl ChartContainer {
             scroll_fetch_started: None,
             data_error: None,
             inner_docking: make_inner_docking_with_main_chart(panel_id),
+            sub_pane_above_main: std::collections::HashSet::new(),
         }
     }
 
@@ -699,6 +708,9 @@ impl ChartContainer {
             // Clone starts with only MainChart leaf; sync_sub_panes_from_manager
             // re-adds indicator leaves on the next tick.
             inner_docking: make_inner_docking_with_main_chart(new_panel_id),
+            // Split child inherits the above-main set from the source so MoveUp
+            // state survives a split operation.
+            sub_pane_above_main: self.sub_pane_above_main.clone(),
         };
         (new_container, new_panel)
     }
@@ -994,6 +1006,7 @@ impl ChartContainer {
             scroll_fetch_started: None,
             data_error: None,
             inner_docking: make_inner_docking_with_main_chart(new_panel_id),
+            sub_pane_above_main: std::collections::HashSet::new(),
         }
     }
 

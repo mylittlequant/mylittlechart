@@ -1512,25 +1512,84 @@ impl ChartApp {
             return;
         }
 
-        // Read the current drawing state from the source window.
-        // We extract tool_id and points so we can release the borrow before
-        // mutating peer windows.
+        // Read the current drawing state and active pane from the source window.
+        // Extracted before taking mutable borrows on peer windows.
         let src_pid_ds = self.panel_app.panel_grid.container_for_leaf(source_leaf).map(|w| w.chart_panel_id);
-        let (tool_id, points) = match src_pid_ds.and_then(|pid| self.panels_store.chart_panel.get(&pid)) {
-            Some(panel) => match panel.drawing_manager.drawing_state() {
-                mlc_core::drawing::DrawingState::Creating { tool_id, points } => {
-                    (Some(tool_id.clone()), points.clone())
+        let (tool_id, points, src_pane_id) = match src_pid_ds.and_then(|pid| self.panels_store.chart_panel.get(&pid)) {
+            Some(panel) => {
+                let pane = panel.drawing_manager.current_pane();
+                match panel.drawing_manager.drawing_state() {
+                    mlc_core::drawing::DrawingState::Creating { tool_id, points } => {
+                        (Some(tool_id.clone()), points.clone(), pane)
+                    }
+                    mlc_core::drawing::DrawingState::Idle => (None, Vec::new(), pane),
                 }
-                mlc_core::drawing::DrawingState::Idle => (None, Vec::new()),
-            },
+            }
             None => return,
         };
 
+        // Build a reverse map: source instance_id -> (type_id, ordinal).
+        // This is the same remap strategy used by prepare.rs for completed primitives.
+        // We build it once from the source chart and apply per-peer.
+        let source_cid = self.panel_app.panel_grid.container_id_for_leaf(source_leaf);
+        let src_pane_type_ord: Option<(String, usize)> = src_pane_id.and_then(|pid| {
+            let cid = source_cid?;
+            let mut sub_pane_insts: Vec<(u64, String, usize, u64)> = self.indicator_manager
+                .get_instances_for_window(cid.0)
+                .into_iter()
+                .filter(|i| i.pane > 0)
+                .map(|i| (i.id, i.type_id.clone(), i.pane, i.id))
+                .collect();
+            sub_pane_insts.sort_by(|a, b| a.2.cmp(&b.2).then(a.3.cmp(&b.3)));
+            let mut type_count: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+            for (iid, type_id, _pane, _) in &sub_pane_insts {
+                let ord = type_count.entry(type_id.clone()).or_insert(0);
+                if *iid == pid {
+                    return Some((type_id.clone(), *ord));
+                }
+                *ord += 1;
+            }
+            None
+        });
+
         // Apply to every peer leaf.
-        for peer_leaf in peer_leaves {
-            if let Some(peer_pid) = self.panel_app.panel_grid.container_for_leaf(peer_leaf).map(|w| w.chart_panel_id) {
+        for peer_leaf in &peer_leaves {
+            let peer_cid = self.panel_app.panel_grid.container_id_for_leaf(*peer_leaf);
+
+            // Remap source pane_id to the peer's corresponding instance_id.
+            let peer_pane_id: Option<u64> = src_pane_type_ord.as_ref().and_then(|(type_id, ord)| {
+                let cid = peer_cid?;
+                let mut sub_pane_insts: Vec<(u64, String, usize, u64)> = self.indicator_manager
+                    .get_instances_for_window(cid.0)
+                    .into_iter()
+                    .filter(|i| i.pane > 0)
+                    .map(|i| (i.id, i.type_id.clone(), i.pane, i.id))
+                    .collect();
+                sub_pane_insts.sort_by(|a, b| a.2.cmp(&b.2).then(a.3.cmp(&b.3)));
+                let mut type_count: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+                for (iid, t, _pane, _) in &sub_pane_insts {
+                    let o = type_count.entry(t.clone()).or_insert(0);
+                    if t == type_id && *o == *ord {
+                        return Some(*iid);
+                    }
+                    *o += 1;
+                }
+                None
+            });
+
+            if let Some(peer_pid) = self.panel_app.panel_grid.container_for_leaf(*peer_leaf).map(|w| w.chart_panel_id) {
                 if let Some(peer_panel) = self.panels_store.chart_panel.get_mut(&peer_pid) {
                     peer_panel.drawing_manager.set_synced_drawing_state(tool_id.clone(), points.clone());
+                    // Sync the pane context so the preview renders in the correct sub-pane
+                    // on the peer (not on the main chart). When the source drawing is on
+                    // the main chart (src_pane_id = None), clear any stale pane context.
+                    if src_pane_id.is_some() {
+                        // peer_pane_id is None when the peer lacks the indicator — the
+                        // preview then falls back to the main chart, which is acceptable.
+                        peer_panel.drawing_manager.set_current_pane(peer_pane_id);
+                    } else {
+                        peer_panel.drawing_manager.set_current_pane(None);
+                    }
                 }
             }
         }

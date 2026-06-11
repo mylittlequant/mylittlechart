@@ -300,8 +300,8 @@ impl ChartWindowSnapshot {
                     })
                     .collect()
             },
-            // above_main is deferred to S7 — emit empty set.
-            sub_pane_above_main: HashSet::new(),
+            // Emit the runtime above-main set so presets round-trip correctly.
+            sub_pane_above_main: window.sub_pane_above_main.clone(),
             sub_pane_order: crate::state::chart_container::collect_inner_instance_ids(
                 &window.inner_docking,
             ),

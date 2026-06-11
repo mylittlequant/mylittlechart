@@ -8372,6 +8372,12 @@ impl ChartApp {
             .map(|(iid, _)| *iid)
             .filter(|iid| sub_pane_ids.contains(iid));
 
+        let empty_above = std::collections::HashSet::new();
+        let above_main_ids: &std::collections::HashSet<u64> = self.panel_app.panel_grid
+            .active_container()
+            .map(|w| &w.sub_pane_above_main)
+            .unwrap_or(&empty_above);
+
         if let Some(max_iid) = maximized_id {
             ExtendedFrameLayout::from_proportions(
                 &content_rect,
@@ -8379,6 +8385,7 @@ impl ChartApp {
                 &[1.0],
                 &scale_settings,
                 1.0,
+                &std::collections::HashSet::new(),
             )
         } else {
             ExtendedFrameLayout::from_proportions(
@@ -8387,6 +8394,7 @@ impl ChartApp {
                 &sub_proportions,
                 &scale_settings,
                 1.0,
+                above_main_ids,
             )
         }
     }
@@ -8460,6 +8468,12 @@ impl ChartApp {
             .map(|(iid, _)| *iid)
             .filter(|iid| sub_pane_ids.contains(iid));
 
+        let empty_above2 = std::collections::HashSet::new();
+        let above_ids: &std::collections::HashSet<u64> = self.panel_app.panel_grid
+            .container_for_leaf(leaf_id)
+            .map(|w| &w.sub_pane_above_main)
+            .unwrap_or(&empty_above2);
+
         if let Some(max_iid) = maximized_id {
             Some(ExtendedFrameLayout::from_proportions(
                 leaf_rect,
@@ -8467,6 +8481,7 @@ impl ChartApp {
                 &[1.0],
                 scale_settings,
                 1.0,
+                &std::collections::HashSet::new(),
             ))
         } else {
             Some(ExtendedFrameLayout::from_proportions(
@@ -8475,6 +8490,7 @@ impl ChartApp {
                 &sub_proportions,
                 scale_settings,
                 1.0,
+                above_ids,
             ))
         }
     }

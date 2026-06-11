@@ -502,6 +502,7 @@ impl ExtendedFrameLayout {
             &sub_proportions,
             scale_settings,
             separator_height,
+            &std::collections::HashSet::new(),
         )
     }
 
@@ -509,12 +510,19 @@ impl ExtendedFrameLayout {
     /// proportions directly. Used when the caller already has the
     /// `ChartContainer` handle and can pull instance ids out of the leaf
     /// payload typed as `ChartContainerLeaf`.
+    ///
+    /// `above_main_ids` — instance ids that should be placed ABOVE the main
+    /// chart. Pass an empty set (or `&HashSet::new()`) to get the old
+    /// all-below behaviour. The inner-docking tree order (and thus
+    /// `sub_pane_instance_ids` / `sub_proportions`) is not changed; only the
+    /// presentation geometry is reordered.
     pub fn from_proportions(
         chart_panel: &LayoutRect,
         sub_pane_instance_ids: &[u64],
         sub_proportions: &[f64],
         scale_settings: &ScaleSettings,
         separator_height: f64,
+        above_main_ids: &std::collections::HashSet<u64>,
     ) -> Self {
         // Clamp scale dimensions to the chart_panel bounds so nothing can
         // overflow into neighbouring leaves when the leaf is squeezed below
@@ -570,6 +578,19 @@ impl ExtendedFrameLayout {
         let actual_available_for_subs: f64 =
             scaled_heights.iter().sum::<f64>() + separator_budget;
 
+        // Partition sub-panes into above-main and below-main groups.
+        // "Above" group order = top-to-bottom on screen (index 0 is topmost).
+        // The inner-docking tree stores all panes in below order; above-main is a
+        // presentation-only reordering applied here at geometry time.
+        let is_above: Vec<bool> = sub_pane_instance_ids
+            .iter()
+            .map(|id| above_main_ids.contains(id))
+            .collect();
+        let above_total_h: f64 = is_above.iter().zip(scaled_heights.iter())
+            .filter(|(&a, _)| a)
+            .map(|(_, &h)| h + separator_height)
+            .sum();
+
         // Calculate chart and scale positions based on scale settings
         let (chart_x, price_scale_x) = match scale_settings.price_scale_position {
             PriceScalePosition::Left => {
@@ -582,19 +603,21 @@ impl ExtendedFrameLayout {
             }
         };
 
+        // above_total_h is the pixel height consumed by above-main panes.
+        // Layout order: [time_scale_top?][above_panes][main_chart][below_panes][time_scale_bottom?]
         let (chart_y, time_scale_y) = match scale_settings.time_scale_position {
             TimeScalePosition::Top => {
-                // Time scale on top: [time_scale][chart][below_panes]
+                // Time scale on top: [time_scale][above_panes][chart][below_panes]
                 (
-                    chart_panel.y + time_scale_height,
+                    chart_panel.y + time_scale_height + above_total_h,
                     chart_panel.y,
                 )
             }
             TimeScalePosition::Bottom | TimeScalePosition::Hidden => {
-                // Time scale on bottom or hidden: [chart][below_panes][time_scale?]
+                // Time scale on bottom or hidden: [above_panes][chart][below_panes][time_scale?]
                 (
-                    chart_panel.y,
-                    chart_panel.y + main_chart_height + actual_available_for_subs,
+                    chart_panel.y + above_total_h,
+                    chart_panel.y + above_total_h + main_chart_height + actual_available_for_subs - above_total_h,
                 )
             }
         };
@@ -627,34 +650,39 @@ impl ExtendedFrameLayout {
             ),
         };
 
-        // Total chart height for positioning
+        // Total chart height for positioning (main + all sub-panes)
         let total_chart_height = main_chart_height + actual_available_for_subs;
 
-        // Compute sub-pane layouts. All sub-panes go below the main chart
-        // in inner-docking tree order. Above-main is no longer supported
-        // (Phase 2 of the chart-container cut -- reintroduce later via
-        // uzor SplitTop if the feature is needed).
-        let mut sub_panes = Vec::with_capacity(sub_pane_count);
+        // Compute sub-pane layouts.
+        // Above-main panes use a y-cursor that starts above the main chart.
+        // Below-main panes use a y-cursor that starts below the main chart.
+        // The starting y for above panes depends on scale position.
+        let above_start_y = match scale_settings.time_scale_position {
+            TimeScalePosition::Top => chart_panel.y + time_scale_height,
+            TimeScalePosition::Bottom | TimeScalePosition::Hidden => chart_panel.y,
+        };
+        let mut above_y = above_start_y;
         let mut below_y = chart_y + main_chart_height;
+
+        let mut sub_panes = Vec::with_capacity(sub_pane_count);
 
         for (i, &instance_id) in sub_pane_instance_ids.iter().enumerate() {
             let pane_h = scaled_heights[i];
+            let pane_is_above = is_above[i];
 
-            let separator = LayoutRect::new(
-                chart_panel.x,
-                below_y,
-                chart_panel.width,
-                separator_height,
-            );
-            below_y += separator_height;
+            let (cur_y, next_y) = if pane_is_above {
+                let y = above_y;
+                above_y += separator_height + pane_h;
+                (y, y + separator_height)
+            } else {
+                let y = below_y;
+                below_y += separator_height + pane_h;
+                (y, y + separator_height)
+            };
 
-            let content = LayoutRect::new(chart_x, below_y, chart_width, pane_h);
-            let pane_price_scale = LayoutRect::new(
-                price_scale_x,
-                below_y,
-                price_scale_width,
-                pane_h,
-            );
+            let separator = LayoutRect::new(chart_panel.x, cur_y, chart_panel.width, separator_height);
+            let content = LayoutRect::new(chart_x, next_y, chart_width, pane_h);
+            let pane_price_scale = LayoutRect::new(price_scale_x, next_y, price_scale_width, pane_h);
 
             sub_panes.push(SubPaneLayout {
                 instance_id,
@@ -662,8 +690,6 @@ impl ExtendedFrameLayout {
                 content,
                 price_scale: pane_price_scale,
             });
-
-            below_y += pane_h;
         }
 
         Self {
