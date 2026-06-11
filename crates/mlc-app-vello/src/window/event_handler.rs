@@ -106,15 +106,16 @@ impl App<'_> {
                     pw.chart_dirty = true;
 
                     // Restore from minimize: tick was skipped while minimized,
-                    // so viewport stayed at the pre-minimize position.  For
-                    // Follow/Auto modes, snap ALL windows to end so the chart
-                    // shows the latest bars.  Manual mode keeps user's position.
+                    // so viewport stayed at the pre-minimize position. ONLY
+                    // Follow mode snaps to the end (it tracks the live edge by
+                    // definition). Auto is a Y-AXIS scaling mode — snapping it
+                    // here threw away the user's X position on every
+                    // minimize/restore cycle. Manual untouched as before.
                     if pw.was_minimized {
                         pw.was_minimized = false;
                         for window in pw.chart.panel_app.panel_grid.containers_mut().values_mut() {
                             if !window.bars.is_empty()
-                                && (window.price_scale.scale_mode.is_follow()
-                                    || window.price_scale.scale_mode == mlc_core::ScaleMode::Auto)
+                                && window.price_scale.scale_mode.is_follow()
                             {
                                 window.snap_to_end(mlc_core::DEFAULT_SNAP_MARGIN);
                             }

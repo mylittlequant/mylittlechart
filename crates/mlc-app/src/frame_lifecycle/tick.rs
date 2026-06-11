@@ -376,13 +376,38 @@ impl ChartApp {
                         {
                             continue;
                         }
+                        // Backfill can PREPEND history: the bars array is fully
+                        // replaced, so compensate view_start by the number of
+                        // bars added in front (same contract as ScrollBarsLoaded)
+                        // or the viewport silently shifts left by the prepend.
+                        let old_first_ts = window.bars.first().map(|b| b.timestamp);
                         window.update_bars(bars.clone());
                         if window.needs_snap_after_backfill {
                             window.snap_to_end(mlc_core::DEFAULT_SNAP_MARGIN);
                             window.needs_snap_after_backfill = false;
-                        }
-                        if window.price_scale.scale_mode.is_auto_y() {
+                            // One-shot Y recompute bypassing the Manual-mode
+                            // gate: the snapshot's price range belongs to a
+                            // different viewport position — keeping it renders
+                            // the fresh bars as a flat line. Mirrors set_bars,
+                            // which auto-scales BEFORE restoring the saved mode.
+                            let saved_mode = window.price_scale.scale_mode;
+                            window.price_scale.scale_mode = mlc_core::ScaleMode::Auto;
                             window.calc_auto_scale();
+                            window.price_scale.scale_mode = saved_mode;
+                        } else {
+                            if let Some(old_first) = old_first_ts {
+                                let prepended = window
+                                    .bars
+                                    .iter()
+                                    .take_while(|b| b.timestamp < old_first)
+                                    .count();
+                                if prepended > 0 {
+                                    window.viewport.view_start += prepended as f64;
+                                }
+                            }
+                            if window.price_scale.scale_mode.is_auto_y() {
+                                window.calc_auto_scale();
+                            }
                         }
                         prev_close_mirrors.push((*chart_id_key, window.bars.first().map(|b| b.open)));
                     }
