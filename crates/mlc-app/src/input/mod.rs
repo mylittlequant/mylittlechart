@@ -2519,6 +2519,22 @@ impl ChartApp {
         // Freehand: drawing_manager.start_freehand() runs inside handle_drag_start.
         // Background: viewport_before_drag already captured above.
         use mlc_core::state::ChartDragStartHit;
+
+        // TEMP-DIAG: fires once per drag gesture; proves whether find_separator_at_y
+        // misses because sub_panes is empty or because y coordinates are offset.
+        {
+            let mc = &extended.main_chart.chart;
+            let sep_info: Vec<String> = extended.sub_panes.iter()
+                .map(|sp| format!("sep(y={:.1},h={:.1})", sp.separator.y, sp.separator.height))
+                .collect();
+            eprintln!(
+                "[TEMP-DIAG drag-start] x={:.1} y={:.1} main_chart(x={:.1},y={:.1},w={:.1},h={:.1}) sub_panes={} {}",
+                x, y, mc.x, mc.y, mc.width, mc.height,
+                extended.sub_panes.len(),
+                sep_info.join(" ")
+            );
+        }
+
         let active_pid_ds = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
         let drag_start_hit = if let Some(pid) = active_pid_ds {
             if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {

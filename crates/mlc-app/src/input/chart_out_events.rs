@@ -844,8 +844,38 @@ impl ChartApp {
                                         true
                                     }
                                     Err(e) => {
-                                        eprintln!("[ChartApp] restore_tree failed: {}  -  falling back to patch", e);
-                                        false
+                                        // Salvage: build a flat docking tree containing one
+                                        // leaf per built window. Iterate in deterministic order
+                                        // (sorted by original LeafId so visual order is stable).
+                                        let mut sorted_entries: Vec<(uzor::panels::LeafId, mlc_core::state::ChartId)> =
+                                            new_leaf_to_chart.into_iter().collect();
+                                        sorted_entries.sort_by_key(|(leaf_id, _)| leaf_id.0);
+
+                                        let n = sorted_entries.len();
+                                        let mut flat_tree: uzor::panels::DockingTree<mlc_core::state::Panel> =
+                                            uzor::panels::DockingTree::new();
+                                        let mut fresh_leaf_to_chart: std::collections::HashMap<uzor::panels::LeafId, mlc_core::state::ChartId> =
+                                            std::collections::HashMap::new();
+                                        let mut first_leaf: Option<uzor::panels::LeafId> = None;
+
+                                        for (_orig_leaf_id, chart_id) in sorted_entries {
+                                            let panel = mlc_core::state::Panel::Chart(chart_id);
+                                            let new_lid = flat_tree.add_leaf(panel);
+                                            fresh_leaf_to_chart.insert(new_lid, chart_id);
+                                            if first_leaf.is_none() {
+                                                first_leaf = Some(new_lid);
+                                            }
+                                        }
+
+                                        eprintln!("[ChartApp] restore_tree failed: {} - salvaged flat layout with {} windows", e, n);
+
+                                        self.panel_app.panel_grid.replace_docking(flat_tree);
+                                        self.panel_app.panel_grid.replace_containers(new_containers);
+                                        self.panel_app.panel_grid.replace_leaf_to_chart(fresh_leaf_to_chart);
+                                        if let Some(lid) = first_leaf {
+                                            self.panel_app.panel_grid.set_active_leaf(lid);
+                                        }
+                                        true
                                     }
                                 }
                             }

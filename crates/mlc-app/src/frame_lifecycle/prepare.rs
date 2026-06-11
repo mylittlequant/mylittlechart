@@ -167,7 +167,15 @@ impl ChartApp {
         if !self.panel_app.panel_grid.is_split() {
             let mut snapped_windows: Vec<(ChartId, f64, f64)> = Vec::new(); // (chart_id, view_start, bar_spacing)
             for (&chart_id, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
-                if window.needs_auto_scale_after_bars && !window.bars.is_empty() && window.viewport.chart_width > 0.0 {
+                // needs_snap_after_backfill alone (without needs_auto_scale_after_bars)
+                // happens for startup-parked presets: update_bars() delivered bars
+                // while chart_width was still 0, and update_bars never sets the
+                // deferred-autoscale flag. Consume the cold-snap here once width
+                // is known so the flag cannot strand.
+                if (window.needs_auto_scale_after_bars || window.needs_snap_after_backfill)
+                    && !window.bars.is_empty()
+                    && window.viewport.chart_width > 0.0
+                {
                     window.needs_auto_scale_after_bars = false;
                     if window.needs_snap_after_backfill {
                         // Cold-restore snap supersedes the plain deferred snap:

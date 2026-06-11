@@ -904,6 +904,7 @@ impl DataBridge {
                     exchange_id, symbol_str, interval,
                     now_secs - disk_last_ts.unwrap_or(0),
                     interval_secs * 2);
+                eprintln!("[Bridge] cache-fresh skip: {:?} {} tf={}", exchange_id, symbol_str, tf_name);
                 finish_fetch!();
                 return;
             }
@@ -936,8 +937,11 @@ impl DataBridge {
 
             let fresh_300: Vec<Bar> = match phase_a_result {
                 Ok(points) => {
-                    crate::dlog!("[Bridge] Phase A: got {} bars (dig3)", points.len());
-                    points.iter().map(bar_point_to_bar).collect()
+                    let n = points.len();
+                    crate::dlog!("[Bridge] Phase A: got {} bars (dig3)", n);
+                    let bars = points.iter().map(bar_point_to_bar).collect::<Vec<_>>();
+                    eprintln!("[Bridge] Phase A ok: {:?} {} at={:?} tf={} -> {} bars", exchange_id, symbol_str, account_type, tf_name, n);
+                    bars
                 }
                 Err(e) => {
                     eprintln!("[Bridge] Phase A error: {:?} sym={} {}", exchange_id, symbol_str, e);

@@ -254,6 +254,19 @@ impl ChartApp {
                                 is_backfill, window.bars.len(), window.pending_symbol_load);
                             if is_backfill {
                                 window.update_bars(bars.clone());
+                                // Cold-snap can also be pending on this arm: a
+                                // startup-parked preset gets restored (flag set,
+                                // bars delivered while live) and then unparked —
+                                // pending_symbol_load is false by then, so the
+                                // cure-path BarsLoaded routes here. Consume the
+                                // one-shot flag on the first delivery regardless
+                                // of which arm it lands in.
+                                if window.needs_snap_after_backfill
+                                    && !window.bars.is_empty()
+                                    && window.viewport.chart_width > 0.0
+                                {
+                                    window.consume_cold_snap();
+                                }
                                 let target = self.panel_app.user_manager.profile.data_load.background_bar_count;
                                 if target > 0 && (window.bars.len() as u32) < target {
                                     backfill_requests.push((
