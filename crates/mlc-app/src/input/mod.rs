@@ -8630,30 +8630,9 @@ impl ChartApp {
             self.autosave_snapshot();
         }
 
-        // Capture the active chart's symbol/timeframe BEFORE the reset: the
-        // wipe below clears every bubble and reassign_active_chart_id hands
-        // out a fresh ChartId, so reading them back afterwards (the old code
-        // did) always yields an EMPTY symbol — which then propagates into the
-        // auto-group, the corner tag, the toolbar selector and the saved
-        // preset. The new blank chart inherits the current symbol, falling
-        // back to BTCUSDT for a cold start.
-        let (prior_symbol, prior_timeframe) = {
-            let prior_chart_id = self
-                .panel_app
-                .panel_grid
-                .docking()
-                .active_leaf()
-                .and_then(|leaf| self.panel_app.panel_grid.container_id_for_leaf(leaf));
-            let sym = prior_chart_id
-                .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
-                .map(String::from)
-                .unwrap_or_else(|| "BTCUSDT".to_string());
-            let tf = prior_chart_id
-                .and_then(|cid| self.managers.bubble.timeframe_for_chart(cid))
-                .cloned()
-                .unwrap_or_default();
-            (sym, tf)
-        };
+        // Hard defaults — new chart always starts clean.
+        let default_symbol = "BTCUSDT".to_string();
+        let default_timeframe = mlc_core::state::Timeframe::new("1H", 60);
 
         // Full reset — single pane, no indicators, no primitives.
         self.panel_app.panel_grid.set_layout_single();
@@ -8681,17 +8660,48 @@ impl ChartApp {
                 }
                 let group_id = self.managers.bubble.create_group_auto(
                     [0.0, 0.0, 0.0, 0.0],
-                    prior_symbol.clone(),
-                    prior_timeframe.clone(),
+                    default_symbol.clone(),
+                    default_timeframe.clone(),
                 );
                 let _ = self.managers.bubble.attach_chart_to_bubble(chart_id, group_id);
-                if let Some(style_arc) = self.managers.bubble.bubble(group_id).map(|g| g.last_used_style.clone()) {
-                    if let Some(pid) = self.panel_app.panel_grid.container_for_leaf(active_leaf).map(|w| w.chart_panel_id) {
+                if let Some(bubble) = self.managers.bubble.bubble_mut(group_id) {
+                    bubble.symbol = default_symbol.clone();
+                    bubble.timeframe = default_timeframe.clone();
+                    bubble.exchange = digdigdig3::ExchangeId::Binance.as_str().to_string();
+                    bubble.account_type = "S".to_string();
+                }
+                let exchange_name = digdigdig3::ExchangeId::Binance.as_str().to_string();
+                if let Some(pid) = self.panel_app.panel_grid.container_for_leaf(active_leaf).map(|w| w.chart_panel_id) {
+                    if let Some(style_arc) = self.managers.bubble.bubble(group_id).map(|g| g.last_used_style.clone()) {
                         if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
                             panel.drawing_manager.bind_style_store(style_arc);
+                            panel.drawing_manager.set_current_symbol_key("BTCUSDT", &exchange_name, "S");
                         }
                     }
                 }
+                // Reset window data provider and kick off data flow.
+                self.active_exchange = digdigdig3::ExchangeId::Binance;
+                let data_provider: mlc_core::SharedDataProvider = std::sync::Arc::new(
+                    mlc_live_data::LiveDataProvider::new(
+                        digdigdig3::ExchangeId::Binance,
+                        exchange_name.clone(),
+                        digdigdig3::AccountType::Spot,
+                        self.bridge.clone(),
+                    ),
+                );
+                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                    window.data_provider = data_provider;
+                }
+                self.bridge.ensure_connector(digdigdig3::ExchangeId::Binance);
+                self.bridge.request_bars(
+                    digdigdig3::ExchangeId::Binance,
+                    "BTCUSDT",
+                    &default_timeframe,
+                    digdigdig3::AccountType::Spot,
+                    None,
+                    Some(self.panel_app.user_manager.profile.bar_count as usize),
+                    false,
+                );
                 eprintln!("[ChartApp] Auto-created invisible sync group {:?} for new chart", group_id);
             }
         }
