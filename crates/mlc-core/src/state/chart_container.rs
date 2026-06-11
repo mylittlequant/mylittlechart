@@ -275,6 +275,14 @@ pub struct ChartContainer {
     /// Runtime-only, not persisted.
     pub restore_scale_mode: Option<ScaleMode>,
 
+    /// When `true`, the `BackfillComplete` handler must call `snap_to_end` after
+    /// delivering fresh bars.  Set on cold preset-restore / new-window spawn
+    /// (the stale cached bars that arrive via `BarsLoaded` / `set_bars` snap to
+    /// the wrong position; the correct fresh data only lands later via
+    /// `BackfillComplete`).  Cleared by the handler after snapping.
+    /// Runtime-only, not persisted.
+    pub needs_snap_after_backfill: bool,
+
     /// Pre-join scale mode: saved when this window enters a group with
     /// `sync_viewport = ON`. Restored automatically on desync so the window
     /// returns to its own A/M/F choice. F (Focus) implies a pinned viewport,
@@ -408,6 +416,7 @@ impl ChartContainer {
             needs_auto_scale_after_bars: false,
             restore_scale_mode: None,
             stashed_scale_mode: None,
+            needs_snap_after_backfill: false,
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
             inner_docking: make_inner_docking_with_main_chart(panel_id),
@@ -671,6 +680,8 @@ impl ChartContainer {
             restore_scale_mode: None,
             // Split child has no stashed scale mode — it joins the group fresh.
             stashed_scale_mode: None,
+            // Split child does not need a post-backfill snap.
+            needs_snap_after_backfill: false,
             // Split child has no in-flight scroll fetch.
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
@@ -913,6 +924,7 @@ impl ChartContainer {
             needs_auto_scale_after_bars: false,
             restore_scale_mode: None,
             stashed_scale_mode: None,
+            needs_snap_after_backfill: false,
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
             inner_docking: make_inner_docking_with_main_chart(new_panel_id),

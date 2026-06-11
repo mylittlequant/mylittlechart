@@ -377,6 +377,10 @@ impl ChartApp {
                             continue;
                         }
                         window.update_bars(bars.clone());
+                        if window.needs_snap_after_backfill {
+                            window.snap_to_end(mlc_core::DEFAULT_SNAP_MARGIN);
+                            window.needs_snap_after_backfill = false;
+                        }
                         if window.price_scale.scale_mode.is_auto_y() {
                             window.calc_auto_scale();
                         }

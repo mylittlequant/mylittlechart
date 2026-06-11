@@ -754,6 +754,10 @@ impl ChartApp {
 
                                     // Bars arrive asynchronously via BarsLoaded.
                                     window.pending_symbol_load = true;
+                                    // Cold preset restore: stale cached bars arrive via BarsLoaded
+                                    // first; fresh exchange data arrives later via BackfillComplete.
+                                    // Snap to end only after the fresh data lands.
+                                    window.needs_snap_after_backfill = true;
 
                                     eprintln!(
                                         "[ChartApp] built window {} -> {}/{} ({} drawings)",
@@ -901,6 +905,10 @@ impl ChartApp {
 
                                     // Bars arrive asynchronously via BarsLoaded.
                                     window.pending_symbol_load = true;
+                                    // Cold preset restore: stale cached bars arrive via BarsLoaded
+                                    // first; fresh exchange data arrives later via BackfillComplete.
+                                    // Snap to end only after the fresh data lands.
+                                    window.needs_snap_after_backfill = true;
 
                                     // Collect panel state for post-borrow write to panels_store.
                                     let static_ct: &'static str = match snap.chart_type.as_str() {

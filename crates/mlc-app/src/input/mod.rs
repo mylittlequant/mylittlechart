@@ -8701,6 +8701,11 @@ impl ChartApp {
                 );
                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     window.data_provider = data_provider;
+                    // Cold data path: first BarsLoaded must replace-and-snap
+                    // (set_bars), and the fresh backfill must snap once more —
+                    // same contract as a cold preset restore.
+                    window.pending_symbol_load = true;
+                    window.needs_snap_after_backfill = true;
                 }
                 self.bridge.ensure_connector(digdigdig3::ExchangeId::Binance);
                 self.bridge.request_bars(

@@ -386,9 +386,15 @@ pub fn draw_time_scale_cursor_label(
         let min_x = tw / 2.0;
         let max_x = (viewport.chart_width - tw / 2.0).max(min_x);
         let tx = if max_x >= min_x { x.clamp(min_x, max_x) } else { viewport.chart_width / 2.0 };
+        let tx = tx.round();
         let box_x = origin_x + tx - tw / 2.0;
         let box_y = origin_y + 2.0;
         let box_height = config.time_scale_height - 4.0;
+
+        ctx.save();
+        ctx.begin_path();
+        ctx.rect(origin_x, origin_y, viewport.chart_width, config.time_scale_height);
+        ctx.clip();
 
         // Draw blur background (for FrostedGlass/LiquidGlass styles)
         ctx.draw_blur_background(box_x, box_y, tw, box_height);
@@ -403,6 +409,8 @@ pub fn draw_time_scale_cursor_label(
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.set_fill_color(&scale_theme.crosshair_label_text);
         ctx.fill_text(&label, origin_x + tx, label_y);
+
+        ctx.restore();
     }
 }
 
