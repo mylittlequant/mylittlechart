@@ -382,6 +382,10 @@ struct App<'s> {
     /// One-shot: elapsed_ms stamp of promote swap completion. Consumed by the
     /// next about_to_wait pass to log the first-live-frame cost.
     promote_end_ms: Option<u128>,
+    /// One-shot: run warm_background_tabs on the pass AFTER the first live
+    /// frame. Set when `promote_end_ms` is consumed. Keeps the ~1.2s
+    /// connector warm-up out of the spinner-freeze window.
+    pending_background_warm: bool,
 
     // ── Pipelined GPU render thread ───────────────────────────────────────
     /// Sender side of the command channel to the GPU render thread.
@@ -839,6 +843,7 @@ impl App<'_> {
             cached_present_us: 0,
             last_atw_end: None,
             promote_end_ms: None,
+            pending_background_warm: false,
             gpu_cmd_tx: None,
             gpu_done_rx: None,
             gpu_thread: None,
@@ -1641,7 +1646,6 @@ impl App<'_> {
             if let Some(pw) = self.windows.get_mut(&r.winit_id) {
                 let t_swap_one = mlc_live_data::elapsed_ms();
                 pw.chart = *r.chart;
-                let t_chart_set = mlc_live_data::elapsed_ms();
                 pw.window_id = r.window_id;
                 pw.skeleton = false;
                 pw.visible_set = true; // already on screen — don't hide again
@@ -1651,12 +1655,15 @@ impl App<'_> {
                 pw.sidebar_dirty_scene = true;
                 pw.chart_dirty = true;
                 pw.overlay_dirty = true;
-                // Warm background tabs now that presets + open_tabs are populated.
-                pw.chart.warm_background_tabs();
+                // Background tab warm-up is DEFERRED to the pass after the
+                // first live frame (about_to_wait): warm_background_tabs
+                // blocks the main thread ~1.2s (ensure_connector per series)
+                // — measured 1206ms of the 1422ms post-spinner freeze. The
+                // chart must appear first; the warm-up catches up one frame
+                // later.
                 eprintln!(
-                    "[App] finish_promote: chart-swap(+old-drop) {}ms, warm {}ms",
-                    t_chart_set.saturating_sub(t_swap_one),
-                    mlc_live_data::elapsed_ms().saturating_sub(t_chart_set),
+                    "[App] finish_promote: chart-swap(+old-drop) {}ms (warm deferred)",
+                    mlc_live_data::elapsed_ms().saturating_sub(t_swap_one),
                 );
             }
         }
@@ -4402,6 +4409,23 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             eprintln!(
                 "[App] finish_promote: first live frame done {}ms after swap (t={}ms)",
                 mlc_live_data::elapsed_ms().saturating_sub(end_ms),
+                mlc_live_data::elapsed_ms(),
+            );
+            // Arm the deferred warm-up for the NEXT pass: the first live
+            // frame is submitted, so the ~1.2s warm_background_tabs cost no
+            // longer extends the spinner freeze.
+            self.pending_background_warm = true;
+        } else if self.pending_background_warm {
+            self.pending_background_warm = false;
+            let t_warm = std::time::Instant::now();
+            for pw in self.windows.values_mut() {
+                if !pw.skeleton {
+                    pw.chart.warm_background_tabs();
+                }
+            }
+            eprintln!(
+                "[App] deferred background-tab warm: {}ms (t={}ms)",
+                t_warm.elapsed().as_millis(),
                 mlc_live_data::elapsed_ms(),
             );
         }
