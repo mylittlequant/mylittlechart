@@ -553,6 +553,10 @@ pub struct ChartApp {
     /// Format: `window_id → (instance_id → height_ratio)`.  Cleared after the
     /// ratios are applied.
     pub(crate) pending_sub_pane_ratios: std::collections::HashMap<u64, std::collections::HashMap<u64, f32>>,
+    /// Instance ids already given a one-shot heal recalc (tick.rs indicator
+    /// heal). Prevents per-tick recalc storms for indicators that
+    /// legitimately produce no values.
+    pub(crate) indicator_heal_attempted: std::collections::HashSet<u64>,
     /// Per-window set of sub-pane instance_ids that should have `above_main = true`
     /// after the next `sync_sub_panes_from_manager` call.  Populated during
     /// `LoadPreset` from `ChartWindowSnapshot::sub_pane_above_main`.
@@ -1027,6 +1031,7 @@ impl ChartApp {
             last_sidebar_data_mark: None,
             render_timing_us: (0, 0, 0, 0),
             pending_sub_pane_ratios: std::collections::HashMap::new(),
+            indicator_heal_attempted: std::collections::HashSet::new(),
             pending_sub_pane_above_main: std::collections::HashMap::new(),
             pending_sub_pane_order: std::collections::HashMap::new(),
             pending_sub_pane_hidden: std::collections::HashMap::new(),
@@ -1372,6 +1377,7 @@ impl ChartApp {
             last_sidebar_data_mark: None,
             render_timing_us: (0, 0, 0, 0),
             pending_sub_pane_ratios: std::collections::HashMap::new(),
+            indicator_heal_attempted: std::collections::HashSet::new(),
             pending_sub_pane_above_main: std::collections::HashMap::new(),
             pending_sub_pane_order: std::collections::HashMap::new(),
             pending_sub_pane_hidden: std::collections::HashMap::new(),
@@ -1615,6 +1621,7 @@ impl ChartApp {
             last_sidebar_data_mark: None,
             render_timing_us: (0, 0, 0, 0),
             pending_sub_pane_ratios: std::collections::HashMap::new(),
+            indicator_heal_attempted: std::collections::HashSet::new(),
             pending_sub_pane_above_main: std::collections::HashMap::new(),
             pending_sub_pane_order: std::collections::HashMap::new(),
             pending_sub_pane_hidden: std::collections::HashMap::new(),

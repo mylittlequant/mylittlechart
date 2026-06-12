@@ -1486,5 +1486,44 @@ impl ChartApp {
                 self.panel_app.panel_grid.containers().is_empty(),
             );
         }
+
+        // ── Indicator heal: one-shot recalc for never-computed instances ────
+        // Bars can reach a window through paths that never emit BarsLoaded
+        // (Phase A cache-fresh skip returns without sending; preset restore
+        // serves bars synchronously from the data_provider cache). Restored
+        // instances then sit with empty `values` until something else forces
+        // a recalc (the owner-visible bug: indicators absent after reload,
+        // appearing only after a new indicator is added). Heal: when a window
+        // HAS bars and hosts instances that were never computed, run one
+        // calculate_for_window. One attempt per instance per session — an
+        // indicator that legitimately yields no values doesn't retrigger.
+        {
+            let window_bars: Vec<(u64, Vec<mlc_core::Bar>)> = self
+                .panel_app
+                .panel_grid
+                .iter_containers()
+                .filter(|(_, w)| !w.bars.is_empty())
+                .map(|(_, w)| (w.id.0, w.bars.clone()))
+                .collect();
+            for (wid, bars) in window_bars {
+                let needs_heal: Vec<u64> = self
+                    .indicator_manager
+                    .get_instances_for_window(wid)
+                    .iter()
+                    .filter(|i| i.values.is_empty() && !self.indicator_heal_attempted.contains(&i.id))
+                    .map(|i| i.id)
+                    .collect();
+                if !needs_heal.is_empty() {
+                    for id in &needs_heal {
+                        self.indicator_heal_attempted.insert(*id);
+                    }
+                    eprintln!(
+                        "[ChartApp] indicator heal: window {} has {} bars, {} never-computed instance(s) {:?} — recalculating",
+                        wid, bars.len(), needs_heal.len(), needs_heal
+                    );
+                    self.indicator_manager.calculate_for_window(wid, &bars);
+                }
+            }
+        }
     }
 }

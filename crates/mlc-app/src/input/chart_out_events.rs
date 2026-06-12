@@ -1303,6 +1303,9 @@ impl ChartApp {
                     // Step 6: Restore indicators
                     // ----------------------------------------------------------------
                     self.indicator_manager.clear_all();
+                    // Re-arm the one-shot indicator heal (tick.rs): restored
+                    // instances reuse ids from the previous preset.
+                    self.indicator_heal_attempted.clear();
                     for ind_snap in &preset.indicators {
                         if self.indicator_manager.create_instance_with_id(
                             ind_snap.id,

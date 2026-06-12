@@ -386,10 +386,14 @@ pub fn draw_last_price_line(
     }
     let screen_y = rect.y + y;
 
-    // Calculate X start position (from last bar's center)
+    // Calculate X start position (from last bar's center).
+    // CLAMP to the container rect: when the last bar sits outside the
+    // viewport (scrolled into the future/past) bar_to_x extrapolates beyond
+    // the pane — without the clamp the projection line leaks into the
+    // neighbouring split container.
     let last_bar_idx = bars.len() - 1;
     let start_x = viewport.bar_to_x(last_bar_idx);
-    let screen_start_x = rect.x + start_x;
+    let screen_start_x = (rect.x + start_x).clamp(rect.x, rect.right());
 
     // End at right edge of chart
     let screen_end_x = rect.right();

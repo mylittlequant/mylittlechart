@@ -2828,33 +2828,14 @@ fn build_maximized_layout(
     sub_pane_ids: &[u64],
     scale_settings: &mlc_core::scale_settings::ScaleSettings,
 ) -> crate::layout::ExtendedFrameLayout {
-    // Pass a single-element sub-pane list with the maximized pane only,
-    // and give it the whole share (1.0).  The main chart gets a near-zero
-    // share that InnerLayout will snap to its min (26 px), which is fine —
-    // we guard main-chart rendering with `main_chart_visible` anyway.
-    // But we want truly zero main chart for clean fullscreen look, so we use
-    // a direct construction approach via the 0.0/1.0 proportion split and
-    // rely on min enforcement being absent in from_proportions when only one
-    // sub-pane is listed.
-    //
-    // Simplest correct path: build via from_proportions with only the
-    // maximized pane in the list and proportions [0.0, 1.0].
-    // InnerLayout::sync_with/heights will enforce min_main_px=26 on the main
-    // slot, but we check main_chart_visible (height >= 1.0) at render time
-    // and skip all main-chart drawing when it is collapsed to its minimum.
-    // For the sub-pane layout the full available height minus that 26 px goes
-    // to the maximized pane — effectively fullscreen for any container
-    // taller than ~60 px.
     let _ = sub_pane_ids; // full list not needed; we render only max pane
-    // Maximized layout ignores above-main placement.
-    crate::layout::ExtendedFrameLayout::from_proportions(
+    // Maximized = overlay: the pane covers the whole container content area,
+    // main chart gets a true zero-height rect (guarded by main_chart_visible
+    // at render time). No 26 px InnerLayout min strip.
+    crate::layout::ExtendedFrameLayout::maximized(
         content_rect,
-        &[maximized_id],
-        &[1.0],
-        Some(0.0),
+        maximized_id,
         scale_settings,
-        1.0,
-        &std::collections::HashSet::new(),
     )
 }
 

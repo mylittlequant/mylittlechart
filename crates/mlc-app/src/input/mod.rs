@@ -2659,10 +2659,19 @@ impl ChartApp {
                 })
                 .unwrap_or((0.0, 0.0));
             if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                let ok = window.drag_sub_pane_separator(instance_id, dy, content_h, content_w);
+                // Above-main panes show their separator at the pane BOTTOM
+                // (between pane and chart). Dragging that line down must GROW
+                // the pane — the tree drag's positive-dy direction shrinks it
+                // (tree semantics: separator above the pane). Invert.
+                let eff_dy = if window.sub_pane_above_main.contains(&instance_id) {
+                    -dy
+                } else {
+                    dy
+                };
+                let ok = window.drag_sub_pane_separator(instance_id, eff_dy, content_h, content_w);
                 eprintln!(
                     "[ChartApp] sub-pane sep DRAG id={} dy={:.1} content_h={:.0} ok={}",
-                    instance_id, dy, content_h, ok
+                    instance_id, eff_dy, content_h, ok
                 );
             }
             return;
@@ -8380,15 +8389,7 @@ impl ChartApp {
             .unwrap_or(&empty_above);
 
         if let Some(max_iid) = maximized_id {
-            ExtendedFrameLayout::from_proportions(
-                &content_rect,
-                &[max_iid],
-                &[1.0],
-                Some(0.0),
-                &scale_settings,
-                1.0,
-                &std::collections::HashSet::new(),
-            )
+            ExtendedFrameLayout::maximized(&content_rect, max_iid, &scale_settings)
         } else {
             ExtendedFrameLayout::from_proportions(
                 &content_rect,
@@ -8479,15 +8480,7 @@ impl ChartApp {
             .unwrap_or(&empty_above2);
 
         if let Some(max_iid) = maximized_id {
-            Some(ExtendedFrameLayout::from_proportions(
-                leaf_rect,
-                &[max_iid],
-                &[1.0],
-                Some(0.0),
-                scale_settings,
-                1.0,
-                &std::collections::HashSet::new(),
-            ))
+            Some(ExtendedFrameLayout::maximized(leaf_rect, max_iid, scale_settings))
         } else {
             Some(ExtendedFrameLayout::from_proportions(
                 leaf_rect,

@@ -719,6 +719,70 @@ impl ExtendedFrameLayout {
             total_chart_height,
         }
     }
+
+    /// Layout for a MAXIMIZED sub-pane: the pane covers the WHOLE container
+    /// content area (an overlay in z-order above the chart), not a squeezed
+    /// stack. The main chart gets a zero-height rect — render passes guard on
+    /// `main_chart_visible` (height >= 1.0) and skip it entirely; the pane's
+    /// separator gets zero height so `find_separator_at_y` ignores it.
+    ///
+    /// Replaces the old `from_proportions(&[id], &[1.0], ...)` trick, whose
+    /// `InnerLayout::heights` min-enforcement always left a 26 px main-chart
+    /// strip visible above the maximized pane.
+    pub fn maximized(
+        chart_panel: &LayoutRect,
+        instance_id: u64,
+        scale_settings: &ScaleSettings,
+    ) -> Self {
+        let price_scale_width = scale_settings
+            .effective_price_scale_width()
+            .min(chart_panel.width)
+            .max(0.0);
+        let time_scale_height = scale_settings
+            .effective_time_scale_height()
+            .min(chart_panel.height)
+            .max(0.0);
+        let chart_width = (chart_panel.width - price_scale_width).max(0.0);
+        let available_height = (chart_panel.height - time_scale_height).max(0.0);
+
+        let (chart_x, price_scale_x) = match scale_settings.price_scale_position {
+            PriceScalePosition::Left => {
+                (chart_panel.x + price_scale_width, chart_panel.x)
+            }
+            PriceScalePosition::Right | PriceScalePosition::Hidden => {
+                (chart_panel.x, chart_panel.x + chart_width)
+            }
+        };
+        let (content_y, time_scale_y) = match scale_settings.time_scale_position {
+            TimeScalePosition::Top => {
+                (chart_panel.y + time_scale_height, chart_panel.y)
+            }
+            TimeScalePosition::Bottom | TimeScalePosition::Hidden => {
+                (chart_panel.y, chart_panel.y + available_height)
+            }
+        };
+
+        let main_chart = ChartAreaLayout {
+            chart: LayoutRect::new(chart_x, content_y, chart_width, 0.0),
+            price_scale: LayoutRect::new(price_scale_x, content_y, price_scale_width, 0.0),
+            time_scale: LayoutRect::new(chart_x, time_scale_y, chart_width, time_scale_height),
+            scale_corner: LayoutRect::new(price_scale_x, time_scale_y, price_scale_width, time_scale_height),
+        };
+
+        let sub_panes = vec![SubPaneLayout {
+            instance_id,
+            separator: LayoutRect::new(chart_panel.x, content_y, chart_panel.width, 0.0),
+            content: LayoutRect::new(chart_x, content_y, chart_width, available_height),
+            price_scale: LayoutRect::new(price_scale_x, content_y, price_scale_width, available_height),
+        }];
+
+        Self {
+            frame: FrameLayout::default(),
+            main_chart,
+            sub_panes,
+            total_chart_height: available_height,
+        }
+    }
 }
 
 /// Margins around the chart area
