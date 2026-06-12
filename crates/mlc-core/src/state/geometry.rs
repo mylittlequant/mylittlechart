@@ -500,6 +500,7 @@ impl ExtendedFrameLayout {
             chart_panel,
             &sub_pane_instance_ids,
             &sub_proportions,
+            proportions.first().copied().filter(|_| proportions.len() > 1),
             scale_settings,
             separator_height,
             &std::collections::HashSet::new(),
@@ -516,10 +517,20 @@ impl ExtendedFrameLayout {
     /// all-below behaviour. The inner-docking tree order (and thus
     /// `sub_pane_instance_ids` / `sub_proportions`) is not changed; only the
     /// presentation geometry is reordered.
+    ///
+    /// `main_proportion` — the main chart's share from the same proportion
+    /// vector the sub shares came from (inner_docking root `proportions[0]`).
+    /// `None` falls back to `InnerLayout::sync_with` defaults (0.8 for one
+    /// pane, 0.64 for two, ...). Passing the real tree share is REQUIRED for
+    /// separator drag to track the cursor: substituting the default while the
+    /// tree's main share shrinks renormalizes the sub share against a fixed
+    /// 0.8 and caps the visible sub-pane at ~55% no matter how far the user
+    /// drags (the "30-60% guard" bug).
     pub fn from_proportions(
         chart_panel: &LayoutRect,
         sub_pane_instance_ids: &[u64],
         sub_proportions: &[f64],
+        main_proportion: Option<f64>,
         scale_settings: &ScaleSettings,
         separator_height: f64,
         above_main_ids: &std::collections::HashSet<u64>,
@@ -563,10 +574,14 @@ impl ExtendedFrameLayout {
             .take(sub_pane_count)
             .collect();
         local.sync_with(&want_ids);
-        // Apply the caller's share Vec verbatim (skip the main slot --
-        // InnerLayout already keeps it at proportions[0]).
+        // Apply the caller's share Vec verbatim. The main slot uses the
+        // caller's tree share when provided; only fall back to the
+        // sync_with-derived default when the tree has no real proportions yet.
         if sub_proportions.len() >= sub_pane_count {
-            local.proportions = std::iter::once(local.proportions[0])
+            let main_share = main_proportion
+                .map(|m| m.max(0.0))
+                .unwrap_or(local.proportions[0]);
+            local.proportions = std::iter::once(main_share)
                 .chain(sub_proportions.iter().take(sub_pane_count).copied())
                 .collect();
             local.normalize();
@@ -670,19 +685,24 @@ impl ExtendedFrameLayout {
             let pane_h = scaled_heights[i];
             let pane_is_above = is_above[i];
 
-            let (cur_y, next_y) = if pane_is_above {
+            let (sep_y, content_y) = if pane_is_above {
+                // Above-main pane: content first, separator BELOW the pane —
+                // visually between the pane and whatever follows (the next
+                // above pane or the main chart). Emitting it at the pane's
+                // top would pin the topmost separator to the panel edge where
+                // it is indistinguishable from the frame border.
                 let y = above_y;
-                above_y += separator_height + pane_h;
-                (y, y + separator_height)
+                above_y += pane_h + separator_height;
+                (y + pane_h, y)
             } else {
                 let y = below_y;
                 below_y += separator_height + pane_h;
                 (y, y + separator_height)
             };
 
-            let separator = LayoutRect::new(chart_panel.x, cur_y, chart_panel.width, separator_height);
-            let content = LayoutRect::new(chart_x, next_y, chart_width, pane_h);
-            let pane_price_scale = LayoutRect::new(price_scale_x, next_y, price_scale_width, pane_h);
+            let separator = LayoutRect::new(chart_panel.x, sep_y, chart_panel.width, separator_height);
+            let content = LayoutRect::new(chart_x, content_y, chart_width, pane_h);
+            let pane_price_scale = LayoutRect::new(price_scale_x, content_y, price_scale_width, pane_h);
 
             sub_panes.push(SubPaneLayout {
                 instance_id,

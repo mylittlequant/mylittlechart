@@ -10,7 +10,7 @@ name = "mlc_app"
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 mlc-layout = { path = "../mlc-layout", package = "mylittlechart-layout" }
 mlc-indicators = { path = "../mlc-indicators", package = "mylittlechart-indicators" }
-uzor = "=1.4.11"
+uzor = "=1.4.12"
 mlc-sidebar-content = { path = "../mlc-sidebar-content", package = "mylittlechart-sidebar-content" }
 mlc-panels = { path = "../mlc-panels", package = "mylittlechart-panels" }
 mlc-alerts = { path = "../mlc-alerts", package = "mylittlechart-alerts" }

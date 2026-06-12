@@ -8336,7 +8336,7 @@ impl ChartApp {
         // pass empty sub_proportions so from_proportions falls back to the
         // same InnerLayout::sync_with defaults the renderer uses — avoids
         // collapsing panes to minimum height (30px) when proportions are zeros.
-        let (sub_pane_ids, sub_proportions): (Vec<u64>, Vec<f64>) = self.panel_app.panel_grid
+        let (sub_pane_ids, sub_proportions, main_proportion): (Vec<u64>, Vec<f64>, Option<f64>) = self.panel_app.panel_grid
             .active_container()
             .map(|win| {
                 use mlc_core::state::chart_container::{collect_inner_instance_ids, collect_inner_proportions};
@@ -8348,11 +8348,12 @@ impl ChartApp {
                 // at least one real value (props.len() > 1, same guard the
                 // renderer uses in render_chart.rs).
                 if props.len() > 1 {
-                    ids.iter()
+                    let (ids_f, subs): (Vec<u64>, Vec<f64>) = ids.iter()
                         .enumerate()
                         .filter(|(_, id)| visible_set.contains(id))
                         .map(|(i, &id)| (id, props.get(i + 1).copied().unwrap_or(0.0)))
-                        .unzip()
+                        .unzip();
+                    (ids_f, subs, props.first().copied())
                 } else {
                     let filtered_ids: Vec<u64> = ids
                         .iter()
@@ -8360,7 +8361,7 @@ impl ChartApp {
                         .copied()
                         .collect();
                     let empty_props = vec![0.0_f64; 0];
-                    (filtered_ids, empty_props)
+                    (filtered_ids, empty_props, None)
                 }
             })
             .unwrap_or_default();
@@ -8383,6 +8384,7 @@ impl ChartApp {
                 &content_rect,
                 &[max_iid],
                 &[1.0],
+                Some(0.0),
                 &scale_settings,
                 1.0,
                 &std::collections::HashSet::new(),
@@ -8392,6 +8394,7 @@ impl ChartApp {
                 &content_rect,
                 &sub_pane_ids,
                 &sub_proportions,
+                main_proportion,
                 &scale_settings,
                 1.0,
                 above_main_ids,
@@ -8459,6 +8462,7 @@ impl ChartApp {
                 .collect();
             (filtered_ids, Vec::new())
         };
+        let main_proportion = all_props.first().copied().filter(|_| all_props.len() > 1);
         // When a sub-pane is maximized, mirror the same override that
         // render_full_chart_panel applies so input hit-testing operates on
         // the correct fullscreen geometry for this leaf.
@@ -8479,6 +8483,7 @@ impl ChartApp {
                 leaf_rect,
                 &[max_iid],
                 &[1.0],
+                Some(0.0),
                 scale_settings,
                 1.0,
                 &std::collections::HashSet::new(),
@@ -8488,6 +8493,7 @@ impl ChartApp {
                 leaf_rect,
                 &sub_pane_ids,
                 &sub_proportions,
+                main_proportion,
                 scale_settings,
                 1.0,
                 above_ids,

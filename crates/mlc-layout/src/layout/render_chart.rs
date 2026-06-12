@@ -2851,6 +2851,7 @@ fn build_maximized_layout(
         content_rect,
         &[maximized_id],
         &[1.0],
+        Some(0.0),
         scale_settings,
         1.0,
         &std::collections::HashSet::new(),
@@ -3011,6 +3012,8 @@ pub fn render_full_chart_panel(
             content_rect,
             &sub_pane_ids,
             &sub_props,
+            data.inner_proportions.first().copied()
+                .filter(|_| data.inner_proportions.len() > 1),
             data.scale_settings,
             1.0,
             above_main_ids,

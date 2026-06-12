@@ -2998,6 +2998,7 @@ impl ChartApp {
                         &leaf_rect,
                         &sub_pane_ids,
                         &sub_proportions,
+                        all_props.first().copied().filter(|_| all_props.len() > 1),
                         &window.scale_settings,
                         1.0,
                         &window.sub_pane_above_main,
@@ -3524,6 +3525,7 @@ impl ChartApp {
                         &chart_render_rect,
                         &sub_pane_ids,
                         &sub_proportions,
+                        all_props2.first().copied().filter(|_| all_props2.len() > 1),
                         &window.scale_settings,
                         1.0,
                         &window.sub_pane_above_main,
@@ -5767,6 +5769,12 @@ impl ChartApp {
             let root_id = window.inner_docking.tree().root().id;
             window.inner_docking.tree_mut().set_branch_preserve_if_empty(root_id, true);
 
+            // Re-pin the vertical stack layout after the add/hide/show
+            // reconcile above: uzor re-infers HORIZONTAL layouts from child
+            // count on every structural change, which breaks separator drag
+            // math (see pin_vertical_stack_layout docs).
+            mlc_core::state::chart_container::pin_vertical_stack_layout(&mut window.inner_docking);
+
             // Apply preset-restore proportions if available.
             if let Some(ref ratios) = pending_ratios {
                 let current_visible_ids = collect_inner_instance_ids(&window.inner_docking);
@@ -6879,8 +6887,20 @@ impl ChartApp {
                 let ts = if w.bars.is_empty() {
                     None
                 } else {
-                    let idx = (view_start.floor() as usize).min(w.bars.len().saturating_sub(1));
-                    Some(w.bars[idx].timestamp)
+                    let last_idx = w.bars.len() - 1;
+                    let fidx = view_start.floor();
+                    if fidx > last_idx as f64 {
+                        // Dragged past the last bar: extrapolate the anchor
+                        // timestamp by the bar interval so sync peers follow
+                        // into the future (find_bar_for_timestamp extrapolates
+                        // right) instead of pinning at their last bar.
+                        let interval = mlc_core::bar_interval_seconds(&w.bars);
+                        Some(w.bars[last_idx].timestamp
+                            + (fidx as i64 - last_idx as i64) * interval)
+                    } else {
+                        let idx = (fidx.max(0.0) as usize).min(last_idx);
+                        Some(w.bars[idx].timestamp)
+                    }
                 };
                 (w.viewport.chart_width, ts, view_start - view_start.floor())
             }

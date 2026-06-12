@@ -328,7 +328,29 @@ pub fn make_inner_docking_with_main_chart(
     ds.tree_mut().add_leaf(
         crate::state::chart_container_leaf::ChartContainerLeaf::MainChart { chart_panel_id: panel_id },
     );
+    pin_vertical_stack_layout(&mut ds);
     ds
+}
+
+/// Force the inner-docking root branch to a vertical stack layout.
+///
+/// uzor's `add_leaf` / `add_leaf_near` / `remove_leaf` re-infer the branch
+/// layout from child count (2 → SplitHorizontal, 3 → ThreeColumns,
+/// 4 → Grid2x2, 5+ → Custom) — all HORIZONTAL layouts. The chart container
+/// stack is always vertical: a horizontal label breaks `drag_separator`
+/// (width basis + 80px width minimums instead of height basis + 26px) and
+/// at 4 children routes the drag into the cross_ratio fast-path where
+/// proportions are never written at all. Call after every structural
+/// mutation of the tree. Writes the field directly — `set_layout` would
+/// clear `proportions` and wipe user drag state.
+pub fn pin_vertical_stack_layout(
+    inner_docking: &mut uzor::layout::DockState<crate::state::chart_container_leaf::ChartContainerLeaf>,
+) {
+    let root_id = inner_docking.tree().root().id;
+    if let Some(root) = inner_docking.tree_mut().find_branch_mut(root_id) {
+        root.layout = uzor::panels::WindowLayout::SplitVertical;
+        root.cross_ratio = None;
+    }
 }
 
 /// Collect indicator `instance_id`s from an inner docking tree in tree order
@@ -489,6 +511,10 @@ impl ChartContainer {
         content_h: f64,
         content_w: f64,
     ) -> bool {
+        // Re-pin the vertical stack layout: any add/remove since the last
+        // sync re-inferred a horizontal layout, which would flip the drag
+        // axis to width and (at 4 children) divert into cross_ratio.
+        pin_vertical_stack_layout(&mut self.inner_docking);
         // Ensure separators list is fresh before looking up sep_idx.
         self.inner_docking.layout(uzor::panels::PanelRect::new(
             0.0, 0.0, content_w as f32, content_h as f32,

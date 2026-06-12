@@ -183,6 +183,7 @@ pub fn compute_chart_internal_layout(
     sub_pane_instance_ids: &[u64],
     scale_settings: &ScaleSettings,
     sub_proportions: &[f64],
+    main_proportion: Option<f64>,
     separator_height: f64,
 ) -> ChartInternalLayout {
     let panel_layout = ChartPanelLayout::compute(full_panel_rect, toolbar_config);
@@ -190,6 +191,7 @@ pub fn compute_chart_internal_layout(
         &panel_layout.content_rect,
         sub_pane_instance_ids,
         sub_proportions,
+        main_proportion,
         scale_settings,
         separator_height,
         &std::collections::HashSet::new(),

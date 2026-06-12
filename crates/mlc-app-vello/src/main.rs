@@ -379,6 +379,9 @@ struct App<'s> {
     /// on a lock, a sync IO, or the promote — not in render. This is the freeze
     /// signature (atw≈0, n=2) the `dt` metric hides. `None` until the first pass.
     last_atw_end: Option<std::time::Instant>,
+    /// One-shot: elapsed_ms stamp of promote swap completion. Consumed by the
+    /// next about_to_wait pass to log the first-live-frame cost.
+    promote_end_ms: Option<u128>,
 
     // ── Pipelined GPU render thread ───────────────────────────────────────
     /// Sender side of the command channel to the GPU render thread.
@@ -835,6 +838,7 @@ impl App<'_> {
             cached_render_tex_us: 0,
             cached_present_us: 0,
             last_atw_end: None,
+            promote_end_ms: None,
             gpu_cmd_tx: None,
             gpu_done_rx: None,
             gpu_thread: None,
@@ -1610,6 +1614,11 @@ impl App<'_> {
 
         // Block until any in-flight GPU frame finishes before touching chart state.
         self.wait_for_gpu_frame_blocking();
+        let t_gpu_wait = mlc_live_data::elapsed_ms();
+        eprintln!(
+            "[App] finish_promote: gpu-wait {}ms",
+            t_gpu_wait.saturating_sub(swap_t0),
+        );
 
         let saved = self.saved_windows.clone();
         let existing_count = self.windows.len();
@@ -1630,7 +1639,9 @@ impl App<'_> {
             }
 
             if let Some(pw) = self.windows.get_mut(&r.winit_id) {
+                let t_swap_one = mlc_live_data::elapsed_ms();
                 pw.chart = *r.chart;
+                let t_chart_set = mlc_live_data::elapsed_ms();
                 pw.window_id = r.window_id;
                 pw.skeleton = false;
                 pw.visible_set = true; // already on screen — don't hide again
@@ -1642,6 +1653,11 @@ impl App<'_> {
                 pw.overlay_dirty = true;
                 // Warm background tabs now that presets + open_tabs are populated.
                 pw.chart.warm_background_tabs();
+                eprintln!(
+                    "[App] finish_promote: chart-swap(+old-drop) {}ms, warm {}ms",
+                    t_chart_set.saturating_sub(t_swap_one),
+                    mlc_live_data::elapsed_ms().saturating_sub(t_chart_set),
+                );
             }
         }
 
@@ -1654,6 +1670,7 @@ impl App<'_> {
         }
 
         self.promote_pending = false;
+        self.promote_end_ms = Some(mlc_live_data::elapsed_ms());
 
         eprintln!(
             "[App] skeleton → live: swap complete, {} window(s) live t={}ms (PROMOTE END — main blocked {}ms)",
@@ -4377,6 +4394,17 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         self.cached_about_to_wait_us = _atw_start.elapsed().as_micros() as u64;
         // Stamp the end of this worked frame for the next pass's GAP detector.
         self.last_atw_end = Some(std::time::Instant::now());
+
+        // One-shot: time from promote swap completion to the end of the first
+        // live frame's scene+submit pass — the unmeasured tail of the spinner
+        // freeze (shader/pipeline compile, full chart scene build).
+        if let Some(end_ms) = self.promote_end_ms.take() {
+            eprintln!(
+                "[App] finish_promote: first live frame done {}ms after swap (t={}ms)",
+                mlc_live_data::elapsed_ms().saturating_sub(end_ms),
+                mlc_live_data::elapsed_ms(),
+            );
+        }
 
         // ── Timing report every 5 seconds ───────────────────────────────────
         self.frame_count += 1;
