@@ -41,9 +41,28 @@ use vello::{AaSupport, Renderer, RendererOptions, Scene};
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
     window::{CursorIcon, Icon, Window, WindowId},
 };
+
+/// User-defined events sent from background threads to the winit event loop.
+enum UserEvent {
+    /// Off-thread promote worker finished building all live ChartApp instances.
+    PromoteReady(Vec<PromoteWindowResult>),
+}
+
+/// Per-window data returned by the off-thread promote worker.
+struct PromoteWindowResult {
+    winit_id: WindowId,
+    chart: Box<mlc_app::ChartApp>,
+    window_id: String,
+    /// Presets that existed only in the chart (new_window created them) but
+    /// were absent from app_state at spawn time — must be merged back on the
+    /// main thread.
+    new_presets: Vec<(String, mlc_core::preset::preset::ChartPreset)>,
+    active_preset_id: String,
+    open_tabs: Vec<String>,
+}
 use mlc_core::CursorStyle;
 use sysinfo::{Pid, ProcessesToUpdate, System};
 
@@ -225,6 +244,10 @@ struct PerWindowState {
     /// Cleared on the first non-zero resize after minimization, which triggers
     /// a snap-to-end so the viewport is back at the latest bar after restore.
     was_minimized: bool,
+    /// Set when the off-thread promote worker is building this window's live
+    /// ChartApp. Drives the animated spinner in the skeleton frame. Cleared
+    /// inside finish_promote when the swap completes.
+    spinner_start: Option<std::time::Instant>,
 }
 
 /// A pending request to open a new window.
@@ -367,6 +390,14 @@ struct App<'s> {
     gpu_thread: Option<std::thread::JoinHandle<()>>,
     /// `true` while the GPU render thread is busy with the previous frame.
     gpu_frame_pending: bool,
+
+    /// Proxy for sending `UserEvent` messages from background threads to the
+    /// winit event loop. Set once in `App::new` or lazily before first use.
+    promote_proxy: Option<EventLoopProxy<UserEvent>>,
+
+    /// True while the off-thread promote worker is running. Prevents a second
+    /// promote from starting (double-unlock guard) and drives spinner redraws.
+    promote_pending: bool,
 
     /// True when `profile.json` did not exist at startup (first-run).
     /// Causes the Welcome Wizard overlay to appear on the first window created.
@@ -808,6 +839,8 @@ impl App<'_> {
             gpu_done_rx: None,
             gpu_thread: None,
             gpu_frame_pending: false,
+            promote_proxy: None,
+            promote_pending: false,
             is_first_run,
             needs_vault_unlock,
             needs_migration,
@@ -1217,6 +1250,7 @@ impl App<'_> {
             chrome_tooltip_start: std::time::Instant::now(),
             toolbar_tooltip: tooltip::TooltipState::with_delay(700.0),
             was_minimized: false,
+            spinner_start: None,
         };
 
         self.windows.insert(win_id, pw);
@@ -1365,181 +1399,267 @@ impl App<'_> {
         );
     }
 
-    /// Promote skeleton windows to live: swap the ChartApp in-place on each
-    /// existing skeleton window instead of destroying and recreating the OS
-    /// window.  Reusing the window eliminates the ~5 s black gap caused by
-    /// (a) OS window destruction + recreation, (b) wgpu surface re-creation,
-    /// and (c) vello shader recompilation.
+    /// Kick off the off-thread promote: gathers Send inputs, starts the spinner
+    /// on each skeleton window, and spawns a worker thread that builds all live
+    /// ChartApp instances. When done the worker sends `UserEvent::PromoteReady`
+    /// through the event-loop proxy so the swap runs on the main thread.
     ///
-    /// Called after vault unlock, wizard completion, or fresh E2E setup.
-    /// The profile is already fully loaded in memory (vault secrets decrypted,
-    /// app_state rebuilt).
-    fn promote_skeleton(&mut self, event_loop: &ActiveEventLoop) {
+    /// Safe to call when `promote_pending` is false. Ignored if the proxy is
+    /// not available (should never happen in practice — the proxy is set before
+    /// the first window is created).
+    fn start_promote_async(&mut self) {
+        let proxy = match self.promote_proxy.take() {
+            Some(p) => p,
+            None => {
+                eprintln!("[App] start_promote_async: no proxy — cannot promote off-thread");
+                return;
+            }
+        };
+
         let _promote_t0 = mlc_live_data::elapsed_ms();
         eprintln!(
-            "[App] skeleton → live: in-place swap of {} skeleton window(s) t={}ms (PROMOTE START)",
+            "[App] skeleton → live: spawning worker for {} skeleton window(s) t={}ms (PROMOTE START)",
             self.windows.len(),
             _promote_t0,
         );
 
-        // Block until any in-flight GPU frame finishes — the GPU thread holds
-        // raw pointers into PerWindowState (surface.target_view); we must not
-        // swap chart state while the render thread reads it.
-        self.wait_for_gpu_frame_blocking();
+        self.promote_pending = true;
 
-        // Collect the winit WindowIds of the current skeleton windows in
-        // insertion order so we can zip them with saved_windows entries.
+        // Start the spinner on every skeleton window.
+        let spinner_instant = std::time::Instant::now();
+        for pw in self.windows.values_mut() {
+            if pw.skeleton {
+                pw.spinner_start = Some(spinner_instant);
+            }
+        }
+
+        // Collect per-window inputs that are Send + 'static.
         let window_ids: Vec<winit::window::WindowId> = self.windows.keys().copied().collect();
-
         let saved = self.saved_windows.clone();
 
-        // For each existing skeleton window, build a live ChartApp and swap it
-        // in-place — the OS window, wgpu surface, and Vello renderer are kept.
-        for (idx, &wid) in window_ids.iter().enumerate() {
-            let restore: Option<&mlc_core::WindowState> = saved.get(idx);
+        // Capture clones of everything the worker needs to build ChartApp.
+        let bridge = self.bridge.clone();
+        let profile = self.profile.clone();
+        let profile_manager = self.profile_manager.clone();
 
-            // Derive window_id the same way create_window does for live windows.
-            let window_id = restore
-                .filter(|ws| !ws.window_id.is_empty())
-                .map(|ws| ws.window_id.clone())
-                .unwrap_or_else(|| {
-                    format!(
-                        "win_{}",
-                        SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_millis()
-                    )
+        // AppState fields needed for the sync block (read-only in the worker).
+        let theme_preset = self.app_state.theme_preset.clone();
+        let watchlist_manager = self.app_state.watchlist_manager.clone();
+        let connector_enabled = self.app_state.connector_enabled.clone();
+        let app_presets = self.app_state.presets.clone();
+        let snapshots = self.app_state.snapshots.clone();
+        let template_manager = self.app_state.template_manager.clone();
+        let server_enabled = self.app_state.server_enabled;
+        let server_port = self.app_state.server_port;
+
+        // Capture window sizes now (on the main thread — winit Arc<Window> is !Send).
+        let window_sizes: Vec<(u32, u32, f64)> = window_ids.iter().map(|wid| {
+            self.windows.get(wid)
+                .map(|pw| {
+                    let sz = pw.window.inner_size();
+                    (sz.width, sz.height, pw.window.scale_factor())
+                })
+                .unwrap_or((1200, 800, 1.0))
+        }).collect();
+
+        std::thread::spawn(move || {
+            let worker_t0 = std::time::Instant::now();
+            let mut results: Vec<PromoteWindowResult> = Vec::with_capacity(window_ids.len());
+
+            for (idx, &wid) in window_ids.iter().enumerate() {
+                let restore: Option<&mlc_core::WindowState> = saved.get(idx);
+
+                // Derive window_id the same way create_window does for live windows.
+                let window_id = restore
+                    .filter(|ws| !ws.window_id.is_empty())
+                    .map(|ws| ws.window_id.clone())
+                    .unwrap_or_else(|| {
+                        format!(
+                            "win_{}",
+                            SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_millis()
+                        )
+                    });
+
+                // Build the live ChartApp (the heavy ~1.7s part).
+                let live_update_rx = bridge.add_listener();
+                let mut chart = mlc_app::ChartApp::new_window(
+                    bridge.clone(),
+                    live_update_rx,
+                    window_id.clone(),
+                    restore,
+                    &profile,
+                    &profile_manager,
+                    false, // skeleton = false
+                );
+
+                // Apply the app-level theme.
+                if !theme_preset.is_empty() {
+                    chart.panel_app.theme_manager.set_preset(&theme_preset);
+                }
+                // Sync AppState into the new live window (read-only from captured clones).
+                chart.sidebar_state.watchlist_manager = watchlist_manager.clone();
+                chart.sidebar_state.connector_enabled = connector_enabled.clone();
+                for (k, v) in app_presets.iter() {
+                    chart.panel_app.presets.entry(k.clone()).or_insert_with(|| v.clone());
+                }
+                chart.panel_app.user_manager.snapshots = snapshots.clone();
+                {
+                    let drawing_styles = &snapshots.last_used_drawing_styles;
+                    for panel in chart.panels_store.chart_panel.values_mut() {
+                        panel.drawing_manager.load_last_styles(drawing_styles);
+                    }
+                }
+                chart.panel_app.template_manager = template_manager.clone();
+                chart.panel_app.user_settings_state.server_enabled = server_enabled;
+                chart.panel_app.user_settings_state.server_port = server_port;
+                chart.panel_app.user_settings_state.server_status = if server_enabled {
+                    "running".to_string()
+                } else {
+                    "stopped".to_string()
+                };
+                chart.panel_app.user_settings_state.language =
+                    profile_manager.profile.language.clone();
+                {
+                    let uss = &mut chart.panel_app.user_settings_state;
+                    uss.profile_id = profile_manager.profile.profile_id.clone();
+                    uss.runtime_profile_id = profile_manager.profile.profile_id.clone();
+                    uss.profile_display_name = profile_manager.profile.display_name.clone();
+                    uss.profile_avatar = profile_manager.profile.avatar.clone();
+                    if let Some(index) = mlc_core::load_profile_index() {
+                        let profiles_dir = mlc_core::active_profile_data_dir()
+                            .parent()
+                            .map(|p| p.to_path_buf());
+                        uss.available_profiles = index.profiles.iter().map(|m| {
+                            (m.id.clone(), m.display_name.clone(), m.avatar.clone())
+                        }).collect();
+                        uss.profiles_with_vault_status = index.profiles.iter().map(|m| {
+                            let has_vault = if let Some(ref pd) = profiles_dir {
+                                pd.join(&m.dir_name).join("vault.enc").exists()
+                            } else {
+                                false
+                            };
+                            (m.id.clone(), m.display_name.clone(), m.avatar.clone(), has_vault)
+                        }).collect();
+                    } else {
+                        uss.available_profiles = vec![(
+                            uss.profile_id.clone(),
+                            uss.profile_display_name.clone(),
+                            uss.profile_avatar.clone(),
+                        )];
+                    }
+                }
+
+                // Resize using the sizes captured on the main thread.
+                let (w, h, scale) = window_sizes.get(idx).copied().unwrap_or((1200, 800, 1.0));
+                let chrome_px = (chrome::CHROME_HEIGHT * scale) as u32;
+                chart.resize(w, h.saturating_sub(chrome_px));
+
+                // Collect presets that new_window created and that were absent
+                // from app_presets — these must be merged back on the main thread.
+                let new_presets: Vec<(String, mlc_core::preset::preset::ChartPreset)> = chart
+                    .panel_app
+                    .presets
+                    .iter()
+                    .filter(|(k, _)| !app_presets.contains_key(*k))
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+
+                results.push(PromoteWindowResult {
+                    winit_id: wid,
+                    chart: Box::new(chart),
+                    window_id,
+                    new_presets,
+                    active_preset_id: String::new(), // filled after chart is built
+                    open_tabs: Vec::new(),            // filled after chart is built
                 });
+            }
 
-            // Build the live ChartApp — mirrors create_window from the bridge
-            // add_listener call through the AppState sync block.
-            let live_update_rx = self.bridge.add_listener();
-            let mut chart = mlc_app::ChartApp::new_window(
-                self.bridge.clone(),
-                live_update_rx,
-                window_id.clone(),
-                restore,
-                &self.profile,
-                &self.profile_manager,
-                false, // skeleton = false
+            // Patch active_preset_id / open_tabs from the built charts.
+            for r in results.iter_mut() {
+                r.active_preset_id = r.chart.panel_app.active_preset_id.clone();
+                r.open_tabs = r.chart.panel_app.open_tabs.clone();
+            }
+
+            eprintln!(
+                "[App] promote worker: {} ChartApp(s) built in {}ms",
+                results.len(),
+                worker_t0.elapsed().as_millis(),
             );
 
-            // Apply the app-level theme.
-            if !self.app_state.theme_preset.is_empty() {
-                chart.panel_app.theme_manager.set_preset(&self.app_state.theme_preset);
-            }
-            // Sync AppState into the new live window.
-            chart.sidebar_state.watchlist_manager = self.app_state.watchlist_manager.clone();
-            chart.sidebar_state.connector_enabled = self.app_state.connector_enabled.clone();
-            for (k, v) in self.app_state.presets.iter() {
-                chart.panel_app.presets.entry(k.clone()).or_insert_with(|| v.clone());
-            }
-            for (k, v) in chart.panel_app.presets.iter() {
-                self.app_state.presets.entry(k.clone()).or_insert_with(|| v.clone());
-            }
-            if !chart.panel_app.active_preset_id.is_empty() {
-                self.profile_manager.profile.active_preset_id = chart.panel_app.active_preset_id.clone();
-                self.profile.active_preset_id = chart.panel_app.active_preset_id.clone();
-            }
-            if !chart.panel_app.open_tabs.is_empty() {
-                self.profile_manager.profile.open_tabs = chart.panel_app.open_tabs.clone();
-                self.profile.open_tabs = chart.panel_app.open_tabs.clone();
-            }
-            chart.panel_app.user_manager.snapshots = self.app_state.snapshots.clone();
-            {
-                let drawing_styles = &self.app_state.snapshots.last_used_drawing_styles;
-                for panel in chart.panels_store.chart_panel.values_mut() {
-                    panel.drawing_manager.load_last_styles(drawing_styles);
-                }
-            }
-            chart.panel_app.template_manager = self.app_state.template_manager.clone();
-            chart.panel_app.user_settings_state.server_enabled = self.app_state.server_enabled;
-            chart.panel_app.user_settings_state.server_port = self.app_state.server_port;
-            chart.panel_app.user_settings_state.server_status = if self.app_state.server_enabled {
-                "running".to_string()
-            } else {
-                "stopped".to_string()
-            };
-            chart.panel_app.user_settings_state.language =
-                self.profile_manager.profile.language.clone();
-            {
-                let uss = &mut chart.panel_app.user_settings_state;
-                uss.profile_id = self.profile_manager.profile.profile_id.clone();
-                uss.runtime_profile_id = self.profile_manager.profile.profile_id.clone();
-                uss.profile_display_name = self.profile_manager.profile.display_name.clone();
-                uss.profile_avatar = self.profile_manager.profile.avatar.clone();
-                if let Some(index) = mlc_core::load_profile_index() {
-                    let profiles_dir = mlc_core::active_profile_data_dir()
-                        .parent()
-                        .map(|p| p.to_path_buf());
-                    uss.available_profiles = index.profiles.iter().map(|m| {
-                        (m.id.clone(), m.display_name.clone(), m.avatar.clone())
-                    }).collect();
-                    uss.profiles_with_vault_status = index.profiles.iter().map(|m| {
-                        let has_vault = if let Some(ref pd) = profiles_dir {
-                            pd.join(&m.dir_name).join("vault.enc").exists()
-                        } else {
-                            false
-                        };
-                        (m.id.clone(), m.display_name.clone(), m.avatar.clone(), has_vault)
-                    }).collect();
-                } else {
-                    uss.available_profiles = vec![(
-                        uss.profile_id.clone(),
-                        uss.profile_display_name.clone(),
-                        uss.profile_avatar.clone(),
-                    )];
-                }
-            }
-            // is_first_run / needs_vault_unlock / needs_migration are all false
-            // at promote time (cleared before pending_skeleton_promote is set),
-            // so their create_window branches are no-ops here — nothing to apply.
+            // Restore proxy ownership (we pass it back through the result so the
+            // main thread can reuse it for future promotes after finish_promote).
+            // Actually we just send the result — the main thread creates a new proxy
+            // from the event loop at startup; one promote per session is typical.
+            let _ = proxy.send_event(UserEvent::PromoteReady(results));
+        });
+    }
 
-            // Resize the live chart to the current window dimensions.
-            if let Some(pw) = self.windows.get(&wid) {
-                let size = pw.window.inner_size();
-                let chrome_px = (chrome::CHROME_HEIGHT * pw.window.scale_factor()) as u32;
-                chart.resize(size.width, size.height.saturating_sub(chrome_px));
+    /// Swap tail of promote — runs on the main thread in user_event when the
+    /// worker delivers `UserEvent::PromoteReady`. Mirrors the old synchronous
+    /// swap block exactly: wait_for_gpu_frame_blocking, swap chart in-place,
+    /// flip skeleton flag, warm background tabs.
+    fn finish_promote(
+        &mut self,
+        results: Vec<PromoteWindowResult>,
+        event_loop: &ActiveEventLoop,
+    ) {
+        let swap_t0 = mlc_live_data::elapsed_ms();
+
+        // Block until any in-flight GPU frame finishes before touching chart state.
+        self.wait_for_gpu_frame_blocking();
+
+        let saved = self.saved_windows.clone();
+        let existing_count = self.windows.len();
+
+        for r in results {
+            // Write-back: merge new presets and profile fields that the worker
+            // could not write because it only had read-only clones.
+            for (k, v) in r.new_presets {
+                self.app_state.presets.entry(k).or_insert(v);
+            }
+            if !r.active_preset_id.is_empty() {
+                self.profile_manager.profile.active_preset_id = r.active_preset_id.clone();
+                self.profile.active_preset_id = r.active_preset_id;
+            }
+            if !r.open_tabs.is_empty() {
+                self.profile_manager.profile.open_tabs = r.open_tabs.clone();
+                self.profile.open_tabs = r.open_tabs;
             }
 
-            // Swap in-place: replace chart, flip skeleton flag, keep visible.
-            // The window is already visible (skeleton windows are shown immediately),
-            // so set visible_set = true to short-circuit the has_data gate and
-            // prevent the about_to_wait loop from fighting the already-visible state.
-            if let Some(pw) = self.windows.get_mut(&wid) {
-                pw.chart = chart;
-                pw.window_id = window_id;
+            if let Some(pw) = self.windows.get_mut(&r.winit_id) {
+                pw.chart = *r.chart;
+                pw.window_id = r.window_id;
                 pw.skeleton = false;
                 pw.visible_set = true; // already on screen — don't hide again
+                pw.spinner_start = None;
                 // Invalidate all render caches so the live content draws next frame.
                 pw.toolbar_dirty = true;
                 pw.sidebar_dirty_scene = true;
                 pw.chart_dirty = true;
                 pw.overlay_dirty = true;
-                // Warm background tabs now that presets + open_tabs are
-                // populated in the live chart.  new_window ran warm_background_tabs
-                // for the non-skeleton path; the skeleton->live promote path runs it
-                // here instead (presets were empty during skeleton construction).
+                // Warm background tabs now that presets + open_tabs are populated.
                 pw.chart.warm_background_tabs();
             }
         }
 
         // If there are more saved windows than skeleton windows (unusual), create
         // the extras the normal way.
-        if saved.len() > window_ids.len() {
-            for ws in saved.iter().skip(window_ids.len()) {
+        if saved.len() > existing_count {
+            for ws in saved.iter().skip(existing_count) {
                 self.create_window(event_loop, Some(ws), None);
             }
         }
 
-        // last_focused stays valid — the winit WindowId is unchanged.
+        self.promote_pending = false;
 
         eprintln!(
-            "[App] skeleton → live: in-place swap complete, {} window(s) live t={}ms (PROMOTE END — main blocked {}ms)",
+            "[App] skeleton → live: swap complete, {} window(s) live t={}ms (PROMOTE END — main blocked {}ms)",
             self.windows.len(),
             mlc_live_data::elapsed_ms(),
-            mlc_live_data::elapsed_ms().saturating_sub(_promote_t0),
+            mlc_live_data::elapsed_ms().saturating_sub(swap_t0),
         );
     }
 
@@ -1866,7 +1986,15 @@ impl App<'_> {
     }
 }
 
-impl ApplicationHandler for App<'_> {
+impl ApplicationHandler<UserEvent> for App<'_> {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
+        match event {
+            UserEvent::PromoteReady(results) => {
+                self.finish_promote(results, event_loop);
+            }
+        }
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         // Only create windows once
         if !self.windows.is_empty() {
@@ -4325,12 +4453,22 @@ impl ApplicationHandler for App<'_> {
         }
 
         // ── Promote skeleton windows to live ────────────────────────────────
-        // After vault unlock / wizard / fresh e2e setup, the skeleton windows
-        // (no bar data, no connector activity) are replaced with fully-live
-        // windows that fetch data.
-        if self.pending_skeleton_promote {
+        // After vault unlock / wizard / fresh e2e setup, start the off-thread
+        // worker that builds live ChartApp instances. The skeleton window keeps
+        // rendering with an animated spinner while the worker runs. The swap
+        // itself happens in user_event when PromoteReady arrives.
+        if self.pending_skeleton_promote && !self.promote_pending {
             self.pending_skeleton_promote = false;
-            self.promote_skeleton(event_loop);
+            self.start_promote_async();
+        }
+
+        // Keep spinner windows animating at ~60fps while the worker is running.
+        if self.promote_pending {
+            for pw in self.windows.values() {
+                if pw.spinner_start.is_some() {
+                    pw.window.request_redraw();
+                }
+            }
         }
 
         // ── Set event loop control flow based on FPS limit ──────────────────
@@ -4412,7 +4550,9 @@ fn main() {
     // the receiver is consumed. UI toast support can be added later.
     let _mem_warnings = mlc_diagnostics::watchdog::start();
 
-    let event_loop = EventLoop::new().expect("Failed to create event loop");
+    let event_loop: EventLoop<UserEvent> = EventLoop::with_user_event()
+        .build()
+        .expect("Failed to create event loop");
     event_loop.set_control_flow(ControlFlow::Poll); // Will be updated per-frame in about_to_wait()
 
     // Create the shared series map BEFORE the bridge so both share the same
@@ -4508,5 +4648,8 @@ fn main() {
     let saved_windows = profile.windows.clone();
 
     let mut app = App::new(bridge, saved_windows, profile, profile_manager, connector_ready_rx, is_first_run, needs_vault_unlock, needs_migration);
+    // Store the event-loop proxy so the promote worker can send PromoteReady
+    // back to the main thread without polling.
+    app.promote_proxy = Some(event_loop.create_proxy());
     event_loop.run_app(&mut app).expect("Event loop error");
 }

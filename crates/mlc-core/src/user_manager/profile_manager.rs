@@ -79,6 +79,7 @@ pub struct SwitchData {
 /// Owns the active profile data (profile JSON, presets, templates, snapshots)
 /// and the cached profile index.  All mutations (create, delete, rename, switch)
 /// go through this struct so that the index and on-disk state stay in sync.
+#[derive(Clone)]
 pub struct ProfileManager {
     /// Cached profile index (refreshed on every mutation).
     index: ProfileIndex,
