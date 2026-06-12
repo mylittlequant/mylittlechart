@@ -500,6 +500,75 @@ impl ChartContainer {
         })
     }
 
+    /// Drag the BOTTOM separator of an ABOVE-MAIN pane.
+    ///
+    /// Above-main panes are a presentation-only reordering: the tree stores
+    /// them as ordinary below-main siblings, so uzor's separator pairs
+    /// (tree-adjacent children) don't correspond to the visually adjacent
+    /// elements. The visual pair for pane P's bottom line is (P, X) where X
+    /// is the NEXT above pane in tree order, or the main chart when P is the
+    /// lowest above pane. Transfer share directly between those two root
+    /// children: dragging down grows P by `delta_y` pixels and shrinks X.
+    ///
+    /// Returns `true` when proportions were updated.
+    pub fn drag_above_pane_separator(
+        &mut self,
+        instance_id: u64,
+        delta_y: f64,
+        content_h: f64,
+    ) -> bool {
+        const MIN_PANE_PX: f64 = 26.0;
+        let ids = collect_inner_instance_ids(&self.inner_docking);
+        let above: Vec<u64> = ids
+            .iter()
+            .filter(|id| self.sub_pane_above_main.contains(id))
+            .copied()
+            .collect();
+        let pos_in_above = match above.iter().position(|&id| id == instance_id) {
+            Some(p) => p,
+            None => return false,
+        };
+        // Proportion indices: main = 0, sub i (tree order) = i + 1.
+        let idx_p = match ids.iter().position(|&id| id == instance_id) {
+            Some(i) => i + 1,
+            None => return false,
+        };
+        let idx_x = if pos_in_above + 1 < above.len() {
+            match ids.iter().position(|&id| id == above[pos_in_above + 1]) {
+                Some(i) => i + 1,
+                None => return false,
+            }
+        } else {
+            0 // lowest above pane borders the main chart
+        };
+
+        let root_id = self.inner_docking.tree().root().id;
+        let mut props = self.inner_docking.tree().root().proportions.clone();
+        let n = self.inner_docking.tree().root().children.len();
+        if props.len() != n || idx_p >= n || idx_x >= n || idx_p == idx_x {
+            return false;
+        }
+        let total: f64 = props.iter().sum();
+        let budget = content_h.max(1.0);
+        if total <= 0.0 {
+            return false;
+        }
+        let min_share = MIN_PANE_PX / budget * total;
+        // Dragging the bottom line down grows P, shrinks X.
+        let want = delta_y / budget * total;
+        let take = want.clamp(
+            -(props[idx_p] - min_share).max(0.0),
+            (props[idx_x] - min_share).max(0.0),
+        );
+        if take == 0.0 {
+            return false;
+        }
+        props[idx_p] += take;
+        props[idx_x] -= take;
+        self.inner_docking.tree_mut().set_branch_proportions(root_id, props);
+        true
+    }
+
     /// Apply a sub-pane separator drag through the uzor inner docking tree.
     /// `delta_y` is per-event pixels (positive = drag down).
     /// `content_w` / `content_h` are the pixel dimensions of the container's

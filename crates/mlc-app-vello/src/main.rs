@@ -382,10 +382,11 @@ struct App<'s> {
     /// One-shot: elapsed_ms stamp of promote swap completion. Consumed by the
     /// next about_to_wait pass to log the first-live-frame cost.
     promote_end_ms: Option<u128>,
-    /// One-shot: run warm_background_tabs on the pass AFTER the first live
-    /// frame. Set when `promote_end_ms` is consumed. Keeps the ~1.2s
-    /// connector warm-up out of the spinner-freeze window.
-    pending_background_warm: bool,
+    /// Amortized post-promote warm-up queue: one background-tab series is
+    /// warmed per about_to_wait pass (each ensure_connector blocks ~120ms —
+    /// a whole batch at once stalls the main thread right after the chart
+    /// appears). Filled when `promote_end_ms` is consumed.
+    pending_warm_targets: Vec<(String, String, mlc_core::state::Timeframe, String)>,
 
     // ── Pipelined GPU render thread ───────────────────────────────────────
     /// Sender side of the command channel to the GPU render thread.
@@ -843,7 +844,7 @@ impl App<'_> {
             cached_present_us: 0,
             last_atw_end: None,
             promote_end_ms: None,
-            pending_background_warm: false,
+            pending_warm_targets: Vec::new(),
             gpu_cmd_tx: None,
             gpu_done_rx: None,
             gpu_thread: None,
@@ -4404,29 +4405,45 @@ impl ApplicationHandler<UserEvent> for App<'_> {
 
         // One-shot: time from promote swap completion to the end of the first
         // live frame's scene+submit pass — the unmeasured tail of the spinner
-        // freeze (shader/pipeline compile, full chart scene build).
+        // freeze. Breakdown shows WHERE the pass went: tick (queued event
+        // backlog from the worker phase), scene build (chart/toolbar/sidebar),
+        // or the whole atw pass (remainder ≈ GPU dispatch + glue).
         if let Some(end_ms) = self.promote_end_ms.take() {
+            let (chart_us, tb_us, side_us, setup_us) = self.windows.values()
+                .next()
+                .map(|pw| pw.chart.render_timing_us)
+                .unwrap_or((0, 0, 0, 0));
             eprintln!(
-                "[App] finish_promote: first live frame done {}ms after swap (t={}ms)",
+                "[App] finish_promote: first live frame done {}ms after swap (t={}ms) — atw={}us tick={}us events={}us scene(chart={}us tb={}us side={}us setup={}us)",
                 mlc_live_data::elapsed_ms().saturating_sub(end_ms),
                 mlc_live_data::elapsed_ms(),
+                self.cached_about_to_wait_us,
+                self.windows.values().next().map(|pw| pw.chart.last_tick_us).unwrap_or(0),
+                self.windows.values().next().map(|pw| pw.chart.last_event_process_us).unwrap_or(0),
+                chart_us, tb_us, side_us, setup_us,
             );
-            // Arm the deferred warm-up for the NEXT pass: the first live
-            // frame is submitted, so the ~1.2s warm_background_tabs cost no
-            // longer extends the spinner freeze.
-            self.pending_background_warm = true;
-        } else if self.pending_background_warm {
-            self.pending_background_warm = false;
+            // Arm the amortized warm-up: one series per pass, so the ~120ms
+            // ensure_connector cost never blocks a whole batch at once.
+            self.pending_warm_targets = self.windows.values()
+                .find(|pw| !pw.skeleton)
+                .map(|pw| pw.chart.warm_background_tab_targets())
+                .unwrap_or_default();
+            if !self.pending_warm_targets.is_empty() {
+                eprintln!(
+                    "[App] deferred background-tab warm: {} target(s), one per frame",
+                    self.pending_warm_targets.len(),
+                );
+            }
+        } else if let Some(target) = self.pending_warm_targets.pop() {
             let t_warm = std::time::Instant::now();
-            for pw in self.windows.values_mut() {
-                if !pw.skeleton {
-                    pw.chart.warm_background_tabs();
-                }
+            if let Some(pw) = self.windows.values_mut().find(|pw| !pw.skeleton) {
+                pw.chart.warm_one_background_tab(&target);
             }
             eprintln!(
-                "[App] deferred background-tab warm: {}ms (t={}ms)",
+                "[App] warm step {}: {}ms ({} left)",
+                target.0,
                 t_warm.elapsed().as_millis(),
-                mlc_live_data::elapsed_ms(),
+                self.pending_warm_targets.len(),
             );
         }
 

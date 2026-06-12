@@ -381,7 +381,36 @@ pub fn draw_last_price_line(
     // Price outside the visible range — don't draw at all. Clamping to the
     // edge here painted a line pinned to the chart border while the actual
     // price was far off-viewport.
-    if y < 0.0 || y > rect.height {
+    //
+    // TEMP-DIAG: the projection reportedly BLINKS — log every show<->hide
+    // transition per container (keyed by rect origin) with the values that
+    // drove the guard, so we can see what oscillates (range jitter from
+    // racing auto-scale paths vs y crossing the edge). Remove once the
+    // oscillation source is fixed.
+    let visible_now = !(y < 0.0 || y > rect.height);
+    {
+        use std::cell::RefCell;
+        use std::collections::HashMap;
+        thread_local! {
+            static LAST_VIS: RefCell<HashMap<(i64, i64), bool>> = RefCell::new(HashMap::new());
+        }
+        LAST_VIS.with(|lv| {
+            let key = (rect.x as i64, rect.y as i64);
+            let mut map = lv.borrow_mut();
+            let prev = map.insert(key, visible_now);
+            if prev.is_some() && prev != Some(visible_now) {
+                eprintln!(
+                    "[PROJ-BLINK] rect=({:.0},{:.0}) {} -> {} | y={:.1} h={:.0} close={:.2} range=[{:.2}..{:.2}]",
+                    rect.x, rect.y,
+                    if prev == Some(true) { "shown" } else { "hidden" },
+                    if visible_now { "shown" } else { "hidden" },
+                    y, rect.height, close_price,
+                    price_scale.price_min, price_scale.price_max,
+                );
+            }
+        });
+    }
+    if !visible_now {
         return;
     }
     let screen_y = rect.y + y;

@@ -2741,6 +2741,9 @@ impl ChartApp {
         // main_chart_y is set in the single-window branch below; used by the
         // indicator overlay chevron rendered after the chart block.
         let mut main_chart_y_single = content_rect.y;
+        // False while a maximized sub-pane covers the single-mode container —
+        // chart-anchored overlays (leaf tab, chevron) are skipped then.
+        let mut single_leaf_tab_visible = true;
         let corner_zones = if self.panel_app.panel_grid.is_split() {
             // Compute sub-chart rectangles.
             // Use origin (0, 0) so that panel_rects() returns rects relative
@@ -2973,6 +2976,7 @@ impl ChartApp {
                 // Post-render: draw bell icons for alerts bound to drawing
                 // primitives and overlay indicators in this leaf.
                 let main_chart_y;
+                let leaf_tab_visible;
                 {
                     // Sub-pane order + proportions both come from the
                     // container's own InnerLayout -- single source of truth.
@@ -3001,15 +3005,27 @@ impl ChartApp {
                         .filter(|(_, id)| visible_set.contains(id))
                         .map(|(i, &id)| (id, all_props.get(i + 1).copied().unwrap_or(0.0)))
                         .unzip();
-                    let extended = mlc_core::ExtendedFrameLayout::from_proportions(
-                        &leaf_rect,
-                        &sub_pane_ids,
-                        &sub_proportions,
-                        all_props.first().copied().filter(|_| all_props.len() > 1),
-                        &window.scale_settings,
-                        1.0,
-                        &window.sub_pane_above_main,
-                    );
+                    // Mirror render_full_chart_panel's maximize override: when a
+                    // sub-pane is maximized it covers the whole container, the
+                    // main chart is zero-height, and chart-anchored overlays
+                    // (leaf tab, alert bells) must not poke through.
+                    let maximized_iid = leaf_chart_id
+                        .and_then(|cid| self.maximized_sub_panes.get(&cid.0))
+                        .map(|(iid, _)| *iid)
+                        .filter(|iid| sub_pane_ids.contains(iid));
+                    let extended = if let Some(miid) = maximized_iid {
+                        mlc_core::ExtendedFrameLayout::maximized(&leaf_rect, miid, &window.scale_settings)
+                    } else {
+                        mlc_core::ExtendedFrameLayout::from_proportions(
+                            &leaf_rect,
+                            &sub_pane_ids,
+                            &sub_proportions,
+                            all_props.first().copied().filter(|_| all_props.len() > 1),
+                            &window.scale_settings,
+                            1.0,
+                            &window.sub_pane_above_main,
+                        )
+                    };
                     let main = &extended.main_chart;
                     let chart_area = LayoutRect {
                         x: main.chart.x,
@@ -3024,31 +3040,36 @@ impl ChartApp {
                     let window_id = leaf_chart_id.map(|cid| cid.0);
 
                     // S2.7.1: pass split_symbol/exchange/account_type from branch_meta.
-                    let bells = Self::draw_alert_bell_icons(
-                        ctx,
-                        chart_area,
-                        &corrected_vp,
-                        window.price_scale.price_min,
-                        window.price_scale.price_max,
-                        &window.bars,
-                        &split_panel.drawing_manager,
-                        &self.indicator_manager,
-                        &self.managers.alert,
-                        window_id,
-                        &split_symbol,
-                        &split_exchange,
-                        &split_account_type,
-                    );
-                    for (widget_id, bx, by, bsize) in bells {
-                        use uzor::input::Sense;
-                        let hw = bsize / 2.0 + 2.0;
-                        self.input_coordinator.borrow_mut().register(
-                            widget_id,
-                            uzor::Rect::new(bx - hw, by - hw, hw * 2.0, hw * 2.0),
-                            Sense::CLICK,
+                    // Skip chart-anchored bells when the main chart is collapsed
+                    // (maximized sub-pane covers the container).
+                    if chart_area.height >= 1.0 {
+                        let bells = Self::draw_alert_bell_icons(
+                            ctx,
+                            chart_area,
+                            &corrected_vp,
+                            window.price_scale.price_min,
+                            window.price_scale.price_max,
+                            &window.bars,
+                            &split_panel.drawing_manager,
+                            &self.indicator_manager,
+                            &self.managers.alert,
+                            window_id,
+                            &split_symbol,
+                            &split_exchange,
+                            &split_account_type,
                         );
+                        for (widget_id, bx, by, bsize) in bells {
+                            use uzor::input::Sense;
+                            let hw = bsize / 2.0 + 2.0;
+                            self.input_coordinator.borrow_mut().register(
+                                widget_id,
+                                uzor::Rect::new(bx - hw, by - hw, hw * 2.0, hw * 2.0),
+                                Sense::CLICK,
+                            );
+                        }
                     }
                     main_chart_y = extended.main_chart.chart.y;
+                    leaf_tab_visible = extended.main_chart.chart.height >= 1.0;
 
                     // chart:price_scale, chart:time_scale, chart:sub_sep, chart:sub_price_scale
                     // registrations removed — chart is now a BlackboxPanel and its
@@ -3069,6 +3090,10 @@ impl ChartApp {
                 };
                 let color_tag = self.panel_app.leaf_color_tags.get(&leaf_id).copied();
                 // S2.7.1: use split_symbol/tf_name/exchange/account_type from branch_meta.
+                // Skipped entirely while a maximized sub-pane covers the container
+                // (leaf_tab_visible == false): the tab belongs to the chart layer,
+                // which sits BELOW the maximized pane in z-order.
+                if leaf_tab_visible {
                 let hit_zones = mlc_layout::layout::panel_overlay::render_leaf_tab(
                     ctx,
                     leaf_rect.x + 2.0,
@@ -3119,6 +3144,7 @@ impl ChartApp {
                         );
                     }
                 }
+                }
 
                 // Render per-leaf indicator overlay (chevron) for this leaf.
                 {
@@ -3146,7 +3172,9 @@ impl ChartApp {
                         .cloned()
                         .unwrap_or_default();
 
-                    if overlay_state.visible || overlay_state.is_open {
+                    // leaf_tab_visible: hidden while a maximized sub-pane covers
+                    // the container (chevron belongs to the chart layer).
+                    if leaf_tab_visible && (overlay_state.visible || overlay_state.is_open) {
                         let mut indicators: Vec<IndicatorOverlayInfo> = instances
                             .iter()
                             .map(|inst| {
@@ -3528,15 +3556,26 @@ impl ChartApp {
                         .filter(|(_, id)| visible_set.contains(id))
                         .map(|(i, &id)| (id, all_props2.get(i + 1).copied().unwrap_or(0.0)))
                         .unzip();
-                    let extended = mlc_core::ExtendedFrameLayout::from_proportions(
-                        &chart_render_rect,
-                        &sub_pane_ids,
-                        &sub_proportions,
-                        all_props2.first().copied().filter(|_| all_props2.len() > 1),
-                        &window.scale_settings,
-                        1.0,
-                        &window.sub_pane_above_main,
-                    );
+                    // Mirror render_full_chart_panel's maximize override (see the
+                    // split-mode twin above): chart-anchored overlays must not
+                    // poke through a maximized sub-pane.
+                    let maximized_iid = self.panel_app.panel_grid.active_container_id()
+                        .and_then(|cid| self.maximized_sub_panes.get(&cid.0))
+                        .map(|(iid, _)| *iid)
+                        .filter(|iid| sub_pane_ids.contains(iid));
+                    let extended = if let Some(miid) = maximized_iid {
+                        mlc_core::ExtendedFrameLayout::maximized(&chart_render_rect, miid, &window.scale_settings)
+                    } else {
+                        mlc_core::ExtendedFrameLayout::from_proportions(
+                            &chart_render_rect,
+                            &sub_pane_ids,
+                            &sub_proportions,
+                            all_props2.first().copied().filter(|_| all_props2.len() > 1),
+                            &window.scale_settings,
+                            1.0,
+                            &window.sub_pane_above_main,
+                        )
+                    };
                     let main = &extended.main_chart;
                     let chart_area = LayoutRect {
                         x: main.chart.x,
@@ -3554,32 +3593,37 @@ impl ChartApp {
                         .map(|cid| cid.0);
 
                     // S2.7.1: use single_sym/exch/at from branch_meta.
-                    let bells = Self::draw_alert_bell_icons(
-                        ctx,
-                        chart_area,
-                        &corrected_vp,
-                        window.price_scale.price_min,
-                        window.price_scale.price_max,
-                        &window.bars,
-                        &single_window_panel.drawing_manager,
-                        &self.indicator_manager,
-                        &self.managers.alert,
-                        window_id,
-                        single_sym,
-                        single_exch,
-                        single_at,
-                    );
-                    // Register bell click zones.
-                    for (widget_id, bx, by, bsize) in bells {
-                        use uzor::input::Sense;
-                        let hw = bsize / 2.0 + 2.0; // a little larger than the icon
-                        self.input_coordinator.borrow_mut().register(
-                            widget_id,
-                            uzor::Rect::new(bx - hw, by - hw, hw * 2.0, hw * 2.0),
-                            Sense::CLICK,
+                    // Skip chart-anchored bells when the main chart is collapsed
+                    // (maximized sub-pane covers the container).
+                    if chart_area.height >= 1.0 {
+                        let bells = Self::draw_alert_bell_icons(
+                            ctx,
+                            chart_area,
+                            &corrected_vp,
+                            window.price_scale.price_min,
+                            window.price_scale.price_max,
+                            &window.bars,
+                            &single_window_panel.drawing_manager,
+                            &self.indicator_manager,
+                            &self.managers.alert,
+                            window_id,
+                            single_sym,
+                            single_exch,
+                            single_at,
                         );
+                        // Register bell click zones.
+                        for (widget_id, bx, by, bsize) in bells {
+                            use uzor::input::Sense;
+                            let hw = bsize / 2.0 + 2.0; // a little larger than the icon
+                            self.input_coordinator.borrow_mut().register(
+                                widget_id,
+                                uzor::Rect::new(bx - hw, by - hw, hw * 2.0, hw * 2.0),
+                                Sense::CLICK,
+                            );
+                        }
                     }
                     main_chart_y_single = extended.main_chart.chart.y;
+                    single_leaf_tab_visible = extended.main_chart.chart.height >= 1.0;
                 }
 
                 corner_zones_ret
@@ -3633,7 +3677,9 @@ impl ChartApp {
             // Reset render scope after single-window render is complete.
             self.indicator_manager.current_render_window_id.set(None);
 
-            // Render overlay tab header (always, even in single mode).
+            // Render overlay tab header (single mode) — skipped while a
+            // maximized sub-pane covers the container.
+            if single_leaf_tab_visible {
             if let Some((symbol, timeframe, exchange, account_type_label)) = single_window_info {
                 let single_leaf_id = self.panel_app.panel_grid.docking()
                     .active_leaf()
@@ -3695,6 +3741,7 @@ impl ChartApp {
                     }
                 }
             }
+            }
 
             // Wrap single-window corner zones in a per-leaf map so the
             // type matches the split path and handle_canvas_click can use
@@ -3748,7 +3795,7 @@ impl ChartApp {
         // 4b. Render indicator overlay (top-left of chart content area).
         //     Drawn BEFORE toolbars so that toolbar dropdowns render on top.
         //     In split mode each leaf renders its own chevron inside the split loop above.
-        if !self.panel_app.panel_grid.is_split() {
+        if !self.panel_app.panel_grid.is_split() && single_leaf_tab_visible {
             // overlay visibility was set in prepare_frame; read the state here.
 
             let toolbar_theme_for_overlay = self.panel_app.toolbar_theme_for_render();
@@ -5614,6 +5661,50 @@ impl ChartApp {
             warmed += 1;
         }
         eprintln!("[ChartApp] startup: warmed {} background tab series", warmed);
+    }
+
+    /// Amortized variant of [`warm_background_tabs`] for the post-promote
+    /// path: return the target list without executing anything, so the
+    /// caller can warm ONE series per frame instead of blocking the main
+    /// thread for the whole batch (~120 ms per series measured).
+    pub fn warm_background_tab_targets(&self) -> Vec<(String, String, mlc_core::state::Timeframe, String)> {
+        let active_id = self.panel_app.active_preset_id.clone();
+        self.panel_app
+            .open_tabs
+            .iter()
+            .filter(|tab| **tab != active_id)
+            .filter_map(|tab| self.panel_app.presets.get(tab))
+            .flat_map(|preset| {
+                preset.windows.iter().map(move |w| {
+                    if let Some(bid) = w.bubble_id {
+                        if let Some(b) = preset.bubbles.iter().find(|b| b.id == bid) {
+                            if !b.symbol.is_empty() {
+                                return (
+                                    b.symbol.clone(),
+                                    b.exchange.clone(),
+                                    b.timeframe.clone(),
+                                    b.account_type.clone(),
+                                );
+                            }
+                        }
+                    }
+                    (w.symbol.clone(), w.exchange.clone(), w.timeframe.clone(), w.account_type.clone())
+                })
+            })
+            .filter(|(sym, _, _, _)| !sym.is_empty())
+            .collect()
+    }
+
+    /// Warm a single background-tab series (one step of the amortized
+    /// post-promote warm-up).
+    pub fn warm_one_background_tab(&mut self, target: &(String, String, mlc_core::state::Timeframe, String)) {
+        let (sym, exch, tf, at_label) = target;
+        let bar_count = self.panel_app.user_manager.profile.bar_count as usize;
+        let eid = digdigdig3::ExchangeId::from_str(exch)
+            .unwrap_or(digdigdig3::ExchangeId::Binance);
+        let at = account_type_from_label(at_label);
+        self.bridge.ensure_connector(eid);
+        self.bridge.request_bars(eid, sym, tf, at, None, Some(bar_count), false);
     }
 
     /// Synchronise `window.inner_docking` with the external `IndicatorManager`.

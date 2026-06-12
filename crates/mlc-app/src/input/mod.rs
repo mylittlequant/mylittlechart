@@ -2659,19 +2659,18 @@ impl ChartApp {
                 })
                 .unwrap_or((0.0, 0.0));
             if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                // Above-main panes show their separator at the pane BOTTOM
-                // (between pane and chart). Dragging that line down must GROW
-                // the pane — the tree drag's positive-dy direction shrinks it
-                // (tree semantics: separator above the pane). Invert.
-                let eff_dy = if window.sub_pane_above_main.contains(&instance_id) {
-                    -dy
+                // Above-main panes show their separator at the pane BOTTOM and
+                // pair visually with the NEXT above pane (or the main chart),
+                // not with their tree-adjacent sibling — route to the dedicated
+                // share-transfer drag instead of the uzor tree separator.
+                let ok = if window.sub_pane_above_main.contains(&instance_id) {
+                    window.drag_above_pane_separator(instance_id, dy, content_h)
                 } else {
-                    dy
+                    window.drag_sub_pane_separator(instance_id, dy, content_h, content_w)
                 };
-                let ok = window.drag_sub_pane_separator(instance_id, eff_dy, content_h, content_w);
                 eprintln!(
                     "[ChartApp] sub-pane sep DRAG id={} dy={:.1} content_h={:.0} ok={}",
-                    instance_id, eff_dy, content_h, ok
+                    instance_id, dy, content_h, ok
                 );
             }
             return;
