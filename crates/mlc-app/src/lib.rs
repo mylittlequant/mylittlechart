@@ -1839,9 +1839,16 @@ impl ChartApp {
                 }
 
                 app.needs_initial_viewport_fit = true;
-                // Warm background tabs: request bars for every non-active open
-                // preset so the bridge cache is hot before the user clicks them.
-                app.warm_background_tabs();
+                // NOTE: background-tab warm-up is intentionally NOT done here.
+                // When this runs inside the off-thread promote worker, firing
+                // ~11 series requests floods the broadcast channel with
+                // BarsLoaded before any live window exists to receive them;
+                // the first live tick then drains that backlog through the
+                // full (no-match) matching path — the bulk of the ~228ms
+                // first-frame freeze. The warm-up is driven AFTER the first
+                // live frame instead (app-vello: pending_warm_targets, one
+                // series per frame), so the cache still heats without blocking
+                // the promote-to-chart transition.
             } else {
                 // Fresh state — Binance default.
                 // Phase 4 B: capture chart_id BEFORE the mutating block.

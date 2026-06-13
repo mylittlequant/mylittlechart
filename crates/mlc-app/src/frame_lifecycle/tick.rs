@@ -105,6 +105,46 @@ impl ChartApp {
         // it here and apply once after the drain loop.
         let mut last_trade_price_by_symbol: std::collections::HashMap<(String, String, String), f64> =
             std::collections::HashMap::new();
+        // Listened-instrument set: every (symbol, exchange, tf, account_type)
+        // that SOME live container or parked preset cares about. Built once per
+        // tick (cheap N-window walk) so the BarsLoaded arm can short-circuit a
+        // fully-unmatched event BEFORE the expensive matching path (per-event
+        // container filtering + bubble lookups + bar_cache.write lock).
+        //
+        // Why this matters: warm_background_tabs fires ~11 series during the
+        // promote worker phase; their BarsLoaded (plus any other-symbol feed)
+        // pile up in the broadcast channel and, on the first live tick, run
+        // the full matching only to resolve to no-match — measured as the bulk
+        // of the ~228ms first-frame event drain. A key not in this set means
+        // neither a live window nor a parked preset wants the bars and
+        // data_provider.insert_bars is gated on any_matched anyway, so the
+        // whole arm is pure waste — skip it.
+        let listened_instruments: std::collections::HashSet<(String, String, String, String)> = {
+            let mut set = std::collections::HashSet::new();
+            for cid in self.panel_app.panel_grid.containers().keys() {
+                if let (Some(s), Some(e), Some(tf), Some(at)) = (
+                    self.managers.bubble.symbol_for_chart(*cid),
+                    self.managers.bubble.exchange_for_chart(*cid),
+                    self.managers.bubble.timeframe_for_chart(*cid),
+                    self.managers.bubble.account_type_for_chart(*cid),
+                ) {
+                    set.insert((s.to_string(), e.to_string(), tf.name.clone(), at.to_string()));
+                }
+            }
+            for parked in self.live_preset_cache.values() {
+                for cid in parked.panel_grid.containers().keys() {
+                    if let (Some(s), Some(e), Some(tf), Some(at)) = (
+                        parked.tag_manager.symbol_for_chart(*cid),
+                        parked.tag_manager.exchange_for_chart(*cid),
+                        parked.tag_manager.timeframe_for_chart(*cid),
+                        parked.tag_manager.account_type_for_chart(*cid),
+                    ) {
+                        set.insert((s.to_string(), e.to_string(), tf.name.clone(), at.to_string()));
+                    }
+                }
+            }
+            set
+        };
         let events_start = std::time::Instant::now();
         // Drain budget: cap the per-tick event processing so a backlog never
         // blocks a single frame. The worst case is the FIRST live tick right
@@ -116,13 +156,11 @@ impl ChartApp {
         // fires immediately); the post-loop coalesced work (ghost filter,
         // trading updates) is idempotent across partial drains.
         const DRAIN_BUDGET_MS: u128 = 8;
-        let mut budget_hit = false;
         loop {
             // Check budget before pulling the next event (not after applying it,
             // so a single heavy event can still complete). Always process at
             // least one event per tick to guarantee forward progress.
             if _drain_count > 0 && events_start.elapsed().as_millis() >= DRAIN_BUDGET_MS {
-                budget_hit = true;
                 break;
             }
             let update = match self.live_update_rx.try_recv() {
@@ -191,6 +229,21 @@ impl ChartApp {
             }
             match update {
                 LiveUpdate::BarsLoaded { exchange_id, symbol, timeframe: tf_name, bars, account_type } => {
+                    // Short-circuit fully-unmatched bars before the expensive
+                    // matching path. If no live window or parked preset listens
+                    // to this instrument, the entire arm resolves to no-match
+                    // (insert_bars is any_matched-gated), so the series_handle
+                    // setup, container filtering, and bar_cache.write lock are
+                    // all wasted. Skip straight away.
+                    let listen_key = (
+                        symbol.clone(),
+                        exchange_id.as_str().to_string(),
+                        tf_name.clone(),
+                        account_type.short_label().to_string(),
+                    );
+                    if !listened_instruments.contains(&listen_key) {
+                        continue;
+                    }
                     let loaded_tf = parse_timeframe_name(&tf_name);
                     crate::dlog!("[ChartApp] BarsLoaded: {:?} {} tf={} bars={} first_ts={} last_ts={}",
                         exchange_id, symbol, tf_name, bars.len(),
@@ -1515,7 +1568,22 @@ impl ChartApp {
         // HAS bars and hosts instances that were never computed, run one
         // calculate_for_window. One attempt per instance per session — an
         // indicator that legitimately yields no values doesn't retrigger.
-        {
+        // Cheap pre-check WITHOUT cloning bars: only enter the heal path when
+        // some window actually hosts a never-computed instance. The previous
+        // version cloned every window's bar vec on every single tick just to
+        // discover there was nothing to heal — pure waste on the steady state
+        // and part of the first-live-frame cost.
+        let any_unhealed = {
+            let attempted = &self.indicator_heal_attempted;
+            let im = &self.indicator_manager;
+            self.panel_app.panel_grid.iter_containers().any(|(_, w)| {
+                !w.bars.is_empty()
+                    && im.get_instances_for_window(w.id.0)
+                        .iter()
+                        .any(|i| i.values.is_empty() && !attempted.contains(&i.id))
+            })
+        };
+        if any_unhealed {
             let window_bars: Vec<(u64, Vec<mlc_core::Bar>)> = self
                 .panel_app
                 .panel_grid
