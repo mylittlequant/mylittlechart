@@ -682,8 +682,109 @@ impl ChartApp {
                         }
                     }
                 }
-                LiveUpdate::BarUpdate { .. } => {
-                    // BarUpdate is superseded by TradeUpdate — no-op.
+                LiveUpdate::BarUpdate { exchange_id: _bar_exch, account_type: bar_account_type, symbol: bar_symbol, bar, is_closed: _ } => {
+                    // Derived bar modes (Range/Tick/Volume/Footprint) receive bars
+                    // exclusively via BarUpdate from dig3. TimeBased windows still
+                    // aggregate from TradeUpdate; this handler is a no-op for them.
+
+                    // Pre-collect (symbol, account_label, is_derived) per cid to
+                    // avoid holding &self.managers.bubble while iterating containers_mut().
+                    let instrument_by_cid_bu: std::collections::HashMap<mlc_core::state::ChartId, (String, String, bool)> = {
+                        self.panel_app.panel_grid.containers().keys()
+                            .filter_map(|cid| {
+                                let sym = self.managers.bubble.symbol_for_chart(*cid).map(String::from)?;
+                                let at = self.managers.bubble.account_type_for_chart(*cid).map(String::from)?;
+                                let is_derived = self.managers.bubble.bar_mode_for_chart(*cid)
+                                    .map(|m| !matches!(m, mlc_core::BarMode::TimeBased))
+                                    .unwrap_or(false);
+                                Some((*cid, (sym, at, is_derived)))
+                            })
+                            .collect()
+                    };
+
+                    let mut bu_symbol_for_recalc: Option<String> = None;
+                    let mut bu_is_new_bar = false;
+
+                    for (cid_bu, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+                        if window.pending_symbol_load {
+                            continue;
+                        }
+                        let (win_sym, win_at, is_derived) = match instrument_by_cid_bu.get(cid_bu) {
+                            Some(t) => t,
+                            None => continue,
+                        };
+                        // Only derived (non-time) bar mode windows are owned by BarUpdate.
+                        if !is_derived {
+                            continue;
+                        }
+                        if win_sym.as_str() != bar_symbol || win_at.as_str() != bar_account_type.short_label() {
+                            continue;
+                        }
+
+                        // Upsert: same timestamp → update last bar in-place; newer → push.
+                        let last_ts = window.bars.last().map(|b| b.timestamp);
+                        if last_ts == Some(bar.timestamp) {
+                            if let Some(last) = window.bars.last_mut() {
+                                last.open   = bar.open;
+                                last.high   = bar.high;
+                                last.low    = bar.low;
+                                last.close  = bar.close;
+                                last.volume = bar.volume;
+                            }
+                            bu_is_new_bar = false;
+                        } else {
+                            window.bars.push(bar.clone());
+                            bu_is_new_bar = true;
+                        }
+
+                        window.viewport.bar_count = window.bars.len();
+
+                        if window.price_scale.scale_mode.is_auto_y() {
+                            let _as_start = std::time::Instant::now();
+                            window.calc_auto_scale();
+                            self.last_auto_scale_us += _as_start.elapsed().as_micros() as u64;
+                        }
+
+                        let count = window.bars.len();
+                        let visible_f = window.viewport.chart_width / window.viewport.bar_spacing;
+
+                        if window.price_scale.scale_mode.is_follow() {
+                            window.snap_to_end(mlc_core::DEFAULT_SNAP_MARGIN);
+                        }
+
+                        if bu_is_new_bar && window.price_scale.scale_mode == ScaleMode::Auto {
+                            let right_edge_bar = window.viewport.view_start + visible_f;
+                            let last_bar = count as f64;
+                            if last_bar >= right_edge_bar {
+                                window.viewport.view_start += 1.0;
+                            }
+                        }
+
+                        bu_symbol_for_recalc = Some(bar_symbol.clone());
+                    }
+
+                    // Trigger indicator recompute and repaint when at least one derived
+                    // window applied this bar — mirrors the TradeUpdate recalc path.
+                    if let Some(ref sym) = bu_symbol_for_recalc {
+                        had_trade_update = true;
+                        match self.indicator_manager.recalc_mode {
+                            RecalcMode::PerTick => {
+                                let _ri_start = std::time::Instant::now();
+                                self.recalc_indicators_for_symbol(sym);
+                                self.last_indicator_recalc_us += _ri_start.elapsed().as_micros() as u64;
+                            }
+                            RecalcMode::PerFrame => {
+                                self.indicator_manager.mark_dirty(sym);
+                            }
+                            RecalcMode::PerBar => {
+                                if bu_is_new_bar {
+                                    self.indicator_manager.mark_new_bar(sym);
+                                } else {
+                                    self.indicator_manager.mark_dirty(sym);
+                                }
+                            }
+                        }
+                    }
                 }
                 LiveUpdate::TradeUpdate { exchange_id, symbol, price, quantity, timestamp, account_type, is_buyer_maker } => {
                     self.trade_count += 1;
@@ -697,6 +798,8 @@ impl ChartApp {
                     let _bar_apply_start = std::time::Instant::now();
 
                     // Phase 4 B: pre-collect instrument map from branch_meta for TradeUpdate.
+                    // Also pre-collect `is_derived` flag per cid: derived-mode windows (Range/Tick/Volume/FP)
+                    // are owned by BarUpdate and must be skipped here to avoid double-aggregation.
                     let instrument_by_cid_tu: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::state::Timeframe, String, String)> = {
                         self.panel_app.panel_grid.containers().keys()
                             .filter_map(|cid| {
@@ -708,11 +811,27 @@ impl ChartApp {
                             })
                             .collect()
                     };
+                    // Pre-collect derived cids separately (same borrow scope as above).
+                    let derived_cids_tu: std::collections::HashSet<mlc_core::state::ChartId> = {
+                        self.panel_app.panel_grid.containers().keys()
+                            .filter(|cid| {
+                                self.managers.bubble.bar_mode_for_chart(**cid)
+                                    .map(|m| !matches!(m, mlc_core::BarMode::TimeBased))
+                                    .unwrap_or(false)
+                            })
+                            .copied()
+                            .collect()
+                    };
 
                     // Update the last bar of every window matching this symbol.
                     for (cid_tu, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if window.pending_symbol_load {
                             // Skip trade updates while waiting for initial bars.
+                            continue;
+                        }
+                        // Derived-mode windows (Range/Tick/Volume/FP) receive bars via BarUpdate;
+                        // skip time-slice aggregation for them so dig3 bars are not overwritten.
+                        if derived_cids_tu.contains(cid_tu) {
                             continue;
                         }
                         let (win_sym_tu, win_tf_tu, _win_exch_tu, win_at_tu) = match instrument_by_cid_tu.get(cid_tu) {
