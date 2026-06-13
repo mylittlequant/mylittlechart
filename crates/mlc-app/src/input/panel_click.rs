@@ -2942,6 +2942,22 @@ impl ChartApp {
                                     .map(|w| (w.viewport.view_start, w.viewport.bar_spacing))
                                     .unwrap_or((0.0, 8.0));
                                 self.propagate_viewport_to_sync_group(active_leaf, vs, bsp, Some(ScaleMode::Auto));
+                                // Persist Auto into the sync group's stored mode too.
+                                // propagate_* only writes the live windows; the
+                                // DataBubble.scale_mode is the authority that any
+                                // later group-join / symbol-switch / Y-zoom re-applies
+                                // to members. Without updating it, the bubble still
+                                // holds Manual and the next such event reverts the
+                                // whole group back to M — which is exactly the
+                                // "center switches to M not A" report.
+                                if let Some(gid) = self.panel_app.panel_grid
+                                    .container_id_for_leaf(active_leaf)
+                                    .and_then(|cid| self.managers.bubble.bubble_for_chart(cid))
+                                {
+                                    if let Some(g) = self.managers.bubble.bubble_mut(gid) {
+                                        g.scale_mode = ScaleMode::Auto;
+                                    }
+                                }
                             }
                         }
                     }
@@ -3254,6 +3270,10 @@ impl ChartApp {
                                 self.panel_app.overlay_settings_state.selected_node_id = None;
                             }
                             eprintln!("[OverlaySettings] Eliminated leaf {}", leaf_id_val);
+                            // Persist the removal — every other mutating branch
+                            // autosaves; this one did not, so eliminated panels
+                            // came back on reload.
+                            self.autosave_snapshot();
                         }
                     }
                 }
@@ -3399,6 +3419,9 @@ impl ChartApp {
                                 self.panel_app.overlay_settings_state.selected_node_id = None;
                             }
                             eprintln!("[TagsTabs] Eliminated leaf {}", leaf_id_val);
+                            // Persist the removal (same omission as the
+                            // overlay-settings eliminate handler).
+                            self.autosave_snapshot();
                         }
                     }
                 }
