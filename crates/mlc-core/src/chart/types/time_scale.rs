@@ -17,6 +17,8 @@ use crate::{TimeFormatSettings, DateFormat};
 // Time Constants
 // =============================================================================
 
+/// One second (base unit for sub-minute / derived-bar zoom levels)
+pub const SECOND: i64 = 1;
 /// Seconds in a minute
 pub const MINUTE: i64 = 60;
 /// Seconds in an hour
@@ -416,8 +418,24 @@ impl TimeScale {
     {
         // Choose interval based on day width
         // day_width_px > 200 means we're zoomed in quite a bit
-        let (time_interval, weight) = if day_width_px > 1440.0 * Self::MIN_CELL_WIDTH {
-            // Extreme zoom: show 1-minute (72000px+ per day)
+        // Sub-minute ladder first: sub-second / second-derived bars (1s/3s/5s/…)
+        // zoom in far past 1-minute spacing. Without these, consecutive bars in
+        // the same minute all collapse to one repeated "HH:MM" label.
+        // Cell width = day_width_px * interval / DAY; thresholds keep it ≥ MIN_CELL_WIDTH.
+        let (time_interval, weight) = if day_width_px > 86400.0 * Self::MIN_CELL_WIDTH {
+            // Extreme zoom: 1-second ticks
+            (SECOND, TickMarkWeight::Second)
+        } else if day_width_px > 17280.0 * Self::MIN_CELL_WIDTH {
+            // 5-second ticks (86400 / 5)
+            (5 * SECOND, TickMarkWeight::Second)
+        } else if day_width_px > 8640.0 * Self::MIN_CELL_WIDTH {
+            // 10-second ticks (86400 / 10)
+            (10 * SECOND, TickMarkWeight::Second)
+        } else if day_width_px > 2880.0 * Self::MIN_CELL_WIDTH {
+            // 30-second ticks (86400 / 30)
+            (30 * SECOND, TickMarkWeight::Second)
+        } else if day_width_px > 1440.0 * Self::MIN_CELL_WIDTH {
+            // Show 1-minute (72000px+ per day)
             (MINUTE, TickMarkWeight::Minute1)
         } else if day_width_px > 288.0 * Self::MIN_CELL_WIDTH {
             // Very deep zoom: show 5-minute (14400px+ per day)
@@ -698,7 +716,7 @@ impl TimeScale {
 
 /// Format time label based on weight (uses current language)
 pub fn format_time_by_weight(ts: i64, weight: TickMarkWeight) -> String {
-    let (year, month, day, hour, minute, _) = timestamp_to_date(ts);
+    let (year, month, day, hour, minute, second) = timestamp_to_date(ts);
     let month_names = month_names_short(current_language());
 
     match weight {
@@ -715,7 +733,9 @@ pub fn format_time_by_weight(ts: i64, weight: TickMarkWeight) -> String {
         TickMarkWeight::Minute30 | TickMarkWeight::Minute5 | TickMarkWeight::Minute1 => {
             format!("{:02}:{:02}", hour, minute)
         }
-        TickMarkWeight::Second => format!("{:02}:{:02}", hour, minute),
+        // Sub-minute zoom (sub-second / second-derived bars): include seconds so
+        // consecutive bars within the same minute get distinct labels.
+        TickMarkWeight::Second => format!("{:02}:{:02}:{:02}", hour, minute, second),
     }
 }
 
@@ -731,23 +751,32 @@ pub fn format_time_by_weight_with_settings(
     weight: TickMarkWeight,
     settings: &TimeFormatSettings
 ) -> String {
-    let (year, month, day, hour, minute, _) = timestamp_to_date(ts);
+    let (year, month, day, hour, minute, second) = timestamp_to_date(ts);
     let month_names = month_names_short(current_language());
+
+    // 12h hour + meridiem, shared by the minute- and second-resolution formats.
+    let (h12, ampm) = if hour == 0 {
+        (12, "AM")
+    } else if hour < 12 {
+        (hour, "AM")
+    } else if hour == 12 {
+        (12, "PM")
+    } else {
+        (hour - 12, "PM")
+    };
 
     // Format time part based on use_24h setting
     let time_str = if settings.use_24h {
         format!("{:02}:{:02}", hour, minute)
     } else {
-        let (h12, ampm) = if hour == 0 {
-            (12, "AM")
-        } else if hour < 12 {
-            (hour, "AM")
-        } else if hour == 12 {
-            (12, "PM")
-        } else {
-            (hour - 12, "PM")
-        };
         format!("{}:{:02} {}", h12, minute, ampm)
+    };
+
+    // Second-resolution variant (sub-minute zoom).
+    let time_str_secs = if settings.use_24h {
+        format!("{:02}:{:02}:{:02}", hour, minute, second)
+    } else {
+        format!("{}:{:02}:{:02} {}", h12, minute, second, ampm)
     };
 
     // Day of week prefix (if enabled)
@@ -776,9 +805,10 @@ pub fn format_time_by_weight_with_settings(
         }
         TickMarkWeight::Hour4 | TickMarkWeight::Hour |
         TickMarkWeight::Minute30 | TickMarkWeight::Minute5 |
-        TickMarkWeight::Minute1 | TickMarkWeight::Second => {
+        TickMarkWeight::Minute1 => {
             time_str
         }
+        TickMarkWeight::Second => time_str_secs,
     }
 }
 
@@ -859,6 +889,25 @@ mod tests {
         let ts = 1699920000_i64; // Some timestamp
         let label = format_time_by_weight(ts, TickMarkWeight::Hour);
         assert!(label.contains(':'));
+    }
+
+    #[test]
+    fn test_format_second_weight_includes_seconds() {
+        // 2023-01-02 03:04:05 UTC — Second weight must surface HH:MM:SS so
+        // consecutive sub-minute bars get distinct labels; Minute weight stays HH:MM.
+        let ts = date_to_timestamp(2023, 1, 2, 3, 4, 5);
+        assert_eq!(format_time_by_weight(ts, TickMarkWeight::Second), "03:04:05");
+        assert_eq!(format_time_by_weight(ts, TickMarkWeight::Minute1), "03:04");
+
+        let settings = TimeFormatSettings { use_24h: true, ..Default::default() };
+        assert_eq!(
+            format_time_by_weight_with_settings(ts, TickMarkWeight::Second, &settings),
+            "03:04:05"
+        );
+        assert_eq!(
+            format_time_by_weight_with_settings(ts, TickMarkWeight::Minute1, &settings),
+            "03:04"
+        );
     }
 
     #[test]
