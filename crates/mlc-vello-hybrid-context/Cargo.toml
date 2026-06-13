@@ -7,6 +7,6 @@ edition = "2021"
 name = "mlc_vello_hybrid_context"
 
 [dependencies]
-uzor = "=1.4.12"
+uzor = "=1.4.13"
 uzor-render-vello-hybrid = "=1.4.5"
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }

@@ -50,7 +50,8 @@ strip = "none"
 opt-level = 2
 
 [patch.crates-io]
-# VERIFICATION MODE: local uzor carries the N-ary separator-drag fix
-# (Grid2x2 cross_ratio). Owner click-verifies, THEN uzor 1.4.6 gets
-# published and this block is removed + pins bumped.
+# Local uzor path build. Pins below track the published version (1.4.13)
+# so the manifest stays honest; the patch just resolves them to the
+# working tree so in-flight uzor fixes are picked up without a publish
+# round-trip. Keep pins == published uzor version on every bump.
 uzor = { path = "../uzor/uzor" }
