@@ -2653,7 +2653,36 @@ impl ChartApp {
             let single_panel = self.panels_store.chart_panel
                 .get(&single_pid)
                 .unwrap_or(&single_default_panel);
-            let render_state = window.to_render_state(
+            // Tick chart: pull the raw trades for this instrument out of the
+            // shared trade ring into a (ts_ms, price) buffer that the renderer
+            // reads via ChartRenderState.tick_points. Built BEFORE render_state
+            // so the borrow outlives it. Empty for every non-tick chart_type.
+            let tick_buf: Vec<(i64, f64)> = if single_panel.chart_type == "tick" {
+                let account_label = single_overlay_cid
+                    .and_then(|cid| self.managers.bubble.account_type_for_chart(cid))
+                    .unwrap_or("");
+                let account = crate::account_type_from_label(account_label);
+                let key = mlc_trade_service::TradeKey::new(
+                    self.active_exchange,
+                    account,
+                    single_overlay_symbol.clone(),
+                );
+                self.trade_map
+                    .read()
+                    .ok()
+                    .and_then(|map| map.get(&key).cloned())
+                    .and_then(|series| series.read().ok().map(|s| {
+                        let (a, b) = s.as_slices();
+                        a.iter().chain(b.iter())
+                            .map(|t| (t.timestamp_ms, t.price))
+                            .collect::<Vec<_>>()
+                    }))
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+
+            let mut render_state = window.to_render_state(
                 chart_rect,
                 &chart_theme,
                 Some(single_overlay_tf_name.as_str()),
@@ -2662,6 +2691,9 @@ impl ChartApp {
                 &single_panel.grid_options,
                 &single_panel.legend,
             );
+            if single_panel.chart_type == "tick" {
+                render_state.tick_points = Some(&tick_buf);
+            }
             let crosshair_config = mlc_core::chart::CrosshairConfig::default();
             let render_config = ChartRenderConfig {
                 scale_theme: self.panel_app.scale_theme_for_render(),
@@ -6252,8 +6284,14 @@ impl ChartApp {
                     // keeping mouse release position close enough for click detection.
                     if self.has_click_drawing_tool() { continue; }
                     let Some(window) = self.panel_app.panel_grid.active_container_mut() else { continue; };
-                    let bar_delta_bars = bar_delta / window.viewport.bar_spacing;
-                    window.viewport.pan(bar_delta_bars);
+                    if window.viewport.is_time_axis() {
+                        // Time-axis chart: pan in the time domain (bar_delta is a
+                        // pixel delta here, same as the divisor below uses it).
+                        window.viewport.pan_time(bar_delta);
+                    } else {
+                        let bar_delta_bars = bar_delta / window.viewport.bar_spacing;
+                        window.viewport.pan(bar_delta_bars);
+                    }
                     if let mlc_core::engine::input::DragMode::SubPaneChart { pane_index } = drag_mode {
                         let instance_id = mlc_core::state::chart_container::collect_inner_instance_ids(
                             &window.inner_docking,
@@ -6295,7 +6333,11 @@ impl ChartApp {
                     let local_center_x = center_x - chart_x;
                     let Some(window) = self.panel_app.panel_grid.active_container_mut() else { continue; };
                     if factor_x != 1.0 {
-                        window.viewport.zoom_at(local_center_x, factor_x);
+                        if window.viewport.is_time_axis() {
+                            window.viewport.zoom_time_at(local_center_x, factor_x);
+                        } else {
+                            window.viewport.zoom_at(local_center_x, factor_x);
+                        }
                         if window.price_scale.scale_mode.is_auto_y() {
                             calc_visible_price_range(window);
                         }

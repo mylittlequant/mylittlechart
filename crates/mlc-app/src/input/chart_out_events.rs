@@ -226,6 +226,7 @@ impl ChartApp {
                     "baseline"      => Some("baseline"),
                     "histogram"     => Some("histogram"),
                     "columns"       => Some("columns"),
+                    "tick"          => Some("tick"),
                     _ => {
                         eprintln!("[ChartApp] unknown chart_type: {}", chart_type);
                         None
@@ -242,6 +243,27 @@ impl ChartApp {
                         );
                         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                             window.set_chart_type_with_undo(panel, ct);
+                            // Tick chart drives the time-domain X axis; every
+                            // other render style uses the index-packed axis.
+                            if ct == "tick" {
+                                // Seed the time window from the current bars'
+                                // timestamp span (seconds -> ms); live trades
+                                // then fill it. Empty bars -> 1-minute default.
+                                let now_ms = window.bars.last().map(|b| b.timestamp * 1000);
+                                let first_ms = window.bars.first().map(|b| b.timestamp * 1000);
+                                match (first_ms, now_ms) {
+                                    (Some(s), Some(e)) => window.viewport.enable_time_axis_for_span(s, e),
+                                    _ => {
+                                        // No bars yet: 1-minute window ending "now-ish"
+                                        // is impossible without a clock here; use a
+                                        // zero-based minute that snap_time_to_end fixes
+                                        // on the first trade.
+                                        window.viewport.enable_time_axis_for_span(0, 60_000);
+                                    }
+                                }
+                            } else {
+                                window.viewport.disable_time_axis();
+                            }
                         }
                     }
                     state_mutated = true;
@@ -798,6 +820,7 @@ impl ChartApp {
                                             "baseline"       => "baseline",
                                             "histogram"      => "histogram",
                                             "columns"        => "columns",
+                                            "tick"           => "tick",
                                             _                => "candles",
                                         };
                                         let mut panel_state = mlc_core::ChartPanelState::new(window.chart_panel_id);

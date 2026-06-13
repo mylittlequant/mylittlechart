@@ -225,6 +225,27 @@ impl Viewport {
         self.time_axis.is_some()
     }
 
+    /// Enable time-axis mode, fitting `[t_start_ms, t_end_ms]` into the chart
+    /// width with a small right margin (10% of the span) for incoming trades.
+    /// Falls back to a 1-minute window if the span is degenerate.
+    pub fn enable_time_axis_for_span(&mut self, t_start_ms: i64, t_end_ms: i64) {
+        let span = (t_end_ms - t_start_ms).max(60_000); // >= 1 minute
+        let margin = (span / 10).max(1);
+        let total = span + margin;
+        let width = self.chart_width.max(1.0);
+        let ms_per_px = total as f64 / width;
+        self.time_axis = Some(TimeAxis {
+            t_start_ms,
+            ms_per_px,
+        });
+    }
+
+    /// Disable time-axis mode (back to index-packed X).
+    #[inline]
+    pub fn disable_time_axis(&mut self) {
+        self.time_axis = None;
+    }
+
     /// Map a timestamp (ms) to an X pixel. Returns `None` in index mode.
     #[inline]
     pub fn ts_to_x(&self, ts_ms: i64) -> Option<f64> {

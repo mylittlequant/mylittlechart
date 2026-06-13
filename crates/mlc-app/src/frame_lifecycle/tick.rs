@@ -972,6 +972,26 @@ impl ChartApp {
                         }
                     }
 
+                    // Time-axis (tick) windows: keep the newest trade near the
+                    // right edge while in follow/auto mode. The bar-aggregation
+                    // path above skips derived windows, so the time-axis viewport
+                    // is advanced here off the live trade timestamp.
+                    for (cid_tu, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+                        if !window.viewport.is_time_axis() {
+                            continue;
+                        }
+                        let follow = window.price_scale.scale_mode.is_follow()
+                            || window.price_scale.scale_mode == ScaleMode::Auto;
+                        if !follow {
+                            continue;
+                        }
+                        if let Some((win_sym, _, _, win_at)) = instrument_by_cid_tu.get(cid_tu) {
+                            if win_sym.as_str() == symbol && win_at.as_str() == account_type.short_label() {
+                                window.viewport.snap_time_to_end(timestamp, 50.0);
+                            }
+                        }
+                    }
+
                     // Pull new trades from the shared ring into all order-flow panels.
                     // All four panel kinds now read from shared_trades via tick().
                     let _trade_panel_start = std::time::Instant::now();

@@ -295,6 +295,7 @@ fn chart_type_items() -> Vec<DropdownItemDef> {
         DropdownItemDef::Separator,
         DropdownItemDef::action("line", MK::Line.get(lang)).with_icon(ToolbarIconId::new("LineChart")),
         DropdownItemDef::action("step_line", MK::StepLine.get(lang)).with_icon(ToolbarIconId::new("StepLine")),
+        DropdownItemDef::action("tick", "Tick").with_icon(ToolbarIconId::new("LineChart")),
         DropdownItemDef::action("line_markers", MK::LineWithMarkers.get(lang)).with_icon(ToolbarIconId::new("LineWithMarkers")),
         DropdownItemDef::action("area", MK::Area.get(lang)).with_icon(ToolbarIconId::new("AreaChart")),
         DropdownItemDef::Separator,
