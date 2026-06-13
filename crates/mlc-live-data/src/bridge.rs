@@ -1461,68 +1461,57 @@ impl DataBridge {
                 .or_insert_with(|| Arc::new(RwLock::new(OrderbookSeries::new(DEFAULT_HISTORY_CAPACITY))));
         }
 
-        // C4: station orderbook subscriber (idempotent — gate on station_orderbook_subscribed).
+        // Snapshot: ALWAYS request a fresh full-book REST snapshot on every
+        // subscribe_depth, independent of the delta-forwarder gate below. The
+        // orderbook is STATE — every (re)subscribing DOM panel needs a starting
+        // book, and deltas are meaningless without it. The previous design only
+        // emitted a snapshot as a one-shot seed when the delta forwarder first
+        // spawned; on a chart restore that re-subscribed the same symbol the gate
+        // was still held by the live forwarder, so subscribe_depth skipped
+        // entirely and the freshly re-created (empty) OrderbookSeries arc only
+        // ever saw deltas → blank DOM. Decoupling the snapshot from the gate is
+        // the fix: DOM asks for the snapshot directly via the hub's REST
+        // connector, the gate only governs the steady-state delta recv-loop.
+        {
+            let hub = self.station.hub();
+            let tx = self.tx.clone();
+            let symbol_canonical = symbol.to_string();
+            let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
+            self.runtime.spawn(async move {
+                let Some(rest) = hub.rest(exchange_id) else { return };
+                let ob = match rest
+                    .get_orderbook(
+                        digdigdig3::core::types::SymbolInput::Raw(&symbol_wire),
+                        Some(1000),
+                        account_type,
+                    )
+                    .await
+                {
+                    Ok(ob) if !(ob.bids.is_empty() && ob.asks.is_empty()) => ob,
+                    _ => return,
+                };
+                let bids: Vec<(f64, f64)> = ob.bids.iter().map(|l| (l.price, l.size)).collect();
+                let asks: Vec<(f64, f64)> = ob.asks.iter().map(|l| (l.price, l.size)).collect();
+                let _ = tx.send(LiveUpdate::OrderbookSnapshot {
+                    exchange_id,
+                    account_type,
+                    symbol: symbol_canonical,
+                    bids,
+                    asks,
+                    timestamp: ob.timestamp,
+                    source: OrderbookSource::Rest,
+                });
+            });
+        }
+
+        // C4: station delta forwarder (idempotent — gate on
+        // station_orderbook_subscribed). The gate governs ONLY the steady-state
+        // delta recv-loop; the snapshot above is independent of it.
         let mut subs = self.station_orderbook_subscribed
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let gate_was_open = subs.insert(ob_key.clone());
         drop(subs);
-        if !gate_was_open {
-            // A forwarder for this key is already live (e.g. a chart restore that
-            // unsubscribed + re-subscribed the SAME symbol within the grace
-            // window). The gate stops us spawning a duplicate recv-loop — but the
-            // re-subscribing consumer just got a freshly-created empty
-            // OrderbookSeries arc (the old one was dropped at refcount 0), and the
-            // live forwarder already emitted its one snapshot long ago, so the DOM
-            // would only ever see deltas against an empty book. Pull ONE fresh REST
-            // snapshot from the station (which now returns a seed on mux-reuse) and
-            // push it into the channel, then drop the handle immediately so we do
-            // not start a second forwarder. Deltas keep flowing on the existing
-            // forwarder.
-            let station = self.station.clone();
-            let tx = self.tx.clone();
-            let symbol_canonical = symbol.to_string();
-            let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
-            self.runtime.spawn(async move {
-                let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
-                    exchange_id,
-                    symbol_wire.clone(),
-                    account_type,
-                    [digdigdig3_station::Stream::OrderbookDelta],
-                );
-                let mut report = match station.subscribe(sub_set).await {
-                    Ok(r) => r,
-                    Err(_) => return,
-                };
-                // Drain only until the seed snapshot arrives (it is sent right
-                // after the relay task subscribes), then stop — the existing
-                // forwarder owns the steady-state stream.
-                let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
-                loop {
-                    let ev = tokio::select! {
-                        _ = tokio::time::sleep_until(deadline) => break,
-                        ev = report.handle.recv() => ev,
-                    };
-                    let Some(ev) = ev else { break };
-                    if let digdigdig3_station::Event::OrderbookSnapshot { point, .. } = ev {
-                        let bids = strip_ob_padding(&point.bids);
-                        let asks = strip_ob_padding(&point.asks);
-                        let _ = tx.send(LiveUpdate::OrderbookSnapshot {
-                            exchange_id,
-                            account_type,
-                            symbol: symbol_canonical.clone(),
-                            bids,
-                            asks,
-                            timestamp: point.ts_ms,
-                            source: OrderbookSource::Rest,
-                        });
-                        break;
-                    }
-                }
-                // handle drops here → station consumer refcount decremented, no
-                // second recv-loop left running.
-            });
-        }
         if gate_was_open {
             let station = self.station.clone();
             let tx = self.tx.clone();
