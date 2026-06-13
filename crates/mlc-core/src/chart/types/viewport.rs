@@ -6,6 +6,40 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Time-domain X axis (additive, opt-in).
+///
+/// When a chart's data is non-uniform in time (raw trades, range/tick/volume
+/// derived bars), the index-packed X axis mis-places everything because it
+/// assumes one uniform slot per record. `TimeAxis` makes X a direct linear
+/// function of the real timestamp: `x = (ts_ms - t_start_ms) / ms_per_px`.
+///
+/// This lives ALONGSIDE the legacy index fields. When `Viewport.time_axis` is
+/// `Some`, the time-aware methods (`ts_to_x` / `x_to_ts`) drive rendering and
+/// hit-testing for that chart; uniform time-bar charts leave it `None` and keep
+/// the proven index-packed path (weekend gaps hidden, TradingView-style).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TimeAxis {
+    /// Timestamp (ms) mapped to the left edge of the chart area (x = 0).
+    pub t_start_ms: i64,
+    /// Milliseconds per pixel (the zoom level in the time domain).
+    /// Always > 0.
+    pub ms_per_px: f64,
+}
+
+impl TimeAxis {
+    /// Map a timestamp (ms) to an X pixel (left edge of chart area = 0).
+    #[inline]
+    pub fn ts_to_x(&self, ts_ms: i64) -> f64 {
+        (ts_ms - self.t_start_ms) as f64 / self.ms_per_px
+    }
+
+    /// Map an X pixel back to a timestamp (ms).
+    #[inline]
+    pub fn x_to_ts(&self, x: f64) -> i64 {
+        self.t_start_ms + (x * self.ms_per_px).round() as i64
+    }
+}
+
 /// Viewport state for a chart
 ///
 /// Manages the visible region of the chart and provides coordinate conversion
@@ -30,6 +64,12 @@ pub struct Viewport {
 
     /// Total number of bars in the data
     pub bar_count: usize,
+
+    /// Optional time-domain X axis for non-uniform-time data (raw trades,
+    /// derived bars). `None` = legacy index-packed X (default, uniform bars).
+    /// Serde-default so old snapshots deserialize as index-mode.
+    #[serde(default)]
+    pub time_axis: Option<TimeAxis>,
 }
 
 impl Default for Viewport {
@@ -41,6 +81,7 @@ impl Default for Viewport {
             chart_width: 0.0,
             chart_height: 0.0,
             bar_count: 0,
+            time_axis: None,
         }
     }
 }
@@ -174,6 +215,67 @@ impl Viewport {
     #[inline]
     pub fn bar_width(&self) -> f64 {
         self.bar_spacing * self.bar_width_ratio
+    }
+
+    // ── Time-domain X axis (active only when `time_axis` is `Some`) ──────────
+
+    /// `true` when this viewport positions X by real timestamp, not bar index.
+    #[inline]
+    pub fn is_time_axis(&self) -> bool {
+        self.time_axis.is_some()
+    }
+
+    /// Map a timestamp (ms) to an X pixel. Returns `None` in index mode.
+    #[inline]
+    pub fn ts_to_x(&self, ts_ms: i64) -> Option<f64> {
+        self.time_axis.map(|t| t.ts_to_x(ts_ms))
+    }
+
+    /// Map an X pixel back to a timestamp (ms). Returns `None` in index mode.
+    #[inline]
+    pub fn x_to_ts(&self, x: f64) -> Option<i64> {
+        self.time_axis.map(|t| t.x_to_ts(x))
+    }
+
+    /// The (ts_start_ms, ts_end_ms) currently visible. `None` in index mode.
+    #[inline]
+    pub fn visible_time_range(&self) -> Option<(i64, i64)> {
+        self.time_axis
+            .map(|t| (t.t_start_ms, t.x_to_ts(self.chart_width)))
+    }
+
+    /// Pan the time axis by a pixel delta (drag). No-op in index mode.
+    ///
+    /// Dragging right (positive `pixel_delta`) moves the view into the past,
+    /// mirroring `pan()`'s bar semantics (`view_start -= bar_delta`).
+    pub fn pan_time(&mut self, pixel_delta: f64) {
+        if let Some(t) = self.time_axis.as_mut() {
+            t.t_start_ms -= (pixel_delta * t.ms_per_px).round() as i64;
+        }
+    }
+
+    /// Zoom the time axis at a pixel, keeping the timestamp under the cursor
+    /// fixed. `factor > 1.0` zooms in (fewer ms per pixel). No-op in index mode.
+    pub fn zoom_time_at(&mut self, x: f64, factor: f64) {
+        if let Some(t) = self.time_axis.as_mut() {
+            // Timestamp under the cursor before the zoom.
+            let ts_under = t.t_start_ms + (x * t.ms_per_px).round() as i64;
+            // Zoom in => fewer ms per pixel.
+            let new_ms_per_px = (t.ms_per_px / factor).max(f64::MIN_POSITIVE);
+            t.ms_per_px = new_ms_per_px;
+            // Re-anchor so the same timestamp stays under the cursor.
+            t.t_start_ms = ts_under - (x * new_ms_per_px).round() as i64;
+        }
+    }
+
+    /// Snap the time axis so the newest timestamp sits near the right edge,
+    /// leaving `right_margin_px` of empty space. No-op in index mode.
+    pub fn snap_time_to_end(&mut self, latest_ts_ms: i64, right_margin_px: f64) {
+        if let Some(t) = self.time_axis.as_mut() {
+            let viewport_ms = (self.chart_width * t.ms_per_px).round() as i64;
+            let margin_ms = (right_margin_px * t.ms_per_px).round() as i64;
+            t.t_start_ms = latest_ts_ms + margin_ms - viewport_ms;
+        }
     }
 
     /// Pan the view by a number of bars (can be fractional)
@@ -338,6 +440,54 @@ mod tests {
         assert_eq!(viewport.x_to_bar(5.0), Some(0));
         assert_eq!(viewport.x_to_bar(15.0), Some(1));
         assert_eq!(viewport.x_to_bar(-5.0), None);
+    }
+
+    #[test]
+    fn test_time_axis_maps_ts_to_x() {
+        let mut vp = Viewport {
+            chart_width: 1000.0,
+            ..Default::default()
+        };
+        // 10 ms per pixel, t=0 at x=0.
+        vp.time_axis = Some(TimeAxis { t_start_ms: 0, ms_per_px: 10.0 });
+        assert!((vp.ts_to_x(0).unwrap() - 0.0).abs() < 1e-6);
+        assert!((vp.ts_to_x(10_000).unwrap() - 1000.0).abs() < 1e-6); // right edge
+        assert_eq!(vp.x_to_ts(500.0), Some(5_000));
+        assert_eq!(vp.visible_time_range(), Some((0, 10_000)));
+        // Index-mode viewport returns None.
+        let idx_vp = Viewport::default();
+        assert!(idx_vp.ts_to_x(123).is_none());
+    }
+
+    #[test]
+    fn test_zoom_time_keeps_cursor_ts_fixed() {
+        let mut vp = Viewport {
+            chart_width: 1000.0,
+            ..Default::default()
+        };
+        vp.time_axis = Some(TimeAxis { t_start_ms: 0, ms_per_px: 10.0 });
+        // Cursor at x=400 → ts=4000 before zoom.
+        let ts_before = vp.x_to_ts(400.0).unwrap();
+        vp.zoom_time_at(400.0, 2.0); // zoom in 2x
+        let ts_after = vp.x_to_ts(400.0).unwrap();
+        assert_eq!(ts_before, ts_after, "ts under cursor must stay fixed on zoom");
+        // ms_per_px halved on 2x zoom-in.
+        assert!((vp.time_axis.unwrap().ms_per_px - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_snap_time_to_end() {
+        let mut vp = Viewport {
+            chart_width: 1000.0,
+            ..Default::default()
+        };
+        vp.time_axis = Some(TimeAxis { t_start_ms: 0, ms_per_px: 10.0 });
+        // latest ts = 50_000, margin 50px (=500ms). Viewport spans 10_000ms.
+        vp.snap_time_to_end(50_000, 50.0);
+        let (start, end) = vp.visible_time_range().unwrap();
+        // end should be latest + margin = 50_500; start = end - 10_000 = 40_500.
+        assert_eq!(start, 40_500);
+        assert_eq!(end, 50_500);
     }
 
     #[test]
