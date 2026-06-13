@@ -20,7 +20,7 @@ mlc-trade-service = { path = "../mlc-trade-service", package = "mylittlechart-tr
 mlc-orderbook-service = { path = "../mlc-orderbook-service", package = "mylittlechart-orderbook-service" }
 
 # V5 connectors (async exchange API) — separate workspace, use path
-digdigdig3 = "=0.3.19"
+digdigdig3 = "=0.3.20"
 
 # Station: warm-start, persistence, gap-heal, replay over the same connectors.
 # Phase 2 of the dig3+mli migration: live-data becomes a strict facade over
@@ -28,7 +28,7 @@ digdigdig3 = "=0.3.19"
 # only translates between station Events and the legacy LiveUpdate API the
 # rest of mlc still uses, plus the three channels station doesn't cover
 # (private streams, scroll-left pagination, exchange_info).
-digdigdig3-station = "=0.3.19"
+digdigdig3-station = "=0.3.20"
 
 # Async runtime for background tasks
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
