@@ -995,8 +995,8 @@ impl ChartContainer {
     /// `grid` and `legend` are supplied by the caller from `ChartPanelState`
     /// (they were removed from `ChartContainer` in Phase 4 C).
     ///
-    /// `timeframe_minutes` is provided by the caller from `branch_meta` via
-    /// `read_timeframe(...).map(|t| t.minutes)` — the field was removed from
+    /// `timeframe_interval_ms` is provided by the caller from `branch_meta` via
+    /// `read_timeframe(...).map(|t| t.interval_ms)` — the field was removed from
     /// `ChartContainer` in Phase 4 B.
     pub fn to_render_state<'a>(
         &'a self,
@@ -1004,7 +1004,7 @@ impl ChartContainer {
         theme: &'a crate::chart::render_data::ChartTheme,
         current_timeframe: Option<&'a str>,
         time_format_settings: Option<&'a crate::TimeFormatSettings>,
-        timeframe_minutes: Option<u32>,
+        timeframe_interval_ms: Option<i64>,
         grid: &'a GridOptions,
         legend: &'a Legend,
     ) -> crate::chart::render_data::ChartRenderState<'a> {
@@ -1022,7 +1022,7 @@ impl ChartContainer {
             current_timeframe,
             disable_clip: false,
             time_format_settings,
-            timeframe_minutes,
+            timeframe_interval_ms,
             scale_settings: Some(&self.scale_settings),
             body_enabled: true,
             border_enabled: true,

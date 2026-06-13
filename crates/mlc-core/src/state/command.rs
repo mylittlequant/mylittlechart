@@ -37,11 +37,11 @@ pub enum TimeframeVisibility {
     /// Visible only on specific timeframes
     Specific(Vec<Timeframe>),
     /// Visible on timeframes >= specified weight
-    MinimumWeight(u32),
+    MinimumWeight(i64),
     /// Visible on timeframes <= specified weight
-    MaximumWeight(u32),
+    MaximumWeight(i64),
     /// Visible in a range of timeframe weights
-    WeightRange { min: u32, max: u32 },
+    WeightRange { min: i64, max: i64 },
 }
 
 impl TimeframeVisibility {

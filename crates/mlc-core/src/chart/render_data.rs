@@ -202,8 +202,8 @@ pub struct ChartRenderState<'a> {
     /// Time format settings for rendering time labels
     /// If None, defaults will be used
     pub time_format_settings: Option<&'a crate::TimeFormatSettings>,
-    /// Timeframe minutes for countdown calculation
-    pub timeframe_minutes: Option<u32>,
+    /// Timeframe interval in milliseconds for countdown calculation
+    pub timeframe_interval_ms: Option<i64>,
     /// Scale settings for countdown and other scale features
     pub scale_settings: Option<&'a crate::ScaleSettings>,
     /// Whether candle bodies are visible

@@ -6,66 +6,80 @@ use serde::{Deserialize, Serialize};
 
 /// Represents a chart timeframe
 ///
-/// The `weight` field is private and computed from `minutes` — it is excluded
+/// The `weight` field is private and computed from `interval_ms` — it is excluded
 /// from serialization. On deserialization the value is reconstructed via the
 /// `TimeframeHelper` newtype so that `weight` is always recomputed correctly.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(from = "TimeframeHelper")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Timeframe {
     /// Display name (e.g., "1H", "4H", "1D")
     pub name: String,
-    /// Duration in minutes
-    pub minutes: u32,
+    /// Duration in milliseconds
+    pub interval_ms: i64,
     /// Weight for sorting/comparison (higher = larger timeframe).
-    /// Excluded from serde — always recomputed from `minutes` on deserialize.
-    #[serde(skip)]
-    weight: u32,
+    /// Excluded from serde — always recomputed from `interval_ms` on deserialize.
+    weight: i64,
+}
+
+impl Serialize for Timeframe {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut s = serializer.serialize_struct("Timeframe", 2)?;
+        s.serialize_field("name", &self.name)?;
+        s.serialize_field("interval_ms", &self.interval_ms)?;
+        s.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Timeframe {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let helper = TimeframeHelper::deserialize(deserializer)?;
+        Ok(Timeframe::from(helper))
+    }
 }
 
 impl Timeframe {
     /// Create a new timeframe
-    pub fn new(name: &str, minutes: u32) -> Self {
+    pub fn new(name: &str, interval_ms: i64) -> Self {
         Self {
             name: name.to_string(),
-            minutes,
-            weight: minutes,
-        }
-    }
-
-    /// Create with explicit weight
-    pub fn with_weight(name: &str, minutes: u32, weight: u32) -> Self {
-        Self {
-            name: name.to_string(),
-            minutes,
-            weight,
+            interval_ms,
+            weight: interval_ms,
         }
     }
 
     /// Get the weight (for comparison)
-    pub fn weight(&self) -> u32 {
+    pub fn weight(&self) -> i64 {
         self.weight
     }
 
     /// Check if this is an intraday timeframe
     pub fn is_intraday(&self) -> bool {
-        self.minutes < 1440 // Less than 1 day
+        self.interval_ms < 86_400_000 // Less than 1 day
     }
 
     /// Check if this is a daily or higher timeframe
     pub fn is_daily_or_higher(&self) -> bool {
-        self.minutes >= 1440
+        self.interval_ms >= 86_400_000
     }
 
+    // Sub-second and second timeframes
+    pub fn s1() -> Self { Self::new("1s", 1_000) }
+    pub fn s3() -> Self { Self::new("3s", 3_000) }
+    pub fn s5() -> Self { Self::new("5s", 5_000) }
+    pub fn s10() -> Self { Self::new("10s", 10_000) }
+    pub fn s15() -> Self { Self::new("15s", 15_000) }
+    pub fn s30() -> Self { Self::new("30s", 30_000) }
+
     // Standard timeframes
-    pub fn m1() -> Self { Self::new("1m", 1) }
-    pub fn m5() -> Self { Self::new("5m", 5) }
-    pub fn m15() -> Self { Self::new("15m", 15) }
-    pub fn m30() -> Self { Self::new("30m", 30) }
-    pub fn h1() -> Self { Self::new("1H", 60) }
-    pub fn h4() -> Self { Self::new("4H", 240) }
-    pub fn d1() -> Self { Self::new("1D", 1440) }
-    pub fn w1() -> Self { Self::new("1W", 10080) }
-    pub fn mn1() -> Self { Self::new("1M", 43200) }
+    pub fn m1() -> Self { Self::new("1m", 60_000) }
+    pub fn m5() -> Self { Self::new("5m", 300_000) }
+    pub fn m15() -> Self { Self::new("15m", 900_000) }
+    pub fn m30() -> Self { Self::new("30m", 1_800_000) }
+    pub fn h1() -> Self { Self::new("1H", 3_600_000) }
+    pub fn h4() -> Self { Self::new("4H", 14_400_000) }
+    pub fn d1() -> Self { Self::new("1D", 86_400_000) }
+    pub fn w1() -> Self { Self::new("1W", 604_800_000) }
+    pub fn mn1() -> Self { Self::new("1M", 2_592_000_000) }
 }
 
 impl Default for Timeframe {
@@ -76,18 +90,28 @@ impl Default for Timeframe {
 
 /// Private helper used by serde to deserialize [`Timeframe`].
 ///
-/// Only `name` and `minutes` are stored in JSON. `weight` is recomputed via
-/// [`Timeframe::new`] so that it is always consistent after deserialization.
+/// Supports both the old format `{"name":"1H","minutes":60}` and the new
+/// format `{"name":"1H","interval_ms":3600000}`. When both are present,
+/// `interval_ms` takes precedence.
 #[derive(Deserialize)]
 struct TimeframeHelper {
     name: String,
-    minutes: u32,
+    #[serde(default)]
+    interval_ms: Option<i64>,
+    #[serde(default)]
+    minutes: Option<u32>,
 }
 
 impl From<TimeframeHelper> for Timeframe {
     fn from(h: TimeframeHelper) -> Self {
-        // Use `new()` so that `weight` is always recomputed from `minutes`.
-        Self::new(&h.name, h.minutes)
+        let ms = if let Some(ms) = h.interval_ms {
+            ms
+        } else if let Some(m) = h.minutes {
+            (m as i64) * 60_000
+        } else {
+            60_000 // default 1m
+        };
+        Self::new(&h.name, ms)
     }
 }
 
@@ -105,6 +129,12 @@ impl TimeframeManager {
     /// Create a new timeframe manager with default timeframes
     pub fn new() -> Self {
         let available = vec![
+            Timeframe::s1(),
+            Timeframe::s3(),
+            Timeframe::s5(),
+            Timeframe::s10(),
+            Timeframe::s15(),
+            Timeframe::s30(),
             Timeframe::m1(),
             Timeframe::m5(),
             Timeframe::m15(),
@@ -154,7 +184,7 @@ impl TimeframeManager {
     pub fn add_favorite(&mut self, tf: Timeframe) {
         if !self.favorites.contains(&tf) {
             self.favorites.push(tf);
-            self.favorites.sort_by_key(|t| t.minutes);
+            self.favorites.sort_by_key(|t| t.interval_ms);
         }
     }
 
@@ -210,7 +240,7 @@ impl TimeframeManager {
     pub fn add_custom(&mut self, tf: Timeframe) {
         if !self.available.contains(&tf) {
             self.available.push(tf);
-            self.available.sort_by_key(|t| t.minutes);
+            self.available.sort_by_key(|t| t.interval_ms);
         }
     }
 }
@@ -261,11 +291,38 @@ mod tests {
 
         assert!(manager.is_favorite(&Timeframe::h1()));
 
-        let custom = Timeframe::new("2H", 120);
+        let custom = Timeframe::new("2H", 7_200_000);
         manager.add_favorite(custom.clone());
         assert!(manager.is_favorite(&custom));
 
         manager.remove_favorite(&custom);
         assert!(!manager.is_favorite(&custom));
+    }
+
+    #[test]
+    fn test_serde_backward_compat() {
+        // Old format with minutes field
+        let old_json = r#"{"name":"1H","minutes":60}"#;
+        let tf: Timeframe = serde_json::from_str(old_json).unwrap();
+        assert_eq!(tf.interval_ms, 3_600_000);
+        assert_eq!(tf.name, "1H");
+
+        // New format with interval_ms field
+        let new_json = r#"{"name":"1H","interval_ms":3600000}"#;
+        let tf2: Timeframe = serde_json::from_str(new_json).unwrap();
+        assert_eq!(tf2.interval_ms, 3_600_000);
+
+        // Serialize writes new format
+        let serialized = serde_json::to_string(&tf).unwrap();
+        assert!(serialized.contains("interval_ms"));
+        assert!(!serialized.contains("minutes"));
+    }
+
+    #[test]
+    fn test_sub_second_timeframes() {
+        assert_eq!(Timeframe::s1().interval_ms, 1_000);
+        assert_eq!(Timeframe::s30().interval_ms, 30_000);
+        assert!(Timeframe::s1().is_intraday());
+        assert!(!Timeframe::s1().is_daily_or_higher());
     }
 }

@@ -260,7 +260,7 @@ impl ChartApp {
                     // Obtain/update TrackedSeriesHandle for matched windows.
                     {
                         use std::sync::{Arc, RwLock};
-                        let period_secs = loaded_tf.as_ref().map_or(60, |tf| tf.minutes as i64) * 60;
+                        let period_secs = loaded_tf.as_ref().map_or(60_000, |tf| tf.interval_ms) / 1000;
                         let bs_key = mlc_bar_service::BarSeriesKey::new(exchange_id, account_type, symbol.clone(), tf_name.clone());
                         let matched_cids: Vec<u64> = self.panel_app.panel_grid.containers().iter()
                             .filter(|(cid, _window)| {
@@ -720,7 +720,7 @@ impl ChartApp {
                             None => continue,
                         };
                         if win_sym_tu.as_str() == symbol && win_at_tu.as_str() == account_type.short_label() {
-                            let period_secs = (win_tf_tu.minutes as i64) * 60;
+                            let period_secs = win_tf_tu.interval_ms / 1000;
                             let trade_ts_secs = timestamp / 1000;
 
                             if let Some(last_ts) = window.bars.last().map(|b| b.timestamp) {

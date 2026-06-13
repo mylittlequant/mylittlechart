@@ -97,13 +97,13 @@ pub fn draw_price_scale(
 
             // Compute countdown text when enabled
             let countdown_opt: Option<String> =
-                if let (Some(scale_settings), Some(tf_minutes)) = (state.scale_settings, state.timeframe_minutes) {
-                    if scale_settings.show_bar_countdown && tf_minutes > 0 {
+                if let (Some(scale_settings), Some(tf_interval_ms)) = (state.scale_settings, state.timeframe_interval_ms) {
+                    if scale_settings.show_bar_countdown && tf_interval_ms > 0 {
                         let now = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .map(|d| d.as_secs() as i64)
                             .unwrap_or(0);
-                        let bar_interval_secs = (tf_minutes as i64) * 60;
+                        let bar_interval_secs = (tf_interval_ms / 1000).max(1);
                         // Bar-grid start from the wall-clock, not from data arrival.
                         // On a sparse-tick instrument (e.g. HyperLiquid for a
                         // low-liquidity symbol) the exchange emits no candle for a

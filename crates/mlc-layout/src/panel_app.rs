@@ -2528,7 +2528,7 @@ impl ChartPanelApp {
                 current_timeframe: None,
                 disable_clip: false,
                 time_format_settings: Some(&window.scale_settings.time_format),
-                timeframe_minutes: None,
+                timeframe_interval_ms: None,
                 scale_settings: Some(&window.scale_settings),
                 body_enabled: true,
                 border_enabled: true,

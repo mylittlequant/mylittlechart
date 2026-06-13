@@ -28,7 +28,7 @@ pub struct BarSeries {
     /// `None` until the first rotation happens.
     pub oldest_rotated_ts: Option<i64>,
 
-    /// Timeframe period in seconds (derived from `Timeframe.minutes * 60`).
+    /// Timeframe period in seconds (derived from `Timeframe.interval_ms / 1000`).
     /// Cached here so trade aggregation does not need the `Timeframe` struct.
     pub period_secs: i64,
 }

@@ -2551,7 +2551,7 @@ impl ChartApp {
                     .and_then(|cid| self.managers.bubble.timeframe_for_chart(cid))
                     .cloned();
                 let overlay_tf_name: String = overlay_tf.as_ref().map(|tf| tf.name.clone()).unwrap_or_default();
-                let overlay_tf_minutes: Option<u32> = overlay_tf.map(|tf| tf.minutes);
+                let overlay_tf_interval_ms: Option<i64> = overlay_tf.map(|tf| tf.interval_ms);
                 let overlay_symbol: String = chart_id
                     .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
                     .map(String::from)
@@ -2575,7 +2575,7 @@ impl ChartApp {
                     &chart_theme,
                     Some(overlay_tf_name.as_str()),
                     Some(&window.scale_settings.time_format),
-                    overlay_tf_minutes,
+                    overlay_tf_interval_ms,
                     &overlay_panel.grid_options,
                     &overlay_panel.legend,
                 );
@@ -2623,7 +2623,7 @@ impl ChartApp {
                 .and_then(|cid| self.managers.bubble.timeframe_for_chart(cid))
                 .cloned();
             let single_overlay_tf_name: String = single_overlay_tf.as_ref().map(|tf| tf.name.clone()).unwrap_or_default();
-            let single_overlay_tf_minutes: Option<u32> = single_overlay_tf.map(|tf| tf.minutes);
+            let single_overlay_tf_interval_ms: Option<i64> = single_overlay_tf.map(|tf| tf.interval_ms);
             let single_overlay_symbol: String = single_overlay_cid
                 .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
                 .map(String::from)
@@ -2646,7 +2646,7 @@ impl ChartApp {
                 &chart_theme,
                 Some(single_overlay_tf_name.as_str()),
                 Some(&window.scale_settings.time_format),
-                single_overlay_tf_minutes,
+                single_overlay_tf_interval_ms,
                 &single_panel.grid_options,
                 &single_panel.legend,
             );
@@ -2863,7 +2863,7 @@ impl ChartApp {
                     .and_then(|cid| self.managers.bubble.timeframe_for_chart(cid))
                     .cloned();
                 let split_tf_name: String = split_tf.as_ref().map(|tf| tf.name.clone()).unwrap_or_default();
-                let split_tf_minutes: Option<u32> = split_tf.map(|tf| tf.minutes);
+                let split_tf_interval_ms: Option<i64> = split_tf.map(|tf| tf.interval_ms);
 
                 // Convert sub_rect to absolute LayoutRect.
                 let leaf_rect = LayoutRect {
@@ -2890,7 +2890,7 @@ impl ChartApp {
                     &chart_theme,
                     Some(split_tf_name.as_str()),
                     Some(&window.scale_settings.time_format),
-                    split_tf_minutes,
+                    split_tf_interval_ms,
                     &split_panel.grid_options,
                     &split_panel.legend,
                 );
@@ -3390,9 +3390,9 @@ impl ChartApp {
                     (sym, tf_name, exch, at)
                 })
             };
-            let single_tf_minutes: Option<u32> = self.panel_app.panel_grid.active_container_id()
+            let single_tf_interval_ms: Option<i64> = self.panel_app.panel_grid.active_container_id()
                 .and_then(|cid| self.managers.bubble.timeframe_for_chart(cid))
-                .map(|tf| tf.minutes);
+                .map(|tf| tf.interval_ms);
 
             // Scope indicator queries to the active window for single-window mode.
             if let Some(chart_id) = self.panel_app.panel_grid.active_container_id() {
@@ -3485,7 +3485,7 @@ impl ChartApp {
                     &chart_theme,
                     Some(single_tf_name),
                     Some(&window.scale_settings.time_format),
-                    single_tf_minutes,
+                    single_tf_interval_ms,
                     &single_window_panel.grid_options,
                     &single_window_panel.legend,
                 );
