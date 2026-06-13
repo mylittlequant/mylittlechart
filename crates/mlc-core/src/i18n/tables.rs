@@ -1039,6 +1039,14 @@ mod completeness {
 
     fn assert_full(name: &str, rows: &[[&str; N_LANG]]) {
         for (r, row) in rows.iter().enumerate() {
+            // A row that is empty in EVERY column is a reserved placeholder kept
+            // only for table-index / enum-discriminant stability (e.g.
+            // `_SourceLinkedReserved`). It carries no translatable text, so skip
+            // it. A PARTIALLY-empty row is a real missing translation and still
+            // fails below.
+            if row.iter().all(|cell| cell.is_empty()) {
+                continue;
+            }
             for (c, cell) in row.iter().enumerate() {
                 assert!(
                     !cell.is_empty(),

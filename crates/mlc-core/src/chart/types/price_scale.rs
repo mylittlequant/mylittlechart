@@ -652,11 +652,14 @@ mod tests {
 
     #[test]
     fn test_price_precision() {
-        assert_eq!(price_precision(10.0), 0);
-        assert_eq!(price_precision(1.0), 0);
-        assert_eq!(price_precision(0.5), 1);
+        // price_precision floors at 2 decimals for any step >= 0.01 (exchange
+        // tickers always show at least cents); finer steps add more digits.
+        assert_eq!(price_precision(10.0), 2);
+        assert_eq!(price_precision(1.0), 2);
+        assert_eq!(price_precision(0.5), 2);
         assert_eq!(price_precision(0.05), 2);
         assert_eq!(price_precision(0.005), 3);
+        assert_eq!(price_precision(0.0005), 4);
     }
 
     #[test]
@@ -679,10 +682,14 @@ mod tests {
         let scale = PriceScale::new(0.0, 100.0);
         let ticks = scale.generate_ticks(300.0);
         assert!(!ticks.is_empty());
-        // All ticks should be within range
+        // generate_ticks deliberately extends the range by ~50px-worth of price
+        // each side (so ticks reach the visible edges), so ticks may sit slightly
+        // outside [price_min, price_max]. Bound by the extended gen range instead.
+        let range = scale.price_max - scale.price_min;
+        let margin = 50.0 * range / 300.0;
         for tick in &ticks {
-            assert!(*tick >= scale.price_min);
-            assert!(*tick <= scale.price_max);
+            assert!(*tick >= scale.price_min - margin);
+            assert!(*tick <= scale.price_max + margin);
         }
     }
 }

@@ -376,7 +376,9 @@ mod tests {
             ..Default::default()
         };
         let (start, end) = viewport.visible_range();
-        assert_eq!(start, 10);
+        // visible_range backs up one bar (view_start_idx - 1) so the partially-
+        // scrolled-in left bar is included → start = 9 for view_start 10.
+        assert_eq!(start, 9);
         assert!(end <= 50);
         assert!(end > start);
     }
