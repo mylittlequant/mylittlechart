@@ -1520,6 +1520,13 @@ impl ChartApp {
                     _ => false,
                 };
                 if started {
+                    // Mark a UI drag so on_drag_move suppresses the chart
+                    // crosshair while the modal is being moved. Without this
+                    // the crosshair stays frozen at its last chart position
+                    // (it belongs to a layer BELOW the modal, but the move
+                    // path never hides it). Mirrors the sidebar-scroll drag
+                    // above which already sets this flag.
+                    self.ui_drag_active = true;
                     return false;
                 }
             }
@@ -4751,6 +4758,18 @@ impl ChartApp {
                 None
             };
         {
+            // Z-order suppressor: hide the crosshair when a UI widget ABOVE the
+            // chart layer sits under the cursor (modal, settings panel, etc.).
+            // The geometry hit-test below only knows the chart layout — it has
+            // no idea a modal is painted on top, so over a modal it reports
+            // "on canvas" and the crosshair bleeds THROUGH the modal. is_over_ui_now
+            // is the authoritative z-order + modal-aware check (false over the
+            // chart's BlackboxPanel canvas, true over any real UI widget), so it
+            // catches exactly the layers geometry cannot see. Drawing bypass
+            // still wins below (a click-tool preview anchor must survive a
+            // cursor drift), so this only fires when not actively drawing.
+            let over_ui_above_chart = self.input_coordinator.borrow().is_over_ui_now(x, y);
+
             // Drawing bypass: keep crosshair visible while the hovered leaf's
             // drawing manager reports an in-progress primitive.  In split mode
             // the hovered leaf (not the active leaf) is checked so a drawing on
@@ -4838,6 +4857,18 @@ impl ChartApp {
                     .unwrap_or(false);
                 (geometry_says_canvas && !explicit_non_chart, over_subpane_widget)
             };
+
+            // A UI widget above the chart (modal/panel) suppresses the
+            // crosshair regardless of what the chart-layout geometry thinks —
+            // unless a drawing is in progress (preview anchor must survive).
+            if over_ui_above_chart && !is_drawing {
+                if self.panel_app.panel_grid.is_split() {
+                    self.hide_all_split_crosshairs();
+                } else {
+                    self.hide_crosshair();
+                }
+                return;
+            }
 
             if !on_canvas && !is_drawing && !over_subpane_widget {
                 if self.panel_app.panel_grid.is_split() {
