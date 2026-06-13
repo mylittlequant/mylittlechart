@@ -216,7 +216,12 @@ impl LiquidityHeatmapState {
                 if view.version != self.last_seen_orderbook_version {
                     self.last_seen_orderbook_version = view.version;
 
-                    let timestamp = view.last_rest_ts_ms;
+                    // Use the freshest of REST/WS timestamps. `last_rest_ts_ms`
+                    // is set once at the REST seed and never advances; feeding
+                    // it to the rate-limited apply_snapshot froze the heatmap
+                    // after a single sample (ts - last_snapshot_ms == 0 forever).
+                    // WS deltas advance `last_ws_ts_ms`, so max() tracks live time.
+                    let timestamp = view.last_ws_ts_ms.max(view.last_rest_ts_ms);
 
                     // Compute mid price from best bid/ask
                     if let (Some(best_bid), Some(best_ask)) = (view.best_bid, view.best_ask) {

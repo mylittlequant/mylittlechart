@@ -2893,30 +2893,68 @@ impl ChartApp {
                     eprintln!("[Sidebar] Object selected: {}", id);
 
                     // Click-to-center: if a drawing row was clicked, scroll the
-                    // viewport so the drawing's midpoint is horizontally centred.
+                    // viewport so the drawing's midpoint is centred on BOTH axes
+                    // (X = time/bar, Y = price). Then propagate to the sync group
+                    // so linked charts re-center too.
                     if is_drw_row {
                         let active_pid_center = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-                        let center_bar = active_pid_center
+                        // Compute (mid_bar, price_min, price_max) from the
+                        // primitive's anchor points. Price anchors are the `.1`
+                        // of each (ts_ms, price) pair; 0.0 prices are sentinels
+                        // (cycle lines / VP primitives) and must be skipped.
+                        let center = active_pid_center
                             .and_then(|pid| self.panels_store.chart_panel.get(&pid))
                             .and_then(|panel| panel.drawing_manager.primitives().iter()
                                 .find(|p| p.data().id == id)
                                 .and_then(|prim| {
                                     let pts = prim.points();
                                     if pts.is_empty() {
+                                        return None;
+                                    }
+                                    let avg_ts = pts.iter().map(|p| p.0).sum::<i64>() / pts.len() as i64;
+                                    let mid_bar = self.panel_app.panel_grid.active_container()
+                                        .map(|w| mlc_core::timestamp_ms_to_bar_f64(&w.bars, avg_ts))?;
+                                    // Price bounds from non-sentinel anchors.
+                                    let prices: Vec<f64> = pts.iter()
+                                        .map(|p| p.1)
+                                        .filter(|&pr| pr != 0.0)
+                                        .collect();
+                                    let price_bounds = if prices.is_empty() {
                                         None
                                     } else {
-                                        let avg_ts = pts.iter().map(|p| p.0).sum::<i64>() / pts.len() as i64;
-                                        self.panel_app.panel_grid.active_container()
-                                            .map(|w| mlc_core::timestamp_ms_to_bar_f64(&w.bars, avg_ts))
-                                    }
+                                        let lo = prices.iter().cloned().fold(f64::INFINITY, f64::min);
+                                        let hi = prices.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                                        Some((lo, hi))
+                                    };
+                                    Some((mid_bar, price_bounds))
                                 }));
-                        if let Some(mid_bar) = center_bar {
+                        if let Some((mid_bar, price_bounds)) = center {
+                            let mut scale_mode_for_sync = None;
                             if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                                 let visible_bars = window.viewport.chart_width / window.viewport.bar_spacing;
                                 window.viewport.view_start = (mid_bar - visible_bars / 2.0).max(0.0);
-                                if window.price_scale.scale_mode.is_auto_y() {
+                                // Y-center: frame the primitive's price range with
+                                // 20% padding each side, switch to Manual so the
+                                // next auto-scale tick doesn't snap Y back.
+                                if let Some((lo, hi)) = price_bounds {
+                                    let span = (hi - lo).max(1e-9);
+                                    let pad = span * 0.2;
+                                    window.price_scale.price_min = lo - pad;
+                                    window.price_scale.price_max = hi + pad;
+                                    window.price_scale.scale_mode =
+                                        mlc_core::chart::types::price_scale::ScaleMode::Manual;
+                                    scale_mode_for_sync = Some(window.price_scale.scale_mode);
+                                } else if window.price_scale.scale_mode.is_auto_y() {
                                     window.calc_auto_scale();
                                 }
+                            }
+                            // Propagate the centering to the sync group (linked
+                            // viewports), same as pan/zoom do.
+                            if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
+                                let (vs, bsp) = self.panel_app.panel_grid.active_container()
+                                    .map(|w| (w.viewport.view_start, w.viewport.bar_spacing))
+                                    .unwrap_or((0.0, 8.0));
+                                self.propagate_viewport_to_sync_group(active_leaf, vs, bsp, scale_mode_for_sync);
                             }
                         }
                     }
