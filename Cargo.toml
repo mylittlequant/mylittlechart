@@ -56,7 +56,7 @@ opt-level = 2
 # round-trip. Keep pins == published uzor version on every bump.
 uzor = { path = "../uzor/uzor" }
 # Local dig3 path build — same policy as uzor. Pins stay at the published
-# 0.3.20; the patch resolves them to the working tree so in-flight dig3
+# 0.3.21; the patch resolves them to the working tree so in-flight dig3
 # fixes (e.g. the HyperLiquid WS-candle fix) are picked up without a publish
 # round-trip. Keep pins == published dig3 version on every bump; all three
 # crates patched together so the graph resolves one consistent version.
