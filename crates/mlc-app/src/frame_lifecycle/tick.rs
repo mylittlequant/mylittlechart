@@ -106,7 +106,25 @@ impl ChartApp {
         let mut last_trade_price_by_symbol: std::collections::HashMap<(String, String, String), f64> =
             std::collections::HashMap::new();
         let events_start = std::time::Instant::now();
+        // Drain budget: cap the per-tick event processing so a backlog never
+        // blocks a single frame. The worst case is the FIRST live tick right
+        // after the skeleton→live promote: the broadcast channel accumulated
+        // ~2.4s of bars/trades/symbols while the worker built the ChartApp,
+        // and draining the whole backlog in one tick measured ~1.07s on the
+        // main thread — the "spinner gone, chart not yet" freeze. Stop after
+        // the budget and leave the rest for the next about_to_wait pass (which
+        // fires immediately); the post-loop coalesced work (ghost filter,
+        // trading updates) is idempotent across partial drains.
+        const DRAIN_BUDGET_MS: u128 = 8;
+        let mut budget_hit = false;
         loop {
+            // Check budget before pulling the next event (not after applying it,
+            // so a single heavy event can still complete). Always process at
+            // least one event per tick to guarantee forward progress.
+            if _drain_count > 0 && events_start.elapsed().as_millis() >= DRAIN_BUDGET_MS {
+                budget_hit = true;
+                break;
+            }
             let update = match self.live_update_rx.try_recv() {
                 Ok(u) => { _drain_count += 1; u },
                 Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {

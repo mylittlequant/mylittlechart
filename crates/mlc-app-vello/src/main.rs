@@ -246,8 +246,16 @@ struct PerWindowState {
     was_minimized: bool,
     /// Set when the off-thread promote worker is building this window's live
     /// ChartApp. Drives the animated spinner in the skeleton frame. Cleared
-    /// inside finish_promote when the swap completes.
+    /// in scene_builder on the first frame that actually composites live chart
+    /// content (NOT in finish_promote) — otherwise the spinner vanished a
+    /// frame before the chart was built, leaving a blank panel during the
+    /// first live tick's event-backlog drain.
     spinner_start: Option<std::time::Instant>,
+    /// True from finish_promote until the first live chart scene is built and
+    /// composited. While set, the spinner is held even though `skeleton` is
+    /// already false, so the spinner masks the first-frame work instead of
+    /// blinking out early.
+    awaiting_first_live_frame: bool,
 }
 
 /// A pending request to open a new window.
@@ -1261,6 +1269,7 @@ impl App<'_> {
             toolbar_tooltip: tooltip::TooltipState::with_delay(700.0),
             was_minimized: false,
             spinner_start: None,
+            awaiting_first_live_frame: false,
         };
 
         self.windows.insert(win_id, pw);
@@ -1650,7 +1659,11 @@ impl App<'_> {
                 pw.window_id = r.window_id;
                 pw.skeleton = false;
                 pw.visible_set = true; // already on screen — don't hide again
-                pw.spinner_start = None;
+                // Keep the spinner running: it is cleared in scene_builder on
+                // the first frame that actually composites the live chart, so
+                // it masks the first-live-tick event-backlog drain instead of
+                // blinking out a frame early onto a blank panel.
+                pw.awaiting_first_live_frame = true;
                 // Invalidate all render caches so the live content draws next frame.
                 pw.toolbar_dirty = true;
                 pw.sidebar_dirty_scene = true;
@@ -4531,12 +4544,16 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             self.start_promote_async();
         }
 
-        // Keep spinner windows animating at ~60fps while the worker is running.
-        if self.promote_pending {
-            for pw in self.windows.values() {
-                if pw.spinner_start.is_some() {
-                    pw.window.request_redraw();
-                }
+        // Keep spinner windows animating at ~60fps while the worker is running
+        // AND through the post-swap window where the spinner is held until the
+        // first live chart frame composites (awaiting_first_live_frame). Both
+        // phases must drive redraws or the spinner freezes / the held frames
+        // never advance to retire it.
+        for pw in self.windows.values() {
+            if pw.spinner_start.is_some()
+                && (self.promote_pending || pw.awaiting_first_live_frame)
+            {
+                pw.window.request_redraw();
             }
         }
 

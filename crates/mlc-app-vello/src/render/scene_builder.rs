@@ -130,6 +130,13 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
             );
             pw.chart.render(&mut render_ctx, frame_time, true);
             pw.chart_dirty = false;
+            // First live chart frame after the promote: the chart scene is now
+            // built and about to composite, so retire the spinner here (not in
+            // finish_promote, which fired a frame too early onto a blank panel).
+            if pw.awaiting_first_live_frame {
+                pw.awaiting_first_live_frame = false;
+                pw.spinner_start = None;
+            }
         }
         let _composite_start = std::time::Instant::now();
         pw.scene.append(&pw.chart_scene, None);
@@ -516,6 +523,13 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 pw.hybrid_ctx = Some(inner);
             }
             RenderBackend::VelloGpu => unreachable!("handled above"),
+        }
+        // Non-VelloGpu backends render the whole chart each frame (no cached
+        // chart_scene), so the live chart is on screen as soon as we get here
+        // after the promote — retire the held spinner now.
+        if pw.awaiting_first_live_frame {
+            pw.awaiting_first_live_frame = false;
+            pw.spinner_start = None;
         }
     }
 
