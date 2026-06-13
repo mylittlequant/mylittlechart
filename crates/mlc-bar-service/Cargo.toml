@@ -8,4 +8,4 @@ name = "mlc_bar_service"
 
 [dependencies]
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
-digdigdig3 = "=0.3.21"
+digdigdig3 = "=0.3.22"

@@ -7,6 +7,6 @@ edition.workspace = true
 name = "mlc_orderbook_service"
 
 [dependencies]
-digdigdig3 = "=0.3.21"
+digdigdig3 = "=0.3.22"
 ordered-float = "4"
 arc-swap = "1"
