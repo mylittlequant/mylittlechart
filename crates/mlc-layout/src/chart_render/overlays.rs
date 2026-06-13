@@ -351,39 +351,8 @@ pub fn draw_last_price_line(
         None => return, // No data
     };
 
-    // Determine if bullish or bearish — WITH a one-pixel deadband.
-    //
-    // The naive `close >= open` flips the line green<->red on EVERY tick
-    // while the live bar's close oscillates around its open (start of a
-    // bar, quiet market). The scene rebuilds per trade, so the alternation
-    // runs at frame rate and reads as the line BLINKING. Hold the previous
-    // direction while |close - open| maps to less than one screen pixel —
-    // the flip only happens when the difference is actually visible.
-    let range_for_px = price_scale.price_max - price_scale.price_min;
-    let px_epsilon = if range_for_px > 0.0 && rect.height > 0.0 {
-        range_for_px / rect.height
-    } else {
-        0.0
-    };
-    let is_bullish = {
-        use std::cell::RefCell;
-        use std::collections::HashMap;
-        thread_local! {
-            static LAST_DIR: RefCell<HashMap<(i64, i64), bool>> = RefCell::new(HashMap::new());
-        }
-        LAST_DIR.with(|ld| {
-            let key = (rect.x as i64, rect.y as i64);
-            let mut map = ld.borrow_mut();
-            let prev = map.get(&key).copied();
-            let dir = if (last_bar.close - last_bar.open).abs() < px_epsilon {
-                prev.unwrap_or(last_bar.close >= last_bar.open)
-            } else {
-                last_bar.close >= last_bar.open
-            };
-            map.insert(key, dir);
-            dir
-        })
-    };
+    // Determine if bullish or bearish
+    let is_bullish = last_bar.close >= last_bar.open;
 
     // Choose color based on direction (with alpha for transparency)
     let base_color = if is_bullish { &theme.candle_up } else { &theme.candle_down };
@@ -415,11 +384,7 @@ pub fn draw_last_price_line(
     if y < 0.0 || y > rect.height {
         return;
     }
-    // Round to whole pixels: a sub-pixel y (auto-scale updates per tick) and
-    // a sub-pixel start x (live-edge follow) shift the dash phase every
-    // frame, making the dashed line shimmer. Whole-pixel anchors keep the
-    // dash pattern stable between ticks.
-    let screen_y = (rect.y + y).round();
+    let screen_y = rect.y + y;
 
     // Calculate X start position (from last bar's center).
     // CLAMP to the container rect: when the last bar sits outside the
@@ -428,7 +393,7 @@ pub fn draw_last_price_line(
     // neighbouring split container.
     let last_bar_idx = bars.len() - 1;
     let start_x = viewport.bar_to_x(last_bar_idx);
-    let screen_start_x = (rect.x + start_x).clamp(rect.x, rect.right()).round();
+    let screen_start_x = (rect.x + start_x).clamp(rect.x, rect.right());
 
     // End at right edge of chart
     let screen_end_x = rect.right();
