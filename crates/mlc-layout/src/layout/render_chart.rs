@@ -29,7 +29,7 @@ use crate::chart_render::{
     ChartRenderState, ChartTheme, ChartRect,
     draw_grid, draw_grid_extended, draw_candles, draw_bars, draw_hollow_candles, draw_heikin_ashi,
     draw_line_series, draw_area_series, draw_baseline_series,
-    draw_step_line, draw_line_with_markers, draw_hlc_area, draw_histogram, draw_columns,
+    draw_step_line, draw_line_with_markers, draw_hlc_area, draw_histogram, draw_columns, draw_tick,
     draw_price_scale, draw_time_scale,
     draw_price_scale_cursor_label, draw_time_scale_cursor_label,
     draw_crosshair, draw_pane_crosshair,
@@ -206,6 +206,7 @@ pub fn draw_series(ctx: &mut dyn RenderContext, state: &ChartRenderState, chart_
         "baseline" => draw_baseline_series(ctx, state),
         "histogram" => draw_histogram(ctx, state),
         "columns" => draw_columns(ctx, state),
+        "tick" => draw_tick(ctx, state), // raw-trade time-axis chart
         _ => draw_candles(ctx, state), // Default fallback
     }
 
@@ -1718,6 +1719,7 @@ pub fn render_sub_pane_primitives(
         chart_width: content.width,
         chart_height: content.height,
         bar_count: state.viewport.bar_count,
+        time_axis: state.viewport.time_axis,
     };
 
     // Create a price scale for this pane
@@ -3028,6 +3030,7 @@ pub fn render_full_chart_panel(
         price_scale: data.state.price_scale,
         time_scale: data.state.time_scale,
         bars: data.state.bars,
+        tick_points: data.state.tick_points,
         grid: data.state.grid,
         crosshair: data.state.crosshair,
         legend: data.state.legend,
@@ -3374,6 +3377,7 @@ pub fn render_chart_splits(
             price_scale: &window.price_scale,
             time_scale: &window.time_scale,
             bars: &window.bars,
+            tick_points: None,
             grid: &panel.grid_options,
             crosshair: &window.crosshair,
             legend: &panel.legend,
@@ -3556,6 +3560,7 @@ pub fn render_chart_overlay(
         price_scale: state.price_scale,
         time_scale: state.time_scale,
         bars: state.bars,
+        tick_points: state.tick_points,
         grid: state.grid,
         crosshair: state.crosshair,
         legend: state.legend,
@@ -3719,6 +3724,7 @@ pub fn render_chart_overlay(
                     chart_width: content.width,
                     chart_height: content.height,
                     bar_count: corrected_viewport.bar_count,
+                    time_axis: corrected_viewport.time_axis,
                 };
                 let pane_price_scale = mlc_core::PriceScale {
                     price_min: pane_min,
