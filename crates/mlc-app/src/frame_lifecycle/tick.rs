@@ -1092,6 +1092,11 @@ impl ChartApp {
                 LiveUpdate::PositionUpdate { .. } => {
                     trading_updates.push(update.clone());
                 }
+                // Phase 3 plumbing: FootprintUpdate is delivered into the channel.
+                // Rendering (Phase 4) will consume this variant once the footprint
+                // renderer is implemented.  For now we accept and discard the event
+                // so the channel never backs up.
+                LiveUpdate::FootprintUpdate { .. } => {}
             }
         }
         self.last_event_process_us = events_start.elapsed().as_micros() as u64;

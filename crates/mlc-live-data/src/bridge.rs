@@ -193,6 +193,22 @@ pub enum LiveUpdate {
         symbol: String,
         event: digdigdig3::PositionUpdateEvent,
     },
+
+    /// Live footprint bar update from a `Stream::Footprint` subscription.
+    ///
+    /// Emitted on every trade that closes or updates the current footprint bar.
+    /// The consumer (Phase 4 render) receives the updated bar state with
+    /// per-price-level buy/sell breakdown.
+    ///
+    /// Phase 3 note: the tick.rs consumer is a no-op for now (Phase 4 render
+    /// not yet implemented).  The variant is delivered into the channel so
+    /// the plumbing is complete; the render arm is marked with a TODO.
+    FootprintUpdate {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        point: digdigdig3_station::data::FootprintPoint,
+    },
 }
 
 /// Async-to-sync bridge that owns a tokio runtime and a connector pool.
@@ -1171,6 +1187,147 @@ impl DataBridge {
                 Some(points.iter().map(bar_point_to_bar).collect())
             }
         })
+    }
+
+    /// Subscribe to a derived-bar stream selected by `bar_mode`.
+    ///
+    /// - `TimeBased` → falls back to [`request_bars`] (kline subscription).
+    /// - `RangeBar`, `TickBar`, `VolumeBar` → station `Stream::RangeBar/TickBar/VolumeBar`.
+    ///   The stream emits `Event::Bar`; the bridge re-emits as `LiveUpdate::BarUpdate`
+    ///   (same variant as kline live bars — no new consumer required).
+    /// - `Footprint` → station `Stream::Footprint(kline_interval)`.
+    ///   The stream emits `Event::Footprint`; the bridge re-emits as
+    ///   `LiveUpdate::FootprintUpdate`.  The tick.rs consumer is a no-op for
+    ///   now (Phase 4 render not yet implemented).
+    ///
+    /// No REST backfill is performed for derived modes — only the live station
+    /// subscription is started.
+    pub fn request_bars_for_mode(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        timeframe: &Timeframe,
+        account_type: AccountType,
+        bar_mode: &mlc_core::BarMode,
+    ) {
+        use mlc_core::BarMode;
+        // TimeBased: delegate entirely to the existing request_bars path.
+        if matches!(bar_mode, BarMode::TimeBased) {
+            self.request_bars(exchange_id, symbol, timeframe, account_type, None, None, true);
+            return;
+        }
+
+        let station = self.station.clone();
+        let tx = self.tx.clone();
+        let symbol_str = symbol.to_string();
+        let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
+
+        match bar_mode {
+            BarMode::TimeBased => unreachable!(),
+            BarMode::Footprint => {
+                let interval_str = timeframe_to_interval(timeframe);
+                let kline_iv = KlineInterval::new(&interval_str);
+                self.runtime.spawn(async move {
+                    let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                        exchange_id,
+                        symbol_wire.clone(),
+                        account_type,
+                        [digdigdig3_station::Stream::Footprint(kline_iv)],
+                    );
+                    let mut report = match station.subscribe(sub_set).await {
+                        Ok(r) => r,
+                        Err(e) => {
+                            crate::dlog!("[Bridge] footprint subscribe failed {:?} sym={}: {:?}",
+                                exchange_id, symbol_wire, e);
+                            return;
+                        }
+                    };
+                    if !report.failed.is_empty() {
+                        crate::dlog!("[Bridge] footprint partial-fail {:?} sym={}: {} failed",
+                            exchange_id, symbol_wire, report.failed.len());
+                    }
+                    while let Some(ev) = report.handle.recv().await {
+                        if let digdigdig3_station::Event::Footprint { point, .. } = ev {
+                            let _ = tx.send(LiveUpdate::FootprintUpdate {
+                                exchange_id,
+                                account_type,
+                                symbol: symbol_str.clone(),
+                                point,
+                            });
+                        }
+                    }
+                });
+            }
+            BarMode::RangeBar { range } => {
+                let stream = digdigdig3_station::Stream::RangeBar((*range * 1e8) as u64);
+                Self::spawn_derived_bar_sub(
+                    &self.runtime, station, tx, exchange_id, account_type,
+                    symbol_str, symbol_wire, stream,
+                );
+            }
+            BarMode::TickBar { count } => {
+                let stream = digdigdig3_station::Stream::TickBar(*count);
+                Self::spawn_derived_bar_sub(
+                    &self.runtime, station, tx, exchange_id, account_type,
+                    symbol_str, symbol_wire, stream,
+                );
+            }
+            BarMode::VolumeBar { volume } => {
+                let stream = digdigdig3_station::Stream::VolumeBar((*volume * 1e8) as u64);
+                Self::spawn_derived_bar_sub(
+                    &self.runtime, station, tx, exchange_id, account_type,
+                    symbol_str, symbol_wire, stream,
+                );
+            }
+        }
+    }
+
+    /// Spawn a derived-bar (Range/Tick/Volume) station subscriber.
+    ///
+    /// The station emits `Event::Bar` for all three derived-bar types; we
+    /// re-emit them as `LiveUpdate::BarUpdate` (same as kline live bars).
+    fn spawn_derived_bar_sub(
+        runtime: &Runtime,
+        station: std::sync::Arc<digdigdig3_station::Station>,
+        tx: tokio::sync::broadcast::Sender<LiveUpdate>,
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol_canonical: String,
+        symbol_wire: String,
+        stream: digdigdig3_station::Stream,
+    ) {
+        runtime.spawn(async move {
+            let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                exchange_id,
+                symbol_wire.clone(),
+                account_type,
+                [stream],
+            );
+            let mut report = match station.subscribe(sub_set).await {
+                Ok(r) => r,
+                Err(e) => {
+                    crate::dlog!("[Bridge] derived-bar subscribe failed {:?} sym={}: {:?}",
+                        exchange_id, symbol_wire, e);
+                    return;
+                }
+            };
+            if !report.failed.is_empty() {
+                crate::dlog!("[Bridge] derived-bar partial-fail {:?} sym={}: {} failed",
+                    exchange_id, symbol_wire, report.failed.len());
+            }
+            while let Some(ev) = report.handle.recv().await {
+                if let digdigdig3_station::Event::Bar { point, .. } = ev {
+                    let bar = bar_point_to_bar(&point);
+                    let _ = tx.send(LiveUpdate::BarUpdate {
+                        exchange_id,
+                        account_type,
+                        symbol: symbol_canonical.clone(),
+                        bar,
+                        is_closed: true,
+                    });
+                }
+            }
+        });
     }
 
     /// Request the full list of trading symbols from an exchange.

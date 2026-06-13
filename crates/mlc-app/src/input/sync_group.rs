@@ -1177,6 +1177,107 @@ impl ChartApp {
         }
     }
 
+    /// Propagate a bar-mode change to all leaves in the same sync color group.
+    ///
+    /// Mirrors `propagate_timeframe_to_sync_group`.  All peers that share the
+    /// bubble's `sync_timeframe` flag (reused for bar-mode — both drive the
+    /// data subscription) receive the new `bar_mode`, their bars are cleared,
+    /// and a fresh station subscription is requested via `request_bars_for_mode`.
+    pub(super) fn propagate_bar_mode_to_sync_group(
+        &mut self,
+        source_leaf: mlc_core::LeafId,
+        mode: mlc_core::BarMode,
+    ) {
+        let should_sync = self.panel_app.panel_grid.container_id_for_leaf(source_leaf)
+            .and_then(|cid| self.managers.bubble.bubble_for_chart(cid))
+            .and_then(|gid| self.managers.bubble.bubble(gid))
+            .map(|g| g.sync_flags.sync_timeframe)
+            .unwrap_or(true);
+        if !should_sync { return; }
+
+        let source_chart_id = self.panel_app.panel_grid.container_id_for_leaf(source_leaf);
+        let group_id = source_chart_id.and_then(|cid| self.managers.bubble.bubble_for_chart(cid));
+        let sync_leaves: Vec<mlc_core::LeafId> = if let Some(gid) = group_id {
+            self.managers.bubble
+                .chart_member_ids(gid)
+                .into_iter()
+                .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
+                .filter(|&lid| lid != source_leaf)
+                .collect()
+        } else {
+            match self.panel_app.leaf_color_tags.get(&source_leaf).copied() {
+                Some(source_color) => self.panel_app.leaf_color_tags.iter()
+                    .filter(|(&lid, &c)| lid != source_leaf && sync_colors_match(c, source_color))
+                    .map(|(&lid, _)| lid)
+                    .collect(),
+                None => return,
+            }
+        };
+
+        // Collect per-peer instrument data before mutating windows.
+        let peer_chart_ids: Vec<(mlc_core::LeafId, Option<mlc_core::state::ChartId>)> =
+            sync_leaves.iter()
+                .map(|lid| (*lid, self.panel_app.panel_grid.container_id_for_leaf(*lid)))
+                .collect();
+
+        let mut peer_requests: Vec<(String, String, mlc_core::state::Timeframe, String)> = Vec::new();
+        for (_, cid_opt) in &peer_chart_ids {
+            if let Some(cid) = cid_opt {
+                let exch = self.managers.bubble.exchange_for_chart(*cid)
+                    .map(String::from).unwrap_or_default();
+                let sym  = self.managers.bubble.symbol_for_chart(*cid)
+                    .map(String::from).unwrap_or_default();
+                let tf   = self.managers.bubble.timeframe_for_chart(*cid)
+                    .cloned().unwrap_or_else(mlc_core::state::Timeframe::h1);
+                let at   = self.managers.bubble.account_type_for_chart(*cid)
+                    .map(String::from).unwrap_or_else(|| "S".to_string());
+                peer_requests.push((exch, sym, tf, at));
+            }
+        }
+
+        // Clear bars on peer windows.
+        for leaf_id in &sync_leaves {
+            if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(*leaf_id) {
+                window.bars.clear();
+                window.viewport.bar_count = 0;
+                window.viewport.view_start = 0.0;
+            }
+        }
+
+        // Write bar_mode into each peer's bubble.
+        for (_, cid_opt) in &peer_chart_ids {
+            if let Some(cid) = cid_opt {
+                if let Some(bid) = self.managers.bubble.bubble_for_chart(*cid) {
+                    if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                        bubble.bar_mode = mode.clone();
+                    }
+                }
+            }
+        }
+
+        // Request new bar subscriptions for each peer.
+        for (exch_str, sym, tf, at_label) in peer_requests {
+            if sym.is_empty() { continue; }
+            let eid = self.exchange_symbols
+                .keys()
+                .find(|e| e.as_str() == exch_str)
+                .copied()
+                .unwrap_or(self.active_exchange);
+            if !self.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
+                continue;
+            }
+            let at = crate::account_type_from_label(&at_label);
+            self.bridge.ensure_connector(eid);
+            self.bridge.request_bars_for_mode(eid, &sym, &tf, at, &mode);
+        }
+
+        // Also update the bubble's canonical bar_mode via set_bar_mode so the
+        // group state stays consistent with the displayed windows.
+        if let Some(chart_id) = source_chart_id {
+            self.managers.bubble.set_bar_mode(chart_id, mode);
+        }
+    }
+
     /// Propagate a timeframe change to all leaves in the same sync color group.
     ///
     /// `source_leaf` is the leaf that already had its timeframe changed.

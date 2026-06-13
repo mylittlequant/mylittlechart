@@ -1259,6 +1259,10 @@ impl ChartApp {
                 .with_max_len(9));
             tf.register(text_input::AGENT_PTY, TextFieldConfig::raw());
             tf.register(text_input::AGENT_CHAT, TextFieldConfig::text());
+            // Bar-mode parameter: digits and decimal point only, max 12 chars.
+            tf.register(text_input::BAR_MODE_PARAM, TextFieldConfig::text()
+                .with_filter(|c| c.is_ascii_digit() || c == '.')
+                .with_max_len(12));
         }
 
         // Populate sub_panes from the real indicator_manager.
@@ -1505,6 +1509,10 @@ impl ChartApp {
                 .with_max_len(9));
             tf.register(text_input::AGENT_PTY, TextFieldConfig::raw());
             tf.register(text_input::AGENT_CHAT, TextFieldConfig::text());
+            // Bar-mode parameter: digits and decimal point only, max 12 chars.
+            tf.register(text_input::BAR_MODE_PARAM, TextFieldConfig::text()
+                .with_filter(|c| c.is_ascii_digit() || c == '.')
+                .with_max_len(12));
         }
 
         app.needs_initial_viewport_fit = true;
@@ -1955,6 +1963,10 @@ impl ChartApp {
                 .with_max_len(9));
             tf.register(text_input::AGENT_PTY, TextFieldConfig::raw());
             tf.register(text_input::AGENT_CHAT, TextFieldConfig::text());
+            // Bar-mode parameter: digits and decimal point only, max 12 chars.
+            tf.register(text_input::BAR_MODE_PARAM, TextFieldConfig::text()
+                .with_filter(|c| c.is_ascii_digit() || c == '.')
+                .with_max_len(12));
         }
 
         app.sync_sub_panes_from_manager();

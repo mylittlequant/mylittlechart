@@ -104,6 +104,112 @@ impl ChartApp {
                     }
                 }
             }
+            ChartOutEvent::ChangeBarMode { mode_id } => {
+                eprintln!("[ChartApp] ChangeBarMode: {}", mode_id);
+                let new_mode = mlc_core::BarMode::with_defaults(&mode_id);
+                let active_chart_id = self.panel_app.panel_grid.active_container_id();
+                let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
+
+                // Pre-fill the text field with the mode's default/current param.
+                if let Some(param) = new_mode.param_f64() {
+                    let param_str = format!("{}", param);
+                    let field_id = uzor::WidgetId::from(crate::text_input::BAR_MODE_PARAM);
+                    self.input_coordinator.borrow_mut()
+                        .text_fields_mut()
+                        .set_text(&field_id, &param_str);
+                }
+
+                // Clear bars on the active window.
+                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                    window.bars.clear();
+                    window.viewport.bar_count = 0;
+                    window.viewport.view_start = 0.0;
+                }
+
+                // Write the new bar_mode into the active chart's bubble.
+                if let Some(chart_id) = active_chart_id {
+                    if let Some(bid) = self.managers.bubble.bubble_for_chart(chart_id) {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                            bubble.bar_mode = new_mode.clone();
+                        }
+                    }
+                }
+
+                // Request new bars via the mode-aware bridge method.
+                if let Some(chart_id) = active_chart_id {
+                    let symbol = self.managers.bubble.symbol_for_chart(chart_id)
+                        .map(String::from).unwrap_or_default();
+                    let at_label = self.managers.bubble.account_type_for_chart(chart_id)
+                        .map(String::from).unwrap_or_else(|| "S".to_string());
+                    let tf = self.managers.bubble.timeframe_for_chart(chart_id)
+                        .cloned().unwrap_or_else(mlc_core::state::Timeframe::h1);
+                    if !symbol.is_empty() {
+                        let eid_str = self.active_exchange.as_str();
+                        if self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
+                            let at = crate::account_type_from_label(&at_label);
+                            self.bridge.request_bars_for_mode(self.active_exchange, &symbol, &tf, at, &new_mode);
+                        }
+                    }
+                }
+
+                // Propagate to sync group peers.
+                if let Some(leaf) = active_leaf {
+                    self.propagate_bar_mode_to_sync_group(leaf, new_mode);
+                }
+                self.sidebar_data_dirty = true;
+                state_mutated = true;
+            }
+
+            ChartOutEvent::UpdateBarModeParam { param } => {
+                eprintln!("[ChartApp] UpdateBarModeParam: {}", param);
+                let active_chart_id = self.panel_app.panel_grid.active_container_id();
+                let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
+
+                // Read current mode, update the param, write it back.
+                let updated_mode = active_chart_id
+                    .and_then(|cid| self.managers.bubble.bar_mode_for_chart(cid))
+                    .cloned()
+                    .unwrap_or_default()
+                    .with_param(param);
+
+                if let Some(chart_id) = active_chart_id {
+                    if let Some(bid) = self.managers.bubble.bubble_for_chart(chart_id) {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                            bubble.bar_mode = updated_mode.clone();
+                        }
+                    }
+                }
+
+                // Clear bars and re-subscribe with the new param.
+                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                    window.bars.clear();
+                    window.viewport.bar_count = 0;
+                    window.viewport.view_start = 0.0;
+                }
+                if let Some(chart_id) = active_chart_id {
+                    let symbol = self.managers.bubble.symbol_for_chart(chart_id)
+                        .map(String::from).unwrap_or_default();
+                    let at_label = self.managers.bubble.account_type_for_chart(chart_id)
+                        .map(String::from).unwrap_or_else(|| "S".to_string());
+                    let tf = self.managers.bubble.timeframe_for_chart(chart_id)
+                        .cloned().unwrap_or_else(mlc_core::state::Timeframe::h1);
+                    if !symbol.is_empty() {
+                        let eid_str = self.active_exchange.as_str();
+                        if self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
+                            let at = crate::account_type_from_label(&at_label);
+                            self.bridge.request_bars_for_mode(self.active_exchange, &symbol, &tf, at, &updated_mode);
+                        }
+                    }
+                }
+
+                // Propagate to sync group.
+                if let Some(leaf) = active_leaf {
+                    self.propagate_bar_mode_to_sync_group(leaf, updated_mode);
+                }
+                self.sidebar_data_dirty = true;
+                state_mutated = true;
+            }
+
             ChartOutEvent::ChangeChartType { chart_type } => {
                 eprintln!("[ChartApp] ChangeChartType: {}", chart_type);
                 // Map the incoming String to a &'static str used by ChartContainer.

@@ -84,6 +84,10 @@ pub mod utils;
 // Chart panel toolbar definitions
 pub mod toolbar;
 
+// Bar aggregation mode (time-based, range, tick, volume, footprint)
+pub mod bar_mode;
+pub use bar_mode::BarMode;
+
 // Chart-local modal state
 pub mod modal;
 

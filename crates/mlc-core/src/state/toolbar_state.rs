@@ -1085,9 +1085,17 @@ impl ChartToolbarState {
             }
 
             // === Chart type selector ===
+            // Bar-mode items emit ChangeBarMode; render-style items emit ChangeChartType.
             "chart_type_selector" => {
-                eprintln!("[ChartToolbar] chart type: {}", item_id);
-                vec![ChartOutEvent::ChangeChartType { chart_type: item_id.to_string() }]
+                eprintln!("[ChartToolbar] chart type selector: {}", item_id);
+                match item_id {
+                    "range_bar" | "tick_bar" | "volume_bar" | "footprint" => {
+                        vec![ChartOutEvent::ChangeBarMode { mode_id: item_id.to_string() }]
+                    }
+                    _ => {
+                        vec![ChartOutEvent::ChangeChartType { chart_type: item_id.to_string() }]
+                    }
+                }
             }
 
             // === Timeframe selector — emit event for app to reload data ===

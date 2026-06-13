@@ -278,9 +278,16 @@ pub fn top_toolbar() -> PanelToolbarDef {
 }
 
 /// Chart type dropdown items (localized).
+///
+/// Render-style items (candles, line, …) are followed by a separator and
+/// bar-mode items (range_bar, tick_bar, volume_bar, footprint).  Bar-mode items
+/// drive `ChartOutEvent::ChangeBarMode`; render-style items drive
+/// `ChartOutEvent::ChangeChartType`.  The toolbar_state dispatcher routes them
+/// based on the item-id prefix.
 fn chart_type_items() -> Vec<DropdownItemDef> {
     let lang = current_language();
     vec![
+        // ── Render-style items (visual only, do not re-subscribe) ────────────
         DropdownItemDef::action("candles", MK::Candles.get(lang)).with_icon(ToolbarIconId::new("Candlestick")),
         DropdownItemDef::action("hollow_candles", MK::HollowCandles.get(lang)).with_icon(ToolbarIconId::new("HollowCandles")),
         DropdownItemDef::action("heikin_ashi", MK::HeikinAshi.get(lang)).with_icon(ToolbarIconId::new("HeikinAshi")),
@@ -295,6 +302,12 @@ fn chart_type_items() -> Vec<DropdownItemDef> {
         DropdownItemDef::action("baseline", MK::Baseline.get(lang)).with_icon(ToolbarIconId::new("Baseline")),
         DropdownItemDef::action("histogram", MK::Histogram.get(lang)).with_icon(ToolbarIconId::new("Histogram")),
         DropdownItemDef::action("columns", MK::Columns.get(lang)).with_icon(ToolbarIconId::new("Columns")),
+        // ── Bar-mode items (change the stream subscription, not just render) ─
+        DropdownItemDef::Separator,
+        DropdownItemDef::action("range_bar",  "Range Bars") .with_icon(ToolbarIconId::new("RangeBar")),
+        DropdownItemDef::action("tick_bar",   "Tick Bars")  .with_icon(ToolbarIconId::new("TickBar")),
+        DropdownItemDef::action("volume_bar", "Volume Bars").with_icon(ToolbarIconId::new("VolumeBar")),
+        DropdownItemDef::action("footprint",  "Footprint")  .with_icon(ToolbarIconId::new("Footprint")),
     ]
 }
 
