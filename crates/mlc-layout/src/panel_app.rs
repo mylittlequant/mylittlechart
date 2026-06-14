@@ -2519,7 +2519,6 @@ impl ChartPanelApp {
                 price_scale: &window.price_scale,
                 time_scale: &window.time_scale,
                 bars: &window.bars,
-                tick_points: None,
                 grid: &panel.grid_options,
                 crosshair: &window.crosshair,
                 legend: &panel.legend,

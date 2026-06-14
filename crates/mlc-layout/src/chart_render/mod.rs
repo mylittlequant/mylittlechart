@@ -39,7 +39,6 @@ pub use series::{
     draw_line_series, draw_area_series, draw_histogram,
     draw_baseline_series, draw_step_line, draw_line_with_markers,
     draw_line_from_data, draw_hlc_area, draw_columns, draw_compare_overlay,
-    draw_tick,
 };
 pub use scales::{
     draw_price_scale, draw_price_scale_cursor_label,

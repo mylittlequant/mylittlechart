@@ -229,7 +229,6 @@ impl ChartApp {
                     "baseline"      => Some("baseline"),
                     "histogram"     => Some("histogram"),
                     "columns"       => Some("columns"),
-                    "tick"          => Some("tick"),
                     _ => {
                         eprintln!("[ChartApp] unknown chart_type: {}", chart_type);
                         None
@@ -287,21 +286,6 @@ impl ChartApp {
                                 window.viewport.bar_count = 0;
                                 window.viewport.view_start = 0.0;
                             }
-                            // Tick chart drives the time-domain X axis; every
-                            // other render style uses the index-packed axis.
-                            if ct == "tick" {
-                                // Seed the time window from the current bars'
-                                // timestamp span (seconds -> ms); live trades
-                                // then fill it. Empty bars -> 1-minute default.
-                                let now_ms = window.bars.last().map(|b| b.timestamp * 1000);
-                                let first_ms = window.bars.first().map(|b| b.timestamp * 1000);
-                                match (first_ms, now_ms) {
-                                    (Some(s), Some(e)) => window.viewport.enable_time_axis_for_span(s, e),
-                                    _ => window.viewport.enable_time_axis_for_span(0, 60_000),
-                                }
-                            } else {
-                                window.viewport.disable_time_axis();
-                            }
                         }
                     }
 
@@ -315,14 +299,6 @@ impl ChartApp {
                                     self.active_exchange, sym, tf, at, &mlc_core::BarMode::TimeBased,
                                 );
                             }
-                        }
-                    }
-
-                    // Tick chart reads raw trades from the shared ring; ensure the
-                    // instrument is subscribed to the trade stream so the ring fills.
-                    if ct == "tick" {
-                        if let Some((ref sym, _, at)) = instrument {
-                            let _ = self.bridge.subscribe_trades(self.active_exchange, sym, at);
                         }
                     }
                     state_mutated = true;
@@ -879,7 +855,6 @@ impl ChartApp {
                                             "baseline"       => "baseline",
                                             "histogram"      => "histogram",
                                             "columns"        => "columns",
-                                            "tick"           => "tick",
                                             _                => "candles",
                                         };
                                         let mut panel_state = mlc_core::ChartPanelState::new(window.chart_panel_id);

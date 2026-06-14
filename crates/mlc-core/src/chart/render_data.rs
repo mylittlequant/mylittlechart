@@ -180,11 +180,6 @@ pub struct ChartRenderState<'a> {
     pub time_scale: &'a TimeScale,
     /// Bar data
     pub bars: &'a [Bar],
-    /// Raw trade points `(ts_ms, price)` for the time-axis tick chart.
-    /// `None` for normal bar charts; `Some` only when `chart_type == "tick"`
-    /// and the viewport is in time-axis mode. Kept as a neutral tuple slice so
-    /// mlc-core stays free of any trade-service dependency.
-    pub tick_points: Option<&'a [(i64, f64)]>,
     /// Grid options
     pub grid: &'a GridOptions,
     /// Crosshair state

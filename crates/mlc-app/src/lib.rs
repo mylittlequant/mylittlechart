@@ -2653,45 +2653,7 @@ impl ChartApp {
             let single_panel = self.panels_store.chart_panel
                 .get(&single_pid)
                 .unwrap_or(&single_default_panel);
-            // Tick chart: pull the raw trades for this instrument out of the
-            // shared trade ring into a (ts_ms, price) buffer that the renderer
-            // reads via ChartRenderState.tick_points. Built BEFORE render_state
-            // so the borrow outlives it. Empty for every non-tick chart_type.
-            let tick_buf: Vec<(i64, f64)> = if single_panel.chart_type == "tick" {
-                let account_label = single_overlay_cid
-                    .and_then(|cid| self.managers.bubble.account_type_for_chart(cid))
-                    .unwrap_or("");
-                let account = crate::account_type_from_label(account_label);
-                let key = mlc_trade_service::TradeKey::new(
-                    self.active_exchange,
-                    account,
-                    single_overlay_symbol.clone(),
-                );
-                // Only collect trades inside the visible time window (+slack), so we
-                // never copy the whole 100k ring every frame. Ring is ts-ordered.
-                let (vis_lo, vis_hi) = window.viewport.visible_time_range()
-                    .map(|(a, b)| {
-                        let slack = ((b - a) / 10).max(1);
-                        (a - slack, b + slack)
-                    })
-                    .unwrap_or((i64::MIN, i64::MAX));
-                self.trade_map
-                    .read()
-                    .ok()
-                    .and_then(|map| map.get(&key).cloned())
-                    .and_then(|series| series.read().ok().map(|s| {
-                        let (a, b) = s.as_slices();
-                        a.iter().chain(b.iter())
-                            .filter(|t| t.timestamp_ms >= vis_lo && t.timestamp_ms <= vis_hi)
-                            .map(|t| (t.timestamp_ms, t.price))
-                            .collect::<Vec<_>>()
-                    }))
-                    .unwrap_or_default()
-            } else {
-                Vec::new()
-            };
-
-            let mut render_state = window.to_render_state(
+            let render_state = window.to_render_state(
                 chart_rect,
                 &chart_theme,
                 Some(single_overlay_tf_name.as_str()),
@@ -2700,9 +2662,6 @@ impl ChartApp {
                 &single_panel.grid_options,
                 &single_panel.legend,
             );
-            if single_panel.chart_type == "tick" {
-                render_state.tick_points = Some(&tick_buf);
-            }
             let crosshair_config = mlc_core::chart::CrosshairConfig::default();
             let render_config = ChartRenderConfig {
                 scale_theme: self.panel_app.scale_theme_for_render(),

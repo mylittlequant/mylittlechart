@@ -1013,7 +1013,6 @@ impl ChartContainer {
             price_scale: &self.price_scale,
             time_scale: &self.time_scale,
             bars: &self.bars,
-            tick_points: None,
             grid,
             crosshair: &self.crosshair,
             legend,
