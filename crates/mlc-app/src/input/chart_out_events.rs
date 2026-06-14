@@ -119,11 +119,14 @@ impl ChartApp {
                         .set_text(&field_id, &param_str);
                 }
 
-                // Clear bars on the active window.
+                // Clear bars on the active window. Derived bars (Range/Tick/Volume/
+                // Footprint) render index-packed like candles, so leave the time
+                // axis OFF — if we're switching here from a tick chart, disable it.
                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     window.bars.clear();
                     window.viewport.bar_count = 0;
                     window.viewport.view_start = 0.0;
+                    window.viewport.disable_time_axis();
                 }
 
                 // Write the new bar_mode into the active chart's bubble.
@@ -237,12 +240,53 @@ impl ChartApp {
                     let pid = self.panel_app.panel_grid
                         .active_container()
                         .map(|w| w.chart_panel_id);
+                    let active_chart_id = self.panel_app.panel_grid.active_container_id();
+
+                    // Render-style and bar-mode share one menu but are mutually
+                    // exclusive: picking ANY render style (candles/line/tick/…)
+                    // returns the window to TimeBased data. If the window was in a
+                    // derived bar_mode (Range/Tick/Volume/Footprint), reset it,
+                    // clear the derived bars, and re-request normal klines so the
+                    // chart recovers instead of staying stuck on stale derived data.
+                    let was_derived = active_chart_id
+                        .and_then(|c| self.managers.bubble.bar_mode_for_chart(c))
+                        .map(|m| !matches!(m, mlc_core::BarMode::TimeBased))
+                        .unwrap_or(false);
+                    if was_derived {
+                        if let Some(chart_id) = active_chart_id {
+                            if let Some(bid) = self.managers.bubble.bubble_for_chart(chart_id) {
+                                if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                                    bubble.bar_mode = mlc_core::BarMode::TimeBased;
+                                }
+                            }
+                        }
+                    }
+
+                    // Instrument for any re-subscription below (needs &self.bridge,
+                    // so capture before the mutable window borrow).
+                    let instrument: Option<(String, mlc_core::state::Timeframe, digdigdig3::AccountType)> =
+                        active_chart_id.and_then(|c| {
+                            let sym = self.managers.bubble.symbol_for_chart(c)?.to_string();
+                            if sym.is_empty() { return None; }
+                            let tf = self.managers.bubble.timeframe_for_chart(c)
+                                .cloned().unwrap_or_else(mlc_core::state::Timeframe::h1);
+                            let at_label = self.managers.bubble.account_type_for_chart(c).unwrap_or("S");
+                            Some((sym, tf, crate::account_type_from_label(at_label)))
+                        });
+
                     if let Some(chart_panel_id) = pid {
                         let panel = crate::chart_panel_bridge::ensure_chart_panel_state(
                             &mut self.panels_store, chart_panel_id,
                         );
                         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                             window.set_chart_type_with_undo(panel, ct);
+                            // Leaving a derived mode: drop the stale derived bars so
+                            // the re-requested klines populate a clean series.
+                            if was_derived {
+                                window.bars.clear();
+                                window.viewport.bar_count = 0;
+                                window.viewport.view_start = 0.0;
+                            }
                             // Tick chart drives the time-domain X axis; every
                             // other render style uses the index-packed axis.
                             if ct == "tick" {
@@ -253,17 +297,32 @@ impl ChartApp {
                                 let first_ms = window.bars.first().map(|b| b.timestamp * 1000);
                                 match (first_ms, now_ms) {
                                     (Some(s), Some(e)) => window.viewport.enable_time_axis_for_span(s, e),
-                                    _ => {
-                                        // No bars yet: 1-minute window ending "now-ish"
-                                        // is impossible without a clock here; use a
-                                        // zero-based minute that snap_time_to_end fixes
-                                        // on the first trade.
-                                        window.viewport.enable_time_axis_for_span(0, 60_000);
-                                    }
+                                    _ => window.viewport.enable_time_axis_for_span(0, 60_000),
                                 }
                             } else {
                                 window.viewport.disable_time_axis();
                             }
+                        }
+                    }
+
+                    // After dropping a derived subscription, re-request normal
+                    // TimeBased klines so the chart refills.
+                    if was_derived {
+                        if let Some((ref sym, ref tf, at)) = instrument {
+                            let eid_str = self.active_exchange.as_str();
+                            if self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
+                                self.bridge.request_bars_for_mode(
+                                    self.active_exchange, sym, tf, at, &mlc_core::BarMode::TimeBased,
+                                );
+                            }
+                        }
+                    }
+
+                    // Tick chart reads raw trades from the shared ring; ensure the
+                    // instrument is subscribed to the trade stream so the ring fills.
+                    if ct == "tick" {
+                        if let Some((ref sym, _, at)) = instrument {
+                            let _ = self.bridge.subscribe_trades(self.active_exchange, sym, at);
                         }
                     }
                     state_mutated = true;

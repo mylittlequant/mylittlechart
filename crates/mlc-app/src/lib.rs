@@ -2667,6 +2667,14 @@ impl ChartApp {
                     account,
                     single_overlay_symbol.clone(),
                 );
+                // Only collect trades inside the visible time window (+slack), so we
+                // never copy the whole 100k ring every frame. Ring is ts-ordered.
+                let (vis_lo, vis_hi) = window.viewport.visible_time_range()
+                    .map(|(a, b)| {
+                        let slack = ((b - a) / 10).max(1);
+                        (a - slack, b + slack)
+                    })
+                    .unwrap_or((i64::MIN, i64::MAX));
                 self.trade_map
                     .read()
                     .ok()
@@ -2674,6 +2682,7 @@ impl ChartApp {
                     .and_then(|series| series.read().ok().map(|s| {
                         let (a, b) = s.as_slices();
                         a.iter().chain(b.iter())
+                            .filter(|t| t.timestamp_ms >= vis_lo && t.timestamp_ms <= vis_hi)
                             .map(|t| (t.timestamp_ms, t.price))
                             .collect::<Vec<_>>()
                     }))
