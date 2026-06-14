@@ -71,10 +71,18 @@ impl ChartApp {
                         .and_then(|cid| self.managers.bubble.account_type_for_chart(cid))
                         .map(String::from)
                         .unwrap_or_else(|| "S".to_string());
+                    let is_tick_tf = tf.is_tick();
                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         window.bars.clear();
                         window.viewport.bar_count = 0;
                         window.viewport.view_start = 0.0;
+                        // Tick TFs are non-uniform in time → time-domain X axis.
+                        // Time TFs use the index-packed axis.
+                        if is_tick_tf {
+                            window.viewport.enable_time_axis_for_span(0, 60_000);
+                        } else {
+                            window.viewport.disable_time_axis();
+                        }
                     }
                     if let Some(chart_id) = active_chart_id {
                         if let Some(bid) = self.managers.bubble.bubble_for_chart(chart_id) {
@@ -91,7 +99,17 @@ impl ChartApp {
                             eprintln!("[ChartApp] Exchange {} is disabled, skipping request_bars (timeframe change)", eid_str);
                         } else {
                             let at = crate::account_type_from_label(&at_label_tf);
-                            self.bridge.request_bars(self.active_exchange, &symbol, &tf, at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), true);
+                            if let Some(count) = tf.tick_count() {
+                                // Tick TF: subscribe to the dig3 TickBar stream; it
+                                // auto-starts the upstream Trade stream. Bars arrive
+                                // via BarUpdate into window.bars (drawn by chart_type).
+                                self.bridge.request_bars_for_mode(
+                                    self.active_exchange, &symbol, &tf, at,
+                                    &mlc_core::BarMode::TickBar { count },
+                                );
+                            } else {
+                                self.bridge.request_bars(self.active_exchange, &symbol, &tf, at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), true);
+                            }
                         }
                     }
                     // Propagate new timeframe to all leaves in the same sync group.

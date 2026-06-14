@@ -4,6 +4,29 @@
 
 use serde::{Deserialize, Serialize};
 
+/// What kind of bar boundary a timeframe defines.
+///
+/// A timeframe is no longer purely time-based: tick timeframes (N trades per
+/// bar) live in the same selector as 1m / 1H / 1D but have no wall-clock
+/// duration. `Time` keeps the legacy behavior; `Tick` selects the dig3 TickBar
+/// stream and forces the chart onto the time-domain X axis (bars are
+/// non-uniform in time). Range/Renko are NOT here — they are chart-type render
+/// transforms of whatever TF is active.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TfKind {
+    /// Wall-clock interval bars (kline). The `interval_ms` is the real duration.
+    Time,
+    /// Tick bars: a new bar every `count` trades. `interval_ms` is unused for
+    /// aggregation (only a synthetic sort weight); the real param is `count`.
+    Tick { count: u32 },
+}
+
+impl Default for TfKind {
+    fn default() -> Self {
+        TfKind::Time
+    }
+}
+
 /// Represents a chart timeframe
 ///
 /// The `weight` field is private and computed from `interval_ms` — it is excluded
@@ -11,10 +34,12 @@ use serde::{Deserialize, Serialize};
 /// `TimeframeHelper` newtype so that `weight` is always recomputed correctly.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Timeframe {
-    /// Display name (e.g., "1H", "4H", "1D")
+    /// Display name (e.g., "1H", "4H", "1D", "100t")
     pub name: String,
-    /// Duration in milliseconds
+    /// Duration in milliseconds (time TFs) or a synthetic sort weight (tick TFs).
     pub interval_ms: i64,
+    /// Time vs tick aggregation. Serde-default `Time` so old presets load.
+    pub kind: TfKind,
     /// Weight for sorting/comparison (higher = larger timeframe).
     /// Excluded from serde — always recomputed from `interval_ms` on deserialize.
     weight: i64,
@@ -23,9 +48,16 @@ pub struct Timeframe {
 impl Serialize for Timeframe {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        let mut s = serializer.serialize_struct("Timeframe", 2)?;
+        // Persist tick count only for tick TFs so old readers ignore it and new
+        // readers reconstruct the kind. Time TFs serialize exactly as before.
+        let tick_count: Option<u32> = match self.kind {
+            TfKind::Time => None,
+            TfKind::Tick { count } => Some(count),
+        };
+        let mut s = serializer.serialize_struct("Timeframe", 3)?;
         s.serialize_field("name", &self.name)?;
         s.serialize_field("interval_ms", &self.interval_ms)?;
+        s.serialize_field("tick_count", &tick_count)?;
         s.end()
     }
 }
@@ -38,14 +70,52 @@ impl<'de> Deserialize<'de> for Timeframe {
 }
 
 impl Timeframe {
-    /// Create a new timeframe
+    /// Create a new time-based timeframe
     pub fn new(name: &str, interval_ms: i64) -> Self {
         Self {
             name: name.to_string(),
             interval_ms,
+            kind: TfKind::Time,
             weight: interval_ms,
         }
     }
+
+    /// Create a tick-based timeframe (`count` trades per bar).
+    ///
+    /// `interval_ms` carries a synthetic sort weight so tick TFs order BELOW
+    /// the smallest time TF (they're the finest resolution). The real
+    /// aggregation parameter is `count`.
+    pub fn tick(count: u32) -> Self {
+        // Synthetic weight in a negative band so ALL tick TFs sort strictly
+        // below the smallest time TF (1s = 1000), while staying ordered by count
+        // (1t < 10t < 100t < 1000t).
+        let weight = count as i64 - 1_000_000;
+        Self {
+            name: format!("{}t", count),
+            interval_ms: weight,
+            kind: TfKind::Tick { count },
+            weight,
+        }
+    }
+
+    /// `true` if this is a tick timeframe.
+    pub fn is_tick(&self) -> bool {
+        matches!(self.kind, TfKind::Tick { .. })
+    }
+
+    /// The tick count, if this is a tick TF.
+    pub fn tick_count(&self) -> Option<u32> {
+        match self.kind {
+            TfKind::Tick { count } => Some(count),
+            TfKind::Time => None,
+        }
+    }
+
+    // Tick timeframes (live in the TF selector, category "Ticks").
+    pub fn t1() -> Self { Self::tick(1) }
+    pub fn t10() -> Self { Self::tick(10) }
+    pub fn t100() -> Self { Self::tick(100) }
+    pub fn t1000() -> Self { Self::tick(1000) }
 
     /// Get the weight (for comparison)
     pub fn weight(&self) -> i64 {
@@ -100,10 +170,16 @@ struct TimeframeHelper {
     interval_ms: Option<i64>,
     #[serde(default)]
     minutes: Option<u32>,
+    #[serde(default)]
+    tick_count: Option<u32>,
 }
 
 impl From<TimeframeHelper> for Timeframe {
     fn from(h: TimeframeHelper) -> Self {
+        // Tick TF reconstructs from tick_count regardless of interval_ms.
+        if let Some(count) = h.tick_count {
+            return Timeframe::tick(count);
+        }
         let ms = if let Some(ms) = h.interval_ms {
             ms
         } else if let Some(m) = h.minutes {
@@ -129,6 +205,10 @@ impl TimeframeManager {
     /// Create a new timeframe manager with default timeframes
     pub fn new() -> Self {
         let available = vec![
+            Timeframe::t1(),
+            Timeframe::t10(),
+            Timeframe::t100(),
+            Timeframe::t1000(),
             Timeframe::s1(),
             Timeframe::s3(),
             Timeframe::s5(),
@@ -316,6 +396,32 @@ mod tests {
         let serialized = serde_json::to_string(&tf).unwrap();
         assert!(serialized.contains("interval_ms"));
         assert!(!serialized.contains("minutes"));
+    }
+
+    #[test]
+    fn test_tick_timeframes() {
+        let t = Timeframe::t100();
+        assert!(t.is_tick());
+        assert_eq!(t.tick_count(), Some(100));
+        assert_eq!(t.name, "100t");
+        assert!(!Timeframe::h1().is_tick());
+        assert_eq!(Timeframe::h1().tick_count(), None);
+        // Tick TFs sort below the smallest time TF.
+        assert!(Timeframe::t1000().weight() < Timeframe::s1().weight());
+        assert!(Timeframe::t1().weight() < Timeframe::t10().weight());
+    }
+
+    #[test]
+    fn test_tick_serde_roundtrip() {
+        let t = Timeframe::t100();
+        let json = serde_json::to_string(&t).unwrap();
+        assert!(json.contains("tick_count"));
+        let back: Timeframe = serde_json::from_str(&json).unwrap();
+        assert!(back.is_tick());
+        assert_eq!(back.tick_count(), Some(100));
+        // Old time-TF json (no tick_count) still deserializes as Time.
+        let old: Timeframe = serde_json::from_str(r#"{"name":"1H","interval_ms":3600000}"#).unwrap();
+        assert!(!old.is_tick());
     }
 
     #[test]
