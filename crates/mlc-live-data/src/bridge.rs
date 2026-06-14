@@ -325,6 +325,15 @@ pub struct DataBridge {
     /// with no backoff, which on a persistently-failing venue snowballed into
     /// an OOM-level request storm.
     symbols_warmup_inflight: Arc<Mutex<HashSet<ExchangeId>>>,
+    /// Active derived-bar / footprint subscription task handles, keyed by
+    /// instrument `(ExchangeId, symbol, AccountType)`.
+    ///
+    /// Unlike kline (which the station dedups internally), each derived-bar
+    /// subscription spawns a fresh forwarder task. Switching tick→1m or
+    /// 100t→1000t must ABORT the previous task (dropping its station handle so
+    /// the 30s grace unsubscribe fires) — otherwise stale TickBar forwarders
+    /// keep emitting BarUpdate into the same window. Guarded by `std::sync::Mutex`.
+    derived_subs: Arc<Mutex<HashMap<(ExchangeId, String, AccountType), tokio::task::JoinHandle<()>>>>,
 }
 
 impl DataBridge {
@@ -470,6 +479,7 @@ impl DataBridge {
             station_ticker_subscribed: Arc::new(Mutex::new(HashSet::new())),
             station_private_subscribed: Arc::new(Mutex::new(HashSet::new())),
             symbols_warmup_inflight: Arc::new(Mutex::new(HashSet::new())),
+            derived_subs: Arc::new(Mutex::new(HashMap::new())),
         }, rx, connector_ready_rx)
     }
 
@@ -1211,7 +1221,15 @@ impl DataBridge {
         bar_mode: &mlc_core::BarMode,
     ) {
         use mlc_core::BarMode;
+
+        // Abort any prior derived/footprint subscription for this instrument so a
+        // mode/TF switch (tick→1m, 100t→1000t, range→footprint) doesn't leave a
+        // stale forwarder emitting BarUpdate. Dropping the JoinHandle aborts the
+        // task, which drops its station handle → 30s grace unsubscribe.
+        self.abort_derived_sub(exchange_id, symbol, account_type);
+
         // TimeBased: delegate entirely to the existing request_bars path.
+        // (The abort above already cancelled any derived stream we were on.)
         if matches!(bar_mode, BarMode::TimeBased) {
             self.request_bars(exchange_id, symbol, timeframe, account_type, None, None, true);
             return;
@@ -1221,8 +1239,9 @@ impl DataBridge {
         let tx = self.tx.clone();
         let symbol_str = symbol.to_string();
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
+        let sub_key = (exchange_id, symbol.to_string(), account_type);
 
-        match bar_mode {
+        let handle: tokio::task::JoinHandle<()> = match bar_mode {
             BarMode::TimeBased => unreachable!(),
             BarMode::Footprint => {
                 let interval_str = timeframe_to_interval(timeframe);
@@ -1256,28 +1275,41 @@ impl DataBridge {
                             });
                         }
                     }
-                });
+                })
             }
             BarMode::RangeBar { range } => {
                 let stream = digdigdig3_station::Stream::RangeBar((*range * 1e8) as u64);
                 Self::spawn_derived_bar_sub(
                     &self.runtime, station, tx, exchange_id, account_type,
                     symbol_str, symbol_wire, stream,
-                );
+                )
             }
             BarMode::TickBar { count } => {
                 let stream = digdigdig3_station::Stream::TickBar(*count);
                 Self::spawn_derived_bar_sub(
                     &self.runtime, station, tx, exchange_id, account_type,
                     symbol_str, symbol_wire, stream,
-                );
+                )
             }
             BarMode::VolumeBar { volume } => {
                 let stream = digdigdig3_station::Stream::VolumeBar((*volume * 1e8) as u64);
                 Self::spawn_derived_bar_sub(
                     &self.runtime, station, tx, exchange_id, account_type,
                     symbol_str, symbol_wire, stream,
-                );
+                )
+            }
+        };
+        // Track the new task so the next mode/TF switch can abort it.
+        if let Ok(mut subs) = self.derived_subs.lock() {
+            subs.insert(sub_key, handle);
+        }
+    }
+
+    /// Abort the active derived/footprint subscription for an instrument, if any.
+    fn abort_derived_sub(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        if let Ok(mut subs) = self.derived_subs.lock() {
+            if let Some(h) = subs.remove(&(exchange_id, symbol.to_string(), account_type)) {
+                h.abort();
             }
         }
     }
@@ -1295,7 +1327,7 @@ impl DataBridge {
         symbol_canonical: String,
         symbol_wire: String,
         stream: digdigdig3_station::Stream,
-    ) {
+    ) -> tokio::task::JoinHandle<()> {
         runtime.spawn(async move {
             let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                 exchange_id,
@@ -1327,7 +1359,7 @@ impl DataBridge {
                     });
                 }
             }
-        });
+        })
     }
 
     /// Request the full list of trading symbols from an exchange.
