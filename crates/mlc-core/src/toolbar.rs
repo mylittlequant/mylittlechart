@@ -315,7 +315,7 @@ fn chart_type_items() -> Vec<DropdownItemDef> {
         DropdownItemDef::Separator,
         DropdownItemDef::action("range_bar",  "Range Bars") .with_icon(ToolbarIconId::new("RangeBar")),
         DropdownItemDef::action("volume_bar", "Volume Bars").with_icon(ToolbarIconId::new("VolumeBar")),
-        DropdownItemDef::action("footprint",  "Footprint")  .with_icon(ToolbarIconId::new("Footprint")),
+        DropdownItemDef::action("footprint",  "Clusters")   .with_icon(ToolbarIconId::new("Footprint")),
     ]
 }
 
