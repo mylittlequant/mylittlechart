@@ -75,18 +75,17 @@ impl ChartApp {
                         .and_then(|cid| self.managers.bubble.account_type_for_chart(cid))
                         .map(String::from)
                         .unwrap_or_else(|| "S".to_string());
-                    let is_tick_tf = tf.is_tick();
                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         window.bars.clear();
                         window.viewport.bar_count = 0;
                         window.viewport.view_start = 0.0;
-                        // Tick TFs are non-uniform in time → time-domain X axis.
-                        // Time TFs use the index-packed axis.
-                        if is_tick_tf {
-                            window.viewport.enable_time_axis_for_span(0, 60_000);
-                        } else {
-                            window.viewport.disable_time_axis();
-                        }
+                        // Mark a fresh load so a stray TradeUpdate can't synthesize a
+                        // bar before BarsLoaded arrives (which would strand view_start
+                        // at 0 = oldest bar at the left edge).
+                        window.pending_symbol_load = true;
+                        // NOTE: the X-axis kind (index vs time) is reconciled centrally
+                        // in prepare_frame from tf.is_tick() + real bar timestamps — do
+                        // NOT set time_axis here (it has no bars to anchor from yet).
                     }
                     if let Some(chart_id) = active_chart_id {
                         if let Some(bid) = self.managers.bubble.bubble_for_chart(chart_id) {
@@ -147,14 +146,12 @@ impl ChartApp {
                         .set_text(&field_id, &param_str);
                 }
 
-                // Clear bars on the active window. Derived bars (Range/Tick/Volume/
-                // Footprint) render index-packed like candles, so leave the time
-                // axis OFF — if we're switching here from a tick chart, disable it.
+                // Clear bars on the active window. X-axis kind is reconciled
+                // centrally in prepare_frame (index vs time from tf.is_tick()).
                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     window.bars.clear();
                     window.viewport.bar_count = 0;
                     window.viewport.view_start = 0.0;
-                    window.viewport.disable_time_axis();
                 }
 
                 // Write the new bar_mode into the active chart's bubble.
@@ -309,21 +306,11 @@ impl ChartApp {
                             window.set_chart_type_with_undo(panel, ct);
                             // Leaving a derived mode: drop the stale derived bars so
                             // the re-requested klines populate a clean series.
+                            // X-axis kind is reconciled centrally in prepare_frame.
                             if was_derived {
                                 window.bars.clear();
                                 window.viewport.bar_count = 0;
                                 window.viewport.view_start = 0.0;
-                            }
-                            // Keep the X axis consistent with the timeframe kind: the
-                            // time-domain axis is ONLY for tick TFs. Changing the
-                            // render style must not leave a window stuck on the time
-                            // axis (e.g. after a tick TF), which made the viewport
-                            // jump because index data was drawn on a ts-mapped axis.
-                            let is_tick_now = instrument.as_ref()
-                                .map(|(_, tf, _)| tf.is_tick())
-                                .unwrap_or(false);
-                            if !is_tick_now && window.viewport.is_time_axis() {
-                                window.viewport.disable_time_axis();
                             }
                         }
                     }

@@ -208,6 +208,53 @@ impl ChartApp {
             }
         }
 
+        // X-axis kind is a property of the DATA, not a free flag: a tick TF
+        // (non-uniform in time) uses the time-domain X axis; everything else
+        // (kline, range, volume, footprint — index-packed) uses the index axis.
+        // This is the SINGLE point that reconciles viewport.time_axis with the
+        // timeframe kind, so it can never drift (the bug where a leftover or
+        // zero-anchored time axis sent bars 37e9 px off-screen). t_start is
+        // taken from the REAL bar timestamps, never 0.
+        {
+            let tick_cids: std::collections::HashMap<ChartId, bool> = self
+                .panel_app
+                .panel_grid
+                .containers()
+                .keys()
+                .map(|cid| {
+                    let is_tick = self
+                        .managers
+                        .bubble
+                        .timeframe_for_chart(*cid)
+                        .map(|tf| tf.is_tick())
+                        .unwrap_or(false);
+                    (*cid, is_tick)
+                })
+                .collect();
+            for (cid, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+                let is_tick = tick_cids.get(cid).copied().unwrap_or(false);
+                if is_tick {
+                    // Anchor / re-anchor the time axis from the real bar span so
+                    // ts_to_x maps into the visible pixel range. Only (re)build
+                    // when the axis is missing or still zero-anchored, so user
+                    // pan/zoom on the time axis is preserved frame-to-frame.
+                    let needs_anchor = window
+                        .viewport
+                        .time_axis
+                        .map(|t| t.t_start_ms == 0)
+                        .unwrap_or(true);
+                    if needs_anchor && !window.bars.is_empty() {
+                        let first_ms = window.bars.first().map(|b| b.timestamp * 1000).unwrap_or(0);
+                        let last_ms = window.bars.last().map(|b| b.timestamp * 1000).unwrap_or(first_ms + 60_000);
+                        window.viewport.enable_time_axis_for_span(first_ms, last_ms);
+                    }
+                } else if window.viewport.is_time_axis() {
+                    // Left a tick TF (or restored a stale time axis) → back to index.
+                    window.viewport.disable_time_axis();
+                }
+            }
+        }
+
         // Keep the alert-settings modal's alerts list always in sync.
         if self.panel_app.alert_settings_state.is_open() {
             self.panel_app.alert_settings_state.all_alerts =
