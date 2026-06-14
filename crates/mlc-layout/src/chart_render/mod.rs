@@ -34,7 +34,7 @@ mod utils;
 
 // Re-export rendering functions
 pub use grid::{draw_grid, draw_grid_extended, draw_styled_line, draw_dashed_line};
-pub use candles::{draw_candles, draw_bars, draw_hollow_candles, draw_heikin_ashi};
+pub use candles::{draw_candles, draw_bars, draw_hollow_candles, draw_heikin_ashi, draw_range_bars, draw_volume_bars, draw_footprint};
 pub use series::{
     draw_line_series, draw_area_series, draw_histogram,
     draw_baseline_series, draw_step_line, draw_line_with_markers,

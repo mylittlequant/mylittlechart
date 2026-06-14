@@ -419,6 +419,234 @@ pub fn draw_heikin_ashi(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     }
 }
 
+/// Draw Range Bars — transform source bars into range bars and render as candles.
+///
+/// Each derived bar accumulates source OHLCV until `(close - open).abs() >= range`,
+/// then a new bar starts opening at the previous bar's close.
+///
+/// The derived series has a different bar count than `state.bars`, so derived bars
+/// are fit-to-width: `x_step = chart_width / count`, ignoring viewport pan/zoom.
+///
+/// # TODO(range-zoom): proper pan/zoom over derived series is a backlog item.
+/// # TODO(range-param): read threshold from panel config instead of hardcoding.
+pub fn draw_range_bars(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
+    let bars = state.bars;
+    if bars.is_empty() {
+        return;
+    }
+
+    let price_span = state.price_scale.price_max - state.price_scale.price_min;
+    // TODO(range-param): read from panel config
+    let range = price_span * 0.01;
+    if range <= 0.0 {
+        return;
+    }
+
+    // Build derived range bars from source OHLCV
+    let derived = build_range_bars(bars, range);
+    if derived.is_empty() {
+        return;
+    }
+
+    draw_derived_candles(ctx, state, &derived);
+}
+
+/// Draw Volume Bars — fold source bars until cumulative volume crosses threshold.
+///
+/// Threshold = 5× average bar volume across all source bars.
+///
+/// # TODO(range-zoom): proper pan/zoom over derived series is a backlog item.
+/// # TODO(volume-param): read threshold multiplier from panel config.
+pub fn draw_volume_bars(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
+    let bars = state.bars;
+    if bars.is_empty() {
+        return;
+    }
+
+    let total_vol: f64 = bars.iter().map(|b| b.volume).sum();
+    let avg_vol = total_vol / bars.len() as f64;
+    // TODO(volume-param): read multiplier from panel config
+    let vol_thresh = avg_vol * 5.0;
+    if vol_thresh <= 0.0 {
+        return;
+    }
+
+    let derived = build_volume_bars(bars, vol_thresh);
+    if derived.is_empty() {
+        return;
+    }
+
+    draw_derived_candles(ctx, state, &derived);
+}
+
+/// Draw Footprint chart — stub, renders as standard candles until cluster data is available.
+///
+/// TODO(footprint-render): needs FootprintPoint data + cluster grid (B-HIGH-5)
+pub fn draw_footprint(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
+    draw_candles(ctx, state);
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/// Build range bars from source bars.
+fn build_range_bars(bars: &[mlc_core::Bar], range: f64) -> Vec<mlc_core::Bar> {
+    let mut derived: Vec<mlc_core::Bar> = Vec::new();
+
+    // Seed the first working bar from the first source bar
+    let mut cur = mlc_core::Bar {
+        timestamp: bars[0].timestamp,
+        open: bars[0].open,
+        high: bars[0].high,
+        low: bars[0].low,
+        close: bars[0].close,
+        volume: bars[0].volume,
+    };
+
+    for bar in bars.iter().skip(1) {
+        // Fold source bar into current derived bar
+        if bar.high > cur.high { cur.high = bar.high; }
+        if bar.low  < cur.low  { cur.low  = bar.low;  }
+        cur.close = bar.close;
+        cur.volume += bar.volume;
+
+        // Finalize when range threshold crossed
+        if (cur.close - cur.open).abs() >= range {
+            let next_open = cur.close;
+            derived.push(cur);
+            cur = mlc_core::Bar {
+                timestamp: bar.timestamp,
+                open: next_open,
+                high: next_open,
+                low: next_open,
+                close: next_open,
+                volume: 0.0,
+            };
+        }
+    }
+
+    // Push the last open bar (may be incomplete)
+    derived.push(cur);
+    derived
+}
+
+/// Build volume bars from source bars.
+fn build_volume_bars(bars: &[mlc_core::Bar], vol_thresh: f64) -> Vec<mlc_core::Bar> {
+    let mut derived: Vec<mlc_core::Bar> = Vec::new();
+
+    let mut cur = mlc_core::Bar {
+        timestamp: bars[0].timestamp,
+        open: bars[0].open,
+        high: bars[0].high,
+        low: bars[0].low,
+        close: bars[0].close,
+        volume: bars[0].volume,
+    };
+
+    for bar in bars.iter().skip(1) {
+        if bar.high > cur.high { cur.high = bar.high; }
+        if bar.low  < cur.low  { cur.low  = bar.low;  }
+        cur.close = bar.close;
+        cur.volume += bar.volume;
+
+        if cur.volume >= vol_thresh {
+            let next_open = cur.close;
+            derived.push(cur);
+            cur = mlc_core::Bar {
+                timestamp: bar.timestamp,
+                open: next_open,
+                high: next_open,
+                low: next_open,
+                close: next_open,
+                volume: 0.0,
+            };
+        }
+    }
+
+    derived.push(cur);
+    derived
+}
+
+/// Render a derived bar series (fit-to-width, ignoring viewport pan/zoom).
+///
+/// Uses its own x-step computed from chart width / derived bar count so that
+/// bars with a different count than `state.bars` still fill the chart area.
+fn draw_derived_candles(
+    ctx: &mut dyn RenderContext,
+    state: &ChartRenderState,
+    derived: &[mlc_core::Bar],
+) {
+    let rect = &state.chart_rect;
+    let price_scale = state.price_scale;
+    let theme = state.theme;
+    let dpr = ctx.dpr();
+    let bounds = rect.bounds();
+
+    let n = derived.len();
+    let x_step = rect.width / n.max(1) as f64;
+
+    let clamp_h = rect.height.max(0.0);
+
+    for (i, bar) in derived.iter().enumerate() {
+        let cx_local = (i as f64 + 0.5) * x_step;
+        let screen_x = rect.x + crisp(cx_local, dpr);
+
+        let is_up = bar.close >= bar.open;
+        let body_color = if is_up { &theme.candle_up } else { &theme.candle_down };
+        let wick_color = if is_up { &theme.wick_up } else { &theme.wick_down };
+
+        // Wick
+        let high_y_raw = rect.y + state.viewport.price_to_y(bar.high, price_scale.price_min, price_scale.price_max);
+        let low_y_raw  = rect.y + state.viewport.price_to_y(bar.low,  price_scale.price_min, price_scale.price_max);
+        let high_y = bounds.clamp_y(high_y_raw);
+        let low_y  = bounds.clamp_y(low_y_raw);
+
+        if bounds.is_y_range_outside(high_y, low_y) {
+            continue;
+        }
+
+        if state.wick_enabled {
+            ctx.set_stroke_color(wick_color);
+            ctx.set_stroke_width(1.0);
+            ctx.set_line_dash(&[]);
+            ctx.begin_path();
+            ctx.move_to(screen_x, high_y);
+            ctx.line_to(screen_x, low_y);
+            ctx.stroke();
+        }
+
+        // Body
+        let top_raw = state.viewport.price_to_y(bar.open.max(bar.close), price_scale.price_min, price_scale.price_max);
+        let bot_raw = state.viewport.price_to_y(bar.open.min(bar.close), price_scale.price_min, price_scale.price_max);
+        let top = top_raw.clamp(0.0, clamp_h);
+        let bot = bot_raw.clamp(0.0, clamp_h);
+        let h = (bot - top).max(1.0);
+
+        let bar_w = x_step * 0.8;
+        let (rx, ry, rw, rh) = crisp_rect(cx_local - bar_w / 2.0, top, bar_w, h, dpr);
+
+        if let (Some((body_x, body_w)), Some((body_y, body_h))) = (
+            bounds.clamp_rect_x(rect.x + rx, rw),
+            bounds.clamp_rect_y(rect.y + ry, rh),
+        ) {
+            if state.body_enabled {
+                ctx.set_fill_color(body_color);
+                ctx.fill_rect(body_x, body_y, body_w, body_h);
+            }
+            if state.border_enabled {
+                let border_color = if is_up { &theme.candle_up_border } else { &theme.candle_down_border };
+                if let Some(border) = border_color {
+                    ctx.set_stroke_color(border);
+                    ctx.set_stroke_width(1.0);
+                    ctx.set_line_dash(&[]);
+                    ctx.stroke_rect(body_x + 0.5, body_y + 0.5, body_w - 1.0, body_h - 1.0);
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

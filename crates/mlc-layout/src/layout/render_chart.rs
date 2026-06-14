@@ -28,6 +28,7 @@ use mlc_core::render::RenderContext;
 use crate::chart_render::{
     ChartRenderState, ChartTheme, ChartRect,
     draw_grid, draw_grid_extended, draw_candles, draw_bars, draw_hollow_candles, draw_heikin_ashi,
+    draw_range_bars, draw_volume_bars, draw_footprint,
     draw_line_series, draw_area_series, draw_baseline_series,
     draw_step_line, draw_line_with_markers, draw_hlc_area, draw_histogram, draw_columns,
     draw_price_scale, draw_time_scale,
@@ -206,6 +207,9 @@ pub fn draw_series(ctx: &mut dyn RenderContext, state: &ChartRenderState, chart_
         "baseline" => draw_baseline_series(ctx, state),
         "histogram" => draw_histogram(ctx, state),
         "columns" => draw_columns(ctx, state),
+        "range_bar" => draw_range_bars(ctx, state),
+        "volume_bar" => draw_volume_bars(ctx, state),
+        "footprint" => draw_footprint(ctx, state),
         _ => draw_candles(ctx, state), // Default fallback
     }
 
