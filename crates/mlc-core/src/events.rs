@@ -96,20 +96,6 @@ pub enum ChartOutEvent {
     /// Request a timeframe change (e.g., from toolbar dropdown selection).
     ChangeTimeframe { timeframe_id: String },
 
-    // === Bar Mode ===
-    /// Request a bar aggregation mode change.
-    ///
-    /// `mode_id` is one of `"range_bar"`, `"tick_bar"`, `"volume_bar"`,
-    /// `"footprint"`, or `"time_based"`.  The handler in `chart_out_events.rs`
-    /// builds the `BarMode` value and calls `request_bars_for_mode` on the bridge.
-    ChangeBarMode { mode_id: String },
-
-    /// Update the numeric parameter of the active derived bar mode.
-    ///
-    /// Emitted when the user commits the `BAR_MODE_PARAM` text field (Enter).
-    /// The handler parses `param` and calls `bubble.bar_mode.with_param(param)`.
-    UpdateBarModeParam { param: f64 },
-
     // === Chart Type ===
     /// Request a chart type change (e.g., from chart_type_selector dropdown).
     ChangeChartType { chart_type: String },

@@ -128,15 +128,6 @@ pub struct DataBubble {
     pub account_type: String,
     pub timeframe: Timeframe,
 
-    /// Bar aggregation mode for this bubble.
-    ///
-    /// Defaults to `BarMode::TimeBased` (uses the bubble's `timeframe` for kline
-    /// subscriptions — byte-for-byte identical to old behavior).  Derived-bar modes
-    /// (`RangeBar`, `TickBar`, `VolumeBar`, `Footprint`) drive re-subscription
-    /// exactly like `timeframe` does — they are propagated to every peer in the
-    /// sync group whenever changed.
-    pub bar_mode: crate::BarMode,
-
     /// Which properties are synchronized.
     pub sync_flags: SyncFlags,
 
@@ -263,7 +254,6 @@ impl Clone for DataBubble {
             exchange: self.exchange.clone(),
             account_type: self.account_type.clone(),
             timeframe: self.timeframe.clone(),
-            bar_mode: self.bar_mode.clone(),
             sync_flags: self.sync_flags.clone(),
             scale_mode: self.scale_mode,
             members: self.members.clone(),
@@ -389,7 +379,6 @@ impl BubbleStore {
             exchange: String::new(),
             account_type: String::new(),
             timeframe,
-            bar_mode: crate::BarMode::default(),
             sync_flags: SyncFlags::default(),
             scale_mode: ScaleMode::Auto,
             members: std::collections::HashSet::new(),
@@ -434,7 +423,6 @@ impl BubbleStore {
             exchange: String::new(),
             account_type: String::new(),
             timeframe,
-            bar_mode: crate::BarMode::default(),
             sync_flags: SyncFlags::default(),
             scale_mode: ScaleMode::Auto,
             members: std::collections::HashSet::new(),
@@ -578,16 +566,6 @@ impl BubbleStore {
         self.bubble_for_chart(chart_id)
             .and_then(|bid| self.bubble(bid))
             .map(|b| &b.timeframe)
-    }
-
-    /// Bar mode of the bubble that contains `chart_id`.
-    ///
-    /// Returns `None` when no bubble is found.  Callers that want a fallback
-    /// should use `.unwrap_or_default()` to get `BarMode::TimeBased`.
-    pub fn bar_mode_for_chart(&self, chart_id: ChartId) -> Option<&crate::BarMode> {
-        self.bubble_for_chart(chart_id)
-            .and_then(|bid| self.bubble(bid))
-            .map(|b| &b.bar_mode)
     }
 
     /// Exchange of the bubble that contains `chart_id`. `None` when no bubble or empty.
@@ -866,15 +844,6 @@ impl BubbleStore {
         Some(bubble)
     }
 
-    /// Update the bar mode for the data bubble that contains the given window.
-    pub fn set_bar_mode(&mut self, chart_id: ChartId, mode: crate::BarMode) -> Option<&DataBubble> {
-        let member = SyncMemberId::Chart(chart_id.0);
-        let bubble_id = self.member_to_bubble.get(&member).copied()?;
-        let bubble = self.bubbles.get_mut(&bubble_id)?;
-        bubble.bar_mode = mode;
-        Some(bubble)
-    }
-
     /// Update symbol, exchange, and account_type for the data bubble that
     /// contains the given member.
     pub fn set_instrument(
@@ -1047,7 +1016,6 @@ impl BubbleStore {
             exchange: snap.exchange.clone(),
             account_type: snap.account_type.clone(),
             timeframe: snap.timeframe.clone(),
-            bar_mode: snap.bar_mode.clone(),
             sync_flags: snap.sync_flags.clone(),
             scale_mode: snap.scale_mode,
             members,

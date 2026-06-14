@@ -1199,41 +1199,24 @@ impl DataBridge {
         })
     }
 
-    /// Subscribe to a derived-bar stream selected by `bar_mode`.
+    /// Subscribe to a tick-bar stream (`count` trades per bar) for a tick TF.
     ///
-    /// - `TimeBased` → falls back to [`request_bars`] (kline subscription).
-    /// - `RangeBar`, `TickBar`, `VolumeBar` → station `Stream::RangeBar/TickBar/VolumeBar`.
-    ///   The stream emits `Event::Bar`; the bridge re-emits as `LiveUpdate::BarUpdate`
-    ///   (same variant as kline live bars — no new consumer required).
-    /// - `Footprint` → station `Stream::Footprint(kline_interval)`.
-    ///   The stream emits `Event::Footprint`; the bridge re-emits as
-    ///   `LiveUpdate::FootprintUpdate`.  The tick.rs consumer is a no-op for
-    ///   now (Phase 4 render not yet implemented).
-    ///
-    /// No REST backfill is performed for derived modes — only the live station
-    /// subscription is started.
-    pub fn request_bars_for_mode(
+    /// The station `Stream::TickBar(count)` auto-starts the upstream Trade stream
+    /// and emits `Event::Bar`; the bridge re-emits as `LiveUpdate::BarUpdate`
+    /// (same variant as kline live bars). No REST backfill — live accumulation
+    /// only (cold start fills as trades arrive). Range/Volume/Footprint are NOT
+    /// here: they are chart_type render transforms of the current TF's bars.
+    pub fn request_tick_bars(
         &self,
         exchange_id: ExchangeId,
         symbol: &str,
-        timeframe: &Timeframe,
         account_type: AccountType,
-        bar_mode: &mlc_core::BarMode,
+        count: u32,
     ) {
-        use mlc_core::BarMode;
-
-        // Abort any prior derived/footprint subscription for this instrument so a
-        // mode/TF switch (tick→1m, 100t→1000t, range→footprint) doesn't leave a
-        // stale forwarder emitting BarUpdate. Dropping the JoinHandle aborts the
-        // task, which drops its station handle → 30s grace unsubscribe.
+        // Abort any prior tick subscription for this instrument so a TF switch
+        // (100t→1000t, or tick→time) doesn't leave a stale forwarder emitting
+        // BarUpdate. Dropping the JoinHandle aborts the task → 30s grace unsub.
         self.abort_derived_sub(exchange_id, symbol, account_type);
-
-        // TimeBased: delegate entirely to the existing request_bars path.
-        // (The abort above already cancelled any derived stream we were on.)
-        if matches!(bar_mode, BarMode::TimeBased) {
-            self.request_bars(exchange_id, symbol, timeframe, account_type, None, None, true);
-            return;
-        }
 
         let station = self.station.clone();
         let tx = self.tx.clone();
@@ -1241,68 +1224,20 @@ impl DataBridge {
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
         let sub_key = (exchange_id, symbol.to_string(), account_type);
 
-        let handle: tokio::task::JoinHandle<()> = match bar_mode {
-            BarMode::TimeBased => unreachable!(),
-            BarMode::Footprint => {
-                let interval_str = timeframe_to_interval(timeframe);
-                let kline_iv = KlineInterval::new(&interval_str);
-                self.runtime.spawn(async move {
-                    let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
-                        exchange_id,
-                        symbol_wire.clone(),
-                        account_type,
-                        [digdigdig3_station::Stream::Footprint(kline_iv)],
-                    );
-                    let mut report = match station.subscribe(sub_set).await {
-                        Ok(r) => r,
-                        Err(e) => {
-                            crate::dlog!("[Bridge] footprint subscribe failed {:?} sym={}: {:?}",
-                                exchange_id, symbol_wire, e);
-                            return;
-                        }
-                    };
-                    if !report.failed.is_empty() {
-                        crate::dlog!("[Bridge] footprint partial-fail {:?} sym={}: {} failed",
-                            exchange_id, symbol_wire, report.failed.len());
-                    }
-                    while let Some(ev) = report.handle.recv().await {
-                        if let digdigdig3_station::Event::Footprint { point, .. } = ev {
-                            let _ = tx.send(LiveUpdate::FootprintUpdate {
-                                exchange_id,
-                                account_type,
-                                symbol: symbol_str.clone(),
-                                point,
-                            });
-                        }
-                    }
-                })
-            }
-            BarMode::RangeBar { range } => {
-                let stream = digdigdig3_station::Stream::RangeBar((*range * 1e8) as u64);
-                Self::spawn_derived_bar_sub(
-                    &self.runtime, station, tx, exchange_id, account_type,
-                    symbol_str, symbol_wire, stream,
-                )
-            }
-            BarMode::TickBar { count } => {
-                let stream = digdigdig3_station::Stream::TickBar(*count);
-                Self::spawn_derived_bar_sub(
-                    &self.runtime, station, tx, exchange_id, account_type,
-                    symbol_str, symbol_wire, stream,
-                )
-            }
-            BarMode::VolumeBar { volume } => {
-                let stream = digdigdig3_station::Stream::VolumeBar((*volume * 1e8) as u64);
-                Self::spawn_derived_bar_sub(
-                    &self.runtime, station, tx, exchange_id, account_type,
-                    symbol_str, symbol_wire, stream,
-                )
-            }
-        };
-        // Track the new task so the next mode/TF switch can abort it.
+        let stream = digdigdig3_station::Stream::TickBar(count);
+        let handle = Self::spawn_derived_bar_sub(
+            &self.runtime, station, tx, exchange_id, account_type,
+            symbol_str, symbol_wire, stream,
+        );
+        // Track the new task so the next TF switch can abort it.
         if let Ok(mut subs) = self.derived_subs.lock() {
             subs.insert(sub_key, handle);
         }
+    }
+
+    /// Abort the active tick subscription for an instrument, when switching away.
+    pub fn abort_tick_bars(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        self.abort_derived_sub(exchange_id, symbol, account_type);
     }
 
     /// Abort the active derived/footprint subscription for an instrument, if any.

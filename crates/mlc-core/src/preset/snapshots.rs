@@ -105,9 +105,6 @@ pub struct ChartWindowSnapshot {
     pub account_type: String,
     /// Timeframe (e.g. 1H, 4H).
     pub timeframe: Timeframe,
-    /// Bar aggregation mode. Absent in old presets → `TimeBased`.
-    #[serde(default)]
-    pub bar_mode: crate::BarMode,
     /// Viewport state (pan/zoom position).
     pub viewport: Viewport,
     /// Price scale configuration.
@@ -234,7 +231,6 @@ impl ChartWindowSnapshot {
         timeframe: Timeframe,
         exchange: String,
         account_type: String,
-        bar_mode: crate::BarMode,
     ) -> Self {
         let drawings = DrawingSnapshot::from_manager(window.id.0, &panel.drawing_manager);
 
@@ -257,7 +253,6 @@ impl ChartWindowSnapshot {
             exchange,
             account_type,
             timeframe,
-            bar_mode,
             viewport: saved_viewport,
             price_scale: saved_price_scale,
             bubble_id,
@@ -439,9 +434,6 @@ pub struct DataBubbleSnapshot {
     pub account_type: String,
     /// Shared timeframe for the group.
     pub timeframe: Timeframe,
-    /// Bar aggregation mode for the group. Absent in old presets → `TimeBased`.
-    #[serde(default)]
-    pub bar_mode: crate::BarMode,
     /// Which properties are synchronised across member windows.
     pub sync_flags: SyncFlags,
     /// Shared indicator configurations propagated to all member windows.
@@ -578,7 +570,6 @@ impl DataBubbleSnapshot {
             exchange: group.exchange.clone(),
             account_type: group.account_type.clone(),
             timeframe: group.timeframe.clone(),
-            bar_mode: group.bar_mode.clone(),
             sync_flags: group.sync_flags.clone(),
             scale_mode: group.scale_mode,
             indicator_configs: group.indicator_configs.clone(),

@@ -1085,17 +1085,11 @@ impl ChartToolbarState {
             }
 
             // === Chart type selector ===
-            // Bar-mode items emit ChangeBarMode; render-style items emit ChangeChartType.
+            // Every item (incl. range_bar/volume_bar/footprint transforms) is a
+            // chart type. Tick lives in the TF selector, not here.
             "chart_type_selector" => {
                 eprintln!("[ChartToolbar] chart type selector: {}", item_id);
-                match item_id {
-                    "range_bar" | "tick_bar" | "volume_bar" | "footprint" => {
-                        vec![ChartOutEvent::ChangeBarMode { mode_id: item_id.to_string() }]
-                    }
-                    _ => {
-                        vec![ChartOutEvent::ChangeChartType { chart_type: item_id.to_string() }]
-                    }
-                }
+                vec![ChartOutEvent::ChangeChartType { chart_type: item_id.to_string() }]
             }
 
             // === Timeframe selector — emit event for app to reload data ===

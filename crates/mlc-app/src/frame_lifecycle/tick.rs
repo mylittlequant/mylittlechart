@@ -695,16 +695,12 @@ impl ChartApp {
                                 let sym = self.managers.bubble.symbol_for_chart(*cid).map(String::from)?;
                                 let at = self.managers.bubble.account_type_for_chart(*cid).map(String::from)?;
                                 // A window uses dig3-delivered bars (via BarUpdate)
-                                // when its bar_mode is derived OR its timeframe is a
-                                // tick TF (N trades per bar). Both bypass the local
-                                // time-slice aggregation in the TradeUpdate handler.
-                                let derived_mode = self.managers.bubble.bar_mode_for_chart(*cid)
-                                    .map(|m| !matches!(m, mlc_core::BarMode::TimeBased))
-                                    .unwrap_or(false);
-                                let tick_tf = self.managers.bubble.timeframe_for_chart(*cid)
+                                // when its timeframe is a tick TF (N trades per bar).
+                                // Those bypass the local time-slice aggregation in
+                                // the TradeUpdate handler.
+                                let is_derived = self.managers.bubble.timeframe_for_chart(*cid)
                                     .map(|tf| tf.is_tick())
                                     .unwrap_or(false);
-                                let is_derived = derived_mode || tick_tf;
                                 Some((*cid, (sym, at, is_derived)))
                             })
                             .collect()
@@ -820,18 +816,14 @@ impl ChartApp {
                             .collect()
                     };
                     // Pre-collect derived cids separately (same borrow scope as above).
-                    // Derived = derived bar_mode OR tick TF; both get bars via
-                    // BarUpdate and must skip local time-slice aggregation here.
+                    // Derived = tick TF; gets bars via BarUpdate and must skip
+                    // local time-slice aggregation here.
                     let derived_cids_tu: std::collections::HashSet<mlc_core::state::ChartId> = {
                         self.panel_app.panel_grid.containers().keys()
                             .filter(|cid| {
-                                let derived_mode = self.managers.bubble.bar_mode_for_chart(**cid)
-                                    .map(|m| !matches!(m, mlc_core::BarMode::TimeBased))
-                                    .unwrap_or(false);
-                                let tick_tf = self.managers.bubble.timeframe_for_chart(**cid)
+                                self.managers.bubble.timeframe_for_chart(**cid)
                                     .map(|tf| tf.is_tick())
-                                    .unwrap_or(false);
-                                derived_mode || tick_tf
+                                    .unwrap_or(false)
                             })
                             .copied()
                             .collect()

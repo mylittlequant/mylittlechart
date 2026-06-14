@@ -8982,9 +8982,6 @@ impl ChartApp {
                 let snap_account_type = self.managers.bubble.account_type_for_chart(chart_id)
                     .map(String::from)
                     .unwrap_or_else(|| "S".to_string());
-                let snap_bar_mode = self.managers.bubble.bar_mode_for_chart(chart_id)
-                    .cloned()
-                    .unwrap_or_default();
                 // Phase 4 C: panel state (18 display/series fields) is in panels_store.
                 let snap_default_panel = mlc_core::ChartPanelState::new(window.chart_panel_id);
                 let snap_panel_state = self.panels_store.chart_panel
@@ -8992,7 +8989,7 @@ impl ChartApp {
                     .unwrap_or(&snap_default_panel);
                 preset.windows.push(ChartWindowSnapshot::from_window(
                     window, snap_panel_state, leaf_id.0, gid, ptids, stashed_ch, stashed_prims_snap,
-                    snap_symbol, snap_timeframe, snap_exchange, snap_account_type, snap_bar_mode,
+                    snap_symbol, snap_timeframe, snap_exchange, snap_account_type,
                 ));
             }
         }

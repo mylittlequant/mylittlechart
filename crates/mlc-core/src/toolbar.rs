@@ -287,11 +287,10 @@ pub fn top_toolbar() -> PanelToolbarDef {
 
 /// Chart type dropdown items (localized).
 ///
-/// Render-style items (candles, line, …) are followed by a separator and
-/// bar-mode items (range_bar, tick_bar, volume_bar, footprint).  Bar-mode items
-/// drive `ChartOutEvent::ChangeBarMode`; render-style items drive
-/// `ChartOutEvent::ChangeChartType`.  The toolbar_state dispatcher routes them
-/// based on the item-id prefix.
+/// All items drive `ChartOutEvent::ChangeChartType`. Plain render styles
+/// (candles, line, …) and transform styles (range_bar, volume_bar, footprint —
+/// derived from the current TF's bars, like heikin_ashi) are all chart types.
+/// Tick is a TIMEFRAME (TF selector), not a chart type.
 fn chart_type_items() -> Vec<DropdownItemDef> {
     let lang = current_language();
     vec![
@@ -310,10 +309,11 @@ fn chart_type_items() -> Vec<DropdownItemDef> {
         DropdownItemDef::action("baseline", MK::Baseline.get(lang)).with_icon(ToolbarIconId::new("Baseline")),
         DropdownItemDef::action("histogram", MK::Histogram.get(lang)).with_icon(ToolbarIconId::new("Histogram")),
         DropdownItemDef::action("columns", MK::Columns.get(lang)).with_icon(ToolbarIconId::new("Columns")),
-        // ── Bar-mode items (change the stream subscription, not just render) ─
+        // ── Transform render styles (derived from the current TF's bars) ─────
+        // Tick is a TIMEFRAME (TF selector), not here. Range/Volume/Footprint are
+        // chart_type render transforms of the current TF bars (like Heikin Ashi).
         DropdownItemDef::Separator,
         DropdownItemDef::action("range_bar",  "Range Bars") .with_icon(ToolbarIconId::new("RangeBar")),
-        DropdownItemDef::action("tick_bar",   "Tick Bars")  .with_icon(ToolbarIconId::new("TickBar")),
         DropdownItemDef::action("volume_bar", "Volume Bars").with_icon(ToolbarIconId::new("VolumeBar")),
         DropdownItemDef::action("footprint",  "Footprint")  .with_icon(ToolbarIconId::new("Footprint")),
     ]
