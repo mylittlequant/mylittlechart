@@ -314,6 +314,17 @@ impl ChartApp {
                                 window.viewport.bar_count = 0;
                                 window.viewport.view_start = 0.0;
                             }
+                            // Keep the X axis consistent with the timeframe kind: the
+                            // time-domain axis is ONLY for tick TFs. Changing the
+                            // render style must not leave a window stuck on the time
+                            // axis (e.g. after a tick TF), which made the viewport
+                            // jump because index data was drawn on a ts-mapped axis.
+                            let is_tick_now = instrument.as_ref()
+                                .map(|(_, tf, _)| tf.is_tick())
+                                .unwrap_or(false);
+                            if !is_tick_now && window.viewport.is_time_axis() {
+                                window.viewport.disable_time_axis();
+                            }
                         }
                     }
 
