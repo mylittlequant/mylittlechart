@@ -19,6 +19,10 @@ impl ChartApp {
             ChartOutEvent::ChangeTimeframe { timeframe_id } => {
                 eprintln!("[ChartApp] ChangeTimeframe: {}", timeframe_id);
                 let timeframe = match timeframe_id.as_str() {
+                    "tf_1t"    => Some(Timeframe::t1()),
+                    "tf_10t"   => Some(Timeframe::t10()),
+                    "tf_100t"  => Some(Timeframe::t100()),
+                    "tf_1000t" => Some(Timeframe::t1000()),
                     "tf_1m"  => Some(Timeframe::m1()),
                     "tf_3m"  => Some(Timeframe::new("3m", 3)),
                     "tf_5m"  => Some(Timeframe::m5()),
