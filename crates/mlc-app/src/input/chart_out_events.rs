@@ -24,15 +24,15 @@ impl ChartApp {
                     "tf_100t"  => Some(Timeframe::t100()),
                     "tf_1000t" => Some(Timeframe::t1000()),
                     "tf_1m"  => Some(Timeframe::m1()),
-                    "tf_3m"  => Some(Timeframe::new("3m", 3)),
+                    "tf_3m"  => Some(Timeframe::new("3m", 3 * 60_000)),
                     "tf_5m"  => Some(Timeframe::m5()),
                     "tf_15m" => Some(Timeframe::m15()),
                     "tf_30m" => Some(Timeframe::m30()),
                     "tf_1h"  => Some(Timeframe::h1()),
-                    "tf_2h"  => Some(Timeframe::new("2H", 120)),
+                    "tf_2h"  => Some(Timeframe::new("2H", 2 * 3_600_000)),
                     "tf_4h"  => Some(Timeframe::h4()),
-                    "tf_6h"  => Some(Timeframe::new("6H", 360)),
-                    "tf_12h" => Some(Timeframe::new("12H", 720)),
+                    "tf_6h"  => Some(Timeframe::new("6H", 6 * 3_600_000)),
+                    "tf_12h" => Some(Timeframe::new("12H", 12 * 3_600_000)),
                     "tf_1d"  => Some(Timeframe::d1()),
                     "tf_1w"  => Some(Timeframe::w1()),
                     "tf_1M"  => Some(Timeframe::mn1()),
@@ -92,6 +92,12 @@ impl ChartApp {
                         if let Some(bid) = self.managers.bubble.bubble_for_chart(chart_id) {
                             if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
                                 bubble.timeframe = tf.clone();
+                                // A timeframe selection (tick OR time) always returns
+                                // bar_mode to TimeBased: a tick TF is expressed via
+                                // tf.kind, not bar_mode; a time TF must clear any
+                                // stale derived bar_mode (e.g. one restored from a
+                                // preset) so the window doesn't stay derived forever.
+                                bubble.bar_mode = mlc_core::BarMode::TimeBased;
                             }
                         }
                     }
