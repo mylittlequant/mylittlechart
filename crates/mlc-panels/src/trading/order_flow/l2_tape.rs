@@ -4,11 +4,12 @@
 //! modifications, cancellations, and executions in real-time.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Serialize, Deserialize};
 
-use mlc_orderbook_service::{OrderbookSeries, OrderbookView, ArcSwap};
+use rust_decimal::prelude::ToPrimitive;
+
+use crate::trading::order_flow::trade_tape::SharedOrderBookTracker;
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
@@ -135,18 +136,14 @@ pub struct L2TapeState {
     /// When set, events at this price level are highlighted.
     pub crosshair_price: Option<f64>,
 
-    /// Shared orderbook series (written by the bridge, read here each tick).
-    pub shared_orderbook: Option<Arc<RwLock<OrderbookSeries>>>,
+    /// Live orderbook reconstructor. L2-tape reads `bbo()` from this for best-bid/ask
+    /// metadata display. Raw delta events still arrive via the broadcast channel
+    /// (`apply_ob_update_with_ts`) because L2-tape needs per-event timestamps.
+    pub shared_orderbook: Option<SharedOrderBookTracker>,
 
-    /// Lock-free view handle — cloned from `series.published` once on first tick.
-    ob_view: Option<Arc<ArcSwap<OrderbookView>>>,
-
-    /// Raw pointer identity of the current `shared_orderbook` Arc.
-    ob_series_ptr: usize,
-
-    /// Last `OrderbookSnapshot::version` we consumed. When `series.current.version`
-    /// differs we pull a fresh snapshot and generate L2 events from the diff.
-    pub last_seen_orderbook_version: u64,
+    /// `last_update_id` from the most recent tracker read. Used to skip tick() when
+    /// the book has not advanced.
+    pub last_seen_update_id: Option<u64>,
 
     /// Column visibility configuration.
     pub column_config: L2TapeColumnConfig,
@@ -530,43 +527,35 @@ impl L2TapeState {
             tick_size: 0.01,
             crosshair_price: None,
             shared_orderbook: None,
-            ob_view: None,
-            ob_series_ptr: 0,
-            last_seen_orderbook_version: 0,
+            last_seen_update_id: None,
             column_config: L2TapeColumnConfig::default(),
         }
     }
 
-    /// Pull the latest snapshot from `shared_orderbook`, diff against `previous_book`,
-    /// and push any changed levels as L2Events.
-    ///
-    /// Returns immediately when there is no shared handle or the version has not
-    /// advanced since the last call.
+    /// Pull BBO metadata from `shared_orderbook` and diff against `previous_book` if
+    /// the book has advanced. L2-tape receives raw delta events via `apply_ob_update_with_ts`
+    /// from the broadcast drain (not from the tracker) because it needs per-event timestamps.
+    /// This tick() is used only for the periodic snapshot-based diff path.
     pub fn tick(&mut self) {
         let Some(ref ob_handle) = self.shared_orderbook else { return };
 
-        // Detect handle reassignment and acquire lock-free view Arc (cold path).
-        let cur_ptr = Arc::as_ptr(ob_handle) as usize;
-        if cur_ptr != self.ob_series_ptr {
-            self.ob_view = None;
-            self.ob_series_ptr = cur_ptr;
-        }
-        if self.ob_view.is_none() {
-            if let Ok(series) = ob_handle.read() {
-                self.ob_view = Some(series.subscribe_view());
-            }
-        }
-        // load_full() gives owned Arc<OrderbookView>, releasing the borrow on
-        // self.ob_view so that &mut self methods can be called without conflict.
-        let view = match self.ob_view.as_ref() {
-            Some(va) => va.load_full(),
-            None => return,
-        };
-
-        if view.version == self.last_seen_orderbook_version {
+        let guard = ob_handle.blocking_read();
+        let current_uid = guard.last_update_id();
+        if current_uid == self.last_seen_update_id {
             return; // nothing new
         }
-        self.last_seen_orderbook_version = view.version;
+        self.last_seen_update_id = current_uid;
+
+        // Build a snapshot from the tracker for the diff path.
+        let bids: Vec<(f64, f64)> = guard.top_bids(1000)
+            .iter()
+            .map(|(p, q)| (p.to_f64().unwrap_or(0.0), q.to_f64().unwrap_or(0.0)))
+            .collect();
+        let asks: Vec<(f64, f64)> = guard.top_asks(1000)
+            .iter()
+            .map(|(p, q)| (p.to_f64().unwrap_or(0.0), q.to_f64().unwrap_or(0.0)))
+            .collect();
+        drop(guard);
 
         // Use wall-clock time for event timestamps (not REST ts which may be stale).
         let timestamp = SystemTime::now()
@@ -574,16 +563,15 @@ impl L2TapeState {
             .unwrap_or_default()
             .as_millis() as i64;
 
-        // Update mid-price tracker.
-        let best_bid = view.bids.first().map(|(p, _)| *p).unwrap_or(0.0);
-        let best_ask = view.asks.first().map(|(p, _)| *p).unwrap_or(0.0);
+        // Update mid-price tracker from bids/asks slices.
+        let best_bid = bids.last().map(|(p, _)| *p).unwrap_or(0.0);
+        let best_ask = asks.first().map(|(p, _)| *p).unwrap_or(0.0);
         if best_bid > 0.0 && best_ask > 0.0 {
             self.dom_market_price = Some((best_bid + best_ask) / 2.0);
         }
 
         // Diff current snapshot against previous_book and generate L2Events.
-        // Pass slices directly — no Vec clone needed.
-        self.diff_and_push_events(&view.bids, &view.asks, timestamp);
+        self.diff_and_push_events(&bids, &asks, timestamp);
 
         // Time-based retention: drain events older than retention_ms.
         let now_ms = SystemTime::now()
@@ -906,145 +894,113 @@ impl L2TapeState {
     ///
     /// Called once per frame by the coalesced ob_dirty loop in tick.rs.
     /// Generates L2Events by diffing the delta against `previous_book` —
-    /// O(delta) instead of O(full book) as in the old `diff_and_push_events` path.
+    /// O(delta) instead of O(full book).
     ///
     /// ## Full rebuild path (`force_rebuild` or empty `previous_book`)
-    /// Rebuilds `previous_book` from the current shared view without pushing
-    /// any events (the panel just opened or was reassigned — we're seeding, not
-    /// reporting historical changes).  Also updates `dom_market_price`.
+    /// Seeds `previous_book` from the tracker without pushing events (panel just
+    /// opened or reassigned). Also updates `dom_market_price`.
     ///
     /// ## Incremental path
-    /// For each `(price, qty)` in `delta_bids`/`delta_asks`: compare against
-    /// `previous_book`, emit Add/Modify/Cancel, update `previous_book`.
-    /// Uses the same classification logic as `diff_and_push_events`.
+    /// Classifies each (price, qty) pair as Add/Modify/Cancel and pushes L2Events.
     pub fn apply_ob_update(
         &mut self,
         delta_bids: &[(f64, f64)],
         delta_asks: &[(f64, f64)],
         force_rebuild: bool,
     ) {
-        // Acquire lock-free view (needed for full rebuild and for best-bid/ask).
-        if let Some(ref ob_handle) = self.shared_orderbook.clone() {
-            let cur_ptr = Arc::as_ptr(ob_handle) as usize;
-            if cur_ptr != self.ob_series_ptr {
-                self.ob_view = None;
-                self.ob_series_ptr = cur_ptr;
-                // Pointer changed → treat as new panel, full rebuild next.
-                self.previous_book.clear();
-                self.last_seen_orderbook_version = 0;
-            }
-            if self.ob_view.is_none() {
-                if let Ok(series) = ob_handle.read() {
-                    self.ob_view = Some(series.subscribe_view());
+        // Update BBO from tracker.
+        if let Some(ref ob_handle) = self.shared_orderbook {
+            let guard = ob_handle.blocking_read();
+            if let Some((bid, ask)) = guard.bbo() {
+                let best_bid = bid.to_f64().unwrap_or(0.0);
+                let best_ask = ask.to_f64().unwrap_or(0.0);
+                if best_bid > 0.0 && best_ask > 0.0 {
+                    self.dom_market_price = Some((best_bid + best_ask) / 2.0);
                 }
             }
-        }
 
-        let view_opt = self.ob_view.as_ref().map(|va| va.load_full());
-
-        // Update mid-price tracker from view when available.
-        if let Some(ref view) = view_opt {
-            let best_bid = view.bids.last().map(|(p, _)| *p).unwrap_or(0.0);
-            let best_ask = view.asks.first().map(|(p, _)| *p).unwrap_or(0.0);
-            if best_bid > 0.0 && best_ask > 0.0 {
-                self.dom_market_price = Some((best_bid + best_ask) / 2.0);
-            }
-        }
-
-        // Full rebuild: seed previous_book from view, no events.
-        if force_rebuild || self.previous_book.is_empty() {
-            if let Some(ref view) = view_opt {
+            // Full rebuild: seed previous_book from tracker, no events.
+            if force_rebuild || self.previous_book.is_empty() {
                 self.previous_book.clear();
-                for &(price, qty) in &view.bids {
+                let uid = guard.last_update_id();
+                let bids: Vec<(f64, f64)> = guard.top_bids(1000)
+                    .iter().map(|(p, q)| (p.to_f64().unwrap_or(0.0), q.to_f64().unwrap_or(0.0))).collect();
+                let asks: Vec<(f64, f64)> = guard.top_asks(1000)
+                    .iter().map(|(p, q)| (p.to_f64().unwrap_or(0.0), q.to_f64().unwrap_or(0.0))).collect();
+                drop(guard);
+                for &(price, qty) in &bids {
                     if qty > 0.0 {
                         let tick = self.price_to_tick(price);
                         let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
                         entry.0 = qty;
                     }
                 }
-                for &(price, qty) in &view.asks {
+                for &(price, qty) in &asks {
                     if qty > 0.0 {
                         let tick = self.price_to_tick(price);
                         let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
                         entry.1 = qty;
                     }
                 }
-                if let Some(ref v) = view_opt {
-                    self.last_seen_orderbook_version = v.version;
-                }
+                self.last_seen_update_id = uid;
+                return;
             }
-            return;
         }
 
-        // Nothing to do when delta is empty (e.g. only trade-price bump).
+        // Nothing to do when delta is empty.
         if delta_bids.is_empty() && delta_asks.is_empty() {
             return;
         }
 
-        // Fall back to wall-clock when no wire timestamp is available (e.g. REST
-        // delta or legacy callers). Per-event wire ts is preferred — use
-        // `apply_ob_update_with_ts` from the tick loop for that path.
+        // Wall-clock fallback for callers that don't supply a wire ts.
+        // Per-event wire ts is preferred — use `apply_ob_update_with_ts` from the drain.
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as i64;
 
-        self.apply_delta_classified(delta_bids, delta_asks, timestamp, &view_opt);
-
-        if let Some(ref v) = view_opt {
-            self.last_seen_orderbook_version = v.version;
-        }
+        self.apply_delta_classified(delta_bids, delta_asks, timestamp);
     }
 
     /// Apply one WS delta event using its original wire timestamp `ts_ms`.
     ///
-    /// Call this from the tick loop (once per `ObDeltaEvent`) so each L2-tape
-    /// row carries the real per-tick wire time instead of a single
-    /// `SystemTime::now()` taken for the whole per-frame batch.
+    /// Called from the tick.rs drain once per `ObDeltaEvent` so each L2-tape row
+    /// carries the real per-tick wire time instead of a single `SystemTime::now()`
+    /// for the whole per-frame batch.
     pub fn apply_ob_update_with_ts(
         &mut self,
         delta_bids: &[(f64, f64)],
         delta_asks: &[(f64, f64)],
         ts_ms: i64,
     ) {
-        // Ensure view + ptr tracking are up-to-date (same as apply_ob_update).
-        if let Some(ref ob_handle) = self.shared_orderbook.clone() {
-            let cur_ptr = Arc::as_ptr(ob_handle) as usize;
-            if cur_ptr != self.ob_series_ptr {
-                self.ob_view = None;
-                self.ob_series_ptr = cur_ptr;
-                self.previous_book.clear();
-                self.last_seen_orderbook_version = 0;
-            }
-            if self.ob_view.is_none() {
-                if let Ok(series) = ob_handle.read() {
-                    self.ob_view = Some(series.subscribe_view());
+        // Update BBO from tracker.
+        if let Some(ref ob_handle) = self.shared_orderbook {
+            let guard = ob_handle.blocking_read();
+            if let Some((bid, ask)) = guard.bbo() {
+                let best_bid = bid.to_f64().unwrap_or(0.0);
+                let best_ask = ask.to_f64().unwrap_or(0.0);
+                if best_bid > 0.0 && best_ask > 0.0 {
+                    self.dom_market_price = Some((best_bid + best_ask) / 2.0);
                 }
             }
-        }
 
-        let view_opt = self.ob_view.as_ref().map(|va| va.load_full());
-
-        if let Some(ref view) = view_opt {
-            let best_bid = view.bids.last().map(|(p, _)| *p).unwrap_or(0.0);
-            let best_ask = view.asks.first().map(|(p, _)| *p).unwrap_or(0.0);
-            if best_bid > 0.0 && best_ask > 0.0 {
-                self.dom_market_price = Some((best_bid + best_ask) / 2.0);
-            }
-        }
-
-        // If previous_book is empty (first event after init or REST rebuild) seed
-        // it from the shared view first, then apply the incremental delta on top.
-        if self.previous_book.is_empty() {
-            if let Some(ref view) = view_opt {
-                for &(price, qty) in &view.bids {
+            // If previous_book is empty (first event after init or REST rebuild) seed
+            // it from the tracker first, then apply the incremental delta on top.
+            if self.previous_book.is_empty() {
+                self.previous_book.clear();
+                let bids: Vec<(f64, f64)> = guard.top_bids(1000)
+                    .iter().map(|(p, q)| (p.to_f64().unwrap_or(0.0), q.to_f64().unwrap_or(0.0))).collect();
+                let asks: Vec<(f64, f64)> = guard.top_asks(1000)
+                    .iter().map(|(p, q)| (p.to_f64().unwrap_or(0.0), q.to_f64().unwrap_or(0.0))).collect();
+                drop(guard);
+                for &(price, qty) in &bids {
                     if qty > 0.0 {
                         let tick = self.price_to_tick(price);
                         let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
                         entry.0 = qty;
                     }
                 }
-                for &(price, qty) in &view.asks {
+                for &(price, qty) in &asks {
                     if qty > 0.0 {
                         let tick = self.price_to_tick(price);
                         let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
@@ -1058,11 +1014,7 @@ impl L2TapeState {
             return;
         }
 
-        self.apply_delta_classified(delta_bids, delta_asks, ts_ms, &view_opt);
-
-        if let Some(ref v) = view_opt {
-            self.last_seen_orderbook_version = v.version;
-        }
+        self.apply_delta_classified(delta_bids, delta_asks, ts_ms);
     }
 
     /// Core delta-classification loop shared by both public update methods.
@@ -1075,7 +1027,6 @@ impl L2TapeState {
         delta_bids: &[(f64, f64)],
         delta_asks: &[(f64, f64)],
         timestamp: i64,
-        view_opt: &Option<Arc<OrderbookView>>,
     ) {
         // Incremental: classify each delta level and push events.
         for &(price, qty) in delta_bids {
@@ -1175,20 +1126,19 @@ impl L2TapeState {
             self.recalc_max_qty();
         }
 
-        let _ = view_opt; // version update done by caller
     }
 
     /// Apply a full orderbook snapshot.
     ///
     /// Deprecated — L2Tape now reads from `shared_orderbook` via `tick()`.
     /// Kept as a no-op so remaining call sites compile.
-    #[deprecated(note = "Use tick() to pull data from the shared OrderbookSeries instead")]
+    #[deprecated(note = "Use tick() to pull data from the shared OrderBookTracker instead")]
     pub fn apply_snapshot(&mut self, _bids: &[(f64, f64)], _asks: &[(f64, f64)], _timestamp: i64) {}
 
     /// Apply an incremental orderbook delta — generates L2Events from changes.
     ///
     /// Deprecated — L2Tape now reads from `shared_orderbook` via `tick()`.
     /// Kept as a no-op so remaining call sites compile.
-    #[deprecated(note = "Use tick() to pull data from the shared OrderbookSeries instead")]
+    #[deprecated(note = "Use tick() to pull data from the shared OrderBookTracker instead")]
     pub fn apply_delta(&mut self, _bids: &[(f64, f64)], _asks: &[(f64, f64)], _timestamp: i64) {}
 }

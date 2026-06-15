@@ -5,10 +5,8 @@
 //! that the sync chart thread can drain each frame.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
-
-use mlc_orderbook_service::{SharedOrderbookMap, OrderbookKey, OrderbookSeries, DEFAULT_HISTORY_CAPACITY};
 
 use digdigdig3_station::SeriesKey as StationSeriesKey;
 use digdigdig3_station::series::Kind as StationKind;
@@ -21,6 +19,13 @@ use digdigdig3_station::data::{BarPoint, TradePoint};
 /// `Arc<tokio::sync::RwLock<Series<TradePoint>>>` directly; the mlc-side
 /// `TradeSeries` wrapper is gone.
 pub type SharedTradeSeries = Arc<tokio::sync::RwLock<StationSeries<TradePoint>>>;
+
+/// Type alias for the per-key live orderbook reconstructor returned by `subscribe_orderbook`.
+///
+/// After Phase 2B step 3 (orderbook), panels hold the station's own
+/// `Arc<tokio::sync::RwLock<OrderBookTracker>>` directly; the mlc-side
+/// `OrderbookSeries` wrapper is gone.
+pub type SharedOrderBookTracker = Arc<tokio::sync::RwLock<digdigdig3_station::orderbook::OrderBookTracker>>;
 
 use tokio::sync::{broadcast, mpsc};
 use tokio::runtime::Runtime;
@@ -264,12 +269,14 @@ pub struct DataBridge {
     /// scroll-left requests can request the correct older window without
     /// re-fetching data that is already cached.
     oldest_fetched_ts: Arc<Mutex<HashMap<FetchKey, i64>>>,
-    /// Session-level live orderbook series map.
+    /// Per-key live orderbook reconstructors.
     ///
-    /// Key: `OrderbookKey`. Shared with `App` via `Arc` — both sides see the same
-    /// `HashMap`. The async REST/WS tasks write orderbook state here;
-    /// panels read at render time. Mirrors `trade_map` semantics.
-    orderbook_map: SharedOrderbookMap,
+    /// Created on the first `subscribe_orderbook`/`subscribe_depth` call for a given
+    /// `(ExchangeId, AccountType, symbol)` key, then shared by all subsequent
+    /// subscribers for the same key. The station forwarder task is the sole writer
+    /// (`apply_snapshot` / `apply_delta`); panels read concurrently via
+    /// `blocking_read()`.
+    ob_trackers: Arc<dashmap::DashMap<(digdigdig3::ExchangeId, digdigdig3::AccountType, String), SharedOrderBookTracker>>,
     /// One-shot guard for the all-connector warm-up. Set the first time
     /// `warmup_all_connectors` runs so the warm-up fires exactly once over the
     /// lifetime of the (shared, long-lived) bridge — NOT once per ChartApp. The
@@ -297,13 +304,13 @@ pub struct DataBridge {
     /// is called multiple times for the same key (one panel + chart header + etc.).
     /// Guarded by `std::sync::Mutex` — only held briefly (never across `.await`).
     station_trade_subscribed: Arc<Mutex<HashSet<(ExchangeId, AccountType, String)>>>,
-    /// C4: tracks which `OrderbookKey` entries already have a live station
-    /// orderbook-subscriber task spawned.
+    /// C4: tracks which `(ExchangeId, AccountType, symbol)` tuples already have a live
+    /// station orderbook-subscriber task spawned.
     ///
     /// Prevents spawning N parallel station forwarders when `subscribe_orderbook`
     /// is called multiple times for the same key. Guarded by `std::sync::Mutex` —
     /// only held briefly (never across `.await`).
-    station_orderbook_subscribed: Arc<Mutex<HashSet<OrderbookKey>>>,
+    station_orderbook_subscribed: Arc<Mutex<HashSet<(digdigdig3::ExchangeId, digdigdig3::AccountType, String)>>>,
     /// C5: tracks which `(ExchangeId, String, AccountType)` keys already have a
     /// live station ticker-subscriber task spawned.
     ///
@@ -348,9 +355,7 @@ impl DataBridge {
     /// Additional broadcast receivers can be created with [`add_listener`]. The channel
     /// capacity is 4096 messages; if a slow receiver falls behind, old messages are
     /// dropped for that receiver only.
-    pub fn new(
-        shared_orderbook: SharedOrderbookMap,
-    ) -> (Self, broadcast::Receiver<LiveUpdate>, mpsc::UnboundedReceiver<ExchangeId>) {
+    pub fn new() -> (Self, broadcast::Receiver<LiveUpdate>, mpsc::UnboundedReceiver<ExchangeId>) {
         // Anchor the process-relative clock here so every [STARTUP-WAVE] timestamp
         // is measured from bridge construction (≈ app start), giving a stable t=0
         // shared by the bridge (connect wave) and the main thread (promote).
@@ -464,7 +469,7 @@ impl DataBridge {
             active_fetches: Arc::new(Mutex::new(HashSet::new())),
             ws_rtt_handles: Arc::new(Mutex::new(HashMap::new())),
             oldest_fetched_ts: Arc::new(Mutex::new(HashMap::new())),
-            orderbook_map: shared_orderbook,
+            ob_trackers: Arc::new(dashmap::DashMap::new()),
             warmup_started: AtomicBool::new(false),
             station,
             station_trade_subscribed: Arc::new(Mutex::new(HashSet::new())),
@@ -485,14 +490,6 @@ impl DataBridge {
     /// [`LiveUpdate`] broadcast.
     pub fn station(&self) -> Arc<digdigdig3_station::Station> {
         self.station.clone()
-    }
-
-    /// Get a clone of the shared orderbook map.
-    ///
-    /// Returns a clone of the shared orderbook map for `App` and panel use.
-    /// Both sides share the same underlying `HashMap` via `Arc`.
-    pub fn orderbook_map(&self) -> SharedOrderbookMap {
-        self.orderbook_map.clone()
     }
 
     /// Create a new update receiver that receives all future updates.
@@ -1540,34 +1537,34 @@ impl DataBridge {
 
     /// Subscribe to L2 orderbook depth updates via WebSocket.
     ///
-    /// Ensures an `OrderbookSeries` exists in the shared map for this key and
-    /// triggers the station orderbook subscriber (C4), which handles REST seed
-    /// and incremental WS deltas via `Station` (with `orderbook_rest_seed(true)`).
+    /// Creates (or returns) the per-key `OrderBookTracker` in `ob_trackers` and
+    /// triggers the station orderbook subscriber (C4), which handles REST seed and
+    /// incremental WS deltas. The station forwarder writes directly into the tracker
+    /// via `apply_snapshot` / `apply_delta` BEFORE emitting `LiveUpdate::Orderbook*`
+    /// on the broadcast channel — panels that hold the tracker handle always see a
+    /// fresh book by the time the drain loop runs.
     pub fn subscribe_depth(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
-        // Ensure the OrderbookSeries entry exists (subscribe_orderbook may not have been called).
-        let ob_key = OrderbookKey::new(exchange_id, account_type, symbol);
-        {
-            let mut map = self.orderbook_map.write().unwrap_or_else(|e| e.into_inner());
-            map.entry(ob_key.clone())
-                .or_insert_with(|| Arc::new(RwLock::new(OrderbookSeries::new(DEFAULT_HISTORY_CAPACITY))));
-        }
+        // Ensure the per-key tracker exists; subsequent subscribers share the same Arc.
+        let gate_key = (exchange_id, account_type, symbol.to_string());
+        let tracker: SharedOrderBookTracker = self.ob_trackers
+            .entry(gate_key.clone())
+            .or_insert_with(|| Arc::new(tokio::sync::RwLock::new(
+                digdigdig3_station::orderbook::OrderBookTracker::new(symbol),
+            )))
+            .clone();
 
-        // Snapshot: ALWAYS request a fresh full-book REST snapshot on every
-        // subscribe_depth, independent of the delta-forwarder gate below. The
-        // orderbook is STATE — every (re)subscribing DOM panel needs a starting
-        // book, and deltas are meaningless without it. The previous design only
-        // emitted a snapshot as a one-shot seed when the delta forwarder first
-        // spawned; on a chart restore that re-subscribed the same symbol the gate
-        // was still held by the live forwarder, so subscribe_depth skipped
-        // entirely and the freshly re-created (empty) OrderbookSeries arc only
-        // ever saw deltas → blank DOM. Decoupling the snapshot from the gate is
-        // the fix: DOM asks for the snapshot directly via the hub's REST
-        // connector, the gate only governs the steady-state delta recv-loop.
+        // REST seed: always request a fresh full-book snapshot on every subscribe_depth
+        // call, independent of the delta-forwarder gate. The tracker is STATE — every
+        // (re)subscribing panel needs a valid starting book, and deltas alone leave it
+        // blank until the next WS snapshot arrives (which may be minutes away on low-
+        // volume symbols). Write into the tracker first, then emit the broadcast so
+        // tick.rs L2-tape gets the event timestamp.
         {
             let hub = self.station.hub();
             let tx = self.tx.clone();
             let symbol_canonical = symbol.to_string();
             let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
+            let tracker_clone = tracker.clone();
             self.runtime.spawn(async move {
                 let Some(rest) = hub.rest(exchange_id) else { return };
                 let ob = match rest
@@ -1581,6 +1578,8 @@ impl DataBridge {
                     Ok(ob) if !(ob.bids.is_empty() && ob.asks.is_empty()) => ob,
                     _ => return,
                 };
+                // Write into the per-key tracker so DOM/heatmap see live levels.
+                let _ = tracker_clone.write().await.apply_snapshot(&ob);
                 let bids: Vec<(f64, f64)> = ob.bids.iter().map(|l| (l.price, l.size)).collect();
                 let asks: Vec<(f64, f64)> = ob.asks.iter().map(|l| (l.price, l.size)).collect();
                 let _ = tx.send(LiveUpdate::OrderbookSnapshot {
@@ -1595,13 +1594,13 @@ impl DataBridge {
             });
         }
 
-        // C4: station delta forwarder (idempotent — gate on
-        // station_orderbook_subscribed). The gate governs ONLY the steady-state
-        // delta recv-loop; the snapshot above is independent of it.
+        // C4: station delta forwarder (idempotent — gate on station_orderbook_subscribed).
+        // The gate governs only the steady-state delta recv-loop; the REST seed above is
+        // independent.
         let mut subs = self.station_orderbook_subscribed
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let gate_was_open = subs.insert(ob_key.clone());
+        let gate_was_open = subs.insert(gate_key.clone());
         drop(subs);
         if gate_was_open {
             let station = self.station.clone();
@@ -1611,7 +1610,8 @@ impl DataBridge {
             let symbol_canonical = symbol.to_string();
             // Wire form — passed to dig3 station add_raw.
             let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
-            let key_for_cleanup = ob_key.clone();
+            let key_for_cleanup = gate_key;
+            let tracker_clone = tracker.clone();
             self.runtime.spawn(async move {
                 let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                     exchange_id,
@@ -1641,12 +1641,16 @@ impl DataBridge {
                 while let Some(ev) = report.handle.recv().await {
                     match ev {
                         digdigdig3_station::Event::OrderbookSnapshot { point, .. } => {
+                            // Write into the per-key tracker first (panels read this
+                            // via blocking_read in their tick()).
+                            let ob = ob_snapshot_point_to_orderbook(&point);
+                            let _ = tracker_clone.write().await.apply_snapshot(&ob);
+                            // Then emit on broadcast for L2-tape per-event-ts consumer.
                             let bids = strip_ob_padding(&point.bids);
                             let asks = strip_ob_padding(&point.asks);
                             let _ = tx.send(LiveUpdate::OrderbookSnapshot {
                                 exchange_id,
                                 account_type,
-                                // Canonical form for app-side OrderbookKey lookup.
                                 symbol: symbol_canonical.clone(),
                                 bids,
                                 asks,
@@ -1655,12 +1659,14 @@ impl DataBridge {
                             });
                         }
                         digdigdig3_station::Event::OrderbookDelta { point, .. } => {
+                            // Write into the tracker before broadcasting.
+                            let delta = ob_delta_point_to_orderbook_delta(&point);
+                            let _ = tracker_clone.write().await.apply_delta(&delta);
                             let bids = strip_ob_padding(&point.bid_changes);
                             let asks = strip_ob_padding(&point.ask_changes);
                             let _ = tx.send(LiveUpdate::OrderbookDelta {
                                 exchange_id,
                                 account_type,
-                                // Canonical form for app-side OrderbookKey lookup.
                                 symbol: symbol_canonical.clone(),
                                 bids,
                                 asks,
@@ -1681,68 +1687,56 @@ impl DataBridge {
         }
     }
 
-    /// Subscribe to the shared `OrderbookSeries` for `(exchange, symbol, account_type)`.
+    /// Subscribe to the live orderbook for `(exchange, symbol, account_type)`.
     ///
-    /// Mirrors `subscribe_trades`: increments `refcount`, starts the station
-    /// orderbook subscriber (via `subscribe_depth`), and returns a cloned `Arc`
-    /// so the caller (DOM panel) can read the live snapshot without going through
-    /// the broadcast channel.
+    /// Starts the station depth subscriber (idempotent via C4 gate) and returns
+    /// the `SharedOrderBookTracker` handle for the key so the caller (DOM, heatmap,
+    /// L2-tape, paper-engine) can read the live reconstructed book directly via
+    /// `blocking_read()`.
+    ///
+    /// Returns `None` only when `subscribe_depth` has not yet created the tracker entry
+    /// (in practice the entry is created synchronously inside `subscribe_depth` before
+    /// this returns, so `None` is unreachable).
     pub fn subscribe_orderbook(
         &self,
         exchange_id: ExchangeId,
         symbol: &str,
         account_type: AccountType,
-    ) -> Arc<RwLock<OrderbookSeries>> {
-        // Start station depth subscriber + ensure series entry exists (idempotent).
+    ) -> Option<SharedOrderBookTracker> {
+        // subscribe_depth creates the tracker in ob_trackers (idempotent).
         self.subscribe_depth(exchange_id, symbol, account_type);
-
-        // Increment refcount on the series created by subscribe_depth.
-        let ob_key = OrderbookKey::new(exchange_id, account_type, symbol);
-        let handle = {
-            let map = self.orderbook_map.read().unwrap_or_else(|e| e.into_inner());
-            map.get(&ob_key).cloned()
-        };
-        let handle = handle.unwrap_or_else(|| {
-            let mut map = self.orderbook_map.write().unwrap_or_else(|e| e.into_inner());
-            map.entry(ob_key)
-                .or_insert_with(|| Arc::new(RwLock::new(OrderbookSeries::new(DEFAULT_HISTORY_CAPACITY))))
-                .clone()
-        });
-        if let Ok(mut series) = handle.write() {
-            series.refcount += 1;
-        }
-        handle
+        let key = (exchange_id, account_type, symbol.to_string());
+        self.ob_trackers.get(&key).map(|r| r.clone())
     }
 
-    /// Unsubscribe one consumer from the shared `OrderbookSeries`.
+    /// Unsubscribe one consumer from the live orderbook.
     ///
-    /// Decrements `refcount`; removes the series from the map when it hits zero.
-    /// Also calls `unsubscribe_depth` to manage the underlying WS actor.
-    pub fn unsubscribe_orderbook(
+    /// Station owns the orderbook lifetime via the 30-second unsubscribe grace window
+    /// configured in the builder. The per-key tracker stays in `ob_trackers` as long
+    /// as the station forwarder lives; a future subscribe call re-uses it without
+    /// re-fetching the REST snapshot. No bookkeeping is needed here.
+
+    /// Look up an existing tracker without starting a subscription.
+    ///
+    /// Returns `None` when no `subscribe_orderbook` call has been made for this
+    /// key yet (i.e. the panel has not subscribed). Used by `PaperEngine` to
+    /// read BBO without triggering a new WS stream.
+    pub fn ob_tracker_for(
         &self,
         exchange_id: ExchangeId,
         symbol: &str,
         account_type: AccountType,
-    ) {
-        self.unsubscribe_depth(exchange_id, symbol, account_type);
-
-        let ob_key = OrderbookKey::new(exchange_id, account_type, symbol);
-        if let Ok(mut map) = self.orderbook_map.write() {
-            let remove = if let Some(handle) = map.get(&ob_key) {
-                if let Ok(mut series) = handle.write() {
-                    series.refcount = series.refcount.saturating_sub(1);
-                    series.refcount == 0
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
-            if remove {
-                map.remove(&ob_key);
-            }
-        }
+    ) -> Option<SharedOrderBookTracker> {
+        let key = (exchange_id, account_type, symbol.to_string());
+        self.ob_trackers.get(&key).map(|r| r.clone())
     }
+
+    pub fn unsubscribe_orderbook(
+        &self,
+        _exchange_id: ExchangeId,
+        _symbol: &str,
+        _account_type: AccountType,
+    ) {}
 
     /// Connect a private (authenticated) WebSocket stream for the given exchange.
     ///
@@ -1912,10 +1906,7 @@ impl DataBridge {
     ///
     /// Station manages unsubscribe lifecycle via the 30s grace window configured
     /// in the builder. The gate key is removed when the forwarder task exits.
-    pub fn unsubscribe_depth(&self, _exchange_id: ExchangeId, _symbol: &str, _account_type: AccountType) {
-        // Station unsubscription is handled by the station_orderbook_subscribed gate:
-        // the forwarder task exits when station drops the handle after the grace period.
-    }
+    pub fn unsubscribe_depth(&self, _exchange_id: ExchangeId, _symbol: &str, _account_type: AccountType) {}
 
     /// No-op after Phase 2B step 2.
     ///
@@ -3053,4 +3044,44 @@ fn strip_ob_padding(arr: &[(f64, f64)]) -> Vec<(f64, f64)> {
         .filter(|(p, q)| !(*p == 0.0 && *q == 0.0))
         .copied()
         .collect()
+}
+
+/// Convert a station `ObSnapshotPoint` to the dig3-core `OrderBook` type expected by
+/// `OrderBookTracker::apply_snapshot`.
+fn ob_snapshot_point_to_orderbook(
+    p: &digdigdig3_station::data::ObSnapshotPoint,
+) -> digdigdig3::core::types::OrderBook {
+    use digdigdig3::core::types::OrderBookLevel;
+    digdigdig3::core::types::OrderBook {
+        bids: p.bids.iter().map(|(price, size)| OrderBookLevel::new(*price, *size)).collect(),
+        asks: p.asks.iter().map(|(price, size)| OrderBookLevel::new(*price, *size)).collect(),
+        timestamp: p.ts_ms,
+        last_update_id: None,
+        sequence: None,
+        first_update_id: None,
+        prev_update_id: None,
+        event_time: None,
+        transaction_time: None,
+        checksum: None,
+        cts: None,
+        prev_change_id: None,
+    }
+}
+
+/// Convert a station `ObDeltaPoint` to the dig3-core `OrderbookDelta` type expected by
+/// `OrderBookTracker::apply_delta`.
+fn ob_delta_point_to_orderbook_delta(
+    p: &digdigdig3_station::data::ObDeltaPoint,
+) -> digdigdig3::core::types::OrderbookDelta {
+    use digdigdig3::core::types::OrderBookLevel;
+    digdigdig3::core::types::OrderbookDelta {
+        bids: p.bid_changes.iter().map(|(price, size)| OrderBookLevel::new(*price, *size)).collect(),
+        asks: p.ask_changes.iter().map(|(price, size)| OrderBookLevel::new(*price, *size)).collect(),
+        timestamp: p.ts_ms,
+        prev_update_id: None,
+        last_update_id: None,
+        first_update_id: None,
+        event_time: None,
+        checksum: None,
+    }
 }

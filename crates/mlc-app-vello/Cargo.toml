@@ -14,7 +14,6 @@ mlc-app = { path = "../mlc-app", package = "mylittlechart-app" }
 mlc-sidebar-content = { path = "../mlc-sidebar-content", package = "mylittlechart-sidebar-content" }
 mlc-alert-delivery = { path = "../mlc-alert-delivery", package = "mylittlechart-alert-delivery" }
 mlc-live-data = { path = "../mlc-live-data", package = "mylittlechart-live-data" }
-mlc-orderbook-service = { path = "../mlc-orderbook-service", package = "mylittlechart-orderbook-service" }
 mlc-vello-context = { path = "../mlc-vello-context", package = "mylittlechart-vello-context" }
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 mlc-crypto = { path = "../mlc-crypto", package = "mylittlechart-crypto" }

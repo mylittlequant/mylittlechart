@@ -1,12 +1,11 @@
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::{Arc, RwLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use mlc_orderbook_service::{OrderbookSeries, OrderbookView, ArcSwap};
+use rust_decimal::prelude::ToPrimitive;
 
-use crate::trading::order_flow::trade_tape::SharedTradeSeries;
+use crate::trading::order_flow::trade_tape::{SharedTradeSeries, SharedOrderBookTracker};
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
@@ -75,20 +74,13 @@ pub struct DomState {
     /// Maximum volume across all visible levels (for bar scaling)
     pub max_volume: f64,
 
-    /// Shared orderbook series (written by the bridge, read here each tick).
-    pub shared_orderbook: Option<Arc<RwLock<OrderbookSeries>>>,
+    /// Live orderbook reconstructor (written by the bridge station forwarder, read here
+    /// each tick via `blocking_read()`).
+    pub shared_orderbook: Option<SharedOrderBookTracker>,
 
-    /// Lock-free view handle — cloned from `series.published` once on first tick.
-    /// After that, every tick reads `ob_view.load()` with zero series lock.
-    ob_view: Option<Arc<ArcSwap<OrderbookView>>>,
-
-    /// Raw pointer identity of the current `shared_orderbook` Arc.
-    /// When `shared_orderbook` is reassigned this changes, triggering re-acquire.
-    ob_series_ptr: usize,
-
-    /// Last `OrderbookSnapshot::version` we consumed.  When `series.current.version`
-    /// differs we pull a fresh aggregation from the shared series.
-    pub last_seen_orderbook_version: u64,
+    /// `last_update_id` from the most recent tracker read. Used to skip tick() when
+    /// the book has not advanced since the last render.
+    pub last_seen_update_id: Option<u64>,
 
     /// Per-level quantity cache for incremental bucket updates.
     ///
@@ -214,9 +206,7 @@ impl DomState {
             volume_by_price: HashMap::new(),
             max_volume: 0.0,
             shared_orderbook: None,
-            ob_view: None,
-            ob_series_ptr: 0,
-            last_seen_orderbook_version: 0,
+            last_seen_update_id: None,
             level_qty_bid: HashMap::new(),
             level_qty_ask: HashMap::new(),
             shared_trades: None,
@@ -412,41 +402,39 @@ impl DomState {
             .unwrap_or_default()
             .as_millis() as i64;
 
-        // --- Orderbook update (lock-free via ArcSwap) ---
-        // Use load_full() to obtain an owned Arc<OrderbookView> that is not a
-        // borrow of self.ob_view, allowing &mut self methods to be called below
-        // without a borrow conflict.
-        if let Some(ob_handle) = self.shared_orderbook.clone() {
-            // Detect handle reassignment by comparing Arc pointer identity.
-            let cur_ptr = Arc::as_ptr(&ob_handle) as usize;
-            if cur_ptr != self.ob_series_ptr {
-                // New series assigned — acquire fresh view Arc (one-time read lock).
-                self.ob_view = None;
-                self.ob_series_ptr = cur_ptr;
-            }
-            if self.ob_view.is_none() {
-                if let Ok(series) = ob_handle.read() {
-                    self.ob_view = Some(series.subscribe_view());
-                }
-            }
-            // load_full() gives Arc<OrderbookView> — no borrow of self.ob_view held.
-            let view_opt = self.ob_view.as_ref().map(|va| va.load_full());
-            if let Some(view) = view_opt {
-                if view.version != self.last_seen_orderbook_version {
-                    self.last_seen_orderbook_version = view.version;
+        // --- Orderbook update (blocking_read from station OrderBookTracker) ---
+        // The bridge station forwarder writes into the tracker (apply_snapshot /
+        // apply_delta) before emitting the broadcast event, so by the time tick()
+        // runs on the app thread the tracker is already up-to-date.
+        if let Some(ref ob_handle) = self.shared_orderbook {
+            let guard = ob_handle.blocking_read();
+            let current_uid = guard.last_update_id();
+            if current_uid != self.last_seen_update_id || (!guard.has_snapshot() && current_uid.is_none()) {
+                self.last_seen_update_id = current_uid;
 
-                    self.best_bid_price = view.best_bid;
-                    self.best_ask_price = view.best_ask;
-                    if let Some(mid) = view.mid {
-                        self.market_price = mid;
-                        if self.center_price == 0.0 || self.auto_center {
-                            self.center_price = mid;
-                        }
+                if let Some((bid, ask)) = guard.bbo() {
+                    let bid_f = bid.to_f64().unwrap_or(0.0);
+                    let ask_f = ask.to_f64().unwrap_or(0.0);
+                    self.best_bid_price = Some(bid_f);
+                    self.best_ask_price = Some(ask_f);
+                    let mid = (bid_f + ask_f) / 2.0;
+                    self.market_price = mid;
+                    if self.center_price == 0.0 || self.auto_center {
+                        self.center_price = mid;
                     }
-
-                    // Pass slices directly — no Vec clone needed.
-                    self.rebuild_aggregation_from_levels(&view.bids, &view.asks);
                 }
+
+                // Rebuild aggregation from tracker levels (use 1000-deep snapshot).
+                let bids: Vec<(f64, f64)> = guard.top_bids(1000)
+                    .iter()
+                    .map(|(p, q)| (p.to_f64().unwrap_or(0.0), q.to_f64().unwrap_or(0.0)))
+                    .collect();
+                let asks: Vec<(f64, f64)> = guard.top_asks(1000)
+                    .iter()
+                    .map(|(p, q)| (p.to_f64().unwrap_or(0.0), q.to_f64().unwrap_or(0.0)))
+                    .collect();
+                drop(guard);
+                self.rebuild_aggregation_from_levels(&bids, &asks);
             }
         }
 
@@ -525,86 +513,70 @@ impl DomState {
     /// Apply an orderbook update from the live-data frame tick.
     ///
     /// Called once per frame when the (symbol, exchange, account_type) key for
-    /// this panel appears in the dirty map.  Acquires the lock-free view for
-    /// price/best-bid/ask metadata, then either does a full rebuild or applies
-    /// the raw delta incrementally.
+    /// this panel appears in the dirty map. Reads the live `OrderBookTracker` for
+    /// a full rebuild (force_rebuild=true or level cache empty), or applies the raw
+    /// delta slice incrementally to keep the bucket aggregation in sync.
     ///
-    /// ## When full rebuild is chosen
-    /// - `force_rebuild` is true (REST snapshot or first delta after reassign)
-    /// - `level_qty_bid`/`level_qty_ask` are empty (panel just opened / reassigned)
-    /// - No delta changes were accumulated (`delta_bids` and `delta_asks` both empty
-    ///   AND `force_rebuild` is false) — nothing to do, but view may have advanced
-    ///   due to `set_last_trade_price`; update price trackers from view in that case.
-    ///
-    /// ## Incremental update (delta path)
-    /// For each `(price, new_qty)` in the delta:
-    /// 1. Look up `old_qty` from `level_qty_bid/ask`.
-    /// 2. Compute the bucket key (`floor` for bids, `ceil` for asks).
-    /// 3. Subtract `old_qty` from the bucket, add `new_qty`.
-    /// 4. Remove the bucket entry when it reaches ~0.
-    /// 5. Update `level_qty_bid/ask`.
-    ///
-    /// `recompute_max_volume()` is called after both paths.
+    /// The tracker is already up-to-date by the time this runs — the bridge station
+    /// forwarder calls `apply_snapshot`/`apply_delta` on it BEFORE emitting the
+    /// broadcast event that drives the tick.rs drain loop.
     pub fn apply_ob_update(
         &mut self,
         delta_bids: &[(f64, f64)],
         delta_asks: &[(f64, f64)],
         force_rebuild: bool,
     ) {
-        // Acquire lock-free view for price metadata and (on full rebuild) level data.
-        // Must happen before any mutable borrow below.
-        let view_opt = {
-            // Handle reassignment: if the Arc pointer changed, re-subscribe.
-            if let Some(ref ob_handle) = self.shared_orderbook.clone() {
-                let cur_ptr = Arc::as_ptr(ob_handle) as usize;
-                if cur_ptr != self.ob_series_ptr {
-                    self.ob_view = None;
-                    self.ob_series_ptr = cur_ptr;
-                    self.level_qty_bid.clear();
-                    self.level_qty_ask.clear();
+        // Read price metadata from the tracker (bbo / mid).
+        if let Some(ref ob_handle) = self.shared_orderbook {
+            let guard = ob_handle.blocking_read();
+            if let Some((bid, ask)) = guard.bbo() {
+                let bid_f = bid.to_f64().unwrap_or(0.0);
+                let ask_f = ask.to_f64().unwrap_or(0.0);
+                self.best_bid_price = Some(bid_f);
+                self.best_ask_price = Some(ask_f);
+                let mid = (bid_f + ask_f) / 2.0;
+                self.market_price = mid;
+                if self.center_price == 0.0 || self.auto_center {
+                    self.center_price = mid;
                 }
-                if self.ob_view.is_none() {
-                    if let Ok(series) = ob_handle.read() {
-                        self.ob_view = Some(series.subscribe_view());
+            }
+
+            let need_full = force_rebuild
+                || (self.level_qty_bid.is_empty() && self.level_qty_ask.is_empty())
+                || (delta_bids.is_empty() && delta_asks.is_empty());
+
+            if need_full {
+                // Full rebuild from tracker levels (deep snapshot, 1000 levels).
+                let bids: Vec<(f64, f64)> = guard.top_bids(1000)
+                    .iter()
+                    .map(|(p, q)| (p.to_f64().unwrap_or(0.0), q.to_f64().unwrap_or(0.0)))
+                    .collect();
+                let asks: Vec<(f64, f64)> = guard.top_asks(1000)
+                    .iter()
+                    .map(|(p, q)| (p.to_f64().unwrap_or(0.0), q.to_f64().unwrap_or(0.0)))
+                    .collect();
+                let uid = guard.last_update_id();
+                drop(guard);
+                self.rebuild_aggregation_from_levels(&bids, &asks);
+                self.level_qty_bid.clear();
+                self.level_qty_ask.clear();
+                for &(price, qty) in &bids {
+                    if qty > 0.0 {
+                        self.level_qty_bid.insert(price.to_bits() as i64, qty);
                     }
                 }
+                for &(price, qty) in &asks {
+                    if qty > 0.0 {
+                        self.level_qty_ask.insert(price.to_bits() as i64, qty);
+                    }
+                }
+                self.last_seen_update_id = uid;
+                return;
             }
-            self.ob_view.as_ref().map(|va| va.load_full())
-        };
-
-        let Some(view) = view_opt else { return };
-
-        // Always update price trackers from the authoritative view.
-        self.best_bid_price = view.best_bid;
-        self.best_ask_price = view.best_ask;
-        if let Some(mid) = view.mid {
-            self.market_price = mid;
-            if self.center_price == 0.0 || self.auto_center {
-                self.center_price = mid;
-            }
+            drop(guard);
         }
 
-        let need_full = force_rebuild
-            || self.level_qty_bid.is_empty() && self.level_qty_ask.is_empty()
-            || (delta_bids.is_empty() && delta_asks.is_empty());
-
-        if need_full {
-            // Full rebuild from the published view.
-            self.rebuild_aggregation_from_levels(&view.bids, &view.asks);
-            // Re-seed the per-level cache from the view.
-            self.level_qty_bid.clear();
-            self.level_qty_ask.clear();
-            for &(price, qty) in &view.bids {
-                if qty > 0.0 {
-                    self.level_qty_bid.insert(price.to_bits() as i64, qty);
-                }
-            }
-            for &(price, qty) in &view.asks {
-                if qty > 0.0 {
-                    self.level_qty_ask.insert(price.to_bits() as i64, qty);
-                }
-            }
-            self.last_seen_orderbook_version = view.version;
+        if self.shared_orderbook.is_none() {
             return;
         }
 
@@ -618,14 +590,11 @@ impl DomState {
             let old_qty = self.level_qty_bid.get(&price_key).copied().unwrap_or(0.0);
             let bucket = (price / tick_size).floor() as i64;
 
-            // Adjust bucket entry.
             let bucket_entry = self.volume_by_price.entry(bucket).or_insert((0.0, 0.0, 0, 0));
-            // Subtract old contribution.
             bucket_entry.0 = (bucket_entry.0 - old_qty).max(0.0);
             if old_qty > 0.0 && bucket_entry.2 > 0 {
                 bucket_entry.2 -= 1;
             }
-            // Add new contribution.
             if new_qty > 0.0 {
                 bucket_entry.0 += new_qty;
                 bucket_entry.2 += 1;
@@ -633,7 +602,6 @@ impl DomState {
             } else {
                 self.level_qty_bid.remove(&price_key);
             }
-            // Prune empty bucket.
             if bucket_entry.0 < f64::EPSILON && bucket_entry.1 < f64::EPSILON {
                 self.volume_by_price.remove(&bucket);
             }
@@ -663,7 +631,6 @@ impl DomState {
         }
 
         self.recompute_max_volume();
-        self.last_seen_orderbook_version = view.version;
     }
 
     /// Recompute max_trade_volume across all stored trade levels.
@@ -700,19 +667,19 @@ impl DomState {
     ///
     /// Deprecated — DOM now reads from `shared_orderbook` via `tick()`.
     /// Kept as a no-op so that any remaining call sites compile without changes.
-    #[deprecated(note = "Use tick() to pull data from the shared OrderbookSeries instead")]
+    #[deprecated(note = "Use tick() to pull data from the shared OrderBookTracker instead")]
     pub fn apply_rest_snapshot(&mut self, _bids: &[(f64, f64)], _asks: &[(f64, f64)]) {}
 
     /// Apply a fresh WS orderbook snapshot.
     ///
     /// Deprecated — DOM now reads from `shared_orderbook` via `tick()`.
-    #[deprecated(note = "Use tick() to pull data from the shared OrderbookSeries instead")]
+    #[deprecated(note = "Use tick() to pull data from the shared OrderBookTracker instead")]
     pub fn apply_ws_snapshot(&mut self, _bids: &[(f64, f64)], _asks: &[(f64, f64)]) {}
 
     /// Apply an incremental orderbook delta.
     ///
     /// Deprecated — DOM now reads from `shared_orderbook` via `tick()`.
-    #[deprecated(note = "Use tick() to pull data from the shared OrderbookSeries instead")]
+    #[deprecated(note = "Use tick() to pull data from the shared OrderBookTracker instead")]
     pub fn apply_delta(&mut self, _bids: &[(f64, f64)], _asks: &[(f64, f64)]) {}
 
     /// Handle a named key event.  Returns `true` if the key was consumed.
@@ -728,7 +695,7 @@ impl DomState {
         }
         self.tick_size = new_tick;
         // Force a full rebuild: clear per-level cache (bucket keys change with tick_size).
-        self.last_seen_orderbook_version = 0;
+        self.last_seen_update_id = None;
         self.last_seen_ts_ms = 0;
         self.level_qty_bid.clear();
         self.level_qty_ask.clear();

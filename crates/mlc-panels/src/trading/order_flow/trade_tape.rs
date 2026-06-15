@@ -16,6 +16,12 @@ use digdigdig3_station::data::TradePoint;
 /// Handle to the station's per-(exchange, symbol) trade ring.
 pub type SharedTradeSeries = Arc<TokioRwLock<StationSeries<TradePoint>>>;
 
+/// Handle to the station's per-(exchange, symbol) live orderbook reconstructor.
+///
+/// After Phase 2B step 3 (orderbook), panels hold the station's `OrderBookTracker`
+/// directly; the mlc-side `OrderbookSeries` wrapper is gone.
+pub type SharedOrderBookTracker = Arc<TokioRwLock<digdigdig3_station::orderbook::OrderBookTracker>>;
+
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
 use mlc_core::i18n::{TradingKey, current_language};

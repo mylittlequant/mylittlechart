@@ -920,9 +920,7 @@ impl ChartApp {
         // The third value is a ConnectorReady mpsc receiver used by the
         // chart-app-vello App struct; here it is dropped since ChartApp::tick()
         // receives ConnectorReady via the broadcast channel directly.
-        let shared_orderbook: mlc_orderbook_service::SharedOrderbookMap =
-            std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
-        let (bridge, live_update_rx, _connector_ready_rx) = DataBridge::new(shared_orderbook);
+        let (bridge, live_update_rx, _connector_ready_rx) = DataBridge::new();
         let bridge = std::sync::Arc::new(bridge);
         // live_update_rx is a broadcast::Receiver — see DataBridge::add_listener()
         // for spawning additional windows that share this bridge.
@@ -5367,7 +5365,7 @@ impl ChartApp {
                     s.exchange = exchange.clone();
                     s.account_type = account_type.clone();
                     s.shared_orderbook = new_ob_handle;
-                    s.last_seen_orderbook_version = 0;
+                    s.last_seen_update_id = None;
                     s.level_qty_bid.clear();
                     s.level_qty_ask.clear();
                     s.shared_trades = new_trade_handle;

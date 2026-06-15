@@ -72,14 +72,19 @@ impl ChartApp {
         let (mut n_symbols, mut n_symbols_total, mut symbols_insert_us) = (0u32, 0usize, 0u64);
         let mut trading_updates: Vec<LiveUpdate> = Vec::new();
         // Coalesce orderbook panel updates: collect per-(symbol,exchange,account_type)
-        // delta accumulation so each panel is ticked ONCE per frame with the
-        // accumulated raw changes from the WS delta events. DOM/L2 apply the delta
-        // incrementally (O(delta)) instead of rebuilding the full ~1000-level book
-        // on every update. Heatmap still uses the old view-based tick path.
+        // delta events for L2-tape (which needs per-event timestamps) and force_rebuild
+        // flags for DOM (which reads the tracker for full rebuilds).
+        //
+        // Phase 2B step 3: the bridge station forwarder writes directly into the
+        // per-key `OrderBookTracker` BEFORE emitting the broadcast. By the time this
+        // drain runs, the tracker is already up-to-date. DOM reads the tracker via
+        // `apply_ob_update`; heatmap reads via its own `tick()`. Only L2-tape
+        // continues to receive raw delta events from the broadcast (it needs per-event
+        // wire timestamps for tape row rendering).
         //
         // Event routing:
-        //   OrderbookSnapshot{source:Rest}  → force_rebuild = true (deep REST seed)
-        //   OrderbookSnapshot{source:Ws}    → SKIP (the Delta event that follows carries the changes)
+        //   OrderbookSnapshot{source:Rest}  → force_rebuild = true for DOM
+        //   OrderbookSnapshot{source:Ws}    → SKIP
         //   OrderbookDelta{bids, asks}       → push ObDeltaEvent preserving per-event ts
         /// One WS delta message with its original wire timestamp.
         struct ObDeltaEvent {
@@ -88,19 +93,13 @@ impl ChartApp {
             asks: Vec<(f64, f64)>,
         }
         struct ObDeltaEntry {
-            /// Per-event raw deltas in arrival order.  Each entry preserves its own ts
-            /// so panels (L2 tape) render tick-by-tick rather than collapsing to one
-            /// SystemTime::now() per render-frame batch.
+            /// Per-event raw deltas in arrival order. Each entry preserves its own ts
+            /// so L2-tape rows get per-event ts instead of one SystemTime::now() per
+            /// render-frame batch.
             events: Vec<ObDeltaEvent>,
-            /// True when a REST snapshot arrived this frame → panels must full-rebuild.
+            /// True when a REST snapshot arrived this frame → DOM must full-rebuild
+            /// from the tracker.
             force_rebuild: bool,
-            /// The REST/WS snapshot levels that drove `force_rebuild`, kept so the
-            /// shared `OrderbookSeries` arc can be seeded. Phase 2B moved orderbook
-            /// data onto the broadcast channel but left DOM/heatmap reading the
-            /// arc-backed view (`apply_ob_update` early-returns when the arc has no
-            /// view) — nothing re-populated the arc, so both panels went blank after
-            /// a preset restore. Re-seed the arc here from the snapshot + deltas.
-            snapshot: Option<(Vec<(f64, f64)>, Vec<(f64, f64)>, i64)>,
         }
         let mut ob_dirty: std::collections::HashMap<(String, String, String), ObDeltaEntry> =
             std::collections::HashMap::new();
@@ -1139,28 +1138,22 @@ impl ChartApp {
                         }
                     }
                 }
-                LiveUpdate::OrderbookSnapshot { exchange_id, account_type, symbol, bids, asks, timestamp, source } => {
+                LiveUpdate::OrderbookSnapshot { exchange_id, account_type, symbol, source, .. } => {
                     self.last_ob_event_count += 1;
                     match source {
                         mlc_live_data::OrderbookSource::Rest => {
-                            // REST bootstrap — force a full rebuild so panels seed
-                            // from the deep snapshot now in the shared series.
+                            // REST bootstrap — force DOM to full-rebuild from the tracker
+                            // (the bridge station forwarder already wrote the snapshot into it).
                             let key = (symbol, exchange_id.as_str().to_string(), account_type.short_label().to_string());
                             let entry = ob_dirty.entry(key).or_insert_with(|| ObDeltaEntry {
                                 events: Vec::new(),
                                 force_rebuild: false,
-                                snapshot: None,
                             });
                             entry.force_rebuild = true;
-                            // Keep the levels so the OrderbookSeries arc can be
-                            // re-seeded (DOM/heatmap read the arc view).
-                            entry.snapshot = Some((bids, asks, timestamp));
                         }
                         mlc_live_data::OrderbookSource::Ws => {
-                            // WS snapshot is always paired with a following
-                            // OrderbookDelta event that carries the actual changes.
-                            // Ignore the snapshot here; the delta will be processed
-                            // below. This avoids a redundant full-rebuild per delta.
+                            // WS snapshot always precedes a Delta event. Skip here;
+                            // the tracker is already updated by the bridge task.
                         }
                     }
                 }
@@ -1173,7 +1166,6 @@ impl ChartApp {
                     let entry = ob_dirty.entry(key).or_insert_with(|| ObDeltaEntry {
                         events: Vec::new(),
                         force_rebuild: false,
-                        snapshot: None,
                     });
                     entry.events.push(ObDeltaEvent { ts_ms: timestamp, bids, asks });
                 }
@@ -1199,30 +1191,6 @@ impl ChartApp {
         }
         self.last_event_process_us = events_start.elapsed().as_micros() as u64;
 
-        // ── Coalesced last-trade-price → ghost filter (once per symbol) ──────
-        // Applied before the panel re-aggregation below so DOM/L2 see the
-        // ghost-filtered book in the same frame.  One sweep + view republish per
-        // symbol instead of one per trade (was the dominant burst spike).
-        if !last_trade_price_by_symbol.is_empty() {
-            let ob_map = self.bridge.orderbook_map();
-            for ((symbol, ex_str, _at_str), price) in &last_trade_price_by_symbol {
-                // Reconstruct the OrderbookKey for this symbol.  exchange_id parse
-                // mirrors the trade arm's construction.
-                if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_str) {
-                    // account_type is encoded in the key tuple's short label; rebuild
-                    // via the same helper used elsewhere.
-                    let at = account_type_from_label(_at_str);
-                    let ob_key = mlc_orderbook_service::OrderbookKey::new(eid, at, symbol);
-                    let series_arc = ob_map.read().ok().and_then(|map| map.get(&ob_key).cloned());
-                    if let Some(arc) = series_arc {
-                        if let Ok(mut s) = arc.write() {
-                            s.set_last_trade_price(*price);
-                        }
-                    }
-                }
-            }
-        }
-
         // ── Coalesced orderbook panel re-aggregation ─────────────────────────
         // DOM + heatmap: tick once per frame with the merged level changes (they
         // track current book state, not history — per-event ts is irrelevant).
@@ -1231,32 +1199,6 @@ impl ChartApp {
         // whole batch.
         if !ob_dirty.is_empty() {
             let _ob_panel_start = std::time::Instant::now();
-            // Seed the shared OrderbookSeries arc from this frame's snapshot +
-            // deltas. Phase 2B routed orderbook data through the broadcast
-            // channel but DOM/heatmap still read the arc-backed view, and
-            // nothing re-populated the arc — so both panels stayed blank.
-            // Apply REST snapshot (range-replace) then deltas (incremental) to
-            // the arc keyed by (symbol, exchange, account_type); the panels'
-            // subscribe_view() then sees live data again.
-            {
-                let ob_map = self.bridge.orderbook_map();
-                for ((symbol, ex_str, at_str), entry) in &ob_dirty {
-                    let Some(eid) = digdigdig3::ExchangeId::from_str(ex_str) else { continue };
-                    let at = account_type_from_label(at_str);
-                    let ob_key = mlc_orderbook_service::OrderbookKey::new(eid, at, symbol);
-                    let series_arc = ob_map.read().ok().and_then(|m| m.get(&ob_key).cloned());
-                    if let Some(arc) = series_arc {
-                        if let Ok(mut s) = arc.write() {
-                            if let Some((bids, asks, ts)) = &entry.snapshot {
-                                s.apply_rest(bids, asks, *ts);
-                            }
-                            for ev in &entry.events {
-                                s.apply_ws_delta(&ev.bids, &ev.asks, ev.ts_ms);
-                            }
-                        }
-                    }
-                }
-            }
             for ((symbol, ex_str, at_str), entry) in &ob_dirty {
                 // ── DOM: incremental or full-rebuild (bulk — level state only) ──
                 // DOM shows current snapshot depth, not tape history. Passing the

@@ -7,7 +7,8 @@ use crate::types::{
 use crate::order_manager::OrderManager;
 use crate::position_tracker::PositionTracker;
 use crate::error::{TradingError, TradingResult};
-use mlc_orderbook_service::{SharedOrderbookMap, OrderbookKey};
+use std::sync::Arc;
+use mlc_live_data::DataBridge;
 
 struct PendingOrder {
     order: Order,
@@ -18,7 +19,7 @@ struct PendingOrder {
 pub struct PaperEngine {
     exchange_id: ExchangeId,
     account_type: AccountType,
-    orderbook: SharedOrderbookMap,
+    bridge: Arc<DataBridge>,
     pending: Vec<PendingOrder>,
     balances: HashMap<String, f64>,
     orders: OrderManager,
@@ -31,14 +32,14 @@ impl PaperEngine {
     pub fn new(
         exchange_id: ExchangeId,
         account_type: AccountType,
-        orderbook: SharedOrderbookMap,
+        bridge: Arc<DataBridge>,
         initial_balances: HashMap<String, f64>,
         fill_tx: tokio::sync::mpsc::UnboundedSender<Fill>,
     ) -> Self {
         Self {
             exchange_id,
             account_type,
-            orderbook,
+            bridge,
             pending: Vec::new(),
             balances: initial_balances,
             orders: OrderManager::new("paper"),
@@ -367,14 +368,11 @@ impl PaperEngine {
     }
 
     fn get_orderbook_price(&self, symbol: &str) -> Option<(f64, f64)> {
-        let key = OrderbookKey::new(self.exchange_id, self.account_type, symbol);
-        let map = self.orderbook.read().ok()?;
-        let series_arc = map.get(&key)?.clone();
-        drop(map);
-        let series = series_arc.read().ok()?;
-        let bid = series.current.best_bid()?;
-        let ask = series.current.best_ask()?;
-        Some((bid, ask))
+        use rust_decimal::prelude::ToPrimitive;
+        let tracker = self.bridge.ob_tracker_for(self.exchange_id, symbol, self.account_type)?;
+        let guard = tracker.blocking_read();
+        let (bid, ask) = guard.bbo()?;
+        Some((bid.to_f64()?, ask.to_f64()?))
     }
 
     fn check_and_deduct_balance(

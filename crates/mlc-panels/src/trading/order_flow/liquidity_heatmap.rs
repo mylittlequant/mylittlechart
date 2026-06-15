@@ -1,8 +1,9 @@
 use serde::{Serialize, Deserialize};
 use std::collections::{BTreeMap, VecDeque};
-use std::sync::{Arc, RwLock};
 
-use mlc_orderbook_service::{OrderbookSeries, OrderbookView, ArcSwap};
+use rust_decimal::prelude::ToPrimitive;
+
+use crate::trading::order_flow::trade_tape::SharedOrderBookTracker;
 
 use crate::trading::order_flow::trade_tape::SharedTradeSeries;
 
@@ -55,17 +56,13 @@ pub struct LiquidityHeatmapState {
     /// Crosshair price synced from a linked chart window.
     pub crosshair_price: Option<f64>,
 
-    /// Shared orderbook series (written by the bridge, read here each tick).
-    pub shared_orderbook: Option<Arc<RwLock<OrderbookSeries>>>,
+    /// Live orderbook reconstructor (written by the bridge station forwarder, read here
+    /// each tick via `blocking_read()`).
+    pub shared_orderbook: Option<SharedOrderBookTracker>,
 
-    /// Lock-free view handle — cloned from `series.published` once on first tick.
-    ob_view: Option<Arc<ArcSwap<OrderbookView>>>,
-
-    /// Raw pointer identity of the current `shared_orderbook` Arc.
-    ob_series_ptr: usize,
-
-    /// Last `OrderbookSnapshot::version` we consumed.
-    pub last_seen_orderbook_version: u64,
+    /// `last_update_id` from the most recent tracker read. Used to skip tick() when
+    /// the book has not advanced.
+    pub last_seen_update_id: Option<u64>,
 
     /// Shared trade series for circle overlay rendering.
     pub shared_trades: Option<SharedTradeSeries>,
@@ -129,9 +126,7 @@ impl LiquidityHeatmapState {
             max_snapshots: 1000,
             crosshair_price: None,
             shared_orderbook: None,
-            ob_view: None,
-            ob_series_ptr: 0,
-            last_seen_orderbook_version: 0,
+            last_seen_update_id: None,
             shared_trades: None,
             last_seen_ts_ms: 0,
             trade_circles: Vec::new(),
@@ -196,44 +191,38 @@ impl LiquidityHeatmapState {
     /// Pull the latest snapshot from `shared_orderbook` and sample it into the heatmap.
     /// Also pulls new trades from `shared_trades` into the circle overlay buffer.
     pub fn tick(&mut self) {
-        // --- Orderbook (lock-free via ArcSwap) ---
-        // Clone the Arc handle so the borrow of self.shared_orderbook ends before
-        // we need &mut self below.  load_full() then gives an owned Arc<OrderbookView>
-        // that is independent of self.ob_view, removing the need to clone bids/asks.
-        if let Some(ob_handle) = self.shared_orderbook.clone() {
-            // Detect handle reassignment and acquire lock-free view Arc (cold path).
-            let cur_ptr = Arc::as_ptr(&ob_handle) as usize;
-            if cur_ptr != self.ob_series_ptr {
-                self.ob_view = None;
-                self.ob_series_ptr = cur_ptr;
-            }
-            if self.ob_view.is_none() {
-                if let Ok(series) = ob_handle.read() {
-                    self.ob_view = Some(series.subscribe_view());
+        // --- Orderbook (blocking_read from station OrderBookTracker) ---
+        // The bridge station forwarder writes into the tracker before emitting the
+        // broadcast, so the tracker is fresh when tick() runs on the app thread.
+        if let Some(ref ob_handle) = self.shared_orderbook {
+            let guard = ob_handle.blocking_read();
+            let current_uid = guard.last_update_id();
+            if current_uid != self.last_seen_update_id {
+                self.last_seen_update_id = current_uid;
+
+                // Use the tracker's last timestamp as the heatmap snapshot time.
+                let timestamp = guard.last_timestamp_ms();
+
+                // Compute mid price from BBO.
+                if let Some((bid, ask)) = guard.bbo() {
+                    let bid_f = bid.to_f64().unwrap_or(0.0);
+                    let ask_f = ask.to_f64().unwrap_or(0.0);
+                    self.mid_price = Some((bid_f + ask_f) / 2.0);
                 }
-            }
-            // load_full() — owned Arc, no borrow of self.ob_view retained.
-            let view_opt = self.ob_view.as_ref().map(|va| va.load_full());
-            if let Some(view) = view_opt {
-                if view.version != self.last_seen_orderbook_version {
-                    self.last_seen_orderbook_version = view.version;
 
-                    // Use the freshest of REST/WS timestamps. `last_rest_ts_ms`
-                    // is set once at the REST seed and never advances; feeding
-                    // it to the rate-limited apply_snapshot froze the heatmap
-                    // after a single sample (ts - last_snapshot_ms == 0 forever).
-                    // WS deltas advance `last_ws_ts_ms`, so max() tracks live time.
-                    let timestamp = view.last_ws_ts_ms.max(view.last_rest_ts_ms);
+                // Build a deep bids/asks snapshot for the heatmap recording.
+                let bids: Vec<(f64, f64)> = guard.top_bids(1000)
+                    .iter()
+                    .map(|(p, q)| (p.to_f64().unwrap_or(0.0), q.to_f64().unwrap_or(0.0)))
+                    .collect();
+                let asks: Vec<(f64, f64)> = guard.top_asks(1000)
+                    .iter()
+                    .map(|(p, q)| (p.to_f64().unwrap_or(0.0), q.to_f64().unwrap_or(0.0)))
+                    .collect();
+                drop(guard);
 
-                    // Compute mid price from best bid/ask
-                    if let (Some(best_bid), Some(best_ask)) = (view.best_bid, view.best_ask) {
-                        self.mid_price = Some((best_bid + best_ask) / 2.0);
-                    }
-
-                    // Pass slices directly — no Vec clone needed.
-                    #[allow(deprecated)]
-                    self.apply_snapshot(&view.bids, &view.asks, timestamp);
-                }
+                #[allow(deprecated)]
+                self.apply_snapshot(&bids, &asks, timestamp);
             }
         }
 
@@ -277,8 +266,8 @@ impl LiquidityHeatmapState {
     /// Returns true if a snapshot was actually recorded.
     ///
     /// Deprecated — callers should use `tick()` to pull data from the shared
-    /// `OrderbookSeries`. This method is still called internally by `tick()`.
-    #[deprecated(note = "Use tick() to pull data from the shared OrderbookSeries instead")]
+    /// `OrderBookTracker`. This method is still called internally by `tick()`.
+    #[deprecated(note = "Use tick() to pull data from the shared OrderBookTracker instead")]
     pub fn apply_snapshot(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)], timestamp_ms: i64) -> bool {
         // Rate-limit: skip if too soon since last snapshot
         if timestamp_ms - self.last_snapshot_ms < self.snapshot_interval_ms as i64 {

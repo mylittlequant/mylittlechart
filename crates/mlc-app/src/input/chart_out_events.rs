@@ -1514,8 +1514,7 @@ impl ChartApp {
                                         if !s.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
-                                                let ob_handle = self.bridge.subscribe_orderbook(eid, &s.symbol, at);
-                                                s.shared_orderbook = Some(ob_handle);
+                                                s.shared_orderbook = self.bridge.subscribe_orderbook(eid, &s.symbol, at);
                                                 let trade_handle = self.bridge.subscribe_trades(eid, &s.symbol, at);
                                                 s.shared_trades = Some(trade_handle);
                                             }
@@ -1578,12 +1577,11 @@ impl ChartApp {
                                             s.exchange = exchange.clone();
                                             s.account_type = normalize_account_type(account_type);
                                         }
-                                        // Subscribe to the shared orderbook series if we have a concrete symbol.
+                                        // Subscribe to the shared orderbook tracker if we have a concrete symbol.
                                         if !s.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
-                                                let handle = self.bridge.subscribe_orderbook(eid, &s.symbol, at);
-                                                s.shared_orderbook = Some(handle);
+                                                s.shared_orderbook = self.bridge.subscribe_orderbook(eid, &s.symbol, at);
                                             }
                                         }
                                         self.panels_store.liquidity_heatmap.insert(pid, s);
@@ -1628,8 +1626,7 @@ impl ChartApp {
                                         if !s.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
-                                                let handle = self.bridge.subscribe_orderbook(eid, &s.symbol, at);
-                                                s.shared_orderbook = Some(handle);
+                                                s.shared_orderbook = self.bridge.subscribe_orderbook(eid, &s.symbol, at);
                                             }
                                         }
                                         self.panels_store.l2_tape.insert(pid, s);

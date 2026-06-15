@@ -10,8 +10,8 @@ name = "mlc_live_data"
 # Chart types (Bar, Timeframe, DataProvider trait)
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 
-# Shared in-memory orderbook series
-mlc-orderbook-service = { path = "../mlc-orderbook-service", package = "mylittlechart-orderbook-service" }
+# Concurrent hash map for per-key tracker storage (ob_trackers)
+dashmap = "6"
 
 # V5 connectors (async exchange API) — separate workspace, use path
 digdigdig3 = "=0.3.23"

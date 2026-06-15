@@ -10,9 +10,10 @@ name = "mlc_panels"
 serde = { version = "1.0", features = ["derive"] }
 uzor = "=1.4.13"
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
-mlc-orderbook-service = { path = "../mlc-orderbook-service", package = "mylittlechart-orderbook-service" }
 mlc-trading-manager = { path = "../mlc-trading-manager", package = "mylittlechart-trading-manager" }
-# After Phase 2B step 2 (trades), panels read TradePoint directly from
-# dig3-station's Series<TradePoint> instead of the deleted mlc-trade-service.
+# After Phase 2B step 2 (trades) + step 3 (orderbook): panels read directly from
+# dig3-station's Series<TradePoint> and OrderBookTracker.
 digdigdig3-station = "=0.3.23"
+# For Decimal → f64 conversion when reading from OrderBookTracker.
+rust_decimal = "1"
 tokio = { version = "1", features = ["sync"] }

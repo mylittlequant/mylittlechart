@@ -408,14 +408,14 @@ impl TradingManager {
                 self.position_trackers.entry(key).or_insert_with(|| PositionTracker::new(is_paper));
 
                 if is_paper {
-                    let orderbook = self.bridge.orderbook_map();
+                    let bridge = Arc::clone(&self.bridge);
                     let initial_balances = self.config.paper_initial_balances.clone();
                     let fill_tx = self.paper_fill_tx.clone();
                     self.paper_engines.entry(key).or_insert_with(|| {
                         PaperEngine::new(
                             exchange_id,
                             at,
-                            orderbook,
+                            bridge,
                             initial_balances,
                             fill_tx,
                         )

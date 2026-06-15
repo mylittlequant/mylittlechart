@@ -1248,13 +1248,12 @@ impl ChartApp {
                                     let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
                                         .unwrap_or(self.active_exchange);
                                     let at = crate::account_type_from_label(&account_type_str);
-                                    let ob_handle = self.bridge.subscribe_orderbook(eid, &symbol, at);
                                     let trade_handle = self.bridge.subscribe_trades(eid, &symbol, at);
                                     if let Some(state) = self.panels_store.dom.get_mut(&pid) {
                                         state.exchange = exchange_str.clone();
                                         state.account_type = account_type_str.clone();
-                                        state.shared_orderbook = Some(ob_handle);
-                                        state.last_seen_orderbook_version = 0;
+                                        state.shared_orderbook = self.bridge.subscribe_orderbook(eid, &symbol, at);
+                                        state.last_seen_update_id = None;
                                         state.level_qty_bid.clear();
                                         state.level_qty_ask.clear();
                                         state.shared_trades = Some(trade_handle);
@@ -1309,12 +1308,11 @@ impl ChartApp {
                                     let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
                                         .unwrap_or(self.active_exchange);
                                     let at = crate::account_type_from_label(&account_type_str);
-                                    let handle = self.bridge.subscribe_orderbook(eid, &symbol, at);
                                     if let Some(state) = self.panels_store.liquidity_heatmap.get_mut(&pid) {
                                         state.exchange = exchange_str.clone();
                                         state.account_type = account_type_str.clone();
-                                        state.shared_orderbook = Some(handle);
-                                        state.last_seen_orderbook_version = 0;
+                                        state.shared_orderbook = self.bridge.subscribe_orderbook(eid, &symbol, at);
+                                        state.last_seen_update_id = None;
                                     }
                                 } else if let Some(state) = self.panels_store.liquidity_heatmap.get_mut(&pid) {
                                     state.exchange = exchange_str.clone();
@@ -1351,13 +1349,12 @@ impl ChartApp {
                                     let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
                                         .unwrap_or(self.active_exchange);
                                     let at = crate::account_type_from_label(&account_type_str);
-                                    let handle = self.bridge.subscribe_orderbook(eid, &symbol, at);
                                     if let Some(state) = self.panels_store.l2_tape.get_mut(&pid) {
                                         state.symbol = symbol.clone();
                                         state.exchange = exchange_str.clone();
                                         state.account_type = account_type_str.clone();
-                                        state.shared_orderbook = Some(handle);
-                                        state.last_seen_orderbook_version = 0;
+                                        state.shared_orderbook = self.bridge.subscribe_orderbook(eid, &symbol, at);
+                                        state.last_seen_update_id = None;
                                         state.previous_book.clear();
                                     }
                                 } else if let Some(state) = self.panels_store.l2_tape.get_mut(&pid) {
