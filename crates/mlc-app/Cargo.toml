@@ -20,7 +20,7 @@ mlc-bar-service = { path = "../mlc-bar-service", package = "mylittlechart-bar-se
 mlc-trade-service = { path = "../mlc-trade-service", package = "mylittlechart-trade-service" }
 mlc-orderbook-service = { path = "../mlc-orderbook-service", package = "mylittlechart-orderbook-service" }
 mlc-trading-manager = { path = "../mlc-trading-manager", package = "mylittlechart-trading-manager" }
-digdigdig3 = "=0.3.22"
+digdigdig3 = "=0.3.23"
 tokio = { version = "1", features = ["sync"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0"
