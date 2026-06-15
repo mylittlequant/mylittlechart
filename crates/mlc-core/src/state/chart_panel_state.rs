@@ -50,6 +50,22 @@ pub struct ChartPanelState {
     /// Default: `"candles"`.
     pub chart_type: &'static str,
 
+    /// Numeric parameter for derived-bar chart types (range_bar / volume_bar).
+    ///
+    /// - For `"range_bar"`: price-move size (e.g. `10.0` USD) — converted to
+    ///   ×1e8 fixed-point at the bridge boundary.
+    /// - For `"volume_bar"`: cumulative volume per bar (e.g. `1000.0` units).
+    /// - For `"footprint"`: unused — footprint uses `chart_type_interval` instead.
+    /// - For plain render chart types: unused.
+    ///
+    /// Default `0.0` — code-side defaults (10.0 / 1000.0) are applied at
+    /// subscribe time when this field is non-positive.
+    pub chart_type_param: f64,
+
+    /// Kline interval label for `"footprint"` chart type (e.g. `"1m"`, `"5m"`).
+    /// Default: `"1m"`. Unused for non-footprint chart types.
+    pub chart_type_interval: &'static str,
+
     // ── Drawing manager ───────────────────────────────────────────────────────
     /// Drawing primitives manager for this canvas leaf.
     ///
@@ -94,6 +110,8 @@ impl ChartPanelState {
             show_columns: false,
             show_baseline: false,
             chart_type: "candles",
+            chart_type_param: 0.0,
+            chart_type_interval: "1m",
             drawing_manager: DrawingManager::new(),
             grid_options: GridOptions::default(),
             crosshair_options: CrosshairOptions::default(),
