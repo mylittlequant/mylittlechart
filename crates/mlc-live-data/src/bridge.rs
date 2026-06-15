@@ -1202,6 +1202,103 @@ impl DataBridge {
         self.abort_derived_sub(exchange_id, symbol, account_type);
     }
 
+    /// Subscribe to a range-bar stream (`price_units` price-move per bar, ×1e8 fixed-point).
+    ///
+    /// The station's `Stream::RangeBar(u64)` aggregates a Trade stream into a
+    /// new BarPoint whenever |close - bar_open| ≥ `price_units / 1e8`. Cold
+    /// start fills as trades arrive (or instantly from the Trade RAM ring +
+    /// disk read_tail when station's warm-seed is enabled).
+    pub fn request_range_bars(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        price_units: u64,
+    ) {
+        self.abort_derived_sub(exchange_id, symbol, account_type);
+
+        let station = self.station.clone();
+        let tx = self.tx.clone();
+        let symbol_str = symbol.to_string();
+        let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
+        let sub_key = (exchange_id, symbol.to_string(), account_type);
+
+        let stream = digdigdig3_station::Stream::RangeBar(price_units);
+        let handle = Self::spawn_derived_bar_sub(
+            &self.runtime, station, tx, exchange_id, account_type,
+            symbol_str, symbol_wire, stream,
+        );
+        if let Ok(mut subs) = self.derived_subs.lock() {
+            subs.insert(sub_key, handle);
+        }
+    }
+
+    /// Subscribe to a volume-bar stream (`volume_units` total volume per bar, ×1e8 fixed-point).
+    pub fn request_volume_bars(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        volume_units: u64,
+    ) {
+        self.abort_derived_sub(exchange_id, symbol, account_type);
+
+        let station = self.station.clone();
+        let tx = self.tx.clone();
+        let symbol_str = symbol.to_string();
+        let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
+        let sub_key = (exchange_id, symbol.to_string(), account_type);
+
+        let stream = digdigdig3_station::Stream::VolumeBar(volume_units);
+        let handle = Self::spawn_derived_bar_sub(
+            &self.runtime, station, tx, exchange_id, account_type,
+            symbol_str, symbol_wire, stream,
+        );
+        if let Ok(mut subs) = self.derived_subs.lock() {
+            subs.insert(sub_key, handle);
+        }
+    }
+
+    /// Subscribe to a footprint stream — aggregates trades into per-price-level
+    /// buy/sell breakdown bound to a kline interval (`1m`, `5m`, …).
+    ///
+    /// Unlike Range/Volume/Tick which emit `Event::Bar`, Footprint emits
+    /// `Event::Footprint { point: FootprintPoint }` — a separate forwarder task
+    /// handles the re-emit into `LiveUpdate::FootprintUpdate`.
+    pub fn request_footprint(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        interval: &str,
+    ) {
+        self.abort_derived_sub(exchange_id, symbol, account_type);
+
+        let station = self.station.clone();
+        let tx = self.tx.clone();
+        let symbol_str = symbol.to_string();
+        let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
+        let sub_key = (exchange_id, symbol.to_string(), account_type);
+        let kline_iv = KlineInterval::new(interval);
+        let stream = digdigdig3_station::Stream::Footprint(kline_iv);
+
+        let handle = Self::spawn_footprint_sub(
+            &self.runtime, station, tx, exchange_id, account_type,
+            symbol_str, symbol_wire, stream,
+        );
+        if let Ok(mut subs) = self.derived_subs.lock() {
+            subs.insert(sub_key, handle);
+        }
+    }
+
+    /// Abort the active range/volume/footprint subscription, when switching away.
+    ///
+    /// Single entry point for all non-tick derived subscriptions — they share
+    /// the `derived_subs` slot per instrument (one source per chart).
+    pub fn abort_derived_chart(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        self.abort_derived_sub(exchange_id, symbol, account_type);
+    }
+
     /// Abort the active derived/footprint subscription for an instrument, if any.
     fn abort_derived_sub(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
         if let Ok(mut subs) = self.derived_subs.lock() {
@@ -1253,6 +1350,54 @@ impl DataBridge {
                         symbol: symbol_canonical.clone(),
                         bar,
                         is_closed: true,
+                    });
+                }
+            }
+        })
+    }
+
+    /// Spawn a footprint station subscriber.
+    ///
+    /// Station emits `Event::Footprint { point: FootprintPoint }` (blob-backed
+    /// OHLCV + per-price-level buy/sell). Bridge re-emits as
+    /// `LiveUpdate::FootprintUpdate`. Same lifecycle as `spawn_derived_bar_sub`
+    /// (one task per instrument, aborts on chart-type/TF switch).
+    fn spawn_footprint_sub(
+        runtime: &Runtime,
+        station: std::sync::Arc<digdigdig3_station::Station>,
+        tx: tokio::sync::broadcast::Sender<LiveUpdate>,
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol_canonical: String,
+        symbol_wire: String,
+        stream: digdigdig3_station::Stream,
+    ) -> tokio::task::JoinHandle<()> {
+        runtime.spawn(async move {
+            let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                exchange_id,
+                symbol_wire.clone(),
+                account_type,
+                [stream],
+            );
+            let mut report = match station.subscribe(sub_set).await {
+                Ok(r) => r,
+                Err(e) => {
+                    crate::dlog!("[Bridge] footprint subscribe failed {:?} sym={}: {:?}",
+                        exchange_id, symbol_wire, e);
+                    return;
+                }
+            };
+            if !report.failed.is_empty() {
+                crate::dlog!("[Bridge] footprint partial-fail {:?} sym={}: {} failed",
+                    exchange_id, symbol_wire, report.failed.len());
+            }
+            while let Some(ev) = report.handle.recv().await {
+                if let digdigdig3_station::Event::Footprint { point, .. } = ev {
+                    let _ = tx.send(LiveUpdate::FootprintUpdate {
+                        exchange_id,
+                        account_type,
+                        symbol: symbol_canonical.clone(),
+                        point,
                     });
                 }
             }
@@ -2804,8 +2949,12 @@ type FetchKey = (ExchangeId, AccountType, String, String);
 
 /// Build a station `SeriesKey` for the `Kind::Kline(interval)` series
 /// addressed by (exchange, account, raw_symbol, timeframe_name).
+///
+/// The kline-interval label is the lowercased timeframe name (matches
+/// `timeframe_to_interval`); only the casing is normalised here so the
+/// caller does not need to construct a full `Timeframe` value.
 fn station_bar_key(exchange: ExchangeId, account: AccountType, symbol: &str, timeframe: &str) -> StationSeriesKey {
-    let iv = KlineInterval::new(&timeframe_to_interval(&Timeframe::new(timeframe)));
+    let iv = KlineInterval::new(&timeframe.to_lowercase());
     StationSeriesKey::new(exchange, account, symbol, StationKind::Kline(iv))
 }
 
@@ -2827,7 +2976,8 @@ fn station_read_bars(station: &digdigdig3_station::Station, key: &StationSeriesK
 /// forwarder is registered.
 fn station_read_bars_len(station: &digdigdig3_station::Station, key: &StationSeriesKey) -> usize {
     let Some(arc) = station.series::<BarPoint>(key) else { return 0; };
-    arc.blocking_read().len()
+    let guard = arc.blocking_read();
+    guard.len()
 }
 
 // ── Trading / Account / Position bridge methods ─────────────────────────────
