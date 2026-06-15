@@ -795,19 +795,6 @@ impl DataBridge {
             af.insert(cache_key.clone());
         }
 
-        // If cache exists, send it immediately (Level 1 — instant render while
-        // the network fetch is in flight).
-        if let Some(ref bars) = cached_bars {
-            crate::dlog!("[Bridge] {:?} serving {} cached bars instantly for sym={} tf={}", exchange_id, bars.len(), symbol_str, tf_name);
-            let _ = tx.send(LiveUpdate::BarsLoaded {
-                exchange_id,
-                account_type,
-                symbol: symbol_str.clone(),
-                timeframe: tf_name.clone(),
-                bars: bars.clone(),
-            });
-        }
-
         // Capture disk cache boundaries for gap detection (Phase B).
         let disk_last_ts: Option<i64> = cached_bars.as_ref()
             .and_then(|bars| bars.last())
@@ -826,10 +813,33 @@ impl DataBridge {
         // subscriber → N parallel WS subscriptions and N duplicate BarUpdate
         // emissions per tick, which caused the chart to "rebuild" the window
         // every frame and Binance to reject the burst with HTTP 403.
+        //
+        // The same flag also gates the Level-1 instant BarsLoaded below: only
+        // the FIRST request_bars for a key emits a full snapshot. Subsequent
+        // calls let live BarUpdate ticks upsert into window.bars in place —
+        // resending BarsLoaded(N) every frame on a station-backed read would
+        // re-set window.bars and drift the viewport, because the station ring
+        // is live (grows on every WS frame) unlike the old mlc-side ring.
         let need_spawn_kline_sub = {
             let mut subs = self.station_kline_subscribed.lock().unwrap_or_else(|e| e.into_inner());
             if subs.contains(&cache_key) { false } else { subs.insert(cache_key.clone()); true }
         };
+
+        // Level 1 — first-call instant render: emit BarsLoaded only on the
+        // very first request_bars for this key.
+        if need_spawn_kline_sub {
+            if let Some(ref bars) = cached_bars {
+                crate::dlog!("[Bridge] {:?} serving {} cached bars instantly for sym={} tf={}", exchange_id, bars.len(), symbol_str, tf_name);
+                let _ = tx.send(LiveUpdate::BarsLoaded {
+                    exchange_id,
+                    account_type,
+                    symbol: symbol_str.clone(),
+                    timeframe: tf_name.clone(),
+                    bars: bars.clone(),
+                });
+            }
+        }
+
         if need_spawn_kline_sub {
             let station = self.station.clone();
             let station_tx = self.tx.clone();
