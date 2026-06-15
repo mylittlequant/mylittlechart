@@ -139,8 +139,11 @@ impl ChartApp {
                     "baseline"      => Some("baseline"),
                     "histogram"     => Some("histogram"),
                     "columns"       => Some("columns"),
-                    // Transform render styles — derived at render time from the
-                    // current TF's bars (like heikin_ashi). Data source unchanged.
+                    // Phase 2C: derived bar streams from dig3-station — own
+                    // subscription, no per-frame folding. Bars arrive via
+                    // LiveUpdate::BarUpdate from the station's
+                    // TradeToRangeBarDerived / TradeToVolumeBarDerived /
+                    // TradeToFootprintDerived forwarders.
                     "range_bar"     => Some("range_bar"),
                     "volume_bar"    => Some("volume_bar"),
                     "footprint"     => Some("footprint"),
@@ -150,18 +153,75 @@ impl ChartApp {
                     }
                 };
                 if let Some(ct) = static_type {
-                    // chart_type is purely a render style now — it does NOT change
-                    // the data subscription (range/volume/footprint transform the
-                    // current TF's bars). Just set the panel chart_type.
                     let pid = self.panel_app.panel_grid
                         .active_container()
                         .map(|w| w.chart_panel_id);
-                    if let Some(chart_panel_id) = pid {
+                    let (chart_param, chart_interval): (f64, &'static str) = if let Some(chart_panel_id) = pid {
                         let panel = crate::chart_panel_bridge::ensure_chart_panel_state(
                             &mut self.panels_store, chart_panel_id,
                         );
+                        let prev_ct = panel.chart_type;
                         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                             window.set_chart_type_with_undo(panel, ct);
+                        }
+                        // Stash for the subscribe-side dispatch below; the
+                        // panel borrow ends here.
+                        let _ = prev_ct;
+                        (panel.chart_type_param, panel.chart_type_interval)
+                    } else {
+                        (0.0, "1m")
+                    };
+
+                    // Phase 2C: drive the bridge subscription to match the new
+                    // chart_type. tick TF stays on TickBar (handled by
+                    // ChangeTimeframe); for time TFs, derived chart_type owns
+                    // the data source and must abort the kline subscription
+                    // implicitly by replacing the derived_subs entry.
+                    if let Some(active_leaf) = self.panel_app.panel_grid.active_container() {
+                        let cid = active_leaf.id;
+                        let symbol_opt = self.managers.bubble.symbol_for_chart(cid).map(String::from);
+                        let at_label_opt = self.managers.bubble.account_type_for_chart(cid).map(String::from);
+                        let tf_opt = self.managers.bubble.timeframe_for_chart(cid).cloned();
+                        if let (Some(symbol), Some(at_label), Some(tf)) = (symbol_opt, at_label_opt, tf_opt) {
+                            if !symbol.is_empty() {
+                                let eid_str = self.active_exchange.as_str();
+                                if self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
+                                    let at = crate::account_type_from_label(&at_label);
+                                    let on_tick_tf = tf.tick_count().is_some();
+                                    match ct {
+                                        "range_bar" => {
+                                            let units = if chart_param > 0.0 { chart_param } else { 10.0 };
+                                            let scaled = (units * 1e8) as u64;
+                                            self.bridge.request_range_bars(self.active_exchange, &symbol, at, scaled);
+                                        }
+                                        "volume_bar" => {
+                                            let units = if chart_param > 0.0 { chart_param } else { 1000.0 };
+                                            let scaled = (units * 1e8) as u64;
+                                            self.bridge.request_volume_bars(self.active_exchange, &symbol, at, scaled);
+                                        }
+                                        "footprint" => {
+                                            self.bridge.request_footprint(self.active_exchange, &symbol, at, chart_interval);
+                                        }
+                                        _ => {
+                                            // Plain render type — abort any active
+                                            // derived/footprint sub for this instrument.
+                                            // (Tick TF subs are dropped by ChangeTimeframe;
+                                            // here we only drop derived chart-types.)
+                                            self.bridge.abort_derived_chart(self.active_exchange, &symbol, at);
+                                            // Re-arm kline subscription for time TF (no-op
+                                            // when station already has a forwarder for this key).
+                                            if !on_tick_tf {
+                                                self.bridge.request_bars(
+                                                    self.active_exchange, &symbol, &tf, at,
+                                                    None,
+                                                    Some(self.panel_app.user_manager.profile.bar_count as usize),
+                                                    true,
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                     state_mutated = true;
