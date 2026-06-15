@@ -2344,7 +2344,7 @@ impl DataBridge {
             // Re-check cache length after connector wait — another task may have
             // already satisfied the target while we were waiting.
             let (still_need, end_time_cursor_init) = {
-                let bars = station_read_bars(&station_bg, &station_bar_seriskey);
+                let bars = station_read_bars_async(&station_bg, &station_bar_seriskey).await;
                 if bars.len() >= target_bars as usize {
                     crate::dlog!(
                         "[Bridge] backfill {:?} sym={} tf={}: satisfied after connector wait ({} bars)",
@@ -3016,27 +3016,34 @@ fn station_bar_key(exchange: ExchangeId, account: AccountType, symbol: &str, tim
     StationSeriesKey::new(exchange, account, symbol, StationKind::Kline(iv))
 }
 
-/// Sync read of all bars from the station's `Series<BarPoint>` ring.
+/// SYNC read of all bars from the station's `Series<BarPoint>` ring.
 ///
-/// Returns empty `Vec` if no forwarder is registered for this key (no active
-/// subscriber). Conversion to chart-side `Bar` is `bar_point_to_bar` (ms→s).
-///
-/// `tokio::sync::RwLock::blocking_read` is safe on the bridge's sync API
-/// surface — every read site fires from the app thread, never from inside a
-/// task on the bridge's own runtime.
+/// SAFE ONLY from the app thread (sync bridge API surface). Calling this
+/// from inside a tokio task on the bridge runtime panics with
+/// "cannot block within runtime" — use [`station_read_bars_async`] there.
 fn station_read_bars(station: &digdigdig3_station::Station, key: &StationSeriesKey) -> Vec<Bar> {
     let Some(arc) = station.series::<BarPoint>(key) else { return Vec::new(); };
     let guard = arc.blocking_read();
     guard.snapshot().iter().map(bar_point_to_bar).collect()
 }
 
-/// Sync count of bars in the station's `Series<BarPoint>` ring. Zero if no
-/// forwarder is registered.
+/// SYNC count of bars in the station's `Series<BarPoint>` ring. App-thread only.
 fn station_read_bars_len(station: &digdigdig3_station::Station, key: &StationSeriesKey) -> usize {
     let Some(arc) = station.series::<BarPoint>(key) else { return 0; };
     let guard = arc.blocking_read();
     guard.len()
 }
+
+/// ASYNC read of all bars from the station's `Series<BarPoint>` ring.
+///
+/// Use from inside tokio tasks on the bridge runtime — the await yields
+/// the worker thread instead of panicking like `blocking_read` would.
+async fn station_read_bars_async(station: &digdigdig3_station::Station, key: &StationSeriesKey) -> Vec<Bar> {
+    let Some(arc) = station.series::<BarPoint>(key) else { return Vec::new(); };
+    let guard = arc.read().await;
+    guard.snapshot().iter().map(bar_point_to_bar).collect()
+}
+
 
 // ── Trading / Account / Position bridge methods ─────────────────────────────
 
