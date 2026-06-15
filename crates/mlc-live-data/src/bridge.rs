@@ -356,6 +356,14 @@ pub struct DataBridge {
     /// the 30s grace unsubscribe fires) — otherwise stale TickBar forwarders
     /// keep emitting BarUpdate into the same window. Guarded by `std::sync::Mutex`.
     derived_subs: Arc<Mutex<HashMap<(ExchangeId, String, AccountType), tokio::task::JoinHandle<()>>>>,
+    /// Tracks which `(ExchangeId, AccountType, symbol, timeframe)` keys already
+    /// have a live `Stream::Kline` forwarder spawned by `request_bars`.
+    ///
+    /// Without this guard, every `request_bars` call (including the cache-fresh
+    /// fast path) spawned a fresh subscriber → N parallel WS subscriptions to
+    /// the same kline channel, N duplicate `LiveUpdate::BarUpdate` events per
+    /// tick, and Binance rejecting the burst with HTTP 403.
+    station_kline_subscribed: Arc<Mutex<HashSet<FetchKey>>>,
 }
 
 impl DataBridge {
@@ -497,6 +505,7 @@ impl DataBridge {
             station_private_subscribed: Arc::new(Mutex::new(HashSet::new())),
             symbols_warmup_inflight: Arc::new(Mutex::new(HashSet::new())),
             derived_subs: Arc::new(Mutex::new(HashMap::new())),
+            station_kline_subscribed: Arc::new(Mutex::new(HashSet::new())),
         }, rx, connector_ready_rx)
     }
 
@@ -811,7 +820,17 @@ impl DataBridge {
         // automatically (REST warm-seed on subscribe + WS upsert_by_ts per event
         // + DiskStore append per event). This task only re-emits Event::Bar as
         // LiveUpdate::BarUpdate for the chart-side consumer.
-        {
+        //
+        // Dedup guard: only spawn ONE subscriber per (eid, at, sym, tf). Without
+        // this every request_bars call (incl. cache-fresh skip) spawned a fresh
+        // subscriber → N parallel WS subscriptions and N duplicate BarUpdate
+        // emissions per tick, which caused the chart to "rebuild" the window
+        // every frame and Binance to reject the burst with HTTP 403.
+        let need_spawn_kline_sub = {
+            let mut subs = self.station_kline_subscribed.lock().unwrap_or_else(|e| e.into_inner());
+            if subs.contains(&cache_key) { false } else { subs.insert(cache_key.clone()); true }
+        };
+        if need_spawn_kline_sub {
             let station = self.station.clone();
             let station_tx = self.tx.clone();
             // Canonical form — emitted back to the app so bubble.symbol lookups match.
