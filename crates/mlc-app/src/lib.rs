@@ -411,10 +411,6 @@ pub struct ChartApp {
     /// Set to true when this window's tab/preset state changed and needs saving.
     /// Checked and cleared by App each frame.
     pub profile_dirty: bool,
-    /// Per-window tracked series handles from BarService.
-    /// Key = (chart_id, BarSeriesKey) → handle.
-    /// Used for version-based change detection in future phases.
-    series_handles: std::collections::HashMap<(u64, mlc_bar_service::BarSeriesKey), mlc_bar_service::TrackedSeriesHandle>,
     /// Live preset state for open tabs (except the active one).
     /// Key = preset id. On tab switch: park active → cache, unpark target → active.
     live_preset_cache: std::collections::HashMap<String, preset_cache::LivePresetState>,
@@ -615,8 +611,6 @@ pub struct ChartApp {
     // ── Leak / backpressure diagnostics (snapshotted each tick) ──────────────
     /// Pending events in the broadcast queue after this tick's drain (backpressure).
     pub diag_queue_len: usize,
-    /// Live `series_handles` map size (should be bounded by open windows×series).
-    pub diag_series_handles: usize,
     /// Live `mini_ticker_cache` map size (should be bounded by watchlist size).
     pub diag_mini_ticker: usize,
 
@@ -931,13 +925,11 @@ impl ChartApp {
         // The third value is a ConnectorReady mpsc receiver used by the
         // chart-app-vello App struct; here it is dropped since ChartApp::tick()
         // receives ConnectorReady via the broadcast channel directly.
-        let shared_series: mlc_bar_service::SharedSeriesMap =
-            std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
         let shared_trades: mlc_trade_service::SharedTradeMap =
             std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
         let shared_orderbook: mlc_orderbook_service::SharedOrderbookMap =
             std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
-        let (bridge, live_update_rx, _connector_ready_rx) = DataBridge::new(shared_series, shared_trades, shared_orderbook);
+        let (bridge, live_update_rx, _connector_ready_rx) = DataBridge::new(shared_trades, shared_orderbook);
         let bridge = std::sync::Arc::new(bridge);
         // live_update_rx is a broadcast::Receiver — see DataBridge::add_listener()
         // for spawning additional windows that share this bridge.
@@ -1036,7 +1028,6 @@ impl ChartApp {
             pending_sub_pane_order: std::collections::HashMap::new(),
             pending_sub_pane_hidden: std::collections::HashMap::new(),
             maximized_sub_panes: std::collections::HashMap::new(),
-            series_handles: std::collections::HashMap::new(),
             live_preset_cache: std::collections::HashMap::new(),
             agent: agent::AgentSessionManager::default(),
             agent_pty_hover_focused: false,
@@ -1044,7 +1035,6 @@ impl ChartApp {
             agent_chat_drag_active: false,
             agent_autostarted: false,
             diag_queue_len: 0,
-            diag_series_handles: 0,
             diag_mini_ticker: 0,
             last_tick_us: 0,
             last_indicator_recalc_us: 0,
@@ -1386,7 +1376,6 @@ impl ChartApp {
             pending_sub_pane_order: std::collections::HashMap::new(),
             pending_sub_pane_hidden: std::collections::HashMap::new(),
             maximized_sub_panes: std::collections::HashMap::new(),
-            series_handles: std::collections::HashMap::new(),
             live_preset_cache: std::collections::HashMap::new(),
             agent: agent::AgentSessionManager::default(),
             agent_pty_hover_focused: false,
@@ -1394,7 +1383,6 @@ impl ChartApp {
             agent_chat_drag_active: false,
             agent_autostarted: false,
             diag_queue_len: 0,
-            diag_series_handles: 0,
             diag_mini_ticker: 0,
             last_tick_us: 0,
             last_indicator_recalc_us: 0,
@@ -1634,7 +1622,6 @@ impl ChartApp {
             pending_sub_pane_order: std::collections::HashMap::new(),
             pending_sub_pane_hidden: std::collections::HashMap::new(),
             maximized_sub_panes: std::collections::HashMap::new(),
-            series_handles: std::collections::HashMap::new(),
             live_preset_cache: std::collections::HashMap::new(),
             agent: agent::AgentSessionManager::default(),
             agent_pty_hover_focused: false,
@@ -1642,7 +1629,6 @@ impl ChartApp {
             agent_chat_drag_active: false,
             agent_autostarted: false,
             diag_queue_len: 0,
-            diag_series_handles: 0,
             diag_mini_ticker: 0,
             last_tick_us: 0,
             last_indicator_recalc_us: 0,

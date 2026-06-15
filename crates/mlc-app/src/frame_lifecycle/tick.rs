@@ -257,36 +257,6 @@ impl ChartApp {
                         bars.first().map(|b| b.timestamp).unwrap_or(0),
                         bars.last().map(|b| b.timestamp).unwrap_or(0));
 
-                    // Obtain/update TrackedSeriesHandle for matched windows.
-                    {
-                        use std::sync::{Arc, RwLock};
-                        let period_secs = loaded_tf.as_ref().map_or(60_000, |tf| tf.interval_ms) / 1000;
-                        let bs_key = mlc_bar_service::BarSeriesKey::new(exchange_id, account_type, symbol.clone(), tf_name.clone());
-                        let matched_cids: Vec<u64> = self.panel_app.panel_grid.containers().iter()
-                            .filter(|(cid, _window)| {
-                
-                                self.managers.bubble.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
-                                    && self.managers.bubble.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
-                                    && self.managers.bubble.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
-                                    && self.managers.bubble.account_type_for_chart(**cid).map_or(false, |at| at == account_type.short_label())
-                            })
-                            .map(|(cid, _window)| cid.0)
-                            .collect();
-                        let bar_cache = self.bridge.bar_cache();
-                        for cid_val in matched_cids {
-                            let handle_key = (cid_val, bs_key.clone());
-                            self.series_handles.entry(handle_key).or_insert_with(|| {
-                                let arc = {
-                                    let mut map = bar_cache.write().unwrap_or_else(|e| e.into_inner());
-                                    map.entry(bs_key.clone())
-                                        .or_insert_with(|| Arc::new(RwLock::new(mlc_bar_service::BarSeries::new(mlc_bar_service::DEFAULT_CAPACITY, period_secs))))
-                                        .clone()
-                                };
-                                mlc_bar_service::TrackedSeriesHandle::new(arc)
-                            });
-                        }
-                    }
-
                     let mut any_matched = false;
                     // Collect (symbol, timeframe, account_type) for windows that received
                     // an initial load so we can trigger background backfill after the loop.
@@ -1707,7 +1677,6 @@ impl ChartApp {
         // Snapshot growable structures so the [PERF] line can show whether they
         // grow unbounded over time (the suspected "leak" / load-storm).
         self.diag_queue_len = self.live_update_rx.len();
-        self.diag_series_handles = self.series_handles.len();
         self.diag_mini_ticker = self.mini_ticker_cache.len();
 
         // ── Tick spike log ───────────────────────────────────────────────────

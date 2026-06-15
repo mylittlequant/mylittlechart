@@ -4470,10 +4470,10 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     .next()
                     .map(|pw| pw.chart.render_timing_us)
                     .unwrap_or((0, 0, 0, 0));
-                let (q_len, n_handles, n_ticker) = self.windows.values()
+                let (q_len, n_ticker) = self.windows.values()
                     .next()
-                    .map(|pw| (pw.chart.diag_queue_len, pw.chart.diag_series_handles, pw.chart.diag_mini_ticker))
-                    .unwrap_or((0, 0, 0));
+                    .map(|pw| (pw.chart.diag_queue_len, pw.chart.diag_mini_ticker))
+                    .unwrap_or((0, 0));
                 let (ob_panel_us, tr_panel_us, bar_apply_us, ob_ev, tr_ev, composite_us) =
                     self.windows.values()
                     .next()
@@ -4487,7 +4487,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     ))
                     .unwrap_or((0, 0, 0, 0, 0, 0));
                 eprintln!(
-                    "[PERF] Frame {} total={:.1}ms atw={:.1}ms dt[min={:.1} max={:.1} n={}] ema_fps={:.0} | tick_app={:.1}ms drains={:.1}ms persist={:.1}ms sync={:.1}ms tick={:.1}ms perf_pop={:.1}ms agent={:.1}ms render={:.1}ms (scene={:.1}ms gpu={:.1}ms[rtex={:.1} pres={:.1}] gpu_wait={:.1}ms) | breakdown: chart={:.1}ms tb={:.1}ms side={:.1}ms setup={:.1}ms | tick-detail: obpanel={}us(n={}) trpanel={}us(n={}) barapply={}us composite={}us | LEAK[queue={} handles={} ticker={}]",
+                    "[PERF] Frame {} total={:.1}ms atw={:.1}ms dt[min={:.1} max={:.1} n={}] ema_fps={:.0} | tick_app={:.1}ms drains={:.1}ms persist={:.1}ms sync={:.1}ms tick={:.1}ms perf_pop={:.1}ms agent={:.1}ms render={:.1}ms (scene={:.1}ms gpu={:.1}ms[rtex={:.1} pres={:.1}] gpu_wait={:.1}ms) | breakdown: chart={:.1}ms tb={:.1}ms side={:.1}ms setup={:.1}ms | tick-detail: obpanel={}us(n={}) trpanel={}us(n={}) barapply={}us composite={}us | LEAK[queue={} ticker={}]",
                     self.frame_count,
                     total as f64 / 1000.0,
                     self.cached_about_to_wait_us as f64 / 1000.0,
@@ -4517,7 +4517,6 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     bar_apply_us,
                     composite_us,
                     q_len,
-                    n_handles,
                     n_ticker,
                 );
             }
@@ -4641,27 +4640,21 @@ fn main() {
         .expect("Failed to create event loop");
     event_loop.set_control_flow(ControlFlow::Poll); // Will be updated per-frame in about_to_wait()
 
-    // Create the shared series map BEFORE the bridge so both share the same
-    // Arc-backed registry.  DataBridge holds a clone for its async fetch tasks;
-    // App::new passes it to BarService so persistence + live data share one map.
-    let shared_series: mlc_bar_service::SharedSeriesMap =
-        std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
-
-    // Create the shared trade map — mirrors shared_series for live trade rings.
+    // Create the shared trade map for live trade rings.
     let shared_trades: mlc_trade_service::SharedTradeMap =
         std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
 
-    // Create the shared orderbook map — mirrors shared_trades for live orderbook series.
+    // Create the shared orderbook map for live orderbook series.
     let shared_orderbook: mlc_orderbook_service::SharedOrderbookMap =
         std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
 
     // Create DataBridge ONCE — tokio runtime + connector pool shared by all windows.
-    // The broadcast receiver (`_live_rx`) is dropped here: we no longer subscribe
-    // to it at the app level.  Per-window ChartApp instances each subscribe via
-    // `bridge.add_listener()`.  The mpsc `connector_ready_rx` is the lightweight
-    // channel used by `tick_app_state` to handle ConnectorReady without touching
-    // the broadcast buffer.
-    let (bridge, _live_rx, connector_ready_rx) = mlc_live_data::DataBridge::new(shared_series.clone(), shared_trades.clone(), shared_orderbook.clone());
+    // Bars live in dig3-station's Series<BarPoint> after Phase 2B; the bridge
+    // reads them via station.series::<BarPoint>(&key).blocking_read() and emits
+    // BarsLoaded/BarUpdate through the broadcast channel as before. Trade and
+    // orderbook still flow through the legacy shared maps until Phase 2B
+    // covers them too.
+    let (bridge, _live_rx, connector_ready_rx) = mlc_live_data::DataBridge::new(shared_trades.clone(), shared_orderbook.clone());
     let bridge = std::sync::Arc::new(bridge);
 
     // Detect startup mode BEFORE loading the user manager.

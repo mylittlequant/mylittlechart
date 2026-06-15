@@ -20,9 +20,12 @@
 //! use digdigdig3::ExchangeId;
 //! use std::sync::Arc;
 //!
-//! // Create the bridge (one per application)
-//! let shared_series = mlc_bar_service::SharedSeriesMap::default();
-//! let (bridge, mut rx, _ready_rx) = DataBridge::new(shared_series);
+//! // Create the bridge (one per application). Bars live in the dig3-station
+//! // Series<BarPoint> ring; the bridge reads them via station.series() on
+//! // demand. Trade + orderbook still flow through their shared maps.
+//! let shared_trades = mlc_trade_service::SharedTradeMap::default();
+//! let shared_orderbook = mlc_orderbook_service::SharedOrderbookMap::default();
+//! let (bridge, mut rx, _ready_rx) = DataBridge::new(shared_trades, shared_orderbook);
 //! let bridge = Arc::new(bridge);
 //!
 //! // Start a connector (non-blocking)

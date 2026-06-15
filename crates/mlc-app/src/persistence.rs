@@ -186,7 +186,6 @@ impl ChartApp {
             ),
             leaf_color_tags: std::mem::take(&mut self.panel_app.leaf_color_tags),
             indicator_overlay_states: std::mem::take(&mut self.panel_app.indicator_overlay_states),
-            series_handles: std::mem::take(&mut self.series_handles),
             pending_sub_pane_ratios: std::mem::take(&mut self.pending_sub_pane_ratios),
             pending_sub_pane_above_main: std::mem::take(&mut self.pending_sub_pane_above_main),
             pending_sub_pane_order: std::mem::take(&mut self.pending_sub_pane_order),
@@ -214,7 +213,6 @@ impl ChartApp {
         self.managers.alert = state.alert_manager;
         self.panel_app.leaf_color_tags = state.leaf_color_tags;
         self.panel_app.indicator_overlay_states = state.indicator_overlay_states;
-        self.series_handles = state.series_handles;
         self.pending_sub_pane_ratios = state.pending_sub_pane_ratios;
         self.pending_sub_pane_above_main = state.pending_sub_pane_above_main;
         self.pending_sub_pane_order = state.pending_sub_pane_order;

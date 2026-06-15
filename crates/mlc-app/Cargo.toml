@@ -16,7 +16,6 @@ mlc-panels = { path = "../mlc-panels", package = "mylittlechart-panels" }
 mlc-alerts = { path = "../mlc-alerts", package = "mylittlechart-alerts" }
 mlc-alert-delivery = { path = "../mlc-alert-delivery", package = "mylittlechart-alert-delivery" }
 mlc-live-data = { path = "../mlc-live-data", package = "mylittlechart-live-data" }
-mlc-bar-service = { path = "../mlc-bar-service", package = "mylittlechart-bar-service" }
 mlc-trade-service = { path = "../mlc-trade-service", package = "mylittlechart-trade-service" }
 mlc-orderbook-service = { path = "../mlc-orderbook-service", package = "mylittlechart-orderbook-service" }
 mlc-trading-manager = { path = "../mlc-trading-manager", package = "mylittlechart-trading-manager" }
