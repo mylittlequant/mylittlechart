@@ -100,6 +100,17 @@ pub enum ChartOutEvent {
     /// Request a chart type change (e.g., from chart_type_selector dropdown).
     ChangeChartType { chart_type: String },
 
+    /// Commit a numeric parameter for a derived chart type (range_bar /
+    /// volume_bar). Emitted by the param-input popup on Enter; the handler
+    /// stores the value on the panel and re-issues the bridge subscription
+    /// with the new threshold.
+    UpdateChartTypeParam { value: f64 },
+
+    /// Commit the kline interval for the `"footprint"` chart type. Emitted
+    /// by the interval-picker popup; handler stores it on the panel and
+    /// re-issues the footprint subscription.
+    UpdateChartTypeInterval { interval: String },
+
     // === Theme (app-global) ===
     SetTheme(&'static str),
     SetStyle(&'static str),

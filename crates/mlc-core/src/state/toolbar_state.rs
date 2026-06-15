@@ -640,6 +640,13 @@ pub struct ChartToolbarState {
     /// When `Some`, `render_dropdown()` uses this position instead of looking up
     /// the button rect from toolbar results.  Cleared when the dropdown closes.
     pub open_dropdown_position: Option<(f64, f64)>,
+    /// While the user is editing a chart-type param inline-input (range_bar /
+    /// volume_bar / footprint), this holds the chart_type whose row owns the
+    /// focused TextField. Cleared when the field blurs / commits.
+    ///
+    /// Used by the Commit handler to route the value to the right
+    /// `ChartOutEvent::UpdateChartTypeParam` / `UpdateChartTypeInterval`.
+    pub active_param_chart_type: Option<String>,
 }
 
 impl Default for ChartToolbarState {
@@ -681,6 +688,7 @@ impl Default for ChartToolbarState {
             left_scroll_offset: 0.0,
             right_scroll_offset: 0.0,
             open_dropdown_position: None,
+            active_param_chart_type: None,
         }
     }
 }

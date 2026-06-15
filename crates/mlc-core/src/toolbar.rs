@@ -309,13 +309,17 @@ fn chart_type_items() -> Vec<DropdownItemDef> {
         DropdownItemDef::action("baseline", MK::Baseline.get(lang)).with_icon(ToolbarIconId::new("Baseline")),
         DropdownItemDef::action("histogram", MK::Histogram.get(lang)).with_icon(ToolbarIconId::new("Histogram")),
         DropdownItemDef::action("columns", MK::Columns.get(lang)).with_icon(ToolbarIconId::new("Columns")),
-        // ── Transform render styles (derived from the current TF's bars) ─────
-        // Tick is a TIMEFRAME (TF selector), not here. Range/Volume/Footprint are
-        // chart_type render transforms of the current TF bars (like Heikin Ashi).
+        // ── Derived chart types — bars built from trades by dig3-station ─────
+        // Each row carries an inline numeric/text input on the right edge so
+        // the user picks the threshold WITHOUT leaving the dropdown.
+        // Tick is a TIMEFRAME (TF selector), not here.
         DropdownItemDef::Separator,
-        DropdownItemDef::action("range_bar",  "Range Bars") .with_icon(ToolbarIconId::new("RangeBar")),
-        DropdownItemDef::action("volume_bar", "Volume Bars").with_icon(ToolbarIconId::new("VolumeBar")),
-        DropdownItemDef::action("footprint",  "Clusters")   .with_icon(ToolbarIconId::new("Footprint")),
+        DropdownItemDef::action_with_input("range_bar",  "Range Bars",  "bar_mode_param", "10.0")
+            .with_icon(ToolbarIconId::new("RangeBar")),
+        DropdownItemDef::action_with_input("volume_bar", "Volume Bars", "bar_mode_param", "1000.0")
+            .with_icon(ToolbarIconId::new("VolumeBar")),
+        DropdownItemDef::action_with_input("footprint",  "Clusters",    "bar_mode_param", "1m")
+            .with_icon(ToolbarIconId::new("Footprint")),
     ]
 }
 

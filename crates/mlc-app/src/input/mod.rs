@@ -7587,6 +7587,43 @@ impl ChartApp {
             return;
         }
 
+        // ── Chart-type inline param-input key routing ────────────────────────
+        // The dropdown's range_bar / volume_bar / footprint rows carry an
+        // inline TextField (registered as BAR_MODE_PARAM). When focused, route
+        // its keys here. Commit (Enter) emits the right UpdateChartType* event
+        // based on toolbar_state.active_param_chart_type (set by the click
+        // handler in panel_click.rs).
+        let param_id = WidgetId::from(crate::text_input::BAR_MODE_PARAM);
+        if self.input_coordinator.borrow().text_fields().is_focused(&param_id) {
+            if let Some(uzor_key) = to_uzor_key(&key) {
+                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
+                match action {
+                    TextAction::Commit(text) => {
+                        let active_ct = self.panel_app.toolbar_state.active_param_chart_type.clone();
+                        if active_ct.as_deref() == Some("footprint") {
+                            self.process_chart_out_event(
+                                mlc_core::events::ChartOutEvent::UpdateChartTypeInterval { interval: text }
+                            );
+                        } else if let Ok(v) = text.trim().parse::<f64>() {
+                            self.process_chart_out_event(
+                                mlc_core::events::ChartOutEvent::UpdateChartTypeParam { value: v }
+                            );
+                        } else {
+                            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                        }
+                        self.panel_app.toolbar_state.active_param_chart_type = None;
+                    }
+                    TextAction::Cancel => {
+                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                        self.panel_app.toolbar_state.active_param_chart_type = None;
+                    }
+                    TextAction::TextChanged(_) | TextAction::None => {}
+                    TextAction::RawInput(_) => {}
+                }
+            }
+            return;
+        }
+
         // ── Hex color picker key routing ──────────────────────────────────────
         let hex_id = WidgetId::from(crate::text_input::HEX_COLOR);
         if self.input_coordinator.borrow().text_fields().is_focused(&hex_id) {

@@ -1392,6 +1392,14 @@ fn convert_dropdown_item(item: &DropdownItemDef) -> DropdownItem {
             }
             di
         }
+        DropdownItemDef::ActionWithInput { id, label, icon, field_id, default_text } => {
+            let mut di = DropdownItem::item(id, label)
+                .with_param_field(field_id.clone(), default_text.clone());
+            if let Some(icon_id) = icon {
+                di = di.with_icon(IconId::new(icon_id.name()));
+            }
+            di
+        }
         DropdownItemDef::Header { label } => {
             DropdownItem::header(label)
         }

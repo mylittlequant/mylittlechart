@@ -551,7 +551,8 @@ fn draw_chevron(
 fn is_tool_in_items(tool_id: &str, items: &[DropdownItemDef]) -> bool {
     for item in items {
         match item {
-            DropdownItemDef::Action { id, .. } => {
+            DropdownItemDef::Action { id, .. }
+            | DropdownItemDef::ActionWithInput { id, .. } => {
                 if *id == tool_id {
                     return true;
                 }

@@ -24,6 +24,15 @@ pub enum DropdownItem {
         /// If Some, draws a toggle switch on the right. The bool is the current state.
         /// Label becomes non-clickable; only the toggle area triggers the action.
         toggle: Option<bool>,
+        /// If Some, draws an inline text-input on the right side of the row.
+        /// `(field_id, default_text)`:
+        /// - `field_id` is the `TextFieldStore` widget-ID key the host
+        ///   registered for this input.
+        /// - `default_text` is rendered as placeholder when the field is empty.
+        /// The row's left side remains clickable (fires the action with the
+        /// item id); the input area becomes its own hit zone that focuses
+        /// the text-field on click.
+        param_field: Option<(String, String)>,
     },
     /// Separator line
     Separator,
@@ -51,7 +60,19 @@ impl DropdownItem {
             subtitle: None,
             accent_color: None,
             toggle: None,
+            param_field: None,
         }
+    }
+
+    /// Attach an inline text-input field on the right side of the row.
+    ///
+    /// `field_id` matches a key the host registered on its
+    /// `TextFieldStore`; `default_text` is shown as placeholder when empty.
+    pub fn with_param_field(mut self, field_id: impl Into<String>, default_text: impl Into<String>) -> Self {
+        if let Self::Item { param_field: ref mut pf, .. } = self {
+            *pf = Some((field_id.into(), default_text.into()));
+        }
+        self
     }
 
     pub fn with_icon(mut self, icon: impl Into<IconId>) -> Self {
@@ -305,7 +326,7 @@ where
 
     for item in &config.items {
         match item {
-            DropdownItem::Item { id: _, label, icon, shortcut, disabled: _, danger: _, subtitle, accent_color: _, toggle } => {
+            DropdownItem::Item { id: _, label, icon, shortcut, disabled: _, danger: _, subtitle, accent_color: _, toggle, param_field: _ } => {
                 // Measure label text
                 let label_width = ctx.measure_text(label);
                 let mut item_width = label_width;
@@ -399,7 +420,7 @@ where
 
     for item in &config.items {
         match item {
-            DropdownItem::Item { id, icon, label, shortcut, disabled, danger, subtitle, accent_color, toggle } => {
+            DropdownItem::Item { id, icon, label, shortcut, disabled, danger, subtitle, accent_color, toggle, param_field } => {
                 let item_rect = WidgetRect::new(
                     menu_rect.x + config.padding,
                     y,
@@ -455,15 +476,18 @@ where
                     text_x += config.icon_size + 8.0;
                 }
 
-                // Draw label (clipped to avoid overflow into toggle/shortcut zone)
+                // Draw label (clipped to avoid overflow into toggle/shortcut/input zone)
                 ctx.set_font(&format!("{}px sans-serif", config.font_size));
                 ctx.set_fill_color(text_color);
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
                 ctx.save();
                 ctx.begin_path();
-                // Reserve space for right-side content: toggle (36+pad), shortcut, or nothing
-                let right_reserve = if toggle.is_some() { 48.0 } else if shortcut.is_some() || subtitle.is_some() { 40.0 } else { 4.0 };
+                // Reserve space for right-side content: input (88+pad), toggle (36+pad), shortcut, or nothing
+                let right_reserve = if param_field.is_some() { 96.0 }
+                    else if toggle.is_some() { 48.0 }
+                    else if shortcut.is_some() || subtitle.is_some() { 40.0 }
+                    else { 4.0 };
                 let label_max_w = (item_rect.right() - text_x - config.item_padding_x - right_reserve).max(20.0);
                 ctx.rect(text_x, item_rect.y, label_max_w, item_rect.height);
                 ctx.clip();
@@ -510,6 +534,41 @@ where
                     ctx.fill_text(sub, item_rect.right() - config.item_padding_x, item_rect.center_y());
                 }
 
+                // Inline param input (right side) — drawn ABOVE the right-side
+                // shortcut/subtitle/toggle code path; the right_reserve above
+                // already accounted for its width so labels don't overlap.
+                let input_rect_opt: Option<WidgetRect> = if let Some((field_id_str, default_text)) = param_field {
+                    let input_w = 88.0_f64;
+                    let input_h = (item_rect.height - 6.0).max(18.0);
+                    let input_x = item_rect.right() - config.item_padding_x - input_w;
+                    let input_y = item_rect.center_y() - input_h / 2.0;
+
+                    // Background + border.
+                    ctx.set_fill_color(&theme.background);
+                    ctx.fill_rounded_rect(input_x, input_y, input_w, input_h, 3.0);
+                    ctx.set_stroke_color(&theme.shortcut_text);
+                    ctx.set_stroke_width(1.0);
+                    ctx.set_line_dash(&[]);
+                    ctx.stroke_rounded_rect(input_x + 0.5, input_y + 0.5, input_w - 1.0, input_h - 1.0, 3.0);
+
+                    // Live text from the host's TextFieldStore. We don't have
+                    // direct access here (drop_dropdown is a pure renderer),
+                    // so fall back to placeholder display via `default_text`.
+                    // The caller (panel_app) overlays a focused-input render
+                    // when the field is focused; the placeholder is shown
+                    // when the field is unfocused/empty.
+                    ctx.set_fill_color(&theme.shortcut_text);
+                    ctx.set_font(&format!("{}px sans-serif", config.font_size - 1.0));
+                    ctx.set_text_align(TextAlign::Left);
+                    ctx.set_text_baseline(TextBaseline::Middle);
+                    ctx.fill_text(default_text, input_x + 6.0, item_rect.center_y());
+
+                    let _ = field_id_str;
+                    Some(WidgetRect::new(input_x, input_y, input_w, input_h))
+                } else {
+                    None
+                };
+
                 // Register click hit zone for all items so clicks inside the dropdown
                 // are always consumed and don't fall through to the background handler.
                 // Disabled items use a "__noop__:" prefix — the caller must treat them
@@ -518,6 +577,12 @@ where
                     result.item_rects.push((format!("__noop__:{}", id), item_rect));
                 } else {
                     result.item_rects.push((id.clone(), item_rect));
+                }
+                // Inline input gets its own dedicated hit zone with an
+                // "__input__:" prefix so the click router can focus the
+                // text-field instead of firing the action.
+                if let Some(ir) = input_rect_opt {
+                    result.item_rects.push((format!("__input__:{}", id), ir));
                 }
                 if is_hovered {
                     result.hovered = Some(id.clone());

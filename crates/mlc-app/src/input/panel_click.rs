@@ -3139,6 +3139,49 @@ impl ChartApp {
                     return;
                 }
 
+                // Inline-input click: a DropdownItem with `param_field` Some
+                // registers an extra "__input__:{real_id}" hit zone over its
+                // input rect. Don't fire the dropdown action — just focus the
+                // text-field and re-fill it with the current panel value (or
+                // the default) so the user can edit and Enter to commit.
+                if let Some(real_id) = item_id.strip_prefix("__input__:") {
+                    let active_pid = self.panel_app.panel_grid
+                        .active_container()
+                        .map(|w| w.chart_panel_id);
+                    let current_text = if let Some(pid) = active_pid {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(
+                            &mut self.panels_store, pid,
+                        );
+                        match real_id {
+                            "range_bar" | "volume_bar" => {
+                                if panel.chart_type_param > 0.0 {
+                                    format!("{}", panel.chart_type_param)
+                                } else if real_id == "range_bar" { "10.0".into() } else { "1000.0".into() }
+                            }
+                            "footprint" => {
+                                if !panel.chart_type_interval.is_empty() {
+                                    panel.chart_type_interval.to_string()
+                                } else { "1m".into() }
+                            }
+                            _ => String::new(),
+                        }
+                    } else {
+                        String::new()
+                    };
+                    // Track which derived chart_type the focused input belongs
+                    // to so the keypress Commit handler knows whether to emit
+                    // UpdateChartTypeParam (numeric) or UpdateChartTypeInterval.
+                    self.panel_app.toolbar_state.active_param_chart_type = Some(real_id.to_string());
+
+                    let field_id = uzor::WidgetId::from(crate::text_input::BAR_MODE_PARAM);
+                    let mut coord = self.input_coordinator.borrow_mut();
+                    let tf = coord.text_fields_mut();
+                    tf.set_text(&field_id, &current_text);
+                    tf.begin_edit(&field_id);
+                    tf.focus(crate::text_input::BAR_MODE_PARAM);
+                    return;
+                }
+
                 let dropdown_id = dropdown_id.to_string();
                 let item_id = item_id.to_string();
 
