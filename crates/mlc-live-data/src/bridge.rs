@@ -27,6 +27,15 @@ pub type SharedTradeSeries = Arc<tokio::sync::RwLock<StationSeries<TradePoint>>>
 /// `OrderbookSeries` wrapper is gone.
 pub type SharedOrderBookTracker = Arc<tokio::sync::RwLock<digdigdig3_station::orderbook::OrderBookTracker>>;
 
+/// Shared per-instrument footprint series.
+///
+/// The bridge owns one `Vec<FootprintPoint>` per `(exchange, account, symbol)`.
+/// The station's derived forwarder for `Stream::Footprint` re-emits each event
+/// through the broadcast channel; the bridge's forwarder writes the point into
+/// this Vec BEFORE broadcasting so the render-side reader always sees the bar
+/// by the time the `FootprintUpdate` event is observed.
+pub type SharedFootprintSeries = Arc<tokio::sync::RwLock<Vec<digdigdig3_station::data::FootprintPoint>>>;
+
 use tokio::sync::{broadcast, mpsc};
 use tokio::runtime::Runtime;
 
@@ -277,6 +286,15 @@ pub struct DataBridge {
     /// (`apply_snapshot` / `apply_delta`); panels read concurrently via
     /// `blocking_read()`.
     ob_trackers: Arc<dashmap::DashMap<(digdigdig3::ExchangeId, digdigdig3::AccountType, String), SharedOrderBookTracker>>,
+    /// Per-key live footprint series.
+    ///
+    /// Created on the first `request_footprint` call for a given
+    /// `(ExchangeId, AccountType, symbol)` key, then shared by all subsequent
+    /// readers. The station footprint forwarder task is the sole writer
+    /// (append per `Event::Footprint`); panels read concurrently via
+    /// `blocking_read()`. Survives chart-type / TF switches as long as a
+    /// subscriber exists.
+    footprint_series: Arc<dashmap::DashMap<(digdigdig3::ExchangeId, digdigdig3::AccountType, String), SharedFootprintSeries>>,
     /// One-shot guard for the all-connector warm-up. Set the first time
     /// `warmup_all_connectors` runs so the warm-up fires exactly once over the
     /// lifetime of the (shared, long-lived) bridge — NOT once per ChartApp. The
@@ -470,6 +488,7 @@ impl DataBridge {
             ws_rtt_handles: Arc::new(Mutex::new(HashMap::new())),
             oldest_fetched_ts: Arc::new(Mutex::new(HashMap::new())),
             ob_trackers: Arc::new(dashmap::DashMap::new()),
+            footprint_series: Arc::new(dashmap::DashMap::new()),
             warmup_started: AtomicBool::new(false),
             station,
             station_trade_subscribed: Arc::new(Mutex::new(HashSet::new())),
@@ -1282,13 +1301,35 @@ impl DataBridge {
         let kline_iv = KlineInterval::new(interval);
         let stream = digdigdig3_station::Stream::Footprint(kline_iv);
 
+        // Get-or-create the per-key footprint Vec BEFORE spawning the
+        // forwarder so the first event has a place to land.
+        let series: SharedFootprintSeries = self.footprint_series
+            .entry((exchange_id, account_type, symbol.to_string()))
+            .or_insert_with(|| Arc::new(tokio::sync::RwLock::new(Vec::new())))
+            .clone();
+
         let handle = Self::spawn_footprint_sub(
-            &self.runtime, station, tx, exchange_id, account_type,
+            &self.runtime, station, tx, series, exchange_id, account_type,
             symbol_str, symbol_wire, stream,
         );
         if let Ok(mut subs) = self.derived_subs.lock() {
             subs.insert(sub_key, handle);
         }
+    }
+
+    /// Lookup the shared footprint Vec for `(exchange, account, symbol)`.
+    ///
+    /// Returns `Some(handle)` if a `request_footprint` has been issued for the
+    /// key (the Vec lives in `footprint_series` until the bridge is dropped).
+    /// Readers call `handle.blocking_read()` to access the points.
+    pub fn footprint_series_for(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) -> Option<SharedFootprintSeries> {
+        let key = (exchange_id, account_type, symbol.to_string());
+        self.footprint_series.get(&key).map(|r| r.clone())
     }
 
     /// Abort the active range/volume/footprint subscription, when switching away.
@@ -1366,6 +1407,7 @@ impl DataBridge {
         runtime: &Runtime,
         station: std::sync::Arc<digdigdig3_station::Station>,
         tx: tokio::sync::broadcast::Sender<LiveUpdate>,
+        series: SharedFootprintSeries,
         exchange_id: ExchangeId,
         account_type: AccountType,
         symbol_canonical: String,
@@ -1393,6 +1435,22 @@ impl DataBridge {
             }
             while let Some(ev) = report.handle.recv().await {
                 if let digdigdig3_station::Event::Footprint { point, .. } = ev {
+                    // Upsert-by-timestamp into the shared Vec BEFORE the
+                    // broadcast — readers triggered by the FootprintUpdate
+                    // event always see the bar already in series.
+                    {
+                        let mut w = series.write().await;
+                        let ts = point.open_time;
+                        if let Some(last) = w.last_mut() {
+                            if last.open_time == ts {
+                                *last = point.clone();
+                            } else {
+                                w.push(point.clone());
+                            }
+                        } else {
+                            w.push(point.clone());
+                        }
+                    }
                     let _ = tx.send(LiveUpdate::FootprintUpdate {
                         exchange_id,
                         account_type,
