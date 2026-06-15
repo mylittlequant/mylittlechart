@@ -710,19 +710,27 @@ impl ChartApp {
                     let mut bu_is_new_bar = false;
 
                     for (cid_bu, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
-                        if window.pending_symbol_load {
-                            continue;
-                        }
                         let (win_sym, win_at, is_derived) = match instrument_by_cid_bu.get(cid_bu) {
                             Some(t) => t,
                             None => continue,
                         };
                         // Only derived (non-time) bar mode windows are owned by BarUpdate.
                         if !is_derived {
+                            // Time-TF windows still gate on pending_symbol_load — they
+                            // wait for the BarsLoaded REST seed before consuming live bars.
+                            if window.pending_symbol_load { continue; }
                             continue;
                         }
                         if win_sym.as_str() != bar_symbol || win_at.as_str() != bar_account_type.short_label() {
                             continue;
+                        }
+                        // Derived (tick TF) windows never receive a BarsLoaded REST seed —
+                        // dig3 derives bars from live trades / RAM seed / disk read_tail and
+                        // emits them as BarUpdate only. The first BarUpdate IS the load
+                        // signal, so clear pending_symbol_load here instead of waiting for
+                        // a BarsLoaded that never comes.
+                        if window.pending_symbol_load {
+                            window.pending_symbol_load = false;
                         }
 
                         // Upsert: same timestamp → update last bar in-place; newer → push.
