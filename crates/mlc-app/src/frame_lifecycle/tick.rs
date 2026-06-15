@@ -978,8 +978,8 @@ impl ChartApp {
                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                 let at = account_type_from_label(&state.account_type);
                                 let h = self.bridge.subscribe_trades(eid, &state.symbol, at);
-                                state.shared_trades = Some(h);
-                                state.last_seen_version = 0;
+                                state.shared_trades = h;
+                                state.last_seen_ts_ms = 0;
                             }
                         }
                         state.tick();

@@ -5352,7 +5352,7 @@ impl ChartApp {
                         let new_at = account_type_from_label(&account_type);
                         let ob = self.bridge.subscribe_orderbook(eid, &symbol, new_at);
                         let tr = self.bridge.subscribe_trades(eid, &symbol, new_at);
-                        (Some(ob), tr)
+                        (ob, tr)
                     } else {
                         (None, None)
                     }

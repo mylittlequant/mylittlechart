@@ -1256,7 +1256,7 @@ impl ChartApp {
                                         state.last_seen_update_id = None;
                                         state.level_qty_bid.clear();
                                         state.level_qty_ask.clear();
-                                        state.shared_trades = Some(trade_handle);
+                                        state.shared_trades = trade_handle;
                                     }
                                 } else if let Some(state) = self.panels_store.dom.get_mut(&pid) {
                                     state.exchange = exchange_str.clone();
@@ -1274,8 +1274,8 @@ impl ChartApp {
                                     if let Some(state) = self.panels_store.footprint.get_mut(&pid) {
                                         state.exchange = exchange_str.clone();
                                         state.account_type = account_type_str.clone();
-                                        state.shared_trades = Some(handle);
-                                        state.last_seen_trade_version = 0;
+                                        state.shared_trades = handle;
+                                        state.last_seen_ts_ms = 0;
                                     }
                                 } else if let Some(state) = self.panels_store.footprint.get_mut(&pid) {
                                     state.exchange = exchange_str.clone();
@@ -1293,8 +1293,8 @@ impl ChartApp {
                                     if let Some(state) = self.panels_store.volume_profile.get_mut(&pid) {
                                         state.exchange = exchange_str.clone();
                                         state.account_type = account_type_str.clone();
-                                        state.shared_trades = Some(handle);
-                                        state.last_seen_trade_version = 0;
+                                        state.shared_trades = handle;
+                                        state.last_seen_ts_ms = 0;
                                     }
                                 } else if let Some(state) = self.panels_store.volume_profile.get_mut(&pid) {
                                     state.exchange = exchange_str.clone();
@@ -1333,8 +1333,8 @@ impl ChartApp {
                                         state.symbol = symbol.clone();
                                         state.exchange = exchange_str.clone();
                                         state.account_type = account_type_str.clone();
-                                        state.shared_trades = Some(handle);
-                                        state.last_seen_trade_version = 0;
+                                        state.shared_trades = handle;
+                                        state.last_seen_ts_ms = 0;
                                     }
                                 } else if let Some(state) = self.panels_store.big_trades.get_mut(&pid) {
                                     state.symbol = symbol.clone();
@@ -1375,8 +1375,8 @@ impl ChartApp {
                                         state.symbol = symbol.clone();
                                         state.exchange = exchange_str.clone();
                                         state.account_type = account_type_str.clone();
-                                        state.shared_trades = Some(handle);
-                                        state.last_seen_version = 0;
+                                        state.shared_trades = handle;
+                                        state.last_seen_ts_ms = 0;
                                     }
                                 } else if let Some(state) = self.panels_store.trade_tape.get_mut(&pid) {
                                     state.symbol = symbol.clone();

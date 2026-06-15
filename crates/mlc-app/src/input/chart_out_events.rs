@@ -1650,7 +1650,7 @@ impl ChartApp {
                                                 let at = crate::account_type_from_label(&s.account_type);
                                                 s.shared_orderbook = self.bridge.subscribe_orderbook(eid, &s.symbol, at);
                                                 let trade_handle = self.bridge.subscribe_trades(eid, &s.symbol, at);
-                                                s.shared_trades = Some(trade_handle);
+                                                s.shared_trades = trade_handle;
                                             }
                                         }
                                         self.panels_store.dom.insert(pid, s);
@@ -1672,7 +1672,7 @@ impl ChartApp {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
                                                 let handle = self.bridge.subscribe_trades(eid, &s.symbol, at);
-                                                s.shared_trades = Some(handle);
+                                                s.shared_trades = handle;
                                             }
                                         }
                                         self.panels_store.footprint.insert(pid, s);
@@ -1694,7 +1694,7 @@ impl ChartApp {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
                                                 let handle = self.bridge.subscribe_trades(eid, &s.symbol, at);
-                                                s.shared_trades = Some(handle);
+                                                s.shared_trades = handle;
                                             }
                                         }
                                         self.panels_store.volume_profile.insert(pid, s);
@@ -1738,7 +1738,7 @@ impl ChartApp {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
                                                 let handle = self.bridge.subscribe_trades(eid, &s.symbol, at);
-                                                s.shared_trades = Some(handle);
+                                                s.shared_trades = handle;
                                             }
                                         }
                                         self.panels_store.big_trades.insert(pid, s);
@@ -1783,7 +1783,7 @@ impl ChartApp {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
                                                 let handle = self.bridge.subscribe_trades(eid, &s.symbol, at);
-                                                s.shared_trades = Some(handle);
+                                                s.shared_trades = handle;
                                             }
                                         }
                                         self.panels_store.trade_tape.insert(pid, s);
