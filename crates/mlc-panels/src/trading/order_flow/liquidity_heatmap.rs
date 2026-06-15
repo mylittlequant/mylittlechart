@@ -3,7 +3,8 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, RwLock};
 
 use mlc_orderbook_service::{OrderbookSeries, OrderbookView, ArcSwap};
-use mlc_trade_service::TradeSeries;
+
+use crate::trading::order_flow::trade_tape::SharedTradeSeries;
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
@@ -67,10 +68,11 @@ pub struct LiquidityHeatmapState {
     pub last_seen_orderbook_version: u64,
 
     /// Shared trade series for circle overlay rendering.
-    pub shared_trades: Option<Arc<RwLock<TradeSeries>>>,
+    pub shared_trades: Option<SharedTradeSeries>,
 
-    /// The `TradeSeries::version` we last consumed in `tick()`.
-    pub last_seen_trade_version: u64,
+    /// Timestamp (ms) of the newest trade we have already pulled into `trade_circles`.
+    /// Per-consumer cursor independent of any global version counter.
+    pub last_seen_ts_ms: i64,
 
     /// Recent trades stored for circle overlay (capped at 1000).
     pub trade_circles: Vec<TradeCircle>,
@@ -131,7 +133,7 @@ impl LiquidityHeatmapState {
             ob_series_ptr: 0,
             last_seen_orderbook_version: 0,
             shared_trades: None,
-            last_seen_trade_version: 0,
+            last_seen_ts_ms: 0,
             trade_circles: Vec::new(),
             max_trade_qty: 0.0,
             coalesce_ticks: 1,
@@ -236,37 +238,38 @@ impl LiquidityHeatmapState {
         }
 
         // --- Trades ---
-        if let Some(ref trade_handle) = self.shared_trades {
-            if let Ok(series) = trade_handle.read() {
-                if series.version != self.last_seen_trade_version {
-                    let new_count =
-                        (series.version.saturating_sub(self.last_seen_trade_version)) as usize;
-                    let len = series.trades.len();
-                    let skip = if new_count < len { len - new_count } else { 0 };
+        if let Some(trade_handle) = self.shared_trades.clone() {
+            // tokio::sync::RwLock — sync context, blocking_read is safe on the
+            // render thread (the station forwarder holds write() for microseconds per push).
+            let guard = trade_handle.blocking_read();
+            let snapshot = guard.snapshot();
+            drop(guard);
 
-                    const MAX_CIRCLES: usize = 1000;
+            const MAX_CIRCLES: usize = 1000;
+            let cursor = self.last_seen_ts_ms;
+            let mut new_max_ts = cursor;
 
-                    for trade in series.trades.iter().skip(skip) {
-                        let circle = TradeCircle {
-                            timestamp: trade.timestamp_ms,
-                            price: trade.price,
-                            qty: trade.quantity,
-                            // is_buyer_maker == 1 → seller initiated → red (sell)
-                            // is_buyer_maker == 0 → buyer initiated → green (buy)
-                            is_buy: trade.is_buyer_maker == 0,
-                        };
-                        if circle.qty > self.max_trade_qty {
-                            self.max_trade_qty = circle.qty;
-                        }
-                        if self.trade_circles.len() >= MAX_CIRCLES {
-                            self.trade_circles.remove(0);
-                        }
-                        self.trade_circles.push(circle);
-                    }
+            for trade in snapshot.iter().filter(|p| p.ts_ms > cursor) {
+                if trade.ts_ms > new_max_ts { new_max_ts = trade.ts_ms; }
 
-                    self.last_seen_trade_version = series.version;
+                let circle = TradeCircle {
+                    timestamp: trade.ts_ms,
+                    price: trade.price,
+                    qty: trade.quantity,
+                    // side 0 = buyer maker → seller initiated → red (sell)
+                    // side != 0 → buyer initiated → green (buy)
+                    is_buy: trade.side != 0,
+                };
+                if circle.qty > self.max_trade_qty {
+                    self.max_trade_qty = circle.qty;
                 }
+                if self.trade_circles.len() >= MAX_CIRCLES {
+                    self.trade_circles.remove(0);
+                }
+                self.trade_circles.push(circle);
             }
+
+            self.last_seen_ts_ms = new_max_ts;
         }
     }
 

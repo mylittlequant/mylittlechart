@@ -5,11 +5,16 @@
 //! `(qty / max_qty_seen).sqrt().clamp(0.15, 1.0)` so big prints glow brighter.
 
 use std::collections::VecDeque;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use mlc_trade_service::TradeSeries;
+use tokio::sync::RwLock as TokioRwLock;
+use digdigdig3_station::series::Series as StationSeries;
+use digdigdig3_station::data::TradePoint;
+
+/// Handle to the station's per-(exchange, symbol) trade ring.
+pub type SharedTradeSeries = Arc<TokioRwLock<StationSeries<TradePoint>>>;
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
@@ -91,10 +96,12 @@ pub struct TradeTapeState {
     /// Row-level scroll offset (0 = newest visible at top).
     pub scroll_offset: f64,
 
-    /// Shared trade ring written by the bridge.
-    pub shared_trades: Option<Arc<RwLock<TradeSeries>>>,
-    /// Version of `TradeSeries` we last consumed.
-    pub last_seen_version: u64,
+    /// Shared trade ring owned by dig3-station's forwarder.
+    pub shared_trades: Option<SharedTradeSeries>,
+    /// Timestamp (ms) of the newest trade we have already pulled into `self.trades`.
+    /// Used as a per-consumer cursor so multi-panel sharing of one `Series<TradePoint>`
+    /// stays independent.
+    pub last_seen_ts_ms: i64,
 
     /// Market price synced from a linked DOM panel.
     pub dom_market_price: Option<f64>,
@@ -116,7 +123,7 @@ impl std::fmt::Debug for TradeTapeState {
             .field("trades_len", &self.trades.len())
             .field("paused", &self.paused)
             .field("max_qty_seen", &self.max_qty_seen)
-            .field("last_seen_version", &self.last_seen_version)
+            .field("last_seen_ts_ms", &self.last_seen_ts_ms)
             .finish()
     }
 }
@@ -138,7 +145,7 @@ impl TradeTapeState {
             auto_scroll: true,
             scroll_offset: 0.0,
             shared_trades: None,
-            last_seen_version: 0,
+            last_seen_ts_ms: 0,
             dom_market_price: None,
             dom_tick_size: None,
             crosshair_price: None,
@@ -162,33 +169,33 @@ impl TradeTapeState {
             Some(h) => h,
             None => return,
         };
-        let series = match handle.read() {
-            Ok(s) => s,
-            Err(_) => return,
-        };
-        if series.version == self.last_seen_version {
-            return;
-        }
+        // tokio::sync::RwLock — sync context, blocking_read is safe on the
+        // render thread (the station forwarder holds write() for microseconds
+        // per push).
+        let guard = handle.blocking_read();
+        let snapshot = guard.snapshot();
+        drop(guard);
 
-        let new_count = (series.version.saturating_sub(self.last_seen_version)) as usize;
-        let len = series.trades.len();
-        let skip = if new_count < len { len - new_count } else { 0 };
-
-        // Collect new entries before dropping the lock.
-        let new_entries: Vec<TapeEntry> = series
-            .trades
-            .iter()
-            .skip(skip)
-            .map(|trade| TapeEntry {
-                timestamp: trade.timestamp_ms,
-                price: trade.price,
-                quantity: trade.quantity,
-                // is_buyer_maker != 0 means buyer is passive → taker is seller
-                is_buy: trade.is_buyer_maker == 0,
+        let cursor = self.last_seen_ts_ms;
+        let mut new_max_ts = cursor;
+        let new_entries: Vec<TapeEntry> = snapshot
+            .into_iter()
+            .filter(|p| p.ts_ms > cursor)
+            .map(|p| {
+                if p.ts_ms > new_max_ts { new_max_ts = p.ts_ms; }
+                TapeEntry {
+                    timestamp: p.ts_ms,
+                    price: p.price,
+                    quantity: p.quantity,
+                    // TradePoint.side 0 = buyer maker -> taker is seller -> is_buy=false
+                    is_buy: p.side != 0,
+                }
             })
             .collect();
-        let new_version = series.version;
-        drop(series);
+
+        if new_entries.is_empty() {
+            return;
+        }
 
         for entry in new_entries {
             if self.paused {
@@ -201,7 +208,7 @@ impl TradeTapeState {
             }
         }
 
-        self.last_seen_version = new_version;
+        self.last_seen_ts_ms = new_max_ts;
     }
 
     fn push_entry(&mut self, entry: TapeEntry) {

@@ -4640,21 +4640,17 @@ fn main() {
         .expect("Failed to create event loop");
     event_loop.set_control_flow(ControlFlow::Poll); // Will be updated per-frame in about_to_wait()
 
-    // Create the shared trade map for live trade rings.
-    let shared_trades: mlc_trade_service::SharedTradeMap =
-        std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
-
     // Create the shared orderbook map for live orderbook series.
     let shared_orderbook: mlc_orderbook_service::SharedOrderbookMap =
         std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
 
     // Create DataBridge ONCE — tokio runtime + connector pool shared by all windows.
-    // Bars live in dig3-station's Series<BarPoint> after Phase 2B; the bridge
-    // reads them via station.series::<BarPoint>(&key).blocking_read() and emits
-    // BarsLoaded/BarUpdate through the broadcast channel as before. Trade and
-    // orderbook still flow through the legacy shared maps until Phase 2B
-    // covers them too.
-    let (bridge, _live_rx, connector_ready_rx) = mlc_live_data::DataBridge::new(shared_trades.clone(), shared_orderbook.clone());
+    // After Phase 2B steps 1+2: bars and trades both live in dig3-station's
+    // Series<BarPoint> / Series<TradePoint> rings; the bridge reads them via
+    // station.series::<T>(&key) on demand and emits BarsLoaded/BarUpdate +
+    // TradeUpdate through the broadcast channel as before. Orderbook still
+    // flows through the legacy shared map until Phase 2B step 3 covers it.
+    let (bridge, _live_rx, connector_ready_rx) = mlc_live_data::DataBridge::new(shared_orderbook.clone());
     let bridge = std::sync::Arc::new(bridge);
 
     // Detect startup mode BEFORE loading the user manager.

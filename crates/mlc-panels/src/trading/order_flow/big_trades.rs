@@ -1,9 +1,8 @@
 use serde::{Serialize, Deserialize};
 use std::collections::VecDeque;
 use std::fmt;
-use std::sync::{Arc, RwLock};
 
-use mlc_trade_service::TradeSeries;
+use crate::trading::order_flow::trade_tape::SharedTradeSeries;
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
@@ -63,17 +62,15 @@ pub struct BigTradesState {
     /// Maximum quantity seen in the current window — used for bar scaling.
     pub max_qty_seen: f64,
 
-    /// Handle to the shared trade ring for this (exchange, symbol, account_type).
-    ///
-    /// `None` until `subscribe_trades` is called on the bridge. Panels read
-    /// from this at tick time; they NEVER write through it.
-    pub shared_trades: Option<Arc<RwLock<TradeSeries>>>,
+    /// Handle to the station's `Series<TradePoint>` for this (exchange, symbol,
+    /// account_type). `None` until `subscribe_trades` returns a populated handle.
+    /// Panels read; the station forwarder is the sole writer.
+    pub shared_trades: Option<SharedTradeSeries>,
 
-    /// The `TradeSeries::version` we last processed in `tick()`.
-    ///
-    /// When `shared_trades.version != last_seen_trade_version` there are new
-    /// trades to pull into `big_trades`.
-    pub last_seen_trade_version: u64,
+    /// Timestamp (ms) of the newest trade we have already pulled into `big_trades`.
+    /// Per-consumer cursor: multiple panels can share one `Series<TradePoint>`
+    /// without competing for a single global version counter.
+    pub last_seen_ts_ms: i64,
 
     /// Crosshair price synced from a linked chart window.
     pub crosshair_price: Option<f64>,
@@ -90,7 +87,7 @@ impl fmt::Debug for BigTradesState {
             .field("account_type", &self.account_type)
             .field("big_trades_len", &self.big_trades.len())
             .field("size_threshold", &self.size_threshold)
-            .field("last_seen_trade_version", &self.last_seen_trade_version)
+            .field("last_seen_ts_ms", &self.last_seen_ts_ms)
             .field("has_shared_trades", &self.shared_trades.is_some())
             .finish()
     }
@@ -125,7 +122,7 @@ impl BigTradesState {
             scroll_offset: 0.0,
             max_qty_seen: 0.0,
             shared_trades: None,
-            last_seen_trade_version: 0,
+            last_seen_ts_ms: 0,
             crosshair_price: None,
             column_config: BigTradesColumnConfig::default(),
         }
@@ -137,36 +134,24 @@ impl BigTradesState {
     /// no shared series or when the version has not advanced.
     pub fn tick(&mut self) {
         let handle = match self.shared_trades.as_ref() {
-            Some(h) => h,
+            Some(h) => h.clone(),
             None => return,
         };
 
-        let series = match handle.read() {
-            Ok(s) => s,
-            Err(_) => return,
-        };
-
-        if series.version == self.last_seen_trade_version {
-            return;
-        }
-
-        // How many trades have been added since we last processed?
-        // Version is incremented once per push, so the delta == number of new trades
-        // (assuming no rotations dropped anything — if they did we accept a gap).
-        let new_count = (series.version.saturating_sub(self.last_seen_trade_version)) as usize;
-        let len = series.trades.len();
-
-        // Walk only the tail that is new.
-        let skip = if new_count < len { len - new_count } else { 0 };
+        let guard = handle.blocking_read();
+        let snapshot = guard.snapshot();
+        drop(guard);
 
         const MAX_TRADES: usize = 1000;
+        let cursor = self.last_seen_ts_ms;
+        let mut new_max_ts = cursor;
 
-        for trade in series.trades.iter().skip(skip) {
-            // Apply size threshold filter.
+        for trade in snapshot.iter().filter(|p| p.ts_ms > cursor) {
+            if trade.ts_ms > new_max_ts { new_max_ts = trade.ts_ms; }
+
             if trade.quantity < self.size_threshold {
                 continue;
             }
-            // Apply notional threshold filter if set.
             if let Some(notional_min) = self.notional_threshold {
                 if trade.price * trade.quantity < notional_min {
                     continue;
@@ -174,10 +159,11 @@ impl BigTradesState {
             }
 
             let public = PublicTrade {
-                timestamp: trade.timestamp_ms,
+                timestamp: trade.ts_ms,
                 price: trade.price,
                 quantity: trade.quantity,
-                side: if trade.is_buyer_maker != 0 {
+                // TradePoint.side 0 = buyer maker → taker is seller → Sell
+                side: if trade.side == 0 {
                     TradeSide::Sell
                 } else {
                     TradeSide::Buy
@@ -194,7 +180,7 @@ impl BigTradesState {
             self.big_trades.push_back(public);
         }
 
-        self.last_seen_trade_version = series.version;
+        self.last_seen_ts_ms = new_max_ts;
     }
 
     /// Scroll through the trade list.  Positive `delta` scrolls toward older trades.

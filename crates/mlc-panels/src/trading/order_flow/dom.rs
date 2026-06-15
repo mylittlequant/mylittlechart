@@ -5,7 +5,8 @@ use std::sync::{Arc, RwLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use mlc_orderbook_service::{OrderbookSeries, OrderbookView, ArcSwap};
-use mlc_trade_service::TradeSeries;
+
+use crate::trading::order_flow::trade_tape::SharedTradeSeries;
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
@@ -102,10 +103,11 @@ pub struct DomState {
     pub level_qty_ask: HashMap<i64, f64>,
 
     /// Shared trade series — read each tick to accumulate trade volume per price.
-    pub shared_trades: Option<Arc<RwLock<TradeSeries>>>,
+    pub shared_trades: Option<SharedTradeSeries>,
 
-    /// Last trade series version we consumed.
-    pub last_seen_trade_version: u64,
+    /// Timestamp (ms) of the newest trade we have already pulled into `trade_volume_by_price`.
+    /// Per-consumer cursor independent of any global version counter.
+    pub last_seen_ts_ms: i64,
 
     /// Accumulated buy/sell trade volume per price tick for the last N minutes.
     /// HashMap<price_tick, (buy_qty, sell_qty)>
@@ -218,7 +220,7 @@ impl DomState {
             level_qty_bid: HashMap::new(),
             level_qty_ask: HashMap::new(),
             shared_trades: None,
-            last_seen_trade_version: 0,
+            last_seen_ts_ms: 0,
             trade_volume_by_price: HashMap::new(),
             trade_window_minutes: 8,
             max_trade_volume: 0.0,
@@ -478,32 +480,44 @@ impl DomState {
         self.chase_last_update_ms = now_ms;
 
         // --- Trade volume accumulation ---
-        if let Some(ref trade_handle) = self.shared_trades.clone() {
-            if let Ok(series) = trade_handle.read() {
-                if series.version != self.last_seen_trade_version {
-                    self.last_seen_trade_version = series.version;
+        if let Some(trade_handle) = self.shared_trades.clone() {
+            // tokio::sync::RwLock — sync context, blocking_read is safe on the
+            // render thread (the station forwarder holds write() for microseconds per push).
+            let guard = trade_handle.blocking_read();
+            let snapshot = guard.snapshot();
+            drop(guard);
 
-                    let cutoff_ms = now_ms - (self.trade_window_minutes as i64 * 60 * 1000);
-                    self.trade_volume_by_price.clear();
+            let cursor = self.last_seen_ts_ms;
+            let mut new_max_ts = cursor;
+            let mut updated = false;
 
-                    let (s0, s1) = series.as_slices();
-                    for trade in s0.iter().chain(s1.iter()) {
-                        if trade.timestamp_ms < cutoff_ms {
-                            continue;
-                        }
-                        let tick = (trade.price / self.tick_size).round() as i64;
-                        let entry = self.trade_volume_by_price.entry(tick).or_insert((0.0, 0.0));
-                        // is_buyer_maker=1 means seller was the taker → sell trade
-                        // is_buyer_maker=0 means buyer was the taker → buy trade
-                        if trade.is_buyer_maker == 0 {
-                            entry.0 += trade.quantity; // buy
-                        } else {
-                            entry.1 += trade.quantity; // sell
-                        }
+            let cutoff_ms = now_ms - (self.trade_window_minutes as i64 * 60 * 1000);
+
+            for trade in snapshot.iter().filter(|p| p.ts_ms > cursor) {
+                if trade.ts_ms > new_max_ts { new_max_ts = trade.ts_ms; }
+                updated = true;
+            }
+
+            if updated {
+                // Rebuild the full window from scratch — DOM needs the rolling window
+                // which may evict old trades, so we re-scan all available trades.
+                self.trade_volume_by_price.clear();
+                for trade in &snapshot {
+                    if trade.ts_ms < cutoff_ms {
+                        continue;
                     }
-                    drop(series);
-                    self.recompute_max_trade_volume();
+                    let tick = (trade.price / self.tick_size).round() as i64;
+                    let entry = self.trade_volume_by_price.entry(tick).or_insert((0.0, 0.0));
+                    // side 0 = buyer maker → seller was the taker → sell trade
+                    // side != 0 → buyer was the taker → buy trade
+                    if trade.side != 0 {
+                        entry.0 += trade.quantity; // buy
+                    } else {
+                        entry.1 += trade.quantity; // sell
+                    }
                 }
+                self.last_seen_ts_ms = new_max_ts;
+                self.recompute_max_trade_volume();
             }
         }
     }
@@ -715,7 +729,7 @@ impl DomState {
         self.tick_size = new_tick;
         // Force a full rebuild: clear per-level cache (bucket keys change with tick_size).
         self.last_seen_orderbook_version = 0;
-        self.last_seen_trade_version = 0;
+        self.last_seen_ts_ms = 0;
         self.level_qty_bid.clear();
         self.level_qty_ask.clear();
         self.tick();

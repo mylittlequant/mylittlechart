@@ -368,11 +368,6 @@ pub struct ChartApp {
     /// Live data bridge — owns the tokio runtime and connector pool.
     bridge: std::sync::Arc<DataBridge>,
 
-    /// Shared trade ring map — clone of `bridge.trade_map()`, shared between the
-    /// bridge (write path from WS events) and `ChartApp` (read/write path from
-    /// `TradeUpdate` events and panel subscriptions).
-    trade_map: mlc_trade_service::SharedTradeMap,
-
     /// Receiver for async live data updates (bars loaded, errors, etc.).
     live_update_rx: tokio::sync::broadcast::Receiver<LiveUpdate>,
 
@@ -925,11 +920,9 @@ impl ChartApp {
         // The third value is a ConnectorReady mpsc receiver used by the
         // chart-app-vello App struct; here it is dropped since ChartApp::tick()
         // receives ConnectorReady via the broadcast channel directly.
-        let shared_trades: mlc_trade_service::SharedTradeMap =
-            std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
         let shared_orderbook: mlc_orderbook_service::SharedOrderbookMap =
             std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
-        let (bridge, live_update_rx, _connector_ready_rx) = DataBridge::new(shared_trades, shared_orderbook);
+        let (bridge, live_update_rx, _connector_ready_rx) = DataBridge::new(shared_orderbook);
         let bridge = std::sync::Arc::new(bridge);
         // live_update_rx is a broadcast::Receiver — see DataBridge::add_listener()
         // for spawning additional windows that share this bridge.
@@ -979,7 +972,6 @@ impl ChartApp {
             last_wl_group_name_result: None,
             needs_initial_viewport_fit: false,
             bridge: bridge.clone(),
-            trade_map: bridge.trade_map(),
             live_update_rx,
             mini_ticker_cache: std::collections::HashMap::new(),
             active_exchange: digdigdig3::ExchangeId::Binance,
@@ -1320,7 +1312,6 @@ impl ChartApp {
             last_wl_group_name_result: None,
             needs_initial_viewport_fit: false,
             bridge: bridge.clone(),
-            trade_map: bridge.trade_map(),
             live_update_rx,
             mini_ticker_cache: std::collections::HashMap::new(),
             active_exchange: digdigdig3::ExchangeId::Binance,
@@ -1575,7 +1566,6 @@ impl ChartApp {
             last_wl_group_name_result: None,
             needs_initial_viewport_fit: false,
             bridge: bridge.clone(),
-            trade_map: bridge.trade_map(),
             live_update_rx,
             mini_ticker_cache: std::collections::HashMap::new(),
             active_exchange: digdigdig3::ExchangeId::Binance,
@@ -5364,7 +5354,7 @@ impl ChartApp {
                         let new_at = account_type_from_label(&account_type);
                         let ob = self.bridge.subscribe_orderbook(eid, &symbol, new_at);
                         let tr = self.bridge.subscribe_trades(eid, &symbol, new_at);
-                        (Some(ob), Some(tr))
+                        (Some(ob), tr)
                     } else {
                         (None, None)
                     }
@@ -5430,7 +5420,7 @@ impl ChartApp {
                 }
                 // Subscribe new.
                 let new_handle = if !symbol.is_empty() {
-                    digdigdig3::ExchangeId::from_str(&exchange).map(|eid| {
+                    digdigdig3::ExchangeId::from_str(&exchange).and_then(|eid| {
                         let new_at = account_type_from_label(&account_type);
                         self.bridge.subscribe_trades(eid, &symbol, new_at)
                     })
@@ -5443,7 +5433,7 @@ impl ChartApp {
                     s.exchange = exchange.clone();
                     s.account_type = account_type.clone();
                     s.shared_trades = new_handle;
-                    s.last_seen_trade_version = 0;
+                    s.last_seen_ts_ms = 0;
                     s.big_trades.clear();
                 }
             }
@@ -5463,7 +5453,7 @@ impl ChartApp {
                     }
                 }
                 let new_handle = if !symbol.is_empty() {
-                    digdigdig3::ExchangeId::from_str(&exchange).map(|eid| {
+                    digdigdig3::ExchangeId::from_str(&exchange).and_then(|eid| {
                         let new_at = account_type_from_label(&account_type);
                         self.bridge.subscribe_trades(eid, &symbol, new_at)
                     })
@@ -5475,7 +5465,7 @@ impl ChartApp {
                     s.exchange = exchange.clone();
                     s.account_type = account_type.clone();
                     s.shared_trades = new_handle;
-                    s.last_seen_trade_version = 0;
+                    s.last_seen_ts_ms = 0;
                     s.volume_by_price.clear();
                     s.buy_sell_by_price.clear();
                     s.total_volume = 0.0;
@@ -5499,7 +5489,7 @@ impl ChartApp {
                     }
                 }
                 let new_handle = if !symbol.is_empty() {
-                    digdigdig3::ExchangeId::from_str(&exchange).map(|eid| {
+                    digdigdig3::ExchangeId::from_str(&exchange).and_then(|eid| {
                         let new_at = account_type_from_label(&account_type);
                         self.bridge.subscribe_trades(eid, &symbol, new_at)
                     })
@@ -5511,7 +5501,7 @@ impl ChartApp {
                     s.exchange = exchange.clone();
                     s.account_type = account_type.clone();
                     s.shared_trades = new_handle;
-                    s.last_seen_trade_version = 0;
+                    s.last_seen_ts_ms = 0;
                     s.footprints.clear();
                     s.poc_by_candle.clear();
                     s.imbalances.clear();
@@ -5533,7 +5523,7 @@ impl ChartApp {
                     }
                 }
                 let new_handle = if !symbol.is_empty() {
-                    digdigdig3::ExchangeId::from_str(&exchange).map(|eid| {
+                    digdigdig3::ExchangeId::from_str(&exchange).and_then(|eid| {
                         let new_at = account_type_from_label(&account_type);
                         self.bridge.subscribe_trades(eid, &symbol, new_at)
                     })
@@ -5545,7 +5535,7 @@ impl ChartApp {
                     s.exchange = exchange.clone();
                     s.account_type = account_type.clone();
                     s.shared_trades = new_handle;
-                    s.last_seen_version = 0;
+                    s.last_seen_ts_ms = 0;
                     s.trades.clear();
                 }
             }

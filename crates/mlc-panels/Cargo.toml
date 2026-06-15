@@ -10,6 +10,9 @@ name = "mlc_panels"
 serde = { version = "1.0", features = ["derive"] }
 uzor = "=1.4.13"
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
-mlc-trade-service = { path = "../mlc-trade-service", package = "mylittlechart-trade-service" }
 mlc-orderbook-service = { path = "../mlc-orderbook-service", package = "mylittlechart-orderbook-service" }
 mlc-trading-manager = { path = "../mlc-trading-manager", package = "mylittlechart-trading-manager" }
+# After Phase 2B step 2 (trades), panels read TradePoint directly from
+# dig3-station's Series<TradePoint> instead of the deleted mlc-trade-service.
+digdigdig3-station = "=0.3.23"
+tokio = { version = "1", features = ["sync"] }

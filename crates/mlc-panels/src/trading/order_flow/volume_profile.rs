@@ -1,9 +1,8 @@
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::{Arc, RwLock};
 
-use mlc_trade_service::TradeSeries;
+use crate::trading::order_flow::trade_tape::SharedTradeSeries;
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
@@ -63,10 +62,11 @@ pub struct VolumeProfileState {
     ///
     /// `None` until `subscribe_trades` is called on the bridge. Panels read
     /// from this at tick time; they NEVER write through it.
-    pub shared_trades: Option<Arc<RwLock<TradeSeries>>>,
+    pub shared_trades: Option<SharedTradeSeries>,
 
-    /// The `TradeSeries::version` we last processed in `tick()`.
-    pub last_seen_trade_version: u64,
+    /// Timestamp (ms) of the newest trade we have already pulled into the profile.
+    /// Per-consumer cursor independent of any global version counter.
+    pub last_seen_ts_ms: i64,
 
     /// Crosshair price synced from a linked chart window.
     pub crosshair_price: Option<f64>,
@@ -89,7 +89,7 @@ impl fmt::Debug for VolumeProfileState {
             .field("account_type", &self.account_type)
             .field("total_volume", &self.total_volume)
             .field("poc", &self.poc)
-            .field("last_seen_trade_version", &self.last_seen_trade_version)
+            .field("last_seen_ts_ms", &self.last_seen_ts_ms)
             .field("has_shared_trades", &self.shared_trades.is_some())
             .finish()
     }
@@ -126,7 +126,7 @@ impl VolumeProfileState {
             dom_levels: None,
             buy_sell_by_price: HashMap::new(),
             shared_trades: None,
-            last_seen_trade_version: 0,
+            last_seen_ts_ms: 0,
             crosshair_price: None,
             price_zoom: 1.0,
             price_pan: 0.0,
@@ -135,54 +135,52 @@ impl VolumeProfileState {
 
     /// Pull new trades from the shared series and accumulate into the volume profile.
     ///
-    /// Call once per frame (or before render). No-op when there is no shared
-    /// series or when the version has not advanced since the last call.
+    /// Call once per frame (or before render). No-op when there is no shared series
+    /// or when no trades newer than `last_seen_ts_ms` have arrived.
     pub fn tick(&mut self) {
         let handle = match self.shared_trades.as_ref() {
-            Some(h) => h,
+            Some(h) => h.clone(),
             None => return,
         };
+        // tokio::sync::RwLock — sync context, blocking_read is safe on the
+        // render thread (the station forwarder holds write() for microseconds per push).
+        let guard = handle.blocking_read();
+        let snapshot = guard.snapshot();
+        drop(guard);
 
-        let series = match handle.read() {
-            Ok(s) => s,
-            Err(_) => return,
-        };
+        let cursor = self.last_seen_ts_ms;
+        let mut new_max_ts = cursor;
+        let mut updated = false;
 
-        if series.version == self.last_seen_trade_version {
-            return;
-        }
+        for trade in snapshot.iter().filter(|p| p.ts_ms > cursor) {
+            if trade.ts_ms > new_max_ts { new_max_ts = trade.ts_ms; }
 
-        let new_count = (series.version.saturating_sub(self.last_seen_trade_version)) as usize;
-        let len = series.trades.len();
-        let skip = if new_count < len { len - new_count } else { 0 };
+            let tick = (trade.price / self.tick_size).round() as i64;
 
-        for trade in series.trades.iter().skip(skip) {
-            let price = trade.price;
-            let quantity = trade.quantity;
-            let is_buyer_maker = trade.is_buyer_maker != 0;
-
-            let tick = (price / self.tick_size).round() as i64;
-
-            *self.volume_by_price.entry(tick).or_insert(0.0) += quantity;
+            *self.volume_by_price.entry(tick).or_insert(0.0) += trade.quantity;
 
             let entry = self.buy_sell_by_price.entry(tick).or_insert((0.0, 0.0));
-            if is_buyer_maker {
-                entry.1 += quantity; // sell volume (seller-initiated)
+            // side 0 = buyer maker → seller initiated → sell volume
+            if trade.side != 0 {
+                entry.0 += trade.quantity; // buy volume (buyer-initiated)
             } else {
-                entry.0 += quantity; // buy volume (buyer-initiated)
+                entry.1 += trade.quantity; // sell volume (seller-initiated)
             }
 
-            self.total_volume += quantity;
+            self.total_volume += trade.quantity;
             let tick_vol = self.volume_by_price[&tick];
             if tick_vol > self.max_volume_at_price {
                 self.max_volume_at_price = tick_vol;
                 self.poc = tick as f64 * self.tick_size;
             }
+
+            updated = true;
         }
 
-        self.last_seen_trade_version = series.version;
-        drop(series);
-        self.compute_value_area();
+        self.last_seen_ts_ms = new_max_ts;
+        if updated {
+            self.compute_value_area();
+        }
     }
 
     /// Compute VAH and VAL by expanding outward from POC until 70% of total volume is accumulated.

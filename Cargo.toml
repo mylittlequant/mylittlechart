@@ -17,7 +17,6 @@ members = [
     "crates/mlc-vello-cpu-context",
     "crates/mlc-vello-hybrid-context",
     "crates/mlc-tiny-skia-context",
-    "crates/mlc-trade-service",
     "crates/mlc-orderbook-service",
     "crates/mlc-diagnostics",
     "crates/mlc-trading-manager",

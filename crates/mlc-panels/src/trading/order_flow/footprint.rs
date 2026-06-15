@@ -1,9 +1,8 @@
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::{Arc, RwLock};
 
-use mlc_trade_service::TradeSeries;
+use crate::trading::order_flow::trade_tape::SharedTradeSeries;
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
@@ -65,10 +64,11 @@ pub struct FootprintState {
     ///
     /// `None` until `subscribe_trades` is called on the bridge. Panels read
     /// from this at tick time; they NEVER write through it.
-    pub shared_trades: Option<Arc<RwLock<TradeSeries>>>,
+    pub shared_trades: Option<SharedTradeSeries>,
 
-    /// The `TradeSeries::version` we last processed in `tick()`.
-    pub last_seen_trade_version: u64,
+    /// Timestamp (ms) of the newest trade we have already pulled into the footprint.
+    /// Per-consumer cursor independent of any global version counter.
+    pub last_seen_ts_ms: i64,
 
     /// Crosshair price synced from a linked chart window.
     pub crosshair_price: Option<f64>,
@@ -81,7 +81,7 @@ impl fmt::Debug for FootprintState {
             .field("exchange", &self.exchange)
             .field("account_type", &self.account_type)
             .field("candle_count", &self.footprints.len())
-            .field("last_seen_trade_version", &self.last_seen_trade_version)
+            .field("last_seen_ts_ms", &self.last_seen_ts_ms)
             .field("has_shared_trades", &self.shared_trades.is_some())
             .finish()
     }
@@ -116,7 +116,7 @@ impl FootprintState {
             candle_duration_ms: 60_000,
             candle_start_ms: 0,
             shared_trades: None,
-            last_seen_trade_version: 0,
+            last_seen_ts_ms: 0,
             crosshair_price: None,
         }
     }
@@ -145,37 +145,40 @@ impl FootprintState {
 
     /// Pull new trades from the shared series and accumulate into the current footprint candle.
     ///
-    /// Call once per frame (or before render). No-op when there is no shared
-    /// series or when the version has not advanced since the last call.
+    /// Call once per frame (or before render). No-op when there is no shared series
+    /// or when no trades newer than `last_seen_ts_ms` have arrived.
     pub fn tick(&mut self) {
         // Snapshot new trades from the shared ring under the lock, then release
         // immediately so we can call &mut self methods without borrow conflicts.
-        let (new_version, new_trades) = {
+        let new_trades: Vec<(f64, f64, bool, i64)> = {
             let handle = match self.shared_trades.as_ref() {
-                Some(h) => h,
+                Some(h) => h.clone(),
                 None => return,
             };
-            let series = match handle.read() {
-                Ok(s) => s,
-                Err(_) => return,
-            };
-            if series.version == self.last_seen_trade_version {
-                return;
-            }
-            let new_count =
-                (series.version.saturating_sub(self.last_seen_trade_version)) as usize;
-            let len = series.trades.len();
-            let skip = if new_count < len { len - new_count } else { 0 };
-            let trades: Vec<(f64, f64, bool, i64)> = series
-                .trades
-                .iter()
-                .skip(skip)
-                .map(|t| (t.price, t.quantity, t.is_buyer_maker != 0, t.timestamp_ms))
-                .collect();
-            (series.version, trades)
-        }; // lock released here
+            // tokio::sync::RwLock — sync context, blocking_read is safe on the
+            // render thread (the station forwarder holds write() for microseconds per push).
+            let guard = handle.blocking_read();
+            let snapshot = guard.snapshot();
+            drop(guard);
+
+            let cursor = self.last_seen_ts_ms;
+            snapshot
+                .into_iter()
+                .filter(|t| t.ts_ms > cursor)
+                // side 0 = buyer maker → seller initiated (is_buyer_maker=true in legacy terms)
+                .map(|t| (t.price, t.quantity, t.side == 0, t.ts_ms))
+                .collect()
+        };
+
+        if new_trades.is_empty() {
+            return;
+        }
+
+        let mut new_max_ts = self.last_seen_ts_ms;
 
         for (price, quantity, is_buyer_maker, timestamp) in new_trades {
+            if timestamp > new_max_ts { new_max_ts = timestamp; }
+
             let tick = (price / self.tick_size).round() as i64;
 
             if self.footprints.is_empty() || self.should_new_candle(timestamp) {
@@ -223,7 +226,7 @@ impl FootprintState {
             }
         }
 
-        self.last_seen_trade_version = new_version;
+        self.last_seen_ts_ms = new_max_ts;
     }
 
     /// Returns a slice of visible candles for rendering

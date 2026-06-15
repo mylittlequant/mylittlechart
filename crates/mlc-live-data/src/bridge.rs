@@ -8,12 +8,19 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use mlc_trade_service::{SharedTradeMap, TradeSeries, TradeKey, DEFAULT_CAPACITY};
 use mlc_orderbook_service::{SharedOrderbookMap, OrderbookKey, OrderbookSeries, DEFAULT_HISTORY_CAPACITY};
 
 use digdigdig3_station::SeriesKey as StationSeriesKey;
 use digdigdig3_station::series::Kind as StationKind;
-use digdigdig3_station::data::BarPoint;
+use digdigdig3_station::series::Series as StationSeries;
+use digdigdig3_station::data::{BarPoint, TradePoint};
+
+/// Type alias for the public trade-series handle returned by `subscribe_trades`.
+///
+/// After Phase 2B step 2 (trades), panels hold the station's own
+/// `Arc<tokio::sync::RwLock<Series<TradePoint>>>` directly; the mlc-side
+/// `TradeSeries` wrapper is gone.
+pub type SharedTradeSeries = Arc<tokio::sync::RwLock<StationSeries<TradePoint>>>;
 
 use tokio::sync::{broadcast, mpsc};
 use tokio::runtime::Runtime;
@@ -238,12 +245,6 @@ pub struct DataBridge {
     /// buffer from filling up when the app-level consumer falls behind, which
     /// would otherwise stall all other broadcast receivers.
     connector_ready_tx: mpsc::UnboundedSender<ExchangeId>,
-    /// Session-level live trade ring map.
-    ///
-    /// Key: `TradeKey`. Shared with `TradeService` in `App` via `Arc` — both
-    /// sides see the same `HashMap`. The async WS tasks write trades here;
-    /// panels read at render time.
-    trade_map: SharedTradeMap,
     /// In-flight bar fetch keys.
     ///
     /// Prevents duplicate concurrent fetches for the same `(exchange, account_type,
@@ -295,7 +296,7 @@ pub struct DataBridge {
     /// Prevents spawning N parallel station forwarders when `subscribe_trades`
     /// is called multiple times for the same key (one panel + chart header + etc.).
     /// Guarded by `std::sync::Mutex` — only held briefly (never across `.await`).
-    station_trade_subscribed: Arc<Mutex<HashSet<TradeKey>>>,
+    station_trade_subscribed: Arc<Mutex<HashSet<(ExchangeId, AccountType, String)>>>,
     /// C4: tracks which `OrderbookKey` entries already have a live station
     /// orderbook-subscriber task spawned.
     ///
@@ -348,7 +349,6 @@ impl DataBridge {
     /// capacity is 4096 messages; if a slow receiver falls behind, old messages are
     /// dropped for that receiver only.
     pub fn new(
-        trade_map: SharedTradeMap,
         shared_orderbook: SharedOrderbookMap,
     ) -> (Self, broadcast::Receiver<LiveUpdate>, mpsc::UnboundedReceiver<ExchangeId>) {
         // Anchor the process-relative clock here so every [STARTUP-WAVE] timestamp
@@ -461,7 +461,6 @@ impl DataBridge {
             hub,
             tx,
             connector_ready_tx,
-            trade_map,
             active_fetches: Arc::new(Mutex::new(HashSet::new())),
             ws_rtt_handles: Arc::new(Mutex::new(HashMap::new())),
             oldest_fetched_ts: Arc::new(Mutex::new(HashMap::new())),
@@ -486,14 +485,6 @@ impl DataBridge {
     /// [`LiveUpdate`] broadcast.
     pub fn station(&self) -> Arc<digdigdig3_station::Station> {
         self.station.clone()
-    }
-
-    /// Get a clone of the shared trade map.
-    ///
-    /// Use this to initialize `TradeService::with_map()` in `App` — both sides
-    /// will share the same underlying `HashMap` via `Arc`.
-    pub fn trade_map(&self) -> SharedTradeMap {
-        self.trade_map.clone()
     }
 
     /// Get a clone of the shared orderbook map.
@@ -1367,32 +1358,25 @@ impl DataBridge {
     /// multiplexes all symbols over a single WS connection.  If no actor
     /// exists yet for this exchange it is spawned automatically.
     ///
-    /// Also registers (or re-uses) a `TradeSeries` in the `SharedTradeMap` for
-    /// this `(exchange_id, symbol, account_type)` key, incrementing its
-    /// refcount. Returns the `Arc<RwLock<TradeSeries>>` handle so the caller
-    /// can attach it to a panel state.
+    /// Spawn (or re-use) a station Trade forwarder for this key and return the
+    /// station's `Series<TradePoint>` handle so panels can read trades directly
+    /// from the canonical store. The station's forwarder owns persistence,
+    /// REST warm-seed, in-memory ring, and broadcast — the bridge only emits a
+    /// flattened `LiveUpdate::TradeUpdate` for chart-side bar aggregation.
+    ///
+    /// The returned handle is `Some(...)` once the subscribe future completes
+    /// inside the spawned task. The bridge does NOT block on subscribe — the
+    /// caller stores `None` initially and the consumer can re-query
+    /// `station.series::<TradePoint>(&key)` later if needed; in practice the
+    /// subscribe runs in <100ms and the handle returned here is read-only fine
+    /// when nothing has subscribed yet (returns `None`).
     pub fn subscribe_trades(
         &self,
         exchange_id: ExchangeId,
         symbol: &str,
         account_type: AccountType,
-    ) -> Arc<RwLock<TradeSeries>> {
-        // Get-or-create the TradeSeries in the shared map, incrementing refcount.
-        let trade_key = TradeKey::new(exchange_id, account_type, symbol);
-        let handle = {
-            let mut map = self.trade_map.write().unwrap_or_else(|e| e.into_inner());
-            let h = map
-                .entry(trade_key.clone())
-                .or_insert_with(|| {
-                    Arc::new(RwLock::new(TradeSeries::new(DEFAULT_CAPACITY)))
-                })
-                .clone();
-            h
-        };
-        // Increment the logical refcount inside the series.
-        if let Ok(mut series) = handle.write() {
-            series.refcount += 1;
-        }
+    ) -> Option<SharedTradeSeries> {
+        let gate_key = (exchange_id, account_type, symbol.to_string());
 
         // C3: spawn a station trade-subscriber once per (exchange_id, account_type, symbol).
         // Subsequent calls for the same key (multiple panels sharing the same stream) skip
@@ -1401,15 +1385,16 @@ impl DataBridge {
             let mut subs = self.station_trade_subscribed
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
-            if subs.insert(trade_key.clone()) {
+            if subs.insert(gate_key.clone()) {
                 // First subscriber for this key: spawn the station forwarder.
                 let station = self.station.clone();
                 let tx = self.tx.clone();
                 let station_trade_subscribed = self.station_trade_subscribed.clone();
-                // Canonical form — emitted back in TradeUpdate.symbol so map lookups match.
+                // Canonical form — emitted back in TradeUpdate.symbol so app-side lookups match.
                 let symbol_canonical = symbol.to_string();
                 // Wire form — passed to dig3 station add_raw.
                 let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
+                let gate_key_task = gate_key.clone();
                 self.runtime.spawn(async move {
                     let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                         exchange_id,
@@ -1428,7 +1413,7 @@ impl DataBridge {
                             let mut subs = station_trade_subscribed
                                 .lock()
                                 .unwrap_or_else(|e| e.into_inner());
-                            subs.remove(&trade_key);
+                            subs.remove(&gate_key_task);
                             return;
                         }
                     };
@@ -1439,14 +1424,16 @@ impl DataBridge {
                         );
                     }
                     // Drain station trade events and re-emit on the bridge broadcast.
-                    // tick.rs already writes received TradeUpdate events into trade_map, so
-                    // we only need to emit on the broadcast channel here (no direct map write).
+                    // The station's Series<TradePoint> forwarder already wrote each
+                    // point into its own ring + DiskStore; we only translate the
+                    // event into the legacy LiveUpdate::TradeUpdate broadcast so
+                    // tick.rs can drive time-TF bar aggregation from raw trades.
                     while let Some(ev) = report.handle.recv().await {
                         if let digdigdig3_station::Event::Trade { point, .. } = ev {
                             let _ = tx.send(LiveUpdate::TradeUpdate {
                                 exchange_id,
                                 account_type,
-                                // Emit canonical form so app-side TradeKey lookup matches.
+                                // Emit canonical form so app-side panel lookups match.
                                 symbol: symbol_canonical.clone(),
                                 price: point.price,
                                 quantity: point.quantity,
@@ -1462,7 +1449,7 @@ impl DataBridge {
                     let mut subs = station_trade_subscribed
                         .lock()
                         .unwrap_or_else(|e| e.into_inner());
-                    subs.remove(&trade_key);
+                    subs.remove(&gate_key_task);
                     crate::dlog!(
                         "[Bridge] station trade forwarder exited {:?} sym={}, gate removed",
                         exchange_id, symbol_wire
@@ -1471,7 +1458,13 @@ impl DataBridge {
             }
         }
 
-        handle
+        // Best-effort sync return: the station's Series is registered before
+        // the first event broadcast; if subscribe hasn't completed yet the
+        // caller will see None on the first frame and Some(...) shortly after
+        // (panel pull_new_trades is idempotent and tolerates a missing handle).
+        let wire = self.wire_symbol(exchange_id, account_type, symbol);
+        let key = StationSeriesKey::new(exchange_id, account_type, wire, StationKind::Trade);
+        self.station.series::<TradePoint>(&key)
     }
 
     /// Subscribe to a single symbol's mini ticker stream via WebSocket.
@@ -1924,32 +1917,16 @@ impl DataBridge {
         // the forwarder task exits when station drops the handle after the grace period.
     }
 
-    /// Remove one consumer interest in trade stream for this symbol.
+    /// No-op after Phase 2B step 2.
     ///
-    /// Sends a `RemoveSymbol` command to the trade actor; the actor applies a
-    /// 30-second grace period before actually unsubscribing from the exchange.
-    ///
-    /// Also decrements the `TradeSeries` refcount in the `SharedTradeMap`.
-    /// When the refcount reaches zero the series is removed from the map,
-    /// freeing memory.
-    pub fn unsubscribe_trades(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
-        // Decrement TradeSeries refcount; remove when it hits zero.
-        let trade_key = TradeKey::new(exchange_id, account_type, symbol);
-        if let Ok(mut map) = self.trade_map.write() {
-            let remove = if let Some(handle) = map.get(&trade_key) {
-                if let Ok(mut series) = handle.write() {
-                    series.refcount = series.refcount.saturating_sub(1);
-                    series.refcount == 0
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
-            if remove {
-                map.remove(&trade_key);
-            }
-        }
+    /// The station owns trade-stream lifetime: each `subscribe_trades` returns
+    /// a `SharedTradeSeries` handle bound to the station's forwarder; when the
+    /// caller drops it (panel unmount / symbol switch), the station's 30 s
+    /// `unsubscribe_grace` window kicks in and the WS forwarder shuts down
+    /// once no live receivers remain. There is no mlc-side refcount to
+    /// decrement anymore.
+    pub fn unsubscribe_trades(&self, _exchange_id: ExchangeId, _symbol: &str, _account_type: AccountType) {
+        // Intentionally empty — see doc comment above.
     }
 
     /// Abort trade WebSocket subscriptions (not mini ticker).

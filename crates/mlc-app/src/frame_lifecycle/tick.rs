@@ -922,39 +922,14 @@ impl ChartApp {
                         }
                     }
 
-                    // Write trade into the shared TradeSeries ring so that
-                    // BigTrades (and future panels) can pull from it via tick().
-                    {
-                        let trade_key = mlc_trade_service::TradeKey::new(
-                            exchange_id,
-                            account_type,
-                            symbol.clone(),
-                        );
-                        if let Ok(map) = self.trade_map.read() {
-                            if let Some(series_arc) = map.get(&trade_key) {
-                                if let Ok(mut series) = series_arc.write() {
-                                    let trade = mlc_trade_service::Trade {
-                                        timestamp_ms: timestamp,
-                                        price,
-                                        quantity,
-                                        trade_id: 0,
-                                        is_buyer_maker: if is_buyer_maker { 1 } else { 0 },
-                                        _pad: [0u8; 7],
-                                    };
-                                    series.trades.push_back(trade);
-                                    series.version += 1;
-                                    series.dirty = true;
-                                    if timestamp > series.last_ts_ms {
-                                        series.last_ts_ms = timestamp;
-                                    }
-                                    // Enforce ring buffer capacity (simple eviction, no disk flush here).
-                                    if series.trades.len() > series.capacity {
-                                        series.trades.pop_front();
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    // (Phase 2B step 2 — trades) The station's Series<TradePoint>
+                    // forwarder owns the trade ring + DiskStore now; panels read
+                    // from station.series::<TradePoint>(&key) directly through
+                    // the handle stored in their `shared_trades` field. The
+                    // bridge no longer maintains a mirror ring, and tick.rs no
+                    // longer needs to push the freshly-drained TradeUpdate into
+                    // any shared structure — the station has already written
+                    // the same point milliseconds earlier.
 
                     // Time-axis (tick) windows: keep the newest trade near the
                     // right edge while in follow/auto mode. The bar-aggregation

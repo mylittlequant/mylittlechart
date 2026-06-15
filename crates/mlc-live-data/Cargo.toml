@@ -10,9 +10,6 @@ name = "mlc_live_data"
 # Chart types (Bar, Timeframe, DataProvider trait)
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 
-# Shared in-memory trade rings
-mlc-trade-service = { path = "../mlc-trade-service", package = "mylittlechart-trade-service" }
-
 # Shared in-memory orderbook series
 mlc-orderbook-service = { path = "../mlc-orderbook-service", package = "mylittlechart-orderbook-service" }
 
