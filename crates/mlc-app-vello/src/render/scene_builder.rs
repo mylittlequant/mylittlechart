@@ -173,6 +173,26 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 pw.overlay_dirty = false;
             }
             pw.scene.append(&pw.overlay_scene, None);
+
+            // Per-chart loading spinner overlay — drawn directly into pw.scene
+            // (NOT cached) so it animates every frame. Goes on top of the
+            // overlay layer so it sits above the crosshair too.
+            if !pw.chart.last_loading_spinners.is_empty() {
+                let elapsed = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                let mut spin_ctx = VelloGpuRenderContext::new(
+                    &mut pw.scene, 0.0, chrome::CHROME_HEIGHT, None, None,
+                );
+                render_loading_spinners(
+                    &mut spin_ctx,
+                    &pw.chart.last_loading_spinners,
+                    elapsed,
+                    &spinner_active_color,
+                    &spinner_backdrop_color,
+                );
+            }
         }
 
         // Sidebar scene rebuild (after render, within the same input frame)
@@ -322,6 +342,23 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 // hid the loading/login screen.
                 pw.chart.render_modal_layer(&mut chart_ctx, frame_time);
 
+                // Per-chart loading spinner overlay (animated every frame; the
+                // host redraw pump in main.rs keeps frames flowing while the
+                // spinner list is non-empty).
+                if !pw.chart.last_loading_spinners.is_empty() {
+                    let elapsed = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0);
+                    render_loading_spinners(
+                        &mut chart_ctx,
+                        &pw.chart.last_loading_spinners,
+                        elapsed,
+                        &spinner_active_color,
+                        &spinner_backdrop_color,
+                    );
+                }
+
                 // Render chrome context menu overlay (at y_offset=0, absolute coords).
                 if pw.chrome_state.context_menu.open {
                     let mut overlay_ctx = mlc_instanced_context::InstancedChartRenderContext::new(
@@ -410,6 +447,19 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 // Render modal layer on top (still inside translate — modals use chart-relative coords).
                 // Unconditional — draws profile/welcome/skeleton screens too.
                 pw.chart.render_modal_layer(&mut cpu_ctx, frame_time);
+                if !pw.chart.last_loading_spinners.is_empty() {
+                    let elapsed = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0);
+                    render_loading_spinners(
+                        &mut cpu_ctx,
+                        &pw.chart.last_loading_spinners,
+                        elapsed,
+                        &spinner_active_color,
+                        &spinner_backdrop_color,
+                    );
+                }
                 cpu_ctx.restore();
                 // Render chrome context menu overlay.
                 if pw.chrome_state.context_menu.open {
@@ -461,6 +511,19 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 // Render modal layer on top (still inside translate — modals use chart-relative coords).
                 // Unconditional — draws profile/welcome/skeleton screens too.
                 pw.chart.render_modal_layer(&mut skia_ctx, frame_time);
+                if !pw.chart.last_loading_spinners.is_empty() {
+                    let elapsed = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0);
+                    render_loading_spinners(
+                        &mut skia_ctx,
+                        &pw.chart.last_loading_spinners,
+                        elapsed,
+                        &spinner_active_color,
+                        &spinner_backdrop_color,
+                    );
+                }
                 skia_ctx.restore();
                 // Render chrome context menu overlay.
                 if pw.chrome_state.context_menu.open {
@@ -502,6 +565,19 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 // Render modal layer on top (still inside translate — modals use chart-relative coords).
                 // Unconditional — draws profile/welcome/skeleton screens too.
                 pw.chart.render_modal_layer(&mut hybrid_ctx, frame_time);
+                if !pw.chart.last_loading_spinners.is_empty() {
+                    let elapsed = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0);
+                    render_loading_spinners(
+                        &mut hybrid_ctx,
+                        &pw.chart.last_loading_spinners,
+                        elapsed,
+                        &spinner_active_color,
+                        &spinner_backdrop_color,
+                    );
+                }
                 hybrid_ctx.translate(0.0, -chrome::CHROME_HEIGHT);
                 // Render chrome context menu overlay.
                 if pw.chrome_state.context_menu.open {
@@ -549,6 +625,55 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
 /// sees activity while the off-thread promote worker builds the live ChartApp.
 ///
 /// `elapsed_ms` is the milliseconds since `pw.spinner_start` was set.
+/// Render the per-chart loading spinner overlay layer.
+///
+/// `spinners` carries `(leaf_id, (cx, cy, radius))` for every leaf currently
+/// in loading state — produced by `ChartPanelRenderResult.loading_spinner`
+/// during `pw.chart.render()` and persisted on `pw.chart.last_loading_spinners`.
+/// Coordinates are in chart-content space (NOT including chrome offset) so
+/// the caller MUST pass the same `y_offset` the chart was rendered with.
+///
+/// "Scene-ready" is implicit: the per-chart `bars.is_empty()` check in the
+/// layout layer flips false the moment bars land, the next render produces
+/// an empty `last_loading_spinners` list, and this fn paints nothing — the
+/// transition is instant, on the SAME frame that draws the real chart. The
+/// host redraw pump keeps the spinner animated while the list is non-empty.
+fn render_loading_spinners<C>(
+    ctx: &mut C,
+    spinners: &[(mlc_core::LeafId, (f64, f64, f64))],
+    elapsed_ms: u64,
+    active_color: &str,
+    backdrop_color: &str,
+)
+where
+    C: uzor::render::Painter + ?Sized,
+{
+    if spinners.is_empty() {
+        return;
+    }
+    let t = (elapsed_ms % 1200) as f64 / 1200.0;
+    let start_angle = t * std::f64::consts::TAU - std::f64::consts::FRAC_PI_2;
+    let sweep = std::f64::consts::PI * 3.0 / 2.0;
+
+    for (_leaf, (cx, cy, radius)) in spinners {
+        let stroke_w = (radius * 0.16).clamp(2.0, 4.0);
+        ctx.save();
+        ctx.set_stroke_width(stroke_w);
+        ctx.set_line_dash(&[]);
+        // Backdrop ring.
+        ctx.set_stroke_color(backdrop_color);
+        ctx.begin_path();
+        ctx.arc(*cx, *cy, *radius, 0.0, std::f64::consts::TAU);
+        ctx.stroke();
+        // Active 270° sweep.
+        ctx.set_stroke_color(active_color);
+        ctx.begin_path();
+        ctx.arc(*cx, *cy, *radius, start_angle, start_angle + sweep);
+        ctx.stroke();
+        ctx.restore();
+    }
+}
+
 fn render_spinner(
     ctx: &mut dyn uzor::render::Painter,
     window_width: f64,

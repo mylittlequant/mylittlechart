@@ -4543,15 +4543,20 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             self.start_promote_async();
         }
 
-        // Keep spinner windows animating at ~60fps while the worker is running
-        // AND through the post-swap window where the spinner is held until the
-        // first live chart frame composites (awaiting_first_live_frame). Both
-        // phases must drive redraws or the spinner freezes / the held frames
-        // never advance to retire it.
+        // Keep spinner windows animating at ~60fps while ANY of:
+        //   - the promote worker is running (skeleton spinner)
+        //   - awaiting_first_live_frame held flag (post-swap skeleton spinner)
+        //   - any per-chart leaf is currently in the loading state
+        //     (`last_loading_spinners` non-empty) — needs continuous redraw so
+        //     the per-chart spinner overlay animates rather than freezing on
+        //     the last drawn frame. The "scene-ready" transition flips this
+        //     flag to empty the moment bars land, and the next frame draws
+        //     the real chart without a spinner — no extra retire timer.
         for pw in self.windows.values() {
-            if pw.spinner_start.is_some()
-                && (self.promote_pending || pw.awaiting_first_live_frame)
-            {
+            let skeleton_active = pw.spinner_start.is_some()
+                && (self.promote_pending || pw.awaiting_first_live_frame);
+            let per_chart_loading = !pw.chart.last_loading_spinners.is_empty();
+            if skeleton_active || per_chart_loading {
                 pw.window.request_redraw();
             }
         }

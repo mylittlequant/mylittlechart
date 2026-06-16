@@ -222,6 +222,17 @@ pub struct ChartApp {
     /// split mode stores one entry per visible leaf.
     pub(crate) scale_corner_zones_by_leaf: std::collections::HashMap<mlc_core::LeafId, ScaleCornerHitZones>,
 
+    /// Per-leaf loading-spinner geometry from the LAST frame: `(cx, cy, radius)`
+    /// for every leaf that rendered the loading skeleton (bars empty, no
+    /// data_error). Empty when nothing is loading.
+    ///
+    /// Read by the host renderer (`scene_builder.rs` in app-vello) AFTER
+    /// `pw.chart.render()` to composite a spinner overlay layer on top of
+    /// chart-scene. "scene-ready" is implicit: non-empty → empty between
+    /// adjacent frames is the transition that retires the spinner, no extra
+    /// flag needed.
+    pub last_loading_spinners: Vec<(mlc_core::LeafId, (f64, f64, f64))>,
+
     /// Search overlay render result from last frame (used for rect-based hit testing).
     pub(crate) search_modal_result: Option<ModalSearchResult>,
 
@@ -914,6 +925,15 @@ pub struct RenderOutput {
     /// Produced each frame by `render_full_chart_panel`.  Applied in
     /// `apply_render_output` so the hit tester can read button rects next frame.
     pub sub_pane_overlay_writebacks: Vec<(mlc_core::LeafId, Vec<mlc_core::SubPaneOverlayResult>)>,
+    /// Per-leaf loading-spinner geometry: `(leaf_id, (cx, cy, radius))` for
+    /// every panel that rendered the loading skeleton (bars empty + no
+    /// data_error) this frame. Empty when nothing is loading.
+    ///
+    /// The host (`scene_builder.rs`) reads this AFTER `pw.chart.render()` to
+    /// composite the spinner as an OVERLAY layer ON TOP of chart-scene — so
+    /// the spinner animates independently of chart-scene composition and the
+    /// "scene-ready" transition is just non-empty → empty across two frames.
+    pub loading_spinners: Vec<(mlc_core::LeafId, (f64, f64, f64))>,
 }
 
 impl ChartApp {
@@ -939,6 +959,7 @@ impl ChartApp {
             height: 800,
             frame_result: None,
             scale_corner_zones_by_leaf: std::collections::HashMap::new(),
+            last_loading_spinners: Vec::new(),
             search_modal_result: None,
             context_menu_result: None,
             hovered_context_menu_item_id: None,
@@ -1280,6 +1301,7 @@ impl ChartApp {
             height: 800,
             frame_result: None,
             scale_corner_zones_by_leaf: std::collections::HashMap::new(),
+            last_loading_spinners: Vec::new(),
             search_modal_result: None,
             context_menu_result: None,
             hovered_context_menu_item_id: None,
@@ -1535,6 +1557,7 @@ impl ChartApp {
             height: 800,
             frame_result: None,
             scale_corner_zones_by_leaf: std::collections::HashMap::new(),
+            last_loading_spinners: Vec::new(),
             search_modal_result: None,
             context_menu_result: None,
             hovered_context_menu_item_id: None,
@@ -2736,6 +2759,8 @@ impl ChartApp {
         let mut out_sub_pane_range_writebacks: Vec<(mlc_core::LeafId, usize, f64, f64)> = Vec::new();
         // Sub-pane overlay result writebacks: cached per-window for hit testing.
         let mut out_sub_pane_overlay_writebacks: Vec<(mlc_core::LeafId, Vec<mlc_core::SubPaneOverlayResult>)> = Vec::new();
+        // Loading-spinner geometry per leaf for the host renderer to composite as overlay.
+        let mut out_loading_spinners: Vec<(mlc_core::LeafId, (f64, f64, f64))> = Vec::new();
 
         let _rt1 = std::time::Instant::now(); // checkpoint: before chart render
         let frame_theme = self.panel_app.frame_theme_for_render();
@@ -2974,6 +2999,9 @@ impl ChartApp {
                 }
                 // Store overlay results for next frame's hit testing.
                 overlay_writebacks.push((leaf_id, render_result.sub_pane_overlays));
+                if let Some(geom) = render_result.loading_spinner {
+                    out_loading_spinners.push((leaf_id, geom));
+                }
 
                 // Post-render: draw bell icons for alerts bound to drawing
                 // primitives and overlay indicators in this leaf.
@@ -3451,6 +3479,7 @@ impl ChartApp {
 
             let mut single_sub_pane_ranges: Vec<(usize, f64, f64)> = Vec::new();
             let mut single_sub_pane_overlays: Vec<mlc_core::SubPaneOverlayResult> = Vec::new();
+            let mut single_loading_spinner: Option<(f64, f64, f64)> = None;
 
             // S2.7.1: extract single-window instrument values from branch_meta tuple.
             let (single_sym, single_tf_name, single_exch, single_at) = single_window_info
@@ -3526,6 +3555,7 @@ impl ChartApp {
                 // Stash ranges and overlay results for writeback after the immutable borrow on `window` ends.
                 single_sub_pane_ranges = render_result.sub_pane_ranges;
                 single_sub_pane_overlays = render_result.sub_pane_overlays;
+                single_loading_spinner = render_result.loading_spinner;
                 let corner_zones_ret = render_result.corner_zones;
 
                 // Post-render: draw bell icons for alerts bound to this window's
@@ -3674,6 +3704,9 @@ impl ChartApp {
                     .active_leaf()
                     .unwrap_or(mlc_core::LeafId(0));
                 out_sub_pane_overlay_writebacks.push((single_leaf_id, single_sub_pane_overlays));
+                if let Some(geom) = single_loading_spinner {
+                    out_loading_spinners.push((single_leaf_id, geom));
+                }
             }
 
             // Reset render scope after single-window render is complete.
@@ -4393,6 +4426,7 @@ impl ChartApp {
             open_submenu_update: out_open_submenu_update,
             sub_pane_range_writebacks: out_sub_pane_range_writebacks,
             sub_pane_overlay_writebacks: out_sub_pane_overlay_writebacks,
+            loading_spinners: out_loading_spinners,
         }
     }
 
@@ -4475,6 +4509,8 @@ impl ChartApp {
                 window.sub_pane_overlay_results = overlays;
             }
         }
+        // Loading-spinner geometry for this frame, read by the host renderer.
+        self.last_loading_spinners = output.loading_spinners;
         // Update text-field geometry for the HexColor field whenever the
         // L2 color picker is visible.  This gives on_drag_start accurate rect +
         // char positions so cursor-from-click works correctly.
