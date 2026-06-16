@@ -1074,145 +1074,17 @@ impl DataBridge {
                 bars: fresh_300.clone(),
             });
 
-            // ── Phase B: Async heal — fill gap between disk cache and fresh bars ──
-            // Only runs when a disk cache existed before this call.
-            if !had_disk_cache {
-                crate::dlog!("[Bridge] Phase B: skipped (no disk cache)");
-                finish_fetch!();
-                return;
-            }
-
-            let disk_last = match disk_last_ts {
-                Some(ts) => ts,
-                None => {
-                    finish_fetch!();
-                    return;
-                }
-            };
-            let fresh_first = match fresh_first_ts {
-                Some(ts) => ts,
-                None => {
-                    finish_fetch!();
-                    return;
-                }
-            };
-
-            let gap_seconds = fresh_first - disk_last;
-            if gap_seconds <= 0 {
-                crate::dlog!("[Bridge] Phase B: no gap (disk_last={} fresh_first={}), done", disk_last, fresh_first);
-                finish_fetch!();
-                return;
-            }
-
-            let interval_secs = interval_to_seconds(&interval);
-            let gap_bars = if interval_secs > 0 { gap_seconds / interval_secs } else { gap_seconds };
-            let heal_target = (gap_bars * 2).max(100) as usize;
-
-            crate::dlog!(
-                "[Bridge] Phase B: gap={}s = ~{} bars, heal_target={} bars (disk_last={} fresh_first={})",
-                gap_seconds, gap_bars, heal_target, disk_last, fresh_first
-            );
-
-            // Paginate backward from fresh_first to fill the gap toward disk_last.
-            // end_time cursor starts just before the earliest fresh bar (in ms).
-            // Phase 2B: each page comes from dig3 `backfill::fetch_history`
-            // (REST `get_klines` with exclusive `end_time_ms`, raw-symbol
-            // passthrough, oldest→newest, deduped+sorted inside dig3).
-            let kline_iv = KlineInterval::new(interval.as_str());
-            let mut end_time_cursor: i64 = fresh_first * 1000 - 1;
-            let mut heal_bars: Vec<Bar> = Vec::with_capacity(heal_target);
-            let mut pages: usize = 0;
-
-            'heal: loop {
-                let result = digdigdig3_station::backfill::fetch_history(
-                    &fetch_hub,
-                    exchange_id,
-                    &wire_sym,
-                    account_type,
-                    &kline_iv,
-                    end_time_cursor,
-                    500,
-                )
-                .await;
-
-                match result {
-                    Ok(points) => {
-                        if points.is_empty() {
-                            crate::dlog!("[Bridge] Phase B: empty page, stopping");
-                            break 'heal;
-                        }
-                        pages += 1;
-                        let batch: Vec<Bar> = points.iter().map(bar_point_to_bar).collect();
-
-                        // Move cursor to before the oldest bar in this page
-                        // (`open_time` is ms; cursor is exclusive ms).
-                        if let Some(oldest_ms) = points.iter().map(|p| p.open_time).min() {
-                            end_time_cursor = oldest_ms - 1;
-                        }
-
-                        let oldest_bar_ts = batch.first().map(|b| b.timestamp).unwrap_or(0);
-                        // batch is fresh REST data and wins on conflicts (second arg wins).
-                        heal_bars = merge_bars(heal_bars, batch);
-
-                        crate::dlog!("[Bridge] Phase B: page {} -> {} heal bars (oldest_ts={})", pages, heal_bars.len(), oldest_bar_ts);
-
-                        if heal_bars.len() >= heal_target {
-                            crate::dlog!("[Bridge] Phase B: reached heal_target={}", heal_target);
-                            break 'heal;
-                        }
-                        // Stop when we've reached into the disk cache range.
-                        if oldest_bar_ts <= disk_last {
-                            crate::dlog!("[Bridge] Phase B: reached disk_last={}, gap covered", disk_last);
-                            break 'heal;
-                        }
-                        if pages >= 20 {
-                            crate::dlog!("[Bridge] Phase B: capped at 20 pages");
-                            break 'heal;
-                        }
-                    }
-                    Err(e) => {
-                        crate::dlog!("[Bridge] Phase B error at page {}: {}", pages, e);
-                        break 'heal;
-                    }
-                }
-            }
-
-            if heal_bars.is_empty() {
-                crate::dlog!("[Bridge] Phase B: no heal bars fetched, done");
-                finish_fetch!();
-                return;
-            }
-
-            // Merge heal (older) with fresh_300 (newer) so the consumer
-            // receives a FULL healed dataset, not just the gap-pages.
-            //
-            // Pre-Phase 2B bug fix: Phase B used to emit `BarsLoaded` with
-            // only `heal_bars`. After Phase 2B that lands in tick.rs's
-            // `is_backfill=true` branch -> `window.update_bars(heal_bars)`,
-            // which sets `self.bars = heal_bars` (full replace, no merge).
-            // Result: window.bars becomes the OLD gap-page range without
-            // fresh_300, the viewport snaps back a month, X axis breaks.
-            //
-            // Emit as `BackfillComplete` (handler also uses update_bars but
-            // semantically owns the merged dataset) carrying the merged set.
-            // `merge_bars(heal, fresh)` — second arg wins on ts conflict, so
-            // fresh_300 closed values override any seed-based duplicates.
-            let merged = merge_bars(heal_bars, fresh_300);
-            let merged_first = merged.first().map(|b| b.timestamp).unwrap_or(0);
-            let merged_last = merged.last().map(|b| b.timestamp).unwrap_or(0);
-            crate::dlog!("[Bridge] Phase B done: sending {} merged bars over {} pages", merged.len(), pages);
-            eprintln!(
-                "[Bridge::PhaseB emit BackfillComplete] {:?} {} at={:?} tf={} bars={} first_ts={} last_ts={} pages={}",
-                exchange_id, symbol_str, account_type, tf_name, merged.len(), merged_first, merged_last, pages,
-            );
-
-            let _ = tx.send(LiveUpdate::BackfillComplete {
-                exchange_id,
-                account_type,
-                symbol: symbol_str,
-                timeframe: tf_name,
-                bars: merged,
-            });
+            // Phase B (legacy heal-loop between disk-cache and Phase A fresh
+            // bars) removed. Background backfill (kicked from tick.rs after
+            // the BarsLoaded arrives) does the same job correctly now:
+            // pages backwards from now_ms with a self-sufficient payload,
+            // so the consumer's `update_bars` replacement is safe by the
+            // source-of-truth rule. Keeping Phase B duplicated the work and
+            // — because it used station_ring as the gap floor — risked
+            // emitting an OLD-only BackfillComplete on a freshly-spawned
+            // station forwarder, snapping the viewport a month back.
+            let _ = had_disk_cache;
+            let _ = disk_last_ts;
 
             finish_fetch!();
         });
@@ -2453,30 +2325,34 @@ impl DataBridge {
                 }
             }
 
-            // Re-check cache length after connector wait — another task may have
-            // already satisfied the target while we were waiting.
-            let (still_need, end_time_cursor_init) = {
-                let bars = station_read_bars_async(&station_bg, &station_bar_seriskey).await;
-                if bars.len() >= target_bars as usize {
-                    crate::dlog!(
-                        "[Bridge] backfill {:?} sym={} tf={}: satisfied after connector wait ({} bars)",
-                        exchange_id, symbol_str, tf_name, bars.len()
-                    );
-                    finish_backfill!();
-                    return;
-                } else if bars.is_empty() {
-                    (target_bars as usize, None)
-                } else {
-                    let need = target_bars as usize - bars.len();
-                    // Cursor: just before the oldest cached bar (in ms).
-                    let oldest_ms = bars.first().map(|b| b.timestamp * 1000 - 1);
-                    (need, oldest_ms)
-                }
-            };
+            // Rule: the exchange is the source of truth. Each emit from
+            // background_backfill must contain a SELF-SUFFICIENT dataset that
+            // tick.rs can apply via `update_bars`/`set_bars` AS-IS, including
+            // the fresh tail. We must NEVER ask the consumer to merge.
+            //
+            // Pre-Phase 2B that worked because the consumer-side ring held the
+            // fresh tail by construction. After Phase 2B the station's ring
+            // is a different buffer (warm-seed may be older than Phase A's
+            // fresh 300), so we cannot use station_read_bars as the "fresh
+            // anchor" any more. Instead: always start backfill paging from
+            // `now_ms`. The FIRST page is the latest 500 from REST = the
+            // fresh tail. Subsequent pages walk backwards. The accumulated
+            // result is a complete contiguous history that already includes
+            // the freshest closed bars, so the consumer's `update_bars`
+            // replacement is correct without any merge.
+            //
+            // The "still_need" / "satisfied-by-cache" short-circuit is
+            // intentionally dropped here — background_backfill is an
+            // explicit "fetch target_bars history NOW from the exchange"
+            // op (called by tick.rs after every BarsLoaded), not a
+            // lazy-fill. The previous early-exit-on-cache branch was the
+            // mechanism by which station's stale warm-seed could block the
+            // refresh AND poison the cursor at the same time.
+            let still_need = target_bars as usize;
 
             crate::dlog!(
-                "[Bridge] backfill {:?} sym={} tf={}: need {} more bars, cursor={:?}",
-                exchange_id, symbol_str, tf_name, still_need, end_time_cursor_init
+                "[Bridge] backfill {:?} sym={} tf={}: target={} bars, paginating from now",
+                exchange_id, symbol_str, tf_name, still_need
             );
 
             // Effective limit accounts for exchange-specific per-request caps
@@ -2484,15 +2360,15 @@ impl DataBridge {
             let effective_limit = fetch_hub.max_kline_limit(exchange_id, 500);
 
             // Phase 2B: pages come from dig3 `backfill::fetch_history`
-            // (exclusive `end_time_ms`, raw symbol, sorted+deduped). The cursor
-            // is `i64` (ms): when the cache is empty there is no oldest bar, so
-            // the first page ends at "now".
+            // (exclusive `end_time_ms`, raw symbol, sorted+deduped). First
+            // page = (now - effective_limit*tf) .. now → fresh tail. Cursor
+            // walks backwards from there.
             let kline_iv = KlineInterval::new(interval.as_str());
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as i64)
                 .unwrap_or(i64::MAX);
-            let mut end_time_cursor: i64 = end_time_cursor_init.unwrap_or(now_ms);
+            let mut end_time_cursor: i64 = now_ms;
             let mut accumulated: Vec<Bar> = Vec::with_capacity(still_need.min(20_000));
             let mut pages: usize = 0;
 
@@ -2592,32 +2468,21 @@ impl DataBridge {
                 return;
             }
 
-            // Merge the fresh tail currently in the station ring (Phase A
-            // 300 + live WS bars accumulated since) on top of the older
-            // backfill pages. Without this `accumulated` is ONLY the older
-            // gap-pages: tick.rs's BackfillComplete handler does
-            // `window.update_bars(bars)` -> `self.bars = bars` (full replace),
-            // which would stomp the fresh tail the user is currently looking
-            // at and snap the viewport a month back.
-            //
-            // merge_bars(old, new) -> second arg wins on ts conflict, so
-            // the live tail (newest values) overrides any seed/REST duplicates.
-            let fresh_tail = station_read_bars_async(&station_bg, &station_bar_seriskey).await;
-            let merged = if fresh_tail.is_empty() {
-                accumulated
-            } else {
-                merge_bars(accumulated, fresh_tail)
-            };
-            let merged_first = merged.first().map(|b| b.timestamp).unwrap_or(0);
-            let merged_last = merged.last().map(|b| b.timestamp).unwrap_or(0);
+            // accumulated is already self-sufficient: page 1 was anchored at
+            // now_ms so the freshest bars are included; subsequent pages
+            // walked further back. tick.rs's BackfillComplete handler does
+            // `window.update_bars(bars)` (full replace) and that's correct
+            // by the source-of-truth rule — REST overwrites RAM as-is.
+            let acc_first = accumulated.first().map(|b| b.timestamp).unwrap_or(0);
+            let acc_last = accumulated.last().map(|b| b.timestamp).unwrap_or(0);
 
             crate::dlog!(
                 "[Bridge] backfill {:?} sym={} tf={}: fetched {} bars over {} pages, emitting",
-                exchange_id, symbol_str, tf_name, merged.len(), pages
+                exchange_id, symbol_str, tf_name, accumulated.len(), pages
             );
             eprintln!(
                 "[Bridge::backfill emit BackfillComplete] {:?} {} at={:?} tf={} bars={} first_ts={} last_ts={} pages={}",
-                exchange_id, symbol_str, account_type, tf_name, merged.len(), merged_first, merged_last, pages,
+                exchange_id, symbol_str, account_type, tf_name, accumulated.len(), acc_first, acc_last, pages,
             );
 
             let _ = tx.send(LiveUpdate::BackfillComplete {
@@ -2625,7 +2490,7 @@ impl DataBridge {
                 account_type,
                 symbol: symbol_str,
                 timeframe: tf_name,
-                bars: merged,
+                bars: accumulated,
             });
 
             finish_backfill!();
@@ -3057,31 +2922,6 @@ pub fn account_type_from_short_label(s: &str) -> AccountType {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Parse an interval string to seconds.
-///
-/// Handles standard exchange interval notation: "1s"→1, "1m"→60, "5m"→300,
-/// "15m"→900, "1h"→3600, "4h"→14400, "1d"→86400, "1w"→604800.
-/// Falls back to minutes when the unit is unrecognised.
-fn interval_to_seconds(interval: &str) -> i64 {
-    let s = interval.trim();
-    if s.is_empty() {
-        return 60;
-    }
-    // Case-sensitive: 'm' = minutes, 'M' = months.
-    // All other units are case-insensitive.
-    let unit = s.chars().last().unwrap_or('m');
-    let num_part = &s[..s.len() - unit.len_utf8()];
-    let num: i64 = num_part.parse().unwrap_or(1);
-    match unit {
-        's' | 'S' => num,
-        'm' => num * 60,             // minutes (lowercase)
-        'M' => num * 2_592_000,      // months (uppercase) ≈ 30 days
-        'h' | 'H' => num * 3_600,
-        'd' | 'D' => num * 86_400,
-        'w' | 'W' => num * 604_800,
-        _ => num * 60,
-    }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // BAR PAGE MERGE
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3155,7 +2995,7 @@ fn station_bar_key(exchange: ExchangeId, account: AccountType, symbol: &str, tim
 ///
 /// SAFE ONLY from the app thread (sync bridge API surface). Calling this
 /// from inside a tokio task on the bridge runtime panics with
-/// "cannot block within runtime" — use [`station_read_bars_async`] there.
+/// "cannot block within runtime".
 fn station_read_bars(station: &digdigdig3_station::Station, key: &StationSeriesKey) -> Vec<Bar> {
     let Some(arc) = station.series::<BarPoint>(key) else { return Vec::new(); };
     let guard = arc.blocking_read();
@@ -3167,16 +3007,6 @@ fn station_read_bars_len(station: &digdigdig3_station::Station, key: &StationSer
     let Some(arc) = station.series::<BarPoint>(key) else { return 0; };
     let guard = arc.blocking_read();
     guard.len()
-}
-
-/// ASYNC read of all bars from the station's `Series<BarPoint>` ring.
-///
-/// Use from inside tokio tasks on the bridge runtime — the await yields
-/// the worker thread instead of panicking like `blocking_read` would.
-async fn station_read_bars_async(station: &digdigdig3_station::Station, key: &StationSeriesKey) -> Vec<Bar> {
-    let Some(arc) = station.series::<BarPoint>(key) else { return Vec::new(); };
-    let guard = arc.read().await;
-    guard.snapshot().iter().map(bar_point_to_bar).collect()
 }
 
 
