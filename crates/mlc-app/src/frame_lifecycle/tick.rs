@@ -235,6 +235,12 @@ impl ChartApp {
             }
             match update {
                 LiveUpdate::BarsLoaded { exchange_id, symbol, timeframe: tf_name, bars, account_type } => {
+                    eprintln!(
+                        "[tick::BarsLoaded recv] {:?} {} at={:?} tf={} bars={} first_ts={} last_ts={}",
+                        exchange_id, symbol, account_type, tf_name, bars.len(),
+                        bars.first().map(|b| b.timestamp).unwrap_or(0),
+                        bars.last().map(|b| b.timestamp).unwrap_or(0),
+                    );
                     // Short-circuit fully-unmatched bars before the expensive
                     // matching path. If no live window or parked preset listens
                     // to this instrument, the entire arm resolves to no-match
@@ -248,6 +254,7 @@ impl ChartApp {
                         account_type.short_label().to_string(),
                     );
                     if !listened_instruments.contains(&listen_key) {
+                        eprintln!("[tick::BarsLoaded] no-listener, skipping");
                         continue;
                     }
                     let loaded_tf = parse_timeframe_name(&tf_name);
@@ -296,6 +303,10 @@ impl ChartApp {
                             } else {
                                 !window.bars.is_empty()
                             };
+                            eprintln!(
+                                "[tick::BarsLoaded match] cid={:?} sym={} tf={} is_backfill={} prior_bars={} incoming_bars={}",
+                                chart_id_key, win_sym, win_tf.name, is_backfill, window.bars.len(), bars.len(),
+                            );
                             crate::dlog!("[ChartApp]   -> window matched: sym={} exch={} tf={} is_backfill={} bars_len={} pending_sym={}",
                                 win_sym, win_exch, win_tf.name,
                                 is_backfill, window.bars.len(), window.pending_symbol_load);
@@ -499,6 +510,12 @@ impl ChartApp {
                     }
                 }
                 LiveUpdate::BackfillComplete { exchange_id, account_type, symbol, timeframe: tf_name, bars } => {
+                    eprintln!(
+                        "[tick::BackfillComplete recv] {:?} {} at={:?} tf={} bars={} first_ts={} last_ts={}",
+                        exchange_id, symbol, account_type, tf_name, bars.len(),
+                        bars.first().map(|b| b.timestamp).unwrap_or(0),
+                        bars.last().map(|b| b.timestamp).unwrap_or(0),
+                    );
                     crate::dlog!("[ChartApp] BackfillComplete: {} {} tf={} bars={}", exchange_id.as_str(), symbol, tf_name, bars.len());
                     let mut prev_close_mirrors: Vec<(mlc_core::state::ChartId, Option<f64>)> = Vec::new();
 
@@ -1103,6 +1120,10 @@ impl ChartApp {
                                 // 300-bar window, and bounce the viewport. The cold
                                 // first-connect case still spawns the subscriber +
                                 // emits the initial Phase A BarsLoaded.
+                                eprintln!(
+                                    "[tick::ConnectorReady -> request_bars] {:?} {} at={:?} tf={} force=false",
+                                    exchange_id, sym, at, tf.name,
+                                );
                                 bridge.request_bars(exchange_id, sym, tf, at, None, None, false);
                             }
                         }

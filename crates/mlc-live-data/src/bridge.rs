@@ -780,6 +780,14 @@ impl DataBridge {
             if bars.is_empty() { None } else { Some(bars) }
         };
 
+        eprintln!(
+            "[Bridge::request_bars enter] {:?} {} at={:?} tf={} force={} cached_bars={} first_cached_ts={} last_cached_ts={}",
+            exchange_id, symbol_str, account_type, tf_name, force,
+            cached_bars.as_ref().map(|v| v.len()).unwrap_or(0),
+            cached_bars.as_ref().and_then(|v| v.first()).map(|b| b.timestamp).unwrap_or(0),
+            cached_bars.as_ref().and_then(|v| v.last()).map(|b| b.timestamp).unwrap_or(0),
+        );
+
         // ── Two-layer dedup ───────────────────────────────────────────────────
         //
         // Layer 1 (active_fetches): fetch currently in flight on the runtime
@@ -797,7 +805,7 @@ impl DataBridge {
         {
             let mut af = active_fetches.lock().unwrap_or_else(|e| e.into_inner());
             if af.contains(&cache_key) {
-                crate::dlog!("[Bridge] fetch already in flight for {:?} sym={} tf={}, skipping", exchange_id, symbol_str, tf_name);
+                eprintln!("[Bridge::request_bars dedup-L1] in-flight, skip {:?} {} tf={}", exchange_id, symbol_str, tf_name);
                 return;
             }
             af.insert(cache_key.clone());
@@ -808,7 +816,7 @@ impl DataBridge {
             subs.contains(&cache_key)
         };
         if already_subscribed && !force {
-            crate::dlog!("[Bridge] subscriber already live for {:?} sym={} tf={}, non-force caller skipped", exchange_id, symbol_str, tf_name);
+            eprintln!("[Bridge::request_bars dedup-L2] subscriber live, non-force skip {:?} {} tf={}", exchange_id, symbol_str, tf_name);
             if let Ok(mut af) = active_fetches.lock() { af.remove(&cache_key); }
             return;
         }
@@ -849,6 +857,10 @@ impl DataBridge {
         // freshly fetched 300 bars; live ticks arrive via LiveUpdate::BarUpdate.
 
         if need_spawn_kline_sub {
+            eprintln!(
+                "[Bridge::request_bars spawn-kline-fwd] {:?} {} at={:?} tf={}",
+                exchange_id, symbol_str, account_type, tf_name,
+            );
             let station = self.station.clone();
             let station_tx = self.tx.clone();
             // Canonical form — emitted back to the app so bubble.symbol lookups match.
@@ -877,9 +889,18 @@ impl DataBridge {
                     crate::dlog!("[Bridge] station kline partial-fail {:?} sym={} tf={}: {} failed",
                         exchange_id, station_symbol_wire, station_tf_name, report.failed.len());
                 }
+                let mut bar_n: u64 = 0;
                 while let Some(ev) = report.handle.recv().await {
                     if let digdigdig3_station::Event::Bar { point, .. } = ev {
                         let bar = bar_point_to_bar(&point);
+                        bar_n = bar_n.wrapping_add(1);
+                        // Sample-log to confirm forwarder is alive without flooding.
+                        if bar_n <= 3 || bar_n % 50 == 0 {
+                            eprintln!(
+                                "[Bridge::kline-fwd emit BarUpdate] n={} {:?} {} at={:?} tf={} bar_ts={}",
+                                bar_n, exchange_id, station_symbol_canonical, account_type, station_tf_name, bar.timestamp,
+                            );
+                        }
                         let _ = station_tx.send(LiveUpdate::BarUpdate {
                             exchange_id,
                             account_type,
@@ -1040,6 +1061,11 @@ impl DataBridge {
             // forwarder receives the same WS klines and upsert_by_ts deduplicates
             // against any cached bars, so the bridge does not need a parallel
             // merge layer.
+            eprintln!(
+                "[Bridge::PhaseA emit BarsLoaded] {:?} {} at={:?} tf={} bars={} first_ts={} last_ts={}",
+                exchange_id, symbol_str, account_type, tf_name, fresh_300.len(),
+                fresh_first_ts.unwrap_or(0), fresh_last_ts.unwrap_or(0),
+            );
             let _ = tx.send(LiveUpdate::BarsLoaded {
                 exchange_id,
                 account_type,
@@ -1157,17 +1183,35 @@ impl DataBridge {
                 return;
             }
 
-            crate::dlog!("[Bridge] Phase B done: sending {} heal bars over {} pages", heal_bars.len(), pages);
+            // Merge heal (older) with fresh_300 (newer) so the consumer
+            // receives a FULL healed dataset, not just the gap-pages.
+            //
+            // Pre-Phase 2B bug fix: Phase B used to emit `BarsLoaded` with
+            // only `heal_bars`. After Phase 2B that lands in tick.rs's
+            // `is_backfill=true` branch -> `window.update_bars(heal_bars)`,
+            // which sets `self.bars = heal_bars` (full replace, no merge).
+            // Result: window.bars becomes the OLD gap-page range without
+            // fresh_300, the viewport snaps back a month, X axis breaks.
+            //
+            // Emit as `BackfillComplete` (handler also uses update_bars but
+            // semantically owns the merged dataset) carrying the merged set.
+            // `merge_bars(heal, fresh)` — second arg wins on ts conflict, so
+            // fresh_300 closed values override any seed-based duplicates.
+            let merged = merge_bars(heal_bars, fresh_300);
+            let merged_first = merged.first().map(|b| b.timestamp).unwrap_or(0);
+            let merged_last = merged.last().map(|b| b.timestamp).unwrap_or(0);
+            crate::dlog!("[Bridge] Phase B done: sending {} merged bars over {} pages", merged.len(), pages);
+            eprintln!(
+                "[Bridge::PhaseB emit BackfillComplete] {:?} {} at={:?} tf={} bars={} first_ts={} last_ts={} pages={}",
+                exchange_id, symbol_str, account_type, tf_name, merged.len(), merged_first, merged_last, pages,
+            );
 
-            // Send Phase B BarsLoaded (Level 3 — fully healed dataset). The
-            // consumer's window state merges this against Phase A bars; station
-            // upsert_by_ts handles dedup independently.
-            let _ = tx.send(LiveUpdate::BarsLoaded {
+            let _ = tx.send(LiveUpdate::BackfillComplete {
                 exchange_id,
                 account_type,
                 symbol: symbol_str,
                 timeframe: tf_name,
-                bars: heal_bars,
+                bars: merged,
             });
 
             finish_fetch!();
@@ -1273,14 +1317,20 @@ impl DataBridge {
         timeframe: &str,
     ) {
         let key: FetchKey = (exchange_id, account_type, symbol.to_string(), timeframe.to_string());
+        let mut aborted = false;
         if let Ok(mut h) = self.station_kline_handles.lock() {
             if let Some(handle) = h.remove(&key) {
                 handle.abort();
+                aborted = true;
             }
         }
         if let Ok(mut subs) = self.station_kline_subscribed.lock() {
             subs.remove(&key);
         }
+        eprintln!(
+            "[Bridge::abort_kline_bars] {:?} {} at={:?} tf={} aborted={}",
+            exchange_id, symbol, account_type, timeframe, aborted,
+        );
     }
 
     /// Subscribe to a range-bar stream (`price_units` price-move per bar, ×1e8 fixed-point).
@@ -2542,9 +2592,32 @@ impl DataBridge {
                 return;
             }
 
+            // Merge the fresh tail currently in the station ring (Phase A
+            // 300 + live WS bars accumulated since) on top of the older
+            // backfill pages. Without this `accumulated` is ONLY the older
+            // gap-pages: tick.rs's BackfillComplete handler does
+            // `window.update_bars(bars)` -> `self.bars = bars` (full replace),
+            // which would stomp the fresh tail the user is currently looking
+            // at and snap the viewport a month back.
+            //
+            // merge_bars(old, new) -> second arg wins on ts conflict, so
+            // the live tail (newest values) overrides any seed/REST duplicates.
+            let fresh_tail = station_read_bars_async(&station_bg, &station_bar_seriskey).await;
+            let merged = if fresh_tail.is_empty() {
+                accumulated
+            } else {
+                merge_bars(accumulated, fresh_tail)
+            };
+            let merged_first = merged.first().map(|b| b.timestamp).unwrap_or(0);
+            let merged_last = merged.last().map(|b| b.timestamp).unwrap_or(0);
+
             crate::dlog!(
                 "[Bridge] backfill {:?} sym={} tf={}: fetched {} bars over {} pages, emitting",
-                exchange_id, symbol_str, tf_name, accumulated.len(), pages
+                exchange_id, symbol_str, tf_name, merged.len(), pages
+            );
+            eprintln!(
+                "[Bridge::backfill emit BackfillComplete] {:?} {} at={:?} tf={} bars={} first_ts={} last_ts={} pages={}",
+                exchange_id, symbol_str, account_type, tf_name, merged.len(), merged_first, merged_last, pages,
             );
 
             let _ = tx.send(LiveUpdate::BackfillComplete {
@@ -2552,7 +2625,7 @@ impl DataBridge {
                 account_type,
                 symbol: symbol_str,
                 timeframe: tf_name,
-                bars: accumulated,
+                bars: merged,
             });
 
             finish_backfill!();
