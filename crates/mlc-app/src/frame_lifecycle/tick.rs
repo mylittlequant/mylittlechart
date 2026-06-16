@@ -1626,6 +1626,13 @@ impl ChartApp {
                 self.profile_dirty = true;
             }
         }
+
+        // Drain a pending autosave once per tick — collapses the 5-7
+        // autosave_snapshot calls fired during a single preset switch
+        // (sync-group propagation + park + load + command history all
+        // ask for one in the same frame) into a single deep collect_state.
+        self.flush_pending_autosave();
+
         self.last_tick_us = tick_start.elapsed().as_micros() as u64;
 
         // ── Leak / backpressure census ───────────────────────────────────────

@@ -8798,14 +8798,30 @@ impl ChartApp {
     // Autosave
     // -------------------------------------------------------------------------
 
-    /// Immediately save the active preset snapshot if autosave is enabled.
+    /// Request an autosave snapshot of the active preset.
     ///
-    /// - Does nothing when autosave is disabled.
-    /// - Does nothing for empty preset ids.
-    /// - For `__default__` — creates the preset entry if it doesn't exist yet.
+    /// Sets `pending_autosave = true` instead of running the full
+    /// collect+upsert immediately. The deferred snapshot runs at most once
+    /// per frame from `flush_pending_autosave`, which is invoked late in the
+    /// tick after all input handlers + sync-group propagations + command
+    /// history settle. Previously every callsite (5-7 of them on a single
+    /// preset switch — handler + sync-group + park + load + command history)
+    /// triggered a full `collect_state_into_preset` deep-copy, freezing the
+    /// UI for 50-200 ms per switch.
+    ///
+    /// Disabled autosave / empty preset id checks are still applied here so
+    /// the deferred path also no-ops.
     pub fn autosave_snapshot(&mut self) {
-        eprintln!("[ChartApp] autosave_snapshot called: enabled={}, id='{}'",
-            self.panel_app.autosave_enabled, self.panel_app.active_preset_id);
+        if !self.panel_app.autosave_enabled { return; }
+        if self.panel_app.active_preset_id.is_empty() { return; }
+        self.pending_autosave = true;
+    }
+
+    /// Run the pending autosave once per frame. Called from the app tick.
+    pub fn flush_pending_autosave(&mut self) {
+        if !self.pending_autosave { return; }
+        self.pending_autosave = false;
+
         if !self.panel_app.autosave_enabled { return; }
         let id = self.panel_app.active_preset_id.clone();
         if id.is_empty() { return; }
@@ -8819,11 +8835,15 @@ impl ChartApp {
             return;
         };
 
+        let _t0 = std::time::Instant::now();
         self.collect_state_into_preset(&id, &name);
         if let Some(preset) = self.panel_app.presets.get(&id).cloned() {
             self.preset_actions.push(crate::PresetAction::Upsert(preset));
         }
-        eprintln!("[ChartApp] autosave snapshot for '{}' (persisted)", name);
+        eprintln!(
+            "[ChartApp] autosave snapshot for '{}' (persisted) collect_us={}",
+            name, _t0.elapsed().as_micros(),
+        );
     }
 
     // -------------------------------------------------------------------------
