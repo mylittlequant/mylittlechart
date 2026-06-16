@@ -578,12 +578,12 @@ where
                 } else {
                     result.item_rects.push((id.clone(), item_rect));
                 }
-                // Inline input gets its own dedicated hit zone with an
-                // "__input__:" prefix so the click router can focus the
-                // text-field instead of firing the action.
-                if let Some(ir) = input_rect_opt {
-                    result.item_rects.push((format!("__input__:{}", id), ir));
-                }
+                // Inline input is display-only (shows current param value). NOT a
+                // hit zone — clicks land on the row and fire ChangeChartType with
+                // the current panel param/interval. Param is edited via the
+                // toolbar-level field that appears after the chart type is set,
+                // not from within the dropdown.
+                let _ = input_rect_opt;
                 if is_hovered {
                     result.hovered = Some(id.clone());
                 }
