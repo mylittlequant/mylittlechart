@@ -1357,60 +1357,85 @@ impl DataBridge {
     ) -> tokio::task::JoinHandle<()> {
         runtime.spawn(async move {
             let stream_label = format!("{:?}", stream);
-            eprintln!(
-                "[Bridge::derived-bar-fwd subscribing] {:?} {} wire={} stream={}",
-                exchange_id, symbol_canonical, symbol_wire, stream_label,
-            );
-            let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
-                exchange_id,
-                symbol_wire.clone(),
-                account_type,
-                [stream],
-            );
-            let mut report = match station.subscribe(sub_set).await {
-                Ok(r) => r,
-                Err(e) => {
-                    eprintln!(
-                        "[Bridge::derived-bar-fwd subscribe FAILED] {:?} {} wire={} stream={}: {:?}",
-                        exchange_id, symbol_canonical, symbol_wire, stream_label, e,
-                    );
-                    return;
-                }
-            };
-            if !report.failed.is_empty() {
-                eprintln!(
-                    "[Bridge::derived-bar-fwd subscribe partial-fail] {:?} {} wire={} stream={}: {} failed",
-                    exchange_id, symbol_canonical, symbol_wire, stream_label, report.failed.len(),
+            // dig3-station 0.3.7+ explicitly disables auto-heal for non-kline
+            // streams (their forwarders exit cleanly on disconnect). Our derived
+            // bars (RangeBar/VolumeBar/TickBar) ARE non-kline by station's
+            // taxonomy, so the upstream forwarder ends after a few seconds and
+            // `report.handle.recv()` starts returning None. Mount a respawn
+            // loop here on top so the consumer sees a continuous bar stream:
+            // after every clean exit we wait 1s and re-subscribe.
+            //
+            // The wrapping JoinHandle is the same as before — abort cancels
+            // the loop entirely, which is what abort_derived_sub wants.
+            let mut total_bars: u64 = 0;
+            let mut respawn_n: u32 = 0;
+            loop {
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                    exchange_id,
+                    symbol_wire.clone(),
+                    account_type,
+                    [stream.clone()],
                 );
-            }
-            eprintln!(
-                "[Bridge::derived-bar-fwd subscribed OK] {:?} {} wire={} stream={}",
-                exchange_id, symbol_canonical, symbol_wire, stream_label,
-            );
-            let mut bar_n: u64 = 0;
-            while let Some(ev) = report.handle.recv().await {
-                if let digdigdig3_station::Event::Bar { point, .. } = ev {
-                    let bar = bar_point_to_bar(&point);
-                    bar_n = bar_n.wrapping_add(1);
-                    if bar_n <= 3 || bar_n % 50 == 0 {
+                eprintln!(
+                    "[Bridge::derived-bar-fwd subscribing] respawn={} {:?} {} wire={} stream={}",
+                    respawn_n, exchange_id, symbol_canonical, symbol_wire, stream_label,
+                );
+                let mut report = match station.subscribe(sub_set).await {
+                    Ok(r) => r,
+                    Err(e) => {
                         eprintln!(
-                            "[Bridge::derived-bar-fwd emit BarUpdate] n={} {:?} {} stream={} bar_ts={}",
-                            bar_n, exchange_id, symbol_canonical, stream_label, bar.timestamp,
+                            "[Bridge::derived-bar-fwd subscribe FAILED] respawn={} {:?} {} wire={} stream={}: {:?}",
+                            respawn_n, exchange_id, symbol_canonical, symbol_wire, stream_label, e,
                         );
+                        // Hard failure (likely StreamNotSupported / venue gap).
+                        // Don't busy-loop — give up.
+                        return;
                     }
-                    let _ = tx.send(LiveUpdate::BarUpdate {
-                        exchange_id,
-                        account_type,
-                        symbol: symbol_canonical.clone(),
-                        bar,
-                        is_closed: true,
-                    });
+                };
+                if !report.failed.is_empty() {
+                    eprintln!(
+                        "[Bridge::derived-bar-fwd subscribe partial-fail] respawn={} {:?} {} wire={} stream={}: {} failed (ok={})",
+                        respawn_n, exchange_id, symbol_canonical, symbol_wire, stream_label,
+                        report.failed.len(), report.ok.len(),
+                    );
+                    if report.ok.is_empty() {
+                        // Nothing succeeded — give up.
+                        return;
+                    }
                 }
+                eprintln!(
+                    "[Bridge::derived-bar-fwd subscribed OK] respawn={} {:?} {} wire={} stream={} ok_streams={}",
+                    respawn_n, exchange_id, symbol_canonical, symbol_wire, stream_label, report.ok.len(),
+                );
+                let mut bar_n_this_cycle: u64 = 0;
+                while let Some(ev) = report.handle.recv().await {
+                    if let digdigdig3_station::Event::Bar { point, .. } = ev {
+                        let bar = bar_point_to_bar(&point);
+                        bar_n_this_cycle = bar_n_this_cycle.wrapping_add(1);
+                        total_bars = total_bars.wrapping_add(1);
+                        if total_bars <= 3 || total_bars % 50 == 0 {
+                            eprintln!(
+                                "[Bridge::derived-bar-fwd emit BarUpdate] total={} cycle={} respawn={} {:?} {} stream={} bar_ts={}",
+                                total_bars, bar_n_this_cycle, respawn_n,
+                                exchange_id, symbol_canonical, stream_label, bar.timestamp,
+                            );
+                        }
+                        let _ = tx.send(LiveUpdate::BarUpdate {
+                            exchange_id,
+                            account_type,
+                            symbol: symbol_canonical.clone(),
+                            bar,
+                            is_closed: true,
+                        });
+                    }
+                }
+                eprintln!(
+                    "[Bridge::derived-bar-fwd cycle ended] respawn={} {:?} {} stream={} bars_this_cycle={} total={}, respawning in 1s",
+                    respawn_n, exchange_id, symbol_canonical, stream_label, bar_n_this_cycle, total_bars,
+                );
+                respawn_n = respawn_n.wrapping_add(1);
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
-            eprintln!(
-                "[Bridge::derived-bar-fwd exited] {:?} {} stream={} bars_emitted={}",
-                exchange_id, symbol_canonical, stream_label, bar_n,
-            );
         })
     }
 
