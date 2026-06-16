@@ -771,25 +771,16 @@ impl DataBridge {
         };
 
         // ── Deduplication guard: skip if a fetch for this key is already running ──
-        // When force=true (tab-switch cure), still emit cached bars for instant
-        // display before skipping — the network refetch was already launched by
-        // whoever set the in-flight flag.
+        // The force-with-cached emission was REMOVED for the same reason as
+        // Level-1: station's Series<BarPoint> snapshot is not in lockstep
+        // with the upcoming Phase A fetch, so emitting it back-to-back
+        // bounces the viewport. The in-flight Phase A will emit BarsLoaded
+        // when it completes; live ticks come via BarUpdate.
         {
             let mut af = active_fetches.lock().unwrap_or_else(|e| e.into_inner());
             if af.contains(&cache_key) {
                 crate::dlog!("[Bridge] fetch already in flight for {:?} sym={} tf={}, skipping", exchange_id, symbol_str, tf_name);
-                if force {
-                    if let Some(ref bars) = cached_bars {
-                        crate::dlog!("[Bridge] {:?} force=true: serving {} cached bars despite in-flight fetch sym={} tf={}", exchange_id, bars.len(), symbol_str, tf_name);
-                        let _ = tx.send(LiveUpdate::BarsLoaded {
-                            exchange_id,
-                            account_type,
-                            symbol: symbol_str.clone(),
-                            timeframe: tf_name.clone(),
-                            bars: bars.clone(),
-                        });
-                    }
-                }
+                let _ = force;
                 return;
             }
             af.insert(cache_key.clone());
@@ -825,20 +816,26 @@ impl DataBridge {
             if subs.contains(&cache_key) { false } else { subs.insert(cache_key.clone()); true }
         };
 
-        // Level 1 — first-call instant render: emit BarsLoaded only on the
-        // very first request_bars for this key.
-        if need_spawn_kline_sub {
-            if let Some(ref bars) = cached_bars {
-                crate::dlog!("[Bridge] {:?} serving {} cached bars instantly for sym={} tf={}", exchange_id, bars.len(), symbol_str, tf_name);
-                let _ = tx.send(LiveUpdate::BarsLoaded {
-                    exchange_id,
-                    account_type,
-                    symbol: symbol_str.clone(),
-                    timeframe: tf_name.clone(),
-                    bars: bars.clone(),
-                });
-            }
-        }
+        // Level 1 — REMOVED in the Phase 2B aftermath.
+        //
+        // Pre-Phase 2B the bridge maintained its own mlc-side ring buffer
+        // (bar_cache: SharedSeriesMap). The Stream::Kline subscriber wrote
+        // INTO it, and cached_bars read FROM the same ring. Re-emitting
+        // BarsLoaded with cached_bars was safe — the ring was in lockstep
+        // with what the app had already received.
+        //
+        // After Phase 2B cached_bars comes from station's own Series<BarPoint>,
+        // which is fed not only by live WS ticks but also by warm-seed
+        // (REST replay-1000 on subscribe) and cross-session disk read_tail.
+        // That means the station ring is a DIFFERENT timestamp range than
+        // what the upcoming Phase A fetch_history is about to return — so
+        // emitting Level-1 BarsLoaded here, then Phase A BarsLoaded a moment
+        // later, sets window.bars to two different ranges back-to-back, which
+        // caused the viewport to "jump a month back every second".
+        //
+        // Phase A always runs (cache-fresh skip short-circuits later but
+        // emits no BarsLoaded), so the chart's initial paint is the
+        // freshly fetched 300 bars; live ticks arrive via LiveUpdate::BarUpdate.
 
         if need_spawn_kline_sub {
             let station = self.station.clone();
