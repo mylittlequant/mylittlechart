@@ -1145,6 +1145,10 @@ impl DataBridge {
         account_type: AccountType,
         count: u32,
     ) {
+        eprintln!(
+            "[Bridge::request_tick_bars enter] {:?} {} at={:?} count={}",
+            exchange_id, symbol, account_type, count,
+        );
         // Abort any prior tick subscription for this instrument so a TF switch
         // (100t→1000t, or tick→time) doesn't leave a stale forwarder emitting
         // BarUpdate. Dropping the JoinHandle aborts the task → 30s grace unsub.
@@ -1348,6 +1352,11 @@ impl DataBridge {
         stream: digdigdig3_station::Stream,
     ) -> tokio::task::JoinHandle<()> {
         runtime.spawn(async move {
+            let stream_label = format!("{:?}", stream);
+            eprintln!(
+                "[Bridge::derived-bar-fwd subscribing] {:?} {} wire={} stream={}",
+                exchange_id, symbol_canonical, symbol_wire, stream_label,
+            );
             let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                 exchange_id,
                 symbol_wire.clone(),
@@ -1357,18 +1366,34 @@ impl DataBridge {
             let mut report = match station.subscribe(sub_set).await {
                 Ok(r) => r,
                 Err(e) => {
-                    crate::dlog!("[Bridge] derived-bar subscribe failed {:?} sym={}: {:?}",
-                        exchange_id, symbol_wire, e);
+                    eprintln!(
+                        "[Bridge::derived-bar-fwd subscribe FAILED] {:?} {} wire={} stream={}: {:?}",
+                        exchange_id, symbol_canonical, symbol_wire, stream_label, e,
+                    );
                     return;
                 }
             };
             if !report.failed.is_empty() {
-                crate::dlog!("[Bridge] derived-bar partial-fail {:?} sym={}: {} failed",
-                    exchange_id, symbol_wire, report.failed.len());
+                eprintln!(
+                    "[Bridge::derived-bar-fwd subscribe partial-fail] {:?} {} wire={} stream={}: {} failed",
+                    exchange_id, symbol_canonical, symbol_wire, stream_label, report.failed.len(),
+                );
             }
+            eprintln!(
+                "[Bridge::derived-bar-fwd subscribed OK] {:?} {} wire={} stream={}",
+                exchange_id, symbol_canonical, symbol_wire, stream_label,
+            );
+            let mut bar_n: u64 = 0;
             while let Some(ev) = report.handle.recv().await {
                 if let digdigdig3_station::Event::Bar { point, .. } = ev {
                     let bar = bar_point_to_bar(&point);
+                    bar_n = bar_n.wrapping_add(1);
+                    if bar_n <= 3 || bar_n % 50 == 0 {
+                        eprintln!(
+                            "[Bridge::derived-bar-fwd emit BarUpdate] n={} {:?} {} stream={} bar_ts={}",
+                            bar_n, exchange_id, symbol_canonical, stream_label, bar.timestamp,
+                        );
+                    }
                     let _ = tx.send(LiveUpdate::BarUpdate {
                         exchange_id,
                         account_type,
@@ -1378,6 +1403,10 @@ impl DataBridge {
                     });
                 }
             }
+            eprintln!(
+                "[Bridge::derived-bar-fwd exited] {:?} {} stream={} bars_emitted={}",
+                exchange_id, symbol_canonical, stream_label, bar_n,
+            );
         })
     }
 
