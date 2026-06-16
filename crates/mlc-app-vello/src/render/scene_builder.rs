@@ -549,19 +549,21 @@ fn render_spinner(
     window_height: f64,
     elapsed_ms: u64,
 ) {
-    const RADIUS: f64 = 20.0;
-    const STROKE_WIDTH: f64 = 3.0;
-    const SWEEP: f64 = std::f64::consts::PI * 4.0 / 3.0; // 240 degrees
+    const RADIUS: f64 = 18.0;
+    const STROKE_WIDTH: f64 = 2.0;
+    const SWEEP: f64 = std::f64::consts::PI * 3.0 / 2.0; // 270 degrees — 3/4 ring
 
     let cx = window_width / 2.0;
-    let cy = window_height / 2.0 + 60.0; // slightly below window center, near unlock area
+    let cy = window_height / 2.0 + 60.0;
 
-    let t = (elapsed_ms % 1000) as f64 / 1000.0;
+    // 1.2s rotation period — slightly slower than the previous spinner so the
+    // motion reads as a steady wait indicator instead of a fast pulse.
+    let t = (elapsed_ms % 1200) as f64 / 1200.0;
     let start_angle = t * std::f64::consts::TAU - std::f64::consts::FRAC_PI_2;
     let end_angle = start_angle + SWEEP;
 
     ctx.save();
-    ctx.set_stroke_color("#3b82f6"); // blue-500 — matches the app accent
+    ctx.set_stroke_color("#9ca3af"); // neutral grey (Tailwind gray-400) — matches the loading ref
     ctx.set_stroke_width(STROKE_WIDTH);
     ctx.begin_path();
     ctx.arc(cx, cy, RADIUS, start_angle, end_angle);

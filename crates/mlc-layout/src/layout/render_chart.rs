@@ -3130,24 +3130,34 @@ pub fn render_full_chart_panel(
         use_prev_close: data.state.use_prev_close,
     };
 
-    // 1. Background — fill the full window rect to avoid gaps when scales are
-    //    repositioned.
-    ctx.set_fill_color(&corrected_state.theme.background);
-    ctx.fill_rect(window_rect.x, window_rect.y, window_rect.width, window_rect.height);
-
-    // Loading / error state — when there are no bars yet, show a centred
-    // label and skip all chart content so primitives don't render over an
-    // empty canvas.  Centre against the FULL leaf rect (window_rect), not
-    // the bar canvas — with no content there are no scales, so canvas-relative
-    // centring looks visibly off-centre in the pane.
+    // Loading / error state — when there are no bars yet, paint the panel as
+    // three separate filled rectangles: chart canvas in theme background +
+    // price-scale strip / time-scale strip / corner in scale_bg. The colour
+    // difference between the strips and the chart canvas IS the visual
+    // separator — no border lines needed; the 1px gap between rects would
+    // also be a separator if rects didn't touch, but they do touch so the
+    // colour-step is what reads as the frame. Centred label / error text
+    // lives in the chart canvas, not over the price scale.
     if corrected_state.bars.is_empty() {
-        let cx = window_rect.x + window_rect.width / 2.0;
-        let cy = window_rect.y + window_rect.height / 2.0;
+        // Chart canvas (theme background).
+        ctx.set_fill_color(&corrected_state.theme.background);
+        ctx.fill_rect(main_chart.chart.x, main_chart.chart.y, main_chart.chart.width, main_chart.chart.height);
+
+        // Three scale strips (scale_bg).
+        let scale_bg = &data.config.scale_theme.scale_bg;
+        ctx.set_fill_color(scale_bg);
+        ctx.fill_rect(main_chart.price_scale.x, main_chart.price_scale.y, main_chart.price_scale.width, main_chart.price_scale.height);
+        ctx.fill_rect(main_chart.time_scale.x, main_chart.time_scale.y, main_chart.time_scale.width, main_chart.time_scale.height);
+        ctx.fill_rect(main_chart.scale_corner.x, main_chart.scale_corner.y, main_chart.scale_corner.width, main_chart.scale_corner.height);
+
+        // Centred label in the chart canvas (NOT window_rect — that would push
+        // it off-centre relative to the visible chart area).
+        let cx = main_chart.chart.x + main_chart.chart.width / 2.0;
+        let cy = main_chart.chart.y + main_chart.chart.height / 2.0;
         ctx.set_font("14px sans-serif");
         ctx.set_text_align(mlc_core::render::TextAlign::Center);
         ctx.set_text_baseline(mlc_core::render::TextBaseline::Middle);
         if let Some(err_msg) = data.data_error {
-            // Show fetch error in the down-candle color (consistent "bearish red").
             ctx.set_fill_color(&corrected_state.theme.candle_down);
             ctx.fill_text(err_msg, cx, cy);
         } else {
@@ -3156,6 +3166,12 @@ pub fn render_full_chart_panel(
         }
         return ChartPanelRenderResult::empty();
     }
+
+    // 1. Background — fill the full window rect (active-chart path). Skipped
+    // in the loading branch above because the three rectangles already cover
+    // every visible pixel.
+    ctx.set_fill_color(&corrected_state.theme.background);
+    ctx.fill_rect(window_rect.x, window_rect.y, window_rect.width, window_rect.height);
 
     // Steps 2-11 render the main chart area.  When a sub-pane is maximized the
     // main chart height is 0, so all these passes are skipped to avoid drawing
