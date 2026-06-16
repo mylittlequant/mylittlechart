@@ -1279,6 +1279,10 @@ impl DataBridge {
         account_type: AccountType,
         interval: &str,
     ) {
+        eprintln!(
+            "[Bridge::request_footprint enter] {:?} {} at={:?} interval={}",
+            exchange_id, symbol, account_type, interval,
+        );
         self.abort_derived_sub(exchange_id, symbol, account_type);
 
         let station = self.station.clone();
@@ -1428,6 +1432,11 @@ impl DataBridge {
         stream: digdigdig3_station::Stream,
     ) -> tokio::task::JoinHandle<()> {
         runtime.spawn(async move {
+            let stream_label = format!("{:?}", stream);
+            eprintln!(
+                "[Bridge::footprint-fwd subscribing] {:?} {} wire={} stream={}",
+                exchange_id, symbol_canonical, symbol_wire, stream_label,
+            );
             let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                 exchange_id,
                 symbol_wire.clone(),
@@ -1437,17 +1446,33 @@ impl DataBridge {
             let mut report = match station.subscribe(sub_set).await {
                 Ok(r) => r,
                 Err(e) => {
-                    crate::dlog!("[Bridge] footprint subscribe failed {:?} sym={}: {:?}",
-                        exchange_id, symbol_wire, e);
+                    eprintln!(
+                        "[Bridge::footprint-fwd subscribe FAILED] {:?} {} wire={} stream={}: {:?}",
+                        exchange_id, symbol_canonical, symbol_wire, stream_label, e,
+                    );
                     return;
                 }
             };
             if !report.failed.is_empty() {
-                crate::dlog!("[Bridge] footprint partial-fail {:?} sym={}: {} failed",
-                    exchange_id, symbol_wire, report.failed.len());
+                eprintln!(
+                    "[Bridge::footprint-fwd subscribe partial-fail] {:?} {} wire={} stream={}: {} failed",
+                    exchange_id, symbol_canonical, symbol_wire, stream_label, report.failed.len(),
+                );
             }
+            eprintln!(
+                "[Bridge::footprint-fwd subscribed OK] {:?} {} wire={} stream={}",
+                exchange_id, symbol_canonical, symbol_wire, stream_label,
+            );
+            let mut fp_n: u64 = 0;
             while let Some(ev) = report.handle.recv().await {
                 if let digdigdig3_station::Event::Footprint { point, .. } = ev {
+                    fp_n = fp_n.wrapping_add(1);
+                    if fp_n <= 3 || fp_n % 50 == 0 {
+                        eprintln!(
+                            "[Bridge::footprint-fwd emit FootprintUpdate] n={} {:?} {} stream={} open_time={}",
+                            fp_n, exchange_id, symbol_canonical, stream_label, point.open_time,
+                        );
+                    }
                     // Upsert-by-timestamp into the shared Vec BEFORE the
                     // broadcast — readers triggered by the FootprintUpdate
                     // event always see the bar already in series.
@@ -1472,6 +1497,10 @@ impl DataBridge {
                     });
                 }
             }
+            eprintln!(
+                "[Bridge::footprint-fwd exited] {:?} {} stream={} events_emitted={}",
+                exchange_id, symbol_canonical, stream_label, fp_n,
+            );
         })
     }
 
