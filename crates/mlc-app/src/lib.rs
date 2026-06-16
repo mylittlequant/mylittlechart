@@ -498,6 +498,16 @@ pub struct ChartApp {
     /// drained by main.rs which forwards it to `updater_handle.cmd_tx`.
     pub pending_updater_cmd: Option<String>, // "logout" | "start_oauth:{provider}"
 
+    /// Signal: two-frame preset load. First LoadPreset call: clear visible
+    /// chart bars (so panels go into loading skeleton on the very next
+    /// render) and stash the preset id here; return immediately. The host
+    /// (`scene_builder.rs` / app tick) re-dispatches `LoadPreset` with the
+    /// stashed id AFTER it has presented the first loading-skeleton frame,
+    /// so the heavy deep-clone + container rebuild runs on the SECOND frame
+    /// and the user sees spinners instead of a frozen old chart for the
+    /// 100-300ms the cold path takes.
+    pub pending_load_preset: Option<String>,
+
     /// Timestamp of the last backfill triggered after a broadcast lag event.
     ///
     /// Used to debounce rapid successive `Lagged` errors — backfill is only
@@ -1029,6 +1039,7 @@ impl ChartApp {
             key_delete_request: None,
             key_list_refresh: false,
             pending_open_url: None,
+            pending_load_preset: None,
             pending_updater_cmd: None,
             last_backfill_time: std::time::Instant::now(),
             lag_event_count: 0,
@@ -1378,6 +1389,7 @@ impl ChartApp {
             key_delete_request: None,
             key_list_refresh: false,
             pending_open_url: None,
+            pending_load_preset: None,
             pending_updater_cmd: None,
             last_backfill_time: std::time::Instant::now(),
             lag_event_count: 0,
@@ -1625,6 +1637,7 @@ impl ChartApp {
             key_delete_request: None,
             key_list_refresh: false,
             pending_open_url: None,
+            pending_load_preset: None,
             pending_updater_cmd: None,
             last_backfill_time: std::time::Instant::now(),
             lag_event_count: 0,
