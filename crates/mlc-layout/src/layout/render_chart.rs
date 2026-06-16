@@ -3130,28 +3130,43 @@ pub fn render_full_chart_panel(
         use_prev_close: data.state.use_prev_close,
     };
 
-    // Loading / error state — when there are no bars yet, paint the panel as
-    // three separate filled rectangles: chart canvas in theme background +
-    // price-scale strip / time-scale strip / corner in scale_bg. The colour
-    // difference between the strips and the chart canvas IS the visual
-    // separator — no border lines needed; the 1px gap between rects would
-    // also be a separator if rects didn't touch, but they do touch so the
-    // colour-step is what reads as the frame. Centred label / error text
-    // lives in the chart canvas, not over the price scale.
+    // 1. Background — fill the full window rect to avoid gaps when scales are
+    //    repositioned.
+    ctx.set_fill_color(&corrected_state.theme.background);
+    ctx.fill_rect(window_rect.x, window_rect.y, window_rect.width, window_rect.height);
+
+    // Loading / error state — when there are no bars yet, draw ONLY the three
+    // scale border lines (price scale separator, time scale separator, scale
+    // corner separator) so the chart skeleton has the same visible frame as
+    // the active path. NO scale fills, NO grid, NO bars, NO crosshair, NO
+    // ticks, NO labels — only the border strokes. Centred label / error text
+    // in the chart canvas.
     if corrected_state.bars.is_empty() {
-        // Chart canvas (theme background).
-        ctx.set_fill_color(&corrected_state.theme.background);
-        ctx.fill_rect(main_chart.chart.x, main_chart.chart.y, main_chart.chart.width, main_chart.chart.height);
+        let border = &data.config.scale_theme.scale_border;
+        ctx.set_stroke_color(border);
+        ctx.set_stroke_width(1.0);
+        ctx.set_line_dash(&[]);
+        // Vertical separator: chart | price scale
+        let psx = main_chart.price_scale.x + 0.5;
+        ctx.begin_path();
+        ctx.move_to(psx, main_chart.chart.y);
+        ctx.line_to(psx, main_chart.chart.y + main_chart.chart.height);
+        ctx.stroke();
+        // Horizontal separator: chart / time scale (spans chart + price scale strip).
+        let tsy = main_chart.time_scale.y + 0.5;
+        ctx.begin_path();
+        ctx.move_to(main_chart.chart.x, tsy);
+        ctx.line_to(main_chart.chart.x + main_chart.chart.width + main_chart.price_scale.width, tsy);
+        ctx.stroke();
+        // Vertical separator continuation through the corner.
+        let cnx = main_chart.scale_corner.x + 0.5;
+        ctx.begin_path();
+        ctx.move_to(cnx, main_chart.scale_corner.y);
+        ctx.line_to(cnx, main_chart.scale_corner.y + main_chart.scale_corner.height);
+        ctx.stroke();
 
-        // Three scale strips (scale_bg).
-        let scale_bg = &data.config.scale_theme.scale_bg;
-        ctx.set_fill_color(scale_bg);
-        ctx.fill_rect(main_chart.price_scale.x, main_chart.price_scale.y, main_chart.price_scale.width, main_chart.price_scale.height);
-        ctx.fill_rect(main_chart.time_scale.x, main_chart.time_scale.y, main_chart.time_scale.width, main_chart.time_scale.height);
-        ctx.fill_rect(main_chart.scale_corner.x, main_chart.scale_corner.y, main_chart.scale_corner.width, main_chart.scale_corner.height);
-
-        // Centred label in the chart canvas (NOT window_rect — that would push
-        // it off-centre relative to the visible chart area).
+        // Centred label in the chart canvas (NOT window_rect — that pushes it
+        // off-centre relative to the visible chart area).
         let cx = main_chart.chart.x + main_chart.chart.width / 2.0;
         let cy = main_chart.chart.y + main_chart.chart.height / 2.0;
         ctx.set_font("14px sans-serif");
@@ -3166,12 +3181,6 @@ pub fn render_full_chart_panel(
         }
         return ChartPanelRenderResult::empty();
     }
-
-    // 1. Background — fill the full window rect (active-chart path). Skipped
-    // in the loading branch above because the three rectangles already cover
-    // every visible pixel.
-    ctx.set_fill_color(&corrected_state.theme.background);
-    ctx.fill_rect(window_rect.x, window_rect.y, window_rect.width, window_rect.height);
 
     // Steps 2-11 render the main chart area.  When a sub-pane is maximized the
     // main chart height is 0, so all these passes are skipped to avoid drawing
