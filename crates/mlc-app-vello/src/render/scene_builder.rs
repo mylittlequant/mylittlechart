@@ -262,8 +262,13 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
             chrome::render_tooltip_themed(&mut tooltip_ctx, &pw.toolbar_tooltip, &pw.chrome_state.colors.tooltip_bg, &pw.chrome_state.colors.tooltip_text, width as f64, height as f64);
         }
 
-        // Spinner overlay — drawn topmost when the off-thread promote worker is running.
+        // Skeleton + spinner overlay — drawn topmost when the off-thread
+        // promote worker is running. Skeleton paints the three scale frames
+        // (price scale strip, time scale strip, corner) so the chart shape is
+        // visible before bars arrive; spinner is the animated indicator.
         if let Some(start) = pw.spinner_start {
+            let mut skel_ctx = VelloGpuRenderContext::new(&mut pw.scene, 0.0, 0.0, None, None);
+            render_skeleton_scales(&mut skel_ctx, width as f64, height as f64);
             let mut spinner_ctx = VelloGpuRenderContext::new(&mut pw.scene, 0.0, 0.0, None, None);
             render_spinner(&mut spinner_ctx, width as f64, height as f64, start.elapsed().as_millis() as u64);
         }
@@ -363,8 +368,14 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                     chart_ctx.inner_mut().draw_commands.extend_from_slice(&tooltip_ctx.inner().draw_commands);
                 }
 
-                // Spinner overlay (topmost layer, when promote worker is running).
+                // Skeleton + spinner overlay (topmost, when promote worker is running).
                 if let Some(start) = pw.spinner_start {
+                    let mut skel_ctx = mlc_instanced_context::InstancedChartRenderContext::new(
+                        width as f32, height as f32, 0.0, 0.0, None, None,
+                    );
+                    render_skeleton_scales(&mut skel_ctx, width as f64, height as f64);
+                    chart_ctx.inner_mut().draw_commands.extend_from_slice(&skel_ctx.inner().draw_commands);
+
                     let mut spinner_ctx = mlc_instanced_context::InstancedChartRenderContext::new(
                         width as f32,
                         height as f32,
@@ -420,8 +431,9 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 // Render tooltips (top-most layer).
                 chrome::render_tooltip(&mut cpu_ctx, &pw.chrome_state, width as f64, height as f64);
                 chrome::render_tooltip_themed(&mut cpu_ctx, &pw.toolbar_tooltip, &pw.chrome_state.colors.tooltip_bg, &pw.chrome_state.colors.tooltip_text, width as f64, height as f64);
-                // Spinner overlay (topmost, when promote worker is running).
+                // Skeleton + spinner overlay (topmost, when promote worker is running).
                 if let Some(start) = pw.spinner_start {
+                    render_skeleton_scales(&mut cpu_ctx, width as f64, height as f64);
                     render_spinner(&mut cpu_ctx, width as f64, height as f64, start.elapsed().as_millis() as u64);
                 }
                 // Rasterize to pixel buffer.
@@ -471,8 +483,9 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 // Render tooltips (top-most layer).
                 chrome::render_tooltip(&mut skia_ctx, &pw.chrome_state, width as f64, height as f64);
                 chrome::render_tooltip_themed(&mut skia_ctx, &pw.toolbar_tooltip, &pw.chrome_state.colors.tooltip_bg, &pw.chrome_state.colors.tooltip_text, width as f64, height as f64);
-                // Spinner overlay (topmost, when promote worker is running).
+                // Skeleton + spinner overlay (topmost, when promote worker is running).
                 if let Some(start) = pw.spinner_start {
+                    render_skeleton_scales(&mut skia_ctx, width as f64, height as f64);
                     render_spinner(&mut skia_ctx, width as f64, height as f64, start.elapsed().as_millis() as u64);
                 }
                 let pixels = skia_ctx.inner().pixels();
@@ -512,8 +525,9 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 // Render tooltips (top-most layer).
                 chrome::render_tooltip(&mut hybrid_ctx, &pw.chrome_state, width as f64, height as f64);
                 chrome::render_tooltip_themed(&mut hybrid_ctx, &pw.toolbar_tooltip, &pw.chrome_state.colors.tooltip_bg, &pw.chrome_state.colors.tooltip_text, width as f64, height as f64);
-                // Spinner overlay (topmost, when promote worker is running).
+                // Skeleton + spinner overlay (topmost, when promote worker is running).
                 if let Some(start) = pw.spinner_start {
+                    render_skeleton_scales(&mut hybrid_ctx, width as f64, height as f64);
                     render_spinner(&mut hybrid_ctx, width as f64, height as f64, start.elapsed().as_millis() as u64);
                 }
                 // Move the inner uzor context (owns the vello_hybrid::Scene)
@@ -566,5 +580,75 @@ fn render_spinner(
     ctx.begin_path();
     ctx.arc(cx, cy, RADIUS, start_angle, end_angle);
     ctx.stroke();
+    ctx.restore();
+}
+
+/// Draw the loading skeleton: three empty boxes that occupy the price scale,
+/// time scale and scale corner positions. NO labels, NO ticks, NO grid — only
+/// the frames so the user sees the chart "shape" while bars / scales /
+/// crosshair are not yet ready.
+///
+/// Drawn on top of everything (same layer as spinner) while a promote worker
+/// is running. Coordinates derived from canonical layout constants so the
+/// frames line up with where the real scales will land after promote.
+fn render_skeleton_scales<C>(
+    ctx: &mut C,
+    window_width: f64,
+    window_height: f64,
+)
+where
+    C: uzor::render::Painter + uzor::render::ShapeHelpers + ?Sized,
+{
+    // Match the constants in mlc-core::types — we deliberately don't depend on
+    // mlc-core here to avoid the build-time pull. If the constants change we
+    // re-sync these by hand.
+    const CHROME_HEIGHT: f64 = 32.0;
+    const TOP_TOOLBAR_HEIGHT: f64 = 40.0;
+    const PRICE_SCALE_WIDTH: f64 = 70.0;
+    const TIME_SCALE_HEIGHT: f64 = 30.0;
+
+    // Top of the chart frame area = chrome + chart toolbar.
+    let top_y = CHROME_HEIGHT + TOP_TOOLBAR_HEIGHT;
+    if window_height <= top_y + TIME_SCALE_HEIGHT + 4.0 || window_width <= PRICE_SCALE_WIDTH + 4.0 {
+        return;
+    }
+
+    // Skeleton occupies the FULL window below chrome+toolbar. The sidebar is
+    // off-state when the skeleton lives, so we don't subtract a sidebar width.
+    let chart_right = window_width;
+    let chart_bottom = window_height;
+
+    let price_scale_x = chart_right - PRICE_SCALE_WIDTH;
+    let time_scale_y = chart_bottom - TIME_SCALE_HEIGHT;
+
+    // Theme constants — match the real ScaleTheme defaults.
+    let bg = "#0c1018";        // chart background
+    let border = "#3a3f4b";    // brighter than scale_theme.scale_border (#2a2e39)
+                                // so the frame is visible against the bg.
+
+    ctx.save();
+    ctx.set_fill_color(bg);
+    ctx.set_stroke_color(border);
+    ctx.set_stroke_width(1.0);
+
+    // Price scale rect (right strip).
+    ctx.fill_rect(price_scale_x, top_y, PRICE_SCALE_WIDTH, time_scale_y - top_y);
+    ctx.begin_path();
+    ctx.rect(price_scale_x + 0.5, top_y + 0.5, PRICE_SCALE_WIDTH - 1.0, (time_scale_y - top_y) - 1.0);
+    ctx.stroke();
+
+    // Time scale rect (bottom strip, EXCLUDING the corner so the corner gets
+    // its own visible border).
+    ctx.fill_rect(0.0, time_scale_y, price_scale_x, TIME_SCALE_HEIGHT);
+    ctx.begin_path();
+    ctx.rect(0.5, time_scale_y + 0.5, price_scale_x - 1.0, TIME_SCALE_HEIGHT - 1.0);
+    ctx.stroke();
+
+    // Scale corner rect (bottom-right corner where the two scales meet).
+    ctx.fill_rect(price_scale_x, time_scale_y, PRICE_SCALE_WIDTH, TIME_SCALE_HEIGHT);
+    ctx.begin_path();
+    ctx.rect(price_scale_x + 0.5, time_scale_y + 0.5, PRICE_SCALE_WIDTH - 1.0, TIME_SCALE_HEIGHT - 1.0);
+    ctx.stroke();
+
     ctx.restore();
 }
