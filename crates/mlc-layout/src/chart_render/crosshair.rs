@@ -46,6 +46,13 @@ pub fn draw_crosshair(
     if !crosshair.enabled || !crosshair.visible {
         return;
     }
+    // While bars are loading (cold preset / TF switch / fresh window) the
+    // chart area is empty. The crosshair would otherwise paint across the
+    // empty rect — owner saw this as "crosshair leaks during loading".
+    // Suppress the cursor + its scale labels until at least one bar lands.
+    if state.bars.is_empty() {
+        return;
+    }
 
     // Calculate crosshair position
     // When dragging (primitive or chart), use crosshair.x directly since it's already clamped.

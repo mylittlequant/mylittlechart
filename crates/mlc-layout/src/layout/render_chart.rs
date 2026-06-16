@@ -2553,7 +2553,37 @@ pub fn render_chart_window(
     );
 
     // 4. Scale corner with buttons
-    draw_scale_corner_with_buttons(ctx, &layout.scale_corner, &config.scale_theme, corner_state)
+    let hit_zones = draw_scale_corner_with_buttons(ctx, &layout.scale_corner, &config.scale_theme, corner_state);
+
+    // 5. Scale borders — thin separator lines between chart and scales, so the
+    // chart area is always framed even when bars are still loading (the empty
+    // chart_rect would otherwise blend into the background). Drawn last so they
+    // sit on top of bg + grid + last-price chip + cursor labels.
+    let border_color = config.scale_theme.scale_border.clone();
+    ctx.set_stroke_color(&border_color);
+    ctx.set_stroke_width(1.0);
+    ctx.set_line_dash(&[]);
+    // Left edge of price scale (right edge of chart).
+    let psx = layout.price_scale.x + 0.5;
+    ctx.begin_path();
+    ctx.move_to(psx, layout.chart.y);
+    ctx.line_to(psx, layout.chart.y + layout.chart.height);
+    ctx.stroke();
+    // Top edge of time scale (bottom edge of chart).
+    let tsy = layout.time_scale.y + 0.5;
+    ctx.begin_path();
+    ctx.move_to(layout.chart.x, tsy);
+    ctx.line_to(layout.chart.x + layout.chart.width + layout.price_scale.width, tsy);
+    ctx.stroke();
+    // Left edge of scale corner (continues the price-scale border down past
+    // the time scale into the corner box).
+    let cnx = layout.scale_corner.x + 0.5;
+    ctx.begin_path();
+    ctx.move_to(cnx, layout.scale_corner.y);
+    ctx.line_to(cnx, layout.scale_corner.y + layout.scale_corner.height);
+    ctx.stroke();
+
+    hit_zones
 }
 
 /// Draw the scale corner with buttons and return hit zones
@@ -3640,7 +3670,9 @@ pub fn render_chart_overlay(
     }
 
     // 3. Price-scale cursor label
-    if state.crosshair.visible {
+    // Suppress while the chart is in loading state — no bars means no price
+    // axis is meaningful, so the cursor labels would chase an undefined value.
+    if state.crosshair.visible && !state.bars.is_empty() {
         let mut leaf_scale_cfg = config.scale_config.clone();
         leaf_scale_cfg.price_scale_width = main_chart.price_scale.width;
         leaf_scale_cfg.time_scale_height = main_chart.time_scale.height;
