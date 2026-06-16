@@ -675,18 +675,27 @@ impl ChartApp {
 
                     // Pre-collect (symbol, account_label, is_derived) per cid to
                     // avoid holding &self.managers.bubble while iterating containers_mut().
+                    //
+                    // is_derived is true when EITHER:
+                    //   - the timeframe is a tick TF (1t/10t/100t/1000t — N trades/bar),
+                    //   - OR the chart_type is one of range_bar/volume_bar/footprint
+                    //     (the time TF stays, but the bar stream comes from station's
+                    //     RangeBar/VolumeBar/Footprint derived stream, not from local
+                    //     time-slice aggregation).
                     let instrument_by_cid_bu: std::collections::HashMap<mlc_core::state::ChartId, (String, String, bool)> = {
-                        self.panel_app.panel_grid.containers().keys()
-                            .filter_map(|cid| {
+                        let panels_store = &self.panels_store;
+                        self.panel_app.panel_grid.containers().iter()
+                            .filter_map(|(cid, win)| {
                                 let sym = self.managers.bubble.symbol_for_chart(*cid).map(String::from)?;
                                 let at = self.managers.bubble.account_type_for_chart(*cid).map(String::from)?;
-                                // A window uses dig3-delivered bars (via BarUpdate)
-                                // when its timeframe is a tick TF (N trades per bar).
-                                // Those bypass the local time-slice aggregation in
-                                // the TradeUpdate handler.
-                                let is_derived = self.managers.bubble.timeframe_for_chart(*cid)
+                                let is_tick_tf = self.managers.bubble.timeframe_for_chart(*cid)
                                     .map(|tf| tf.is_tick())
                                     .unwrap_or(false);
+                                let derived_chart_type = panels_store.chart_panel
+                                    .get(&win.chart_panel_id)
+                                    .map(|p| matches!(p.chart_type, "range_bar" | "volume_bar" | "footprint"))
+                                    .unwrap_or(false);
+                                let is_derived = is_tick_tf || derived_chart_type;
                                 Some((*cid, (sym, at, is_derived)))
                             })
                             .collect()
