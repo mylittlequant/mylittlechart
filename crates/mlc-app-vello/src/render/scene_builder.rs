@@ -34,6 +34,10 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
     // Sync chrome colours from the chart theme.
     #[cfg(target_os = "windows")]
     let dwm_border_color: String;
+    // Spinner colours pulled from the active theme so the loading indicator
+    // doesn't look hand-painted against whichever skin the user picked.
+    let spinner_active_color: String;
+    let spinner_backdrop_color: String;
     {
         let theme = pw.chart.panel_app.theme_manager.current();
         pw.chrome_state.colors.background = theme.chart.background.clone();
@@ -45,6 +49,8 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
         pw.chrome_state.colors.tab_accent  = theme.colors.accent.clone();
         pw.chrome_state.colors.tooltip_bg  = theme.colors.button_bg.clone();
         pw.chrome_state.colors.tooltip_text = theme.colors.text_primary.clone();
+        spinner_active_color = theme.colors.text_primary.clone();
+        spinner_backdrop_color = theme.chart.scale_border.clone();
         #[cfg(target_os = "windows")]
         { dwm_border_color = theme.colors.ui_border.clone(); }
     }
@@ -265,7 +271,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
         // Spinner overlay — drawn topmost when the off-thread promote worker is running.
         if let Some(start) = pw.spinner_start {
             let mut spinner_ctx = VelloGpuRenderContext::new(&mut pw.scene, 0.0, 0.0, None, None);
-            render_spinner(&mut spinner_ctx, width as f64, height as f64, start.elapsed().as_millis() as u64);
+            render_spinner(&mut spinner_ctx, width as f64, height as f64, start.elapsed().as_millis() as u64, &spinner_active_color, &spinner_backdrop_color);
         }
     } else {
         // ── Non-VelloGpu: full backend switch ─────────────────────────────────
@@ -373,7 +379,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                         None,
                         None,
                     );
-                    render_spinner(&mut spinner_ctx, width as f64, height as f64, start.elapsed().as_millis() as u64);
+                    render_spinner(&mut spinner_ctx, width as f64, height as f64, start.elapsed().as_millis() as u64, &spinner_active_color, &spinner_backdrop_color);
                     chart_ctx.inner_mut().draw_commands.extend_from_slice(&spinner_ctx.inner().draw_commands);
                 }
 
@@ -422,7 +428,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 chrome::render_tooltip_themed(&mut cpu_ctx, &pw.toolbar_tooltip, &pw.chrome_state.colors.tooltip_bg, &pw.chrome_state.colors.tooltip_text, width as f64, height as f64);
                 // Spinner overlay (topmost, when promote worker is running).
                 if let Some(start) = pw.spinner_start {
-                    render_spinner(&mut cpu_ctx, width as f64, height as f64, start.elapsed().as_millis() as u64);
+                    render_spinner(&mut cpu_ctx, width as f64, height as f64, start.elapsed().as_millis() as u64, &spinner_active_color, &spinner_backdrop_color);
                 }
                 // Rasterize to pixel buffer.
                 let pixel_count = (width as usize) * (height as usize) * 4;
@@ -473,7 +479,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 chrome::render_tooltip_themed(&mut skia_ctx, &pw.toolbar_tooltip, &pw.chrome_state.colors.tooltip_bg, &pw.chrome_state.colors.tooltip_text, width as f64, height as f64);
                 // Spinner overlay (topmost, when promote worker is running).
                 if let Some(start) = pw.spinner_start {
-                    render_spinner(&mut skia_ctx, width as f64, height as f64, start.elapsed().as_millis() as u64);
+                    render_spinner(&mut skia_ctx, width as f64, height as f64, start.elapsed().as_millis() as u64, &spinner_active_color, &spinner_backdrop_color);
                 }
                 let pixels = skia_ctx.inner().pixels();
                 pw.cpu_chart_dims = (width, height);
@@ -514,7 +520,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 chrome::render_tooltip_themed(&mut hybrid_ctx, &pw.toolbar_tooltip, &pw.chrome_state.colors.tooltip_bg, &pw.chrome_state.colors.tooltip_text, width as f64, height as f64);
                 // Spinner overlay (topmost, when promote worker is running).
                 if let Some(start) = pw.spinner_start {
-                    render_spinner(&mut hybrid_ctx, width as f64, height as f64, start.elapsed().as_millis() as u64);
+                    render_spinner(&mut hybrid_ctx, width as f64, height as f64, start.elapsed().as_millis() as u64, &spinner_active_color, &spinner_backdrop_color);
                 }
                 // Move the inner uzor context (owns the vello_hybrid::Scene)
                 // into PerWindowState for GPU submission.
@@ -548,25 +554,30 @@ fn render_spinner(
     window_width: f64,
     window_height: f64,
     elapsed_ms: u64,
+    active_color: &str,
+    backdrop_color: &str,
 ) {
-    const RADIUS: f64 = 18.0;
-    const STROKE_WIDTH: f64 = 2.0;
+    const RADIUS: f64 = 22.0;
+    const STROKE_WIDTH: f64 = 3.0;
     const SWEEP: f64 = std::f64::consts::PI * 3.0 / 2.0; // 270 degrees — 3/4 ring
 
     let cx = window_width / 2.0;
     let cy = window_height / 2.0 + 60.0;
 
-    // 1.2s rotation period — slightly slower than the previous spinner so the
-    // motion reads as a steady wait indicator instead of a fast pulse.
     let t = (elapsed_ms % 1200) as f64 / 1200.0;
     let start_angle = t * std::f64::consts::TAU - std::f64::consts::FRAC_PI_2;
-    let end_angle = start_angle + SWEEP;
 
     ctx.save();
-    ctx.set_stroke_color("#9ca3af"); // neutral grey (Tailwind gray-400) — matches the loading ref
     ctx.set_stroke_width(STROKE_WIDTH);
+    // Backdrop full circle (dim, theme.scale_border).
+    ctx.set_stroke_color(backdrop_color);
     ctx.begin_path();
-    ctx.arc(cx, cy, RADIUS, start_angle, end_angle);
+    ctx.arc(cx, cy, RADIUS, 0.0, std::f64::consts::TAU);
+    ctx.stroke();
+    // Active 270° arc (primary, theme.text_primary).
+    ctx.set_stroke_color(active_color);
+    ctx.begin_path();
+    ctx.arc(cx, cy, RADIUS, start_angle, start_angle + SWEEP);
     ctx.stroke();
     ctx.restore();
 }

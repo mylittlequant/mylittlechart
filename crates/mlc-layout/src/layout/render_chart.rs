@@ -3139,8 +3139,8 @@ pub fn render_full_chart_panel(
     // scale border lines (price scale separator, time scale separator, scale
     // corner separator) so the chart skeleton has the same visible frame as
     // the active path. NO scale fills, NO grid, NO bars, NO crosshair, NO
-    // ticks, NO labels — only the border strokes. Centred label / error text
-    // in the chart canvas.
+    // ticks, NO labels — only the border strokes. A spinner sits in the
+    // chart canvas (or error text if the fetch failed).
     if corrected_state.bars.is_empty() {
         let border = &data.config.scale_theme.scale_border;
         ctx.set_stroke_color(border);
@@ -3165,19 +3165,49 @@ pub fn render_full_chart_panel(
         ctx.line_to(cnx, main_chart.scale_corner.y + main_chart.scale_corner.height);
         ctx.stroke();
 
-        // Centred label in the chart canvas (NOT window_rect — that pushes it
-        // off-centre relative to the visible chart area).
         let cx = main_chart.chart.x + main_chart.chart.width / 2.0;
         let cy = main_chart.chart.y + main_chart.chart.height / 2.0;
-        ctx.set_font("14px sans-serif");
-        ctx.set_text_align(mlc_core::render::TextAlign::Center);
-        ctx.set_text_baseline(mlc_core::render::TextBaseline::Middle);
         if let Some(err_msg) = data.data_error {
+            // Error path keeps text — the user needs to see WHAT failed.
+            ctx.set_font("14px sans-serif");
+            ctx.set_text_align(mlc_core::render::TextAlign::Center);
+            ctx.set_text_baseline(mlc_core::render::TextBaseline::Middle);
             ctx.set_fill_color(&corrected_state.theme.candle_down);
             ctx.fill_text(err_msg, cx, cy);
         } else {
-            ctx.set_fill_color(&corrected_state.theme.text);
-            ctx.fill_text(mlc_core::i18n::TextKey::Loading.get(mlc_core::i18n::current_language()), cx, cy);
+            // Spinner: two-layer ring. Backdrop = scale_border (dim grey),
+            // active sweep = theme.text (primary). 270° sweep, 1.2s period.
+            // Radius scales with the smaller pane dimension so it stays sized
+            // sensibly in narrow splits but still feels prominent in full
+            // panes (clamp 14..36).
+            let pane_min = main_chart.chart.width.min(main_chart.chart.height);
+            let radius = (pane_min * 0.08).clamp(14.0, 36.0);
+            let stroke_w = (radius * 0.16).clamp(2.0, 4.0);
+            let elapsed = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let t = (elapsed % 1200) as f64 / 1200.0;
+            let start_angle = t * std::f64::consts::TAU - std::f64::consts::FRAC_PI_2;
+            let sweep = std::f64::consts::PI * 3.0 / 2.0;
+
+            ctx.save();
+            ctx.set_stroke_width(stroke_w);
+            ctx.set_line_dash(&[]);
+
+            // Backdrop full circle (dim).
+            ctx.set_stroke_color(border);
+            ctx.begin_path();
+            ctx.arc(cx, cy, radius, 0.0, std::f64::consts::TAU);
+            ctx.stroke();
+
+            // Active 270° arc (primary).
+            ctx.set_stroke_color(&corrected_state.theme.text);
+            ctx.begin_path();
+            ctx.arc(cx, cy, radius, start_angle, start_angle + sweep);
+            ctx.stroke();
+
+            ctx.restore();
         }
         return ChartPanelRenderResult::empty();
     }
