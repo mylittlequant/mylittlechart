@@ -730,11 +730,21 @@ impl ChartApp {
                 if self.unpark_preset(&id) {
                     eprintln!("[ChartApp] LoadPreset '{}': live cache hit  -  zero-flicker switch", id);
 
-                    // Cure: request 300 fresh bars for every window so gaps are
-                    // healed, stale data is refreshed, and bar store is updated.
+                    // Per-window cure: only force=true when the unparked window
+                    // came back EMPTY (bars never reached it before the park, or
+                    // the live forwarder died). Otherwise call force=false — the
+                    // bridge's dedup-L2 sees an already-live Stream::Kline
+                    // subscriber and skips the REST + bg-backfill round-trip,
+                    // and the WS BarUpdate stream that has been piping since the
+                    // park keeps the dataset fresh. This collapses the
+                    // 6×Phase-A + 6×2000-bar-backfill storm that froze the UI
+                    // on every preset tab swap to zero network work in the
+                    // common "I'm flipping between presets I just looked at"
+                    // case. The handful of empty-window cases still resync
+                    // properly via the force=true fallback.
                     let bar_count = self.panel_app.user_manager.profile.bar_count as usize;
                     // Phase 4 S2.7.1c: read via branch_meta (B6 tuple-collect flip).
-                    let window_bar_data: Vec<(String, String, mlc_core::state::Timeframe, String)> = self
+                    let window_bar_data: Vec<(String, String, mlc_core::state::Timeframe, String, bool)> = self
                         .panel_app
                         .panel_grid
                         .iter_containers()
@@ -748,11 +758,13 @@ impl ChartApp {
                                 .cloned().unwrap_or_else(mlc_core::state::Timeframe::h1);
                             let at = self.managers.bubble.account_type_for_chart(cid)
                                 .map(String::from).unwrap_or_default();
-                            (sym, exch, tf, at)
+                            let has_bars = !w.bars.is_empty();
+                            (sym, exch, tf, at, has_bars)
                         })
                         .collect();
-                    let mut bars_requested: usize = 0;
-                    for (sym, exch, tf, at_label) in &window_bar_data {
+                    let mut bars_requested_force: usize = 0;
+                    let mut bars_requested_lazy: usize = 0;
+                    for (sym, exch, tf, at_label, has_bars) in &window_bar_data {
                         let eid = digdigdig3::ExchangeId::from_str(exch)
                             .unwrap_or(digdigdig3::ExchangeId::Binance);
                         if !self.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
@@ -760,10 +772,14 @@ impl ChartApp {
                         }
                         let at = crate::account_type_from_label(at_label);
                         self.bridge.ensure_connector(eid);
-                        self.bridge.request_bars(eid, sym, tf, at, None, Some(bar_count), true);
-                        bars_requested += 1;
+                        let force = !*has_bars;
+                        self.bridge.request_bars(eid, sym, tf, at, None, Some(bar_count), force);
+                        if force { bars_requested_force += 1; } else { bars_requested_lazy += 1; }
                     }
-                    eprintln!("[ChartApp] LoadPreset (cache): cure requested for {} windows", bars_requested);
+                    eprintln!(
+                        "[ChartApp] LoadPreset (cache): cure requested force={} lazy={}",
+                        bars_requested_force, bars_requested_lazy,
+                    );
 
                     self.sidebar_data_dirty = true;
                     state_mutated = true;
