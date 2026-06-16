@@ -364,6 +364,15 @@ pub struct DataBridge {
     /// the same kline channel, N duplicate `LiveUpdate::BarUpdate` events per
     /// tick, and Binance rejecting the burst with HTTP 403.
     station_kline_subscribed: Arc<Mutex<HashSet<FetchKey>>>,
+    /// Active `Stream::Kline` forwarder task handles keyed by
+    /// `(ExchangeId, AccountType, symbol, timeframe)`.
+    ///
+    /// Stored so that an explicit `unsubscribe_kline_bars` (TF / symbol /
+    /// preset switch) can `.abort()` the task and drop the consumer's
+    /// SubscriptionHandle inside the station — that triggers the 30s grace
+    /// window and prevents the old `(BTCUSDT, 1h)` forwarder from staying
+    /// live after the user switches to `(BTCUSDT, 1m)`.
+    station_kline_handles: Arc<Mutex<HashMap<FetchKey, tokio::task::JoinHandle<()>>>>,
 }
 
 impl DataBridge {
@@ -506,6 +515,7 @@ impl DataBridge {
             symbols_warmup_inflight: Arc::new(Mutex::new(HashSet::new())),
             derived_subs: Arc::new(Mutex::new(HashMap::new())),
             station_kline_subscribed: Arc::new(Mutex::new(HashSet::new())),
+            station_kline_handles: Arc::new(Mutex::new(HashMap::new())),
         }, rx, connector_ready_rx)
     }
 
@@ -770,20 +780,37 @@ impl DataBridge {
             if bars.is_empty() { None } else { Some(bars) }
         };
 
-        // ── Deduplication guard: skip if a fetch for this key is already running ──
-        // The force-with-cached emission was REMOVED for the same reason as
-        // Level-1: station's Series<BarPoint> snapshot is not in lockstep
-        // with the upcoming Phase A fetch, so emitting it back-to-back
-        // bounces the viewport. The in-flight Phase A will emit BarsLoaded
-        // when it completes; live ticks come via BarUpdate.
+        // ── Two-layer dedup ───────────────────────────────────────────────────
+        //
+        // Layer 1 (active_fetches): fetch currently in flight on the runtime
+        // — drop the duplicate caller flat. Same as pre-Phase 2B.
+        //
+        // Layer 2 (station_kline_subscribed): a Stream::Kline forwarder for
+        // this (eid, at, sym, tf) is already live. force=true callers
+        // (ChangeTimeframe, ChangeSymbol, LoadPreset) still get a fresh
+        // Phase A REST and a new BarsLoaded — the user explicitly asked for
+        // a refresh. force=false callers (ConnectorReady sweep,
+        // warm_one_background_tab, etc.) silently exit — the subscriber is
+        // already piping live ticks via BarUpdate; another Phase A would
+        // overwrite window.bars with a slightly-different fresh_300 and
+        // bounce the viewport every time the secondary trigger fires.
         {
             let mut af = active_fetches.lock().unwrap_or_else(|e| e.into_inner());
             if af.contains(&cache_key) {
                 crate::dlog!("[Bridge] fetch already in flight for {:?} sym={} tf={}, skipping", exchange_id, symbol_str, tf_name);
-                let _ = force;
                 return;
             }
             af.insert(cache_key.clone());
+        }
+
+        let already_subscribed = {
+            let subs = self.station_kline_subscribed.lock().unwrap_or_else(|e| e.into_inner());
+            subs.contains(&cache_key)
+        };
+        if already_subscribed && !force {
+            crate::dlog!("[Bridge] subscriber already live for {:?} sym={} tf={}, non-force caller skipped", exchange_id, symbol_str, tf_name);
+            if let Ok(mut af) = active_fetches.lock() { af.remove(&cache_key); }
+            return;
         }
 
         // Capture disk cache boundaries for gap detection (Phase B).
@@ -792,25 +819,9 @@ impl DataBridge {
             .map(|b| b.timestamp);
         let had_disk_cache = cached_bars.is_some();
 
-        // ── Station live kline subscriber (side-channel, independent of REST flow) ──
-        //
-        // The station forwarder writes BarPoints into its own Series<BarPoint>
-        // automatically (REST warm-seed on subscribe + WS upsert_by_ts per event
-        // + DiskStore append per event). This task only re-emits Event::Bar as
-        // LiveUpdate::BarUpdate for the chart-side consumer.
-        //
-        // Dedup guard: only spawn ONE subscriber per (eid, at, sym, tf). Without
-        // this every request_bars call (incl. cache-fresh skip) spawned a fresh
-        // subscriber → N parallel WS subscriptions and N duplicate BarUpdate
-        // emissions per tick, which caused the chart to "rebuild" the window
-        // every frame and Binance to reject the burst with HTTP 403.
-        //
-        // The same flag also gates the Level-1 instant BarsLoaded below: only
-        // the FIRST request_bars for a key emits a full snapshot. Subsequent
-        // calls let live BarUpdate ticks upsert into window.bars in place —
-        // resending BarsLoaded(N) every frame on a station-backed read would
-        // re-set window.bars and drift the viewport, because the station ring
-        // is live (grows on every WS frame) unlike the old mlc-side ring.
+        // Spawn the Stream::Kline subscriber ONCE per (eid, at, sym, tf) key.
+        // The forwarder lives until the bridge is dropped — station owns the
+        // WS lifetime via its own grace window.
         let need_spawn_kline_sub = {
             let mut subs = self.station_kline_subscribed.lock().unwrap_or_else(|e| e.into_inner());
             if subs.contains(&cache_key) { false } else { subs.insert(cache_key.clone()); true }
@@ -846,7 +857,7 @@ impl DataBridge {
             let station_symbol_wire = wire_sym.clone();
             let station_interval = interval.clone();
             let station_tf_name = tf_name.clone();
-            self.runtime.spawn(async move {
+            let handle = self.runtime.spawn(async move {
                 let kline_iv = KlineInterval::new(&station_interval);
                 let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                     exchange_id,
@@ -880,6 +891,9 @@ impl DataBridge {
                     }
                 }
             });
+            if let Ok(mut h) = self.station_kline_handles.lock() {
+                h.insert(cache_key.clone(), handle);
+            }
         }
 
         self.runtime.spawn(async move {
@@ -950,28 +964,23 @@ impl DataBridge {
             }
 
             // ── Phase A: Quick fresh fetch ───────────────────────────────────
-            // Skip the network fetch if the cache is already fresh (last bar
-            // within 2× the interval of now). This avoids redundant API calls
-            // when switching between presets that share the same data.
-            let interval_secs = interval_to_seconds(&interval);
-            let now_secs = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0);
-            let cache_is_fresh = disk_last_ts
-                .map(|ts| (now_secs - ts) < interval_secs * 2)
-                .unwrap_or(false);
-
-            if cache_is_fresh && !force {
-                crate::dlog!("[Bridge] Phase A: {:?} sym={} interval={} cache is fresh (age={}s < {}s), skipping fetch",
-                    exchange_id, symbol_str, interval,
-                    now_secs - disk_last_ts.unwrap_or(0),
-                    interval_secs * 2);
-                eprintln!("[Bridge] cache-fresh skip: {:?} {} tf={}", exchange_id, symbol_str, tf_name);
-                finish_fetch!();
-                return;
-            }
-
+            //
+            // The pre-Phase-2B cache-fresh short-circuit (`disk_last_ts within
+            // 2× interval`) is REMOVED. After Phase 2B `disk_last_ts` comes
+            // from station's cross-session DiskStore tail, not from the
+            // app's view of the data. That made the freshness gate trigger
+            // on every request_bars call within minutes of starting the app,
+            // which caused `finish_fetch!()` to run in ~1ms and clear the
+            // active_fetches dedup key — so the NEXT request_bars from the
+            // same UI event (ConnectorReady sweep / warm walk / etc.) fired
+            // Phase A again, and again, and the chart oscillated between
+            // the three returned-but-slightly-different fresh_300 windows.
+            //
+            // The fix at the bridge-level is to always fetch on a fresh key
+            // and rely on the request_bars-side dedup (active_fetches +
+            // station_kline_subscribed) to suppress repeat callers within a
+            // single UI event. Repeat callers from later UI events get a
+            // legitimate refresh.
             crate::dlog!("[Bridge] Phase A: {:?} sym={} wire={} interval={} fetching 300 fresh bars",
                 exchange_id, symbol_str, wire_sym, interval);
 
@@ -1245,6 +1254,33 @@ impl DataBridge {
     /// Abort the active tick subscription for an instrument, when switching away.
     pub fn abort_tick_bars(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
         self.abort_derived_sub(exchange_id, symbol, account_type);
+    }
+
+    /// Abort the active `Stream::Kline` forwarder for an instrument + TF
+    /// when the chart switches away (TF change, symbol change, preset swap).
+    ///
+    /// `.abort()` cancels the forwarder task, which drops the consumer's
+    /// `SubscriptionHandle` inside station — that triggers the 30s grace
+    /// window after which station unsubscribes the underlying WS channel.
+    /// Without this call the old subscriber stays live indefinitely after
+    /// a TF switch (logs show e.g. 1H BarUpdates arriving on the broadcast
+    /// while the user is already viewing 1m).
+    pub fn abort_kline_bars(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        timeframe: &str,
+    ) {
+        let key: FetchKey = (exchange_id, account_type, symbol.to_string(), timeframe.to_string());
+        if let Ok(mut h) = self.station_kline_handles.lock() {
+            if let Some(handle) = h.remove(&key) {
+                handle.abort();
+            }
+        }
+        if let Ok(mut subs) = self.station_kline_subscribed.lock() {
+            subs.remove(&key);
+        }
     }
 
     /// Subscribe to a range-bar stream (`price_units` price-move per bar, ×1e8 fixed-point).

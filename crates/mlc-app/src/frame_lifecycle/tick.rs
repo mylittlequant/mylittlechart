@@ -1095,7 +1095,15 @@ impl ChartApp {
                                 self.managers.bubble.account_type_for_chart(*cid).unwrap_or("")
                             );
                             if let Some(tf) = self.managers.bubble.timeframe_for_chart(*cid) {
-                                bridge.request_bars(exchange_id, sym, tf, at, None, None, true);
+                                // ConnectorReady fires on initial connect AND reconnects.
+                                // force=false lets the bridge skip if a Stream::Kline
+                                // forwarder is already piping live ticks for this key —
+                                // otherwise every reconnect would re-trigger Phase A,
+                                // overwrite window.bars with a slightly-different fresh
+                                // 300-bar window, and bounce the viewport. The cold
+                                // first-connect case still spawns the subscriber +
+                                // emits the initial Phase A BarsLoaded.
+                                bridge.request_bars(exchange_id, sym, tf, at, None, None, false);
                             }
                         }
                     }

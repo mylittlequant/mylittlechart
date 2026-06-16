@@ -104,6 +104,15 @@ impl ChartApp {
                             eprintln!("[ChartApp] Exchange {} is disabled, skipping data fetch (timeframe change)", eid_str);
                         } else {
                             let at = crate::account_type_from_label(&at_label_tf);
+                            // Drop the OLD time-TF kline forwarder so it stops piping
+                            // 1h BarUpdates to the broadcast after the user switched
+                            // to 1m. abort_kline_bars is a no-op for tick TFs (the
+                            // prior tick subscription is owned by abort_tick_bars).
+                            if let Some(ref prev_tf) = prev_tf_opt {
+                                if prev_tf.tick_count().is_none() {
+                                    self.bridge.abort_kline_bars(self.active_exchange, &symbol, at, &prev_tf.name);
+                                }
+                            }
                             if let Some(count) = tf.tick_count() {
                                 self.bridge.request_tick_bars(self.active_exchange, &symbol, at, count);
                             } else {
