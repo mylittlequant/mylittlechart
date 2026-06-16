@@ -2522,6 +2522,57 @@ pub fn render_chart_window(
     config: &ChartRenderConfig,
     corner_state: &ScaleCornerState,
 ) -> ScaleCornerHitZones {
+    // Per-chart skeleton: while bars are still loading (cold preset, TF/symbol
+    // switch, freshly-spawned window) render ONLY the chart-rect background +
+    // empty price/time/corner frames. NO grid, NO bars, NO crosshair, NO
+    // ticks, NO labels, NO last-price chip — just the three boxes outlined so
+    // the chart's geometry is present from frame 1.
+    if state.bars.is_empty() {
+        let theme_bg = &state.theme.background;
+        let border = &config.scale_theme.scale_border;
+        let scale_bg = &config.scale_theme.scale_bg;
+
+        // 1. Chart area background.
+        ctx.set_fill_color(theme_bg);
+        ctx.fill_rect(layout.chart.x, layout.chart.y, layout.chart.width, layout.chart.height);
+
+        // 2. Price scale frame (right strip).
+        ctx.set_fill_color(scale_bg);
+        ctx.fill_rect(layout.price_scale.x, layout.price_scale.y, layout.price_scale.width, layout.price_scale.height);
+
+        // 3. Time scale frame (bottom strip).
+        ctx.fill_rect(layout.time_scale.x, layout.time_scale.y, layout.time_scale.width, layout.time_scale.height);
+
+        // 4. Scale corner frame (bottom-right).
+        ctx.fill_rect(layout.scale_corner.x, layout.scale_corner.y, layout.scale_corner.width, layout.scale_corner.height);
+
+        // 5. Borders around the three scale strips so they're visibly framed.
+        ctx.set_stroke_color(border);
+        ctx.set_stroke_width(1.0);
+        ctx.set_line_dash(&[]);
+        // Left edge of price scale (right edge of chart).
+        let psx = layout.price_scale.x + 0.5;
+        ctx.begin_path();
+        ctx.move_to(psx, layout.chart.y);
+        ctx.line_to(psx, layout.chart.y + layout.chart.height);
+        ctx.stroke();
+        // Top edge of time scale (bottom edge of chart).
+        let tsy = layout.time_scale.y + 0.5;
+        ctx.begin_path();
+        ctx.move_to(layout.chart.x, tsy);
+        ctx.line_to(layout.chart.x + layout.chart.width + layout.price_scale.width, tsy);
+        ctx.stroke();
+        // Left edge of scale corner (continues the price-scale border).
+        let cnx = layout.scale_corner.x + 0.5;
+        ctx.begin_path();
+        ctx.move_to(cnx, layout.scale_corner.y);
+        ctx.line_to(cnx, layout.scale_corner.y + layout.scale_corner.height);
+        ctx.stroke();
+
+        // Empty hit zones — no scale-corner buttons in skeleton state.
+        return ScaleCornerHitZones::default();
+    }
+
     // 1. Render chart area (background, grid, series, crosshair)
     render_chart(ctx, layout, state, config);
 
