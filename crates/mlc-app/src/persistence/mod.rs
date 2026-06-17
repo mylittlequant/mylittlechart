@@ -21,6 +21,7 @@
 
 pub mod autosave;
 pub mod hydration;
+pub mod hydration_impl;
 pub mod live_cache;
 pub mod load_state;
 pub mod profile;
