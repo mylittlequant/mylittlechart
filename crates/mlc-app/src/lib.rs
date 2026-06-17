@@ -4387,6 +4387,8 @@ impl ChartApp {
                     match item {
                         Panel::Dom(id) => panels_store.dom.get(id)
                             .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
+                        Panel::MultiDom(id) => panels_store.multi_dom.get(id)
+                            .and_then(|s| label_from_fields(&s.symbol, "", "")),
                         Panel::Footprint(id) => panels_store.footprint.get(id)
                             .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
                         Panel::VolumeProfile(id) => panels_store.volume_profile.get(id)
@@ -4444,6 +4446,8 @@ impl ChartApp {
                     match item {
                         Panel::Dom(id) => panels_store.dom.get(id)
                             .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                        Panel::MultiDom(id) => panels_store.multi_dom.get(id)
+                            .map(|s| (s.symbol.clone(), String::new(), String::new())),
                         Panel::Footprint(id) => panels_store.footprint.get(id)
                             .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
                         Panel::VolumeProfile(id) => panels_store.volume_profile.get(id)
@@ -4910,6 +4914,8 @@ impl ChartApp {
                 match item {
                     Panel::Dom(id) => panels_store.dom.get(id)
                         .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
+                    Panel::MultiDom(id) => panels_store.multi_dom.get(id)
+                        .and_then(|s| label_from_fields(&s.symbol, "", "")),
                     Panel::Footprint(id) => panels_store.footprint.get(id)
                         .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
                     Panel::VolumeProfile(id) => panels_store.volume_profile.get(id)
@@ -4966,6 +4972,8 @@ impl ChartApp {
                 match item {
                     Panel::Dom(id) => panels_store.dom.get(id)
                         .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                    Panel::MultiDom(id) => panels_store.multi_dom.get(id)
+                        .map(|s| (s.symbol.clone(), String::new(), String::new())),
                     Panel::Footprint(id) => panels_store.footprint.get(id)
                         .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
                     Panel::VolumeProfile(id) => panels_store.volume_profile.get(id)

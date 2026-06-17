@@ -63,6 +63,14 @@ pub fn panel_header_info(
             account_type: s.account_type.clone(),
             is_dom: true,
         }),
+        Panel::MultiDom(id) => store.multi_dom.get(id).map(|s| PanelHeaderInfo {
+            source_label: "Synced",
+            source_color: "#374151",
+            symbol: s.symbol.clone(),
+            exchange: String::new(),
+            account_type: String::new(),
+            is_dom: false,
+        }),
         Panel::Footprint(id) => store.footprint.get(id).map(|s| PanelHeaderInfo {
             source_label: "Synced",
             source_color: "#374151",

@@ -9294,6 +9294,8 @@ impl ChartApp {
                                 height_ratio: state.height_ratio,
                             }
                         }
+                        // MultiDom persistence not yet wired — skip like Chart.
+                        Panel::MultiDom(_) => return None,
                         // Chart persistence is wired in Stage 8 (panels_store
                         // ownership of ChartWindows + ChartWindowSnapshot).
                         // For now skip — chart leaf drops from preset and

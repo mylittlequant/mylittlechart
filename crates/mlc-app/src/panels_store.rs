@@ -22,7 +22,7 @@ use mlc_panels::trading::order_flow::{
     indicator_panel::IndicatorPanelState,
     l2_tape::L2TapeState,
     liquidity_heatmap::LiquidityHeatmapState,
-    multi_dom::MultiDomState,
+    multi_dom::{MultiDomConfig, MultiDomState},
     trade_tape::TradeTapeState,
     volume_profile::VolumeProfileState,
 };
@@ -117,6 +117,22 @@ impl TradingPanelsStore {
     pub fn create_dom(&mut self, symbol: String, tick_size: f64) -> PanelId {
         let id = self.alloc_id();
         self.dom.insert(id, DomState::new(symbol, tick_size));
+        id
+    }
+
+    /// Allocate a new Multi-Exchange DOM panel.
+    ///
+    /// `exchanges` is the ordered list of exchange labels to track.
+    /// The panel starts with an empty book for each exchange; the caller
+    /// is responsible for wiring live-data subscriptions.
+    pub fn create_multi_dom(&mut self, symbol: String, exchanges: Vec<String>) -> PanelId {
+        let id = self.alloc_id();
+        let config = MultiDomConfig {
+            exchanges,
+            grid_size: 0.5,
+            depth_per_side: 30,
+        };
+        self.multi_dom.insert(id, MultiDomState::new(symbol, config));
         id
     }
 
@@ -251,6 +267,7 @@ impl TradingPanelsStore {
     pub fn get_panel(&self, item: &Panel) -> Option<&dyn TradingPanel> {
         match item {
             Panel::Dom(id) => self.dom.get(id).map(|s| s as &dyn TradingPanel),
+            Panel::MultiDom(id) => self.multi_dom.get(id).map(|s| s as &dyn TradingPanel),
             Panel::Footprint(id) => self.footprint.get(id).map(|s| s as &dyn TradingPanel),
             Panel::VolumeProfile(id) => self.volume_profile.get(id).map(|s| s as &dyn TradingPanel),
             Panel::LiquidityHeatmap(id) => self.liquidity_heatmap.get(id).map(|s| s as &dyn TradingPanel),
@@ -272,6 +289,7 @@ impl TradingPanelsStore {
     pub fn get_panel_mut(&mut self, item: &Panel) -> Option<&mut dyn TradingPanel> {
         match item {
             Panel::Dom(id) => self.dom.get_mut(id).map(|s| s as &mut dyn TradingPanel),
+            Panel::MultiDom(id) => self.multi_dom.get_mut(id).map(|s| s as &mut dyn TradingPanel),
             Panel::Footprint(id) => self.footprint.get_mut(id).map(|s| s as &mut dyn TradingPanel),
             Panel::VolumeProfile(id) => self.volume_profile.get_mut(id).map(|s| s as &mut dyn TradingPanel),
             Panel::LiquidityHeatmap(id) => self.liquidity_heatmap.get_mut(id).map(|s| s as &mut dyn TradingPanel),
@@ -302,6 +320,12 @@ impl TradingPanelsStore {
                 let pid = self.alloc_id();
                 self.dom.insert(pid, DomState::new(s.symbol.clone(), s.tick_size));
                 Some(Panel::Dom(pid))
+            }
+            Panel::MultiDom(id) => {
+                let s = self.multi_dom.get(id)?;
+                let pid = self.alloc_id();
+                self.multi_dom.insert(pid, MultiDomState::new(s.symbol.clone(), s.config.clone()));
+                Some(Panel::MultiDom(pid))
             }
             Panel::Footprint(id) => {
                 let s = self.footprint.get(id)?;
@@ -413,6 +437,7 @@ impl TradingPanelsStore {
     pub fn remove(&mut self, item: &Panel) {
         match item {
             Panel::Dom(id)              => { self.dom.remove(id); }
+            Panel::MultiDom(id)         => { self.multi_dom.remove(id); }
             Panel::Footprint(id)        => { self.footprint.remove(id); }
             Panel::VolumeProfile(id)    => { self.volume_profile.remove(id); }
             Panel::LiquidityHeatmap(id) => { self.liquidity_heatmap.remove(id); }

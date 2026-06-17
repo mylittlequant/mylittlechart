@@ -540,6 +540,28 @@ impl TradingPanel for FootprintState {
                 uzor::Rect::new(x as f64, y as f64, w as f64, h as f64),
                 uzor::input::Sense::SCROLL | uzor::input::Sense::DRAG | uzor::input::Sense::DOUBLE_CLICK,
             );
+            // Mode-selector button in the top-right corner.
+            let btn_w = 36.0_f64;
+            let btn_h = 16.0_f64;
+            let btn_x = x as f64 + w as f64 - btn_w - 4.0;
+            let btn_y = y as f64 + 2.0;
+            coordinator.register(
+                format!("{}:footprint:mode_btn", slot_prefix).as_str(),
+                uzor::Rect::new(btn_x, btn_y, btn_w, btn_h),
+                uzor::input::Sense::CLICK,
+            );
+            ctx.set_fill_color(&theme.header_bg);
+            ctx.fill_rect(btn_x, btn_y, btn_w, btn_h);
+            ctx.set_stroke_color(&theme.separator);
+            ctx.set_stroke_width(1.0);
+            ctx.stroke_rect(btn_x + 0.5, btn_y + 0.5, btn_w - 1.0, btn_h - 1.0);
+            ctx.set_fill_color(&theme.text_primary);
+            ctx.set_font("10px sans-serif");
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text("mode ▾", btn_x + btn_w * 0.5, btn_y + btn_h * 0.5);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Top);
         }
         let config = FootprintConfig::default();
 
@@ -752,7 +774,22 @@ impl TradingPanel for FootprintState {
         }
     }
 
-    fn handle_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool { false }
+    fn handle_click(&mut self, local_id: &str, _x: f64, _y: f64) -> bool {
+        if local_id == "footprint:mode_btn" {
+            self.toggle_mode_menu();
+            return true;
+        }
+        if let Some(rest) = local_id.strip_prefix("footprint:mode:") {
+            if let Ok(idx) = rest.parse::<usize>() {
+                let modes = FootprintMode::all();
+                if let Some(m) = modes.get(idx).copied() {
+                    self.set_display_mode(m);
+                    return true;
+                }
+            }
+        }
+        false
+    }
 
     fn handle_scroll(&mut self, local_id: &str, _dx: f64, dy: f64) -> bool {
         if local_id == "footprint:body" {

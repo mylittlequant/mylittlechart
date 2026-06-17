@@ -1461,7 +1461,18 @@ impl TradingPanel for DomState {
         }
     }
 
-    fn handle_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool {
+    fn handle_click(&mut self, local_id: &str, _x: f64, _y: f64) -> bool {
+        // Skin selector menu rows are registered as `dom:skin:{idx}`.
+        // Parse the trailing index and flip the active skin.
+        if let Some(rest) = local_id.strip_prefix("dom:skin:") {
+            if let Ok(idx) = rest.parse::<usize>() {
+                let skins = DomSkin::all();
+                if let Some(new_skin) = skins.get(idx).copied() {
+                    self.set_skin(new_skin);
+                    return true;
+                }
+            }
+        }
         false
     }
 
@@ -1485,6 +1496,14 @@ impl TradingPanel for DomState {
     fn handle_blackbox_event(&mut self, _local_x: f32, _local_y: f32, event: crate::panel_trait::BlackboxEvent) -> bool {
         use crate::panel_trait::BlackboxEvent;
         match event {
+            BlackboxEvent::RightClick => {
+                // Right-click anywhere on the DOM body toggles the skin
+                // selector popup. The skin menu rows render on top of
+                // the body and intercept primary clicks via their own
+                // hit zones.
+                self.toggle_skin_menu();
+                true
+            }
             BlackboxEvent::Hover => {
                 // TODO: compute hovered_price from local_y once cached row
                 // geometry is stored on DomState (needs last_render_geometry field).

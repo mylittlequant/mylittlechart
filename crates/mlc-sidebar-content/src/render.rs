@@ -917,6 +917,7 @@ fn render_slot_spawn_dropdown(
 ) {
     const ITEMS: &[(&str, &str)] = &[
         ("dom",                "DOM"),
+        ("multi_dom",          "Multi-Exchange DOM"),
         ("footprint",          "Footprint"),
         ("volume_profile",     "Volume Profile"),
         ("liquidity_heatmap",  "Liquidity Heatmap"),

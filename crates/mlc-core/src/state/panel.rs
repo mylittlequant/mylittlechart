@@ -88,6 +88,7 @@ pub enum Panel {
     /// its parent `Chart`).
     IndicatorPanel(PanelId),
     Dom(PanelId),
+    MultiDom(PanelId),
     L2Tape(PanelId),
     TradeTape(PanelId),
     BigTrades(PanelId),
@@ -110,6 +111,7 @@ impl Panel {
             Panel::Chart(_)             => PanelKind::Chart,
             Panel::IndicatorPanel(_)    => PanelKind::IndicatorPanel,
             Panel::Dom(_)               => PanelKind::Dom,
+            Panel::MultiDom(_)          => PanelKind::MultiDom,
             Panel::L2Tape(_)            => PanelKind::L2Tape,
             Panel::TradeTape(_)         => PanelKind::TradeTape,
             Panel::BigTrades(_)         => PanelKind::BigTrades,
@@ -139,6 +141,7 @@ impl Panel {
             Panel::Chart(cid)               => PanelId(cid.0),
             Panel::IndicatorPanel(id)
             | Panel::Dom(id)
+            | Panel::MultiDom(id)
             | Panel::L2Tape(id)
             | Panel::TradeTape(id)
             | Panel::BigTrades(id)
@@ -160,6 +163,7 @@ impl uzor::panels::DockPanel for Panel {
             Panel::Chart(_)             => "Chart",
             Panel::IndicatorPanel(_)    => "Indicator",
             Panel::Dom(_)               => "DOM",
+            Panel::MultiDom(_)          => "Multi-DOM",
             Panel::L2Tape(_)            => "L2 Tape",
             Panel::TradeTape(_)         => "Trade Tape",
             Panel::BigTrades(_)         => "Big Trades",
@@ -182,6 +186,7 @@ impl uzor::panels::DockPanel for Panel {
             Panel::Chart(_)             => "free_chart",
             Panel::IndicatorPanel(_)    => "free_indicator_panel",
             Panel::Dom(_)               => "free_dom",
+            Panel::MultiDom(_)          => "free_multi_dom",
             Panel::L2Tape(_)            => "free_l2_tape",
             Panel::TradeTape(_)         => "free_trade_tape",
             Panel::BigTrades(_)         => "free_big_trades",
@@ -222,6 +227,7 @@ pub enum PanelKind {
     Chart,
     IndicatorPanel,
     Dom,
+    MultiDom,
     L2Tape,
     TradeTape,
     BigTrades,
@@ -241,6 +247,7 @@ impl PanelKind {
             PanelKind::Chart             => "chart",
             PanelKind::IndicatorPanel    => "indicator_panel",
             PanelKind::Dom               => "dom",
+            PanelKind::MultiDom          => "multi_dom",
             PanelKind::L2Tape            => "l2_tape",
             PanelKind::TradeTape         => "trade_tape",
             PanelKind::BigTrades         => "big_trades",

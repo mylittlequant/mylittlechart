@@ -1264,6 +1264,39 @@ impl ChartApp {
                                 }
                                 Some(mlc_core::state::Panel::Dom(pid))
                             }
+                            "multi_dom" => {
+                                // Default exchange roster — owner can
+                                // edit MultiDomState::config.exchanges
+                                // at runtime via a future settings UI.
+                                // For now, prefill with the same 3
+                                // exchanges aggr.trade uses as its
+                                // default landing view.
+                                let default_exchanges = vec![
+                                    "binance".to_string(),
+                                    "bybit".to_string(),
+                                    "okx".to_string(),
+                                ];
+                                let pid = self.panels_store.create_multi_dom(
+                                    symbol.clone(),
+                                    default_exchanges.clone(),
+                                );
+                                if !symbol.is_empty() {
+                                    let at = crate::account_type_from_label(&account_type_str);
+                                    // Subscribe orderbook from each
+                                    // configured exchange in parallel.
+                                    // The OrderbookDelta fan-out in
+                                    // tick.rs routes events into the
+                                    // panel by (symbol, exchange_label).
+                                    for ex_label in &default_exchanges {
+                                        if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
+                                            let _ = self.bridge.subscribe_orderbook(
+                                                eid, &symbol, at,
+                                            );
+                                        }
+                                    }
+                                }
+                                Some(mlc_core::state::Panel::MultiDom(pid))
+                            }
                             "footprint" => {
                                 let pid = self.panels_store.create_footprint(symbol.clone(), resolved_tick_size);
                                 if !symbol.is_empty() {
@@ -1447,7 +1480,7 @@ impl ChartApp {
                         // indicator_panel is market-data (symbol-bound).
                         let is_market_data = matches!(
                             kind_str,
-                            "dom" | "footprint" | "volume_profile" | "liquidity_heatmap"
+                            "dom" | "multi_dom" | "footprint" | "volume_profile" | "liquidity_heatmap"
                                 | "big_trades" | "l2_tape" | "trade_tape" | "indicator_panel"
                         );
                         if is_market_data {
@@ -2275,6 +2308,7 @@ impl ChartApp {
                                     // SymbolSource — they are managed via TagManager.
                                     let current_source = match &item {
                                         Panel::Dom(_)
+                                        | Panel::MultiDom(_)
                                         | Panel::Footprint(_)
                                         | Panel::VolumeProfile(_)
                                         | Panel::LiquidityHeatmap(_)
