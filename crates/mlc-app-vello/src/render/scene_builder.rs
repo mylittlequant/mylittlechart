@@ -137,11 +137,24 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
             pw.chart.render(&mut render_ctx, frame_time, true);
             pw.chart_dirty = false;
             // First live chart frame after the promote: the chart scene is now
-            // built and about to composite, so retire the spinner here (not in
-            // finish_promote, which fired a frame too early onto a blank panel).
+            // built and about to composite. BUT retire the big startup
+            // spinner ONLY if the chart actually has bars to show — otherwise
+            // the next frame falls into render_full_chart_panel's empty-bars
+            // branch (3 scale border lines + per-chart spinner) and the
+            // owner sees "big spinner → empty scaffold → small spinner →
+            // real chart" instead of "big spinner → real chart". Holding
+            // the big spinner across the empty interval bridges that gap.
             if pw.awaiting_first_live_frame {
-                pw.awaiting_first_live_frame = false;
-                pw.spinner_start = None;
+                let chart_populated = pw
+                    .chart
+                    .panel_app
+                    .panel_grid
+                    .iter_containers()
+                    .any(|(_, w)| !w.bars.is_empty());
+                if chart_populated {
+                    pw.awaiting_first_live_frame = false;
+                    pw.spinner_start = None;
+                }
             }
         }
         let _composite_start = std::time::Instant::now();
@@ -181,7 +194,19 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
             // is up (`spinner_start.is_some()`) — owner sees one centred
             // ring instead of "big ring + tiny ring in the middle of every
             // empty pane" at startup.
-            if !pw.chart.last_loading_spinners.is_empty() && pw.spinner_start.is_none() {
+            // Per-chart spinner suppressed when ANY of these is true:
+            //   - big startup spinner up (`spinner_start`)
+            //   - still holding the spinner across the first-live-frame gap
+            //     (`awaiting_first_live_frame`)
+            //   - welcome wizard / profile manager screen is up
+            // Owner wants exactly one ring on screen at a time.
+            let _skel_active_for_spin = pw.chart.panel_app.user_settings_state.show_profile_manager
+                || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
+            if !pw.chart.last_loading_spinners.is_empty()
+                && pw.spinner_start.is_none()
+                && !pw.awaiting_first_live_frame
+                && !_skel_active_for_spin
+            {
                 let elapsed = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_millis() as u64)
@@ -353,7 +378,19 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
             // is up (`spinner_start.is_some()`) — owner sees one centred
             // ring instead of "big ring + tiny ring in the middle of every
             // empty pane" at startup.
-            if !pw.chart.last_loading_spinners.is_empty() && pw.spinner_start.is_none() {
+            // Per-chart spinner suppressed when ANY of these is true:
+            //   - big startup spinner up (`spinner_start`)
+            //   - still holding the spinner across the first-live-frame gap
+            //     (`awaiting_first_live_frame`)
+            //   - welcome wizard / profile manager screen is up
+            // Owner wants exactly one ring on screen at a time.
+            let _skel_active_for_spin = pw.chart.panel_app.user_settings_state.show_profile_manager
+                || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
+            if !pw.chart.last_loading_spinners.is_empty()
+                && pw.spinner_start.is_none()
+                && !pw.awaiting_first_live_frame
+                && !_skel_active_for_spin
+            {
                     let elapsed = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_millis() as u64)
@@ -459,7 +496,19 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
             // is up (`spinner_start.is_some()`) — owner sees one centred
             // ring instead of "big ring + tiny ring in the middle of every
             // empty pane" at startup.
-            if !pw.chart.last_loading_spinners.is_empty() && pw.spinner_start.is_none() {
+            // Per-chart spinner suppressed when ANY of these is true:
+            //   - big startup spinner up (`spinner_start`)
+            //   - still holding the spinner across the first-live-frame gap
+            //     (`awaiting_first_live_frame`)
+            //   - welcome wizard / profile manager screen is up
+            // Owner wants exactly one ring on screen at a time.
+            let _skel_active_for_spin = pw.chart.panel_app.user_settings_state.show_profile_manager
+                || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
+            if !pw.chart.last_loading_spinners.is_empty()
+                && pw.spinner_start.is_none()
+                && !pw.awaiting_first_live_frame
+                && !_skel_active_for_spin
+            {
                     let elapsed = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_millis() as u64)
@@ -527,7 +576,19 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
             // is up (`spinner_start.is_some()`) — owner sees one centred
             // ring instead of "big ring + tiny ring in the middle of every
             // empty pane" at startup.
-            if !pw.chart.last_loading_spinners.is_empty() && pw.spinner_start.is_none() {
+            // Per-chart spinner suppressed when ANY of these is true:
+            //   - big startup spinner up (`spinner_start`)
+            //   - still holding the spinner across the first-live-frame gap
+            //     (`awaiting_first_live_frame`)
+            //   - welcome wizard / profile manager screen is up
+            // Owner wants exactly one ring on screen at a time.
+            let _skel_active_for_spin = pw.chart.panel_app.user_settings_state.show_profile_manager
+                || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
+            if !pw.chart.last_loading_spinners.is_empty()
+                && pw.spinner_start.is_none()
+                && !pw.awaiting_first_live_frame
+                && !_skel_active_for_spin
+            {
                     let elapsed = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_millis() as u64)
@@ -585,7 +646,19 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
             // is up (`spinner_start.is_some()`) — owner sees one centred
             // ring instead of "big ring + tiny ring in the middle of every
             // empty pane" at startup.
-            if !pw.chart.last_loading_spinners.is_empty() && pw.spinner_start.is_none() {
+            // Per-chart spinner suppressed when ANY of these is true:
+            //   - big startup spinner up (`spinner_start`)
+            //   - still holding the spinner across the first-live-frame gap
+            //     (`awaiting_first_live_frame`)
+            //   - welcome wizard / profile manager screen is up
+            // Owner wants exactly one ring on screen at a time.
+            let _skel_active_for_spin = pw.chart.panel_app.user_settings_state.show_profile_manager
+                || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
+            if !pw.chart.last_loading_spinners.is_empty()
+                && pw.spinner_start.is_none()
+                && !pw.awaiting_first_live_frame
+                && !_skel_active_for_spin
+            {
                     let elapsed = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_millis() as u64)
@@ -627,11 +700,21 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
             RenderBackend::VelloGpu => unreachable!("handled above"),
         }
         // Non-VelloGpu backends render the whole chart each frame (no cached
-        // chart_scene), so the live chart is on screen as soon as we get here
-        // after the promote — retire the held spinner now.
+        // chart_scene). Same retire rule as VelloGpu — hold the big spinner
+        // until the chart has bars to draw, so the "big spinner → empty
+        // scaffold → small spinner → real chart" cascade collapses to
+        // "big spinner → real chart".
         if pw.awaiting_first_live_frame {
-            pw.awaiting_first_live_frame = false;
-            pw.spinner_start = None;
+            let chart_populated = pw
+                .chart
+                .panel_app
+                .panel_grid
+                .iter_containers()
+                .any(|(_, w)| !w.bars.is_empty());
+            if chart_populated {
+                pw.awaiting_first_live_frame = false;
+                pw.spinner_start = None;
+            }
         }
     }
 
