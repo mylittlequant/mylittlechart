@@ -208,58 +208,21 @@ impl ChartApp {
             }
         }
 
-        // X-axis kind is a property of the DATA, not a free flag.
-        // Time-axis (non-uniform in time) modes:
-        //   - tick TF (1t/10t/100t/1000t — N trades per bar)
-        //   - chart_type ∈ {range_bar, volume_bar, footprint} on any TF
-        // Everything else (kline-aligned candles) uses the index axis.
-        // This is the SINGLE point that reconciles viewport.time_axis with the
-        // current data source, so it can never drift (the bug where a leftover
-        // or zero-anchored time axis sent bars 37e9 px off-screen). t_start
-        // comes from REAL bar timestamps, never 0.
-        {
-            let time_axis_cids: std::collections::HashMap<ChartId, bool> = self
-                .panel_app
-                .panel_grid
-                .containers()
-                .iter()
-                .map(|(cid, window)| {
-                    let is_tick = self
-                        .managers
-                        .bubble
-                        .timeframe_for_chart(*cid)
-                        .map(|tf| tf.is_tick())
-                        .unwrap_or(false);
-                    let derived_chart_type = self
-                        .panels_store
-                        .chart_panel
-                        .get(&window.chart_panel_id)
-                        .map(|p| matches!(p.chart_type, "range_bar" | "volume_bar" | "footprint"))
-                        .unwrap_or(false);
-                    (*cid, is_tick || derived_chart_type)
-                })
-                .collect();
-            for (cid, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
-                let wants_time_axis = time_axis_cids.get(cid).copied().unwrap_or(false);
-                if wants_time_axis {
-                    // Anchor / re-anchor the time axis from the real bar span so
-                    // ts_to_x maps into the visible pixel range. Only (re)build
-                    // when the axis is missing or still zero-anchored, so user
-                    // pan/zoom on the time axis is preserved frame-to-frame.
-                    let needs_anchor = window
-                        .viewport
-                        .time_axis
-                        .map(|t| t.t_start_ms == 0)
-                        .unwrap_or(true);
-                    if needs_anchor && !window.bars.is_empty() {
-                        let first_ms = window.bars.first().map(|b| b.ts_ms()).unwrap_or(0);
-                        let last_ms = window.bars.last().map(|b| b.ts_ms()).unwrap_or(first_ms + 60_000);
-                        window.viewport.enable_time_axis_for_span(first_ms, last_ms);
-                    }
-                } else if window.viewport.is_time_axis() {
-                    // Left a time-axis mode → back to index.
-                    window.viewport.disable_time_axis();
-                }
+        // X-axis is ALWAYS index-mode for bar charts (kline, range_bar,
+        // volume_bar, tick TF, footprint). Industry standard: every major
+        // platform (TradeStation, NinjaTrader, MultiCharts, TradingView,
+        // ATAS, Sierra Chart, Bookmap footprint, Lightweight Charts)
+        // lays bars out at uniform pixel spacing regardless of inter-bar
+        // time gaps; the time scale shows non-uniform labels, but bars
+        // are equally wide. Time-axis mode is reserved for heatmap-class
+        // visualisations (DOM heatmap, liquidation heatmap, time & sales)
+        // where time is a continuous axis, not a bar slot.
+        //
+        // Defensive cleanup: if a stale time_axis from an earlier session
+        // (pre-cutover) lingers on the viewport, drop it back to index.
+        for (_cid, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+            if window.viewport.is_time_axis() {
+                window.viewport.disable_time_axis();
             }
         }
 
