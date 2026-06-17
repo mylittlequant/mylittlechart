@@ -256,13 +256,6 @@ struct PerWindowState {
     /// already false, so the spinner masks the first-frame work instead of
     /// blinking out early.
     awaiting_first_live_frame: bool,
-    /// Two-frame preset load gate. Phase 1 of `LoadPreset` sets this to
-    /// true when it stashes `pending_load_preset`. `about_to_wait` skips
-    /// the drain while this is true. The RedrawRequested handler clears
-    /// it AFTER the frame has been rendered + presented, so the next
-    /// `about_to_wait` runs phase 2 — by which time the loading skeleton
-    /// is on screen.
-    deferred_load_pending: bool,
 }
 
 /// A pending request to open a new window.
@@ -1277,7 +1270,6 @@ impl App<'_> {
             was_minimized: false,
             spinner_start: None,
             awaiting_first_live_frame: false,
-            deferred_load_pending: false,
         };
 
         self.windows.insert(win_id, pw);
@@ -2969,16 +2961,18 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
         }
 
-        // ── Two-frame preset load: arm the deferral ─────────────────────
-        // Phase 1 of LoadPreset cleared visible bars and stashed the id on
-        // `pw.chart.pending_load_preset`. Here we ONLY arm the deferral —
-        // setting `deferred_load_pending = true` and requesting a redraw.
-        // The actual phase-2 drain happens INSIDE RedrawRequested AFTER the
-        // frame has been submitted to the GPU, so by the time phase 2 runs
-        // the loading skeleton is already on screen.
+        // ── Drain pending preset-load requests ──────────────────────────
+        // Phase 1 of `LoadPreset` cleared the visible bars and stashed the
+        // id on `pw.chart.pending_load_preset`. After the render of THIS
+        // frame finishes, presenting loading skeletons + spinners, we
+        // re-dispatch the same id which runs phase 2 (the heavy deep-clone
+        // / chart-container rebuild). The user sees animated spinners
+        // during the work instead of a frozen old chart.
         for pw in self.windows.values_mut() {
-            if pw.chart.pending_load_preset.is_some() && !pw.deferred_load_pending {
-                pw.deferred_load_pending = true;
+            if pw.chart.pending_load_preset.is_some() {
+                pw.chart.drain_pending_load_preset();
+                // The heavy work mutated state; request another redraw so
+                // the next frame composites the fresh preset.
                 pw.window.request_redraw();
             }
         }
@@ -4280,17 +4274,6 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             self.gpu_frame_pending = false;
 
             // After GpuDone the previous frame has been presented on screen.
-            // Two-frame preset load — the loading skeleton from phase 1 is now
-            // visible to the user, so it's safe to run phase 2 (the heavy
-            // deep-clone + container rebuild) here.
-            for pw in self.windows.values_mut() {
-                if pw.deferred_load_pending && pw.chart.pending_load_preset.is_some() {
-                    pw.deferred_load_pending = false;
-                    pw.chart.drain_pending_load_preset();
-                    pw.window.request_redraw();
-                }
-            }
-
             // Make any newly created window visible — but hold it back until its
             // chart actually has bars to draw, so a freshly promoted (post-login)
             // window doesn't flash an empty chart for ~2s while data loads. A
