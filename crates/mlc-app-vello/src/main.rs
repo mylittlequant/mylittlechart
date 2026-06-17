@@ -1444,11 +1444,22 @@ impl App<'_> {
 
         self.promote_pending = true;
 
-        // Start the spinner on every skeleton window.
+        // Start the spinner on every skeleton window AND immediately retire
+        // any welcome / profile-manager screen still showing. The spinner is
+        // composited on top of `chart_scene` — without retiring the welcome
+        // form here, the cached chart_scene keeps drawing passphrase inputs
+        // under the spinner ring until `finish_promote` swaps the ChartApp.
+        // Owner sees "spinner over still-visible form" which reads as a UI
+        // glitch. Force a clean redraw NOW so the user only sees the spinner
+        // on the bare background until the live chart appears.
         let spinner_instant = std::time::Instant::now();
         for pw in self.windows.values_mut() {
             if pw.skeleton {
                 pw.spinner_start = Some(spinner_instant);
+                pw.chart.panel_app.user_settings_state.show_profile_manager = false;
+                pw.chart.panel_app.user_settings_state.show_welcome_wizard = false;
+                pw.chart_dirty = true;
+                pw.window.request_redraw();
             }
         }
 
@@ -1655,7 +1666,22 @@ impl App<'_> {
 
             if let Some(pw) = self.windows.get_mut(&r.winit_id) {
                 let t_swap_one = mlc_live_data::elapsed_ms();
-                pw.chart = *r.chart;
+                // `pw.chart = *r.chart` would drop the OLD skeleton ChartApp
+                // inline on the main thread (~144ms measured — Drop chain of
+                // BubbleStore + IndicatorManager + AgentSessionManager + Arc
+                // refcount fan-out on the bridge), freezing the spinner for
+                // that interval. Hand the old chart to a background thread
+                // to drop. ChartApp is Send (proven by the promote worker
+                // itself), so this is safe.
+                let old_chart = std::mem::replace(&mut pw.chart, *r.chart);
+                std::thread::spawn(move || {
+                    let _t = std::time::Instant::now();
+                    drop(old_chart);
+                    eprintln!(
+                        "[App] finish_promote: off-thread drop of skeleton ChartApp took {}us",
+                        _t.elapsed().as_micros(),
+                    );
+                });
                 pw.window_id = r.window_id;
                 pw.skeleton = false;
                 pw.visible_set = true; // already on screen — don't hide again
@@ -1669,6 +1695,7 @@ impl App<'_> {
                 pw.sidebar_dirty_scene = true;
                 pw.chart_dirty = true;
                 pw.overlay_dirty = true;
+                pw.window.request_redraw();
                 // Background tab warm-up is DEFERRED to the pass after the
                 // first live frame (about_to_wait): warm_background_tabs
                 // blocks the main thread ~1.2s (ensure_connector per series)
@@ -1676,7 +1703,7 @@ impl App<'_> {
                 // chart must appear first; the warm-up catches up one frame
                 // later.
                 eprintln!(
-                    "[App] finish_promote: chart-swap(+old-drop) {}ms (warm deferred)",
+                    "[App] finish_promote: chart-swap (old drop off-thread) {}ms",
                     mlc_live_data::elapsed_ms().saturating_sub(t_swap_one),
                 );
             }
@@ -4589,15 +4616,20 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         //     flag to empty the moment bars land, and the next frame draws
         //     the real chart without a spinner — no extra retire timer.
         for pw in self.windows.values() {
-            let skeleton_active = pw.spinner_start.is_some()
-                && (self.promote_pending || pw.awaiting_first_live_frame);
+            // Anytime the startup spinner is up, KEEP REDRAWING so the ring
+            // keeps spinning. Previously this was gated on
+            // `(promote_pending || awaiting_first_live_frame)` — both can
+            // flip false briefly in the window between finish_promote
+            // returning and the first chart_dirty rebuild, freezing the
+            // spinner on its last drawn angle for that interval.
+            let spinner_up = pw.spinner_start.is_some();
             let per_chart_loading = !pw.chart.last_loading_spinners.is_empty();
             // Cold preset apply is one-frame-deferred (see
             // `pending_cold_apply`). The renderer must redraw NOW so the
             // skeleton frame appears before `about_to_wait` drains the
             // stash and runs the synchronous cold body.
             let cold_apply_stashed = pw.chart.pending_cold_apply.is_some();
-            if skeleton_active || per_chart_loading || cold_apply_stashed {
+            if spinner_up || per_chart_loading || cold_apply_stashed {
                 pw.window.request_redraw();
             }
         }
