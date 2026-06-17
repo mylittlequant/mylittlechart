@@ -749,11 +749,14 @@ impl DataBridge {
         _total_bars: Option<usize>,
         force: bool,
     ) {
+        let _rb_total = std::time::Instant::now();
         // Phase 2B: historical fetch (Phase A + Phase B) runs through the
         // STATION's shared hub so it reuses the same connector pool as live
         // WS subscriptions (one dial-wave, one rate budget). `station.hub()`
         // is an O(1) Arc clone of that pool.
+        let _rb_t_hub = std::time::Instant::now();
         let fetch_hub = self.station.hub();
+        let rb_hub_us = _rb_t_hub.elapsed().as_micros();
         let tx = self.tx.clone();
         // Canonical key — used for cache keys and event symbols so app-side
         // lookups always match bubble.symbol (which is now canonical).
@@ -762,30 +765,28 @@ impl DataBridge {
         // Resolved eagerly for the station kline subscriber; the main REST task
         // retries resolution inside the connector-wait loop if the symbol list
         // is still empty at spawn time (Fix 2 — MUUSDC@hyperliquid race).
+        let _rb_t_wire = std::time::Instant::now();
         let wire_sym = self.wire_symbol(exchange_id, account_type, symbol);
+        let rb_wire_us = _rb_t_wire.elapsed().as_micros();
         // Station handle cloned for the resolution retry inside the main task.
         let station_for_retry = self.station.clone();
         let interval = timeframe_to_interval(timeframe);
         let tf_name = timeframe.name.clone();
+        let tf_name_for_log = tf_name.clone();
         let active_fetches = self.active_fetches.clone();
 
         let cache_key: FetchKey = (exchange_id, account_type, symbol_str.clone(), tf_name.clone());
         let station_bar_seriskey = station_bar_key(exchange_id, account_type, &symbol_str, &tf_name);
-
-        // Snapshot the station's in-RAM Series<BarPoint> ring BEFORE the dedup
-        // guard so we can emit it immediately on force=true even when a fetch is
-        // already in flight. Empty Vec if no forwarder is registered yet.
-        let cached_bars: Option<Vec<Bar>> = {
-            let bars = station_read_bars(&self.station, &station_bar_seriskey);
-            if bars.is_empty() { None } else { Some(bars) }
-        };
+        // `station_bar_seriskey` is consumed by the forwarder spawn below; the
+        // dedup hot-path never touches the station ring. Snapshotting bars
+        // here (the old `cached_bars` path) cost ~100µs per bar × 1500-2000
+        // bars = ~150ms on a non-force LoadPreset call where dedup-L2 would
+        // throw the result away anyway. Bug 10 in handoff-2026-06-17.
+        let _ = &station_bar_seriskey;
 
         eprintln!(
-            "[Bridge::request_bars enter] {:?} {} at={:?} tf={} force={} cached_bars={} first_cached_ts={} last_cached_ts={}",
+            "[Bridge::request_bars enter] {:?} {} at={:?} tf={} force={}",
             exchange_id, symbol_str, account_type, tf_name, force,
-            cached_bars.as_ref().map(|v| v.len()).unwrap_or(0),
-            cached_bars.as_ref().and_then(|v| v.first()).map(|b| b.timestamp).unwrap_or(0),
-            cached_bars.as_ref().and_then(|v| v.last()).map(|b| b.timestamp).unwrap_or(0),
         );
 
         // ── Two-layer dedup ───────────────────────────────────────────────────
@@ -821,11 +822,11 @@ impl DataBridge {
             return;
         }
 
-        // Capture disk cache boundaries for gap detection (Phase B).
-        let disk_last_ts: Option<i64> = cached_bars.as_ref()
-            .and_then(|bars| bars.last())
-            .map(|b| b.timestamp);
-        let had_disk_cache = cached_bars.is_some();
+        // Phase B gap-detection was REMOVED in commit bea348e. The
+        // `disk_last_ts` / `had_disk_cache` values it consumed no longer
+        // serve a purpose — see the `let _ = had_disk_cache;` no-op below.
+        let disk_last_ts: Option<i64> = None;
+        let had_disk_cache: bool = false;
 
         // Spawn the Stream::Kline subscriber ONCE per (eid, at, sym, tf) key.
         // The forwarder lives until the bridge is dropped — station owns the
@@ -1088,6 +1089,12 @@ impl DataBridge {
 
             finish_fetch!();
         });
+        eprintln!(
+            "[Bridge::request_bars sync-exit] {:?} tf={} total={}us hub={}us wire={}us",
+            exchange_id, tf_name_for_log,
+            _rb_total.elapsed().as_micros(),
+            rb_hub_us, rb_wire_us,
+        );
     }
 
     /// Request bars synchronously (blocking).

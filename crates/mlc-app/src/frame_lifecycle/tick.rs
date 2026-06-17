@@ -849,6 +849,23 @@ impl ChartApp {
                         };
                         if win_sym_tu.as_str() == symbol && win_at_tu.as_str() == account_type.short_label() {
                             let period_secs = win_tf_tu.interval_ms / 1000;
+                            // Skip degenerate timeframes. Standard time TFs are
+                            // ≥ 1s = 1000ms → period_secs ≥ 1. Tick TFs are
+                            // already filtered out via `derived_cids_tu` above
+                            // (they carry a negative sentinel `interval_ms`).
+                            // Anything that lands here with period_secs ≤ 0 is
+                            // either an uninitialised `Timeframe { interval_ms:
+                            // 0, .. }` (legacy serde path) or a derived-chart
+                            // window whose tf wasn't tagged tick — neither
+                            // wants time-slice aggregation. Hard skip prevents
+                            // a div-by-zero crash on the candle-boundary math.
+                            if period_secs <= 0 {
+                                eprintln!(
+                                    "[tick::TradeUpdate] skip cid={:?} sym={} — degenerate period_secs={} (interval_ms={})",
+                                    cid_tu, symbol, period_secs, win_tf_tu.interval_ms,
+                                );
+                                continue;
+                            }
                             let trade_ts_secs = timestamp / 1000;
 
                             if let Some(last_ts) = window.bars.last().map(|b| b.timestamp) {
