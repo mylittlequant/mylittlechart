@@ -320,11 +320,31 @@ impl ChartApp {
                         (0.0, "1m")
                     };
 
-                    // Phase 2C: fire the subscription using the panel's current
-                    // chart_type_param / chart_type_interval. Defaults are
-                    // substituted when the panel has no value yet. The user
-                    // can re-enter values via the inline TextField on each
-                    // derived dropdown row at any time.
+                    // ── Layer 1 (derived-bars audit 2026-06-17): clean state ──
+                    //
+                    // Every chart_type switch must:
+                    //   1. abort the previous derived subscription (kline-OR-
+                    //      derived → any). If we don't, switching range_bar →
+                    //      volume_bar leaves the range_bar forwarder running,
+                    //      which keeps pushing BarUpdate (range timestamps)
+                    //      into a window that just became volume_bar.
+                    //   2. clear `window.bars` — the old timestamp grid is
+                    //      semantically incompatible with the new stream
+                    //      (kline 1H ts every 3600s vs range bars ts at
+                    //      crossing trade ms; mixing both = the "crossing
+                    //      timestamps" visual owner described).
+                    //   3. flip viewport axis mode to match: derived bar
+                    //      streams are non-uniform in time → time_axis.
+                    //      Time-uniform candles (kline) → index axis.
+                    //   4. reset view_start so the next batch of bars
+                    //      doesn't land off-screen.
+                    //   5. set `pending_symbol_load = true` so renderer
+                    //      shows the loading skeleton until the first new
+                    //      bar arrives.
+                    let is_derived_target = matches!(
+                        ct,
+                        "range_bar" | "volume_bar" | "footprint"
+                    );
                     if let Some(active_leaf) = self.panel_app.panel_grid.active_container() {
                         let cid = active_leaf.id;
                         let symbol_opt = self.managers.bubble.symbol_for_chart(cid).map(String::from);
@@ -333,9 +353,41 @@ impl ChartApp {
                         if let (Some(symbol), Some(at_label), Some(tf)) = (symbol_opt, at_label_opt, tf_opt) {
                             if !symbol.is_empty() {
                                 let eid_str = self.active_exchange.as_str();
-                                if self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
+                                let connector_enabled = self.sidebar_state.connector_enabled
+                                    .get(eid_str).copied().unwrap_or(true);
+                                if connector_enabled {
                                     let at = crate::account_type_from_label(&at_label);
                                     let on_tick_tf = tf.tick_count().is_some();
+
+                                    // Step 1: always abort any derived
+                                    // subscription. The bridge.abort_* call is
+                                    // idempotent when nothing's live.
+                                    self.bridge.abort_derived_chart(
+                                        self.active_exchange, &symbol, at,
+                                    );
+
+                                    // Steps 2-5: mutate the active window.
+                                    // NOTE: axis mode (time vs index) is
+                                    // reconciled centrally in prepare_frame
+                                    // from chart_type + tf.is_tick(). DON'T
+                                    // toggle viewport.time_axis here — without
+                                    // real bar timestamps the anchor would be
+                                    // wrong, and the next prepare_frame would
+                                    // overwrite it anyway.
+                                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                                        window.bars.clear();
+                                        window.viewport.bar_count = 0;
+                                        window.viewport.view_start = 0.0;
+                                        window.pending_symbol_load = true;
+                                        // Mark "snap to end on first data" so
+                                        // the new stream lands at the right
+                                        // edge of the viewport.
+                                        window.needs_snap_after_backfill = true;
+                                    }
+                                    let _ = is_derived_target; // axis flip done in prepare_frame
+
+                                    // Step 6: fire the appropriate
+                                    // subscription for the new mode.
                                     match ct {
                                         "range_bar" => {
                                             let units = if chart_param > 0.0 { chart_param } else { 10.0 };
@@ -352,8 +404,11 @@ impl ChartApp {
                                             self.bridge.request_footprint(self.active_exchange, &symbol, at, iv);
                                         }
                                         _ => {
-                                            // Plain render type — abort any active derived sub.
-                                            self.bridge.abort_derived_chart(self.active_exchange, &symbol, at);
+                                            // Plain render type (candle /
+                                            // bars / line / ...). Kline
+                                            // request only when NOT on a
+                                            // tick TF (tick TF flips into
+                                            // derived path above).
                                             if !on_tick_tf {
                                                 self.bridge.request_bars(
                                                     self.active_exchange, &symbol, &tf, at,

@@ -208,32 +208,40 @@ impl ChartApp {
             }
         }
 
-        // X-axis kind is a property of the DATA, not a free flag: a tick TF
-        // (non-uniform in time) uses the time-domain X axis; everything else
-        // (kline, range, volume, footprint — index-packed) uses the index axis.
+        // X-axis kind is a property of the DATA, not a free flag.
+        // Time-axis (non-uniform in time) modes:
+        //   - tick TF (1t/10t/100t/1000t — N trades per bar)
+        //   - chart_type ∈ {range_bar, volume_bar, footprint} on any TF
+        // Everything else (kline-aligned candles) uses the index axis.
         // This is the SINGLE point that reconciles viewport.time_axis with the
-        // timeframe kind, so it can never drift (the bug where a leftover or
-        // zero-anchored time axis sent bars 37e9 px off-screen). t_start is
-        // taken from the REAL bar timestamps, never 0.
+        // current data source, so it can never drift (the bug where a leftover
+        // or zero-anchored time axis sent bars 37e9 px off-screen). t_start
+        // comes from REAL bar timestamps, never 0.
         {
-            let tick_cids: std::collections::HashMap<ChartId, bool> = self
+            let time_axis_cids: std::collections::HashMap<ChartId, bool> = self
                 .panel_app
                 .panel_grid
                 .containers()
-                .keys()
-                .map(|cid| {
+                .iter()
+                .map(|(cid, window)| {
                     let is_tick = self
                         .managers
                         .bubble
                         .timeframe_for_chart(*cid)
                         .map(|tf| tf.is_tick())
                         .unwrap_or(false);
-                    (*cid, is_tick)
+                    let derived_chart_type = self
+                        .panels_store
+                        .chart_panel
+                        .get(&window.chart_panel_id)
+                        .map(|p| matches!(p.chart_type, "range_bar" | "volume_bar" | "footprint"))
+                        .unwrap_or(false);
+                    (*cid, is_tick || derived_chart_type)
                 })
                 .collect();
             for (cid, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
-                let is_tick = tick_cids.get(cid).copied().unwrap_or(false);
-                if is_tick {
+                let wants_time_axis = time_axis_cids.get(cid).copied().unwrap_or(false);
+                if wants_time_axis {
                     // Anchor / re-anchor the time axis from the real bar span so
                     // ts_to_x maps into the visible pixel range. Only (re)build
                     // when the axis is missing or still zero-anchored, so user
@@ -249,7 +257,7 @@ impl ChartApp {
                         window.viewport.enable_time_axis_for_span(first_ms, last_ms);
                     }
                 } else if window.viewport.is_time_axis() {
-                    // Left a tick TF (or restored a stale time axis) → back to index.
+                    // Left a time-axis mode → back to index.
                     window.viewport.disable_time_axis();
                 }
             }
