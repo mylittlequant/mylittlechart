@@ -177,7 +177,11 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
             // Per-chart loading spinner overlay — drawn directly into pw.scene
             // (NOT cached) so it animates every frame. Goes on top of the
             // overlay layer so it sits above the crosshair too.
-            if !pw.chart.last_loading_spinners.is_empty() {
+            // Suppress per-chart spinners while the global startup spinner
+            // is up (`spinner_start.is_some()`) — owner sees one centred
+            // ring instead of "big ring + tiny ring in the middle of every
+            // empty pane" at startup.
+            if !pw.chart.last_loading_spinners.is_empty() && pw.spinner_start.is_none() {
                 let elapsed = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_millis() as u64)
@@ -345,7 +349,11 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 // Per-chart loading spinner overlay (animated every frame; the
                 // host redraw pump in main.rs keeps frames flowing while the
                 // spinner list is non-empty).
-                if !pw.chart.last_loading_spinners.is_empty() {
+                // Suppress per-chart spinners while the global startup spinner
+            // is up (`spinner_start.is_some()`) — owner sees one centred
+            // ring instead of "big ring + tiny ring in the middle of every
+            // empty pane" at startup.
+            if !pw.chart.last_loading_spinners.is_empty() && pw.spinner_start.is_none() {
                     let elapsed = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_millis() as u64)
@@ -447,7 +455,11 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 // Render modal layer on top (still inside translate — modals use chart-relative coords).
                 // Unconditional — draws profile/welcome/skeleton screens too.
                 pw.chart.render_modal_layer(&mut cpu_ctx, frame_time);
-                if !pw.chart.last_loading_spinners.is_empty() {
+                // Suppress per-chart spinners while the global startup spinner
+            // is up (`spinner_start.is_some()`) — owner sees one centred
+            // ring instead of "big ring + tiny ring in the middle of every
+            // empty pane" at startup.
+            if !pw.chart.last_loading_spinners.is_empty() && pw.spinner_start.is_none() {
                     let elapsed = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_millis() as u64)
@@ -511,7 +523,11 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 // Render modal layer on top (still inside translate — modals use chart-relative coords).
                 // Unconditional — draws profile/welcome/skeleton screens too.
                 pw.chart.render_modal_layer(&mut skia_ctx, frame_time);
-                if !pw.chart.last_loading_spinners.is_empty() {
+                // Suppress per-chart spinners while the global startup spinner
+            // is up (`spinner_start.is_some()`) — owner sees one centred
+            // ring instead of "big ring + tiny ring in the middle of every
+            // empty pane" at startup.
+            if !pw.chart.last_loading_spinners.is_empty() && pw.spinner_start.is_none() {
                     let elapsed = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_millis() as u64)
@@ -565,7 +581,11 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 // Render modal layer on top (still inside translate — modals use chart-relative coords).
                 // Unconditional — draws profile/welcome/skeleton screens too.
                 pw.chart.render_modal_layer(&mut hybrid_ctx, frame_time);
-                if !pw.chart.last_loading_spinners.is_empty() {
+                // Suppress per-chart spinners while the global startup spinner
+            // is up (`spinner_start.is_some()`) — owner sees one centred
+            // ring instead of "big ring + tiny ring in the middle of every
+            // empty pane" at startup.
+            if !pw.chart.last_loading_spinners.is_empty() && pw.spinner_start.is_none() {
                     let elapsed = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_millis() as u64)
@@ -687,7 +707,7 @@ fn render_spinner(
     const SWEEP: f64 = std::f64::consts::PI * 3.0 / 2.0; // 270 degrees — 3/4 ring
 
     let cx = window_width / 2.0;
-    let cy = window_height / 2.0 + 60.0;
+    let cy = window_height / 2.0;
 
     let t = (elapsed_ms % 1200) as f64 / 1200.0;
     let start_angle = t * std::f64::consts::TAU - std::f64::consts::FRAC_PI_2;
