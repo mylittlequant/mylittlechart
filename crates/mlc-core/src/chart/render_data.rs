@@ -219,6 +219,21 @@ pub struct ChartRenderState<'a> {
     /// level, POC highlight, and value-area background.
     /// When `None` (default), footprint dispatch falls back to draw_candles.
     pub footprint_bars: Option<&'a [crate::types::FootprintBar]>,
+    /// Renko brick data. When `Some(_)` and chart_type == "renko" the
+    /// renko renderer draws filled rect bricks; otherwise renko dispatch
+    /// renders nothing.
+    pub renko_bars: Option<&'a [crate::types::RenkoBrick]>,
+    /// Point-and-Figure column data.
+    pub pnf_columns: Option<&'a [crate::types::PnfColumn]>,
+    /// Kagi segment data.
+    pub kagi_segments: Option<&'a [crate::types::KagiSegment]>,
+    /// Cumulative Volume Delta line samples (used by both the standalone
+    /// CVD chart type and the CVD overlay on other chart types when
+    /// enabled).
+    pub cvd_line: Option<&'a [crate::types::CvdSample]>,
+    /// TPO Market Profile session snapshots — typically a small ring
+    /// (current session + N closed sessions).
+    pub tpo_sessions: Option<&'a [crate::types::TpoSession]>,
 }
 
 /// Configuration for scale rendering

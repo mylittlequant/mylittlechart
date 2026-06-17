@@ -29,6 +29,7 @@ use crate::chart_render::{
     ChartRenderState, ChartTheme, ChartRect,
     draw_grid, draw_grid_extended, draw_candles, draw_bars, draw_hollow_candles, draw_heikin_ashi,
     draw_range_bars, draw_volume_bars, draw_tick_bars, draw_footprint, draw_renko, draw_pnf, draw_kagi,
+    draw_cvd_chart, draw_tpo,
     draw_line_series, draw_area_series, draw_baseline_series,
     draw_step_line, draw_line_with_markers, draw_hlc_area, draw_histogram, draw_columns,
     draw_price_scale, draw_time_scale,
@@ -220,6 +221,8 @@ pub fn draw_series(ctx: &mut dyn RenderContext, state: &ChartRenderState, chart_
         "renko" => draw_renko(ctx, state),
         "pnf" => draw_pnf(ctx, state),
         "kagi" => draw_kagi(ctx, state),
+        "cvd" => draw_cvd_chart(ctx, state),
+        "tpo" => draw_tpo(ctx, state),
         "footprint" => draw_footprint(ctx, state),
         _ => draw_candles(ctx, state), // Default fallback
     }
@@ -3146,6 +3149,11 @@ pub fn render_full_chart_panel(
         wick_enabled: data.state.wick_enabled,
         use_prev_close: data.state.use_prev_close,
         footprint_bars: data.state.footprint_bars,
+        renko_bars: data.state.renko_bars,
+        pnf_columns: data.state.pnf_columns,
+        kagi_segments: data.state.kagi_segments,
+        cvd_line: data.state.cvd_line,
+        tpo_sessions: data.state.tpo_sessions,
     };
 
     // 1. Background — fill the full window rect to avoid gaps when scales are
@@ -3526,6 +3534,11 @@ pub fn render_chart_splits(
             wick_enabled: true,
             use_prev_close: false,
             footprint_bars: window.footprint_bars.as_deref(),
+            renko_bars: window.renko_bars.as_deref(),
+            pnf_columns: window.pnf_columns.as_deref(),
+            kagi_segments: window.kagi_segments.as_deref(),
+            cvd_line: window.cvd_line.as_deref(),
+            tpo_sessions: window.tpo_sessions.as_deref(),
         };
 
         // Build a config for this leaf, overriding chart_type from the window.
@@ -3703,6 +3716,11 @@ pub fn render_chart_overlay(
         wick_enabled: state.wick_enabled,
         use_prev_close: state.use_prev_close,
         footprint_bars: state.footprint_bars,
+        renko_bars: state.renko_bars,
+        pnf_columns: state.pnf_columns,
+        kagi_segments: state.kagi_segments,
+        cvd_line: state.cvd_line,
+        tpo_sessions: state.tpo_sessions,
     };
 
     // Compute total chart bounds (main + all sub-panes) for the vertical crosshair span.

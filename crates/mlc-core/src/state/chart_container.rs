@@ -1070,6 +1070,11 @@ impl ChartContainer {
             wick_enabled: true,
             use_prev_close: false,
             footprint_bars: None,
+            renko_bars: None,
+            pnf_columns: None,
+            kagi_segments: None,
+            cvd_line: None,
+            tpo_sessions: None,
         }
     }
 
