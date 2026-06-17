@@ -205,6 +205,11 @@ pub struct DomState {
 
     /// Rendering skin (vendor preset). Default `Classic`.
     pub skin: DomSkin,
+    /// True when the panel settings menu is visible (right-click on the
+    /// panel header opens it). Renderer paints a popup with one row per
+    /// `DomSkin::all()` variant; input handler toggles `self.skin` on
+    /// click.
+    pub skin_menu_open: bool,
 }
 
 impl fmt::Debug for DomState {
@@ -281,6 +286,7 @@ impl DomState {
             chase_last_update_ms: 0,
             column_config: DomColumnConfig::default(),
             skin: DomSkin::default(),
+            skin_menu_open: false,
         }
     }
 
@@ -799,6 +805,18 @@ impl DomState {
         if max_vol > 0.0 {
             self.max_volume = max_vol;
         }
+    }
+
+    /// Set the current visual skin and close the selector menu (if open).
+    pub fn set_skin(&mut self, skin: DomSkin) {
+        self.skin = skin;
+        self.skin_menu_open = false;
+    }
+
+    /// Toggle the skin-selector menu visibility (typically wired to a
+    /// right-click on the panel header).
+    pub fn toggle_skin_menu(&mut self) {
+        self.skin_menu_open = !self.skin_menu_open;
     }
 }
 

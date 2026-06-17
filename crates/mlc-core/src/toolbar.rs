@@ -318,8 +318,23 @@ fn chart_type_items() -> Vec<DropdownItemDef> {
             .with_icon(ToolbarIconId::new("RangeBar")),
         DropdownItemDef::action_with_input("volume_bar", "Volume Bars", "bar_mode_param", "1000.0")
             .with_icon(ToolbarIconId::new("VolumeBar")),
+        DropdownItemDef::action_with_input("tick_bar",   "Tick Bars",   "bar_mode_param", "100")
+            .with_icon(ToolbarIconId::new("Tick")),
         DropdownItemDef::action_with_input("footprint",  "Clusters",    "bar_mode_param", "1m")
             .with_icon(ToolbarIconId::new("Footprint")),
+        DropdownItemDef::Separator,
+        // ── Non-standard bars (price-action: Renko / P&F / Kagi) ─────────────
+        DropdownItemDef::action_with_input("renko",      "Renko",       "bar_mode_param", "10.0")
+            .with_icon(ToolbarIconId::new("BarChart")),
+        DropdownItemDef::action_with_input("pnf",        "Point & Figure", "bar_mode_param", "10.0")
+            .with_icon(ToolbarIconId::new("BarChart")),
+        DropdownItemDef::action_with_input("kagi",       "Kagi",        "bar_mode_param", "10.0")
+            .with_icon(ToolbarIconId::new("LineChart")),
+        DropdownItemDef::Separator,
+        // ── Orderflow / profile visualizations ───────────────────────────────
+        DropdownItemDef::action("cvd", "CVD Line").with_icon(ToolbarIconId::new("LineChart")),
+        DropdownItemDef::action_with_input("tpo", "Market Profile (TPO)", "bar_mode_param", "30")
+            .with_icon(ToolbarIconId::new("Histogram")),
     ]
 }
 

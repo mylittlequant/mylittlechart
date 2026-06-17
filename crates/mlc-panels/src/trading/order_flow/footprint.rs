@@ -72,6 +72,22 @@ pub struct FootprintState {
 
     /// Crosshair price synced from a linked chart window.
     pub crosshair_price: Option<f64>,
+
+    /// True when the display-mode selector menu is visible.
+    pub mode_menu_open: bool,
+}
+
+impl FootprintState {
+    /// Set the active display mode and close the selector menu.
+    pub fn set_display_mode(&mut self, mode: FootprintMode) {
+        self.display_mode = mode;
+        self.mode_menu_open = false;
+    }
+
+    /// Toggle the mode-selector menu visibility.
+    pub fn toggle_mode_menu(&mut self) {
+        self.mode_menu_open = !self.mode_menu_open;
+    }
 }
 
 impl fmt::Debug for FootprintState {
@@ -111,6 +127,7 @@ impl FootprintState {
             imbalance_threshold: 3.0,
             imbalances: Vec::new(),
             display_mode: FootprintMode::BidAsk,
+            mode_menu_open: false,
             dom_center_price: None,
             dom_levels: None,
             candle_duration_ms: 60_000,

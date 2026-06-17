@@ -95,6 +95,22 @@ pub struct LiquidityHeatmapState {
     /// Per-price-tick update count over the visible window. Updated
     /// alongside `snapshots`. Used by `Count` and `Spoofing` modes.
     pub update_count_by_tick: std::collections::HashMap<i64, u32>,
+
+    /// True when the mode-selector menu is visible.
+    pub mode_menu_open: bool,
+}
+
+impl LiquidityHeatmapState {
+    /// Set the active color mode and close the selector menu.
+    pub fn set_mode(&mut self, mode: LiquidityHeatmapMode) {
+        self.mode = mode;
+        self.mode_menu_open = false;
+    }
+
+    /// Toggle the mode-selector menu visibility.
+    pub fn toggle_mode_menu(&mut self) {
+        self.mode_menu_open = !self.mode_menu_open;
+    }
 }
 
 impl std::fmt::Debug for LiquidityHeatmapState {
@@ -143,6 +159,7 @@ impl LiquidityHeatmapState {
             pause_buffer: VecDeque::new(),
             mid_price: None,
             mode: LiquidityHeatmapMode::default(),
+            mode_menu_open: false,
             update_count_by_tick: std::collections::HashMap::new(),
         }
     }
