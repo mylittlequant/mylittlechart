@@ -165,6 +165,116 @@ impl Viewport {
         relative_idx * self.bar_spacing + self.bar_spacing / 2.0
     }
 
+    /// Axis-aware X for a bar: time-axis mode uses real timestamp,
+    /// index mode falls back to `bar_to_x(idx)`. `bar_ts_ms` is the
+    /// bar's timestamp in milliseconds.
+    ///
+    /// This is the renderer's single entry point — callers do NOT
+    /// branch on `is_time_axis()`.
+    #[inline]
+    pub fn x_for_bar(&self, bar_idx: usize, bar_ts_ms: i64) -> f64 {
+        if let Some(t) = self.time_axis {
+            t.ts_to_x(bar_ts_ms)
+        } else {
+            self.bar_to_x(bar_idx)
+        }
+    }
+
+    /// Axis-aware X for a sub-bar fractional position.
+    /// Time-axis mode uses the timestamp (the fractional index is
+    /// irrelevant). Index mode uses the fractional index.
+    #[inline]
+    pub fn x_for_bar_f64(&self, bar_idx_f64: f64, bar_ts_ms: i64) -> f64 {
+        if let Some(t) = self.time_axis {
+            t.ts_to_x(bar_ts_ms)
+        } else {
+            self.bar_to_x_f64(bar_idx_f64)
+        }
+    }
+
+    /// Axis-aware X for a timestamp: time mode uses ts directly,
+    /// index mode binary-searches `bars` for the bar with the closest
+    /// timestamp. This is the primitive-renderer path.
+    ///
+    /// `bars` is required for index-mode bar lookup; callers that
+    /// know they're in time-axis mode can pass `&[]`.
+    pub fn x_for_ts(&self, ts_ms: i64, bars: &[crate::types::Bar]) -> f64 {
+        if let Some(t) = self.time_axis {
+            return t.ts_to_x(ts_ms);
+        }
+        if bars.is_empty() {
+            return self.bar_to_x(0);
+        }
+        // Index-mode: find the fractional bar index closest to ts_ms
+        // and convert via bar_to_x_f64. ts is in ms; Bar.timestamp is
+        // currently in seconds (changes in commit 2).
+        let ts_sec = ts_ms / 1000;
+        let bar_f = match bars.binary_search_by_key(&ts_sec, |b| b.timestamp) {
+            Ok(i) => i as f64,
+            Err(0) => {
+                // Before first bar — extrapolate from spacing.
+                let first_ts = bars.first().unwrap().timestamp;
+                let dt = (ts_sec - first_ts) as f64;
+                let avg_step = if bars.len() >= 2 {
+                    (bars.last().unwrap().timestamp - first_ts) as f64
+                        / (bars.len() - 1).max(1) as f64
+                } else {
+                    60.0
+                };
+                if avg_step > 0.0 { dt / avg_step } else { 0.0 }
+            }
+            Err(i) if i >= bars.len() => {
+                // After last bar — extrapolate.
+                let last_ts = bars.last().unwrap().timestamp;
+                let dt = (ts_sec - last_ts) as f64;
+                let avg_step = if bars.len() >= 2 {
+                    (last_ts - bars[bars.len() - 2].timestamp) as f64
+                } else {
+                    60.0
+                };
+                (bars.len() - 1) as f64
+                    + if avg_step > 0.0 { dt / avg_step } else { 0.0 }
+            }
+            Err(i) => {
+                // Between bars i-1 and i — linear interpolate by ts.
+                let prev = bars[i - 1].timestamp as f64;
+                let next = bars[i].timestamp as f64;
+                let span = next - prev;
+                let frac = if span > 0.0 {
+                    (ts_sec as f64 - prev) / span
+                } else {
+                    0.0
+                };
+                (i - 1) as f64 + frac
+            }
+        };
+        self.bar_to_x_f64(bar_f)
+    }
+
+    /// Axis-aware reverse mapping: X pixel → bar index.
+    /// In index mode this is `x_to_bar`. In time mode it binary-searches
+    /// `bars` for the nearest bar by timestamp.
+    pub fn x_to_bar_axis_aware(&self, x: f64, bars: &[crate::types::Bar]) -> Option<usize> {
+        if let Some(t) = self.time_axis {
+            if bars.is_empty() { return None; }
+            let ts_ms = t.x_to_ts(x);
+            let ts_sec = ts_ms / 1000;
+            let idx = match bars.binary_search_by_key(&ts_sec, |b| b.timestamp) {
+                Ok(i) => i,
+                Err(0) => 0,
+                Err(i) if i >= bars.len() => bars.len() - 1,
+                Err(i) => {
+                    let prev = (ts_sec - bars[i - 1].timestamp).abs();
+                    let next = (bars[i].timestamp - ts_sec).abs();
+                    if prev <= next { i - 1 } else { i }
+                }
+            };
+            Some(idx)
+        } else {
+            self.x_to_bar(x)
+        }
+    }
+
     /// Convert X pixel coordinate to bar index
     ///
     /// Returns None if the coordinate is outside the chart area or
@@ -299,16 +409,40 @@ impl Viewport {
         }
     }
 
-    /// Pan the view by a number of bars (can be fractional)
-    pub fn pan(&mut self, bar_delta: f64) {
-        self.view_start -= bar_delta;
+    /// Pan the view by a PIXEL delta (axis-aware). Time mode shifts the
+    /// time anchor; index mode converts pixels to bars via `bar_spacing`.
+    ///
+    /// Callers from input handlers pass raw mouse drag delta in pixels;
+    /// they no longer branch on axis mode.
+    pub fn pan(&mut self, pixel_delta: f64) {
+        if let Some(t) = self.time_axis.as_mut() {
+            t.t_start_ms -= (pixel_delta * t.ms_per_px).round() as i64;
+        } else if self.bar_spacing > 0.0 {
+            self.view_start -= pixel_delta / self.bar_spacing;
+        }
     }
 
-    /// Zoom at a specific X coordinate, maintaining the bar under cursor
+    /// Pan the view by a BAR delta (index mode only). No-op in time mode
+    /// — callers that work in bar terms use this for snap/scroll math.
+    pub fn pan_bars(&mut self, bar_delta: f64) {
+        if self.time_axis.is_none() {
+            self.view_start -= bar_delta;
+        }
+    }
+
+    /// Zoom at a specific X coordinate, maintaining the position under
+    /// cursor. Axis-aware: time mode zooms `ms_per_px`, index mode zooms
+    /// `bar_spacing`.
     ///
     /// Factor > 1.0 zooms in, factor < 1.0 zooms out.
-    /// Uses viewport's built-in min/max spacing limits.
     pub fn zoom_at(&mut self, x: f64, factor: f64) {
+        if let Some(t) = self.time_axis.as_mut() {
+            let ts_under = t.t_start_ms + (x * t.ms_per_px).round() as i64;
+            let new_ms_per_px = (t.ms_per_px / factor).max(f64::MIN_POSITIVE);
+            t.ms_per_px = new_ms_per_px;
+            t.t_start_ms = ts_under - (x * new_ms_per_px).round() as i64;
+            return;
+        }
         let old_spacing = self.bar_spacing;
         let min = self.min_bar_spacing();
         let max = self.max_bar_spacing();

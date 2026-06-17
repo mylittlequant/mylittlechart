@@ -6392,14 +6392,10 @@ impl ChartApp {
                     // keeping mouse release position close enough for click detection.
                     if self.has_click_drawing_tool() { continue; }
                     let Some(window) = self.panel_app.panel_grid.active_container_mut() else { continue; };
-                    if window.viewport.is_time_axis() {
-                        // Time-axis chart: pan in the time domain (bar_delta is a
-                        // pixel delta here, same as the divisor below uses it).
-                        window.viewport.pan_time(bar_delta);
-                    } else {
-                        let bar_delta_bars = bar_delta / window.viewport.bar_spacing;
-                        window.viewport.pan(bar_delta_bars);
-                    }
+                    // bar_delta is a PIXEL delta (drag distance). Viewport
+                    // dispatches internally: time mode shifts the time
+                    // anchor, index mode converts via bar_spacing.
+                    window.viewport.pan(bar_delta);
                     if let mlc_core::engine::input::DragMode::SubPaneChart { pane_index } = drag_mode {
                         let instance_id = mlc_core::state::chart_container::collect_inner_instance_ids(
                             &window.inner_docking,
@@ -6441,11 +6437,8 @@ impl ChartApp {
                     let local_center_x = center_x - chart_x;
                     let Some(window) = self.panel_app.panel_grid.active_container_mut() else { continue; };
                     if factor_x != 1.0 {
-                        if window.viewport.is_time_axis() {
-                            window.viewport.zoom_time_at(local_center_x, factor_x);
-                        } else {
-                            window.viewport.zoom_at(local_center_x, factor_x);
-                        }
+                        // viewport.zoom_at dispatches axis-aware internally.
+                        window.viewport.zoom_at(local_center_x, factor_x);
                         if window.price_scale.scale_mode.is_auto_y() {
                             calc_visible_price_range(window);
                         }

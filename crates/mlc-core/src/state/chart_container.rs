@@ -1771,17 +1771,14 @@ impl ChartContainer {
     // Split-aware scroll helpers (called when routing scroll to sub-charts)
     // =========================================================================
 
-    /// Pan the viewport horizontally by `bar_delta` pixels.
+    /// Pan the viewport horizontally by `pixel_delta` pixels.
     ///
-    /// Converts pixel delta to bars using the current bar spacing, then
-    /// delegates to [`Viewport::pan`] which handles clamping.
+    /// Delegates to [`Viewport::pan`] which dispatches axis-aware
+    /// (time mode shifts ts anchor, index mode converts via bar_spacing).
     pub fn pan_horizontal(&mut self, pixel_delta: f64) {
-        if self.viewport.bar_spacing > 0.0 {
-            let bar_delta = pixel_delta / self.viewport.bar_spacing;
-            self.viewport.pan(bar_delta);
-            if self.price_scale.scale_mode.is_auto_y() {
-                self.calc_auto_scale();
-            }
+        self.viewport.pan(pixel_delta);
+        if self.price_scale.scale_mode.is_auto_y() {
+            self.calc_auto_scale();
         }
     }
 
