@@ -133,13 +133,19 @@ fn date_to_timestamp(year: i32, month: i32, day: i32, hour: i32, minute: i32, se
 // =============================================================================
 
 /// Hierarchical weights: Year=70, Month=60, Day=50, Hour=30, etc.
-/// Higher weight = more important = larger font/brighter color
+/// Higher weight = more important = larger font/brighter color.
+///
+/// Variants mirror TradingView Lightweight Charts'
+/// `TickMarkWeight` so the LWC weight-by-time algorithm ports verbatim
+/// (see `weight_by_time` and `fill_weights`).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
 #[repr(u8)]
 pub enum TickMarkWeight {
-    /// Sub-minute granularity
+    /// Sub-second resolution (range/tick bars firing inside a single second).
+    LessThanSecond = 1,
+    /// Sub-minute granularity.
     #[default]
-    Second = 0,
+    Second = 5,
     /// 1-minute boundaries
     Minute1 = 10,
     /// 5-minute boundaries
@@ -148,8 +154,14 @@ pub enum TickMarkWeight {
     Minute30 = 20,
     /// Hour boundaries
     Hour = 30,
+    /// 3-hour boundaries
+    Hour3 = 31,
     /// 4-hour boundaries
     Hour4 = 35,
+    /// 6-hour boundaries
+    Hour6 = 36,
+    /// 12-hour boundaries
+    Hour12 = 37,
     /// Day boundaries
     Day = 50,
     /// Month boundaries
@@ -167,6 +179,98 @@ impl TickMarkWeight {
     /// Check if this weight is medium (Day) for medium styling
     pub fn is_medium(&self) -> bool {
         matches!(self, TickMarkWeight::Day)
+    }
+}
+
+/// LWC intraday divisor table (ms-per-boundary, ascending) — verbatim from
+/// `lightweight-charts/src/model/horz-scale-behavior-time/time-scale-point-weight-generator.ts`.
+const INTRADAY_DIVISORS: &[(i64, TickMarkWeight)] = &[
+    (1_000,       TickMarkWeight::Second),
+    (60_000,      TickMarkWeight::Minute1),
+    (300_000,     TickMarkWeight::Minute5),
+    (1_800_000,   TickMarkWeight::Minute30),
+    (3_600_000,   TickMarkWeight::Hour),
+    (10_800_000,  TickMarkWeight::Hour3),
+    (21_600_000,  TickMarkWeight::Hour6),
+    (43_200_000,  TickMarkWeight::Hour12),
+];
+
+/// Weight for a bar given its and the previous bar's timestamps (UTC ms).
+///
+/// Returns the highest calendar boundary that was actually crossed between
+/// `prev_ms` and `cur_ms`. This is the LWC `weightByTime` function in Rust.
+pub fn weight_by_time(cur_ms: i64, prev_ms: i64) -> TickMarkWeight {
+    let (cy, cm, cd, _, _, _) = timestamp_to_date(cur_ms / 1000);
+    let (py, pm, pd, _, _, _) = timestamp_to_date(prev_ms / 1000);
+    if cy != py { return TickMarkWeight::Year; }
+    if cm != pm { return TickMarkWeight::Month; }
+    if cd != pd { return TickMarkWeight::Day; }
+    // Largest matching intraday boundary first.
+    for (div, w) in INTRADAY_DIVISORS.iter().rev() {
+        if cur_ms / div != prev_ms / div {
+            return *w;
+        }
+    }
+    TickMarkWeight::LessThanSecond
+}
+
+/// Detect non-uniform-time bars. `bars` is considered non-uniform if the
+/// maximum gap between adjacent timestamps is > 2× the median gap. This
+/// flags range/volume/tick charts (where adjacent bars can span wildly
+/// different time deltas) and routes them through the LWC per-bar weight
+/// path instead of the uniform `day_width_px` interval dispatch.
+fn is_non_uniform(bars: &[Bar]) -> bool {
+    let n = bars.len();
+    if n < 3 { return false; }
+    // Sample up to the last 100 gaps for stability on long histories.
+    let sample = n.min(100);
+    let start = n - sample;
+    let mut gaps: Vec<i64> = Vec::with_capacity(sample - 1);
+    for i in (start + 1)..n {
+        let g = (bars[i].timestamp - bars[i - 1].timestamp).abs();
+        if g > 0 { gaps.push(g); }
+    }
+    if gaps.len() < 2 { return false; }
+    gaps.sort_unstable();
+    let median = gaps[gaps.len() / 2];
+    let max = *gaps.last().unwrap();
+    median > 0 && max > median.saturating_mul(2)
+}
+
+/// Fill per-bar weights given a sorted slice of `(timestamp_secs, weight)`
+/// tuples. `start` is the first index to (re-)compute (0 = full bulk pass,
+/// `N` = incremental tail re-weight after appending bars). Weights are
+/// written into `points[i].1`.
+///
+/// Mirrors LWC `fillWeightsForPoints` — first point gets a weight estimated
+/// from the average interval, and downstream points compare against their
+/// real predecessor.
+pub fn fill_weights(points: &mut [(i64, TickMarkWeight)], start: usize) {
+    if points.is_empty() { return; }
+    let mut prev_ms: Option<i64> = if start > 0 {
+        Some(points[start - 1].0 * 1000)
+    } else {
+        None
+    };
+    let mut total_diff: i64 = 0;
+    let mut diff_count: i64 = 0;
+
+    for i in start..points.len() {
+        let cur_ms = points[i].0 * 1000;
+        if let Some(p) = prev_ms {
+            points[i].1 = weight_by_time(cur_ms, p);
+            total_diff += cur_ms - p;
+            diff_count += 1;
+        }
+        prev_ms = Some(cur_ms);
+    }
+
+    // First point of a full pass has no real predecessor — synthesize from
+    // the average inter-bar interval. Only meaningful for >= 2 bars.
+    if start == 0 && points.len() > 1 && diff_count > 0 {
+        let avg = (total_diff + diff_count - 1) / diff_count;
+        let approx_prev_ms = points[0].0 * 1000 - avg;
+        points[0].1 = weight_by_time(points[0].0 * 1000, approx_prev_ms);
     }
 }
 
@@ -353,6 +457,25 @@ impl TimeScale {
             return ticks;
         }
 
+        // Detect non-uniform bar spacing (range/volume/tick bars). When the
+        // max gap between adjacent bars is > 2× the median gap, the existing
+        // `day_width_px` interval dispatch picks labels at wrong timestamps
+        // (the boundary cells skip over real bars). Switch to the LWC
+        // per-bar weight path: fill_weights → one candidate per bar with the
+        // calendar-boundary weight, picker accepts in weight-desc order.
+        let non_uniform = bars.len() >= 3 && is_non_uniform(bars);
+        if non_uniform {
+            self.generate_per_bar_ticks(
+                &mut ticks,
+                bars,
+                viewport,
+                &measure_text,
+                format_settings,
+            );
+            ticks.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal));
+            return ticks;
+        }
+
         // Calculate bar interval from data
         let bar_interval = if bars.len() >= 2 {
             let sample_count = bars.len().min(10);
@@ -406,6 +529,59 @@ impl TimeScale {
         // Sort by x position
         ticks.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal));
         ticks
+    }
+
+    /// LWC-style per-bar tick generation for non-uniform-time bar charts
+    /// (range / volume / tick). For each visible bar emits one candidate with
+    /// `weight_by_time(bar[i], bar[i-1])`. The picker then selects on weight
+    /// desc + bilateral index gap.
+    fn generate_per_bar_ticks<F>(
+        &self,
+        ticks: &mut Vec<TimeTick>,
+        bars: &[Bar],
+        viewport: &Viewport,
+        measure_text: &F,
+        format_settings: Option<&TimeFormatSettings>,
+    ) where
+        F: Fn(&str) -> f64,
+    {
+        // Build weights array sized to the visible window plus a small
+        // off-screen buffer (matches the legacy ±50-bar pad).
+        let visible_bars = viewport.visible_bars() as i64;
+        let start_bar = ((viewport.view_start.floor() as i64) - 50).max(0);
+        let end_bar = ((viewport.view_start as i64) + visible_bars + 50).min(bars.len() as i64);
+
+        if end_bar <= start_bar {
+            return;
+        }
+
+        // Build (timestamp, weight) tuples for the visible slice and one
+        // extra leading bar (so weight[0] has a real predecessor).
+        let lead = (start_bar - 1).max(0) as usize;
+        let from = lead;
+        let to = end_bar as usize;
+        let mut pts: Vec<(i64, TickMarkWeight)> = bars[from..to]
+            .iter()
+            .map(|b| (b.timestamp, TickMarkWeight::Second))
+            .collect();
+        // First entry of the slice gets a real predecessor (lead) so we
+        // start filling from index 1.
+        fill_weights(&mut pts, if from == 0 { 0 } else { 1 });
+
+        // Convert to picker candidates: (bar_idx, x, weight, ts).
+        let mut candidates: Vec<(i64, f64, TickMarkWeight, i64)> =
+            Vec::with_capacity(pts.len());
+        for (i_local, (ts, weight)) in pts.iter().enumerate() {
+            let bar_idx = (from + i_local) as i64;
+            let x = viewport.bar_to_x(bar_idx as usize);
+            if x < -100.0 || x > viewport.chart_width + 100.0 {
+                continue;
+            }
+            candidates.push((bar_idx, x, *weight, *ts));
+        }
+
+        // Reuse the bilateral-gap picker.
+        self.select_ticks_with_spacing(ticks, candidates, viewport, measure_text, format_settings);
     }
 
     /// Generate ticks for a time-domain X axis (tick chart / derived bars).
@@ -732,7 +908,13 @@ impl TimeScale {
         }
     }
 
-    /// Select ticks with proper spacing
+    /// Select ticks with proper spacing.
+    ///
+    /// Per LWC `_buildMarksImpl`: both the *left* and *right* index gap to the
+    /// nearest already-accepted candidate must be `>= max_indexes_per_mark`
+    /// where `max_indexes_per_mark = ceil(label_px / bar_spacing)`. Without
+    /// the right-side check labels can crowd ahead of the cursor on
+    /// non-uniform spacing.
     fn select_ticks_with_spacing<F>(
         &self,
         ticks: &mut Vec<TimeTick>,
@@ -747,18 +929,49 @@ impl TimeScale {
             return;
         }
 
-        // Sort by weight descending, then by position
+        // Sort by weight descending, then by position. Highest weight
+        // candidates pre-empt the layout.
         candidates.sort_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(&b.0)));
 
+        // LWC uses an estimate of the widest label as the index-gap basis.
+        // We measure a representative full label ("01 Jan" / "01:00") and
+        // convert that to a bar-count using bar_spacing. Falls back to the
+        // pixel-collision check when bar_spacing is zero (defensive — should
+        // never happen because viewport already guards on this).
+        let sample_label = "00:00";
+        let label_px = measure_text(sample_label).max(20.0);
+        let bar_spacing = viewport.bar_spacing.max(1e-6);
+        let max_indexes_per_mark = ((label_px / bar_spacing).ceil() as i64).max(1);
+
+        // Track accepted bar indices sorted for bilateral lookup.
+        let mut accepted: Vec<i64> = Vec::new();
         let mut used_positions: Vec<(f64, f64)> = Vec::new(); // (x, half_width)
 
         for (bar_idx, x, weight, ts) in candidates {
-            // Skip if far outside visible area
+            // Skip if far outside visible area.
             if x < -50.0 || x > viewport.chart_width + 50.0 {
                 continue;
             }
 
-            // Format label
+            // Bilateral index-gap check.
+            let left_gap = accepted
+                .iter()
+                .rev()
+                .find(|&&i| i < bar_idx)
+                .map(|i| bar_idx - i);
+            let right_gap = accepted
+                .iter()
+                .find(|&&i| i > bar_idx)
+                .map(|i| i - bar_idx);
+
+            if let Some(g) = left_gap {
+                if g < max_indexes_per_mark { continue; }
+            }
+            if let Some(g) = right_gap {
+                if g < max_indexes_per_mark { continue; }
+            }
+
+            // Format label.
             let label = if let Some(settings) = format_settings {
                 format_time_by_weight_with_settings(ts, weight, settings)
             } else {
@@ -767,11 +980,10 @@ impl TimeScale {
             let measured_width = measure_text(&label);
             let half_width = measured_width / 2.0 + 5.0;
 
-            // Pixel-based collision check
+            // Pixel-based safety net (handles unequal label widths).
             let conflicts = used_positions
                 .iter()
                 .any(|(ox, ohw)| (x - ox).abs() < half_width + ohw + 10.0);
-
             if conflicts {
                 continue;
             }
@@ -783,6 +995,10 @@ impl TimeScale {
                 label,
             });
             used_positions.push((x, half_width));
+
+            // Maintain accepted as sorted by bar_idx.
+            let pos = accepted.binary_search(&bar_idx).unwrap_or_else(|p| p);
+            accepted.insert(pos, bar_idx);
         }
     }
 }
@@ -804,15 +1020,26 @@ pub fn format_time_by_weight(ts: i64, weight: TickMarkWeight) -> String {
         TickMarkWeight::Day => {
             format!("{} {}", day, month_names[(month - 1) as usize])
         }
-        TickMarkWeight::Hour4 | TickMarkWeight::Hour => {
+        TickMarkWeight::Hour12
+        | TickMarkWeight::Hour6
+        | TickMarkWeight::Hour4
+        | TickMarkWeight::Hour3
+        | TickMarkWeight::Hour => {
             format!("{:02}:{:02}", hour, minute)
         }
-        TickMarkWeight::Minute30 | TickMarkWeight::Minute5 | TickMarkWeight::Minute1 => {
+        TickMarkWeight::Minute30
+        | TickMarkWeight::Minute5
+        | TickMarkWeight::Minute1 => {
             format!("{:02}:{:02}", hour, minute)
         }
         // Sub-minute zoom (sub-second / second-derived bars): include seconds so
         // consecutive bars within the same minute get distinct labels.
         TickMarkWeight::Second => format!("{:02}:{:02}:{:02}", hour, minute, second),
+        TickMarkWeight::LessThanSecond => {
+            let ms = (ts.rem_euclid(1)).abs(); // ts is seconds, ms is decorative
+            let _ = ms;
+            format!("{:02}:{:02}:{:02}", hour, minute, second)
+        }
     }
 }
 
@@ -880,12 +1107,13 @@ pub fn format_time_by_weight_with_settings(
                 DateFormat::DayMonthShort => format!("{}{} {}", dow_prefix, day, month_names[(month - 1) as usize]),
             }
         }
-        TickMarkWeight::Hour4 | TickMarkWeight::Hour |
-        TickMarkWeight::Minute30 | TickMarkWeight::Minute5 |
-        TickMarkWeight::Minute1 => {
+        TickMarkWeight::Hour12 | TickMarkWeight::Hour6 |
+        TickMarkWeight::Hour4 | TickMarkWeight::Hour3 |
+        TickMarkWeight::Hour | TickMarkWeight::Minute30 |
+        TickMarkWeight::Minute5 | TickMarkWeight::Minute1 => {
             time_str
         }
-        TickMarkWeight::Second => time_str_secs,
+        TickMarkWeight::Second | TickMarkWeight::LessThanSecond => time_str_secs,
     }
 }
 
