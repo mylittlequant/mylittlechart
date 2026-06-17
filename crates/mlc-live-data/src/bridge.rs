@@ -373,6 +373,13 @@ pub struct DataBridge {
     /// repeat lookup (preset switch, request_bars, request_footprint,
     /// subscribe_depth/trades/orderbook/mini_ticker, etc.) to O(1).
     wire_symbol_cache: Arc<Mutex<HashMap<(ExchangeId, AccountType, String), String>>>,
+    /// Per-exchange last seeded symbol count. Each SymbolsLoaded event
+    /// arrives multiple times per exchange (one per account_type as REST
+    /// completes). Without this guard, an exchange with N symbols and 4
+    /// account_types ran the prewarm O(N) scan 4 times (= 500ms total for
+    /// Binance). Skip when count hasn't grown since the last successful
+    /// prewarm.
+    wire_symbol_prewarmed_count: Arc<Mutex<HashMap<ExchangeId, usize>>>,
     /// Active `Stream::Kline` forwarder task handles keyed by
     /// `(ExchangeId, AccountType, symbol, timeframe)`.
     ///
@@ -525,6 +532,7 @@ impl DataBridge {
             derived_subs: Arc::new(Mutex::new(HashMap::new())),
             station_kline_subscribed: Arc::new(Mutex::new(HashSet::new())),
             wire_symbol_cache: Arc::new(Mutex::new(HashMap::new())),
+            wire_symbol_prewarmed_count: Arc::new(Mutex::new(HashMap::new())),
             station_kline_handles: Arc::new(Mutex::new(HashMap::new())),
         }, rx, connector_ready_rx)
     }
@@ -590,6 +598,22 @@ impl DataBridge {
             return;
         }
         let n = symbols.len();
+        // Per-exchange idempotency: skip when the catalogue hasn't grown
+        // since the last successful prewarm. SymbolsLoaded fires once per
+        // account_type as REST resolves — without this guard a Binance
+        // catalogue with 4389 symbols × 5 account_types ran the O(N) scan
+        // 5 times (~500ms total). The catalogue length is monotone, so
+        // a strict equality skip is safe.
+        {
+            let mut counts = match self.wire_symbol_prewarmed_count.lock() {
+                Ok(g) => g,
+                Err(_) => return,
+            };
+            if counts.get(&exchange_id).copied().unwrap_or(0) >= n {
+                return;
+            }
+            counts.insert(exchange_id, n);
+        }
         let Ok(mut cache) = self.wire_symbol_cache.lock() else { return; };
         // For each SymbolInfo, the wire form is `s.symbol`. wire_symbol's
         // case (1) returns `requested` unchanged on an exact native match,
