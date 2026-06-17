@@ -419,6 +419,12 @@ pub struct ChartApp {
     /// Live preset state for open tabs (except the active one).
     /// Key = preset id. On tab switch: park active → cache, unpark target → active.
     live_preset_cache: std::collections::HashMap<String, persistence::live_cache::LivePresetState>,
+    /// Live | Loading { target_id, .. }. While `Loading`, autosave is gated
+    /// (`flush_pending_autosave` early-returns, `PresetAction::Upsert` drain
+    /// skips) and `render_full_chart_panel` forces the loading skeleton —
+    /// the `7a9d1d2` disaster path (placeholder grid serialised under the
+    /// NEW preset id) is impossible. See `persistence::load_state`.
+    pub load_state: crate::persistence::LoadState,
     /// Set to true when window geometry (position/size) changed.
     /// Triggers local save but NOT cloud sync.
     pub profile_geometry_dirty: bool,
@@ -1063,6 +1069,7 @@ impl ChartApp {
             pending_sub_pane_hidden: std::collections::HashMap::new(),
             maximized_sub_panes: std::collections::HashMap::new(),
             live_preset_cache: std::collections::HashMap::new(),
+            load_state: crate::persistence::LoadState::default(),
             agent: agent::AgentSessionManager::default(),
             agent_pty_hover_focused: false,
             agent_pty_drag_active: false,
@@ -1413,6 +1420,7 @@ impl ChartApp {
             pending_sub_pane_hidden: std::collections::HashMap::new(),
             maximized_sub_panes: std::collections::HashMap::new(),
             live_preset_cache: std::collections::HashMap::new(),
+            load_state: crate::persistence::LoadState::default(),
             agent: agent::AgentSessionManager::default(),
             agent_pty_hover_focused: false,
             agent_pty_drag_active: false,
@@ -1661,6 +1669,7 @@ impl ChartApp {
             pending_sub_pane_hidden: std::collections::HashMap::new(),
             maximized_sub_panes: std::collections::HashMap::new(),
             live_preset_cache: std::collections::HashMap::new(),
+            load_state: crate::persistence::LoadState::default(),
             agent: agent::AgentSessionManager::default(),
             agent_pty_hover_focused: false,
             agent_pty_drag_active: false,

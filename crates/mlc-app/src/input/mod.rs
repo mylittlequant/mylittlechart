@@ -8823,6 +8823,18 @@ impl ChartApp {
         self.pending_autosave = false;
 
         if !self.panel_app.autosave_enabled { return; }
+        // LoadState gate. While a cold hydrate is in flight, `panel_grid`
+        // has been parked into `ChartPanelGrid::placeholder()` and the new
+        // `active_preset_id` is already set. Snapshot-and-Upsert here would
+        // overwrite the real preset file on disk with placeholder content.
+        // This is the `7a9d1d2` disaster path closed in code.
+        if !crate::persistence::autosave::is_persist_safe(&self.load_state) {
+            eprintln!(
+                "[ChartApp] autosave skipped — load_state={:?} (cold hydrate in flight, refusing to persist placeholder)",
+                self.load_state,
+            );
+            return;
+        }
         let id = self.panel_app.active_preset_id.clone();
         if id.is_empty() { return; }
 
@@ -8974,6 +8986,19 @@ impl ChartApp {
     pub fn collect_state_into_preset(&mut self, id: &str, name: &str) {
         use mlc_core::preset::preset::ChartPreset;
         use mlc_core::preset::snapshots::*;
+
+        // Hard guard against the `7a9d1d2` failure mode. Whoever calls this
+        // mid cold-hydrate would otherwise snapshot a placeholder grid into
+        // `panel_app.presets` (and from there the next autosave / Upsert
+        // drains it to disk). Nothing legitimate calls this during a cold
+        // hydrate — refuse and bail.
+        if self.load_state.is_loading() {
+            eprintln!(
+                "[ChartApp] collect_state_into_preset refused for id={} — load_state={:?}",
+                id, self.load_state,
+            );
+            return;
+        }
 
         // Reuse existing metadata if updating an existing slot.
         let (preset_id, preset_name, created_at) =
