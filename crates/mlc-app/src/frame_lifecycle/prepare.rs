@@ -252,8 +252,8 @@ impl ChartApp {
                         .map(|t| t.t_start_ms == 0)
                         .unwrap_or(true);
                     if needs_anchor && !window.bars.is_empty() {
-                        let first_ms = window.bars.first().map(|b| b.timestamp * 1000).unwrap_or(0);
-                        let last_ms = window.bars.last().map(|b| b.timestamp * 1000).unwrap_or(first_ms + 60_000);
+                        let first_ms = window.bars.first().map(|b| b.ts_ms()).unwrap_or(0);
+                        let last_ms = window.bars.last().map(|b| b.ts_ms()).unwrap_or(first_ms + 60_000);
                         window.viewport.enable_time_axis_for_span(first_ms, last_ms);
                     }
                 } else if window.viewport.is_time_axis() {

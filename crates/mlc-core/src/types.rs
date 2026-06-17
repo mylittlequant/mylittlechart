@@ -235,6 +235,18 @@ impl Bar {
         }
     }
 
+    /// Bar timestamp in milliseconds (the unit used by the time axis
+    /// and by every drawing primitive's `ts_ms` field).
+    ///
+    /// Storage stays in seconds (existing snapshots load 1:1, candle-
+    /// boundary math in the live aggregation path stays in seconds).
+    /// Callers that need the time-axis unit go through this one method
+    /// instead of repeating `* 1000` everywhere.
+    #[inline]
+    pub fn ts_ms(&self) -> i64 {
+        self.timestamp.saturating_mul(1000)
+    }
+
     /// Returns true if this bar closed higher than it opened
     #[inline]
     pub fn is_bullish(&self) -> bool {
