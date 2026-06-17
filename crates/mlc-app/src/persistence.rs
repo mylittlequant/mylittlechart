@@ -167,61 +167,117 @@ impl ChartApp {
     /// Park the active preset's live state into the cache.
     /// Active fields are replaced with cheap placeholders.
     pub(crate) fn park_active_preset(&mut self, id: &str) {
+        let pk_total = std::time::Instant::now();
+        let t0 = std::time::Instant::now();
+        let panel_grid = std::mem::replace(
+            &mut self.panel_app.panel_grid,
+            mlc_core::state::panel_grid::ChartPanelGrid::placeholder(),
+        );
+        let pk_grid_us = t0.elapsed().as_micros();
+        let t0 = std::time::Instant::now();
+        let tag_manager = std::mem::replace(
+            &mut self.managers.bubble,
+            mlc_core::tag_manager::BubbleStore::new(),
+        );
+        let pk_bubble_us = t0.elapsed().as_micros();
+        let t0 = std::time::Instant::now();
+        let indicator_manager = std::mem::replace(
+            &mut self.indicator_manager,
+            IndicatorManager::new(),
+        );
+        let pk_ind_us = t0.elapsed().as_micros();
+        let t0 = std::time::Instant::now();
+        let alert_manager = std::mem::replace(
+            &mut self.managers.alert,
+            mlc_alerts::AlertManager::new(),
+        );
+        let pk_alert_us = t0.elapsed().as_micros();
+        let t0 = std::time::Instant::now();
+        let leaf_color_tags = std::mem::take(&mut self.panel_app.leaf_color_tags);
+        let indicator_overlay_states = std::mem::take(&mut self.panel_app.indicator_overlay_states);
+        let pending_sub_pane_ratios = std::mem::take(&mut self.pending_sub_pane_ratios);
+        let pending_sub_pane_above_main = std::mem::take(&mut self.pending_sub_pane_above_main);
+        let pending_sub_pane_order = std::mem::take(&mut self.pending_sub_pane_order);
+        let pk_takes_us = t0.elapsed().as_micros();
+        let t0 = std::time::Instant::now();
+        let slot_dockings = std::mem::replace(
+            &mut self.sidebar_state.slot_dockings,
+            std::array::from_fn(|_| mlc_sidebar_content::SlotDockingManager::new()),
+        );
+        let pk_slots_us = t0.elapsed().as_micros();
+        let t0 = std::time::Instant::now();
+        let panels_store = std::mem::replace(
+            &mut self.panels_store,
+            crate::panels_store::TradingPanelsStore::new(),
+        );
+        let pk_panels_us = t0.elapsed().as_micros();
         let state = preset_cache::LivePresetState {
-            panel_grid: std::mem::replace(
-                &mut self.panel_app.panel_grid,
-                mlc_core::state::panel_grid::ChartPanelGrid::placeholder(),
-            ),
-            tag_manager: std::mem::replace(
-                &mut self.managers.bubble,
-                mlc_core::tag_manager::BubbleStore::new(),
-            ),
-            indicator_manager: std::mem::replace(
-                &mut self.indicator_manager,
-                IndicatorManager::new(),
-            ),
-            alert_manager: std::mem::replace(
-                &mut self.managers.alert,
-                mlc_alerts::AlertManager::new(),
-            ),
-            leaf_color_tags: std::mem::take(&mut self.panel_app.leaf_color_tags),
-            indicator_overlay_states: std::mem::take(&mut self.panel_app.indicator_overlay_states),
-            pending_sub_pane_ratios: std::mem::take(&mut self.pending_sub_pane_ratios),
-            pending_sub_pane_above_main: std::mem::take(&mut self.pending_sub_pane_above_main),
-            pending_sub_pane_order: std::mem::take(&mut self.pending_sub_pane_order),
+            panel_grid,
+            tag_manager,
+            indicator_manager,
+            alert_manager,
+            leaf_color_tags,
+            indicator_overlay_states,
+            pending_sub_pane_ratios,
+            pending_sub_pane_above_main,
+            pending_sub_pane_order,
             needs_initial_viewport_fit: self.needs_initial_viewport_fit,
-            slot_dockings: std::mem::replace(
-                &mut self.sidebar_state.slot_dockings,
-                std::array::from_fn(|_| mlc_sidebar_content::SlotDockingManager::new()),
-            ),
-            panels_store: std::mem::replace(
-                &mut self.panels_store,
-                crate::panels_store::TradingPanelsStore::new(),
-            ),
+            slot_dockings,
+            panels_store,
             focused_free_leaf: self.sidebar_state.focused_free_leaf.take(),
         };
+        let t0 = std::time::Instant::now();
         self.live_preset_cache.insert(id.to_string(), state);
-        eprintln!("[ChartApp] Parked preset '{}' into live cache ({} total cached)", id, self.live_preset_cache.len());
+        let pk_insert_us = t0.elapsed().as_micros();
+        eprintln!(
+            "[ChartApp] Parked preset '{}' into live cache ({} total cached) park_total={}us grid={}us bubble={}us ind={}us alert={}us takes={}us slots={}us panels={}us insert={}us",
+            id, self.live_preset_cache.len(), pk_total.elapsed().as_micros(),
+            pk_grid_us, pk_bubble_us, pk_ind_us, pk_alert_us, pk_takes_us, pk_slots_us, pk_panels_us, pk_insert_us,
+        );
     }
 
     /// Unpack a cached preset into active fields. Returns true on cache hit.
     pub(crate) fn unpark_preset(&mut self, id: &str) -> bool {
+        let up_total = std::time::Instant::now();
+        let t0 = std::time::Instant::now();
         let Some(state) = self.live_preset_cache.remove(id) else { return false; };
+        let up_remove_us = t0.elapsed().as_micros();
+        let t0 = std::time::Instant::now();
+        // Each of the following lines DROPS whatever lives in the field
+        // currently (placeholder from when we parked) — Drops of complex
+        // managers can be expensive. Track them individually.
         self.panel_app.panel_grid = state.panel_grid;
+        let up_grid_us = t0.elapsed().as_micros();
+        let t0 = std::time::Instant::now();
         self.managers.bubble = state.tag_manager;
+        let up_bubble_us = t0.elapsed().as_micros();
+        let t0 = std::time::Instant::now();
         self.indicator_manager = state.indicator_manager;
+        let up_ind_us = t0.elapsed().as_micros();
+        let t0 = std::time::Instant::now();
         self.managers.alert = state.alert_manager;
+        let up_alert_us = t0.elapsed().as_micros();
+        let t0 = std::time::Instant::now();
         self.panel_app.leaf_color_tags = state.leaf_color_tags;
         self.panel_app.indicator_overlay_states = state.indicator_overlay_states;
         self.pending_sub_pane_ratios = state.pending_sub_pane_ratios;
         self.pending_sub_pane_above_main = state.pending_sub_pane_above_main;
         self.pending_sub_pane_order = state.pending_sub_pane_order;
         self.needs_initial_viewport_fit = state.needs_initial_viewport_fit;
+        let up_misc_us = t0.elapsed().as_micros();
+        let t0 = std::time::Instant::now();
         self.sidebar_state.slot_dockings = state.slot_dockings;
+        let up_slots_us = t0.elapsed().as_micros();
+        let t0 = std::time::Instant::now();
         self.panels_store = state.panels_store;
+        let up_panels_us = t0.elapsed().as_micros();
         self.sidebar_state.focused_free_leaf = state.focused_free_leaf;
         self.sidebar_data_dirty = true;
-        eprintln!("[ChartApp] Unpacked preset '{}' from live cache", id);
+        eprintln!(
+            "[ChartApp] Unpacked preset '{}' from live cache unpark_total={}us remove={}us grid={}us bubble={}us ind={}us alert={}us misc={}us slots={}us panels={}us",
+            id, up_total.elapsed().as_micros(),
+            up_remove_us, up_grid_us, up_bubble_us, up_ind_us, up_alert_us, up_misc_us, up_slots_us, up_panels_us,
+        );
         true
     }
 

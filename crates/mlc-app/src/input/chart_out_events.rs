@@ -686,6 +686,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::LoadPreset { id } => {
+                let _lp_total = std::time::Instant::now();
                 eprintln!("[ChartApp] load preset: {}", id);
                 let prev_id = self.panel_app.active_preset_id.clone();
 
@@ -696,39 +697,50 @@ impl ChartApp {
                 // membership yet. Treating it as a no-op both skipped the real
                 // restore (eternal "Loading...", empty toolbar) and let the
                 // trailing autosave bake the EMPTY state into the preset file.
+                let _lp_t_materialized = std::time::Instant::now();
                 let already_materialized = self
                     .panel_app
                     .panel_grid
                     .iter_containers()
                     .any(|(_, w)| self.managers.bubble.bubble_for_chart(w.id).is_some());
+                let lp_materialized_us = _lp_t_materialized.elapsed().as_micros();
 
                 // Same tab AND live state real  -  no-op (and nothing changed,
                 // so no autosave either).
                 if prev_id == id && already_materialized {
-                    eprintln!("[ChartApp] LoadPreset: already active, skipping");
+                    eprintln!("[ChartApp] LoadPreset: already active, skipping (materialized_check={}us)", lp_materialized_us);
                 } else {
 
                 // Save the outgoing preset (with bars) before switching away —
                 // but never snapshot a non-materialized placeholder state over
                 // a real preset file.
+                let _lp_t_autosave = std::time::Instant::now();
                 if !prev_id.is_empty() && prev_id != "__default__" && already_materialized {
                     self.autosave_snapshot();
                 }
+                let lp_autosave_us = _lp_t_autosave.elapsed().as_micros();
 
                 // Park outgoing state into live cache — only a materialized
                 // state. Parking the startup placeholder under the SAME id we
                 // are about to load would make unpark return the placeholder
                 // and skip the cold restore entirely.
+                let _lp_t_park = std::time::Instant::now();
                 if !prev_id.is_empty() && already_materialized {
                     self.park_active_preset(&prev_id);
                 }
+                let lp_park_us = _lp_t_park.elapsed().as_micros();
 
                 self.panel_app.active_preset_id = id.clone();
                 self.persist_profile();
 
                 // Warm path: live cache hit  -  zero-flicker switch.
-                if self.unpark_preset(&id) {
-                    eprintln!("[ChartApp] LoadPreset '{}': live cache hit  -  zero-flicker switch", id);
+                let _lp_t_unpark = std::time::Instant::now();
+                let unpark_hit = self.unpark_preset(&id);
+                let lp_unpark_us = _lp_t_unpark.elapsed().as_micros();
+                if unpark_hit {
+                    eprintln!("[ChartApp] LoadPreset '{}': live cache hit  -  zero-flicker switch (materialized={}us autosave={}us park={}us unpark={}us)",
+                        id, lp_materialized_us, lp_autosave_us, lp_park_us, lp_unpark_us);
+                    let _lp_t_cure = std::time::Instant::now();
 
                     // Per-window cure: only force=true when the unparked window
                     // came back EMPTY (bars never reached it before the park, or
@@ -776,14 +788,21 @@ impl ChartApp {
                         self.bridge.request_bars(eid, sym, tf, at, None, Some(bar_count), force);
                         if force { bars_requested_force += 1; } else { bars_requested_lazy += 1; }
                     }
+                    let lp_cure_us = _lp_t_cure.elapsed().as_micros();
                     eprintln!(
-                        "[ChartApp] LoadPreset (cache): cure requested force={} lazy={}",
+                        "[ChartApp] LoadPreset (cache): cure requested force={} lazy={} (cure={}us total={}us)",
                         bars_requested_force, bars_requested_lazy,
+                        lp_cure_us, _lp_total.elapsed().as_micros(),
                     );
 
                     self.sidebar_data_dirty = true;
                     state_mutated = true;
-                } else if let Some(mut preset) = self.panel_app.presets.get(&id).cloned() {
+                } else {
+                    let _lp_t_clone = std::time::Instant::now();
+                    let preset_opt = self.panel_app.presets.get(&id).cloned();
+                    let lp_clone_us = _lp_t_clone.elapsed().as_micros();
+                    if let Some(mut preset) = preset_opt {
+                    let lp_cold_start = std::time::Instant::now();
                     // Recovery: preset files written by the startup-autosave bug
                     // carry empty symbol/exchange. Resurrect them with the
                     // standard default instead of an eternally-loading empty
@@ -801,8 +820,9 @@ impl ChartApp {
                         }
                     }
                     eprintln!(
-                        "[ChartApp] applying preset '{}': {} windows, {} groups, {} indicators",
-                        preset.name, preset.windows.len(), preset.bubbles.len(), preset.indicators.len()
+                        "[ChartApp] applying preset '{}' COLD path: {} windows, {} groups, {} indicators (materialized={}us autosave={}us park={}us unpark_miss={}us clone={}us)",
+                        preset.name, preset.windows.len(), preset.bubbles.len(), preset.indicators.len(),
+                        lp_materialized_us, lp_autosave_us, lp_park_us, lp_unpark_us, lp_clone_us,
                     );
 
                     // ----------------------------------------------------------------
@@ -2112,10 +2132,14 @@ impl ChartApp {
                         }
                     }
 
-                    eprintln!("[ChartApp] preset '{}' fully restored", preset.name);
+                    let lp_cold_body_us = lp_cold_start.elapsed().as_micros();
+                    eprintln!("[ChartApp] preset '{}' fully restored (cold_body={}us total={}us)",
+                        preset.name, lp_cold_body_us, _lp_total.elapsed().as_micros());
                     state_mutated = true;
-                } else {
-                    eprintln!("[ChartApp] preset '{}' not found in memory", id);
+                    } else {
+                        eprintln!("[ChartApp] preset '{}' not found in memory (clone_attempt={}us total={}us)",
+                            id, lp_clone_us, _lp_total.elapsed().as_micros());
+                    }
                 }
 
                 } // end else (prev_id != id)
