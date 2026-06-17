@@ -197,6 +197,26 @@ struct MiniTickerData {
 /// and a `DefaultChartInputHandler` for chart canvas input.
 ///
 /// There is no sync bridge — with only one window the state flows directly.
+pub struct PendingColdApply {
+    pub preset: mlc_core::preset::preset::ChartPreset,
+    pub stashed_at: std::time::Instant,
+    /// Timers carried from the synchronous portion of the `LoadPreset`
+    /// handler (warm-check / autosave / park / unpark / clone), forwarded
+    /// to `apply_preset_cold` so the trailing log line keeps measuring
+    /// "click → fully restored" the same way.
+    pub timings: ColdApplyTimings,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ColdApplyTimings {
+    pub lp_total: std::time::Instant,
+    pub lp_materialized_us: u128,
+    pub lp_autosave_us: u128,
+    pub lp_park_us: u128,
+    pub lp_unpark_us: u128,
+    pub lp_clone_us: u128,
+}
+
 pub struct ChartApp {
     /// The chart panel — owns ChartContainer, toolbar state, split grid, and modal state.
     pub panel_app: ChartPanelApp,
@@ -518,6 +538,19 @@ pub struct ChartApp {
         digdigdig3::AccountType,
         bool,
     )>,
+
+    /// Cold-path preset apply, deferred by one frame.
+    ///
+    /// The `LoadPreset` handler stashes the cloned `ChartPreset` here and
+    /// flips `load_state = Loading`. The next frame paints the skeleton (no
+    /// chart yet because `panel_grid` is `placeholder()`), and only on the
+    /// frame AFTER that does the host call `drain_pending_cold_apply`,
+    /// which runs the actual 1.3-1.8s `apply_preset_cold` body and clears
+    /// `load_state` back to `Live`.
+    ///
+    /// The intermediate skeleton frame is what owner sees instead of a
+    /// 2-second freeze.
+    pub pending_cold_apply: Option<PendingColdApply>,
 
     /// Timestamp of the last backfill triggered after a broadcast lag event.
     ///
@@ -1052,6 +1085,7 @@ impl ChartApp {
             pending_open_url: None,
             pending_updater_cmd: None,
             pending_cure_after_preset_load: Vec::new(),
+            pending_cold_apply: None,
             last_backfill_time: std::time::Instant::now(),
             lag_event_count: 0,
             recalc_count: 0,
@@ -1403,6 +1437,7 @@ impl ChartApp {
             pending_open_url: None,
             pending_updater_cmd: None,
             pending_cure_after_preset_load: Vec::new(),
+            pending_cold_apply: None,
             last_backfill_time: std::time::Instant::now(),
             lag_event_count: 0,
             recalc_count: 0,
@@ -1652,6 +1687,7 @@ impl ChartApp {
             pending_open_url: None,
             pending_updater_cmd: None,
             pending_cure_after_preset_load: Vec::new(),
+            pending_cold_apply: None,
             last_backfill_time: std::time::Instant::now(),
             lag_event_count: 0,
             recalc_count: 0,

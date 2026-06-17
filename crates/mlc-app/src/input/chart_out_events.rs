@@ -24,6 +24,35 @@ impl ChartApp {
         eprintln!("[ChartApp] drained {} cure jobs in {}us", n, drain_t0.elapsed().as_micros());
     }
 
+    /// Drain a cold-path preset that was stashed by `LoadPreset` one frame
+    /// ago. The host calls this AFTER the GpuDone for the skeleton frame
+    /// (so the user has already seen "loading skeleton + spinner") and
+    /// then runs `apply_preset_cold` synchronously on the main thread.
+    ///
+    /// While the stash is in flight, `load_state == Loading`. Cleared back
+    /// to `Live` here once apply finishes.
+    pub fn drain_pending_cold_apply(&mut self) {
+        let Some(stash) = self.pending_cold_apply.take() else { return; };
+        let waited_us = stash.stashed_at.elapsed().as_micros();
+        eprintln!(
+            "[ChartApp] draining pending cold apply for preset '{}' (waited {}us for skeleton frame)",
+            stash.preset.name, waited_us,
+        );
+        self.apply_preset_cold(
+            stash.preset,
+            stash.timings.lp_total,
+            stash.timings.lp_materialized_us,
+            stash.timings.lp_autosave_us,
+            stash.timings.lp_park_us,
+            stash.timings.lp_unpark_us,
+            stash.timings.lp_clone_us,
+        );
+        // Cold body finished — autosave + collect_state_into_preset are
+        // safe again. Future flush_pending_autosave runs will persist the
+        // newly materialised state to disk normally.
+        self.load_state = crate::persistence::LoadState::Live;
+    }
+
     /// Process a `ChartOutEvent`  -  route high-level outcomes back to state.
     pub(crate) fn process_chart_out_event(&mut self, event: mlc_core::events::ChartOutEvent) {
         use mlc_core::events::ChartOutEvent;
@@ -824,16 +853,42 @@ impl ChartApp {
                     let preset_opt = self.panel_app.presets.get(&id).cloned();
                     let lp_clone_us = _lp_t_clone.elapsed().as_micros();
                     if let Some(preset) = preset_opt {
-                    self.apply_preset_cold(
-                        preset,
-                        _lp_total,
-                        lp_materialized_us,
-                        lp_autosave_us,
-                        lp_park_us,
-                        lp_unpark_us,
-                        lp_clone_us,
-                    );
-                    state_mutated = true;
+                        // Defer the 1.3-1.8s `apply_preset_cold` body by ONE
+                        // frame so the renderer has a chance to paint a
+                        // skeleton + spinner on the parked placeholder grid
+                        // before the main thread blocks on the cold body.
+                        // The host drains `pending_cold_apply` from
+                        // `about_to_wait` AFTER GpuDone for the skeleton
+                        // frame.
+                        //
+                        // While the stash is in flight, `load_state ==
+                        // Loading { target_id }`. flush_pending_autosave
+                        // and collect_state_into_preset both early-return
+                        // under that gate, so a placeholder grid cannot
+                        // leak to disk under the new `active_preset_id`.
+                        self.load_state = crate::persistence::LoadState::Loading {
+                            target_id: id.clone(),
+                            started_at: std::time::Instant::now(),
+                        };
+                        self.pending_cold_apply = Some(crate::PendingColdApply {
+                            preset,
+                            stashed_at: std::time::Instant::now(),
+                            timings: crate::ColdApplyTimings {
+                                lp_total: _lp_total,
+                                lp_materialized_us,
+                                lp_autosave_us,
+                                lp_park_us,
+                                lp_unpark_us,
+                                lp_clone_us,
+                            },
+                        });
+                        eprintln!(
+                            "[ChartApp] LoadPreset '{}' COLD path: stashed for deferred apply (skeleton-frame-first, lp_handler={}us)",
+                            id, _lp_total.elapsed().as_micros(),
+                        );
+                        // Do NOT set state_mutated — autosave is gated by
+                        // LoadState anyway, and "Loading" is not a state
+                        // worth persisting.
                     } else {
                         eprintln!("[ChartApp] preset '{}' not found in memory (clone_attempt={}us total={}us)",
                             id, lp_clone_us, _lp_total.elapsed().as_micros());

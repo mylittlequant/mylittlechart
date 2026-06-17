@@ -4258,9 +4258,29 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             self.gpu_frame_pending = false;
 
             // After GpuDone the previous frame has been presented on screen.
-            // Drain any preset-load cure work that LoadPreset deferred. The
-            // loading skeleton is visible NOW, so the 100-220ms request_bars
-            // sweep can run without the user seeing a frozen old chart.
+            //
+            // Order matters:
+            //   1. drain_pending_cold_apply — runs the deferred ~1.3-1.8s
+            //      `apply_preset_cold` body. We're here ONE frame after
+            //      LoadPreset parked the previous state into a placeholder
+            //      grid, so the user saw the loading skeleton + spinner
+            //      during that frame. Cold body now runs synchronously
+            //      under that visible skeleton; when it returns,
+            //      load_state flips back to Live and the panel populates.
+            //   2. drain_pending_cure_after_preset_load — runs the warm
+            //      cure `request_bars` sweep. The loading skeleton is
+            //      visible NOW so the 100-220ms request_bars batch can
+            //      run without freezing the old chart.
+            for pw in self.windows.values_mut() {
+                let had_stash = pw.chart.pending_cold_apply.is_some();
+                pw.chart.drain_pending_cold_apply();
+                if had_stash {
+                    // After cold apply the panel_grid is fresh — kick the
+                    // renderer or it would sit waiting for next input event.
+                    pw.chart_dirty = true;
+                    pw.window.request_redraw();
+                }
+            }
             for pw in self.windows.values_mut() {
                 pw.chart.drain_pending_cure_after_preset_load();
             }
@@ -4563,7 +4583,12 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             let skeleton_active = pw.spinner_start.is_some()
                 && (self.promote_pending || pw.awaiting_first_live_frame);
             let per_chart_loading = !pw.chart.last_loading_spinners.is_empty();
-            if skeleton_active || per_chart_loading {
+            // Cold preset apply is one-frame-deferred (see
+            // `pending_cold_apply`). The renderer must redraw NOW so the
+            // skeleton frame appears before `about_to_wait` drains the
+            // stash and runs the synchronous cold body.
+            let cold_apply_stashed = pw.chart.pending_cold_apply.is_some();
+            if skeleton_active || per_chart_loading || cold_apply_stashed {
                 pw.window.request_redraw();
             }
         }
