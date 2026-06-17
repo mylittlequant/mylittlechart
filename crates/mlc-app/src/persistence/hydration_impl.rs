@@ -33,6 +33,7 @@ impl ChartApp {
         lp_clone_us: u128,
     ) {
                     let lp_cold_start = std::time::Instant::now();
+                    let _t_prep = std::time::Instant::now();
                     // Recovery: preset files written by the startup-autosave bug
                     // carry empty symbol/exchange. Resurrect them with the
                     // standard default instead of an eternally-loading empty
@@ -49,6 +50,7 @@ impl ChartApp {
                             b.exchange = "binance".to_string();
                         }
                     }
+                    let prep_us = _t_prep.elapsed().as_micros();
                     eprintln!(
                         "[ChartApp] applying preset '{}' COLD path: {} windows, {} groups, {} indicators (materialized={}us autosave={}us park={}us unpark_miss={}us clone={}us)",
                         preset.name, preset.windows.len(), preset.bubbles.len(), preset.indicators.len(),
@@ -60,6 +62,7 @@ impl ChartApp {
                     // Used after the preset is loaded to unsubscribe stale trade actors.
                     // ----------------------------------------------------------------
                     // Phase 4 S2.7.1c: read via branch_meta (B1 flip).
+                    let _t_old_subs = std::time::Instant::now();
                     let old_subscriptions: std::collections::HashSet<(digdigdig3::ExchangeId, String)> = self
                         .panel_app
                         .panel_grid
@@ -72,12 +75,14 @@ impl ChartApp {
                             digdigdig3::ExchangeId::from_str(exch).map(|eid| (eid, sym))
                         })
                         .collect();
+                    let old_subs_us = _t_old_subs.elapsed().as_micros();
 
                     // ----------------------------------------------------------------
                     // Step 1: Attempt full layout restore (new presets with layout).
                     // Falls back to in-place window patching for old presets without.
                     // ----------------------------------------------------------------
 
+                    let _t_layout = std::time::Instant::now();
                     let layout_restored = if !preset.layout.is_null() {
                         match serde_json::from_value::<uzor::panels::serialize::LayoutSnapshot>(preset.layout.clone()) {
                             Ok(layout_snap) => {
@@ -483,10 +488,12 @@ impl ChartApp {
                             self.panels_store.chart_panel.insert(chart_panel_id, ps);
                         }
                     }
+                    let layout_us = _t_layout.elapsed().as_micros();
 
                     // ----------------------------------------------------------------
                     // Step 5: Restore TagManager (sync groups)
                     // ----------------------------------------------------------------
+                    let _t_bubbles = std::time::Instant::now();
                     self.managers.bubble.clear();
                     for sg_snap in &preset.bubbles {
                         let mut group = mlc_core::tag_manager::BubbleStore::group_from_snapshot(sg_snap);
@@ -522,11 +529,13 @@ impl ChartApp {
                         }
                     }
                     eprintln!("[ChartApp] restored {} sync groups", preset.bubbles.len());
+                    let bubbles_us = _t_bubbles.elapsed().as_micros();
 
                     // Rebind every window's DM to its group's shared style store now
                     // that all groups are fully reconstructed.  Windows whose group_id
                     // is set but the group has no entry yet keep their own private Arc
                     // (fresh HashMap) as a safe fallback.
+                    let _t_rebind = std::time::Instant::now();
                     {
                         // Collect (chart_id, group_id) pairs without holding borrow.
                         let rebind_info: Vec<(mlc_core::ChartId, mlc_core::tag_manager::BubbleId)> =
@@ -553,9 +562,11 @@ impl ChartApp {
                             }
                         }
                     }
+                    let rebind_us = _t_rebind.elapsed().as_micros();
 
                     // Bump BubbleId counter past any restored bubble IDs so
                     // future create_group / create_group_auto calls never collide.
+                    let _t_seed_ids = std::time::Instant::now();
                     for sg_snap in &preset.bubbles {
                         mlc_core::tag_manager::BubbleId::bump_past(sg_snap.id);
                     }
@@ -645,9 +656,11 @@ impl ChartApp {
                             );
                         }
                     }
+                    let seed_ids_us = _t_seed_ids.elapsed().as_micros();
 
                     // Step 5b: If no sync groups exist but windows do, auto-create
                     // a default group so primitives always use the grouped path.
+                    let _t_orphans = std::time::Instant::now();
                     if preset.bubbles.is_empty() && !self.panel_app.panel_grid.containers().is_empty() {
                         // Auto groups get transparent color  -  never occupy palette slots
                         let Some((_, first_win)) = self.panel_app.panel_grid.iter_containers().next() else {
@@ -733,10 +746,12 @@ impl ChartApp {
                             );
                         }
                     }
+                    let orphans_us = _t_orphans.elapsed().as_micros();
 
                     // ----------------------------------------------------------------
                     // Step 6: Restore indicators
                     // ----------------------------------------------------------------
+                    let _t_indicators = std::time::Instant::now();
                     self.indicator_manager.clear_all();
                     // Re-arm the one-shot indicator heal (tick.rs): restored
                     // instances reuse ids from the previous preset.
@@ -783,6 +798,7 @@ impl ChartApp {
                         }
                     }
                     eprintln!("[ChartApp] restored {} indicators", preset.indicators.len());
+                    let indicators_us = _t_indicators.elapsed().as_micros();
 
                     // ----------------------------------------------------------------
                     // Step 6b: Immediately recalculate indicators for every window that
@@ -792,6 +808,7 @@ impl ChartApp {
                     // Collect (symbol, window_id, bars) first to avoid a split borrow of
                     // `self` (panel_grid vs indicator_manager both live on `self`).
                     // ----------------------------------------------------------------
+                    let _t_recalc = std::time::Instant::now();
                     let window_bar_data: Vec<(u64, Vec<mlc_core::Bar>)> = self
                         .panel_app
                         .panel_grid
@@ -800,16 +817,19 @@ impl ChartApp {
                         .map(|(_, w)| (w.id.0, w.bars.clone()))
                         .collect();
 
+                    let recalc_n = window_bar_data.len();
                     for (window_id, bars) in window_bar_data {
                         self.indicator_manager.calculate_for_window(window_id, &bars);
                     }
                     eprintln!("[ChartApp] recalculated indicators for all windows with bars");
+                    let recalc_us = _t_recalc.elapsed().as_micros();
 
                     // ----------------------------------------------------------------
                     // Step 6c: Stage sub-pane height ratios, above_main flags, and
                     // ordering for application on the next
                     // sync_sub_panes_from_manager() call.
                     // ----------------------------------------------------------------
+                    let _t_sub_panes = std::time::Instant::now();
                     self.pending_sub_pane_ratios.clear();
                     self.pending_sub_pane_above_main.clear();
                     self.pending_sub_pane_order.clear();
@@ -838,10 +858,12 @@ impl ChartApp {
                             self.pending_sub_pane_ratios.len()
                         );
                     }
+                    let sub_panes_us = _t_sub_panes.elapsed().as_micros();
 
                     // ----------------------------------------------------------------
                     // Step 7: Clear stale per-leaf UI state
                     // ----------------------------------------------------------------
+                    let _t_leaf_tags = std::time::Instant::now();
                     self.panel_app.indicator_overlay_states.clear();
                     self.panel_app.leaf_color_tags.clear();
 
@@ -854,16 +876,20 @@ impl ChartApp {
                         "[ChartApp] Step7: restored {} leaf_color_tags from snapshot",
                         self.panel_app.leaf_color_tags.len()
                     );
+                    let leaf_tags_us = _t_leaf_tags.elapsed().as_micros();
 
                     // ----------------------------------------------------------------
                     // Step 8: Restore alerts
                     // ----------------------------------------------------------------
+                    let _t_alerts = std::time::Instant::now();
                     self.managers.alert.restore(preset.alerts.clone());
                     eprintln!("[ChartApp] restored {} alerts", self.managers.alert.len());
+                    let alerts_us = _t_alerts.elapsed().as_micros();
 
                     // Step 8b: Restore per-slot Panel docking layouts.
                     // Pre-populate the store with panel state so the closure
                     // can construct the matching `Panel` variants.
+                    let _t_slots = std::time::Instant::now();
                     {
                         // Determine max panel_id across ALL slots to update next_id.
                         let max_panel_id: u64 = preset.slot_leaves.iter()
@@ -1185,11 +1211,13 @@ impl ChartApp {
                         };
                         self.sidebar_state.slot_dockings[i] = mgr;
                     }
+                    let slots_us = _t_slots.elapsed().as_micros();
 
                     // Subscribe depth for restored panels that require L2 data
                     // (DOM, L2Tape, LiquidityHeatmap).  For Fixed sources we use the
                     // stored exchange string; for HyperFocus/BoundToChart we fall back
                     // to the active exchange and Spot account type.
+                    let _t_depth_subs = std::time::Instant::now();
                     {
                         // Build a deduplicated list of (exchange_id, symbol, account_type)
                         // tuples that need depth subscriptions.
@@ -1245,6 +1273,7 @@ impl ChartApp {
                             }
                         }
                     }
+                    let depth_subs_us = _t_depth_subs.elapsed().as_micros();
 
                     self.sidebar_data_dirty = true;
 
@@ -1255,6 +1284,7 @@ impl ChartApp {
                     // that appear in both old and new presets are not disrupted.
                     // ----------------------------------------------------------------
                     // Phase 4 S2.7.1c: read via branch_meta (B1 flip).
+                    let _t_unsubs = std::time::Instant::now();
                     let new_subscriptions: std::collections::HashSet<(digdigdig3::ExchangeId, String)> = self
                         .panel_app
                         .panel_grid
@@ -1274,6 +1304,7 @@ impl ChartApp {
                             eprintln!("[ChartApp] unsubscribed trades: {}/{}", eid.as_str(), symbol);
                         }
                     }
+                    let unsubs_us = _t_unsubs.elapsed().as_micros();
 
                     // ----------------------------------------------------------------
                     // Step 10: Request bars for every window in the newly loaded preset.
@@ -1281,6 +1312,7 @@ impl ChartApp {
                     // but at runtime (tab-bar switch) only this handler runs, so we must
                     // trigger the fetches here.
                     // ----------------------------------------------------------------
+                    let _t_request_bars = std::time::Instant::now();
                     let bar_count = self.panel_app.user_manager.profile.bar_count as usize;
                     let mut bars_requested: usize = 0;
                     // Phase 4 S2.7.1c: read via branch_meta (B6 tuple-collect flip).
@@ -1313,6 +1345,7 @@ impl ChartApp {
                         bars_requested += 1;
                     }
                     eprintln!("[ChartApp] LoadPreset: requesting bars for {} windows", bars_requested);
+                    let request_bars_us = _t_request_bars.elapsed().as_micros();
 
                     // Prune orphan Panel members from all restored sync groups.
                     // SyncGroupSnapshot.panel_members can carry ids from the prior
@@ -1320,6 +1353,7 @@ impl ChartApp {
                     // have no entry in panels_store after Step 8b. Leaving them
                     // in group.members + member_to_group leaks zombie references
                     // that mis-route propagate_* / apply_key_to_panels_in_group.
+                    let _t_orphan_prune = std::time::Instant::now();
                     {
                         use mlc_core::tag_manager::SyncMemberId;
                         use mlc_core::state::PanelId;
@@ -1361,9 +1395,44 @@ impl ChartApp {
                             eprintln!("[ChartApp] preset restore: pruned {} orphan panel members from sync groups", pruned);
                         }
                     }
+                    let orphan_prune_us = _t_orphan_prune.elapsed().as_micros();
 
         let lp_cold_body_us = lp_cold_start.elapsed().as_micros();
         eprintln!("[ChartApp] preset '{}' fully restored (cold_body={}us total={}us)",
             preset.name, lp_cold_body_us, _lp_total.elapsed().as_micros());
+
+        // ── COLD BODY PER-STEP BREAKDOWN ──────────────────────────────────────
+        //
+        // Sum of these = cold_body_us above (modulo overhead of timer reads
+        // themselves, which is in the tens of nanoseconds per call).
+        //
+        // Layout above lists steps in the order they execute. Look for the
+        // biggest bucket — that's where Stage 4 (Send carve-out + worker
+        // dispatch) buys you the most off-main-thread time. Steps that
+        // touch `self.bridge.*` (`depth_subs`, `unsubs`, `request_bars`,
+        // and parts of `slots`) cannot move off main today; everything
+        // else is pure CPU and is the target of the worker thread.
+        eprintln!(
+            "[ChartApp] cold_body[{}] breakdown (us): prep={} old_subs={} layout={} bubbles={} rebind={} seed_ids={} orphans={} indicators={} recalc[{}wins]={} sub_panes={} leaf_tags={} alerts={} slots={} depth_subs={} unsubs={} request_bars={} orphan_prune={}",
+            preset.name,
+            prep_us,
+            old_subs_us,
+            layout_us,
+            bubbles_us,
+            rebind_us,
+            seed_ids_us,
+            orphans_us,
+            indicators_us,
+            recalc_n,
+            recalc_us,
+            sub_panes_us,
+            leaf_tags_us,
+            alerts_us,
+            slots_us,
+            depth_subs_us,
+            unsubs_us,
+            request_bars_us,
+            orphan_prune_us,
+        );
     }
 }

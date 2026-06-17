@@ -1843,6 +1843,15 @@ impl ChartApp {
             let has_saved_preset = app.panel_app.presets.contains_key(&app.panel_app.active_preset_id);
 
             if has_saved_preset {
+                // ── new_window COLD PATH timer anchor ─────────────────────
+                // This branch runs on the off-thread promote worker during
+                // startup and on hot-reload. It triggers a synchronous
+                // LoadPreset → apply_preset_cold for the active preset
+                // PLUS per-window data_provider + per-window request_bars.
+                // The total here is what "first chart shows up after
+                // launch" effectively waits on (modulo the parallel
+                // skeleton render on the main thread).
+                let _t_nw_cold = std::time::Instant::now();
                 // Restore from saved preset.
                 if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
                     window.data_provider = data_provider.clone();
@@ -1850,6 +1859,7 @@ impl ChartApp {
                 }
                 app.panel_app.toolbar_config = ToolbarConfig::standalone();
 
+                let _t_nw_load = std::time::Instant::now();
                 let preset_id = app.panel_app.active_preset_id.clone();
                 // Clear active_preset_id so LoadPreset doesn't skip with
                 // "already active" — the constructor set it above, but the
@@ -1858,6 +1868,7 @@ impl ChartApp {
                 app.process_chart_out_event(
                     mlc_core::events::ChartOutEvent::LoadPreset { id: preset_id },
                 );
+                let nw_load_us = _t_nw_load.elapsed().as_micros();
 
                 // Ensure all windows have data_provider and toolbar config.
                 // Phase 4 B: read exchange/account_type from branch_meta.
@@ -1904,6 +1915,8 @@ impl ChartApp {
                         .unwrap_or(digdigdig3::ExchangeId::Binance);
                 }
 
+                let _t_nw_reqbars = std::time::Instant::now();
+                let mut nw_reqbars_n: usize = 0;
                 for (sym, exch, tf, at_label) in &window_data {
                     let eid = digdigdig3::ExchangeId::from_str(exch)
                         .unwrap_or(digdigdig3::ExchangeId::Binance);
@@ -1913,7 +1926,15 @@ impl ChartApp {
                     let at = account_type_from_label(at_label);
                     bridge.ensure_connector(eid);
                     bridge.request_bars(eid, sym, tf, at, None, Some(app.panel_app.user_manager.profile.bar_count as usize), false);
+                    nw_reqbars_n += 1;
                 }
+                let nw_reqbars_us = _t_nw_reqbars.elapsed().as_micros();
+
+                let nw_cold_us = _t_nw_cold.elapsed().as_micros();
+                eprintln!(
+                    "[ChartApp] new_window cold path: load={}us reqbars[{}wins]={}us total={}us",
+                    nw_load_us, nw_reqbars_n, nw_reqbars_us, nw_cold_us,
+                );
 
                 app.needs_initial_viewport_fit = true;
                 // NOTE: background-tab warm-up is intentionally NOT done here.
@@ -1928,6 +1949,7 @@ impl ChartApp {
                 // the promote-to-chart transition.
             } else {
                 // Fresh state — Binance default.
+                let _t_nw_fresh = std::time::Instant::now();
                 // Phase 4 B: capture chart_id BEFORE the mutating block.
                 let active_chart_id = app.panel_app.panel_grid.active_container_id();
                 let active_pid_init3 = app.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
@@ -1995,6 +2017,10 @@ impl ChartApp {
                     None,
                     Some(app.panel_app.user_manager.profile.bar_count as usize),
                     false,
+                );
+                eprintln!(
+                    "[ChartApp] new_window fresh-state path total={}us",
+                    _t_nw_fresh.elapsed().as_micros(),
                 );
             }
         }
