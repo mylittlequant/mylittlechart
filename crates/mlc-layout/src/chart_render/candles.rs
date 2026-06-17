@@ -10,6 +10,7 @@
 //! - `draw_heikin_ashi()` - Smoothed Heikin Ashi candles
 
 use mlc_core::render::{RenderContext, crisp, crisp_rect};
+use mlc_core::Bar;
 use super::ChartRenderState;
 
 /// Draw standard candlestick bars (filled bodies, wicks)
@@ -422,23 +423,162 @@ pub fn draw_heikin_ashi(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
 /// Draw Range Bars — transform source bars into range bars and render as candles.
 ///
 /// Each derived bar accumulates source OHLCV until `(close - open).abs() >= range`,
-/// Draw Range Bars.
+/// Draw Range Bars — OHLC bar style with horizontal open/close ticks
+/// (TradeStation / NinjaTrader textbook).
 ///
-/// Phase 2C: bars in `state.bars` are ALREADY the derived range-bar series —
-/// dig3-station's `TradeToRangeBarDerived` aggregates trades into BarPoints
-/// using the panel's `chart_type_param` price threshold and the bridge
-/// re-emits them as `LiveUpdate::BarUpdate` into `window.bars` (same code
-/// path as kline bars). No per-frame folding here.
+/// Range bars are derived in dig3-station's `TradeToRangeBarDerived` so all
+/// bars already span the configured price range. We render them as OHLC
+/// bars (vertical wick H→L + open tick left + close tick right) WITHOUT a
+/// filled body rectangle — this is the canonical visual: it signals "range
+/// bar" by the absence of body while preserving directional color via the
+/// open/close tick spread. Reuses `draw_bars` directly because the visual
+/// is identical to the OHLC bar style.
 pub fn draw_range_bars(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
-    draw_candles(ctx, state);
+    draw_bars(ctx, state);
 }
 
-/// Draw Volume Bars.
+/// Draw Volume Bars — standard candle + bottom intensity strip
+/// (MotiveWave Volumetric Bars style).
 ///
-/// Phase 2C: bars in `state.bars` are ALREADY the derived volume-bar series
-/// (dig3-station `TradeToVolumeBarDerived` + bridge BarUpdate forwarder).
+/// Volume bars are derived in dig3-station's `TradeToVolumeBarDerived`. We
+/// render them as standard OHLC candles, then overlay a bottom strip whose
+/// height is proportional to the bar's volume share of the visible window's
+/// maximum volume. This makes high-volume bars visually punch above their
+/// neighbours regardless of price excursion (which is meaningless when
+/// every bar consumed the same volume threshold).
 pub fn draw_volume_bars(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     draw_candles(ctx, state);
+    draw_volume_intensity_strip(ctx, state);
+}
+
+/// Draw Tick Bars — standard candle with body opacity scaled by volume
+/// (NinjaTrader-inspired intensity coding).
+///
+/// Tick bars are derived in dig3-station's `TradeToTickBarDerived`. Each
+/// bar consumed N trades regardless of price or volume, so we encode the
+/// "trade intensity" of each bar by modulating its body opacity. High-volume
+/// bars (more aggressive participants in the same trade count) render
+/// fully opaque; low-volume bars render dimmed. Wicks always full opacity.
+pub fn draw_tick_bars(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
+    let rect = &state.chart_rect;
+    let viewport = state.viewport;
+    let price_scale = state.price_scale;
+    let theme = state.theme;
+    let bars = state.bars;
+    let dpr = ctx.dpr();
+
+    let bar_w = viewport.bar_width();
+    let (start, end) = viewport.visible_range();
+    let bounds = rect.bounds();
+
+    let max_vol = max_volume_in_range(bars, start, end);
+
+    for i in start..end {
+        if i >= bars.len() { break; }
+        let bar = &bars[i];
+        let cx = viewport.x_for_bar(i, bar.ts_ms());
+        let is_up = bar.is_bullish();
+
+        let base_color = if is_up { &theme.candle_up } else { &theme.candle_down };
+        let wick_color = if is_up { &theme.wick_up } else { &theme.wick_down };
+        let body_alpha = if max_vol > 0.0 {
+            (bar.volume / max_vol).sqrt().clamp(0.25, 1.0)
+        } else { 1.0 };
+        let body_color = apply_alpha_to_color(base_color, body_alpha);
+
+        let wick_x = crisp(cx, dpr);
+        let screen_x = rect.x + wick_x;
+        if screen_x + bar_w * 0.5 < bounds.left || screen_x - bar_w * 0.5 > bounds.right {
+            continue;
+        }
+        let high_y = bounds.clamp_y(rect.y + viewport.price_to_y(bar.high, price_scale.price_min, price_scale.price_max));
+        let low_y  = bounds.clamp_y(rect.y + viewport.price_to_y(bar.low,  price_scale.price_min, price_scale.price_max));
+        if bounds.is_y_range_outside(high_y, low_y) { continue; }
+
+        // Wick at full opacity.
+        ctx.set_stroke_color(wick_color);
+        ctx.set_stroke_width(1.0);
+        ctx.set_line_dash(&[]);
+        ctx.begin_path();
+        ctx.move_to(screen_x, high_y);
+        ctx.line_to(screen_x, low_y);
+        ctx.stroke();
+
+        // Body with intensity-modulated alpha.
+        let clamp_h = rect.height.max(0.0);
+        let top_raw = viewport.price_to_y(bar.open.max(bar.close), price_scale.price_min, price_scale.price_max);
+        let bot_raw = viewport.price_to_y(bar.open.min(bar.close), price_scale.price_min, price_scale.price_max);
+        let top = top_raw.clamp(0.0, clamp_h);
+        let bot = bot_raw.clamp(0.0, clamp_h);
+        let h = (bot - top).max(1.0);
+        let (rx, ry, rw, rh) = crisp_rect(cx - bar_w / 2.0, top, bar_w, h, dpr);
+        if let (Some((body_x, body_w)), Some((body_y, body_h))) = (
+            bounds.clamp_rect_x(rect.x + rx, rw),
+            bounds.clamp_rect_y(rect.y + ry, rh),
+        ) {
+            ctx.set_fill_color(&body_color);
+            ctx.fill_rect(body_x, body_y, body_w, body_h);
+        }
+    }
+}
+
+/// Overlay a bottom strip whose per-bar height is `bar.volume / max_vol *
+/// 0.20 * chart_height`. Used by `draw_volume_bars`.
+fn draw_volume_intensity_strip(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
+    let rect = &state.chart_rect;
+    let viewport = state.viewport;
+    let theme = state.theme;
+    let bars = state.bars;
+    let dpr = ctx.dpr();
+    let (start, end) = viewport.visible_range();
+    let max_vol = max_volume_in_range(bars, start, end);
+    if max_vol <= 0.0 { return; }
+    let bar_w = viewport.bar_width();
+    let strip_max = (rect.height * 0.20).max(2.0);
+    let baseline_y = rect.y + rect.height; // strip grows upward from bottom.
+    for i in start..end {
+        if i >= bars.len() { break; }
+        let bar = &bars[i];
+        let is_up = bar.is_bullish();
+        let color = if is_up { &theme.candle_up } else { &theme.candle_down };
+        let strip_color = apply_alpha_to_color(color, 0.5);
+        let h = strip_max * (bar.volume / max_vol).clamp(0.0, 1.0);
+        if h < 1.0 { continue; }
+        let cx = viewport.x_for_bar(i, bar.ts_ms());
+        let (rx, ry, rw, rh) = crisp_rect(cx - bar_w / 2.0, baseline_y - rect.y - h, bar_w, h, dpr);
+        ctx.set_fill_color(&strip_color);
+        ctx.fill_rect(rect.x + rx, rect.y + ry, rw, rh);
+    }
+}
+
+fn max_volume_in_range(bars: &[Bar], start: usize, end: usize) -> f64 {
+    let end = end.min(bars.len());
+    if start >= end { return 0.0; }
+    let mut m = 0.0_f64;
+    for i in start..end {
+        if bars[i].volume > m { m = bars[i].volume; }
+    }
+    m
+}
+
+/// Apply alpha multiplier to a CSS hex color. Returns `rgba(r,g,b,a)`.
+fn apply_alpha_to_color(hex: &str, alpha: f64) -> String {
+    // Parse #RRGGBB / #RRGGBBAA / 3-letter shorthand to (r,g,b).
+    let s = hex.trim_start_matches('#');
+    let (r, g, b) = match s.len() {
+        6 | 8 => (
+            u8::from_str_radix(&s[0..2], 16).unwrap_or(180),
+            u8::from_str_radix(&s[2..4], 16).unwrap_or(180),
+            u8::from_str_radix(&s[4..6], 16).unwrap_or(180),
+        ),
+        3 => (
+            u8::from_str_radix(&s[0..1].repeat(2), 16).unwrap_or(180),
+            u8::from_str_radix(&s[1..2].repeat(2), 16).unwrap_or(180),
+            u8::from_str_radix(&s[2..3].repeat(2), 16).unwrap_or(180),
+        ),
+        _ => (180u8, 180u8, 180u8),
+    };
+    format!("rgba({},{},{},{:.3})", r, g, b, alpha.clamp(0.0, 1.0))
 }
 
 /// Draw Footprint chart — routes to the cluster-grid renderer
