@@ -2961,22 +2961,6 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
         }
 
-        // ── Drain pending preset-load requests ──────────────────────────
-        // Phase 1 of `LoadPreset` cleared the visible bars and stashed the
-        // id on `pw.chart.pending_load_preset`. After the render of THIS
-        // frame finishes, presenting loading skeletons + spinners, we
-        // re-dispatch the same id which runs phase 2 (the heavy deep-clone
-        // / chart-container rebuild). The user sees animated spinners
-        // during the work instead of a frozen old chart.
-        for pw in self.windows.values_mut() {
-            if pw.chart.pending_load_preset.is_some() {
-                pw.chart.drain_pending_load_preset();
-                // The heavy work mutated state; request another redraw so
-                // the next frame composites the fresh preset.
-                pw.window.request_redraw();
-            }
-        }
-
         // ── Drain open-URL requests ──────────────────────────────────────
         {
             let url: Option<String> = self.windows.values_mut()

@@ -8,16 +8,6 @@ use mlc_core::state::modal_state::OpenModal;
 
 impl ChartApp {
     /// Process a `ChartOutEvent`  -  route high-level outcomes back to state.
-    /// Re-dispatches a stashed `LoadPreset` request (set during phase 1 of the
-    /// two-frame load). Called by the host between frames AFTER the loading
-    /// skeleton has been presented, so the heavy preset rebuild runs while
-    /// the user is already looking at spinners. No-op when nothing pending.
-    pub fn drain_pending_load_preset(&mut self) {
-        if let Some(id) = self.pending_load_preset.clone() {
-            self.process_chart_out_event(mlc_core::events::ChartOutEvent::LoadPreset { id });
-        }
-    }
-
     pub(crate) fn process_chart_out_event(&mut self, event: mlc_core::events::ChartOutEvent) {
         use mlc_core::events::ChartOutEvent;
         use mlc_core::state::Timeframe;
@@ -696,43 +686,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::LoadPreset { id } => {
-                // Two-frame load. Phase 1 (first call): clear all visible
-                // chart bars so the panels go into loading skeleton on the
-                // next render, stash the id in `pending_load_preset`, and
-                // RETURN. The host (scene_builder/app tick) re-dispatches
-                // `LoadPreset` with the stashed id on the NEXT frame, which
-                // runs phase 2 (the actual heavy work) — by then the user
-                // is already looking at animated spinners, not a frozen
-                // old chart.
-                //
-                // Re-entry semantics: if the incoming id MATCHES the
-                // stashed pending id, this is the phase-2 re-dispatch —
-                // clear the stash and fall through to the heavy work.
-                // If it's a DIFFERENT id (the user clicked another tab
-                // during phase 1), we treat it as a fresh phase 1 — the
-                // stash gets overwritten and the heavy work for the prior
-                // pending id is dropped on the floor (the user picked
-                // somewhere else anyway).
-                let is_phase2 = self.pending_load_preset.as_deref() == Some(id.as_str());
-                if is_phase2 {
-                    self.pending_load_preset = None;
-                    eprintln!("[ChartApp] load preset phase2: {}", id);
-                } else {
-                    eprintln!("[ChartApp] load preset phase1 (defer to next frame): {}", id);
-                    // Clear visible chart bars + flag loading so the layout
-                    // layer paints the skeleton (lines + spinner) on the
-                    // next render, even though no real load has happened
-                    // yet. Bars get repopulated when phase 2 finishes its
-                    // cure/restore cycle.
-                    for (_, w) in self.panel_app.panel_grid.containers_mut().iter_mut() {
-                        w.bars.clear();
-                        w.viewport.bar_count = 0;
-                        w.pending_symbol_load = true;
-                    }
-                    self.pending_load_preset = Some(id.clone());
-                    state_mutated = true;
-                    return;
-                }
+                eprintln!("[ChartApp] load preset: {}", id);
                 let prev_id = self.panel_app.active_preset_id.clone();
 
                 // Is the CURRENT live state actually a materialized preset?
