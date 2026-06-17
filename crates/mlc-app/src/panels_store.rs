@@ -22,6 +22,7 @@ use mlc_panels::trading::order_flow::{
     indicator_panel::IndicatorPanelState,
     l2_tape::L2TapeState,
     liquidity_heatmap::LiquidityHeatmapState,
+    multi_dom::MultiDomState,
     trade_tape::TradeTapeState,
     volume_profile::VolumeProfileState,
 };
@@ -45,6 +46,8 @@ pub struct TradingPanelsStore {
     pub footprint: HashMap<PanelId, FootprintState>,
     pub volume_profile: HashMap<PanelId, VolumeProfileState>,
     pub liquidity_heatmap: HashMap<PanelId, LiquidityHeatmapState>,
+    /// Multi-exchange consolidated DOM panels.
+    pub multi_dom: HashMap<PanelId, MultiDomState>,
     pub big_trades: HashMap<PanelId, BigTradesState>,
     pub l2_tape: HashMap<PanelId, L2TapeState>,
     pub trade_tape: HashMap<PanelId, TradeTapeState>,
@@ -75,6 +78,7 @@ impl TradingPanelsStore {
             footprint: HashMap::new(),
             volume_profile: HashMap::new(),
             liquidity_heatmap: HashMap::new(),
+            multi_dom: HashMap::new(),
             big_trades: HashMap::new(),
             l2_tape: HashMap::new(),
             trade_tape: HashMap::new(),

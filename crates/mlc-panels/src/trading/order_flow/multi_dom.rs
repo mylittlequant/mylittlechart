@@ -1,39 +1,39 @@
 //! Multi-exchange consolidated DOM panel.
 //!
-//! Status: scaffolding. The state machine + merge engine + renderer is
-//! tracked separately under
-//! `nemo/docs/mlc/plans/renderer-wave-B-2026-06-18.md` Track 7. Spec:
-//! `nemo/docs/mlc/research/specs/aggr-multi-exchange-pattern-2026-06-18.md`
-//! + `nemo/docs/mlc/research/specs/multi-exchange-depth-panels-2026-06-17.md`.
+//! Track 7 of `nemo/docs/mlc/plans/renderer-wave-B-2026-06-18.md`.
+//! Specs:
+//! - `nemo/docs/mlc/research/specs/aggr-multi-exchange-pattern-2026-06-18.md`
+//! - `nemo/docs/mlc/research/specs/multi-exchange-depth-panels-2026-06-17.md`
 //!
-//! Design notes (locked):
-//! - Per-exchange `BTreeMap<OrderedFloat, f64>` book state — one
-//!   per side, per exchange. Common rounded-price grid configurable via
-//!   `MultiDomConfig::grid_size`.
-//! - Subscribes via N parallel `bridge.request_orderbook` over N
-//!   exchanges; each emits `LiveUpdate::OrderbookSnapshot` /
-//!   `LiveUpdate::OrderbookDelta`.
-//! - Merge engine: per-tick, fold all per-exchange books onto the
-//!   common grid, emit `Vec<MultiLevel>` ordered by price desc (asks
-//!   on top, bids on bottom — Bookmap-style merged ladder).
-//! - Renderer: text-grid panel (NOT a chart). N + 1 columns (price +
-//!   one per exchange). Cell intensity ∝ size. Cross-exchange
-//!   dominance highlight: the row's max-volume exchange gets a side
-//!   accent stripe. Stacked-imbalance detection on the consolidated
-//!   row.
+//! Design:
+//! - Per-exchange `BTreeMap<OrderedFloat, f64>` book state for bids + asks.
+//! - All exchanges merged onto a common rounded-price grid (config.grid_size).
+//! - Ladder: ask side high→low at top, bid side high→low at bottom.
+//! - Renderer: N+1 columns (price + one per exchange). Cell intensity ∝ size
+//!   relative to the merged-row max. Row's max-volume exchange gets a side
+//!   accent stripe (cross-exchange dominance highlight).
+//!
+//! Subscriptions are wired through the live-data bridge by the consumer
+//! (mlc-app). Each `LiveUpdate::OrderbookSnapshot` for any of the configured
+//! exchanges calls [`MultiDomState::apply_snapshot`].
 
 use std::collections::BTreeMap;
 
-/// Local Eq/Ord newtype around f64 — we avoid adding an `ordered_float`
-/// dependency for this scaffold. Compares via bit-pattern after
-/// canonicalising NaN to a single zero-payload representation.
+use serde::{Serialize, Deserialize};
+
+use crate::panel_trait::TradingPanel;
+use crate::render::{RenderContext, TextAlign, TextBaseline};
+
+/// Multi-DOM panel ID — same shape as DomId.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct MultiDomId(pub u64);
+
+/// Local Eq/Ord newtype around f64 (no `ordered_float` dep).
 #[derive(Clone, Copy, Debug)]
 pub struct OrderedFloat(pub f64);
 
 impl PartialEq for OrderedFloat {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.to_bits() == other.0.to_bits()
-    }
+    fn eq(&self, other: &Self) -> bool { self.0.to_bits() == other.0.to_bits() }
 }
 impl Eq for OrderedFloat {}
 impl PartialOrd for OrderedFloat {
@@ -45,32 +45,25 @@ impl Ord for OrderedFloat {
     }
 }
 
-/// Exchange identifier — held as an opaque String label here so the
-/// multi-dom scaffold doesn't pull a hard dep on `digdigdig3`. Wire
-/// up to the typed `digdigdig3::ExchangeId` at the panel-construction
-/// site (one `format!("{:?}", ex)` is enough).
+/// Exchange identifier — opaque label so the panel doesn't pull a hard
+/// dep on the `digdigdig3` crate. Wire up to `digdigdig3::ExchangeId`
+/// at the app layer with `format!("{:?}", ex)`.
 pub type ExchangeId = String;
 
-/// One consolidated price level — per-exchange volume on a common
-/// rounded price.
+/// Snapshot of one merged price level — per-exchange volume + side flag.
 #[derive(Clone, Debug)]
 pub struct MultiLevel {
     pub price: f64,
-    /// Per-exchange volume at this level. Length == config.exchanges.len();
-    /// `0.0` for exchanges without volume at this price.
+    /// `per_exchange[i]` = volume at this price from `config.exchanges[i]`.
     pub per_exchange: Vec<f64>,
-    /// True when this row is on the ask side (`price > mid_price`).
     pub is_ask: bool,
 }
 
-/// Static config for a multi-exchange book.
+/// Static configuration for a multi-exchange book.
 #[derive(Clone, Debug)]
 pub struct MultiDomConfig {
-    /// Exchanges to merge — order is preserved in the renderer columns.
     pub exchanges: Vec<ExchangeId>,
-    /// Common price-grid bucket size (rounded down).
     pub grid_size: f64,
-    /// Number of levels to keep per side after the merge.
     pub depth_per_side: usize,
 }
 
@@ -84,67 +77,67 @@ impl Default for MultiDomConfig {
     }
 }
 
-/// Multi-exchange consolidated book state.
-///
-/// Per-exchange books live in `books_by_exchange`. The merged view is
-/// rebuilt at tick time by [`MultiExchangeBook::merged_levels`].
-#[derive(Default)]
-pub struct MultiExchangeBook {
+/// Multi-exchange DOM state (mode `state` per other panels).
+pub struct MultiDomState {
+    pub symbol: String,
     pub config: MultiDomConfig,
-    /// `books_by_exchange[i]` is `(bids, asks)` for `config.exchanges[i]`.
+    /// `books_by_exchange[i]` = `(bids, asks)` for `config.exchanges[i]`.
     pub books_by_exchange: Vec<(BTreeMap<OrderedFloat, f64>, BTreeMap<OrderedFloat, f64>)>,
-    /// Current mid-price across the consolidated book (cached at merge
-    /// time so the renderer doesn't recompute it).
+    /// Cached merged view — rebuilt by [`Self::rebuild_merged`].
+    pub merged: Vec<MultiLevel>,
     pub mid_price: f64,
 }
 
-impl MultiExchangeBook {
-    pub fn new(config: MultiDomConfig) -> Self {
+impl MultiDomState {
+    pub fn new(symbol: String, config: MultiDomConfig) -> Self {
         let n = config.exchanges.len();
         Self {
+            symbol,
             config,
-            books_by_exchange: (0..n)
-                .map(|_| (BTreeMap::new(), BTreeMap::new()))
-                .collect(),
+            books_by_exchange: (0..n).map(|_| (BTreeMap::new(), BTreeMap::new())).collect(),
+            merged: Vec::new(),
             mid_price: 0.0,
         }
     }
 
-    /// Snap a price to the common grid (floor — caller chooses which
-    /// rounding semantics). Public so external callers can match the
-    /// merge engine's bucket boundaries when preparing inputs.
+    /// Snap a price down to the common grid boundary.
     #[inline]
     pub fn snap_grid(&self, price: f64) -> f64 {
         (price / self.config.grid_size).floor() * self.config.grid_size
     }
 
-    /// Apply a single-exchange book update.
-    pub fn apply_snapshot(
-        &mut self,
-        exchange_idx: usize,
-        bids: impl IntoIterator<Item = (f64, f64)>,
-        asks: impl IntoIterator<Item = (f64, f64)>,
-    ) {
+    /// Resolve an exchange label to its index in `config.exchanges`.
+    pub fn exchange_idx(&self, label: &str) -> Option<usize> {
+        self.config.exchanges.iter().position(|e| e == label)
+    }
+
+    /// Replace the snapshot for one exchange. `bids` and `asks` are raw
+    /// per-level `(price, qty)` tuples; the call buckets them onto the
+    /// common grid.
+    pub fn apply_snapshot<B, A>(&mut self, exchange_idx: usize, bids: B, asks: A)
+    where
+        B: IntoIterator<Item = (f64, f64)>,
+        A: IntoIterator<Item = (f64, f64)>,
+    {
+        let grid = self.config.grid_size;
         let Some((b, a)) = self.books_by_exchange.get_mut(exchange_idx) else { return };
         b.clear();
         a.clear();
         for (price, qty) in bids {
             if qty <= 0.0 { continue; }
-            let p = self.config.grid_size * (price / self.config.grid_size).floor();
+            let p = (price / grid).floor() * grid;
             *b.entry(OrderedFloat(p)).or_insert(0.0) += qty;
         }
         for (price, qty) in asks {
             if qty <= 0.0 { continue; }
-            let p = self.config.grid_size * (price / self.config.grid_size).floor();
+            let p = (price / grid).floor() * grid;
             *a.entry(OrderedFloat(p)).or_insert(0.0) += qty;
         }
     }
 
-    /// Build the merged ladder. Computes the consolidated per-price
-    /// volume across all exchanges for both sides, sorts (asks high→low,
-    /// bids high→low), truncates to `depth_per_side` per side, and
-    /// updates `self.mid_price` from the best bid/ask consensus.
-    pub fn merged_levels(&mut self) -> Vec<MultiLevel> {
+    /// Rebuild [`Self::merged`] from current per-exchange books. Called
+    /// each frame (cheap — N×M levels, both bounded by `depth_per_side`).
+    pub fn rebuild_merged(&mut self) {
         let n = self.config.exchanges.len();
         let mut by_price_bid: BTreeMap<OrderedFloat, Vec<f64>> = BTreeMap::new();
         let mut by_price_ask: BTreeMap<OrderedFloat, Vec<f64>> = BTreeMap::new();
@@ -168,15 +161,251 @@ impl MultiExchangeBook {
             _ => self.mid_price,
         };
 
-        let mut out: Vec<MultiLevel> = Vec::new();
-        // Asks first (low→high in storage; reverse so the renderer can
-        // draw top-down).
-        for (p, row) in by_price_ask.iter().take(self.config.depth_per_side) {
-            out.push(MultiLevel { price: p.0, per_exchange: row.clone(), is_ask: true });
-        }
+        self.merged.clear();
+        // Asks (top of ladder) — keep highest above mid, then descend.
+        // Output order: highest ask first → mid → lowest bid at bottom.
+        let asks_take: Vec<MultiLevel> = by_price_ask.iter()
+            .take(self.config.depth_per_side)
+            .map(|(p, row)| MultiLevel { price: p.0, per_exchange: row.clone(), is_ask: true })
+            .collect();
+        // We want asks displayed high→low (top of ladder shows the
+        // largest sell wall in walking-down order). BTreeMap iteration
+        // is ascending, so reverse the slice we kept.
+        let mut asks_rev: Vec<MultiLevel> = asks_take;
+        asks_rev.reverse();
+        self.merged.extend(asks_rev);
         for (p, row) in by_price_bid.iter().rev().take(self.config.depth_per_side) {
-            out.push(MultiLevel { price: p.0, per_exchange: row.clone(), is_ask: false });
+            self.merged.push(MultiLevel { price: p.0, per_exchange: row.clone(), is_ask: false });
         }
-        out
     }
+}
+
+impl Clone for MultiDomState {
+    fn clone(&self) -> Self {
+        Self {
+            symbol: self.symbol.clone(),
+            config: self.config.clone(),
+            books_by_exchange: self.books_by_exchange.clone(),
+            merged: self.merged.clone(),
+            mid_price: self.mid_price,
+        }
+    }
+}
+
+impl std::fmt::Debug for MultiDomState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MultiDomState")
+            .field("symbol", &self.symbol)
+            .field("exchanges", &self.config.exchanges)
+            .field("merged_len", &self.merged.len())
+            .field("mid_price", &self.mid_price)
+            .finish()
+    }
+}
+
+// ============================================================================
+// TradingPanel impl
+// ============================================================================
+
+const ROW_HEIGHT: f32 = 18.0;
+const HEADER_HEIGHT: f32 = 18.0;
+const PRICE_COL_WIDTH: f32 = 70.0;
+
+impl TradingPanel for MultiDomState {
+    fn kind(&self) -> &'static str { "multi_dom" }
+    fn label(&self) -> &'static str { "Multi-Exchange DOM" }
+
+    fn render(
+        &self,
+        ctx: &mut dyn RenderContext,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        theme: &crate::panel_theme::PanelTheme,
+        coordinator: &mut uzor::InputCoordinator,
+        slot_prefix: &str,
+    ) {
+        use uzor::input::{Sense, WidgetKind, LayerId};
+        // Register interactive body for hover/scroll/drag.
+        let body_id = format!("{}:multi_dom:body", slot_prefix);
+        coordinator.register_composite(
+            body_id,
+            WidgetKind::BlackboxPanel,
+            uzor::Rect::new(x as f64, y as f64, w as f64, h as f64),
+            Sense::SCROLL | Sense::HOVER | Sense::DRAG,
+            &LayerId::main(),
+        );
+
+        // Background.
+        ctx.set_fill_color(&theme.panel_bg);
+        ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
+
+        let n = self.config.exchanges.len();
+        if n == 0 || self.merged.is_empty() {
+            // Empty-state hint.
+            ctx.set_fill_color(&theme.text_muted);
+            ctx.set_font("12px sans-serif");
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(
+                "No exchanges configured. Call MultiDomState::new with a non-empty MultiDomConfig.exchanges.",
+                (x + w * 0.5) as f64,
+                (y + h * 0.5) as f64,
+            );
+            return;
+        }
+
+        let avail_w = (w - PRICE_COL_WIDTH).max(40.0);
+        let col_w = avail_w / n as f32;
+        let header_y = y;
+        let body_y = y + HEADER_HEIGHT;
+
+        // Header row: "Price | <exchange labels...>".
+        ctx.set_fill_color(&theme.header_bg);
+        ctx.fill_rect(x as f64, header_y as f64, w as f64, HEADER_HEIGHT as f64);
+        ctx.set_fill_color(&theme.text_primary);
+        ctx.set_font("11px sans-serif");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Price", (x + 4.0) as f64, (header_y + HEADER_HEIGHT * 0.5) as f64);
+        for (i, ex) in self.config.exchanges.iter().enumerate() {
+            let cx = x + PRICE_COL_WIDTH + col_w * i as f32 + col_w * 0.5;
+            ctx.set_text_align(TextAlign::Center);
+            ctx.fill_text(ex, cx as f64, (header_y + HEADER_HEIGHT * 0.5) as f64);
+        }
+
+        // Per-row max volume for the dominance highlight.
+        let level_max_row = |row: &[f64]| row.iter().cloned().fold(0.0_f64, f64::max);
+
+        // Determine the global row-max for cell-intensity normalization.
+        let global_max: f64 = self.merged.iter()
+            .map(|lvl| level_max_row(&lvl.per_exchange))
+            .fold(0.0, f64::max);
+        let max_norm = if global_max > 0.0 { global_max } else { 1.0 };
+
+        let max_rows = ((h - HEADER_HEIGHT) / ROW_HEIGHT).floor() as usize;
+        let rows = self.merged.len().min(max_rows);
+
+        ctx.set_font("11px monospace");
+        for r in 0..rows {
+            let lvl = &self.merged[r];
+            let row_y = body_y + ROW_HEIGHT * r as f32;
+
+            // Faint row-stripe by side.
+            let stripe = if lvl.is_ask {
+                "rgba(239, 83, 80, 0.05)"
+            } else {
+                "rgba(38, 166, 154, 0.05)"
+            };
+            ctx.set_fill_color(stripe);
+            ctx.fill_rect(x as f64, row_y as f64, w as f64, ROW_HEIGHT as f64);
+
+            // Price column.
+            ctx.set_fill_color(&theme.text_primary);
+            ctx.set_text_align(TextAlign::Right);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(
+                &format!("{:.2}", lvl.price),
+                (x + PRICE_COL_WIDTH - 4.0) as f64,
+                (row_y + ROW_HEIGHT * 0.5) as f64,
+            );
+
+            // Determine dominant exchange for this row.
+            let row_max = level_max_row(&lvl.per_exchange);
+            let dominant_idx = lvl.per_exchange.iter()
+                .enumerate()
+                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|(i, _)| i);
+
+            for (i, vol) in lvl.per_exchange.iter().enumerate() {
+                let cx = x + PRICE_COL_WIDTH + col_w * i as f32;
+                let intensity = (vol / max_norm).clamp(0.0, 1.0);
+                let bg_alpha = (0.15 + 0.6 * intensity).clamp(0.0, 1.0);
+                let bg = if lvl.is_ask {
+                    format!("rgba(239, 83, 80, {:.3})", bg_alpha)
+                } else {
+                    format!("rgba(38, 166, 154, {:.3})", bg_alpha)
+                };
+                ctx.set_fill_color(&bg);
+                ctx.fill_rect(cx as f64, row_y as f64, col_w as f64, ROW_HEIGHT as f64);
+
+                // Dominance accent (cross-exchange flag).
+                if dominant_idx == Some(i) && row_max > 0.0 {
+                    let accent = if lvl.is_ask { "#ef5350" } else { "#26a69a" };
+                    ctx.set_fill_color(accent);
+                    let strip_w = 2.0;
+                    let strip_x = if lvl.is_ask { cx + col_w - strip_w } else { cx };
+                    ctx.fill_rect(strip_x as f64, row_y as f64, strip_w as f64, ROW_HEIGHT as f64);
+                }
+
+                // Volume text.
+                if *vol > 0.0 {
+                    ctx.set_fill_color(&theme.text_primary);
+                    ctx.set_text_align(TextAlign::Center);
+                    ctx.set_text_baseline(TextBaseline::Middle);
+                    let label = if *vol >= 1_000_000.0 {
+                        format!("{:.1}M", vol / 1_000_000.0)
+                    } else if *vol >= 1_000.0 {
+                        format!("{:.1}K", vol / 1_000.0)
+                    } else {
+                        format!("{:.2}", vol)
+                    };
+                    ctx.fill_text(
+                        &label,
+                        (cx + col_w * 0.5) as f64,
+                        (row_y + ROW_HEIGHT * 0.5) as f64,
+                    );
+                }
+            }
+        }
+
+        // Mid-price separator line.
+        if self.mid_price > 0.0 {
+            // Find the closest row index to mid_price in the merged
+            // view — at the ask/bid boundary.
+            let mut split_row: Option<usize> = None;
+            for (i, lvl) in self.merged.iter().enumerate() {
+                if !lvl.is_ask {
+                    split_row = Some(i);
+                    break;
+                }
+            }
+            if let Some(r) = split_row {
+                let line_y = body_y + ROW_HEIGHT * r as f32;
+                ctx.set_stroke_color(&theme.separator);
+                ctx.set_stroke_width(1.0);
+                ctx.begin_path();
+                ctx.move_to(x as f64, line_y as f64);
+                ctx.line_to((x + w) as f64, line_y as f64);
+                ctx.stroke();
+            }
+        }
+
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+    }
+
+    fn handle_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool { false }
+}
+
+/// Lightweight wrapper for PanelKind registration.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MultiDomPanel {
+    id: MultiDomId,
+    title: String,
+}
+
+impl MultiDomPanel {
+    pub fn new(id: MultiDomId, title: String) -> Self {
+        Self { id, title }
+    }
+
+    pub fn id(&self) -> MultiDomId { self.id }
+    pub fn title(&self) -> &str { &self.title }
+    pub fn set_title(&mut self, title: String) { self.title = title; }
+
+    pub fn type_id(&self) -> &'static str { "multi_dom" }
+    pub fn kind_label(&self) -> &'static str { "Multi-Exchange DOM" }
+    pub fn min_size(&self) -> (f32, f32) { (200.0, 120.0) }
 }

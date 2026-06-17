@@ -1223,12 +1223,29 @@ impl ChartApp {
                     // Push each delta event with its original wire timestamp so
                     // L2-tape rows get per-event ts instead of one SystemTime::now()
                     // for the whole per-frame batch.
-                    let key = (symbol, exchange_id.as_str().to_string(), account_type.short_label().to_string());
+                    let key = (symbol.clone(), exchange_id.as_str().to_string(), account_type.short_label().to_string());
                     let entry = ob_dirty.entry(key).or_insert_with(|| ObDeltaEntry {
                         events: Vec::new(),
                         force_rebuild: false,
                     });
-                    entry.events.push(ObDeltaEvent { ts_ms: timestamp, bids, asks });
+                    entry.events.push(ObDeltaEvent { ts_ms: timestamp, bids: bids.clone(), asks: asks.clone() });
+
+                    // Multi-DOM fan-out: route the delta into every
+                    // MultiDomState whose `(symbol, exchange in config)`
+                    // matches this update. Delta replaces the per-exchange
+                    // snapshot (single-shot rebuild model — finer-grain
+                    // delta-merge is a Phase 7.3 followup).
+                    let ex_label = exchange_id.as_str().to_string();
+                    let sym_ref = symbol.as_str();
+                    for state in self.panels_store.multi_dom.values_mut() {
+                        if state.symbol != sym_ref { continue; }
+                        if let Some(idx) = state.exchange_idx(&ex_label) {
+                            let bids_iter = bids.iter().map(|(p, q)| (*p, *q));
+                            let asks_iter = asks.iter().map(|(p, q)| (*p, *q));
+                            state.apply_snapshot(idx, bids_iter, asks_iter);
+                            state.rebuild_merged();
+                        }
+                    }
                 }
                 LiveUpdate::ConnectorMetrics { .. } => {
                     // Metrics snapshots are collected on-demand by the metrics panel.
