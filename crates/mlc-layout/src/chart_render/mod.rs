@@ -33,12 +33,14 @@ mod panes;
 mod utils;
 mod footprint;
 mod renko;
+mod pnf;
 
 // Re-export rendering functions
 pub use grid::{draw_grid, draw_grid_extended, draw_styled_line, draw_dashed_line};
 pub use candles::{draw_candles, draw_bars, draw_hollow_candles, draw_heikin_ashi, draw_range_bars, draw_volume_bars, draw_tick_bars, draw_footprint};
 pub use footprint::draw_footprint_cluster;
 pub use renko::{draw_renko, compute_renko_bricks, RenkoBrick};
+pub use pnf::{draw_pnf, compute_pnf_columns, PnFColumn};
 pub use series::{
     draw_line_series, draw_area_series, draw_histogram,
     draw_baseline_series, draw_step_line, draw_line_with_markers,
