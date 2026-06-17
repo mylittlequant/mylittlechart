@@ -498,6 +498,22 @@ pub struct ChartApp {
     /// drained by main.rs which forwards it to `updater_handle.cmd_tx`.
     pub pending_updater_cmd: Option<String>, // "logout" | "start_oauth:{provider}"
 
+    /// Cure work deferred from LoadPreset's warm path. The handler swaps
+    /// preset state in ~3ms (park + unpark + active id), then stashes the
+    /// per-window cure tuples here and returns IMMEDIATELY. The host drains
+    /// this queue AFTER the first post-swap frame is presented so the user
+    /// sees loading skeletons + spinners while the 100-220ms `request_bars`
+    /// loop runs, instead of staring at the old chart for that long.
+    ///
+    /// Tuple: (exchange_id, symbol, timeframe, account_type, force).
+    pub pending_cure_after_preset_load: Vec<(
+        digdigdig3::ExchangeId,
+        String,
+        mlc_core::state::Timeframe,
+        digdigdig3::AccountType,
+        bool,
+    )>,
+
     /// Timestamp of the last backfill triggered after a broadcast lag event.
     ///
     /// Used to debounce rapid successive `Lagged` errors — backfill is only
@@ -1030,6 +1046,7 @@ impl ChartApp {
             key_list_refresh: false,
             pending_open_url: None,
             pending_updater_cmd: None,
+            pending_cure_after_preset_load: Vec::new(),
             last_backfill_time: std::time::Instant::now(),
             lag_event_count: 0,
             recalc_count: 0,
@@ -1379,6 +1396,7 @@ impl ChartApp {
             key_list_refresh: false,
             pending_open_url: None,
             pending_updater_cmd: None,
+            pending_cure_after_preset_load: Vec::new(),
             last_backfill_time: std::time::Instant::now(),
             lag_event_count: 0,
             recalc_count: 0,
@@ -1626,6 +1644,7 @@ impl ChartApp {
             key_list_refresh: false,
             pending_open_url: None,
             pending_updater_cmd: None,
+            pending_cure_after_preset_load: Vec::new(),
             last_backfill_time: std::time::Instant::now(),
             lag_event_count: 0,
             recalc_count: 0,

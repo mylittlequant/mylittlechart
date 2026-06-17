@@ -4258,6 +4258,13 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             self.gpu_frame_pending = false;
 
             // After GpuDone the previous frame has been presented on screen.
+            // Drain any preset-load cure work that LoadPreset deferred. The
+            // loading skeleton is visible NOW, so the 100-220ms request_bars
+            // sweep can run without the user seeing a frozen old chart.
+            for pw in self.windows.values_mut() {
+                pw.chart.drain_pending_cure_after_preset_load();
+            }
+
             // Make any newly created window visible — but hold it back until its
             // chart actually has bars to draw, so a freshly promoted (post-login)
             // window doesn't flash an empty chart for ~2s while data loads. A

@@ -504,6 +504,15 @@ impl App<'_> {
                                 if let Some(tab) = pw.chrome_state.tabs.get(idx) {
                                     let tab_id = tab.id.clone();
                                     pw.chart.load_preset(&tab_id);
+                                    // Force-paint the freshly-swapped preset
+                                    // immediately. The cure sweep that follows
+                                    // is queued in
+                                    // `pending_cure_after_preset_load` and
+                                    // drained by about_to_wait AFTER GpuDone,
+                                    // so by then the loading skeleton +
+                                    // spinners are already on screen.
+                                    pw.chart_dirty = true;
+                                    pw.window.request_redraw();
                                 }
                             }
                             return;

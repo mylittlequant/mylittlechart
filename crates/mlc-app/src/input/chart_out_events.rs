@@ -7,6 +7,23 @@ use mlc_core::UIStyle;
 use mlc_core::state::modal_state::OpenModal;
 
 impl ChartApp {
+    /// Drain the cure work LoadPreset's warm path deferred. Called by the host
+    /// AFTER the first frame following a preset swap has been presented so
+    /// the user sees loading skeletons + spinners during the request_bars
+    /// sweep instead of staring at the old chart while it runs synchronously.
+    pub fn drain_pending_cure_after_preset_load(&mut self) {
+        if self.pending_cure_after_preset_load.is_empty() { return; }
+        let work = std::mem::take(&mut self.pending_cure_after_preset_load);
+        let bar_count = self.panel_app.user_manager.profile.bar_count as usize;
+        let drain_t0 = std::time::Instant::now();
+        let n = work.len();
+        for (eid, sym, tf, at, force) in work {
+            self.bridge.ensure_connector(eid);
+            self.bridge.request_bars(eid, &sym, &tf, at, None, Some(bar_count), force);
+        }
+        eprintln!("[ChartApp] drained {} cure jobs in {}us", n, drain_t0.elapsed().as_micros());
+    }
+
     /// Process a `ChartOutEvent`  -  route high-level outcomes back to state.
     pub(crate) fn process_chart_out_event(&mut self, event: mlc_core::events::ChartOutEvent) {
         use mlc_core::events::ChartOutEvent;
@@ -774,6 +791,11 @@ impl ChartApp {
                             (sym, exch, tf, at, has_bars)
                         })
                         .collect();
+                    // Deferred cure: stash the per-window work and bail out.
+                    // The host drains `pending_cure_after_preset_load` AFTER
+                    // the first post-swap frame is presented, so the user
+                    // sees loading skeletons + spinners DURING the 100-220ms
+                    // request_bars sweep instead of staring at the old chart.
                     let mut bars_requested_force: usize = 0;
                     let mut bars_requested_lazy: usize = 0;
                     for (sym, exch, tf, at_label, has_bars) in &window_bar_data {
@@ -783,11 +805,11 @@ impl ChartApp {
                             continue;
                         }
                         let at = crate::account_type_from_label(at_label);
-                        self.bridge.ensure_connector(eid);
                         let force = !*has_bars;
-                        self.bridge.request_bars(eid, sym, tf, at, None, Some(bar_count), force);
+                        self.pending_cure_after_preset_load.push((eid, sym.clone(), tf.clone(), at, force));
                         if force { bars_requested_force += 1; } else { bars_requested_lazy += 1; }
                     }
+                    let _ = bar_count; // bar_count moves to drain_pending_cure
                     let lp_cure_us = _lp_t_cure.elapsed().as_micros();
                     eprintln!(
                         "[ChartApp] LoadPreset (cache): cure requested force={} lazy={} (cure={}us total={}us)",
