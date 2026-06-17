@@ -79,14 +79,11 @@ pub enum LiveUpdate {
     },
     /// Live bar update from WebSocket (last bar in-place update or new bar).
     ///
-    /// `is_closed = true` means the candle closed and a new one has started.
-    /// `is_closed = false` means the current (last) candle is being updated.
     BarUpdate {
         exchange_id: ExchangeId,
         account_type: AccountType,
         symbol: String,
         bar: Bar,
-        is_closed: bool,
     },
     /// Live trade update from WebSocket.
     TradeUpdate {
@@ -1046,7 +1043,6 @@ impl DataBridge {
                             // Emit canonical form so app-side symbol == bubble.symbol.
                             symbol: station_symbol_canonical.clone(),
                             bar,
-                            is_closed: true,
                         });
                     }
                 }
@@ -1698,7 +1694,6 @@ impl DataBridge {
                             account_type,
                             symbol: symbol_canonical.clone(),
                             bar,
-                            is_closed: true,
                         });
                     }
                 }

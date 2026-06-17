@@ -668,7 +668,7 @@ impl ChartApp {
                         }
                     }
                 }
-                LiveUpdate::BarUpdate { exchange_id: _bar_exch, account_type: bar_account_type, symbol: bar_symbol, bar, is_closed: _ } => {
+                LiveUpdate::BarUpdate { exchange_id: _bar_exch, account_type: bar_account_type, symbol: bar_symbol, bar } => {
                     // Derived bar modes (Range/Tick/Volume/Footprint) receive bars
                     // exclusively via BarUpdate from dig3. TimeBased windows still
                     // aggregate from TradeUpdate; this handler is a no-op for them.

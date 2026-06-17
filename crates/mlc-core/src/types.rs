@@ -571,6 +571,18 @@ impl TpoSession {
     #[inline] pub fn ts_ms(&self) -> i64 { self.open_time }
 }
 
+/// Pre-computed Heikin Ashi bar; cache element used by the renderer
+/// memo on `ChartContainer` so HA values aren't recomputed from index 0
+/// every frame.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HaBar {
+    pub ts_ms: i64,
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+}
+
 /// OHLCV bar data with timestamp
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct Bar {

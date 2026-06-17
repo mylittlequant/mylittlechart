@@ -30,7 +30,6 @@ mod scales;
 mod crosshair;
 mod overlays;
 mod panes;
-mod utils;
 mod footprint;
 mod renko;
 mod pnf;
