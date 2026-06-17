@@ -22,7 +22,6 @@ pub mod frame_lifecycle;
 pub mod input;
 pub mod panels_render;
 pub mod panels_store;
-pub mod preset_cache;
 pub mod scroll_dispatch;
 pub mod text_input;
 use uzor::input::TextFieldConfig;
@@ -419,7 +418,7 @@ pub struct ChartApp {
     pub profile_dirty: bool,
     /// Live preset state for open tabs (except the active one).
     /// Key = preset id. On tab switch: park active → cache, unpark target → active.
-    live_preset_cache: std::collections::HashMap<String, preset_cache::LivePresetState>,
+    live_preset_cache: std::collections::HashMap<String, persistence::live_cache::LivePresetState>,
     /// Set to true when window geometry (position/size) changed.
     /// Triggers local save but NOT cloud sync.
     pub profile_geometry_dirty: bool,

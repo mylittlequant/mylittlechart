@@ -1,7 +1,7 @@
 //! Profile / watchlist / template persistence: read/write user state to disk.
 
 use crate::ChartApp;
-use crate::preset_cache;
+use crate::persistence::live_cache as preset_cache;
 use mlc_indicators::IndicatorManager;
 use mlc_core::ScaleMode;
 

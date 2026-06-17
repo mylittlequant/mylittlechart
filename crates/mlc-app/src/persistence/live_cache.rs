@@ -1,3 +1,15 @@
+//! In-memory cache of parked preset live-state.
+//!
+//! `LivePresetState` owns every field that `ChartApp` swaps in/out on a warm
+//! preset tab switch. Storage is a plain `HashMap<id, LivePresetState>` on
+//! `ChartApp::live_preset_cache`. Swap is `mem::replace` against
+//! `ChartPanelGrid::placeholder()` + per-manager `::new()` defaults.
+//!
+//! Cold-path hydration (first-ever click of a preset id, or after the cache
+//! entry was dropped) lives in [`super::hydration`]. It builds the same set
+//! of fields from a `ChartPreset` and the result is swap-compatible with
+//! anything `park_active_preset` produces here.
+
 use std::collections::{HashMap, HashSet};
 
 use mlc_core::state::panel_grid::ChartPanelGrid;
