@@ -31,6 +31,57 @@ impl Default for DomColumnConfig {
     }
 }
 
+/// DOM rendering skin — vendor-style presets. Each skin layouts and
+/// colors the bid/ask ladder differently while reusing the same data
+/// source (per-price `DomLevel` aggregated from L2 deltas).
+///
+/// - `Classic` — current 4-column layout: bid_orders / sell_trades /
+///   buy_trades / ask_orders. Respects `DomColumnConfig`.
+/// - `BidAskSplit` — 2-column compact: bid volume (right-grown red)
+///   left of price, ask volume (left-grown green) right of price.
+///   Trades hidden. Quantower / Sierra "Bid x Ask" preset.
+/// - `DeltaColumn` — single column to the right of price: delta =
+///   ask − bid signed bar, green/red.
+/// - `DominantSide` — per row, single bar filling 100% with the
+///   dominant side's color; bar width ∝ max(bid, ask) / level_max.
+///   Sierra "Dominant Side" preset.
+/// - `BookmapHybrid` — 2-column bid/ask with cell **background**
+///   colored by volume intensity (heat-cell mode). Numbers overlaid.
+///
+/// Pulling/Stacking-style diff tracking is intentionally NOT included
+/// in this enum — it needs per-tick book-delta history which is its
+/// own state machine; deferred to a follow-up topic.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum DomSkin {
+    #[default]
+    Classic,
+    BidAskSplit,
+    DeltaColumn,
+    DominantSide,
+    BookmapHybrid,
+}
+
+impl DomSkin {
+    pub fn label(self) -> &'static str {
+        match self {
+            DomSkin::Classic       => "Classic",
+            DomSkin::BidAskSplit   => "Bid × Ask",
+            DomSkin::DeltaColumn   => "Delta",
+            DomSkin::DominantSide  => "Dominant",
+            DomSkin::BookmapHybrid => "Heat",
+        }
+    }
+    pub fn all() -> &'static [DomSkin] {
+        &[
+            DomSkin::Classic,
+            DomSkin::BidAskSplit,
+            DomSkin::DeltaColumn,
+            DomSkin::DominantSide,
+            DomSkin::BookmapHybrid,
+        ]
+    }
+}
+
 /// DOM panel ID
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DomId(pub u64);
@@ -149,8 +200,11 @@ pub struct DomState {
     /// Timestamp (ms) of the last chase update, for the 200ms window.
     pub chase_last_update_ms: i64,
 
-    /// Column visibility configuration.
+    /// Column visibility configuration. Honored by `DomSkin::Classic`.
     pub column_config: DomColumnConfig,
+
+    /// Rendering skin (vendor preset). Default `Classic`.
+    pub skin: DomSkin,
 }
 
 impl fmt::Debug for DomState {
@@ -226,6 +280,7 @@ impl DomState {
             last_best_ask: 0.0,
             chase_last_update_ms: 0,
             column_config: DomColumnConfig::default(),
+            skin: DomSkin::default(),
         }
     }
 
@@ -906,6 +961,16 @@ impl TradingPanel for DomState {
         ctx.set_fill_color(&theme.header_bg);
         ctx.fill_rect(x as f64, col_header_y as f64, w as f64, DOM_COL_HEADER_HEIGHT as f64);
 
+        // Skin dispatch: non-Classic skins use a compact alt renderer
+        // that ignores `column_config` and lays out a 2-column or
+        // single-column ladder per the selected preset. Returns early
+        // — Classic path follows below for backwards compat with
+        // existing column-config / trade-overlay / chase-tracker logic.
+        if self.skin != DomSkin::Classic {
+            render_alt_skin(ctx, self, x, y, w, h, body_y, body_h, theme);
+            return;
+        }
+
         // === STEP 0: Restrict bar scale to visible rows only ===
         let visible_max_volume: f64 = {
             let row_h = DOM_ROW_HEIGHT;
@@ -1435,4 +1500,234 @@ impl TradingPanel for DomState {
             _ => false,
         }
     }
+}
+
+// =============================================================================
+// Alt-skin renderer — BidAskSplit / DeltaColumn / DominantSide / BookmapHybrid
+// =============================================================================
+
+/// Render the DOM in one of the non-Classic skins.
+/// Layout: price column centered, value column(s) flanking it.
+/// Uses the same `volume_by_price` ladder as Classic, just laid out
+/// per the active skin instead of the 4-column trade overlay.
+fn render_alt_skin(
+    ctx: &mut dyn RenderContext,
+    state: &DomState,
+    x: f32,
+    y: f32,
+    w: f32,
+    _h: f32,
+    body_y: f32,
+    body_h: f32,
+    theme: &crate::panel_theme::PanelTheme,
+) {
+    let row_h = DOM_ROW_HEIGHT as f64;
+    let visible_rows = ((body_h as f64 / row_h) as usize).max(1);
+    let half = visible_rows / 2;
+    let center_tick = state.price_to_tick(state.center_price);
+    let filter = state.min_volume_filter;
+
+    let body_x = x as f64;
+    let body_w = w as f64;
+
+    // Geometry: compact ladder.
+    // - DominantSide: full-width bar.
+    // - DeltaColumn: price center, single bar to the right.
+    // - BidAskSplit + BookmapHybrid: price center, bid left, ask right.
+    let price_col_w = (DOM_PRICE_COL_WIDTH as f64).min(body_w * 0.45);
+    let price_col_x = body_x + (body_w - price_col_w) * 0.5;
+
+    let side_col_w_each = ((body_w - price_col_w) * 0.5 - 4.0).max(20.0);
+    let left_col_x = body_x + 4.0;
+    let left_col_w = side_col_w_each;
+    let right_col_x = price_col_x + price_col_w + 4.0;
+    let right_col_w = side_col_w_each;
+
+    // Scan visible rows to compute max volume for normalisation.
+    let mut max_vol = 0.0_f64;
+    for i in 0..visible_rows {
+        let offset = half as i64 - i as i64;
+        let tick = center_tick + offset;
+        if let Some(&(bv, av, _, _)) = state.volume_by_price.get(&tick) {
+            if filter > 0.0 && (bv + av) < filter { continue; }
+            let m = bv.max(av);
+            if m > max_vol { max_vol = m; }
+        }
+    }
+    if max_vol <= 0.0 { max_vol = state.max_volume.max(1e-9); }
+
+    // Column header label.
+    ctx.set_fill_color(&theme.text_muted);
+    ctx.set_font(&format!("{}px sans-serif", 10));
+    ctx.set_text_align(uzor::render::TextAlign::Center);
+    ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
+    ctx.fill_text(
+        state.skin.label(),
+        body_x + body_w * 0.5,
+        y as f64 + (DOM_COL_HEADER_HEIGHT as f64) * 0.5,
+    );
+
+    // Pre-define palette.
+    let bid_color = "#ef5350";
+    let ask_color = "#26a69a";
+    let delta_pos = "#26a69a";
+    let delta_neg = "#ef5350";
+
+    ctx.set_font(&format!("{}px monospace", 11));
+    ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
+
+    for i in 0..visible_rows {
+        let offset = half as i64 - i as i64;
+        let tick = center_tick + offset;
+        let row_y = body_y as f64 + i as f64 * row_h;
+
+        let (bid_v, ask_v, _, _) = state
+            .volume_by_price
+            .get(&tick)
+            .copied()
+            .unwrap_or((0.0, 0.0, 0, 0));
+        if filter > 0.0 && (bid_v + ask_v) < filter { continue; }
+
+        // Center price column.
+        let price = state.tick_to_price(tick);
+        ctx.set_fill_color(&theme.text_primary);
+        ctx.set_text_align(uzor::render::TextAlign::Center);
+        ctx.fill_text(
+            &format_dom_price(price),
+            price_col_x + price_col_w * 0.5,
+            row_y + row_h * 0.5,
+        );
+
+        match state.skin {
+            DomSkin::Classic => unreachable!(),
+            DomSkin::BidAskSplit => {
+                if bid_v > 0.0 {
+                    let bw = (bid_v / max_vol).clamp(0.0, 1.0) * left_col_w;
+                    let bx = left_col_x + left_col_w - bw; // grow toward price column
+                    ctx.set_fill_color(&with_alpha(bid_color, 0.55));
+                    ctx.fill_rect(bx, row_y + 2.0, bw, row_h - 4.0);
+                    ctx.set_fill_color(&theme.text_primary);
+                    ctx.set_text_align(uzor::render::TextAlign::Right);
+                    ctx.fill_text(
+                        &format_dom_qty(bid_v),
+                        left_col_x + left_col_w - 4.0,
+                        row_y + row_h * 0.5,
+                    );
+                }
+                if ask_v > 0.0 {
+                    let aw = (ask_v / max_vol).clamp(0.0, 1.0) * right_col_w;
+                    ctx.set_fill_color(&with_alpha(ask_color, 0.55));
+                    ctx.fill_rect(right_col_x, row_y + 2.0, aw, row_h - 4.0);
+                    ctx.set_fill_color(&theme.text_primary);
+                    ctx.set_text_align(uzor::render::TextAlign::Left);
+                    ctx.fill_text(
+                        &format_dom_qty(ask_v),
+                        right_col_x + 4.0,
+                        row_y + row_h * 0.5,
+                    );
+                }
+            }
+            DomSkin::DeltaColumn => {
+                let d = ask_v - bid_v;
+                if d.abs() > 0.0 {
+                    let mag = (d.abs() / max_vol).clamp(0.0, 1.0);
+                    let color_str = if d >= 0.0 { delta_pos } else { delta_neg };
+                    let bx = right_col_x;
+                    let bw = mag * right_col_w;
+                    ctx.set_fill_color(&with_alpha(color_str, 0.55));
+                    ctx.fill_rect(bx, row_y + 2.0, bw, row_h - 4.0);
+                    ctx.set_fill_color(&theme.text_primary);
+                    ctx.set_text_align(uzor::render::TextAlign::Left);
+                    ctx.fill_text(
+                        &format_dom_qty(d),
+                        right_col_x + 4.0,
+                        row_y + row_h * 0.5,
+                    );
+                }
+            }
+            DomSkin::DominantSide => {
+                let (winner, win_v) = if ask_v >= bid_v { (ask_color, ask_v) } else { (bid_color, bid_v) };
+                if win_v > 0.0 {
+                    let mag = (win_v / max_vol).clamp(0.0, 1.0);
+                    let total_w = body_w - price_col_w - 8.0;
+                    let bw = mag * (total_w * 0.5);
+                    ctx.set_fill_color(&with_alpha(winner, 0.55));
+                    if ask_v >= bid_v {
+                        ctx.fill_rect(right_col_x, row_y + 2.0, bw, row_h - 4.0);
+                    } else {
+                        let bx = left_col_x + left_col_w - bw;
+                        ctx.fill_rect(bx, row_y + 2.0, bw, row_h - 4.0);
+                    }
+                    ctx.set_fill_color(&theme.text_primary);
+                    if ask_v >= bid_v {
+                        ctx.set_text_align(uzor::render::TextAlign::Left);
+                        ctx.fill_text(&format_dom_qty(win_v), right_col_x + 4.0, row_y + row_h * 0.5);
+                    } else {
+                        ctx.set_text_align(uzor::render::TextAlign::Right);
+                        ctx.fill_text(&format_dom_qty(win_v), left_col_x + left_col_w - 4.0, row_y + row_h * 0.5);
+                    }
+                }
+            }
+            DomSkin::BookmapHybrid => {
+                if bid_v > 0.0 {
+                    let ratio = (bid_v / max_vol).clamp(0.0, 1.0);
+                    let alpha = 0.18 + 0.55 * ratio.sqrt();
+                    ctx.set_fill_color(&with_alpha(bid_color, alpha));
+                    ctx.fill_rect(left_col_x, row_y + 1.0, left_col_w, row_h - 2.0);
+                    ctx.set_fill_color(&theme.text_primary);
+                    ctx.set_text_align(uzor::render::TextAlign::Right);
+                    ctx.fill_text(
+                        &format_dom_qty(bid_v),
+                        left_col_x + left_col_w - 4.0,
+                        row_y + row_h * 0.5,
+                    );
+                }
+                if ask_v > 0.0 {
+                    let ratio = (ask_v / max_vol).clamp(0.0, 1.0);
+                    let alpha = 0.18 + 0.55 * ratio.sqrt();
+                    ctx.set_fill_color(&with_alpha(ask_color, alpha));
+                    ctx.fill_rect(right_col_x, row_y + 1.0, right_col_w, row_h - 2.0);
+                    ctx.set_fill_color(&theme.text_primary);
+                    ctx.set_text_align(uzor::render::TextAlign::Left);
+                    ctx.fill_text(
+                        &format_dom_qty(ask_v),
+                        right_col_x + 4.0,
+                        row_y + row_h * 0.5,
+                    );
+                }
+            }
+        }
+    }
+
+    // Reset text state.
+    ctx.set_text_align(uzor::render::TextAlign::Left);
+    ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+}
+
+fn format_dom_price(p: f64) -> String {
+    if p >= 1_000.0 { format!("{:.2}", p) }
+    else if p >= 1.0 { format!("{:.4}", p) }
+    else { format!("{:.6}", p) }
+}
+
+fn format_dom_qty(q: f64) -> String {
+    let v = q.abs();
+    if v >= 1_000_000.0 { format!("{:.1}M", v / 1_000_000.0) }
+    else if v >= 1_000.0 { format!("{:.1}K", v / 1_000.0) }
+    else if v >= 100.0  { format!("{:.0}", v) }
+    else if v >= 10.0   { format!("{:.1}", v) }
+    else                { format!("{:.2}", v) }
+}
+
+fn with_alpha(hex: &str, alpha: f64) -> String {
+    let s = hex.trim_start_matches('#');
+    let (r, g, b) = match s.len() {
+        6 | 8 => (
+            u8::from_str_radix(&s[0..2], 16).unwrap_or(180),
+            u8::from_str_radix(&s[2..4], 16).unwrap_or(180),
+            u8::from_str_radix(&s[4..6], 16).unwrap_or(180),
+        ),
+        _ => (180u8, 180u8, 180u8),
+    };
+    format!("rgba({},{},{},{:.3})", r, g, b, alpha.clamp(0.0, 1.0))
 }
