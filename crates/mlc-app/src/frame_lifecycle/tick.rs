@@ -1283,21 +1283,50 @@ impl ChartApp {
                         volume: point.volume,
                         levels: point.levels.iter()
                             .map(|(price, buy_vol, sell_vol)| mlc_core::FootprintLevel {
-                                price: *price, buy_vol: *buy_vol, sell_vol: *sell_vol,
+                                price: *price,
+                                buy_vol: *buy_vol,
+                                sell_vol: *sell_vol,
+                                is_single_print: false,
+                                is_unfinished: false,
                             })
                             .collect(),
+                        cumulative_delta: 0.0,
+                        stacked_ask_start: None,
+                        stacked_bid_start: None,
+                        is_absorption: false,
+                    };
+                    // Infer tick_size from the smallest positive level step
+                    // on this bar (fallback: 1.0). Industry default
+                    // imbalance ratio = 3.0×, stack count = 3, absorption
+                    // ratio = 0.15, single-print share = 0.05.
+                    let tick_size = {
+                        let mut step = f64::INFINITY;
+                        for w in new_bar.levels.windows(2) {
+                            let d = (w[1].price - w[0].price).abs();
+                            if d > 0.0 && d < step { step = d; }
+                        }
+                        if step.is_finite() { step } else { 1.0 }
                     };
                     for (cid_fp, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !footprint_cids.contains(cid_fp) { continue; }
                         let store = window.footprint_bars.get_or_insert_with(Vec::new);
+                        let prev_cvd = match store.last() {
+                            Some(last) if last.open_time != new_bar.open_time => last.cumulative_delta,
+                            // Intra-bar update — re-seed from the bar before last.
+                            Some(_) if store.len() >= 2 => store[store.len() - 2].cumulative_delta,
+                            _ => 0.0,
+                        };
+                        let mut bar = new_bar.clone();
+                        bar.compute_extras(prev_cvd, 3.0, 3, 0.15, 0.05, tick_size);
                         // Same open_time → in-place update; new → append.
                         match store.last_mut() {
-                            Some(last) if last.open_time == new_bar.open_time => {
-                                *last = new_bar.clone();
+                            Some(last) if last.open_time == bar.open_time => {
+                                *last = bar;
                             }
-                            _ => store.push(new_bar.clone()),
+                            _ => store.push(bar),
                         }
                     }
+                    let _ = new_bar;
                 }
             }
         }

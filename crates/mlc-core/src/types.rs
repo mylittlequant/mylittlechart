@@ -202,6 +202,14 @@ pub struct FootprintLevel {
     pub price: f64,
     pub buy_vol: f64,
     pub sell_vol: f64,
+    /// `total_vol <= bar.max_total_vol * 0.05`. Renderer marks the cell
+    /// with a dashed border (MQL5 Part 11 SinglePrint).
+    #[serde(default)]
+    pub is_single_print: bool,
+    /// Level at bar high or low AND one side is zero. Renderer marks
+    /// the cell edge with a dot (MQL5 Part 11 UnfinishedBusiness).
+    #[serde(default)]
+    pub is_unfinished: bool,
 }
 
 impl FootprintLevel {
@@ -228,6 +236,23 @@ pub struct FootprintBar {
     pub close: f64,
     pub volume: f64,
     pub levels: Vec<FootprintLevel>,
+    /// Running session-level CVD seeded from prior bar's close.
+    /// Renderer plots a line below the cluster grid (F5).
+    #[serde(default)]
+    pub cumulative_delta: f64,
+    /// Start index of a stacked-ask-imbalance run (3+ consecutive
+    /// diagonal-imbalanced asks). Renderer draws tinted row fill +
+    /// `▲` marker (F1).
+    #[serde(default)]
+    pub stacked_ask_start: Option<usize>,
+    /// Start index of a stacked-bid-imbalance run. Renderer draws
+    /// tinted row fill + `▼` marker (F1).
+    #[serde(default)]
+    pub stacked_bid_start: Option<usize>,
+    /// `|delta| / total_vol <= 0.15` → absorption. Renderer paints a
+    /// background tint + "ABS" label (F2).
+    #[serde(default)]
+    pub is_absorption: bool,
 }
 
 impl FootprintBar {
@@ -263,6 +288,92 @@ impl FootprintBar {
             }
         }
         Some(best)
+    }
+
+    /// Compute and store F1/F2/F4/F5 extras in-place after `levels` are
+    /// finalised. `prev_cvd` is the carrying CVD value from the previous
+    /// bar's `cumulative_delta` (0.0 for the first bar of a session).
+    /// Stays defensive on tiny / empty bars.
+    pub fn compute_extras(
+        &mut self,
+        prev_cvd: f64,
+        imbalance_ratio: f64,
+        stack_count: usize,
+        absorption_threshold: f64,
+        single_print_threshold: f64,
+        tick_size: f64,
+    ) {
+        // CVD carry (F5).
+        self.cumulative_delta = prev_cvd + self.total_delta();
+
+        // Absorption (F2).
+        self.is_absorption = if self.volume > 0.0 {
+            (self.total_delta().abs() / self.volume) <= absorption_threshold
+        } else { false };
+
+        // Max total volume on this bar — used by F4 single print + F3 gate.
+        let max_total: f64 = self
+            .levels
+            .iter()
+            .map(|l| l.total_vol())
+            .fold(0.0_f64, f64::max);
+
+        // F4 single print + unfinished auction per level.
+        let n = self.levels.len();
+        let high = self.high;
+        let low = self.low;
+        let edge = tick_size * 0.5;
+        for (i, lv) in self.levels.iter_mut().enumerate() {
+            lv.is_single_print = max_total > 0.0
+                && lv.total_vol() > 0.0
+                && lv.total_vol() <= max_total * single_print_threshold;
+            lv.is_unfinished = (((lv.price - high).abs() <= edge) || ((lv.price - low).abs() <= edge))
+                && (lv.buy_vol == 0.0 || lv.sell_vol == 0.0);
+            let _ = i;
+            let _ = n;
+        }
+
+        // F1 stacked imbalance — ascending price order assumed.
+        // Ask-side stack: walk top-down, count consecutive
+        // `ask[i] / bid[i-1] >= ratio` with significance gate on max ask.
+        self.stacked_ask_start = None;
+        self.stacked_bid_start = None;
+        if n >= stack_count.max(2) {
+            let max_buy = self.levels.iter().map(|l| l.buy_vol).fold(0.0_f64, f64::max);
+            let max_sell = self.levels.iter().map(|l| l.sell_vol).fold(0.0_f64, f64::max);
+            let mut run_ask: usize = 0;
+            for i in 1..n {
+                let ask = self.levels[i].buy_vol;
+                let bid_below = self.levels[i - 1].sell_vol;
+                if bid_below > 0.0
+                    && ask / bid_below >= imbalance_ratio
+                    && (max_buy <= 0.0 || ask >= 0.30 * max_buy)
+                {
+                    run_ask += 1;
+                    if run_ask >= stack_count && self.stacked_ask_start.is_none() {
+                        self.stacked_ask_start = Some(i + 1 - stack_count);
+                    }
+                } else {
+                    run_ask = 0;
+                }
+            }
+            let mut run_bid: usize = 0;
+            for i in 0..(n - 1) {
+                let bid = self.levels[i].sell_vol;
+                let ask_above = self.levels[i + 1].buy_vol;
+                if ask_above > 0.0
+                    && bid / ask_above >= imbalance_ratio
+                    && (max_sell <= 0.0 || bid >= 0.30 * max_sell)
+                {
+                    run_bid += 1;
+                    if run_bid >= stack_count && self.stacked_bid_start.is_none() {
+                        self.stacked_bid_start = Some(i + 1 - stack_count);
+                    }
+                } else {
+                    run_bid = 0;
+                }
+            }
+        }
     }
 
     /// Value Area: (low_idx, high_idx) — greedy bidirectional expansion

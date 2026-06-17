@@ -70,6 +70,32 @@ const DEFAULT_COLORS: FpColors<'static> = FpColors {
     cell_bg_dim: "rgba(120, 144, 156, 0.04)",
 };
 
+/// Stacked-imbalance + absorption + CVD palette (F1, F2, F5).
+struct FpExtraColors<'a> {
+    stacked_ask_fill: &'a str,
+    stacked_bid_fill: &'a str,
+    absorption_fill: &'a str,
+    cvd_up: &'a str,
+    cvd_down: &'a str,
+    cvd_axis: &'a str,
+}
+
+const EXTRA_COLORS: FpExtraColors<'static> = FpExtraColors {
+    stacked_ask_fill: "rgba(105, 240, 174, 0.22)",
+    stacked_bid_fill: "rgba(255, 82, 82, 0.22)",
+    absorption_fill: "rgba(255, 152, 0, 0.16)",
+    cvd_up: "#26a69a",
+    cvd_down: "#ef5350",
+    cvd_axis: "rgba(120, 144, 156, 0.45)",
+};
+
+/// Height (px) of the CVD sub-strip drawn at the bottom of the chart
+/// area when ≥ 2 footprint bars are visible. Reserved out of the chart
+/// vertical extent — bars render above it.
+const CVD_STRIP_HEIGHT_PX: f64 = 28.0;
+/// Minimum chart height (px) below which we skip the CVD strip.
+const CVD_MIN_CHART_HEIGHT_PX: f64 = 160.0;
+
 /// Entry point — `super::candles::draw_footprint` routes here.
 pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     let bars = match state.footprint_bars {
@@ -115,6 +141,14 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
         return;
     }
 
+    // Reserve a strip at the bottom for the CVD line (F5) when there's
+    // space. The cluster + wicks render in the area above the strip.
+    let cvd_strip = if rect.height >= CVD_MIN_CHART_HEIGHT_PX && end - start >= 2 {
+        Some((rect.y + rect.height - CVD_STRIP_HEIGHT_PX, CVD_STRIP_HEIGHT_PX))
+    } else {
+        None
+    };
+
     // First: draw a thin OHLC wick line per bar so price excursion is
     // still readable behind the cluster text.
     draw_wicks(ctx, state, bars, start, end, bar_w);
@@ -149,8 +183,43 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
             let _ = poc;
         }
 
+        // F2: absorption bar tint across full column.
+        if bar.is_absorption {
+            ctx.set_fill_color(EXTRA_COLORS.absorption_fill);
+            ctx.fill_rect(cell_left, rect.y, bar_w, rect.height);
+        }
+
+        // F1: stacked imbalance zones — tinted row band across the
+        // stacked levels (ascending price). Drawn AFTER VA so the stack
+        // dominates the visual when both regions overlap.
+        if let Some(start_idx) = bar.stacked_ask_start {
+            let lo_lv = &bar.levels[start_idx];
+            let hi_idx = (start_idx + 2).min(bar.levels.len() - 1);
+            let hi_lv = &bar.levels[hi_idx];
+            let top_y = rect.y + price_to_y_local(hi_lv.price, price_scale, rect.height);
+            let bot_y = rect.y + price_to_y_local(lo_lv.price, price_scale, rect.height) + row_h;
+            ctx.set_fill_color(EXTRA_COLORS.stacked_ask_fill);
+            ctx.fill_rect(cell_left, top_y, bar_w, (bot_y - top_y).max(row_h));
+        }
+        if let Some(start_idx) = bar.stacked_bid_start {
+            let lo_lv = &bar.levels[start_idx];
+            let hi_idx = (start_idx + 2).min(bar.levels.len() - 1);
+            let hi_lv = &bar.levels[hi_idx];
+            let top_y = rect.y + price_to_y_local(hi_lv.price, price_scale, rect.height);
+            let bot_y = rect.y + price_to_y_local(lo_lv.price, price_scale, rect.height) + row_h;
+            ctx.set_fill_color(EXTRA_COLORS.stacked_bid_fill);
+            ctx.fill_rect(cell_left, top_y, bar_w, (bot_y - top_y).max(row_h));
+        }
+
         // Max volume on this bar (for dim cell-background gradient).
         let max_vol = bar.levels.iter().map(|l| l.total_vol()).fold(0.0_f64, f64::max);
+        // F3: 30% significance gate — only color cells whose own side's
+        // share of the bar's max same-side volume is meaningful. Stops
+        // tiny-cell imbalances from over-coloring.
+        let max_buy = bar.levels.iter().map(|l| l.buy_vol).fold(0.0_f64, f64::max);
+        let max_sell = bar.levels.iter().map(|l| l.sell_vol).fold(0.0_f64, f64::max);
+        let sig_buy_gate = max_buy * 0.30;
+        let sig_sell_gate = max_sell * 0.30;
 
         // Per-level rendering.
         let bid_x = cx - bar_w * 0.25;
@@ -177,15 +246,36 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
                 }
             }
 
+            // F4: single print dashed border.
+            if lv.is_single_print {
+                ctx.set_stroke_color("rgba(255, 255, 255, 0.55)");
+                ctx.set_stroke_width(1.0);
+                ctx.set_line_dash(&[3.0, 2.0]);
+                ctx.stroke_rect(cell_left + 0.5, y + 0.5, bar_w - 1.0, row_h - 1.0);
+                ctx.set_line_dash(&[]);
+            }
+            // F4: unfinished auction dot marker (at bar extreme with one
+            // side zero) — placed at the relevant cell edge.
+            if lv.is_unfinished {
+                ctx.set_fill_color("#ffd54f");
+                let dot_r = (row_h * 0.18).clamp(2.0, 4.0);
+                let dx = if lv.buy_vol == 0.0 { cell_right - dot_r - 1.0 } else { cell_left + dot_r + 1.0 };
+                let dy = y + row_h * 0.5;
+                ctx.begin_path();
+                ctx.arc(dx, dy, dot_r, 0.0, std::f64::consts::TAU);
+                ctx.fill();
+            }
+
             // Diagonal imbalance: ask[i] vs bid[i-1] (ask-imbalance),
-            // bid[i] vs ask[i+1] (bid-imbalance). Industry-standard
-            // "stacked" logic compares neighbours, not same-row sides.
+            // bid[i] vs ask[i+1] (bid-imbalance). With 30% significance
+            // gate (F3): the *current* side's volume must clear 30% of
+            // the bar's same-side max before we color.
             let ask_imb = li > 0
-                && lv.buy_vol > 0.0
+                && lv.buy_vol > sig_buy_gate
                 && bar.levels[li - 1].sell_vol > 0.0
                 && lv.buy_vol / bar.levels[li - 1].sell_vol >= IMBALANCE_RATIO;
             let bid_imb = li + 1 < bar.levels.len()
-                && lv.sell_vol > 0.0
+                && lv.sell_vol > sig_sell_gate
                 && bar.levels[li + 1].buy_vol > 0.0
                 && lv.sell_vol / bar.levels[li + 1].buy_vol >= IMBALANCE_RATIO;
 
@@ -209,8 +299,30 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
             }
         }
 
-        // Faint vertical separator between bars so the columns read as
-        // distinct objects when many bars are visible.
+        // F1 zone-edge triangle markers (layer 8).
+        if bar.stacked_ask_start.is_some() {
+            ctx.set_fill_color(colors.ask_imb);
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Top);
+            ctx.fill_text("▲", cx, rect.y + 2.0);
+        }
+        if bar.stacked_bid_start.is_some() {
+            ctx.set_fill_color(colors.bid_imb);
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Bottom);
+            ctx.fill_text("▼", cx, rect.y + rect.height - 2.0);
+        }
+
+        // F2: "ABS" info label on absorption bars.
+        if bar.is_absorption {
+            ctx.set_fill_color("rgba(255, 152, 0, 0.95)");
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Top);
+            ctx.set_font(&format!("{}px sans-serif", (font_size as i32 - 1).max(7)));
+            ctx.fill_text("ABS", cx, rect.y + 14.0);
+        }
+
+        // Faint vertical separator between bars.
         ctx.set_stroke_color("rgba(120, 144, 156, 0.18)");
         ctx.set_stroke_width(1.0);
         ctx.begin_path();
@@ -219,10 +331,76 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
         ctx.stroke();
     }
 
+    // F5: CVD sub-strip across the visible window.
+    if let Some((strip_y, strip_h)) = cvd_strip {
+        draw_cvd_strip(ctx, state, bars, start, end, bar_w, strip_y, strip_h);
+    }
+
     // Reset text alignment so subsequent renderers do not inherit our
     // RIGHT/LEFT alignment.
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
+    ctx.set_line_dash(&[]);
+}
+
+/// CVD line drawn into a reserved horizontal strip at the bottom of the
+/// chart area (F5). Auto-scales to min/max of the visible CVD range so
+/// the line uses the full strip vertically. Color flips: green when CVD
+/// is currently rising, red when falling, segment-by-segment.
+fn draw_cvd_strip(
+    ctx: &mut dyn RenderContext,
+    state: &ChartRenderState,
+    bars: &[FootprintBar],
+    start: usize,
+    end: usize,
+    _bar_w: f64,
+    strip_y: f64,
+    strip_h: f64,
+) {
+    let rect = &state.chart_rect;
+    let viewport = state.viewport;
+
+    // Min/max CVD across the visible window.
+    let (mut cvd_min, mut cvd_max) = (f64::INFINITY, f64::NEG_INFINITY);
+    for i in start..end {
+        let v = bars[i].cumulative_delta;
+        if v < cvd_min { cvd_min = v; }
+        if v > cvd_max { cvd_max = v; }
+    }
+    if !cvd_min.is_finite() || !cvd_max.is_finite() { return; }
+    let span = (cvd_max - cvd_min).max(1e-9);
+
+    // Strip background.
+    ctx.set_fill_color("rgba(0, 0, 0, 0.18)");
+    ctx.fill_rect(rect.x, strip_y, rect.width, strip_h);
+
+    // Zero / baseline line.
+    let zero_y = strip_y + strip_h * (1.0 - (-cvd_min / span)).clamp(0.0, 1.0);
+    ctx.set_stroke_color(EXTRA_COLORS.cvd_axis);
+    ctx.set_stroke_width(1.0);
+    ctx.begin_path();
+    ctx.move_to(rect.x, zero_y);
+    ctx.line_to(rect.x + rect.width, zero_y);
+    ctx.stroke();
+
+    // Line segments.
+    ctx.set_stroke_width(1.5);
+    let mut last_xy: Option<(f64, f64, f64)> = None;
+    for i in start..end {
+        let bar = &bars[i];
+        let cx = viewport.bar_to_x(i) + rect.x;
+        let y = strip_y + strip_h * (1.0 - (bar.cumulative_delta - cvd_min) / span);
+        if let Some((px, py, prev_v)) = last_xy {
+            let rising = bar.cumulative_delta >= prev_v;
+            let c = if rising { EXTRA_COLORS.cvd_up } else { EXTRA_COLORS.cvd_down };
+            ctx.set_stroke_color(c);
+            ctx.begin_path();
+            ctx.move_to(px, py);
+            ctx.line_to(cx, y);
+            ctx.stroke();
+        }
+        last_xy = Some((cx, y, bar.cumulative_delta));
+    }
 }
 
 /// Draw a thin wick from each bar's low to high so the candle silhouette
