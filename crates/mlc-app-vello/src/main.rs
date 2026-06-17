@@ -4285,6 +4285,15 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 pw.chart.drain_pending_cure_after_preset_load();
             }
 
+            // Background-warm: hydrate one open-tab preset per frame into
+            // live_preset_cache so a user click on any chrome-bar tab is
+            // always a warm cache hit (zero-flicker swap, ~3ms total).
+            // Self-paced via VecDeque — finite, exits when empty.
+            for pw in self.windows.values_mut() {
+                pw.chart.seed_background_warm_if_idle();
+                pw.chart.drain_one_background_warm();
+            }
+
             // Make any newly created window visible — but hold it back until its
             // chart actually has bars to draw, so a freshly promoted (post-login)
             // window doesn't flash an empty chart for ~2s while data loads. A

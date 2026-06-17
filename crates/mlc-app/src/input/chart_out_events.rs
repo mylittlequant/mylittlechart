@@ -24,6 +24,103 @@ impl ChartApp {
         eprintln!("[ChartApp] drained {} cure jobs in {}us", n, drain_t0.elapsed().as_micros());
     }
 
+    /// Seed `pending_background_warm` once with every `open_tabs` entry
+    /// that is NOT the active preset and NOT already in
+    /// `live_preset_cache`. Called by the host on every frame; idempotent
+    /// after the first successful seed (guarded by `background_warm_seeded`).
+    pub fn seed_background_warm_if_idle(&mut self) {
+        if self.background_warm_seeded { return; }
+        // Only seed once we're fully Live — seeding during a cold load
+        // means we'd race against drain_pending_cold_apply.
+        if self.load_state.is_loading() { return; }
+        if self.pending_cold_apply.is_some() { return; }
+        // Need an active preset materialised first. Otherwise the
+        // background-warm dance has no "current" state to park/unpark
+        // against.
+        if self.panel_app.active_preset_id.is_empty() { return; }
+        let active = self.panel_app.active_preset_id.clone();
+        if !self
+            .panel_app
+            .panel_grid
+            .iter_containers()
+            .any(|(_, w)| self.managers.bubble.bubble_for_chart(w.id).is_some())
+        {
+            // Active slot not yet materialised (still showing the
+            // promote-skeleton). Defer to the next frame.
+            return;
+        }
+        for tab_id in self.panel_app.open_tabs.clone().into_iter() {
+            if tab_id == active { continue; }
+            if tab_id == "__default__" { continue; }
+            if self.live_preset_cache.contains_key(&tab_id) { continue; }
+            if !self.panel_app.presets.contains_key(&tab_id) { continue; }
+            self.pending_background_warm.push_back(tab_id);
+        }
+        self.background_warm_seeded = true;
+        if !self.pending_background_warm.is_empty() {
+            eprintln!(
+                "[ChartApp] background-warm seeded: {} open_tab preset(s) queued for pre-hydration",
+                self.pending_background_warm.len(),
+            );
+        }
+    }
+
+    /// Hydrate ONE queued background-warm preset and park it directly into
+    /// `live_preset_cache`. Called by the host once per frame from
+    /// `about_to_wait`. Each call: park current active → cold-apply target
+    /// → park target → unpark original. All within one event-loop tick so
+    /// no intermediate frame paints — owner sees zero flicker.
+    ///
+    /// Bails out if a cold apply is already in flight or load_state is
+    /// not Live. Returns true if it processed an entry, false otherwise.
+    pub fn drain_one_background_warm(&mut self) -> bool {
+        if self.load_state.is_loading() { return false; }
+        if self.pending_cold_apply.is_some() { return false; }
+        let Some(target_id) = self.pending_background_warm.pop_front() else {
+            return false;
+        };
+        // Skip if it got into the cache via a user click in the meantime.
+        if self.live_preset_cache.contains_key(&target_id) {
+            return true; // counted as drained, just nothing to do
+        }
+        let Some(preset) = self.panel_app.presets.get(&target_id).cloned() else {
+            return true; // gone — silently drop
+        };
+        let active = self.panel_app.active_preset_id.clone();
+        if active.is_empty() {
+            // No active preset to swap around — re-queue and bail.
+            self.pending_background_warm.push_front(target_id);
+            return false;
+        }
+
+        let t0 = std::time::Instant::now();
+        // 1. Park current active into live_preset_cache.
+        self.park_active_preset(&active);
+        // 2. Cold-apply the target preset into the now-placeholder slot.
+        //    Use synthetic zero timings — these are diagnostic-only logs.
+        let lp_total = std::time::Instant::now();
+        self.panel_app.active_preset_id = target_id.clone();
+        self.apply_preset_cold(preset, lp_total, 0, 0, 0, 0, 0);
+        // 3. Park target into live_preset_cache.
+        self.park_active_preset(&target_id);
+        // 4. Unpark original active.
+        let unpark_ok = self.unpark_preset(&active);
+        self.panel_app.active_preset_id = active.clone();
+        if !unpark_ok {
+            eprintln!(
+                "[ChartApp] background-warm WARNING: failed to unpark active '{}' after warming '{}' — active slot left as placeholder",
+                active, target_id,
+            );
+        }
+        eprintln!(
+            "[ChartApp] background-warm processed '{}' in {}us (queue {} remaining)",
+            target_id,
+            t0.elapsed().as_micros(),
+            self.pending_background_warm.len(),
+        );
+        true
+    }
+
     /// Drain a cold-path preset that was stashed by `LoadPreset` one frame
     /// ago. The host calls this AFTER the GpuDone for the skeleton frame
     /// (so the user has already seen "loading skeleton + spinner") and

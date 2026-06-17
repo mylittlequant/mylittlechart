@@ -575,6 +575,55 @@ impl DataBridge {
         out
     }
 
+    /// Preload `wire_symbol_cache` for every symbol in `exchange_id`'s
+    /// catalogue across every account_type variant we'll dispatch on
+    /// (Spot/Margin/Futures/FuturesIso). Eliminates the 130-180ms first-call
+    /// hit on `request_bars` / `request_footprint` / `subscribe_*` at the
+    /// cost of one O(N) scan right after `SymbolsLoaded` arrives.
+    ///
+    /// Idempotent — the cache `.insert()` overwrites, but since the input
+    /// is the source catalogue itself the value is stable.
+    pub fn prewarm_wire_symbol_cache(&self, exchange_id: ExchangeId) {
+        let _t0 = std::time::Instant::now();
+        let symbols = self.station.symbols(exchange_id);
+        if symbols.is_empty() {
+            return;
+        }
+        let n = symbols.len();
+        let Ok(mut cache) = self.wire_symbol_cache.lock() else { return; };
+        // For each SymbolInfo, the wire form is `s.symbol`. wire_symbol's
+        // case (1) returns `requested` unchanged on an exact native match,
+        // so seeding (eid, at, s.symbol) → s.symbol is the answer for all
+        // canonical-form-equals-native exchanges (Binance and most others).
+        // The `at` we cache against is `s.account_type` — that's the only
+        // bucket that would ever resolve to this s.symbol via cases (2)+(3)
+        // of wire_symbol, so caching by it costs nothing and saves the same
+        // miss-path scan on the actual lookup.
+        for s in &symbols {
+            cache.insert(
+                (exchange_id, s.account_type, s.symbol.clone()),
+                s.symbol.clone(),
+            );
+            // Also seed the canonical lookup (base+quote concatenated,
+            // uppercased) — this is what mlc passes when the preset's
+            // bubble carries the canonical form. wire_symbol case (2) /
+            // (3) would otherwise pay the linear scan on first use.
+            if !s.base_asset.is_empty() && !s.quote_asset.is_empty() {
+                let canonical = format!("{}{}", s.base_asset, s.quote_asset).to_uppercase();
+                if canonical != s.symbol {
+                    cache.insert(
+                        (exchange_id, s.account_type, canonical),
+                        s.symbol.clone(),
+                    );
+                }
+            }
+        }
+        eprintln!(
+            "[Bridge::prewarm_wire_symbol_cache] {:?}: seeded {} symbols in {}us",
+            exchange_id, n, _t0.elapsed().as_micros(),
+        );
+    }
+
     /// Get a reference to the connector hub.
     pub fn pool(&self) -> &ExchangeHub {
         &self.hub

@@ -1162,6 +1162,12 @@ impl ChartApp {
                     let _t = std::time::Instant::now();
                     self.exchange_symbols.insert(exchange_id, symbols);
                     symbols_insert_us += _t.elapsed().as_micros() as u64;
+                    // Preload bridge's wire_symbol cache for this exchange.
+                    // Trades one O(N) scan now for ~180ms saved on the FIRST
+                    // request_bars / subscribe_* per (symbol, account_type)
+                    // pair later — turns the first cold tab click into a
+                    // pure UI swap instead of a 180ms freeze.
+                    self.bridge.prewarm_wire_symbol_cache(exchange_id);
                 }
                 LiveUpdate::Error { exchange_id, account_type, symbol, timeframe: tf_name_err, message } => {
                     eprintln!("[ChartApp] live-data error ({:?}): {}", exchange_id, message);

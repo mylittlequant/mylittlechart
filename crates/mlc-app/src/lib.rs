@@ -560,6 +560,24 @@ pub struct ChartApp {
     /// 2-second freeze.
     pub pending_cold_apply: Option<PendingColdApply>,
 
+    /// Background pre-warm queue. Populated once `load_state == Live` for
+    /// the first time post-startup with every `open_tabs` entry that is
+    /// NOT the currently active preset and NOT already in
+    /// `live_preset_cache`. Drained one entry per frame by the host —
+    /// each entry: park current Live state → cold-apply target → park
+    /// target into cache → unpark original. All within one event-loop
+    /// tick so no intermediate frame renders. Cold body on warmed
+    /// wire_symbol cache is ~1-5ms per preset → ~6-50ms total spread
+    /// across as many frames as there are tabs. Owner gets warm cache
+    /// hits on every tab click going forward (the chrome-bar visible
+    /// set was the explicit ask).
+    pub pending_background_warm: std::collections::VecDeque<String>,
+    /// Set to true once `pending_background_warm` has been seeded from
+    /// `open_tabs` (done one-shot the first time we observe
+    /// `load_state == Live` with an active preset). Prevents re-seeding
+    /// on every subsequent frame.
+    pub background_warm_seeded: bool,
+
     /// Timestamp of the last backfill triggered after a broadcast lag event.
     ///
     /// Used to debounce rapid successive `Lagged` errors — backfill is only
@@ -1094,6 +1112,8 @@ impl ChartApp {
             pending_updater_cmd: None,
             pending_cure_after_preset_load: Vec::new(),
             pending_cold_apply: None,
+            pending_background_warm: std::collections::VecDeque::new(),
+            background_warm_seeded: false,
             last_backfill_time: std::time::Instant::now(),
             lag_event_count: 0,
             recalc_count: 0,
@@ -1446,6 +1466,8 @@ impl ChartApp {
             pending_updater_cmd: None,
             pending_cure_after_preset_load: Vec::new(),
             pending_cold_apply: None,
+            pending_background_warm: std::collections::VecDeque::new(),
+            background_warm_seeded: false,
             last_backfill_time: std::time::Instant::now(),
             lag_event_count: 0,
             recalc_count: 0,
@@ -1696,6 +1718,8 @@ impl ChartApp {
             pending_updater_cmd: None,
             pending_cure_after_preset_load: Vec::new(),
             pending_cold_apply: None,
+            pending_background_warm: std::collections::VecDeque::new(),
+            background_warm_seeded: false,
             last_backfill_time: std::time::Instant::now(),
             lag_event_count: 0,
             recalc_count: 0,
