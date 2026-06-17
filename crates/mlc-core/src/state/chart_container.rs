@@ -165,6 +165,29 @@ pub struct ChartContainer {
     /// `ChartRenderState::footprint_bars`.
     pub footprint_bars: Option<Vec<crate::types::FootprintBar>>,
 
+    /// Renko bricks. `None` for non-renko chart types. Populated by the
+    /// live-data bridge when `chart_type == "renko"`. Each entry is one
+    /// closed brick — no in-progress brick because Renko bricks are
+    /// atomic at the station level.
+    pub renko_bars: Option<Vec<crate::types::RenkoBrick>>,
+
+    /// Point-and-Figure columns. `None` for non-pnf chart types. Each
+    /// emit replaces the same-`column_id` entry in-place; a new
+    /// `column_id` appends.
+    pub pnf_columns: Option<Vec<crate::types::PnfColumn>>,
+
+    /// Kagi segments. `None` for non-kagi chart types. Append-only —
+    /// each emit is a closed segment.
+    pub kagi_segments: Option<Vec<crate::types::KagiSegment>>,
+
+    /// Cumulative Volume Delta line samples. `None` for charts that
+    /// don't request the CVD overlay/panel. Append-only.
+    pub cvd_line: Option<Vec<crate::types::CvdSample>>,
+
+    /// TPO Market Profile session snapshots, keyed by `session_date_ms`
+    /// via in-place upsert on the last entry. `None` for non-TPO charts.
+    pub tpo_sessions: Option<Vec<crate::types::TpoSession>>,
+
     // === Viewport & Scales ===
     /// Viewport state (pan/zoom)
     pub viewport: Viewport,
@@ -425,6 +448,11 @@ impl ChartContainer {
             current_bubble_id: BubbleId(0),
             bars: Vec::new(),
             footprint_bars: None,
+            renko_bars: None,
+            pnf_columns: None,
+            kagi_segments: None,
+            cvd_line: None,
+            tpo_sessions: None,
             viewport: Viewport::default(),
             price_scale: PriceScale::default(),
             time_scale: TimeScale::new(),
@@ -739,6 +767,11 @@ impl ChartContainer {
             // === Data (cloned) ===
             bars: self.bars.clone(),
             footprint_bars: self.footprint_bars.clone(),
+            renko_bars: self.renko_bars.clone(),
+            pnf_columns: self.pnf_columns.clone(),
+            kagi_segments: self.kagi_segments.clone(),
+            cvd_line: self.cvd_line.clone(),
+            tpo_sessions: self.tpo_sessions.clone(),
 
             // === Viewport & Scales (cloned) ===
             viewport: self.viewport.clone(),
@@ -1069,6 +1102,11 @@ impl ChartContainer {
 
             bars: self.bars.clone(),
             footprint_bars: self.footprint_bars.clone(),
+            renko_bars: self.renko_bars.clone(),
+            pnf_columns: self.pnf_columns.clone(),
+            kagi_segments: self.kagi_segments.clone(),
+            cvd_line: self.cvd_line.clone(),
+            tpo_sessions: self.tpo_sessions.clone(),
             viewport: self.viewport.clone(),
             price_scale: self.price_scale.clone(),
             time_scale: self.time_scale.clone(),

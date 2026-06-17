@@ -233,6 +233,55 @@ pub enum LiveUpdate {
         symbol: String,
         point: digdigdig3_station::data::FootprintPoint,
     },
+
+    /// Live Renko brick close from a `Stream::RenkoBar` subscription.
+    /// Each event is one fully-closed brick (no in-progress emit —
+    /// bricks are atomic, see TradeToRenkoBarDerived).
+    RenkoBarUpdate {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        point: digdigdig3_station::data::RenkoBrickPoint,
+    },
+
+    /// Live Point-and-Figure column update from a `Stream::PnfBar`
+    /// subscription. Emitted on every trade that extends the current
+    /// column or rolls into a new one — readers group by `column_id`.
+    PnfBarUpdate {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        point: digdigdig3_station::data::PnfColumnPoint,
+    },
+
+    /// Live Kagi segment / connector close from a `Stream::KagiBar`
+    /// subscription. One event per closed segment.
+    KagiBarUpdate {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        point: digdigdig3_station::data::KagiSegmentPoint,
+    },
+
+    /// Cumulative Volume Delta scalar update from `Stream::CvdLine`.
+    /// One event per upstream trade.
+    CvdLineUpdate {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        point: digdigdig3_station::data::ScalarBarPoint,
+    },
+
+    /// TPO Market Profile session snapshot from `Stream::TpoProfile`.
+    /// Upserted on `open_time = session_date_ms`; the receiver typically
+    /// keeps a single in-progress session plus a small ring of closed
+    /// sessions for the historical-sessions view.
+    TpoProfileUpdate {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        point: digdigdig3_station::data::TpoSessionPoint,
+    },
 }
 
 /// Async-to-sync bridge that owns a tokio runtime and a connector pool.
@@ -1428,6 +1477,134 @@ impl DataBridge {
         self.abort_derived_sub(exchange_id, symbol, account_type);
     }
 
+    /// Subscribe to a Renko brick stream (`box_size_units` price-move per
+    /// brick, ×1e8 fixed-point; `reversal_count` = bricks required to
+    /// flip direction, industry standard = 2).
+    pub fn request_renko_bars(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        box_size_units: u64,
+        reversal_count: u8,
+    ) {
+        self.abort_derived_sub(exchange_id, symbol, account_type);
+        let station = self.station.clone();
+        let tx = self.tx.clone();
+        let symbol_str = symbol.to_string();
+        let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
+        let sub_key = (exchange_id, symbol.to_string(), account_type);
+        let stream = digdigdig3_station::Stream::RenkoBar(box_size_units, reversal_count);
+        let handle = Self::spawn_renko_sub(
+            &self.runtime, station, tx, exchange_id, account_type,
+            symbol_str, symbol_wire, stream,
+        );
+        if let Ok(mut subs) = self.derived_subs.lock() {
+            subs.insert(sub_key, handle);
+        }
+    }
+
+    /// Subscribe to a Point-and-Figure column stream.
+    pub fn request_pnf_bars(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        box_size_units: u64,
+        reversal_count: u8,
+    ) {
+        self.abort_derived_sub(exchange_id, symbol, account_type);
+        let station = self.station.clone();
+        let tx = self.tx.clone();
+        let symbol_str = symbol.to_string();
+        let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
+        let sub_key = (exchange_id, symbol.to_string(), account_type);
+        let stream = digdigdig3_station::Stream::PnfBar(box_size_units, reversal_count);
+        let handle = Self::spawn_pnf_sub(
+            &self.runtime, station, tx, exchange_id, account_type,
+            symbol_str, symbol_wire, stream,
+        );
+        if let Ok(mut subs) = self.derived_subs.lock() {
+            subs.insert(sub_key, handle);
+        }
+    }
+
+    /// Subscribe to a Kagi segment stream (`reversal_units` × 1e8).
+    pub fn request_kagi_bars(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        reversal_units: u64,
+    ) {
+        self.abort_derived_sub(exchange_id, symbol, account_type);
+        let station = self.station.clone();
+        let tx = self.tx.clone();
+        let symbol_str = symbol.to_string();
+        let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
+        let sub_key = (exchange_id, symbol.to_string(), account_type);
+        let stream = digdigdig3_station::Stream::KagiBar(reversal_units);
+        let handle = Self::spawn_kagi_sub(
+            &self.runtime, station, tx, exchange_id, account_type,
+            symbol_str, symbol_wire, stream,
+        );
+        if let Ok(mut subs) = self.derived_subs.lock() {
+            subs.insert(sub_key, handle);
+        }
+    }
+
+    /// Subscribe to the Cumulative Volume Delta line for an instrument.
+    pub fn request_cvd_line(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) {
+        self.abort_derived_sub(exchange_id, symbol, account_type);
+        let station = self.station.clone();
+        let tx = self.tx.clone();
+        let symbol_str = symbol.to_string();
+        let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
+        let sub_key = (exchange_id, symbol.to_string(), account_type);
+        let stream = digdigdig3_station::Stream::CvdLine;
+        let handle = Self::spawn_cvd_sub(
+            &self.runtime, station, tx, exchange_id, account_type,
+            symbol_str, symbol_wire, stream,
+        );
+        if let Ok(mut subs) = self.derived_subs.lock() {
+            subs.insert(sub_key, handle);
+        }
+    }
+
+    /// Subscribe to a TPO Market Profile session stream.
+    ///
+    /// `freq_minutes` = letter-bucket width (industry default = 30).
+    /// `source` selects the upstream channel (Trade or 1m kline) — see
+    /// `digdigdig3_station::TpoSource`.
+    pub fn request_tpo(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        freq_minutes: u16,
+        source: digdigdig3_station::TpoSource,
+    ) {
+        self.abort_derived_sub(exchange_id, symbol, account_type);
+        let station = self.station.clone();
+        let tx = self.tx.clone();
+        let symbol_str = symbol.to_string();
+        let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
+        let sub_key = (exchange_id, symbol.to_string(), account_type);
+        let stream = digdigdig3_station::Stream::TpoProfile(freq_minutes, source);
+        let handle = Self::spawn_tpo_sub(
+            &self.runtime, station, tx, exchange_id, account_type,
+            symbol_str, symbol_wire, stream,
+        );
+        if let Ok(mut subs) = self.derived_subs.lock() {
+            subs.insert(sub_key, handle);
+        }
+    }
+
     /// Abort the active derived/footprint subscription for an instrument, if any.
     fn abort_derived_sub(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
         if let Ok(mut subs) = self.derived_subs.lock() {
@@ -1622,6 +1799,198 @@ impl DataBridge {
                 "[Bridge::footprint-fwd exited] {:?} {} stream={} events_emitted={}",
                 exchange_id, symbol_canonical, stream_label, fp_n,
             );
+        })
+    }
+
+    /// Spawn a Renko station subscriber. Station emits one
+    /// `Event::RenkoBar` per closed brick; we re-emit as
+    /// `LiveUpdate::RenkoBarUpdate`.
+    fn spawn_renko_sub(
+        runtime: &Runtime,
+        station: std::sync::Arc<digdigdig3_station::Station>,
+        tx: tokio::sync::broadcast::Sender<LiveUpdate>,
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol_canonical: String,
+        symbol_wire: String,
+        stream: digdigdig3_station::Stream,
+    ) -> tokio::task::JoinHandle<()> {
+        runtime.spawn(async move {
+            let stream_label = format!("{:?}", stream);
+            let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                exchange_id, symbol_wire.clone(), account_type, [stream],
+            );
+            let mut report = match station.subscribe(sub_set).await {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("[Bridge::renko-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
+                        exchange_id, symbol_canonical, symbol_wire, e);
+                    return;
+                }
+            };
+            while let Some(ev) = report.handle.recv().await {
+                if let digdigdig3_station::Event::RenkoBar { point, .. } = ev {
+                    let _ = tx.send(LiveUpdate::RenkoBarUpdate {
+                        exchange_id, account_type,
+                        symbol: symbol_canonical.clone(),
+                        point,
+                    });
+                }
+            }
+            eprintln!("[Bridge::renko-fwd exited] {:?} {} stream={}",
+                exchange_id, symbol_canonical, stream_label);
+        })
+    }
+
+    /// Spawn a P&F station subscriber.
+    fn spawn_pnf_sub(
+        runtime: &Runtime,
+        station: std::sync::Arc<digdigdig3_station::Station>,
+        tx: tokio::sync::broadcast::Sender<LiveUpdate>,
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol_canonical: String,
+        symbol_wire: String,
+        stream: digdigdig3_station::Stream,
+    ) -> tokio::task::JoinHandle<()> {
+        runtime.spawn(async move {
+            let stream_label = format!("{:?}", stream);
+            let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                exchange_id, symbol_wire.clone(), account_type, [stream],
+            );
+            let mut report = match station.subscribe(sub_set).await {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("[Bridge::pnf-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
+                        exchange_id, symbol_canonical, symbol_wire, e);
+                    return;
+                }
+            };
+            while let Some(ev) = report.handle.recv().await {
+                if let digdigdig3_station::Event::PnfBar { point, .. } = ev {
+                    let _ = tx.send(LiveUpdate::PnfBarUpdate {
+                        exchange_id, account_type,
+                        symbol: symbol_canonical.clone(),
+                        point,
+                    });
+                }
+            }
+            eprintln!("[Bridge::pnf-fwd exited] {:?} {} stream={}",
+                exchange_id, symbol_canonical, stream_label);
+        })
+    }
+
+    /// Spawn a Kagi station subscriber.
+    fn spawn_kagi_sub(
+        runtime: &Runtime,
+        station: std::sync::Arc<digdigdig3_station::Station>,
+        tx: tokio::sync::broadcast::Sender<LiveUpdate>,
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol_canonical: String,
+        symbol_wire: String,
+        stream: digdigdig3_station::Stream,
+    ) -> tokio::task::JoinHandle<()> {
+        runtime.spawn(async move {
+            let stream_label = format!("{:?}", stream);
+            let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                exchange_id, symbol_wire.clone(), account_type, [stream],
+            );
+            let mut report = match station.subscribe(sub_set).await {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("[Bridge::kagi-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
+                        exchange_id, symbol_canonical, symbol_wire, e);
+                    return;
+                }
+            };
+            while let Some(ev) = report.handle.recv().await {
+                if let digdigdig3_station::Event::KagiBar { point, .. } = ev {
+                    let _ = tx.send(LiveUpdate::KagiBarUpdate {
+                        exchange_id, account_type,
+                        symbol: symbol_canonical.clone(),
+                        point,
+                    });
+                }
+            }
+            eprintln!("[Bridge::kagi-fwd exited] {:?} {} stream={}",
+                exchange_id, symbol_canonical, stream_label);
+        })
+    }
+
+    /// Spawn a CVD station subscriber.
+    fn spawn_cvd_sub(
+        runtime: &Runtime,
+        station: std::sync::Arc<digdigdig3_station::Station>,
+        tx: tokio::sync::broadcast::Sender<LiveUpdate>,
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol_canonical: String,
+        symbol_wire: String,
+        stream: digdigdig3_station::Stream,
+    ) -> tokio::task::JoinHandle<()> {
+        runtime.spawn(async move {
+            let stream_label = format!("{:?}", stream);
+            let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                exchange_id, symbol_wire.clone(), account_type, [stream],
+            );
+            let mut report = match station.subscribe(sub_set).await {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("[Bridge::cvd-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
+                        exchange_id, symbol_canonical, symbol_wire, e);
+                    return;
+                }
+            };
+            while let Some(ev) = report.handle.recv().await {
+                if let digdigdig3_station::Event::CvdLine { point, .. } = ev {
+                    let _ = tx.send(LiveUpdate::CvdLineUpdate {
+                        exchange_id, account_type,
+                        symbol: symbol_canonical.clone(),
+                        point,
+                    });
+                }
+            }
+            eprintln!("[Bridge::cvd-fwd exited] {:?} {} stream={}",
+                exchange_id, symbol_canonical, stream_label);
+        })
+    }
+
+    /// Spawn a TPO station subscriber.
+    fn spawn_tpo_sub(
+        runtime: &Runtime,
+        station: std::sync::Arc<digdigdig3_station::Station>,
+        tx: tokio::sync::broadcast::Sender<LiveUpdate>,
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol_canonical: String,
+        symbol_wire: String,
+        stream: digdigdig3_station::Stream,
+    ) -> tokio::task::JoinHandle<()> {
+        runtime.spawn(async move {
+            let stream_label = format!("{:?}", stream);
+            let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                exchange_id, symbol_wire.clone(), account_type, [stream],
+            );
+            let mut report = match station.subscribe(sub_set).await {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("[Bridge::tpo-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
+                        exchange_id, symbol_canonical, symbol_wire, e);
+                    return;
+                }
+            };
+            while let Some(ev) = report.handle.recv().await {
+                if let digdigdig3_station::Event::TpoProfile { point, .. } = ev {
+                    let _ = tx.send(LiveUpdate::TpoProfileUpdate {
+                        exchange_id, account_type,
+                        symbol: symbol_canonical.clone(),
+                        point,
+                    });
+                }
+            }
+            eprintln!("[Bridge::tpo-fwd exited] {:?} {} stream={}",
+                exchange_id, symbol_canonical, stream_label);
         })
     }
 

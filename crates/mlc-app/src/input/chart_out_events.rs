@@ -298,7 +298,13 @@ impl ChartApp {
                     // TradeToFootprintDerived forwarders.
                     "range_bar"     => Some("range_bar"),
                     "volume_bar"    => Some("volume_bar"),
+                    "tick_bar"      => Some("tick_bar"),
                     "footprint"     => Some("footprint"),
+                    "renko"         => Some("renko"),
+                    "pnf"           => Some("pnf"),
+                    "kagi"          => Some("kagi"),
+                    "cvd"           => Some("cvd"),
+                    "tpo"           => Some("tpo"),
                     _ => {
                         eprintln!("[ChartApp] unknown chart_type: {}", chart_type);
                         None
@@ -343,7 +349,8 @@ impl ChartApp {
                     //      bar arrives.
                     let is_derived_target = matches!(
                         ct,
-                        "range_bar" | "volume_bar" | "footprint"
+                        "range_bar" | "volume_bar" | "tick_bar" | "footprint"
+                        | "renko" | "pnf" | "kagi" | "cvd" | "tpo"
                     );
                     if let Some(active_leaf) = self.panel_app.panel_grid.active_container() {
                         let cid = active_leaf.id;
@@ -403,6 +410,35 @@ impl ChartApp {
                                             let iv = if !chart_interval.is_empty() { chart_interval } else { "1m" };
                                             self.bridge.request_footprint(self.active_exchange, &symbol, at, iv);
                                         }
+                                        "renko" => {
+                                            // Default: 0.5 % of last close for the box size; reversal = 2 (TradeStation classic).
+                                            let units = if chart_param > 0.0 { chart_param } else { 10.0 };
+                                            let scaled = (units * 1e8) as u64;
+                                            self.bridge.request_renko_bars(self.active_exchange, &symbol, at, scaled, 2);
+                                        }
+                                        "pnf" => {
+                                            // Default reversal = 3 (TradeStation classic).
+                                            let units = if chart_param > 0.0 { chart_param } else { 10.0 };
+                                            let scaled = (units * 1e8) as u64;
+                                            self.bridge.request_pnf_bars(self.active_exchange, &symbol, at, scaled, 3);
+                                        }
+                                        "kagi" => {
+                                            // Default reversal = 1 % of current price expressed as absolute units.
+                                            let units = if chart_param > 0.0 { chart_param } else { 10.0 };
+                                            let scaled = (units * 1e8) as u64;
+                                            self.bridge.request_kagi_bars(self.active_exchange, &symbol, at, scaled);
+                                        }
+                                        "cvd" => {
+                                            self.bridge.request_cvd_line(self.active_exchange, &symbol, at);
+                                        }
+                                        "tpo" => {
+                                            // Default 30-min letter buckets, Trade-source path (sub-tick precision, fast cold start).
+                                            let freq = if chart_param > 0.0 { chart_param as u16 } else { 30 };
+                                            self.bridge.request_tpo(
+                                                self.active_exchange, &symbol, at, freq,
+                                                mlc_live_data::TpoSource::TradeBucket,
+                                            );
+                                        }
                                         _ => {
                                             // Plain render type (candle /
                                             // bars / line / ...). Kline
@@ -458,6 +494,9 @@ impl ChartApp {
                                 match active_ct.as_str() {
                                     "range_bar"  => self.bridge.request_range_bars(self.active_exchange, &symbol, at, scaled),
                                     "volume_bar" => self.bridge.request_volume_bars(self.active_exchange, &symbol, at, scaled),
+                                    "renko"      => self.bridge.request_renko_bars(self.active_exchange, &symbol, at, scaled, 2),
+                                    "pnf"        => self.bridge.request_pnf_bars(self.active_exchange, &symbol, at, scaled, 3),
+                                    "kagi"       => self.bridge.request_kagi_bars(self.active_exchange, &symbol, at, scaled),
                                     _ => {}
                                 }
                             }

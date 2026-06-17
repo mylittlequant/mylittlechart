@@ -1328,6 +1328,173 @@ impl ChartApp {
                     }
                     let _ = new_bar;
                 }
+                // Renko brick stream — each emit is one closed brick.
+                // Append to `window.renko_bars` for every window whose
+                // chart_type == "renko" and (symbol, account) matches.
+                LiveUpdate::RenkoBarUpdate { account_type: at, symbol: sym, point, .. } => {
+                    let at_label = at.short_label();
+                    let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
+                        let panels_store = &self.panels_store;
+                        self.panel_app.panel_grid.containers().iter()
+                            .filter_map(|(cid, win)| {
+                                let s = self.managers.bubble.symbol_for_chart(*cid)?;
+                                let a = self.managers.bubble.account_type_for_chart(*cid)?;
+                                let is_renko = panels_store.chart_panel
+                                    .get(&win.chart_panel_id)
+                                    .map(|p| p.chart_type == "renko")
+                                    .unwrap_or(false);
+                                if !is_renko || s != sym.as_str() || a != at_label { return None; }
+                                Some(*cid)
+                            }).collect()
+                    };
+                    if target_cids.is_empty() { continue; }
+                    let brick = mlc_core::types::RenkoBrick {
+                        open_time: point.open_time,
+                        bottom: point.bottom,
+                        top: point.top,
+                        up: point.up,
+                        volume: point.volume,
+                        trades_count: point.trades_count,
+                    };
+                    for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+                        if !target_cids.contains(cid_) { continue; }
+                        window.renko_bars.get_or_insert_with(Vec::new).push(brick.clone());
+                    }
+                }
+                // P&F column stream — emit may update the current open
+                // column (same column_id) or roll into a new one.
+                LiveUpdate::PnfBarUpdate { account_type: at, symbol: sym, point, .. } => {
+                    let at_label = at.short_label();
+                    let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
+                        let panels_store = &self.panels_store;
+                        self.panel_app.panel_grid.containers().iter()
+                            .filter_map(|(cid, win)| {
+                                let s = self.managers.bubble.symbol_for_chart(*cid)?;
+                                let a = self.managers.bubble.account_type_for_chart(*cid)?;
+                                let is_pnf = panels_store.chart_panel
+                                    .get(&win.chart_panel_id)
+                                    .map(|p| p.chart_type == "pnf")
+                                    .unwrap_or(false);
+                                if !is_pnf || s != sym.as_str() || a != at_label { return None; }
+                                Some(*cid)
+                            }).collect()
+                    };
+                    if target_cids.is_empty() { continue; }
+                    let col = mlc_core::types::PnfColumn {
+                        open_time: point.open_time,
+                        column_id: point.column_id,
+                        is_x: point.is_x,
+                        bottom: point.bottom,
+                        top: point.top,
+                        volume: point.volume,
+                        trades_count: point.trades_count,
+                    };
+                    for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+                        if !target_cids.contains(cid_) { continue; }
+                        let store = window.pnf_columns.get_or_insert_with(Vec::new);
+                        match store.last_mut() {
+                            Some(last) if last.column_id == col.column_id => *last = col.clone(),
+                            _ => store.push(col.clone()),
+                        }
+                    }
+                }
+                // Kagi segment stream — append-only, one event per
+                // closed segment.
+                LiveUpdate::KagiBarUpdate { account_type: at, symbol: sym, point, .. } => {
+                    let at_label = at.short_label();
+                    let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
+                        let panels_store = &self.panels_store;
+                        self.panel_app.panel_grid.containers().iter()
+                            .filter_map(|(cid, win)| {
+                                let s = self.managers.bubble.symbol_for_chart(*cid)?;
+                                let a = self.managers.bubble.account_type_for_chart(*cid)?;
+                                let is_kagi = panels_store.chart_panel
+                                    .get(&win.chart_panel_id)
+                                    .map(|p| p.chart_type == "kagi")
+                                    .unwrap_or(false);
+                                if !is_kagi || s != sym.as_str() || a != at_label { return None; }
+                                Some(*cid)
+                            }).collect()
+                    };
+                    if target_cids.is_empty() { continue; }
+                    let seg = mlc_core::types::KagiSegment {
+                        open_time: point.open_time,
+                        start_price: point.start_price,
+                        end_price: point.end_price,
+                        up: point.up,
+                        yang: point.yang,
+                        is_connector: point.is_connector,
+                    };
+                    for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+                        if !target_cids.contains(cid_) { continue; }
+                        window.kagi_segments.get_or_insert_with(Vec::new).push(seg.clone());
+                    }
+                }
+                // CVD line update — append a scalar sample.
+                LiveUpdate::CvdLineUpdate { account_type: at, symbol: sym, point, .. } => {
+                    let at_label = at.short_label();
+                    let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
+                        let panels_store = &self.panels_store;
+                        self.panel_app.panel_grid.containers().iter()
+                            .filter_map(|(cid, win)| {
+                                let s = self.managers.bubble.symbol_for_chart(*cid)?;
+                                let a = self.managers.bubble.account_type_for_chart(*cid)?;
+                                let is_cvd = panels_store.chart_panel
+                                    .get(&win.chart_panel_id)
+                                    .map(|p| p.chart_type == "cvd")
+                                    .unwrap_or(false);
+                                if !is_cvd || s != sym.as_str() || a != at_label { return None; }
+                                Some(*cid)
+                            }).collect()
+                    };
+                    if target_cids.is_empty() { continue; }
+                    let sample = mlc_core::types::CvdSample {
+                        ts_ms: point.ts_ms,
+                        value: point.value,
+                    };
+                    for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+                        if !target_cids.contains(cid_) { continue; }
+                        window.cvd_line.get_or_insert_with(Vec::new).push(sample);
+                    }
+                }
+                // TPO session snapshot — upsert in place by session_date
+                // (the last entry IS the current session; new date appends).
+                LiveUpdate::TpoProfileUpdate { account_type: at, symbol: sym, point, .. } => {
+                    let at_label = at.short_label();
+                    let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
+                        let panels_store = &self.panels_store;
+                        self.panel_app.panel_grid.containers().iter()
+                            .filter_map(|(cid, win)| {
+                                let s = self.managers.bubble.symbol_for_chart(*cid)?;
+                                let a = self.managers.bubble.account_type_for_chart(*cid)?;
+                                let is_tpo = panels_store.chart_panel
+                                    .get(&win.chart_panel_id)
+                                    .map(|p| p.chart_type == "tpo")
+                                    .unwrap_or(false);
+                                if !is_tpo || s != sym.as_str() || a != at_label { return None; }
+                                Some(*cid)
+                            }).collect()
+                    };
+                    if target_cids.is_empty() { continue; }
+                    let session = mlc_core::types::TpoSession {
+                        open_time: point.open_time,
+                        tick_size: point.tick_size,
+                        session_high: point.session_high,
+                        session_low: point.session_low,
+                        poc_price: point.poc_price,
+                        vah_price: point.vah_price,
+                        val_price: point.val_price,
+                        rows: point.rows.clone(),
+                    };
+                    for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+                        if !target_cids.contains(cid_) { continue; }
+                        let store = window.tpo_sessions.get_or_insert_with(Vec::new);
+                        match store.last_mut() {
+                            Some(last) if last.open_time == session.open_time => *last = session.clone(),
+                            _ => store.push(session.clone()),
+                        }
+                    }
+                }
             }
         }
         self.last_event_process_us = events_start.elapsed().as_micros() as u64;

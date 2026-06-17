@@ -408,6 +408,94 @@ impl FootprintBar {
     }
 }
 
+// =============================================================================
+// Renko / Point-and-Figure / Kagi / CVD / TPO renderer-facing types
+// =============================================================================
+//
+// These mirror the dig3-station Point types but use mlc-native names
+// (and only the fields the renderer needs). The bridge converts from
+// station Point → these on event arrival, so the renderer never holds
+// a station-typed reference.
+
+/// One Renko brick mirroring `digdigdig3_station::data::RenkoBrickPoint`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RenkoBrick {
+    pub open_time: i64,
+    pub bottom: f64,
+    pub top: f64,
+    pub up: bool,
+    pub volume: f64,
+    pub trades_count: u64,
+}
+
+impl RenkoBrick {
+    #[inline] pub fn ts_ms(&self) -> i64 { self.open_time }
+}
+
+/// One Point-and-Figure column mirroring
+/// `digdigdig3_station::data::PnfColumnPoint`. Renderer groups consecutive
+/// emits with the same `column_id` into one column block (the same id
+/// emits multiple times as the column extends).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PnfColumn {
+    pub open_time: i64,
+    pub column_id: u64,
+    pub is_x: bool,
+    pub bottom: f64,
+    pub top: f64,
+    pub volume: f64,
+    pub trades_count: u64,
+}
+
+impl PnfColumn {
+    #[inline] pub fn ts_ms(&self) -> i64 { self.open_time }
+}
+
+/// One Kagi segment / connector mirroring
+/// `digdigdig3_station::data::KagiSegmentPoint`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct KagiSegment {
+    pub open_time: i64,
+    pub start_price: f64,
+    pub end_price: f64,
+    pub up: bool,
+    pub yang: bool,
+    pub is_connector: bool,
+}
+
+impl KagiSegment {
+    #[inline] pub fn ts_ms(&self) -> i64 { self.open_time }
+}
+
+/// One Cumulative Volume Delta sample mirroring
+/// `digdigdig3_station::data::ScalarBarPoint` but scoped to CVD usage.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+pub struct CvdSample {
+    pub ts_ms: i64,
+    pub value: f64,
+}
+
+/// One TPO Market Profile session snapshot mirroring
+/// `digdigdig3_station::data::TpoSessionPoint`. The renderer reads `rows`
+/// to draw letter glyphs and `poc_price` / `vah_price` / `val_price` to
+/// overlay the POC + Value Area horizontal lines.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TpoSession {
+    pub open_time: i64,
+    pub tick_size: f64,
+    pub session_high: f64,
+    pub session_low: f64,
+    pub poc_price: f64,
+    pub vah_price: f64,
+    pub val_price: f64,
+    /// `(price, letters)` rows sorted ascending by price.
+    pub rows: Vec<(f64, Vec<char>)>,
+}
+
+impl TpoSession {
+    #[inline] pub fn ts_ms(&self) -> i64 { self.open_time }
+}
+
 /// OHLCV bar data with timestamp
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct Bar {
