@@ -379,13 +379,20 @@ impl FootprintState {
                 let delta = ask_vol - bid_vol;
                 format!("{:+}", delta as i64)
             }
-            FootprintMode::Volume | FootprintMode::VolumeDeltaColor => {
+            FootprintMode::Volume
+            | FootprintMode::VolumeDeltaColor
+            | FootprintMode::Profile
+            | FootprintMode::Ladder => {
                 let total = bid_vol + ask_vol;
                 self.format_volume(total)
             }
-            FootprintMode::DeltaProfile => {
+            FootprintMode::DeltaProfile | FootprintMode::Centered => {
                 let delta = ask_vol - bid_vol;
                 format!("{:+.0}", delta)
+            }
+            FootprintMode::DominantSide => {
+                let winner = bid_vol.max(ask_vol);
+                self.format_volume(winner)
             }
         }
     }
@@ -413,11 +420,46 @@ impl FootprintState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum FootprintMode {
-    BidAsk,           // Show bid|ask numbers
+    BidAsk,           // Show bid|ask numbers (ATAS default)
     Delta,            // Show delta (ask - bid)
     Volume,           // Show total volume
     VolumeDeltaColor, // Show volume, color by delta
     DeltaProfile,     // Horizontal bar of delta per price
+    // ATAS-named extras (Topic 6) — full-width per-cell bar variants
+    // that visualise relative magnitude inside each bar's column.
+    Profile,          // Cell width ∝ level_vol / bar_max_vol (volume profile in-cell)
+    Ladder,           // Only POC row highlighted with full color, rest dim
+    DominantSide,     // Fills the side with higher vol; bar width ∝ winner/max
+    Centered,         // Centered delta bar, symmetric from cell midline
+}
+
+impl FootprintMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            FootprintMode::BidAsk           => "Bid × Ask",
+            FootprintMode::Delta            => "Delta",
+            FootprintMode::Volume           => "Volume",
+            FootprintMode::VolumeDeltaColor => "Vol · Δ",
+            FootprintMode::DeltaProfile     => "Δ Profile",
+            FootprintMode::Profile          => "Profile",
+            FootprintMode::Ladder           => "Ladder",
+            FootprintMode::DominantSide     => "Dominant",
+            FootprintMode::Centered         => "Centered",
+        }
+    }
+    pub fn all() -> &'static [FootprintMode] {
+        &[
+            FootprintMode::BidAsk,
+            FootprintMode::Delta,
+            FootprintMode::Volume,
+            FootprintMode::VolumeDeltaColor,
+            FootprintMode::DeltaProfile,
+            FootprintMode::Profile,
+            FootprintMode::Ladder,
+            FootprintMode::DominantSide,
+            FootprintMode::Centered,
+        ]
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -586,6 +628,62 @@ impl TradingPanel for FootprintState {
                             let bar_w = (total / max_vol) * cell_w as f64;
                             ctx.set_fill_color(&format!("#4488ff{:02x}", bar_alpha));
                             ctx.fill_rect(bar_x, bar_y, bar_w, bar_h);
+                        }
+                    }
+                    FootprintMode::Profile => {
+                        // Centered bar with width ∝ total / bar_max (in-cell vol profile).
+                        let total = bid_vol + ask_vol;
+                        if max_vol > 0.0 {
+                            let bar_w = (total / max_vol) * cell_w as f64;
+                            let bx = bar_x + (cell_w as f64 - bar_w) * 0.5;
+                            ctx.set_fill_color(&format!("#4488ff{:02x}", bar_alpha));
+                            ctx.fill_rect(bx, bar_y, bar_w, bar_h);
+                        }
+                    }
+                    FootprintMode::Ladder => {
+                        // Only the POC row (max total volume) gets full color;
+                        // all others render the cell_bg only.
+                        let total = bid_vol + ask_vol;
+                        if max_vol > 0.0 && (total - max_vol).abs() < 1e-9 {
+                            ctx.set_fill_color(&format!("#ffeb3b{:02x}", 0x66u8));
+                            ctx.fill_rect(bar_x, bar_y, cell_w as f64, bar_h);
+                        }
+                    }
+                    FootprintMode::DominantSide => {
+                        // Single bar from the dominant side, width ∝ winner / max
+                        // of same side, color of the winning side. Bar grows from
+                        // the corresponding cell edge.
+                        let dominant_is_ask = ask_vol >= bid_vol;
+                        let winner = if dominant_is_ask { ask_vol } else { bid_vol };
+                        let denom = if dominant_is_ask { max_ask } else { max_bid };
+                        if denom > 0.0 && winner > 0.0 {
+                            let bar_w = (winner / denom) * cell_w as f64;
+                            let color = if dominant_is_ask {
+                                format!("#00ff00{:02x}", bar_alpha + 0x10)
+                            } else {
+                                format!("#ff0000{:02x}", bar_alpha + 0x10)
+                            };
+                            ctx.set_fill_color(&color);
+                            if dominant_is_ask {
+                                ctx.fill_rect(bar_x + cell_w as f64 - bar_w, bar_y, bar_w, bar_h);
+                            } else {
+                                ctx.fill_rect(bar_x, bar_y, bar_w, bar_h);
+                            }
+                        }
+                    }
+                    FootprintMode::Centered => {
+                        // Symmetric delta bar from cell midline; |delta|/max_abs.
+                        let delta = ask_vol - bid_vol;
+                        if max_abs_delta > 0.0 {
+                            let bar_w = (delta.abs() / max_abs_delta) * half_w;
+                            let center_x = bar_x + half_w;
+                            let color = if delta >= 0.0 {
+                                format!("#00ff00{:02x}", bar_alpha + 0x10)
+                            } else {
+                                format!("#ff0000{:02x}", bar_alpha + 0x10)
+                            };
+                            ctx.set_fill_color(&color);
+                            ctx.fill_rect(center_x - bar_w * 0.5, bar_y, bar_w, bar_h);
                         }
                     }
                 }
