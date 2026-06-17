@@ -88,6 +88,13 @@ pub struct LiquidityHeatmapState {
 
     /// Mid price used to determine bid/ask side for coloring.
     pub mid_price: Option<f64>,
+
+    /// Color mode (vendor-style preset). Default `Volume` (legacy).
+    pub mode: LiquidityHeatmapMode,
+
+    /// Per-price-tick update count over the visible window. Updated
+    /// alongside `snapshots`. Used by `Count` and `Spoofing` modes.
+    pub update_count_by_tick: std::collections::HashMap<i64, u32>,
 }
 
 impl std::fmt::Debug for LiquidityHeatmapState {
@@ -135,6 +142,8 @@ impl LiquidityHeatmapState {
             paused: false,
             pause_buffer: VecDeque::new(),
             mid_price: None,
+            mode: LiquidityHeatmapMode::default(),
+            update_count_by_tick: std::collections::HashMap::new(),
         }
     }
 
@@ -322,10 +331,25 @@ impl LiquidityHeatmapState {
                 self.pause_buffer.pop_front();
             }
         } else {
+            // Update per-tick churn count BEFORE push so the Count /
+            // Spoofing modes see this snapshot's contribution.
+            for &price_tick in snapshot.depth_by_price.keys() {
+                let counter = self.update_count_by_tick.entry(price_tick).or_insert(0);
+                *counter = counter.saturating_add(1);
+            }
             self.snapshots.push(snapshot);
             // Enforce rolling window
             while self.snapshots.len() > self.max_snapshots {
-                self.snapshots.remove(0);
+                let dropped = self.snapshots.remove(0);
+                // Decrement counts for the dropped snapshot so the
+                // window stays bounded. Entries that hit zero are kept
+                // (cheap) — they don't bloat the map meaningfully
+                // because update_count_by_tick is keyed on price grid.
+                for &price_tick in dropped.depth_by_price.keys() {
+                    if let Some(counter) = self.update_count_by_tick.get_mut(&price_tick) {
+                        *counter = counter.saturating_sub(1);
+                    }
+                }
             }
             self.rebuild_time_range();
         }
@@ -414,26 +438,78 @@ impl LiquidityHeatmapState {
     }
 
     /// Get visible cells for rendering (time_idx, price_tick, color).
-    /// Colors are side-aware with horizontal fade applied.
+    /// Color formula is determined by `self.mode`; falls back to the
+    /// legacy side_color (`Volume`) when no mode is set.
     pub fn visible_cells(&self, _width: f32, _height: f32) -> Vec<(usize, i64, [f32; 4])> {
         let (start_time, end_time) = self.visible_time_range();
         let visible_columns = (end_time - start_time).max(1);
         let mut cells = Vec::new();
 
-        for (col, time_idx) in (start_time..end_time).enumerate() {
-            // Horizontal fade: older columns (lower col index) are dimmer.
-            let fade_factor = (col as f32 / visible_columns as f32).clamp(0.3, 1.0);
+        // Pre-compute max update count for Count/Spoofing alpha normalisation.
+        let max_count = self.update_count_by_tick.values().copied().max().unwrap_or(1).max(1) as f64;
 
-            if let Some(snapshot) = self.snapshots.get(time_idx) {
-                for (&price_tick, _) in &snapshot.depth_by_price {
-                    let intensity = self.cell_intensity(time_idx, price_tick);
-                    let color = self.side_color(price_tick, intensity, fade_factor);
-                    cells.push((time_idx, price_tick, color));
-                }
+        for (col, time_idx) in (start_time..end_time).enumerate() {
+            let fade_factor = (col as f32 / visible_columns as f32).clamp(0.3, 1.0);
+            let snap = match self.snapshots.get(time_idx) { Some(s) => s, None => continue };
+            for (&price_tick, &(bid, ask)) in &snap.depth_by_price {
+                let intensity = self.cell_intensity(time_idx, price_tick);
+                let color = match self.mode {
+                    LiquidityHeatmapMode::Volume => self.side_color(price_tick, intensity, fade_factor),
+                    LiquidityHeatmapMode::Count => {
+                        let c = *self.update_count_by_tick.get(&price_tick).unwrap_or(&0) as f64;
+                        let i_norm = (c / max_count).clamp(0.0, 1.0);
+                        let alpha = (i_norm as f32).sqrt().clamp(0.1, 0.85) * fade_factor;
+                        color_with_alpha_for_side(self.is_bid_tick(price_tick), alpha)
+                    }
+                    LiquidityHeatmapMode::Delta => {
+                        let d = ask - bid;
+                        let mag = (d.abs() / self.max_depth.max(1e-9)).clamp(0.0, 1.0);
+                        let alpha = (mag as f32).sqrt().clamp(0.1, 0.85) * fade_factor;
+                        // ask dominates → green; bid dominates → red.
+                        let ask_dominant = d >= 0.0;
+                        let (r, g, b) = if ask_dominant {
+                            (46.0 / 255.0, 204.0 / 255.0, 113.0 / 255.0)
+                        } else {
+                            (231.0 / 255.0, 76.0 / 255.0, 60.0 / 255.0)
+                        };
+                        [r, g, b, alpha]
+                    }
+                    LiquidityHeatmapMode::Imbalance => {
+                        let total = bid + ask;
+                        let imb = if total > 0.0 { (bid.max(ask) / total) - 0.5 } else { 0.0 };
+                        let mag = (imb * 2.0).clamp(0.0, 1.0) as f32;
+                        let alpha = (mag.sqrt()).clamp(0.1, 0.85) * fade_factor;
+                        // Yellow tint scales between balanced (faint) and full-imbalance (bright).
+                        [255.0/255.0, 235.0/255.0, 59.0/255.0, alpha]
+                    }
+                    LiquidityHeatmapMode::Spoofing => {
+                        // Heuristic: cells with high update count AND high volume
+                        // are suspicious (frequent flicker on a deep wall).
+                        let c = *self.update_count_by_tick.get(&price_tick).unwrap_or(&0) as f64;
+                        let total = bid + ask;
+                        let depth_norm = (total / self.max_depth.max(1e-9)).clamp(0.0, 1.0);
+                        let count_norm = (c / max_count).clamp(0.0, 1.0);
+                        let suspicion = (depth_norm * count_norm).sqrt() as f32;
+                        let alpha = (suspicion).clamp(0.0, 0.85) * fade_factor;
+                        // Orange — distinct from bid/ask palette.
+                        [255.0/255.0, 152.0/255.0, 0.0, alpha]
+                    }
+                };
+                cells.push((time_idx, price_tick, color));
             }
         }
 
         cells
+    }
+
+    /// Returns whether `price_tick` falls below the mid (bid-side).
+    /// Mirrors the logic inside `side_color`.
+    fn is_bid_tick(&self, price_tick: i64) -> bool {
+        let mid_tick = self.mid_price.map(|m| (m / self.tick_size).round() as i64);
+        match mid_tick {
+            Some(mid) => price_tick < mid,
+            None => price_tick < 0,
+        }
     }
 
     /// Get color for depth value using the rainbow ramp (used for sidebar).
@@ -501,6 +577,52 @@ pub enum HeatmapSide {
     Bids,
     Asks,
     Both,
+}
+
+/// Heatmap color mode — what each cell's color encodes.
+///
+/// - `Volume` (default) — current behavior. Color = side (green bids /
+///   red asks), alpha ∝ sqrt(volume / max).
+/// - `Count` — color = side, alpha ∝ how many updates this price-tick
+///   received across the visible time window (high-churn = bright).
+///   Reveals spoofing / rapid cancellation hotspots.
+/// - `Delta` — color = ask_depth − bid_depth at that price; green
+///   when asks dominate, red when bids dominate. Crosses sign at the
+///   imbalance neutral line.
+/// - `Imbalance` — dominance ratio max(bid,ask) / (bid+ask); intensity
+///   grows from 0.5 (balanced) to 1.0 (one-sided wall).
+/// - `Spoofing` — flags cells where volume is large but the price
+///   tick had a brief lifetime (would need delta-history; for now we
+///   shade by a placeholder of `count * volume`-suspicion).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+pub enum LiquidityHeatmapMode {
+    #[default]
+    Volume,
+    Count,
+    Delta,
+    Imbalance,
+    Spoofing,
+}
+
+impl LiquidityHeatmapMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            LiquidityHeatmapMode::Volume    => "Volume",
+            LiquidityHeatmapMode::Count     => "Count",
+            LiquidityHeatmapMode::Delta     => "Delta",
+            LiquidityHeatmapMode::Imbalance => "Imbalance",
+            LiquidityHeatmapMode::Spoofing  => "Spoofing",
+        }
+    }
+    pub fn all() -> &'static [LiquidityHeatmapMode] {
+        &[
+            LiquidityHeatmapMode::Volume,
+            LiquidityHeatmapMode::Count,
+            LiquidityHeatmapMode::Delta,
+            LiquidityHeatmapMode::Imbalance,
+            LiquidityHeatmapMode::Spoofing,
+        ]
+    }
 }
 
 impl TradingPanel for LiquidityHeatmapState {
@@ -832,4 +954,12 @@ impl LiquidityHeatmapPanel {
     pub fn type_id(&self) -> &'static str { "liquidity_heatmap" }
     pub fn kind_label(&self) -> &'static str { "Liquidity Heatmap" }
     pub fn min_size(&self) -> (f32, f32) { (100.0, 80.0) }
+}
+
+fn color_with_alpha_for_side(is_bid: bool, alpha: f32) -> [f32; 4] {
+    if is_bid {
+        [46.0 / 255.0, 204.0 / 255.0, 113.0 / 255.0, alpha]
+    } else {
+        [231.0 / 255.0, 76.0 / 255.0, 60.0 / 255.0, alpha]
+    }
 }
