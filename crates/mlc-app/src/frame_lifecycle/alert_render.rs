@@ -5,7 +5,6 @@ use mlc_core::{
     Bar,
     LayoutRect,
     render::RenderContext,
-    timestamp_ms_to_bar_f64,
 };
 use mlc_core::indicator_source::IndicatorSource;
 use mlc_indicators::IndicatorManager;
@@ -140,7 +139,9 @@ impl ChartApp {
                     let (bar2, price2) = if points.len() >= 2 { points[1] } else { points[0] };
 
                     // Convert point 2 to screen coordinates (relative to chart origin).
-                    let rel_x2 = viewport.bar_to_x_f64(timestamp_ms_to_bar_f64(bars, bar2));
+                    // bar2 is a ms timestamp — axis-aware x_for_ts dispatches
+                    // (time-axis: ts_to_x direct; index: binary-search bars).
+                    let rel_x2 = viewport.x_for_ts(bar2, bars);
                     let rel_y2 = viewport.price_to_y(price2, price_min, price_max);
 
                     let type_id = prim.type_id();
@@ -150,7 +151,7 @@ impl ChartApp {
                     {
                         // For projecting primitives, extrapolate to the right edge of the chart.
                         let (bar1, price1) = points[0];
-                        let rel_x1 = viewport.bar_to_x_f64(timestamp_ms_to_bar_f64(bars, bar1));
+                        let rel_x1 = viewport.x_for_ts(bar1, bars);
                         let rel_y1 = viewport.price_to_y(price1, price_min, price_max);
 
                         let dx = rel_x2 - rel_x1;
@@ -247,7 +248,8 @@ impl ChartApp {
                     };
 
                     // Bell X is at the bar of the last valid value.
-                    let rel_x = viewport.bar_to_x_f64(bar_idx as f64);
+                    let bar_ts_ms = bars.get(bar_idx).map(|b| b.ts_ms()).unwrap_or(0);
+                    let rel_x = viewport.x_for_bar_f64(bar_idx as f64, bar_ts_ms);
                     let raw_bell_x = chart_x + rel_x;
 
                     // Convert price to screen Y.
@@ -335,7 +337,8 @@ impl ChartApp {
                         continue;
                     }
 
-                    let rel_x = viewport.bar_to_x_f64(bar_idx as f64);
+                    let bar_ts_ms = bars.get(bar_idx).map(|b| b.ts_ms()).unwrap_or(0);
+                    let rel_x = viewport.x_for_bar_f64(bar_idx as f64, bar_ts_ms);
                     let raw_bell_x = chart_x + rel_x;
                     let rel_y = viewport.price_to_y(price, price_min, price_max);
                     let raw_bell_y = chart_y + rel_y;

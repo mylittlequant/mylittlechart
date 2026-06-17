@@ -62,7 +62,8 @@ pub fn draw_crosshair(
         // Use pre-clamped x position directly during drag
         crosshair.x
     } else if let Some(bar_idx) = crosshair.bar_idx {
-        viewport.bar_to_x(bar_idx)
+        let bar_ts_ms = state.bars.get(bar_idx).map(|b| b.ts_ms()).unwrap_or(0);
+        viewport.x_for_bar(bar_idx, bar_ts_ms)
     } else {
         // Out of data bounds: follow cursor pixel-perfect
         crosshair.x

@@ -270,7 +270,8 @@ pub fn draw_markers(
             continue;
         }
 
-        let x = viewport.bar_to_x(marker.bar_idx);
+        let bar_ts_ms = state.bars.get(marker.bar_idx).map(|b| b.ts_ms()).unwrap_or(0);
+        let x = viewport.x_for_bar(marker.bar_idx, bar_ts_ms);
         let y = viewport.price_to_y(marker.price, price_scale.price_min, price_scale.price_max);
 
         // Skip if off-screen
@@ -392,7 +393,8 @@ pub fn draw_last_price_line(
     // the pane — without the clamp the projection line leaks into the
     // neighbouring split container.
     let last_bar_idx = bars.len() - 1;
-    let start_x = viewport.bar_to_x(last_bar_idx);
+    let last_bar_ts_ms = bars[last_bar_idx].ts_ms();
+    let start_x = viewport.x_for_bar(last_bar_idx, last_bar_ts_ms);
     let screen_start_x = (rect.x + start_x).clamp(rect.x, rect.right());
 
     // End at right edge of chart

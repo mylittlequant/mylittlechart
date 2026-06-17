@@ -46,7 +46,7 @@ pub fn draw_candles(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
             break;
         }
         let bar = &bars[i];
-        let cx = viewport.bar_to_x(i);
+        let cx = viewport.x_for_bar(i, bar.ts_ms());
         let is_up = if state.use_prev_close && i > 0 {
             // Compare current close to previous bar's close
             bar.close >= bars[i - 1].close
@@ -174,7 +174,7 @@ pub fn draw_bars(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
             break;
         }
         let bar = &bars[i];
-        let cx = crisp(viewport.bar_to_x(i), dpr);
+        let cx = crisp(viewport.x_for_bar(i, bar.ts_ms()), dpr);
         let is_up = bar.is_bullish();
 
         let color = if is_up { &theme.candle_up } else { &theme.candle_down };
@@ -244,7 +244,7 @@ pub fn draw_hollow_candles(ctx: &mut dyn RenderContext, state: &ChartRenderState
             break;
         }
         let bar = &bars[i];
-        let cx = viewport.bar_to_x(i);
+        let cx = viewport.x_for_bar(i, bar.ts_ms());
         let is_up = bar.is_bullish();
 
         let body_color = if is_up { &theme.candle_up } else { &theme.candle_down };
@@ -346,7 +346,7 @@ pub fn draw_heikin_ashi(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
             break;
         }
         let bar = &bars[i];
-        let cx = viewport.bar_to_x(i);
+        let cx = viewport.x_for_bar(i, bar.ts_ms());
 
         // Calculate HA OHLC
         let ha_close = (bar.open + bar.high + bar.low + bar.close) / 4.0;

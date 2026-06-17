@@ -410,10 +410,14 @@ pub fn draw_time_scale_cursor_label(
     };
 
     if let Some(ts) = ts_opt {
+        // ts is in seconds; convert to ms for axis-aware path.
+        let ts_ms = ts.saturating_mul(1000);
         let x = if let Some(bar_idx) = crosshair.bar_idx {
-            viewport.bar_to_x(bar_idx)
+            let bar_ts_ms = bars.get(bar_idx).map(|b| b.ts_ms()).unwrap_or(ts_ms);
+            viewport.x_for_bar(bar_idx, bar_ts_ms)
         } else {
-            viewport.bar_to_x_f64(crosshair.bar_f64)
+            // Beyond data — for index mode use bar_f64, for time mode use ts directly.
+            viewport.x_for_ts(ts_ms, bars)
         };
 
         // Get format settings (use default if not provided)

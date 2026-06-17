@@ -437,7 +437,8 @@ pub fn draw_indicator_line(
             continue;
         }
 
-        let x = state.chart_rect.x + state.viewport.bar_to_x(i);
+        let bar_ts_ms = state.bars.get(i).map(|b| b.ts_ms()).unwrap_or(0);
+        let x = state.chart_rect.x + state.viewport.x_for_bar(i, bar_ts_ms);
         let y = state.chart_rect.y + state.viewport.price_to_y(
             value,
             state.price_scale.price_min,
@@ -488,7 +489,8 @@ pub fn draw_indicator_band(
             continue;
         }
 
-        let x = state.chart_rect.x + state.viewport.bar_to_x(i);
+        let bar_ts_ms = state.bars.get(i).map(|b| b.ts_ms()).unwrap_or(0);
+        let x = state.chart_rect.x + state.viewport.x_for_bar(i, bar_ts_ms);
         let y = state.chart_rect.y + state.viewport.price_to_y(
             value,
             state.price_scale.price_min,
@@ -509,7 +511,8 @@ pub fn draw_indicator_band(
             continue;
         }
 
-        let x = state.chart_rect.x + state.viewport.bar_to_x(i);
+        let bar_ts_ms = state.bars.get(i).map(|b| b.ts_ms()).unwrap_or(0);
+        let x = state.chart_rect.x + state.viewport.x_for_bar(i, bar_ts_ms);
         let y = state.chart_rect.y + state.viewport.price_to_y(
             value,
             state.price_scale.price_min,
@@ -568,7 +571,8 @@ pub fn draw_volume_overlay(
             continue;
         }
 
-        let x = state.chart_rect.x + state.viewport.bar_to_x(i);
+        let bar_ts_ms = state.bars.get(i).map(|b| b.ts_ms()).unwrap_or(0);
+        let x = state.chart_rect.x + state.viewport.x_for_bar(i, bar_ts_ms);
         let ratio = v / max_volume;
         let bar_height = (ratio * volume_height).max(1.0);
 
@@ -773,7 +777,8 @@ pub fn draw_indicator_selection_markers(
             continue;
         }
 
-        let x = viewport.bar_to_x(i) + chart_rect.x;
+        let bar_ts_ms = state.bars.get(i).map(|b| b.ts_ms()).unwrap_or(0);
+        let x = viewport.x_for_bar(i, bar_ts_ms) + chart_rect.x;
         let y = chart_rect.y + ((price_scale.price_max - value) / price_range) * chart_rect.height;
 
         ctx.begin_path();
@@ -829,7 +834,8 @@ pub fn draw_indicator_signals(
             continue;
         }
 
-        let x = viewport.bar_to_x(signal.bar_index) + chart_x;
+        let bar_ts_ms = state.bars.get(signal.bar_index).map(|b| b.ts_ms()).unwrap_or(0);
+        let x = viewport.x_for_bar(signal.bar_index, bar_ts_ms) + chart_x;
         let direction = signal.direction;
         let is_bullish = direction >= 0;
 
@@ -1058,7 +1064,8 @@ pub fn draw_sub_pane_line(
             continue;
         }
 
-        let x = pane_x + state.viewport.bar_to_x(i);
+        let bar_ts_ms = state.bars.get(i).map(|b| b.ts_ms()).unwrap_or(0);
+        let x = pane_x + state.viewport.x_for_bar(i, bar_ts_ms);
         let ratio = if pane_max > pane_min {
             (v - pane_min) / (pane_max - pane_min)
         } else {
@@ -1128,7 +1135,8 @@ pub fn draw_sub_pane_histogram(
                     continue;
                 }
 
-                let x = pane_x + state.viewport.bar_to_x(i) - bar_width / 2.0;
+                let bar_ts_ms = state.bars.get(i).map(|b| b.ts_ms()).unwrap_or(0);
+                let x = pane_x + state.viewport.x_for_bar(i, bar_ts_ms) - bar_width / 2.0;
 
                 // Map value to pixel Y using pane_min/pane_max coordinate system.
                 let val_ratio = (v - pane_min) / pane_range;
@@ -1158,7 +1166,8 @@ pub fn draw_sub_pane_histogram(
                     continue;
                 }
 
-                let x = pane_x + state.viewport.bar_to_x(i) - bar_width / 2.0;
+                let bar_ts_ms = state.bars.get(i).map(|b| b.ts_ms()).unwrap_or(0);
+                let x = pane_x + state.viewport.x_for_bar(i, bar_ts_ms) - bar_width / 2.0;
                 let ratio = if pane_max > pane_min {
                     (v - pane_min) / (pane_max - pane_min)
                 } else {
@@ -1368,7 +1377,8 @@ pub fn render_sub_pane(
                     if i >= values.len() { break; }
                     let v = values[i];
                     if v.is_nan() || v.is_infinite() { continue; }
-                    let mx = viewport.bar_to_x(i) + content.x;
+                    let bar_ts_ms = state.bars.get(i).map(|b| b.ts_ms()).unwrap_or(0);
+                    let mx = viewport.x_for_bar(i, bar_ts_ms) + content.x;
                     let my = content.y + ((pane_max - v) / pane_range) * content.height;
                     ctx.begin_path();
                     ctx.arc(mx, my, 4.0, 0.0, TAU);
@@ -2158,8 +2168,7 @@ pub(crate) fn draw_main_chart_drawing_preview(
                 let screen_pts: Vec<(f64, f64)> = points
                     .iter()
                     .map(|&(ts_ms, price)| {
-                        let bar_f = mlc_core::timestamp_ms_to_bar_f64(state.bars, ts_ms);
-                        let x = state.viewport.bar_to_x_f64(bar_f);
+                        let x = state.viewport.x_for_ts(ts_ms, state.bars);
                         let y = state.price_scale.price_to_y(price, chart_height);
                         (x, y)
                     })
@@ -2205,8 +2214,7 @@ pub(crate) fn draw_main_chart_drawing_preview(
                 ctx.set_stroke_width(1.0);
 
                 for (ts_ms, price) in points {
-                    let bar_f = mlc_core::timestamp_ms_to_bar_f64(state.bars, *ts_ms);
-                    let x = state.viewport.bar_to_x_f64(bar_f);
+                    let x = state.viewport.x_for_ts(*ts_ms, state.bars);
                     let y = state.price_scale.price_to_y(*price, chart_height);
 
                     ctx.begin_path();
@@ -2273,8 +2281,7 @@ pub(crate) fn draw_sub_pane_drawing_preview(
 
                 let screen_pts: Vec<(f64, f64)> = points.iter()
                     .map(|&(ts_ms, price)| {
-                        let bar_f = mlc_core::timestamp_ms_to_bar_f64(state.bars, ts_ms);
-                        let x = pane_viewport.bar_to_x_f64(bar_f);
+                        let x = pane_viewport.x_for_ts(ts_ms, state.bars);
                         let y = pane_price_scale.price_to_y(price, content_height);
                         (x, y)
                     })
@@ -2313,8 +2320,7 @@ pub(crate) fn draw_sub_pane_drawing_preview(
                 ctx.set_stroke_width(1.0);
 
                 for (ts_ms, price) in points {
-                    let bar_f = mlc_core::timestamp_ms_to_bar_f64(state.bars, *ts_ms);
-                    let x = pane_viewport.bar_to_x_f64(bar_f);
+                    let x = pane_viewport.x_for_ts(*ts_ms, state.bars);
                     let y = pane_price_scale.price_to_y(*price, content_height);
 
                     ctx.begin_path();

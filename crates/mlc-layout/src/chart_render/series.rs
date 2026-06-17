@@ -35,7 +35,7 @@ pub fn draw_line_series(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     // Collect points
     let mut points: Vec<(f64, f64)> = Vec::with_capacity(end - start);
     for (i, bar) in bars.iter().enumerate().take(end).skip(start) {
-        let x = rect.x + viewport.bar_to_x(i);
+        let x = rect.x + viewport.x_for_bar(i, bar.ts_ms());
         let y = rect.y + viewport.price_to_y(bar.close, price_scale.price_min, price_scale.price_max);
         points.push((x, y));
     }
@@ -77,7 +77,7 @@ pub fn draw_area_series(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     // Collect top points
     let mut top_points: Vec<(f64, f64)> = Vec::with_capacity(end - start);
     for (i, bar) in bars.iter().enumerate().take(end).skip(start) {
-        let x = rect.x + viewport.bar_to_x(i);
+        let x = rect.x + viewport.x_for_bar(i, bar.ts_ms());
         let y = rect.y + viewport.price_to_y(bar.close, price_scale.price_min, price_scale.price_max);
         top_points.push((x, y));
     }
@@ -149,7 +149,7 @@ pub fn draw_histogram(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     let max_height = rect.height * 0.3; // 30% of chart height
 
     for (i, bar) in bars.iter().enumerate().take(end).skip(start) {
-        let x = rect.x + viewport.bar_to_x(i);
+        let x = rect.x + viewport.x_for_bar(i, bar.ts_ms());
 
         // Scale volume to height
         let vol_ratio = (bar.volume - vol_min) / (vol_max - vol_min);
@@ -195,7 +195,7 @@ pub fn draw_baseline_series(ctx: &mut dyn RenderContext, state: &ChartRenderStat
     // Collect points with their values
     let mut points: Vec<(f64, f64, f64)> = Vec::with_capacity(end - start); // (x, y, close)
     for (i, bar) in bars.iter().enumerate().take(end).skip(start) {
-        let x = rect.x + viewport.bar_to_x(i);
+        let x = rect.x + viewport.x_for_bar(i, bar.ts_ms());
         let y = rect.y + viewport.price_to_y(bar.close, price_scale.price_min, price_scale.price_max);
         points.push((x, y, bar.close));
     }
@@ -362,7 +362,7 @@ pub fn draw_step_line(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     let mut prev_y: Option<f64> = None;
 
     for (i, bar) in bars.iter().enumerate().take(end).skip(start) {
-        let x = rect.x + viewport.bar_to_x(i);
+        let x = rect.x + viewport.x_for_bar(i, bar.ts_ms());
         let y = rect.y + viewport.price_to_y(bar.close, price_scale.price_min, price_scale.price_max);
 
         if let Some(py) = prev_y {
@@ -409,7 +409,7 @@ pub fn draw_line_with_markers(ctx: &mut dyn RenderContext, state: &ChartRenderSt
     // Collect points
     let mut points: Vec<(f64, f64)> = Vec::with_capacity(end - start);
     for (i, bar) in bars.iter().enumerate().take(end).skip(start) {
-        let x = rect.x + viewport.bar_to_x(i);
+        let x = rect.x + viewport.x_for_bar(i, bar.ts_ms());
         let y = rect.y + viewport.price_to_y(bar.close, price_scale.price_min, price_scale.price_max);
         points.push((x, y));
     }
@@ -475,7 +475,8 @@ pub fn draw_line_from_data(
             continue;
         }
 
-        let x = rect.x + viewport.bar_to_x(i);
+        let bar_ts_ms = state.bars.get(i).map(|b| b.ts_ms()).unwrap_or(0);
+        let x = rect.x + viewport.x_for_bar(i, bar_ts_ms);
         let y = rect.y + viewport.price_to_y(v, price_scale.price_min, price_scale.price_max);
 
         if !in_path {
@@ -518,7 +519,7 @@ pub fn draw_hlc_area(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     let mut close_points: Vec<(f64, f64)> = Vec::with_capacity(end - start);
 
     for (i, bar) in bars.iter().enumerate().take(end).skip(start) {
-        let x = rect.x + viewport.bar_to_x(i);
+        let x = rect.x + viewport.x_for_bar(i, bar.ts_ms());
         let high_y = rect.y + viewport.price_to_y(bar.high, price_scale.price_min, price_scale.price_max);
         let low_y = rect.y + viewport.price_to_y(bar.low, price_scale.price_min, price_scale.price_max);
         let close_y = rect.y + viewport.price_to_y(bar.close, price_scale.price_min, price_scale.price_max);
@@ -587,7 +588,7 @@ pub fn draw_columns(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     let baseline_y = rect.y + viewport.price_to_y(baseline, price_scale.price_min, price_scale.price_max);
 
     for (i, bar) in bars.iter().enumerate().take(end).skip(start) {
-        let x = rect.x + viewport.bar_to_x(i);
+        let x = rect.x + viewport.x_for_bar(i, bar.ts_ms());
         let y = rect.y + viewport.price_to_y(bar.close, price_scale.price_min, price_scale.price_max);
 
         let is_up = bar.close >= baseline;
@@ -693,7 +694,7 @@ pub fn draw_compare_overlay(
 
             // Find matching compare bar by timestamp
             if let Some(compare_bar) = compare_map.get(&main_bar.timestamp) {
-                let x = rect.x + viewport.bar_to_x(i);
+                let x = rect.x + viewport.x_for_bar(i, main_bar.ts_ms());
 
                 let y = if is_percent_mode {
                     let pct = series.price_to_percent(compare_bar.close);
