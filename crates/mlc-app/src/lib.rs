@@ -463,11 +463,19 @@ pub struct ChartApp {
     /// Queued preset mutations — drained by App each frame and applied to AppState.
     pub preset_actions: Vec<PresetAction>,
 
-    /// Set by any callsite that calls `autosave_snapshot()` during a frame.
-    /// Drained by `flush_pending_autosave` once per frame from the app tick,
-    /// so a preset switch (which triggers 5-7 autosave callsites in one
-    /// frame) results in a single deep-copy + Upsert instead of 5-7.
-    pub pending_autosave: bool,
+    /// Pending autosave target. `Some(preset_id)` means a callsite has
+    /// requested an autosave for that exact preset; `None` means no autosave
+    /// is queued. Drained by `flush_pending_autosave` once per frame.
+    ///
+    /// CRITICAL: this captures `active_preset_id` AT THE MOMENT OF
+    /// `autosave_snapshot()` call. A previous version used a bare `bool` +
+    /// re-read `active_preset_id` at flush time — but on a preset switch
+    /// the handler advances `active_preset_id` to the NEW id BEFORE the
+    /// end-of-tick flush runs, so flush would persist the new preset
+    /// instead of the outgoing one. The outgoing preset's user edits
+    /// (viewport pan, scale, drawings made just before the switch) were
+    /// silently lost — visible to owner as "data disappears on switch".
+    pub pending_autosave: Option<String>,
 
     /// Queued settings snapshot mutations — drained by App each frame and applied to AppState.
     pub snapshot_actions: Vec<SnapshotAction>,
@@ -1069,7 +1077,7 @@ impl ChartApp {
             watchlist_actions: Vec::new(),
             connector_actions: Vec::new(),
             preset_actions: Vec::new(),
-            pending_autosave: false,
+            pending_autosave: None,
             snapshot_actions: Vec::new(),
             template_actions: Vec::new(),
             perf_actions: Vec::new(),
@@ -1421,7 +1429,7 @@ impl ChartApp {
             watchlist_actions: Vec::new(),
             connector_actions: Vec::new(),
             preset_actions: Vec::new(),
-            pending_autosave: false,
+            pending_autosave: None,
             snapshot_actions: Vec::new(),
             template_actions: Vec::new(),
             perf_actions: Vec::new(),
@@ -1671,7 +1679,7 @@ impl ChartApp {
             watchlist_actions: Vec::new(),
             connector_actions: Vec::new(),
             preset_actions: Vec::new(),
-            pending_autosave: false,
+            pending_autosave: None,
             snapshot_actions: Vec::new(),
             template_actions: Vec::new(),
             perf_actions: Vec::new(),

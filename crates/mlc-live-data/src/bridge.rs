@@ -364,6 +364,15 @@ pub struct DataBridge {
     /// the same kline channel, N duplicate `LiveUpdate::BarUpdate` events per
     /// tick, and Binance rejecting the burst with HTTP 403.
     station_kline_subscribed: Arc<Mutex<HashSet<FetchKey>>>,
+    /// Memoised `wire_symbol()` resolutions. The miss-path clones the full
+    /// `Vec<SymbolInfo>` from station (~2500 entries × `serde_json::Value`
+    /// `extra` field on Binance = ~10MB allocation) and runs 2-3 linear
+    /// scans with per-element `format!()` + `to_uppercase`, costing
+    /// 130-170ms per call. The catalogue is effectively immutable after
+    /// startup, so a HashMap by (eid, at, requested) collapses every
+    /// repeat lookup (preset switch, request_bars, request_footprint,
+    /// subscribe_depth/trades/orderbook/mini_ticker, etc.) to O(1).
+    wire_symbol_cache: Arc<Mutex<HashMap<(ExchangeId, AccountType, String), String>>>,
     /// Active `Stream::Kline` forwarder task handles keyed by
     /// `(ExchangeId, AccountType, symbol, timeframe)`.
     ///
@@ -515,6 +524,7 @@ impl DataBridge {
             symbols_warmup_inflight: Arc::new(Mutex::new(HashSet::new())),
             derived_subs: Arc::new(Mutex::new(HashMap::new())),
             station_kline_subscribed: Arc::new(Mutex::new(HashSet::new())),
+            wire_symbol_cache: Arc::new(Mutex::new(HashMap::new())),
             station_kline_handles: Arc::new(Mutex::new(HashMap::new())),
         }, rx, connector_ready_rx)
     }
@@ -2873,12 +2883,26 @@ impl DataBridge {
         account_type: AccountType,
         requested: &str,
     ) -> String {
+        // Memoised. The miss-path clones the full Vec<SymbolInfo> from
+        // station + scans it 2-3 times — 130-170ms per call on Binance's
+        // ~2500-symbol catalogue.
+        let cache_key = (exchange_id, account_type, requested.to_string());
+        if let Ok(cache) = self.wire_symbol_cache.lock() {
+            if let Some(hit) = cache.get(&cache_key) {
+                return hit.clone();
+            }
+        }
+
         let symbols = self.station.symbols(exchange_id);
 
         // (1) Exact native match — covers old watchlist/preset entries and venues
         // where the canonical form is identical to the native form (e.g. Binance).
         if symbols.iter().any(|s| s.symbol == requested) {
-            return requested.to_string();
+            let resolved = requested.to_string();
+            if let Ok(mut cache) = self.wire_symbol_cache.lock() {
+                cache.insert(cache_key, resolved.clone());
+            }
+            return resolved;
         }
 
         // (2) Canonical → native with account_type filter.
@@ -2894,7 +2918,11 @@ impl DataBridge {
             .collect();
 
         if with_at.len() == 1 {
-            return with_at[0].symbol.clone();
+            let resolved = with_at[0].symbol.clone();
+            if let Ok(mut cache) = self.wire_symbol_cache.lock() {
+                cache.insert(cache_key, resolved.clone());
+            }
+            return resolved;
         }
 
         // (3) Relaxed: ignore account_type when exactly one match.
@@ -2909,11 +2937,18 @@ impl DataBridge {
                 .collect();
 
             if any_at.len() == 1 {
-                return any_at[0].symbol.clone();
+                let resolved = any_at[0].symbol.clone();
+                if let Ok(mut cache) = self.wire_symbol_cache.lock() {
+                    cache.insert(cache_key, resolved.clone());
+                }
+                return resolved;
             }
         }
 
         // (4) Fallback — return the requested string unchanged.
+        // Don't cache the fallback: the symbol catalogue may still be
+        // warming up (REST `exchange_info` not in yet). A cache hit here
+        // would freeze the resolution to passthrough until shutdown.
         requested.to_string()
     }
 

@@ -8814,13 +8814,22 @@ impl ChartApp {
     pub fn autosave_snapshot(&mut self) {
         if !self.panel_app.autosave_enabled { return; }
         if self.panel_app.active_preset_id.is_empty() { return; }
-        self.pending_autosave = true;
+        // Capture the target ID NOW. By flush time `active_preset_id` may
+        // already point at a new preset (LoadPreset advances it before the
+        // end-of-tick flush). Without this snapshot, the outgoing preset's
+        // edits would be silently dropped on every warm switch.
+        let target_id = self.panel_app.active_preset_id.clone();
+        // If multiple callsites fire in one frame for the same target, keep
+        // the first (current materialized state). If they fire for DIFFERENT
+        // targets, the more-recent one wins — second autosave_snapshot is
+        // usually called AFTER a switch and represents the user's current
+        // intent. Either way one flush per frame, no thrash.
+        self.pending_autosave = Some(target_id);
     }
 
     /// Run the pending autosave once per frame. Called from the app tick.
     pub fn flush_pending_autosave(&mut self) {
-        if !self.pending_autosave { return; }
-        self.pending_autosave = false;
+        let Some(target_id) = self.pending_autosave.take() else { return; };
 
         if !self.panel_app.autosave_enabled { return; }
         // LoadState gate. While a cold hydrate is in flight, `panel_grid`
@@ -8835,7 +8844,29 @@ impl ChartApp {
             );
             return;
         }
-        let id = self.panel_app.active_preset_id.clone();
+        // CRUCIAL: only autosave when the captured target IS the currently
+        // active preset. After a warm switch, `target_id` is the OUTGOING
+        // preset but `active_preset_id`+`panel_grid` are the INCOMING one.
+        // Persisting the captured outgoing id with the incoming grid would
+        // overwrite the outgoing preset on disk with the incoming layout —
+        // the exact "data disappears" symptom owner reported.
+        //
+        // The outgoing preset's pre-switch state lives in `live_preset_cache`
+        // (parked by LoadPreset). When the user switches BACK to it, unpark
+        // restores those exact bytes. The pre-park `autosave_snapshot()`
+        // call at the start of the LoadPreset handler is what flushes them
+        // to disk — but that path was previously broken by this race.
+        // Fixed now: the autosave for the outgoing preset must run BEFORE
+        // active_preset_id is changed, or be done synchronously in the
+        // LoadPreset handler (still TODO — see below).
+        if target_id != self.panel_app.active_preset_id {
+            eprintln!(
+                "[ChartApp] autosave skipped — target='{}' but active='{}' (warm switch race, outgoing autosave should run synchronously)",
+                target_id, self.panel_app.active_preset_id,
+            );
+            return;
+        }
+        let id = target_id;
         if id.is_empty() { return; }
 
         let name = if let Some(preset) = self.panel_app.presets.get(&id) {

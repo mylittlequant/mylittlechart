@@ -760,9 +760,30 @@ impl ChartApp {
                 // Save the outgoing preset (with bars) before switching away —
                 // but never snapshot a non-materialized placeholder state over
                 // a real preset file.
+                //
+                // CRITICAL: must run SYNCHRONOUSLY before `active_preset_id`
+                // is changed. The debounced `autosave_snapshot()` path can't
+                // catch this — by the time the end-of-tick flush runs,
+                // `active_preset_id` is already the NEW id, and the captured
+                // target_id != active_id check in flush_pending_autosave will
+                // intentionally skip. We need the outgoing preset persisted
+                // RIGHT NOW with the still-materialised outgoing panel_grid.
                 let _lp_t_autosave = std::time::Instant::now();
                 if !prev_id.is_empty() && prev_id != "__default__" && already_materialized {
-                    self.autosave_snapshot();
+                    let prev_name = self.panel_app.presets.get(&prev_id)
+                        .map(|p| p.name.clone())
+                        .unwrap_or_else(|| prev_id.clone());
+                    // Drop any earlier pending request — we're handling
+                    // outgoing-state persistence here synchronously.
+                    self.pending_autosave = None;
+                    self.collect_state_into_preset(&prev_id, &prev_name);
+                    if let Some(preset) = self.panel_app.presets.get(&prev_id).cloned() {
+                        self.preset_actions.push(crate::PresetAction::Upsert(preset));
+                    }
+                    eprintln!(
+                        "[ChartApp] LoadPreset: persisted outgoing preset '{}' synchronously before switch (active='{}')",
+                        prev_id, self.panel_app.active_preset_id,
+                    );
                 }
                 let lp_autosave_us = _lp_t_autosave.elapsed().as_micros();
 
