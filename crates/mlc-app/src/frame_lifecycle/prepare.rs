@@ -224,6 +224,17 @@ impl ChartApp {
             if window.viewport.is_time_axis() {
                 window.viewport.disable_time_axis();
             }
+            // Refresh the Heikin Ashi memo if the chart panel is on
+            // chart_type == "heikin_ashi" AND `bars` mutated since the
+            // last frame. Cheap when stamp matches (single i64
+            // comparison + Option check).
+            let is_ha = self.panels_store.chart_panel
+                .get(&window.chart_panel_id)
+                .map(|p| p.chart_type == "heikin_ashi")
+                .unwrap_or(false);
+            if is_ha {
+                window.ensure_ha_cache();
+            }
         }
 
         // Keep the alert-settings modal's alerts list always in sync.

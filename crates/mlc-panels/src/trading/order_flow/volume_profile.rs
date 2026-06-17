@@ -321,16 +321,6 @@ impl VolumeProfileState {
         }
     }
 
-    /// Apply a live trade to the volume profile.
-    ///
-    /// VolumeProfile now reads from `shared_trades` via `tick()`. This method
-    /// is intentionally a no-op and exists only to avoid breaking any call
-    /// sites that have not yet been removed.
-    #[deprecated(note = "VolumeProfile reads from shared_trades via tick(); this method is a no-op")]
-    pub fn push_trade(&mut self, _price: f64, _quantity: f64, _is_buyer_maker: bool) {
-        // No-op: VolumeProfile now reads from the shared TradeSeries.
-    }
-
     /// Zoom the price range.  Positive `delta` zooms in (fewer levels visible);
     /// negative `delta` zooms out (more levels visible).  Clamped to [0.5, 20.0].
     pub fn handle_scroll(&mut self, delta: f64) {

@@ -244,17 +244,6 @@ impl BigTradesState {
         base_color
     }
 
-    /// Apply a live trade directly (legacy broadcast path, kept for compatibility
-    /// while Footprint and VolumeProfile are still on the old fan-out).
-    ///
-    /// BigTrades now reads from `shared_trades` via `tick()`. This method is
-    /// called from the fan-out loop and is intentionally a no-op — all filtering
-    /// happens in `tick()` instead.
-    #[deprecated(note = "BigTrades reads from shared_trades via tick(); this method is a no-op")]
-    pub fn push_trade(&mut self, _price: f64, _quantity: f64, _is_buyer_maker: bool, _timestamp: i64) {
-        // No-op: BigTrades now reads from the shared TradeSeries.
-    }
-
     /// Calculate bar width for size visualization (0.0–1.0 fraction of max_width).
     ///
     /// Bars scale against the largest trade seen in the current window so that

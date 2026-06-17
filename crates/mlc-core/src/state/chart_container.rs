@@ -188,6 +188,15 @@ pub struct ChartContainer {
     /// via in-place upsert on the last entry. `None` for non-TPO charts.
     pub tpo_sessions: Option<Vec<crate::types::TpoSession>>,
 
+    /// Heikin Ashi memo cache. Populated by
+    /// [`ChartContainer::ensure_ha_cache`] and invalidated whenever the
+    /// cache stamp no longer matches `bars`. The cache stamp is
+    /// `(bars.len(), bars.last().map(ts_ms).unwrap_or(0))`. Not
+    /// serialized — recomputed on first frame after deserialize.
+    pub ha_cache: Option<Vec<crate::types::HaBar>>,
+    /// Stamp paired with `ha_cache` — `(len, last_ts_ms)`.
+    pub ha_cache_stamp: Option<(usize, i64)>,
+
     // === Viewport & Scales ===
     /// Viewport state (pan/zoom)
     pub viewport: Viewport,
@@ -453,6 +462,8 @@ impl ChartContainer {
             kagi_segments: None,
             cvd_line: None,
             tpo_sessions: None,
+            ha_cache: None,
+            ha_cache_stamp: None,
             viewport: Viewport::default(),
             price_scale: PriceScale::default(),
             time_scale: TimeScale::new(),
@@ -772,6 +783,8 @@ impl ChartContainer {
             kagi_segments: self.kagi_segments.clone(),
             cvd_line: self.cvd_line.clone(),
             tpo_sessions: self.tpo_sessions.clone(),
+            ha_cache: None,
+            ha_cache_stamp: None,
 
             // === Viewport & Scales (cloned) ===
             viewport: self.viewport.clone(),
@@ -1075,7 +1088,50 @@ impl ChartContainer {
             kagi_segments: None,
             cvd_line: None,
             tpo_sessions: None,
+            ha_cache: None,
         }
+    }
+
+    /// Recompute the Heikin Ashi memo if (and only if) `bars` has
+    /// changed since the last build. Returns a slice borrowing from
+    /// `self.ha_cache`. Called once per frame BEFORE
+    /// `render_full_chart_panel` so the HA renderer can read the cache.
+    pub fn ensure_ha_cache(&mut self) {
+        let stamp = (self.bars.len(), self.bars.last().map(|b| b.ts_ms()).unwrap_or(0));
+        if self.ha_cache_stamp == Some(stamp) && self.ha_cache.is_some() { return; }
+        if self.bars.is_empty() {
+            self.ha_cache = Some(Vec::new());
+            self.ha_cache_stamp = Some(stamp);
+            return;
+        }
+        let mut out: Vec<crate::types::HaBar> = Vec::with_capacity(self.bars.len());
+        let first = &self.bars[0];
+        let mut prev_open = (first.open + first.close) * 0.5;
+        let mut prev_close = (first.open + first.high + first.low + first.close) * 0.25;
+        out.push(crate::types::HaBar {
+            ts_ms: first.ts_ms(),
+            open: prev_open,
+            high: first.high.max(prev_open).max(prev_close),
+            low: first.low.min(prev_open).min(prev_close),
+            close: prev_close,
+        });
+        for bar in &self.bars[1..] {
+            let ha_close = (bar.open + bar.high + bar.low + bar.close) * 0.25;
+            let ha_open = (prev_open + prev_close) * 0.5;
+            let ha_high = bar.high.max(ha_open).max(ha_close);
+            let ha_low = bar.low.min(ha_open).min(ha_close);
+            out.push(crate::types::HaBar {
+                ts_ms: bar.ts_ms(),
+                open: ha_open,
+                high: ha_high,
+                low: ha_low,
+                close: ha_close,
+            });
+            prev_open = ha_open;
+            prev_close = ha_close;
+        }
+        self.ha_cache = Some(out);
+        self.ha_cache_stamp = Some(stamp);
     }
 
     /// Create a minimal clone of this chart window for use in `panel_grid::split_active`.
@@ -1112,6 +1168,8 @@ impl ChartContainer {
             kagi_segments: self.kagi_segments.clone(),
             cvd_line: self.cvd_line.clone(),
             tpo_sessions: self.tpo_sessions.clone(),
+            ha_cache: None,
+            ha_cache_stamp: None,
             viewport: self.viewport.clone(),
             price_scale: self.price_scale.clone(),
             time_scale: self.time_scale.clone(),

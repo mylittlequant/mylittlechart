@@ -330,16 +330,27 @@ pub fn draw_heikin_ashi(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     let (start, end) = viewport.visible_range();
     let bounds = rect.bounds();
 
+    // Fast path: use the precomputed memo when the window already paid
+    // the O(n) cost on its `ensure_ha_cache()` prepass. Avoids
+    // recomputing HA recursive values from index 0 every frame on long
+    // histories. Falls through to the in-line algorithm if no cache.
+    let cache: Option<&[mlc_core::types::HaBar]> = match state.ha_cache {
+        Some(c) if c.len() == bars.len() => Some(c),
+        _ => None,
+    };
+
     // Initialize Heikin Ashi values
     let mut prev_ha_open = (bars[0].open + bars[0].close) / 2.0;
     let mut prev_ha_close = (bars[0].open + bars[0].high + bars[0].low + bars[0].close) / 4.0;
 
-    // Pre-calculate HA values up to visible range
-    for bar in &bars[1..start.min(bars.len())] {
-        let ha_close = (bar.open + bar.high + bar.low + bar.close) / 4.0;
-        let ha_open = (prev_ha_open + prev_ha_close) / 2.0;
-        prev_ha_open = ha_open;
-        prev_ha_close = ha_close;
+    // Pre-calculate HA values up to visible range (only when cache miss).
+    if cache.is_none() {
+        for bar in &bars[1..start.min(bars.len())] {
+            let ha_close = (bar.open + bar.high + bar.low + bar.close) / 4.0;
+            let ha_open = (prev_ha_open + prev_ha_close) / 2.0;
+            prev_ha_open = ha_open;
+            prev_ha_close = ha_close;
+        }
     }
 
     for i in start..end {
@@ -349,15 +360,21 @@ pub fn draw_heikin_ashi(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
         let bar = &bars[i];
         let cx = viewport.x_for_bar(i, bar.ts_ms());
 
-        // Calculate HA OHLC
-        let ha_close = (bar.open + bar.high + bar.low + bar.close) / 4.0;
-        let ha_open = if i == 0 {
-            (bar.open + bar.close) / 2.0
+        // Calculate HA OHLC — from cache when available.
+        let (ha_open, ha_close, ha_high, ha_low) = if let Some(c) = cache {
+            let h = &c[i];
+            (h.open, h.close, h.high, h.low)
         } else {
-            (prev_ha_open + prev_ha_close) / 2.0
+            let ha_close = (bar.open + bar.high + bar.low + bar.close) / 4.0;
+            let ha_open = if i == 0 {
+                (bar.open + bar.close) / 2.0
+            } else {
+                (prev_ha_open + prev_ha_close) / 2.0
+            };
+            let ha_high = bar.high.max(ha_open).max(ha_close);
+            let ha_low = bar.low.min(ha_open).min(ha_close);
+            (ha_open, ha_close, ha_high, ha_low)
         };
-        let ha_high = bar.high.max(ha_open).max(ha_close);
-        let ha_low = bar.low.min(ha_open).min(ha_close);
 
         let is_up = ha_close >= ha_open;
 

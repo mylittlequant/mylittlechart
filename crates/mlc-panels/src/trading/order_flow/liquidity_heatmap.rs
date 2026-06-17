@@ -879,6 +879,11 @@ impl TradingPanel for LiquidityHeatmapState {
             ctx.set_fill_color("#e74c3cff");
             ctx.fill_text(badge_text, badge_x as f64, badge_y as f64);
         }
+
+        // Mode-selector popup (toggle_mode_menu API).
+        if self.mode_menu_open {
+            draw_heatmap_mode_menu(ctx, coordinator, slot_prefix, x, y, w, h, theme, self.mode);
+        }
     }
 
     fn handle_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool { false }
@@ -979,4 +984,60 @@ fn color_with_alpha_for_side(is_bid: bool, alpha: f32) -> [f32; 4] {
     } else {
         [231.0 / 255.0, 76.0 / 255.0, 60.0 / 255.0, alpha]
     }
+}
+
+/// Draw the LiquidityHeatmapMode selector popup. Each row's click hit
+/// zone is registered with the input coordinator as
+/// `{slot_prefix}:heatmap:mode:{idx}`.
+fn draw_heatmap_mode_menu(
+    ctx: &mut dyn RenderContext,
+    coordinator: &mut uzor::InputCoordinator,
+    slot_prefix: &str,
+    x: f32, y: f32, w: f32, _h: f32,
+    theme: &crate::panel_theme::PanelTheme,
+    current: LiquidityHeatmapMode,
+) {
+    use uzor::input::{Sense, WidgetKind, LayerId};
+    let modes = LiquidityHeatmapMode::all();
+    let row_h = 22.0_f64;
+    let menu_w = 140.0_f64;
+    let menu_h = row_h * modes.len() as f64 + 8.0;
+    let menu_x = (x as f64 + w as f64 - menu_w - 6.0).max(x as f64 + 6.0);
+    let menu_y = y as f64 + 28.0;
+
+    ctx.set_fill_color(&theme.row_bg_alt);
+    ctx.fill_rect(menu_x, menu_y, menu_w, menu_h);
+    ctx.set_stroke_color(&theme.separator);
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rect(menu_x + 0.5, menu_y + 0.5, menu_w - 1.0, menu_h - 1.0);
+
+    ctx.set_fill_color(&theme.text_muted);
+    ctx.set_font("11px sans-serif");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("Mode", menu_x + 8.0, menu_y + 12.0);
+
+    for (i, mode) in modes.iter().enumerate() {
+        let row_y = menu_y + 18.0 + i as f64 * row_h;
+        let active = *mode == current;
+        if active {
+            ctx.set_fill_color(&theme.header_bg);
+            ctx.fill_rect(menu_x + 2.0, row_y, menu_w - 4.0, row_h - 2.0);
+        }
+        ctx.set_fill_color(&theme.text_primary);
+        ctx.set_font("12px sans-serif");
+        ctx.fill_text(mode.label(), menu_x + 12.0, row_y + row_h * 0.5 - 1.0);
+
+        let row_id = format!("{}:heatmap:mode:{}", slot_prefix, i);
+        coordinator.register_composite(
+            row_id,
+            WidgetKind::BlackboxPanel,
+            uzor::Rect::new(menu_x, row_y, menu_w, row_h - 2.0),
+            Sense::CLICK | Sense::HOVER,
+            &LayerId::main(),
+        );
+    }
+
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
 }

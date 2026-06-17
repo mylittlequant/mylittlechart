@@ -234,6 +234,11 @@ pub struct ChartRenderState<'a> {
     /// TPO Market Profile session snapshots — typically a small ring
     /// (current session + N closed sessions).
     pub tpo_sessions: Option<&'a [crate::types::TpoSession]>,
+    /// Pre-computed Heikin Ashi cache. When `Some(_)` and chart_type
+    /// == "heikin_ashi" the HA renderer reads directly from this slice
+    /// instead of running the recursive HA formula from index 0 each
+    /// frame. Window maintains the cache on `ChartContainer.ha_cache`.
+    pub ha_cache: Option<&'a [crate::types::HaBar]>,
 }
 
 /// Configuration for scale rendering

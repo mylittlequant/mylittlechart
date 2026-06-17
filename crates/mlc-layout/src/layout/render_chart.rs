@@ -3154,6 +3154,7 @@ pub fn render_full_chart_panel(
         kagi_segments: data.state.kagi_segments,
         cvd_line: data.state.cvd_line,
         tpo_sessions: data.state.tpo_sessions,
+        ha_cache: data.state.ha_cache,
     };
 
     // 1. Background — fill the full window rect to avoid gaps when scales are
@@ -3539,6 +3540,7 @@ pub fn render_chart_splits(
             kagi_segments: window.kagi_segments.as_deref(),
             cvd_line: window.cvd_line.as_deref(),
             tpo_sessions: window.tpo_sessions.as_deref(),
+            ha_cache: window.ha_cache.as_deref(),
         };
 
         // Build a config for this leaf, overriding chart_type from the window.
@@ -3721,6 +3723,7 @@ pub fn render_chart_overlay(
         kagi_segments: state.kagi_segments,
         cvd_line: state.cvd_line,
         tpo_sessions: state.tpo_sessions,
+        ha_cache: state.ha_cache,
     };
 
     // Compute total chart bounds (main + all sub-panes) for the vertical crosshair span.

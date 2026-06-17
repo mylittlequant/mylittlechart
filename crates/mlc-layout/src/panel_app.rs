@@ -2548,6 +2548,7 @@ impl ChartPanelApp {
                 kagi_segments: window.kagi_segments.as_deref(),
                 cvd_line: window.cvd_line.as_deref(),
                 tpo_sessions: window.tpo_sessions.as_deref(),
+                ha_cache: window.ha_cache.as_deref(),
             };
 
             let render_config = ChartRenderConfig {

@@ -1128,17 +1128,4 @@ impl L2TapeState {
 
     }
 
-    /// Apply a full orderbook snapshot.
-    ///
-    /// Deprecated — L2Tape now reads from `shared_orderbook` via `tick()`.
-    /// Kept as a no-op so remaining call sites compile.
-    #[deprecated(note = "Use tick() to pull data from the shared OrderBookTracker instead")]
-    pub fn apply_snapshot(&mut self, _bids: &[(f64, f64)], _asks: &[(f64, f64)], _timestamp: i64) {}
-
-    /// Apply an incremental orderbook delta — generates L2Events from changes.
-    ///
-    /// Deprecated — L2Tape now reads from `shared_orderbook` via `tick()`.
-    /// Kept as a no-op so remaining call sites compile.
-    #[deprecated(note = "Use tick() to pull data from the shared OrderBookTracker instead")]
-    pub fn apply_delta(&mut self, _bids: &[(f64, f64)], _asks: &[(f64, f64)], _timestamp: i64) {}
 }

@@ -419,16 +419,6 @@ impl FootprintState {
         self.poc_by_candle.get(candle_index).copied()
     }
 
-    /// Apply a live trade to the current candle's footprint.
-    ///
-    /// Footprint now reads from `shared_trades` via `tick()`. This method is
-    /// intentionally a no-op and exists only to avoid breaking any call sites
-    /// that have not yet been removed.
-    #[deprecated(note = "Footprint reads from shared_trades via tick(); this method is a no-op")]
-    pub fn push_trade(&mut self, _price: f64, _quantity: f64, _is_buyer_maker: bool, _timestamp: i64) {
-        // No-op: Footprint now reads from the shared TradeSeries.
-    }
-
     fn should_new_candle(&self, timestamp: i64) -> bool {
         self.candle_start_ms > 0
             && timestamp - self.candle_start_ms >= self.candle_duration_ms
@@ -755,6 +745,11 @@ impl TradingPanel for FootprintState {
                 }
             }
         }
+
+        // Display-mode selector popup.
+        if self.mode_menu_open {
+            draw_footprint_mode_menu(ctx, coordinator, slot_prefix, x, y, w, h, theme, self.display_mode);
+        }
     }
 
     fn handle_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool { false }
@@ -814,4 +809,60 @@ impl FootprintPanel {
     pub fn type_id(&self) -> &'static str { "footprint" }
     pub fn kind_label(&self) -> &'static str { "Footprint" }
     pub fn min_size(&self) -> (f32, f32) { (100.0, 80.0) }
+}
+
+/// Draw the FootprintMode selector popup. Row click hit zones are
+/// registered as `{slot_prefix}:footprint:mode:{idx}` for the input
+/// handler to dispatch back into `FootprintState::set_display_mode`.
+fn draw_footprint_mode_menu(
+    ctx: &mut dyn RenderContext,
+    coordinator: &mut uzor::InputCoordinator,
+    slot_prefix: &str,
+    x: f32, y: f32, w: f32, _h: f32,
+    theme: &crate::panel_theme::PanelTheme,
+    current: FootprintMode,
+) {
+    use uzor::input::{Sense, WidgetKind, LayerId};
+    let modes = FootprintMode::all();
+    let row_h = 22.0_f64;
+    let menu_w = 160.0_f64;
+    let menu_h = row_h * modes.len() as f64 + 8.0;
+    let menu_x = (x as f64 + w as f64 - menu_w - 6.0).max(x as f64 + 6.0);
+    let menu_y = y as f64 + 28.0;
+
+    ctx.set_fill_color(&theme.row_bg_alt);
+    ctx.fill_rect(menu_x, menu_y, menu_w, menu_h);
+    ctx.set_stroke_color(&theme.separator);
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rect(menu_x + 0.5, menu_y + 0.5, menu_w - 1.0, menu_h - 1.0);
+
+    ctx.set_fill_color(&theme.text_muted);
+    ctx.set_font("11px sans-serif");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("Mode", menu_x + 8.0, menu_y + 12.0);
+
+    for (i, mode) in modes.iter().enumerate() {
+        let row_y = menu_y + 18.0 + i as f64 * row_h;
+        let active = *mode == current;
+        if active {
+            ctx.set_fill_color(&theme.header_bg);
+            ctx.fill_rect(menu_x + 2.0, row_y, menu_w - 4.0, row_h - 2.0);
+        }
+        ctx.set_fill_color(&theme.text_primary);
+        ctx.set_font("12px sans-serif");
+        ctx.fill_text(mode.label(), menu_x + 12.0, row_y + row_h * 0.5 - 1.0);
+
+        let row_id = format!("{}:footprint:mode:{}", slot_prefix, i);
+        coordinator.register_composite(
+            row_id,
+            WidgetKind::BlackboxPanel,
+            uzor::Rect::new(menu_x, row_y, menu_w, row_h - 2.0),
+            Sense::CLICK | Sense::HOVER,
+            &LayerId::main(),
+        );
+    }
+
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
 }
