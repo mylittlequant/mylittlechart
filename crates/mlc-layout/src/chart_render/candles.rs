@@ -561,24 +561,11 @@ fn max_volume_in_range(bars: &[Bar], start: usize, end: usize) -> f64 {
     m
 }
 
-/// Apply alpha multiplier to a CSS hex color. Returns `rgba(r,g,b,a)`.
+/// Apply alpha to a CSS hex color. Wrapper around the canonical
+/// `mlc_core::apply_opacity` helper so call sites can stay compact.
+#[inline]
 fn apply_alpha_to_color(hex: &str, alpha: f64) -> String {
-    // Parse #RRGGBB / #RRGGBBAA / 3-letter shorthand to (r,g,b).
-    let s = hex.trim_start_matches('#');
-    let (r, g, b) = match s.len() {
-        6 | 8 => (
-            u8::from_str_radix(&s[0..2], 16).unwrap_or(180),
-            u8::from_str_radix(&s[2..4], 16).unwrap_or(180),
-            u8::from_str_radix(&s[4..6], 16).unwrap_or(180),
-        ),
-        3 => (
-            u8::from_str_radix(&s[0..1].repeat(2), 16).unwrap_or(180),
-            u8::from_str_radix(&s[1..2].repeat(2), 16).unwrap_or(180),
-            u8::from_str_radix(&s[2..3].repeat(2), 16).unwrap_or(180),
-        ),
-        _ => (180u8, 180u8, 180u8),
-    };
-    format!("rgba({},{},{},{:.3})", r, g, b, alpha.clamp(0.0, 1.0))
+    mlc_core::apply_opacity(hex, alpha)
 }
 
 /// Draw Footprint chart — routes to the cluster-grid renderer

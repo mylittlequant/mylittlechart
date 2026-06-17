@@ -183,18 +183,26 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
             let _ = poc;
         }
 
-        // F2: absorption bar tint across full column.
+        // F2: absorption bar tint clipped to the actual price excursion
+        // (high → low) per MQL5 Part 11 spec. The predecessor painted
+        // the full chart vertical; that washed out everything else when
+        // an absorption bar was visible.
         if bar.is_absorption {
+            let hy = rect.y + price_to_y_local(bar.high, price_scale, rect.height);
+            let ly = rect.y + price_to_y_local(bar.low, price_scale, rect.height) + row_h;
             ctx.set_fill_color(EXTRA_COLORS.absorption_fill);
-            ctx.fill_rect(cell_left, rect.y, bar_w, rect.height);
+            ctx.fill_rect(cell_left, hy.min(ly), bar_w, (ly - hy).abs().max(row_h));
         }
 
         // F1: stacked imbalance zones — tinted row band across the
         // stacked levels (ascending price). Drawn AFTER VA so the stack
-        // dominates the visual when both regions overlap.
+        // dominates the visual when both regions overlap. Uses the real
+        // streak length recorded by compute_extras instead of the
+        // hardcoded +2 the predecessor assumed.
         if let Some(start_idx) = bar.stacked_ask_start {
+            let len = bar.stacked_ask_len.unwrap_or(3).max(1);
+            let hi_idx = (start_idx + len - 1).min(bar.levels.len() - 1);
             let lo_lv = &bar.levels[start_idx];
-            let hi_idx = (start_idx + 2).min(bar.levels.len() - 1);
             let hi_lv = &bar.levels[hi_idx];
             let top_y = rect.y + price_to_y_local(hi_lv.price, price_scale, rect.height);
             let bot_y = rect.y + price_to_y_local(lo_lv.price, price_scale, rect.height) + row_h;
@@ -202,8 +210,9 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
             ctx.fill_rect(cell_left, top_y, bar_w, (bot_y - top_y).max(row_h));
         }
         if let Some(start_idx) = bar.stacked_bid_start {
+            let len = bar.stacked_bid_len.unwrap_or(3).max(1);
+            let hi_idx = (start_idx + len - 1).min(bar.levels.len() - 1);
             let lo_lv = &bar.levels[start_idx];
-            let hi_idx = (start_idx + 2).min(bar.levels.len() - 1);
             let hi_lv = &bar.levels[hi_idx];
             let top_y = rect.y + price_to_y_local(hi_lv.price, price_scale, rect.height);
             let bot_y = rect.y + price_to_y_local(lo_lv.price, price_scale, rect.height) + row_h;

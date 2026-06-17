@@ -245,10 +245,18 @@ pub struct FootprintBar {
     /// `▲` marker (F1).
     #[serde(default)]
     pub stacked_ask_start: Option<usize>,
+    /// Length of the stacked-ask-imbalance run (= the actual streak
+    /// length recorded by `compute_extras`). Renderer uses this to
+    /// size the highlight band instead of assuming the default 3.
+    #[serde(default)]
+    pub stacked_ask_len: Option<usize>,
     /// Start index of a stacked-bid-imbalance run. Renderer draws
     /// tinted row fill + `▼` marker (F1).
     #[serde(default)]
     pub stacked_bid_start: Option<usize>,
+    /// Length of the stacked-bid-imbalance run.
+    #[serde(default)]
+    pub stacked_bid_len: Option<usize>,
     /// `|delta| / total_vol <= 0.15` → absorption. Renderer paints a
     /// background tint + "ABS" label (F2).
     #[serde(default)]
@@ -294,6 +302,38 @@ impl FootprintBar {
     /// finalised. `prev_cvd` is the carrying CVD value from the previous
     /// bar's `cumulative_delta` (0.0 for the first bar of a session).
     /// Stays defensive on tiny / empty bars.
+    /// Set the running cumulative delta from the previous bar's CVD.
+    /// Window-scoped — must be called per-window because each window
+    /// has its own store and prior-bar reference.
+    #[inline]
+    pub fn set_cumulative_delta(&mut self, prev_cvd: f64) {
+        self.cumulative_delta = prev_cvd + self.total_delta();
+    }
+
+    /// Compute F1-F4 extras (stacked imbalance, absorption, single
+    /// print, unfinished auction). All inputs are bar-local; the
+    /// resulting flags can be shared across every window that observes
+    /// the same event. Caller must still call
+    /// [`set_cumulative_delta`] per-window after this, because CVD
+    /// carries across bars and the prior CVD differs per window store.
+    pub fn compute_static_extras(
+        &mut self,
+        imbalance_ratio: f64,
+        stack_count: usize,
+        absorption_threshold: f64,
+        single_print_threshold: f64,
+        tick_size: f64,
+    ) {
+        self._compute_static_extras_inner(
+            imbalance_ratio, stack_count, absorption_threshold,
+            single_print_threshold, tick_size,
+        );
+    }
+
+    /// Legacy combined entry point — sets CVD AND computes static
+    /// extras in one shot. Kept for callers that still want the bundled
+    /// form (e.g. one-window scenarios where the per-event split has
+    /// no benefit).
     pub fn compute_extras(
         &mut self,
         prev_cvd: f64,
@@ -305,6 +345,20 @@ impl FootprintBar {
     ) {
         // CVD carry (F5).
         self.cumulative_delta = prev_cvd + self.total_delta();
+        self._compute_static_extras_inner(
+            imbalance_ratio, stack_count, absorption_threshold,
+            single_print_threshold, tick_size,
+        );
+    }
+
+    fn _compute_static_extras_inner(
+        &mut self,
+        imbalance_ratio: f64,
+        stack_count: usize,
+        absorption_threshold: f64,
+        single_print_threshold: f64,
+        tick_size: f64,
+    ) {
 
         // Absorption (F2).
         self.is_absorption = if self.volume > 0.0 {
@@ -334,14 +388,20 @@ impl FootprintBar {
         }
 
         // F1 stacked imbalance — ascending price order assumed.
-        // Ask-side stack: walk top-down, count consecutive
-        // `ask[i] / bid[i-1] >= ratio` with significance gate on max ask.
+        // We track the LONGEST run of each side and record both the
+        // run's start index and its actual length. Renderer reads
+        // (start, len) and sizes the highlight band exactly — fixes
+        // the predecessor's hardcoded +2 (= 3-level) assumption that
+        // broke when stack_count != 3.
         self.stacked_ask_start = None;
+        self.stacked_ask_len = None;
         self.stacked_bid_start = None;
+        self.stacked_bid_len = None;
         if n >= stack_count.max(2) {
             let max_buy = self.levels.iter().map(|l| l.buy_vol).fold(0.0_f64, f64::max);
             let max_sell = self.levels.iter().map(|l| l.sell_vol).fold(0.0_f64, f64::max);
             let mut run_ask: usize = 0;
+            let mut best_ask: Option<(usize, usize)> = None;
             for i in 1..n {
                 let ask = self.levels[i].buy_vol;
                 let bid_below = self.levels[i - 1].sell_vol;
@@ -350,14 +410,22 @@ impl FootprintBar {
                     && (max_buy <= 0.0 || ask >= 0.30 * max_buy)
                 {
                     run_ask += 1;
-                    if run_ask >= stack_count && self.stacked_ask_start.is_none() {
-                        self.stacked_ask_start = Some(i + 1 - stack_count);
+                    if run_ask >= stack_count {
+                        let cand = (i + 1 - run_ask, run_ask);
+                        if best_ask.map(|(_, l)| run_ask > l).unwrap_or(true) {
+                            best_ask = Some(cand);
+                        }
                     }
                 } else {
                     run_ask = 0;
                 }
             }
+            if let Some((s, l)) = best_ask {
+                self.stacked_ask_start = Some(s);
+                self.stacked_ask_len = Some(l);
+            }
             let mut run_bid: usize = 0;
+            let mut best_bid: Option<(usize, usize)> = None;
             for i in 0..(n - 1) {
                 let bid = self.levels[i].sell_vol;
                 let ask_above = self.levels[i + 1].buy_vol;
@@ -366,12 +434,19 @@ impl FootprintBar {
                     && (max_sell <= 0.0 || bid >= 0.30 * max_sell)
                 {
                     run_bid += 1;
-                    if run_bid >= stack_count && self.stacked_bid_start.is_none() {
-                        self.stacked_bid_start = Some(i + 1 - stack_count);
+                    if run_bid >= stack_count {
+                        let cand = (i + 1 - run_bid, run_bid);
+                        if best_bid.map(|(_, l)| run_bid > l).unwrap_or(true) {
+                            best_bid = Some(cand);
+                        }
                     }
                 } else {
                     run_bid = 0;
                 }
+            }
+            if let Some((s, l)) = best_bid {
+                self.stacked_bid_start = Some(s);
+                self.stacked_bid_len = Some(l);
             }
         }
     }

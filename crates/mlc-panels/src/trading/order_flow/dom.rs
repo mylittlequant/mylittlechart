@@ -1719,15 +1719,7 @@ fn format_dom_qty(q: f64) -> String {
     else                { format!("{:.2}", v) }
 }
 
+#[inline]
 fn with_alpha(hex: &str, alpha: f64) -> String {
-    let s = hex.trim_start_matches('#');
-    let (r, g, b) = match s.len() {
-        6 | 8 => (
-            u8::from_str_radix(&s[0..2], 16).unwrap_or(180),
-            u8::from_str_radix(&s[2..4], 16).unwrap_or(180),
-            u8::from_str_radix(&s[4..6], 16).unwrap_or(180),
-        ),
-        _ => (180u8, 180u8, 180u8),
-    };
-    format!("rgba({},{},{},{:.3})", r, g, b, alpha.clamp(0.0, 1.0))
+    mlc_core::apply_opacity(hex, alpha)
 }

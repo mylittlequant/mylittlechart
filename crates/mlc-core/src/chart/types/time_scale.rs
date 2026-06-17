@@ -573,7 +573,11 @@ impl TimeScale {
             Vec::with_capacity(pts.len());
         for (i_local, (ts, weight)) in pts.iter().enumerate() {
             let bar_idx = (from + i_local) as i64;
-            let x = viewport.bar_to_x(bar_idx as usize);
+            // Use the axis-aware `x_for_bar` helper so the labels land
+            // correctly when the time-axis path is active. In pure
+            // index-mode `x_for_bar` resolves to `bar_to_x` so there is
+            // no regression.
+            let x = viewport.x_for_bar(bar_idx as usize, *ts);
             if x < -100.0 || x > viewport.chart_width + 100.0 {
                 continue;
             }

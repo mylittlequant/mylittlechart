@@ -1292,7 +1292,9 @@ impl ChartApp {
                             .collect(),
                         cumulative_delta: 0.0,
                         stacked_ask_start: None,
+                        stacked_ask_len: None,
                         stacked_bid_start: None,
+                        stacked_bid_len: None,
                         is_absorption: false,
                     };
                     // Infer tick_size from the smallest positive level step
@@ -1307,17 +1309,22 @@ impl ChartApp {
                         }
                         if step.is_finite() { step } else { 1.0 }
                     };
+                    // Compute F1-F4 static extras ONCE per event. CVD is
+                    // window-scoped (per-store prior bar) so it's set in
+                    // the loop below.
+                    let mut new_bar_with_static = new_bar.clone();
+                    new_bar_with_static.compute_static_extras(3.0, 3, 0.15, 0.05, tick_size);
                     for (cid_fp, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !footprint_cids.contains(cid_fp) { continue; }
                         let store = window.footprint_bars.get_or_insert_with(Vec::new);
                         let prev_cvd = match store.last() {
-                            Some(last) if last.open_time != new_bar.open_time => last.cumulative_delta,
+                            Some(last) if last.open_time != new_bar_with_static.open_time => last.cumulative_delta,
                             // Intra-bar update — re-seed from the bar before last.
                             Some(_) if store.len() >= 2 => store[store.len() - 2].cumulative_delta,
                             _ => 0.0,
                         };
-                        let mut bar = new_bar.clone();
-                        bar.compute_extras(prev_cvd, 3.0, 3, 0.15, 0.05, tick_size);
+                        let mut bar = new_bar_with_static.clone();
+                        bar.set_cumulative_delta(prev_cvd);
                         // Same open_time → in-place update; new → append.
                         match store.last_mut() {
                             Some(last) if last.open_time == bar.open_time => {
