@@ -440,7 +440,13 @@ impl DataBridge {
             digdigdig3_station::Station::builder()
                 .storage_root(storage_root)
                 .persistence(digdigdig3_station::PersistenceConfig::on())
-                .warm_start(1000)
+                // 5000 trade-ring depth so derived bars (range/volume/tick/
+                // footprint) have enough historical trade data to seed at
+                // least a few closed bars at typical parameters. Audit
+                // 2026-06-17 (research/station-derived-prewarm-audit) showed
+                // the previous 1000-cap covered only ~1-5 seconds on BTC,
+                // never enough to produce a single closed range bar.
+                .warm_start(5000)
                 .unsubscribe_grace(std::time::Duration::from_secs(30))
                 .orderbook_rest_seed(true)
                 .orderbook_seed_depth(1000)
