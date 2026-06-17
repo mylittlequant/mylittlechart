@@ -49,7 +49,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
         pw.chrome_state.colors.tab_accent  = theme.colors.accent.clone();
         pw.chrome_state.colors.tooltip_bg  = theme.colors.button_bg.clone();
         pw.chrome_state.colors.tooltip_text = theme.colors.text_primary.clone();
-        spinner_active_color = theme.colors.text_primary.clone();
+        spinner_active_color = theme.colors.accent.clone();
         spinner_backdrop_color = theme.chart.scale_border.clone();
         #[cfg(target_os = "windows")]
         { dwm_border_color = theme.colors.ui_border.clone(); }
