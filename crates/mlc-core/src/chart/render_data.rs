@@ -214,6 +214,11 @@ pub struct ChartRenderState<'a> {
     pub wick_enabled: bool,
     /// Use previous bar's close to determine candle color (instead of open vs close)
     pub use_prev_close: bool,
+    /// Footprint bar data for cluster rendering. When `Some(_)` and the chart
+    /// type is `footprint`, the cluster renderer paints Bid × Ask per price
+    /// level, POC highlight, and value-area background.
+    /// When `None` (default), footprint dispatch falls back to draw_candles.
+    pub footprint_bars: Option<&'a [crate::types::FootprintBar]>,
 }
 
 /// Configuration for scale rendering

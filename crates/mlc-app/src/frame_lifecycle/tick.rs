@@ -1243,11 +1243,62 @@ impl ChartApp {
                 LiveUpdate::PositionUpdate { .. } => {
                     trading_updates.push(update.clone());
                 }
-                // Phase 3 plumbing: FootprintUpdate is delivered into the channel.
-                // Rendering (Phase 4) will consume this variant once the footprint
-                // renderer is implemented.  For now we accept and discard the event
-                // so the channel never backs up.
-                LiveUpdate::FootprintUpdate { .. } => {}
+                // Footprint cluster grid (C7): convert the station-derived
+                // `FootprintPoint` into our local `FootprintBar` and route into
+                // every window whose chart_type == "footprint" and whose
+                // (symbol, account_type) matches this update. The renderer
+                // (`chart_render::footprint::draw_footprint_cluster`) reads
+                // `window.footprint_bars` and paints Bid × Ask per level.
+                LiveUpdate::FootprintUpdate { exchange_id: _fp_exch, account_type: fp_at, symbol: fp_sym, point } => {
+                    let fp_at_label = fp_at.short_label();
+                    // Pre-collect (symbol, account_label, is_footprint) per cid
+                    // to avoid holding &self.managers while mutating containers.
+                    let footprint_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
+                        let panels_store = &self.panels_store;
+                        self.panel_app.panel_grid.containers().iter()
+                            .filter_map(|(cid, win)| {
+                                let sym = self.managers.bubble.symbol_for_chart(*cid)?;
+                                let at = self.managers.bubble.account_type_for_chart(*cid)?;
+                                let is_footprint = panels_store.chart_panel
+                                    .get(&win.chart_panel_id)
+                                    .map(|p| p.chart_type == "footprint")
+                                    .unwrap_or(false);
+                                if !is_footprint { return None; }
+                                if sym != fp_sym.as_str() { return None; }
+                                if at != fp_at_label { return None; }
+                                Some(*cid)
+                            })
+                            .collect()
+                    };
+                    if footprint_cids.is_empty() {
+                        continue;
+                    }
+                    // Build the local FootprintBar once; clone per matching window.
+                    let new_bar = mlc_core::FootprintBar {
+                        open_time: point.open_time,
+                        open: point.open,
+                        high: point.high,
+                        low: point.low,
+                        close: point.close,
+                        volume: point.volume,
+                        levels: point.levels.iter()
+                            .map(|(price, buy_vol, sell_vol)| mlc_core::FootprintLevel {
+                                price: *price, buy_vol: *buy_vol, sell_vol: *sell_vol,
+                            })
+                            .collect(),
+                    };
+                    for (cid_fp, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+                        if !footprint_cids.contains(cid_fp) { continue; }
+                        let store = window.footprint_bars.get_or_insert_with(Vec::new);
+                        // Same open_time → in-place update; new → append.
+                        match store.last_mut() {
+                            Some(last) if last.open_time == new_bar.open_time => {
+                                *last = new_bar.clone();
+                            }
+                            _ => store.push(new_bar.clone()),
+                        }
+                    }
+                }
             }
         }
         self.last_event_process_us = events_start.elapsed().as_micros() as u64;

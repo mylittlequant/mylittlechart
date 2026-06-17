@@ -159,6 +159,12 @@ pub struct ChartContainer {
     /// OHLC bars for this chart
     pub bars: Vec<Bar>,
 
+    /// Footprint bars for cluster rendering. `None` for non-footprint
+    /// chart types. Populated by the live-data bridge on chart_type
+    /// switch to `footprint`; the renderer reads via
+    /// `ChartRenderState::footprint_bars`.
+    pub footprint_bars: Option<Vec<crate::types::FootprintBar>>,
+
     // === Viewport & Scales ===
     /// Viewport state (pan/zoom)
     pub viewport: Viewport,
@@ -418,6 +424,7 @@ impl ChartContainer {
             auto_bubble_id: BubbleId(0),
             current_bubble_id: BubbleId(0),
             bars: Vec::new(),
+            footprint_bars: None,
             viewport: Viewport::default(),
             price_scale: PriceScale::default(),
             time_scale: TimeScale::new(),
@@ -731,6 +738,7 @@ impl ChartContainer {
 
             // === Data (cloned) ===
             bars: self.bars.clone(),
+            footprint_bars: self.footprint_bars.clone(),
 
             // === Viewport & Scales (cloned) ===
             viewport: self.viewport.clone(),
@@ -1028,6 +1036,7 @@ impl ChartContainer {
             border_enabled: true,
             wick_enabled: true,
             use_prev_close: false,
+            footprint_bars: None,
         }
     }
 
@@ -1059,6 +1068,7 @@ impl ChartContainer {
             current_bubble_id: BubbleId(0),
 
             bars: self.bars.clone(),
+            footprint_bars: self.footprint_bars.clone(),
             viewport: self.viewport.clone(),
             price_scale: self.price_scale.clone(),
             time_scale: self.time_scale.clone(),

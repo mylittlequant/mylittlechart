@@ -193,6 +193,110 @@ pub const STATUS_BAR_HEIGHT: f64 = 0.0;
 // Data Structures
 // =============================================================================
 
+/// Per-price-level breakdown inside a footprint bar.
+///
+/// `buy_vol` = aggressive buy volume (market buy, lifted offer).
+/// `sell_vol` = aggressive sell volume (market sell, hit bid).
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+pub struct FootprintLevel {
+    pub price: f64,
+    pub buy_vol: f64,
+    pub sell_vol: f64,
+}
+
+impl FootprintLevel {
+    #[inline]
+    pub fn total_vol(&self) -> f64 {
+        self.buy_vol + self.sell_vol
+    }
+    #[inline]
+    pub fn delta(&self) -> f64 {
+        self.buy_vol - self.sell_vol
+    }
+}
+
+/// One footprint bar — OHLCV plus per-price-level (buy_vol, sell_vol).
+///
+/// `open_time` is the bucket-start in milliseconds. Levels are sorted
+/// ascending by price after construction.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct FootprintBar {
+    pub open_time: i64,
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+    pub volume: f64,
+    pub levels: Vec<FootprintLevel>,
+}
+
+impl FootprintBar {
+    /// Bar timestamp in milliseconds (axis-aware units).
+    #[inline]
+    pub fn ts_ms(&self) -> i64 {
+        self.open_time
+    }
+
+    #[inline]
+    pub fn is_bullish(&self) -> bool {
+        self.close >= self.open
+    }
+
+    /// Total delta (sum of buy_vol - sell_vol across all levels).
+    #[inline]
+    pub fn total_delta(&self) -> f64 {
+        self.levels.iter().map(|l| l.delta()).sum()
+    }
+
+    /// Index of the Point of Control — the level with maximum total volume.
+    pub fn poc_idx(&self) -> Option<usize> {
+        if self.levels.is_empty() {
+            return None;
+        }
+        let mut best = 0usize;
+        let mut best_vol = self.levels[0].total_vol();
+        for (i, l) in self.levels.iter().enumerate().skip(1) {
+            let v = l.total_vol();
+            if v > best_vol {
+                best_vol = v;
+                best = i;
+            }
+        }
+        Some(best)
+    }
+
+    /// Value Area: (low_idx, high_idx) — greedy bidirectional expansion
+    /// from POC until cumulative volume >= 70% of total. Returns the
+    /// pair `(low, high)` such that `levels[low..=high]` is the VA.
+    /// Always expands toward the higher-volume neighbour.
+    pub fn value_area(&self, pct: f64) -> Option<(usize, usize)> {
+        let poc = self.poc_idx()?;
+        let target = self.volume * pct.clamp(0.01, 1.0);
+        if target <= 0.0 {
+            return Some((poc, poc));
+        }
+        let mut lo = poc;
+        let mut hi = poc;
+        let mut acc = self.levels[poc].total_vol();
+        let n = self.levels.len();
+        while acc < target {
+            let down_vol = if lo > 0 { self.levels[lo - 1].total_vol() } else { -1.0 };
+            let up_vol   = if hi + 1 < n { self.levels[hi + 1].total_vol() } else { -1.0 };
+            if down_vol < 0.0 && up_vol < 0.0 {
+                break;
+            }
+            if up_vol >= down_vol {
+                hi += 1;
+                acc += up_vol.max(0.0);
+            } else {
+                lo -= 1;
+                acc += down_vol.max(0.0);
+            }
+        }
+        Some((lo, hi))
+    }
+}
+
 /// OHLCV bar data with timestamp
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct Bar {

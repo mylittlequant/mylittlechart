@@ -2542,6 +2542,7 @@ impl ChartPanelApp {
                 border_enabled: true,
                 wick_enabled: true,
                 use_prev_close: false,
+                footprint_bars: window.footprint_bars.as_deref(),
             };
 
             let render_config = ChartRenderConfig {

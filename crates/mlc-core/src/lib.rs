@@ -127,7 +127,7 @@ pub use utils::catmull_rom_spline;
 
 // Core Types (from types.rs)
 pub use types::{
-    crisp, crisp_rect, Bar, DragMode, Theme,
+    crisp, crisp_rect, Bar, FootprintBar, FootprintLevel, DragMode, Theme,
     find_bar_for_timestamp, bar_to_timestamp,
     find_bar_for_timestamp_ms, timestamp_ms_to_bar_f64, bar_f64_to_timestamp_ms, bar_interval_seconds,
     // Price scale constants

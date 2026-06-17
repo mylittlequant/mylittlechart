@@ -441,12 +441,11 @@ pub fn draw_volume_bars(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     draw_candles(ctx, state);
 }
 
-/// Draw Footprint chart — stub, renders as standard candles until the
-/// cluster-grid renderer arrives. Data already flows via station's
-/// `TradeToFootprintDerived` + `LiveUpdate::FootprintUpdate`; the visual
-/// render is B-HIGH-5 (own arc).
+/// Draw Footprint chart — routes to the cluster-grid renderer
+/// (`super::footprint::draw_footprint_cluster`), which collapses to a
+/// candle visual when the bar is too narrow for legible text.
 pub fn draw_footprint(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
-    draw_candles(ctx, state);
+    super::footprint::draw_footprint_cluster(ctx, state);
 }
 
 #[cfg(test)]

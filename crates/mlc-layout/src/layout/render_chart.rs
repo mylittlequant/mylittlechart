@@ -3141,6 +3141,7 @@ pub fn render_full_chart_panel(
         border_enabled: data.state.border_enabled,
         wick_enabled: data.state.wick_enabled,
         use_prev_close: data.state.use_prev_close,
+        footprint_bars: data.state.footprint_bars,
     };
 
     // 1. Background — fill the full window rect to avoid gaps when scales are
@@ -3520,6 +3521,7 @@ pub fn render_chart_splits(
             border_enabled: true,
             wick_enabled: true,
             use_prev_close: false,
+            footprint_bars: window.footprint_bars.as_deref(),
         };
 
         // Build a config for this leaf, overriding chart_type from the window.
@@ -3696,6 +3698,7 @@ pub fn render_chart_overlay(
         border_enabled: state.border_enabled,
         wick_enabled: state.wick_enabled,
         use_prev_close: state.use_prev_close,
+        footprint_bars: state.footprint_bars,
     };
 
     // Compute total chart bounds (main + all sub-panes) for the vertical crosshair span.
