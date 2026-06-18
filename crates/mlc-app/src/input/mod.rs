@@ -407,13 +407,19 @@ impl ChartApp {
                                 .map(|w| w.price_scale.scale_mode)
                                 .unwrap_or(ScaleMode::Auto);
                             let next_mode = current_mode.next();
+                            let bars_for_calc: Vec<mlc_core::Bar> = self.panel_app.panel_grid
+                                .container_id_for_leaf(leaf_id)
+                                .and_then(|cid| self.managers.bubble.bubble_for_chart(cid))
+                                .and_then(|bid| self.managers.bubble.bubble(bid))
+                                .map(|b| b.bars.clone())
+                                .unwrap_or_default();
                             if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
                                 window.price_scale.scale_mode = next_mode;
                                 if next_mode.is_follow() {
                                     window.snap_to_end(mlc_core::DEFAULT_SNAP_MARGIN);
                                 }
                                 if next_mode.is_auto_y() {
-                                    window.calc_auto_scale();
+                                    window.calc_auto_scale(&bars_for_calc);
                                 }
                                 let is_auto = next_mode.is_auto_y();
                                 for state in window.sub_pane_y_state.values_mut() {
@@ -586,6 +592,10 @@ impl ChartApp {
         };
 
         let active_pid_rc = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+        let active_bars: Vec<mlc_core::Bar> = self.panel_app.panel_grid.active_container()
+            .and_then(|w| self.managers.bubble.bubble(w.current_bubble_id))
+            .map(|b| b.bars.clone())
+            .unwrap_or_default();
         let hit = if let Some(pid) = active_pid_rc {
             if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
                 self.panel_app.panel_grid.handle_right_click(
@@ -593,6 +603,7 @@ impl ChartApp {
                     indicator_overlay_hit,
                     indicator_subpane_hit,
                     &mut panel.drawing_manager,
+                    &active_bars,
                 )
             } else {
                 mlc_core::ChartRightClickHit::Miss
@@ -2559,9 +2570,10 @@ impl ChartApp {
         }
 
         let active_pid_ds = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+        let ds_bars = self.active_chart_bars();
         let drag_start_hit = if let Some(pid) = active_pid_ds {
             if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                self.panel_app.panel_grid.handle_drag_start(x, y, extended, &mut panel.drawing_manager)
+                self.panel_app.panel_grid.handle_drag_start(x, y, extended, &mut panel.drawing_manager, &ds_bars)
             } else {
                 ChartDragStartHit::Miss
             }
@@ -3587,9 +3599,10 @@ impl ChartApp {
                 None => { _fallback_fh = self.build_extended_layout(); &_fallback_fh }
             };
             let active_pid_fh = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+            let fh_bars: Vec<mlc_core::Bar> = self.active_chart_bars();
             let freehand_extended = if let Some(pid) = active_pid_fh {
                 if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                    self.panel_app.panel_grid.extend_freehand(x, y, extended, &mut panel.drawing_manager)
+                    self.panel_app.panel_grid.extend_freehand(x, y, extended, &mut panel.drawing_manager, &fh_bars)
                 } else { false }
             } else { false };
             if freehand_extended {
@@ -3610,7 +3623,7 @@ impl ChartApp {
                                     mlc_core::engine::input::HitResult::PaneSeparator { .. }
                                 );
                                 if let Some((ts, price, vis, pane_idx)) = self.panel_app.panel_grid
-                                    .update_crosshair_split(x, y, active_leaf, &ext, is_over_separator)
+                                    .update_crosshair_split(x, y, active_leaf, &ext, is_over_separator, &fh_bars)
                                 {
                                     // Propagate to sync-group peers (F11).
                                     self.propagate_crosshair_to_sync_group(
@@ -3629,7 +3642,7 @@ impl ChartApp {
                                 mlc_core::engine::input::HitResult::PaneSeparator { .. }
                             );
                             self.panel_app.panel_grid.update_crosshair(
-                                x, y, drag_mode, /* drawing_active */ true, extended, is_over_separator, &panel.drawing_manager,
+                                x, y, drag_mode, /* drawing_active */ true, extended, is_over_separator, &panel.drawing_manager, &fh_bars,
                             );
                         }
                     }
@@ -3696,8 +3709,9 @@ impl ChartApp {
                             ExtendedLayoutHitTester::new(&ext).hit_test(x, y),
                             mlc_core::engine::input::HitResult::PaneSeparator { .. }
                         );
+                        let hovered_bars: Vec<mlc_core::Bar> = self.bars_for_leaf(leaf_id);
                         if let Some((ts, price, vis, pane_idx)) = self.panel_app.panel_grid
-                            .update_crosshair_split(x, y, leaf_id, &ext, is_over_separator)
+                            .update_crosshair_split(x, y, leaf_id, &ext, is_over_separator, &hovered_bars)
                         {
                             self.propagate_crosshair_to_sync_group(leaf_id, ts, price, vis, pane_idx);
                         }
@@ -3710,10 +3724,11 @@ impl ChartApp {
                 ExtendedLayoutHitTester::new(extended2).hit_test(x, y),
                 mlc_core::engine::input::HitResult::PaneSeparator { .. }
             );
+            let active_bars_ch2: Vec<mlc_core::Bar> = self.active_chart_bars();
             active_pid_ch2
                 .and_then(|pid| self.panels_store.chart_panel.get(&pid))
                 .and_then(|panel| self.panel_app.panel_grid
-                    .update_crosshair(x, y, drag_mode, false, extended2, is_over_separator2, &panel.drawing_manager))
+                    .update_crosshair(x, y, drag_mode, false, extended2, is_over_separator2, &panel.drawing_manager, &active_bars_ch2))
         } {
             let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
             if let Some(active_leaf) = active_leaf_opt {
@@ -4937,8 +4952,9 @@ impl ChartApp {
                             ExtendedLayoutHitTester::new(&extended).hit_test(x, y),
                             mlc_core::engine::input::HitResult::PaneSeparator { .. }
                         );
+                        let hovered_bars_mm: Vec<mlc_core::Bar> = self.bars_for_leaf(leaf_id);
                         if let Some((ts, price, vis, pane_idx)) = self.panel_app.panel_grid
-                            .update_crosshair_split(x, y, leaf_id, &extended, is_over_separator)
+                            .update_crosshair_split(x, y, leaf_id, &extended, is_over_separator, &hovered_bars_mm)
                         {
                             // Propagate to sync-group peers (handles order-flow panels too).
                             self.propagate_crosshair_to_sync_group(leaf_id, ts, price, vis, pane_idx);
@@ -5064,10 +5080,11 @@ impl ChartApp {
         );
         if let Some((timestamp, price, crosshair_visible, pane_index)) = {
             let active_pid_ch3 = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+            let active_bars_ch3: Vec<mlc_core::Bar> = self.active_chart_bars();
             active_pid_ch3
                 .and_then(|pid| self.panels_store.chart_panel.get(&pid))
                 .and_then(|panel| self.panel_app.panel_grid
-                    .update_crosshair(x, y, drag_mode, is_drawing, &extended, is_over_separator_mm, &panel.drawing_manager))
+                    .update_crosshair(x, y, drag_mode, is_drawing, &extended, is_over_separator_mm, &panel.drawing_manager, &active_bars_ch3))
         } {
             let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
             if let Some(active_leaf) = active_leaf_opt {
@@ -7003,8 +7020,9 @@ impl ChartApp {
                                     .and_then(|s| s.strip_suffix("_bar"))
                                     .and_then(|s| s.parse::<usize>().ok())
                                 {
-                                    if let Some(window) = self.panel_app.panel_grid.active_container() {
-                                        let ts_ms = mlc_core::bar_f64_to_timestamp_ms(&window.bars, bar);
+                                    if let Some(_window) = self.panel_app.panel_grid.active_container() {
+                                        let coord_bars = self.active_chart_bars();
+                                        let ts_ms = mlc_core::bar_f64_to_timestamp_ms(&coord_bars[..], bar);
                                         if let Some(pid) = active_pid_char {
                                             if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
                                                 let prims = panel.drawing_manager.primitives_mut();
@@ -7132,7 +7150,7 @@ impl ChartApp {
                             let active_cid = self.panel_app.panel_grid.docking().active_leaf()
                                 .and_then(|leaf| self.panel_app.panel_grid.container_id_for_leaf(leaf))
                                 .map(|c| c.0);
-                            let bars_opt = self.panel_app.panel_grid.active_container().map(|w| w.bars.clone());
+                            let bars_opt = self.panel_app.panel_grid.active_container().map(|w| Vec::<mlc_core::Bar>::new());
                             if let (Some(cid), Some(bars)) = (active_cid, bars_opt) {
                                 self.indicator_manager.calculate_all_for_window(cid, &bars);
                             }
@@ -8201,7 +8219,7 @@ impl ChartApp {
                             }
                         }
                         bars_for_bubble = Some(bars.clone());
-                        window.set_bars(bars);
+                        window.reconcile_view_fresh(&bars);
                         new_exch = Some(exch);
                         eprintln!("[Undo/Redo] Changed symbol to {}", new_symbol);
                     }
@@ -8233,7 +8251,7 @@ impl ChartApp {
                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     if let Some(bars) = window.data_provider.get_bars(&cur_sym, new_timeframe) {
                         bars_for_bubble = Some(bars.clone());
-                        window.set_bars(bars);
+                        window.reconcile_view_fresh(&bars);
                         changed = true;
                         eprintln!("[Undo/Redo] Changed timeframe to {:?}", new_timeframe);
                     }
@@ -8298,7 +8316,7 @@ impl ChartApp {
             }
             Command::AddIndicator { instance_id, type_id, .. } => {
                 let (bars_snapshot, chart_id_val) = match self.panel_app.panel_grid.active_container() {
-                    Some(w) => (w.bars.clone(), w.id),
+                    Some(w) => (Vec::<mlc_core::Bar>::new(), w.id),
                     None => return,
                 };
                 if self.indicator_manager.create_instance_with_id(*instance_id, type_id) {
@@ -8695,10 +8713,13 @@ impl ChartApp {
                 let (active_cid, bars) = self.panel_app.panel_grid.docking().active_leaf()
                     .and_then(|leaf| {
                         let cid = self.panel_app.panel_grid.container_id_for_leaf(leaf)?;
-                        let bars = self.panel_app.panel_grid.container_for_leaf(leaf)?.bars.clone();
+                        let bars = self.managers.bubble.bubble_for_chart(cid)
+                            .and_then(|bid| self.managers.bubble.bubble(bid))
+                            .map(|b| b.bars.clone())
+                            .unwrap_or_default();
                         Some((cid.0, bars))
                     })
-                    .unwrap_or_default();
+                    .unwrap_or((0u64, Vec::new()));
                 self.indicator_manager.calculate_all_for_window(active_cid, &bars);
                 self.sync_sub_panes_from_manager();
                 // Propagate to sync group peers
@@ -8722,10 +8743,13 @@ impl ChartApp {
                 let (active_cid, bars) = self.panel_app.panel_grid.docking().active_leaf()
                     .and_then(|leaf| {
                         let cid = self.panel_app.panel_grid.container_id_for_leaf(leaf)?;
-                        let bars = self.panel_app.panel_grid.container_for_leaf(leaf)?.bars.clone();
+                        let bars = self.managers.bubble.bubble_for_chart(cid)
+                            .and_then(|bid| self.managers.bubble.bubble(bid))
+                            .map(|b| b.bars.clone())
+                            .unwrap_or_default();
                         Some((cid.0, bars))
                     })
-                    .unwrap_or_default();
+                    .unwrap_or((0u64, Vec::new()));
                 self.indicator_manager.calculate_all_for_window(active_cid, &bars);
                 self.sync_sub_panes_from_manager();
                 // Propagate to sync group peers

@@ -185,7 +185,7 @@ impl ChartApp {
                     .map(String::from)
                     .unwrap_or_default();
                 let inline_alert_price_fallback = self.panel_app.panel_grid.active_container()
-                    .and_then(|w| w.bars.last())
+                    .and_then(|w| None::<&mlc_core::Bar>)
                     .map(|b| b.close)
                     .unwrap_or(0.0);
                 if let Some(pid) = active_pid_inline {
@@ -411,7 +411,7 @@ impl ChartApp {
                             window.restore_drawings_for_symbol(sym_part, exchange_part, &wl_at_label, &mut panel.drawing_manager);
                         }
                     }
-                    window.bars.clear();
+                    {};
                     window.viewport.bar_count = 0;
                     window.pending_symbol_load = true;
                 }
@@ -681,7 +681,7 @@ impl ChartApp {
 
         let (active_window_id, bars) = self.panel_app.panel_grid.docking().active_leaf()
             .and_then(|leaf| self.panel_app.panel_grid.container_id_for_leaf(leaf).map(|cid| (cid.0, leaf)))
-            .and_then(|(cid, leaf)| self.panel_app.panel_grid.container_for_leaf(leaf).map(|w| (cid, w.bars.clone())))
+            .and_then(|(cid, leaf)| self.panel_app.panel_grid.container_for_leaf(leaf).map(|w| (cid, Vec::<mlc_core::Bar>::new())))
             .unwrap_or_default();
         let _ = symbol; // legacy, no longer needed for indicator calc
         self.indicator_manager.calculate_all_for_window(active_window_id, &bars);
@@ -881,7 +881,7 @@ impl ChartApp {
                                     window.restore_drawings_for_symbol(symbol_part, resolved_exchange.as_str(), &search_at_label, &mut panel.drawing_manager);
                                 }
                             }
-                            window.bars.clear();
+                            {};
                             window.viewport.bar_count = 0;
                             window.viewport.view_start = 0.0;
                             window.pending_symbol_load = true;
@@ -928,10 +928,13 @@ impl ChartApp {
                         let (active_cid, bars) = self.panel_app.panel_grid.docking().active_leaf()
                             .and_then(|leaf| {
                                 let cid = self.panel_app.panel_grid.container_id_for_leaf(leaf)?;
-                                let bars = self.panel_app.panel_grid.container_for_leaf(leaf)?.bars.clone();
+                                let bars = self.managers.bubble.bubble_for_chart(cid)
+                                    .and_then(|bid| self.managers.bubble.bubble(bid))
+                                    .map(|b| b.bars.clone())
+                                    .unwrap_or_default();
                                 Some((cid.0, bars))
                             })
-                            .unwrap_or_default();
+                            .unwrap_or((0u64, Vec::new()));
                         self.indicator_manager.calculate_all_for_window(active_cid, &bars);
                         self.sync_sub_panes_from_manager();
                         self.sidebar_data_dirty = true;
@@ -952,8 +955,9 @@ impl ChartApp {
                             .and_then(|cid| self.managers.bubble.timeframe_for_chart(cid))
                             .cloned()
                             .unwrap_or_else(mlc_core::state::Timeframe::h1);
+                        let main_bars_for_cmp = self.active_chart_bars();
                         let added_series = if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                            let added = window.add_compare_symbol(symbol_part, &main_sym_for_cmp, &main_tf_for_cmp);
+                            let added = window.add_compare_symbol(symbol_part, &main_sym_for_cmp, &main_tf_for_cmp, &main_bars_for_cmp);
                             eprintln!(
                                 "[ChartApp] Compare symbol {}: {}",
                                 symbol_part,
@@ -1073,7 +1077,7 @@ impl ChartApp {
                             // Recalculate the new indicator with current bars.
                             if let (Some(cid), Some(bars)) = (
                                 active_container_id,
-                                active_leaf.and_then(|leaf| self.panel_app.panel_grid.container_for_leaf(leaf)).map(|w| w.bars.clone()),
+                                active_leaf.and_then(|leaf| self.panel_app.panel_grid.container_for_leaf(leaf)).map(|w| Vec::<mlc_core::Bar>::new()),
                             ) {
                                 self.indicator_manager.calculate_all_for_window(cid.0, &bars);
                             }
@@ -1127,13 +1131,14 @@ impl ChartApp {
                         .map(|w| w.price_scale.scale_mode)
                         .unwrap_or(ScaleMode::Auto);
                     let next_mode = current_mode.next();
+                    let hit_bars: Vec<mlc_core::Bar> = self.bars_for_leaf(hit_leaf_id);
                     if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(hit_leaf_id) {
                         window.price_scale.scale_mode = next_mode;
                         if next_mode.is_follow() {
                             window.snap_to_end(mlc_core::DEFAULT_SNAP_MARGIN);
                         }
                         if next_mode.is_auto_y() {
-                            window.calc_auto_scale();
+                            window.calc_auto_scale(&hit_bars);
                         }
                         let is_auto = next_mode.is_auto_y();
                         for state in window.sub_pane_y_state.values_mut() {
@@ -1416,7 +1421,7 @@ impl ChartApp {
                             .map(String::from)
                             .unwrap_or_default();
                         let price_fallback = self.panel_app.panel_grid.active_container()
-                            .and_then(|w| w.bars.last())
+                            .and_then(|w| None::<&mlc_core::Bar>)
                             .map(|b| b.close)
                             .unwrap_or(0.0);
                         let label = self.indicator_manager
@@ -1524,12 +1529,13 @@ impl ChartApp {
 
                 // If magnet mode is active, call calculate_magnet_snap() directly
                 // (like the terminal does) rather than relying on crosshair state.
+                let magnet_bars = self.active_chart_bars();
                 let price = self.panel_app.panel_grid.active_container()
                     .map(|w| {
                         if w.crosshair.is_magnet() {
                             let bar_idx = w.viewport.x_to_bar(local_x_main);
                             let (snapped_price, _) = w.calculate_magnet_snap(
-                                bar_idx, raw_price, chart_height, price_min, price_max,
+                                &magnet_bars, bar_idx, raw_price, chart_height, price_min, price_max,
                             );
                             snapped_price
                         } else {
@@ -1550,8 +1556,9 @@ impl ChartApp {
 
                 // Dispatch click and record undo if a primitive was just completed.
                 eprintln!("[CANVAS_CLICK] screen=({:.0},{:.0}) -> bar={:.2}, price={:.12e}, price_range=[{:.12e}..{:.12e}]", x, y, bar, price, price_min, price_max);
+                let click_bars_main: Vec<mlc_core::Bar> = self.active_chart_bars();
                 let ts_ms = self.panel_app.panel_grid.active_container()
-                    .map(|w| mlc_core::bar_f64_to_timestamp_ms(&w.bars, bar))
+                    .map(|_w| mlc_core::bar_f64_to_timestamp_ms(&click_bars_main[..], bar))
                     .unwrap_or(0);
                 let primitive_created = active_pid_tool
                     .and_then(|pid| self.panels_store.chart_panel.get_mut(&pid))
@@ -1687,8 +1694,9 @@ impl ChartApp {
                 }
 
                 // Dispatch click and record undo if a primitive was just completed.
+                let click_bars_sub: Vec<mlc_core::Bar> = self.active_chart_bars();
                 let sub_ts_ms = self.panel_app.panel_grid.active_container()
-                    .map(|w| mlc_core::bar_f64_to_timestamp_ms(&w.bars, bar))
+                    .map(|_w| mlc_core::bar_f64_to_timestamp_ms(&click_bars_sub[..], bar))
                     .unwrap_or(0);
                 let primitive_created = active_pid_tool
                     .and_then(|pid| self.panels_store.chart_panel.get_mut(&pid))
@@ -1801,6 +1809,7 @@ impl ChartApp {
             if local_x >= 0.0 && local_x <= chart_rect.width
                 && local_y >= 0.0 && local_y <= chart_rect.height
             {
+                let hit_bars_main: Vec<mlc_core::Bar> = self.active_chart_bars();
                 if let Some(window) = self.panel_app.panel_grid.active_container() {
                     // Use corrected viewport dimensions from the layout so that
                     // hit-test coordinate mapping matches the render path exactly.
@@ -1810,7 +1819,7 @@ impl ChartApp {
                     let prim_idx = active_pid_hit
                         .and_then(|pid| self.panels_store.chart_panel.get(&pid))
                         .and_then(|panel| panel.drawing_manager.hit_test(
-                            local_x, local_y, &window.bars, &corrected_vp, &window.price_scale,
+                            local_x, local_y, &hit_bars_main[..], &corrected_vp, &window.price_scale,
                         ));
                     if let Some(prim_idx) = prim_idx {
                         // Select the primitive, clear indicator selection, and return.
@@ -1864,11 +1873,12 @@ impl ChartApp {
                         vp.chart_height = content.height;
                         vp
                     });
-                if let (Some(sub_viewport), Some(window)) = (sub_viewport, self.panel_app.panel_grid.active_container()) {
+                let hit_bars_sub: Vec<mlc_core::Bar> = self.active_chart_bars();
+                if let (Some(sub_viewport), Some(_window)) = (sub_viewport, self.panel_app.panel_grid.active_container()) {
                     let sub_prim_idx = active_pid_hit
                         .and_then(|pid| self.panels_store.chart_panel.get(&pid))
                         .and_then(|panel| panel.drawing_manager.hit_test_in_pane(
-                            plx, ply, instance_id, &window.bars, &sub_viewport, &sub_price_scale,
+                            plx, ply, instance_id, &hit_bars_sub[..], &sub_viewport, &sub_price_scale,
                         ));
                     if let Some(prim_idx) = sub_prim_idx {
                         // Select the primitive, clear indicator selection, and return.
@@ -2199,13 +2209,14 @@ impl ChartApp {
                         if let Some(new_idx) = cloned_idx {
                             // Apply +20px right, -20px up offset to the cloned primitive.
                             // Convert screen pixels to bar/price coordinates using the viewport.
+                            let clone_bars: Vec<mlc_core::Bar> = self.active_chart_bars();
                             if let Some(w) = self.panel_app.panel_grid.active_container() {
                                 let bar_spacing = w.viewport.bar_spacing;
                                 let chart_height = w.viewport.chart_height;
                                 let price_range = w.price_scale.price_max - w.price_scale.price_min;
                                 // 20px right = 20 / bar_spacing bars → convert to ms
                                 let bars_delta = 20.0 / bar_spacing.max(0.001);
-                                let bar_interval_ms = mlc_core::bar_interval_seconds(&w.bars) * 1000;
+                                let bar_interval_ms = mlc_core::bar_interval_seconds(&clone_bars[..]) * 1000;
                                 let ts_delta_ms = (bars_delta * bar_interval_ms as f64).round() as i64;
                                 // 20px up = 20 / chart_height * price_range (up = positive price)
                                 let price_delta = if chart_height > 0.0 && price_range > 0.0 {

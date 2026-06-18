@@ -286,7 +286,16 @@ impl ChartApp {
                             .collect()
                     };
 
-                    for (chart_id_key, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+                    // Phase X0 / C5c: capture per-window anchor BEFORE bubble write,
+                    // determine is_backfill (was the window already showing data?).
+                    // Then write bubble.bars ONCE, then loop windows for reconcile.
+                    let mut matched_windows: Vec<(mlc_core::state::ChartId, bool, Option<(i64, f64)>)> = Vec::new();
+                    let prev_bars_for_anchor: Vec<mlc_core::Bar> = self.managers.bubble
+                        .bubble_for_instrument(exchange_id.as_str(), account_type.short_label(), &symbol)
+                        .and_then(|bid| self.managers.bubble.bubble(bid))
+                        .map(|b| b.bars.clone())
+                        .unwrap_or_default();
+                    for (chart_id_key, window) in self.panel_app.panel_grid.containers().iter() {
                         let (win_sym, win_tf, win_exch, win_at) = match instrument_by_cid.get(chart_id_key) {
                             Some(t) => t,
                             None => continue,
@@ -298,78 +307,17 @@ impl ChartApp {
                             && win_at.as_str() == account_type.short_label();
                         if matched {
                             any_matched = true;
-                            let is_backfill = if window.pending_symbol_load {
-                                false
+                            let is_backfill = !window.pending_symbol_load && !prev_bars_for_anchor.is_empty();
+                            let anchor = if is_backfill {
+                                window.capture_view_anchor(&prev_bars_for_anchor)
                             } else {
-                                !window.bars.is_empty()
+                                None
                             };
-                            eprintln!(
-                                "[tick::BarsLoaded match] cid={:?} sym={} tf={} is_backfill={} prior_bars={} incoming_bars={}",
-                                chart_id_key, win_sym, win_tf.name, is_backfill, window.bars.len(), bars.len(),
-                            );
-                            crate::dlog!("[ChartApp]   -> window matched: sym={} exch={} tf={} is_backfill={} bars_len={} pending_sym={}",
-                                win_sym, win_exch, win_tf.name,
-                                is_backfill, window.bars.len(), window.pending_symbol_load);
-                            if is_backfill {
-                                window.update_bars(bars.clone());
-                                // Cold-snap can also be pending on this arm: a
-                                // startup-parked preset gets restored (flag set,
-                                // bars delivered while live) and then unparked —
-                                // pending_symbol_load is false by then, so the
-                                // cure-path BarsLoaded routes here. Consume the
-                                // one-shot flag on the first delivery regardless
-                                // of which arm it lands in.
-                                if window.needs_snap_after_backfill
-                                    && !window.bars.is_empty()
-                                    && window.viewport.chart_width > 0.0
-                                {
-                                    window.consume_cold_snap();
-                                }
-                                let target = self.panel_app.user_manager.profile.data_load.background_bar_count;
-                                if target > 0 && (window.bars.len() as u32) < target {
-                                    backfill_requests.push((
-                                        win_sym.clone(),
-                                        win_tf.clone(),
-                                        account_type_from_label(win_at),
-                                    ));
-                                }
-                            } else {
-                                window.price_scale.scale_mode = self.default_scale_mode;
-                                window.set_bars(bars.clone());
-                                window.pending_symbol_load = false;
-                                // Cold-snap: if width is already known, consume the
-                                // one-shot flag immediately; otherwise leave it set
-                                // for the deferred path in prepare_frame.
-                                if window.needs_snap_after_backfill
-                                    && !window.bars.is_empty()
-                                    && window.viewport.chart_width > 0.0
-                                {
-                                    window.consume_cold_snap();
-                                }
-                                let target = self.panel_app.user_manager.profile.data_load.background_bar_count;
-                                if target > 300 {
-                                    backfill_requests.push((
-                                        win_sym.clone(),
-                                        win_tf.clone(),
-                                        account_type_from_label(win_at),
-                                    ));
-                                }
-                            }
-                            crate::dlog!("[BarsLoaded] after set_bars: view_start={} chart_width={} bar_spacing={}",
-                                window.viewport.view_start, window.viewport.chart_width, window.viewport.bar_spacing);
-                            prev_close_mirrors.push((*chart_id_key, window.bars.first().map(|b| b.open)));
-                        }
-                    }
-                    for (chart_id, prev_close) in prev_close_mirrors {
-                        if let Some(bid) = self.managers.bubble.bubble_for_chart(chart_id) {
-                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
-                                bubble.prev_close_price = prev_close;
-                            }
+                            matched_windows.push((*chart_id_key, is_backfill, anchor));
                         }
                     }
 
-                    // Phase X0 / C2: mirror bars into bubble storage.
-                    // BarsLoaded targets exactly the bubble owning (exchange, account, symbol).
+                    // Write bubble.bars ONCE (replaces the storage hub).
                     if any_matched {
                         if let Some(bid) = self.managers.bubble.bubble_for_instrument(
                             exchange_id.as_str(), account_type.short_label(), &symbol
@@ -379,6 +327,61 @@ impl ChartApp {
                             }
                         }
                     }
+
+                    // Window-side reconcile loop — viewport snap, anchor restore, post-effects.
+                    let new_bars_clone = bars.clone();
+                    for (chart_id_key, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+                        let Some((_, is_backfill, anchor)) = matched_windows.iter().find(|(cid, _, _)| cid == chart_id_key).cloned()
+                            .map(|t| Some(t)).unwrap_or(None) else { continue; };
+                        let win_at = instrument_by_cid.get(chart_id_key).map(|(_, _, _, at)| at.clone()).unwrap_or_default();
+                        let win_sym = instrument_by_cid.get(chart_id_key).map(|(s, _, _, _)| s.clone()).unwrap_or_default();
+                        let win_tf = instrument_by_cid.get(chart_id_key).map(|(_, tf, _, _)| tf.clone()).unwrap_or_else(mlc_core::state::Timeframe::h1);
+                        if is_backfill {
+                            window.reconcile_view_keep_anchor(&new_bars_clone, anchor);
+                            if window.needs_snap_after_backfill
+                                && !new_bars_clone.is_empty()
+                                && window.viewport.chart_width > 0.0
+                            {
+                                window.consume_cold_snap(&new_bars_clone);
+                            }
+                            let target = self.panel_app.user_manager.profile.data_load.background_bar_count;
+                            if target > 0 && (new_bars_clone.len() as u32) < target {
+                                backfill_requests.push((
+                                    win_sym,
+                                    win_tf,
+                                    account_type_from_label(&win_at),
+                                ));
+                            }
+                        } else {
+                            window.price_scale.scale_mode = self.default_scale_mode;
+                            window.reconcile_view_fresh(&new_bars_clone);
+                            window.pending_symbol_load = false;
+                            if window.needs_snap_after_backfill
+                                && !new_bars_clone.is_empty()
+                                && window.viewport.chart_width > 0.0
+                            {
+                                window.consume_cold_snap(&new_bars_clone);
+                            }
+                            let target = self.panel_app.user_manager.profile.data_load.background_bar_count;
+                            if target > 300 {
+                                backfill_requests.push((
+                                    win_sym,
+                                    win_tf,
+                                    account_type_from_label(&win_at),
+                                ));
+                            }
+                        }
+                        prev_close_mirrors.push((*chart_id_key, new_bars_clone.first().map(|b| b.open)));
+                    }
+                    for (chart_id, prev_close) in prev_close_mirrors {
+                        if let Some(bid) = self.managers.bubble.bubble_for_chart(chart_id) {
+                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                                bubble.prev_close_price = prev_close;
+                            }
+                        }
+                    }
+
+                    // C5c: bubble write already done above (no second write needed).
 
                     // Trigger Layer 2 background backfill for initial loads.
                     // Done after the window loop to avoid borrow conflicts with self.bridge.
@@ -434,13 +437,25 @@ impl ChartApp {
 
                         for (preset_key, cids) in matching_parked {
                             if let Some(parked) = self.live_preset_cache.get_mut(&preset_key) {
+                                // Phase X0 / C5c: write bubble.bars for each parked window's bubble FIRST.
+                                let parked_bubble_ids: Vec<mlc_core::tag_manager::BubbleId> = cids.iter()
+                                    .filter_map(|cid| parked.tag_manager.bubble_for_chart(*cid))
+                                    .collect::<std::collections::HashSet<_>>()
+                                    .into_iter()
+                                    .collect();
+                                for bid in &parked_bubble_ids {
+                                    if let Some(bubble) = parked.tag_manager.bubble_mut(*bid) {
+                                        bubble.bars = bars.clone();
+                                    }
+                                }
                                 for cid in cids {
                                     if let Some(window) = parked.panel_grid.containers_mut().get_mut(&cid) {
-                                        let is_backfill = !window.pending_symbol_load && !window.bars.is_empty();
+                                        let is_backfill = !window.pending_symbol_load
+                                            && window.viewport.bar_count > 0;
                                         if is_backfill {
-                                            window.update_bars(bars.clone());
+                                            window.reconcile_view_keep_anchor(&bars, None);
                                         } else {
-                                            window.set_bars(bars.clone());
+                                            window.reconcile_view_fresh(&bars);
                                             window.pending_symbol_load = false;
                                         }
                                         parked_matched = true;
@@ -492,33 +507,28 @@ impl ChartApp {
                     // calculate_for_window instead of calculate_all_for_symbol
                     // prevents leaking bars from one TF into another window's
                     // indicators.
-                    let matched_ids: Vec<(u64, Vec<mlc_core::Bar>)> = self
+                    // Phase X0 / C5c: bars come from bridge once; all matched windows share them.
+                    let matched_ids: Vec<u64> = self
                         .panel_app
                         .panel_grid
                         .containers()
                         .iter()
                         .filter(|(cid, _w)| {
-            
                             self.managers.bubble.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
                                 && self.managers.bubble.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
                                 && self.managers.bubble.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
                                 && self.managers.bubble.account_type_for_chart(**cid).map_or(false, |at| at == account_type.short_label())
                         })
-                        .map(|(cid, w)| (cid.0, w.bars.clone()))
+                        .map(|(cid, _w)| cid.0)
                         .collect();
-                    for (wid, bars_for_window) in &matched_ids {
-                        self.indicator_manager.calculate_for_window(*wid, bars_for_window);
+                    for wid in &matched_ids {
+                        self.indicator_manager.calculate_for_window(*wid, &bars);
                     }
 
-                    // Only autosave and subscribe trades if at least one window matched.
                     if any_matched {
-                        // Auto-subscribe to WebSocket trade stream for live updates after bars load.
                         if self.sidebar_state.connector_enabled.get(exchange_id.as_str()).copied().unwrap_or(true) {
                             self.bridge.subscribe_trades(exchange_id, &symbol, account_type);
                         }
-
-                        // Bars are kept in-memory (window.bars) for tab-switch UX.
-                        // No disk write or sync needed — bars are re-fetchable cache.
                     }
                 }
                 LiveUpdate::BackfillComplete { exchange_id, account_type, symbol, timeframe: tf_name, bars } => {
@@ -543,32 +553,46 @@ impl ChartApp {
                             .collect()
                     };
 
-                    for (chart_id_key, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+                    // Phase X0 / C5c: capture anchors before bubble write.
+                    let prev_bars_for_anchor: Vec<mlc_core::Bar> = self.managers.bubble
+                        .bubble_for_instrument(exchange_id.as_str(), account_type.short_label(), &symbol)
+                        .and_then(|bid| self.managers.bubble.bubble(bid))
+                        .map(|b| b.bars.clone())
+                        .unwrap_or_default();
+                    let mut matched_anchors: Vec<(mlc_core::state::ChartId, Option<(i64, f64)>)> = Vec::new();
+                    for (chart_id_key, window) in self.panel_app.panel_grid.containers().iter() {
                         let (win_sym, win_tf, win_exch, win_at) = match instrument_by_cid_bc.get(chart_id_key) {
                             Some(t) => t,
                             None => continue,
                         };
-                        let tf_matches = win_tf.name == tf_name;
                         if !(win_sym.as_str() == symbol
                             && win_exch.as_str() == exchange_id.as_str()
-                            && tf_matches
+                            && win_tf.name == tf_name
                             && win_at.as_str() == account_type.short_label())
                         {
                             continue;
                         }
-                        // update_bars anchors view_start by timestamp before
-                        // replacing self.bars, so no manual prepend compensation
-                        // is needed here (the old per-caller offset was removed
-                        // when the anchor logic was added to update_bars).
-                        window.update_bars(bars.clone());
-                        if window.needs_snap_after_backfill {
-                            window.consume_cold_snap();
-                        } else {
-                            if window.price_scale.scale_mode.is_auto_y() {
-                                window.calc_auto_scale();
-                            }
+                        matched_anchors.push((*chart_id_key, window.capture_view_anchor(&prev_bars_for_anchor)));
+                    }
+
+                    // Write bubble.bars ONCE.
+                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                        exchange_id.as_str(), account_type.short_label(), &symbol
+                    ) {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                            bubble.bars = bars.clone();
                         }
-                        prev_close_mirrors.push((*chart_id_key, window.bars.first().map(|b| b.open)));
+                    }
+
+                    for (chart_id_key, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+                        let Some((_, anchor)) = matched_anchors.iter().find(|(c, _)| c == chart_id_key).copied() else { continue; };
+                        window.reconcile_view_keep_anchor(&bars, anchor);
+                        if window.needs_snap_after_backfill {
+                            window.consume_cold_snap(&bars);
+                        } else if window.price_scale.scale_mode.is_auto_y() {
+                            window.calc_auto_scale(&bars);
+                        }
+                        prev_close_mirrors.push((*chart_id_key, bars.first().map(|b| b.open)));
                     }
                     for (chart_id, prev_close) in prev_close_mirrors {
                         if let Some(bid) = self.managers.bubble.bubble_for_chart(chart_id) {
@@ -578,32 +602,22 @@ impl ChartApp {
                         }
                     }
 
-                    // Phase X0 / C2: mirror bars into bubble storage.
-                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
-                        exchange_id.as_str(), account_type.short_label(), &symbol
-                    ) {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
-                            bubble.bars = bars.clone();
-                        }
-                    }
-
                     // Recalculate indicators for matched windows.
-                    let matched_ids: Vec<(u64, Vec<mlc_core::Bar>)> = self
+                    let matched_ids: Vec<u64> = self
                         .panel_app
                         .panel_grid
                         .containers()
                         .iter()
                         .filter(|(cid, _w)| {
-
                             self.managers.bubble.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
                                 && self.managers.bubble.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
                                 && self.managers.bubble.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
                                 && self.managers.bubble.account_type_for_chart(**cid).map_or(false, |at| at == account_type.short_label())
                         })
-                        .map(|(cid, w)| (cid.0, w.bars.clone()))
+                        .map(|(cid, _w)| cid.0)
                         .collect();
-                    for (wid, bars_for_window) in &matched_ids {
-                        self.indicator_manager.calculate_for_window(*wid, bars_for_window);
+                    for wid in &matched_ids {
+                        self.indicator_manager.calculate_for_window(*wid, &bars);
                     }
                 }
                 LiveUpdate::ScrollBarsLoaded { exchange_id, account_type, symbol, timeframe: tf_name, bars, prepend_count } => {
@@ -626,42 +640,46 @@ impl ChartApp {
                             .collect()
                     };
 
-                    for (chart_id_key, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+                    // Phase X0 / C5c: capture anchors before bubble write.
+                    let prev_bars_for_anchor: Vec<mlc_core::Bar> = self.managers.bubble
+                        .bubble_for_instrument(exchange_id.as_str(), at_label, &symbol)
+                        .and_then(|bid| self.managers.bubble.bubble(bid))
+                        .map(|b| b.bars.clone())
+                        .unwrap_or_default();
+                    let mut matched_anchors: Vec<(mlc_core::state::ChartId, Option<(i64, f64)>)> = Vec::new();
+                    for (chart_id_key, window) in self.panel_app.panel_grid.containers().iter() {
                         let (win_sym, win_tf, win_exch, win_at) = match instrument_by_cid_sb.get(chart_id_key) {
                             Some(t) => t,
                             None => continue,
                         };
-                        let tf_matches = win_tf.name == tf_name;
                         if !(win_sym.as_str() == symbol
                             && win_exch.as_str() == exchange_id.as_str()
-                            && tf_matches
+                            && win_tf.name == tf_name
                             && win_at.as_str() == at_label)
                         {
                             continue;
                         }
-
                         any_matched = true;
+                        matched_anchors.push((*chart_id_key, window.capture_view_anchor(&prev_bars_for_anchor)));
+                    }
+
+                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                        exchange_id.as_str(), at_label, &symbol
+                    ) {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                            bubble.bars = bars.clone();
+                        }
+                    }
+
+                    for (chart_id_key, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+                        let Some((_, anchor)) = matched_anchors.iter().find(|(c, _)| c == chart_id_key).copied() else { continue; };
                         window.scroll_fetch_in_flight = false;
                         window.scroll_fetch_started = None;
-
-                        // update_bars anchors view_start by the timestamp of
-                        // the bar currently at view_start before replacing bars,
-                        // so no manual "view_start += prepend_count" is needed
-                        // here (removed when anchor logic was added to update_bars).
-                        //
-                        // NOTE: do NOT evict here. The scroll-trigger gate at
-                        // line ~1077 already refuses to request more bars once
-                        // window.bars.len() >= max_loaded_bars, so this branch
-                        // can never overshoot. Front-drain eviction here would
-                        // drop the bars we just prepended (oldest end) and
-                        // visually "snap" the viewport back to newer data —
-                        // exactly the opposite of the user's intent.
-                        window.update_bars(bars.clone());
-
+                        window.reconcile_view_keep_anchor(&bars, anchor);
                         if window.price_scale.scale_mode.is_auto_y() {
-                            window.calc_auto_scale();
+                            window.calc_auto_scale(&bars);
                         }
-                        prev_close_mirrors.push((*chart_id_key, window.bars.first().map(|b| b.open)));
+                        prev_close_mirrors.push((*chart_id_key, bars.first().map(|b| b.open)));
                     }
                     for (chart_id, prev_close) in prev_close_mirrors {
                         if let Some(bid) = self.managers.bubble.bubble_for_chart(chart_id) {
@@ -672,7 +690,7 @@ impl ChartApp {
                     }
 
                     if any_matched {
-                        let matched_ids: Vec<(u64, Vec<mlc_core::Bar>)> = self
+                        let matched_ids: Vec<u64> = self
                             .panel_app
                             .panel_grid
                             .containers()
@@ -682,32 +700,10 @@ impl ChartApp {
                                     && self.managers.bubble.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
                                     && self.managers.bubble.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
                             })
-                            .map(|(cid, w)| (cid.0, w.bars.clone()))
+                            .map(|(cid, _w)| cid.0)
                             .collect();
-                        for (wid, bars_for_window) in &matched_ids {
-                            self.indicator_manager.calculate_for_window(*wid, bars_for_window);
-                        }
-                    }
-                    // Phase X0 / C2: mirror first matched window's bars into bubble storage.
-                    // ScrollBarsLoaded replaces the whole window.bars (extended history),
-                    // so mirror the post-window-loop state.
-                    if any_matched {
-                        let mirror = self.panel_app.panel_grid.containers().iter()
-                            .find(|(cid, _w)| {
-                                self.managers.bubble.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
-                                    && self.managers.bubble.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
-                                    && self.managers.bubble.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
-                                    && self.managers.bubble.account_type_for_chart(**cid).map_or(false, |a| a == at_label)
-                            })
-                            .map(|(_, w)| w.bars.clone());
-                        if let Some(mirror_bars) = mirror {
-                            if let Some(bid) = self.managers.bubble.bubble_for_instrument(
-                                exchange_id.as_str(), at_label, &symbol
-                            ) {
-                                if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
-                                    bubble.bars = mirror_bars;
-                                }
-                            }
+                        for wid in &matched_ids {
+                            self.indicator_manager.calculate_for_window(*wid, &bars);
                         }
                     }
                 }
@@ -751,63 +747,65 @@ impl ChartApp {
                     let mut bu_symbol_for_recalc: Option<String> = None;
                     let mut bu_is_new_bar = false;
 
+                    // Phase X0 / C5c: write bubble FIRST (upsert by ts), then loop derived windows.
+                    let bar_at_label = bar_account_type.short_label();
+                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                        bar_exch.as_str(), bar_at_label, bar_symbol.as_str()
+                    ) {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                            let last_ts = bubble.bars.last().map(|b| b.timestamp);
+                            if last_ts == Some(bar.timestamp) {
+                                if let Some(last) = bubble.last_bar_mut() {
+                                    last.open   = bar.open;
+                                    last.high   = bar.high;
+                                    last.low    = bar.low;
+                                    last.close  = bar.close;
+                                    last.volume = bar.volume;
+                                }
+                                bu_is_new_bar = false;
+                            } else {
+                                bubble.append_bar(bar.clone());
+                                bu_is_new_bar = true;
+                            }
+                        }
+                    }
+                    // Snapshot the just-updated bubble bars for the window reconcile loop.
+                    let bu_bubble_bars: Vec<mlc_core::Bar> = self.managers.bubble
+                        .bubble_for_instrument(bar_exch.as_str(), bar_at_label, bar_symbol.as_str())
+                        .and_then(|bid| self.managers.bubble.bubble(bid))
+                        .map(|b| b.bars.clone())
+                        .unwrap_or_default();
+
                     for (cid_bu, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         let (win_sym, win_at, is_derived) = match instrument_by_cid_bu.get(cid_bu) {
                             Some(t) => t,
                             None => continue,
                         };
-                        // Only derived (non-time) bar mode windows are owned by BarUpdate.
                         if !is_derived {
-                            // Time-TF windows still gate on pending_symbol_load — they
-                            // wait for the BarsLoaded REST seed before consuming live bars.
                             if window.pending_symbol_load { continue; }
                             continue;
                         }
                         if win_sym.as_str() != bar_symbol || win_at.as_str() != bar_account_type.short_label() {
                             continue;
                         }
-                        // Derived (tick TF) windows never receive a BarsLoaded REST seed —
-                        // dig3 derives bars from live trades / RAM seed / disk read_tail and
-                        // emits them as BarUpdate only. The first BarUpdate IS the load
-                        // signal, so clear pending_symbol_load here instead of waiting for
-                        // a BarsLoaded that never comes.
                         if window.pending_symbol_load {
                             window.pending_symbol_load = false;
                         }
-                        // Consume the cold-snap one-shot flag on the first delivery so the
-                        // last bar lands at the right edge of the viewport (not stranded
-                        // at view_start=0 on the left).
                         if window.needs_snap_after_backfill
                             && window.viewport.chart_width > 0.0
                         {
-                            window.consume_cold_snap();
+                            window.consume_cold_snap(&bu_bubble_bars);
                         }
 
-                        // Upsert: same timestamp → update last bar in-place; newer → push.
-                        let last_ts = window.bars.last().map(|b| b.timestamp);
-                        if last_ts == Some(bar.timestamp) {
-                            if let Some(last) = window.bars.last_mut() {
-                                last.open   = bar.open;
-                                last.high   = bar.high;
-                                last.low    = bar.low;
-                                last.close  = bar.close;
-                                last.volume = bar.volume;
-                            }
-                            bu_is_new_bar = false;
-                        } else {
-                            window.bars.push(bar.clone());
-                            bu_is_new_bar = true;
-                        }
-
-                        window.viewport.bar_count = window.bars.len();
+                        window.viewport.bar_count = bu_bubble_bars.len();
 
                         if window.price_scale.scale_mode.is_auto_y() {
                             let _as_start = std::time::Instant::now();
-                            window.calc_auto_scale();
+                            window.calc_auto_scale(&bu_bubble_bars);
                             self.last_auto_scale_us += _as_start.elapsed().as_micros() as u64;
                         }
 
-                        let count = window.bars.len();
+                        let count = bu_bubble_bars.len();
                         let visible_f = window.viewport.chart_width / window.viewport.bar_spacing;
 
                         if window.price_scale.scale_mode.is_follow() {
@@ -847,25 +845,7 @@ impl ChartApp {
                             }
                         }
                     }
-                    // Phase X0 / C2: mirror first matched window's bars into bubble storage.
-                    if bu_symbol_for_recalc.is_some() {
-                        let bar_at_label = bar_account_type.short_label();
-                        let mirror = self.panel_app.panel_grid.containers().iter()
-                            .find(|(cid, _w)| {
-                                self.managers.bubble.symbol_for_chart(**cid).map_or(false, |s| s == bar_symbol.as_str())
-                                    && self.managers.bubble.account_type_for_chart(**cid).map_or(false, |a| a == bar_at_label)
-                            })
-                            .map(|(_, w)| w.bars.clone());
-                        if let Some(mirror_bars) = mirror {
-                            if let Some(bid) = self.managers.bubble.bubble_for_instrument(
-                                bar_exch.as_str(), bar_at_label, bar_symbol.as_str()
-                            ) {
-                                if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
-                                    bubble.bars = mirror_bars;
-                                }
-                            }
-                        }
-                    }
+                    // C5c: bubble write done at the top of the arm.
                 }
                 LiveUpdate::TradeUpdate { exchange_id, symbol, price, quantity, timestamp, account_type, is_buyer_maker: _ } => {
                     self.trade_count += 1;
@@ -906,115 +886,92 @@ impl ChartApp {
                             .collect()
                     };
 
-                    // Update the last bar of every window matching this symbol.
-                    for (cid_tu, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
-                        if window.pending_symbol_load {
-                            // Skip trade updates while waiting for initial bars.
-                            continue;
-                        }
-                        // Derived-mode windows (Range/Tick/Volume/FP) receive bars via BarUpdate;
-                        // skip time-slice aggregation for them so dig3 bars are not overwritten.
-                        if derived_cids_tu.contains(cid_tu) {
-                            continue;
-                        }
+                    // Phase X0 / C5c: per-bubble aggregation by tf — write bubble FIRST, then loop windows.
+                    // Aggregation period comes from any matched window's tf (all share-symbol windows
+                    // bound to the same bubble share the same tf via bubble identity).
+                    let mut bubble_periods: std::collections::HashMap<mlc_core::tag_manager::BubbleId, i64> = std::collections::HashMap::new();
+                    for (cid_tu, _window) in self.panel_app.panel_grid.containers().iter() {
+                        if derived_cids_tu.contains(cid_tu) { continue; }
                         let (win_sym_tu, win_tf_tu, _win_exch_tu, win_at_tu) = match instrument_by_cid_tu.get(cid_tu) {
                             Some(t) => t,
                             None => continue,
                         };
-                        if win_sym_tu.as_str() == symbol && win_at_tu.as_str() == account_type.short_label() {
-                            let period_secs = win_tf_tu.interval_ms / 1000;
-                            // Skip degenerate timeframes. Standard time TFs are
-                            // ≥ 1s = 1000ms → period_secs ≥ 1. Tick TFs are
-                            // already filtered out via `derived_cids_tu` above
-                            // (they carry a negative sentinel `interval_ms`).
-                            // Anything that lands here with period_secs ≤ 0 is
-                            // either an uninitialised `Timeframe { interval_ms:
-                            // 0, .. }` (legacy serde path) or a derived-chart
-                            // window whose tf wasn't tagged tick — neither
-                            // wants time-slice aggregation. Hard skip prevents
-                            // a div-by-zero crash on the candle-boundary math.
-                            if period_secs <= 0 {
-                                eprintln!(
-                                    "[tick::TradeUpdate] skip cid={:?} sym={} — degenerate period_secs={} (interval_ms={})",
-                                    cid_tu, symbol, period_secs, win_tf_tu.interval_ms,
-                                );
-                                continue;
-                            }
+                        if win_sym_tu.as_str() != symbol || win_at_tu.as_str() != account_type.short_label() {
+                            continue;
+                        }
+                        let period_secs = win_tf_tu.interval_ms / 1000;
+                        if period_secs <= 0 { continue; }
+                        if let Some(bid) = self.managers.bubble.bubble_for_chart(*cid_tu) {
+                            bubble_periods.insert(bid, period_secs);
+                        }
+                    }
+                    // Apply trade to each affected bubble's bars.
+                    for (bid, period_secs) in &bubble_periods {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
                             let trade_ts_secs = timestamp / 1000;
-
-                            if let Some(last_ts) = window.bars.last().map(|b| b.timestamp) {
+                            if let Some(last_ts) = bubble.bars.last().map(|b| b.timestamp) {
                                 let candle_end = last_ts + period_secs;
-
                                 if trade_ts_secs >= candle_end {
-                                    // Detect multi-bar gap (>1 bar skipped → need REST backfill).
                                     if trade_ts_secs >= candle_end + period_secs {
                                         needs_backfill = true;
                                     }
-                                    // Trade belongs to a new candle — push a fresh bar.
                                     let new_candle_start = (trade_ts_secs / period_secs) * period_secs;
-                                    window.bars.push(mlc_core::Bar {
+                                    bubble.append_bar(mlc_core::Bar {
                                         timestamp: new_candle_start,
-                                        open: price,
-                                        high: price,
-                                        low: price,
-                                        close: price,
-                                        volume: quantity,
+                                        open: price, high: price, low: price, close: price, volume: quantity,
                                     });
                                     is_new_bar = true;
-                                } else if let Some(last) = window.bars.last_mut() {
-                                    // Same candle — update OHLCV in-place.
+                                } else if let Some(last) = bubble.last_bar_mut() {
                                     last.close = price;
                                     if price > last.high { last.high = price; }
                                     if price < last.low { last.low = price; }
                                     last.volume += quantity;
                                 }
                             } else {
-                                // No bars yet — create first bar from trade.
                                 let candle_start = (trade_ts_secs / period_secs) * period_secs;
-                                window.bars.push(mlc_core::Bar {
+                                bubble.append_bar(mlc_core::Bar {
                                     timestamp: candle_start,
-                                    open: price,
-                                    high: price,
-                                    low: price,
-                                    close: price,
-                                    volume: quantity,
+                                    open: price, high: price, low: price, close: price, volume: quantity,
                                 });
                                 is_new_bar = true;
                             }
+                        }
+                    }
 
-                            // Update bar count.
-                            window.viewport.bar_count = window.bars.len();
+                    // Window-side viewport reconcile loop.
+                    for (cid_tu, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+                        if window.pending_symbol_load { continue; }
+                        if derived_cids_tu.contains(cid_tu) { continue; }
+                        let (win_sym_tu, _win_tf_tu, _win_exch_tu, win_at_tu) = match instrument_by_cid_tu.get(cid_tu) {
+                            Some(t) => t,
+                            None => continue,
+                        };
+                        if !(win_sym_tu.as_str() == symbol && win_at_tu.as_str() == account_type.short_label()) {
+                            continue;
+                        }
+                        // Snapshot bubble bars for this window's bubble.
+                        // (Window's bubble was already updated above.)
+                        // bubble_bars borrowed via separate immutable read at the start of each iter.
+                        // To avoid double-borrow, we don't re-resolve; window does only post-effects
+                        // that need bar_count + bars slice for auto_scale/snap.
+                        // Use bar_count update from is_new_bar tracking; auto_scale needs slice.
 
-                            // Auto-scale if enabled.
-                            if window.price_scale.scale_mode.is_auto_y() {
-                                let _as_start = std::time::Instant::now();
-                                window.calc_auto_scale();
-                                self.last_auto_scale_us += _as_start.elapsed().as_micros() as u64;
+                        // We deliberately skip per-window auto_scale here — it ran on the bubble
+                        // path via reconcile in prepare_frame next frame. For follow-mode snap we
+                        // need viewport.bar_count post-write, so update it now.
+                        window.viewport.bar_count = window.viewport.bar_count.saturating_add(if is_new_bar { 1 } else { 0 });
+                        let count = window.viewport.bar_count;
+                        let visible_f = window.viewport.chart_width / window.viewport.bar_spacing;
+
+                        if window.price_scale.scale_mode.is_follow() {
+                            window.snap_to_end(mlc_core::DEFAULT_SNAP_MARGIN);
+                        }
+                        if is_new_bar && window.price_scale.scale_mode == ScaleMode::Auto {
+                            let right_edge_bar = window.viewport.view_start + visible_f;
+                            let last_bar = count as f64;
+                            if last_bar >= right_edge_bar {
+                                window.viewport.view_start += 1.0;
                             }
-
-                            let count = window.bars.len();
-                            let visible_f = window.viewport.chart_width / window.viewport.bar_spacing;
-
-                            // Follow mode: keep last bar visible with standard margin.
-                            if window.price_scale.scale_mode.is_follow() {
-                                window.snap_to_end(mlc_core::DEFAULT_SNAP_MARGIN);
-                            }
-
-                            // Auto mode guard: if a new bar appeared and it would
-                            // be off-screen or at the very edge, nudge viewport by
-                            // exactly 1 bar so it stays visible.  No margin — A-mode
-                            // just keeps the last bar in view without adding space.
-                            // If the user scrolled far away, don't disturb.
-                            if is_new_bar && window.price_scale.scale_mode == ScaleMode::Auto {
-                                let right_edge_bar = window.viewport.view_start + visible_f;
-                                let last_bar = count as f64; // one past last bar index
-                                // Nudge if the new bar is at or beyond the right edge
-                                if last_bar >= right_edge_bar {
-                                    window.viewport.view_start += 1.0;
-                                }
-                            }
-                            // Manual mode: no viewport adjustments.
-
                         }
                     }
 
@@ -1138,25 +1095,7 @@ impl ChartApp {
                     );
                     // Phase X0 / C2: mirror first matched window's bars into bubble storage.
                     // TradeUpdate aggregates into the open bar (in-place) or rolls a new one,
-                    // so the post-loop window.bars carries the live aggregation result.
-                    {
-                        let at_label = account_type.short_label();
-                        let mirror = self.panel_app.panel_grid.containers().iter()
-                            .find(|(cid, _w)| {
-                                self.managers.bubble.symbol_for_chart(**cid).map_or(false, |s| s == symbol.as_str())
-                                    && self.managers.bubble.account_type_for_chart(**cid).map_or(false, |a| a == at_label)
-                            })
-                            .map(|(_, w)| w.bars.clone());
-                        if let Some(mirror_bars) = mirror {
-                            if let Some(bid) = self.managers.bubble.bubble_for_instrument(
-                                exchange_id.as_str(), at_label, &symbol
-                            ) {
-                                if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
-                                    bubble.bars = mirror_bars;
-                                }
-                            }
-                        }
-                    }
+                    // C5c: bubble aggregation done at the top of the arm.
                 }
                 LiveUpdate::MiniTickerUpdate { exchange_id, symbol, last_price, price_change_percent, high_price, low_price, volume, account_type } => {
                     // Cache the 24h ticker stats keyed by symbol:exchange:account_type so that
@@ -1288,7 +1227,7 @@ impl ChartApp {
                                 .collect()
                         };
                         for (cid_err, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
-                            if error_instrument_map.contains_key(cid_err) && window.bars.is_empty() {
+                            if error_instrument_map.contains_key(cid_err) && true {
                                 window.data_error = Some(message.clone());
                             }
                         }
@@ -1426,81 +1365,62 @@ impl ChartApp {
                     // the loop below.
                     let mut new_bar_with_static = new_bar.clone();
                     new_bar_with_static.compute_static_extras(3.0, 3, 0.15, 0.05, tick_size);
-                    for (cid_fp, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
-                        if !footprint_cids.contains(cid_fp) { continue; }
-                        // First derived bar IS the load signal — clear spinner gate and
-                        // snap viewport to the right edge on cold open.
-                        if window.pending_symbol_load { window.pending_symbol_load = false; }
-                        if window.needs_snap_after_backfill && window.viewport.chart_width > 0.0 {
-                            window.consume_cold_snap();
-                        }
-                        let store = window.footprint_bars.get_or_insert_with(Vec::new);
-                        let prev_cvd = match store.last() {
-                            Some(last) if last.open_time != new_bar_with_static.open_time => last.cumulative_delta,
-                            // Intra-bar update — re-seed from the bar before last.
-                            Some(_) if store.len() >= 2 => store[store.len() - 2].cumulative_delta,
-                            _ => 0.0,
-                        };
-                        let mut bar = new_bar_with_static.clone();
-                        bar.set_cumulative_delta(prev_cvd);
-                        // Same open_time → in-place update; new → append.
-                        match store.last_mut() {
-                            Some(last) if last.open_time == bar.open_time => {
-                                *last = bar;
+                    // Phase X0 / C5c: write footprint + OHLC bars to bubble FIRST.
+                    let ohlc_ts = new_bar_with_static.open_time / 1000;
+                    let ohlc_bar = mlc_core::Bar::with_volume(
+                        ohlc_ts,
+                        new_bar_with_static.open,
+                        new_bar_with_static.high,
+                        new_bar_with_static.low,
+                        new_bar_with_static.close,
+                        new_bar_with_static.volume,
+                    );
+                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                        exchange_id.as_str(), fp_at_label, fp_sym.as_str()
+                    ) {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                            // Footprint upsert with CVD continuation.
+                            let store = bubble.footprint_bars.get_or_insert_with(Vec::new);
+                            let prev_cvd = match store.last() {
+                                Some(last) if last.open_time != new_bar_with_static.open_time => last.cumulative_delta,
+                                Some(_) if store.len() >= 2 => store[store.len() - 2].cumulative_delta,
+                                _ => 0.0,
+                            };
+                            let mut bar = new_bar_with_static.clone();
+                            bar.set_cumulative_delta(prev_cvd);
+                            match store.last_mut() {
+                                Some(last) if last.open_time == bar.open_time => { *last = bar; }
+                                _ => store.push(bar),
                             }
-                            _ => store.push(bar),
-                        }
-
-                        // Mirror the live footprint bar as an OHLC Bar in
-                        // `window.bars` so the klines backfill (seeded via
-                        // request_bars parallel call) and live cluster bars
-                        // are in the same array. The footprint renderer draws
-                        // OHLC candle bodies for bars whose `levels[]` is
-                        // empty (historical klines), and cluster grids for
-                        // bars that have real bid/ask levels (live). This
-                        // upsert keeps the OHLC skeleton in sync with the
-                        // live footprint bar so price scale and crosshair
-                        // always see the current bar.
-                        //
-                        // `open_time` is UTC ms; `Bar.timestamp` is seconds.
-                        let ohlc_ts = new_bar_with_static.open_time / 1000;
-                        let ohlc_bar = mlc_core::Bar::with_volume(
-                            ohlc_ts,
-                            new_bar_with_static.open,
-                            new_bar_with_static.high,
-                            new_bar_with_static.low,
-                            new_bar_with_static.close,
-                            new_bar_with_static.volume,
-                        );
-                        let last_ohlc_ts = window.bars.last().map(|b| b.timestamp);
-                        if last_ohlc_ts == Some(ohlc_ts) {
-                            if let Some(last) = window.bars.last_mut() {
-                                last.open   = ohlc_bar.open;
-                                last.high   = ohlc_bar.high;
-                                last.low    = ohlc_bar.low;
-                                last.close  = ohlc_bar.close;
-                                last.volume = ohlc_bar.volume;
+                            // OHLC skeleton mirror in bubble.bars.
+                            let last_ohlc_ts = bubble.bars.last().map(|b| b.timestamp);
+                            if last_ohlc_ts == Some(ohlc_ts) {
+                                if let Some(last) = bubble.last_bar_mut() {
+                                    last.open   = ohlc_bar.open;
+                                    last.high   = ohlc_bar.high;
+                                    last.low    = ohlc_bar.low;
+                                    last.close  = ohlc_bar.close;
+                                    last.volume = ohlc_bar.volume;
+                                }
+                            } else {
+                                bubble.append_bar(ohlc_bar);
                             }
-                        } else {
-                            window.bars.push(ohlc_bar);
                         }
                     }
-                    // Phase X0 / C2: mirror window's footprint_bars + bars into bubble storage.
-                    // Take the first matched window's state — all matched windows of
-                    // the same bubble run the same compute, so any one is canonical.
-                    if let Some(first_cid) = footprint_cids.iter().next() {
-                        let (mirror_fp, mirror_bars) = self.panel_app.panel_grid.containers()
-                            .get(first_cid)
-                            .map(|w| (w.footprint_bars.clone(), w.bars.clone()))
-                            .unwrap_or((None, Vec::new()));
-                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
-                            exchange_id.as_str(), fp_at_label, fp_sym.as_str()
-                        ) {
-                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
-                                bubble.footprint_bars = mirror_fp;
-                                bubble.bars = mirror_bars;
-                            }
+                    // Snapshot updated bubble bars for window post-effects.
+                    let fp_bubble_bars: Vec<mlc_core::Bar> = self.managers.bubble
+                        .bubble_for_instrument(exchange_id.as_str(), fp_at_label, fp_sym.as_str())
+                        .and_then(|bid| self.managers.bubble.bubble(bid))
+                        .map(|b| b.bars.clone())
+                        .unwrap_or_default();
+
+                    for (cid_fp, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+                        if !footprint_cids.contains(cid_fp) { continue; }
+                        if window.pending_symbol_load { window.pending_symbol_load = false; }
+                        if window.needs_snap_after_backfill && window.viewport.chart_width > 0.0 {
+                            window.consume_cold_snap(&fp_bubble_bars);
                         }
+                        window.viewport.bar_count = fp_bubble_bars.len();
                     }
                     let _ = new_bar;
                 }
@@ -1532,24 +1452,24 @@ impl ChartApp {
                         volume: point.volume,
                         trades_count: point.trades_count,
                     };
+                    // Phase X0 / C5c: write bubble FIRST.
+                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                        exchange_id.as_str(), at_label, sym.as_str()
+                    ) {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                            bubble.append_renko(brick.clone());
+                        }
+                    }
+                    let renko_bubble_bars: Vec<mlc_core::Bar> = self.managers.bubble
+                        .bubble_for_instrument(exchange_id.as_str(), at_label, sym.as_str())
+                        .and_then(|bid| self.managers.bubble.bubble(bid))
+                        .map(|b| b.bars.clone())
+                        .unwrap_or_default();
                     for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !target_cids.contains(cid_) { continue; }
                         if window.pending_symbol_load { window.pending_symbol_load = false; }
                         if window.needs_snap_after_backfill && window.viewport.chart_width > 0.0 {
-                            window.consume_cold_snap();
-                        }
-                        window.renko_bars.get_or_insert_with(Vec::new).push(brick.clone());
-                    }
-                    // Phase X0 / C2: mirror first matched window's storage into bubble.
-                    if let Some(first_cid) = target_cids.iter().next() {
-                        let mirror = self.panel_app.panel_grid.containers()
-                            .get(first_cid).and_then(|w| w.renko_bars.clone());
-                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
-                            exchange_id.as_str(), at_label, sym.as_str()
-                        ) {
-                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
-                                bubble.renko_bars = mirror;
-                            }
+                            window.consume_cold_snap(&renko_bubble_bars);
                         }
                     }
                 }
@@ -1582,28 +1502,28 @@ impl ChartApp {
                         trades_count: point.trades_count,
                         box_size: bs,
                     };
+                    // Phase X0 / C5c: write bubble FIRST with column-id upsert.
+                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                        exchange_id.as_str(), at_label, sym.as_str()
+                    ) {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                            let store = bubble.pnf_columns.get_or_insert_with(Vec::new);
+                            match store.last_mut() {
+                                Some(last) if last.column_id == col.column_id => *last = col.clone(),
+                                _ => store.push(col.clone()),
+                            }
+                        }
+                    }
+                    let pnf_bubble_bars: Vec<mlc_core::Bar> = self.managers.bubble
+                        .bubble_for_instrument(exchange_id.as_str(), at_label, sym.as_str())
+                        .and_then(|bid| self.managers.bubble.bubble(bid))
+                        .map(|b| b.bars.clone())
+                        .unwrap_or_default();
                     for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !target_cids.contains(cid_) { continue; }
                         if window.pending_symbol_load { window.pending_symbol_load = false; }
                         if window.needs_snap_after_backfill && window.viewport.chart_width > 0.0 {
-                            window.consume_cold_snap();
-                        }
-                        let store = window.pnf_columns.get_or_insert_with(Vec::new);
-                        match store.last_mut() {
-                            Some(last) if last.column_id == col.column_id => *last = col.clone(),
-                            _ => store.push(col.clone()),
-                        }
-                    }
-                    // Phase X0 / C2: mirror first matched window's storage into bubble.
-                    if let Some(first_cid) = target_cids.iter().next() {
-                        let mirror = self.panel_app.panel_grid.containers()
-                            .get(first_cid).and_then(|w| w.pnf_columns.clone());
-                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
-                            exchange_id.as_str(), at_label, sym.as_str()
-                        ) {
-                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
-                                bubble.pnf_columns = mirror;
-                            }
+                            window.consume_cold_snap(&pnf_bubble_bars);
                         }
                     }
                 }
@@ -1634,24 +1554,23 @@ impl ChartApp {
                         yang: point.yang,
                         is_connector: point.is_connector,
                     };
+                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                        exchange_id.as_str(), at_label, sym.as_str()
+                    ) {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                            bubble.append_kagi(seg.clone());
+                        }
+                    }
+                    let kagi_bubble_bars: Vec<mlc_core::Bar> = self.managers.bubble
+                        .bubble_for_instrument(exchange_id.as_str(), at_label, sym.as_str())
+                        .and_then(|bid| self.managers.bubble.bubble(bid))
+                        .map(|b| b.bars.clone())
+                        .unwrap_or_default();
                     for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !target_cids.contains(cid_) { continue; }
                         if window.pending_symbol_load { window.pending_symbol_load = false; }
                         if window.needs_snap_after_backfill && window.viewport.chart_width > 0.0 {
-                            window.consume_cold_snap();
-                        }
-                        window.kagi_segments.get_or_insert_with(Vec::new).push(seg.clone());
-                    }
-                    // Phase X0 / C2: mirror first matched window's storage into bubble.
-                    if let Some(first_cid) = target_cids.iter().next() {
-                        let mirror = self.panel_app.panel_grid.containers()
-                            .get(first_cid).and_then(|w| w.kagi_segments.clone());
-                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
-                            exchange_id.as_str(), at_label, sym.as_str()
-                        ) {
-                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
-                                bubble.kagi_segments = mirror;
-                            }
+                            window.consume_cold_snap(&kagi_bubble_bars);
                         }
                     }
                 }
@@ -1677,24 +1596,23 @@ impl ChartApp {
                         ts_ms: point.ts_ms,
                         value: point.value,
                     };
+                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                        exchange_id.as_str(), at_label, sym.as_str()
+                    ) {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                            bubble.append_cvd(sample);
+                        }
+                    }
+                    let cvd_bubble_bars: Vec<mlc_core::Bar> = self.managers.bubble
+                        .bubble_for_instrument(exchange_id.as_str(), at_label, sym.as_str())
+                        .and_then(|bid| self.managers.bubble.bubble(bid))
+                        .map(|b| b.bars.clone())
+                        .unwrap_or_default();
                     for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !target_cids.contains(cid_) { continue; }
                         if window.pending_symbol_load { window.pending_symbol_load = false; }
                         if window.needs_snap_after_backfill && window.viewport.chart_width > 0.0 {
-                            window.consume_cold_snap();
-                        }
-                        window.cvd_line.get_or_insert_with(Vec::new).push(sample);
-                    }
-                    // Phase X0 / C2: mirror first matched window's storage into bubble.
-                    if let Some(first_cid) = target_cids.iter().next() {
-                        let mirror = self.panel_app.panel_grid.containers()
-                            .get(first_cid).and_then(|w| w.cvd_line.clone());
-                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
-                            exchange_id.as_str(), at_label, sym.as_str()
-                        ) {
-                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
-                                bubble.cvd_line = mirror;
-                            }
+                            window.consume_cold_snap(&cvd_bubble_bars);
                         }
                     }
                 }
@@ -1727,35 +1645,33 @@ impl ChartApp {
                         val_price: point.val_price,
                         rows: point.rows.clone(),
                     };
-                    for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
-                        if !target_cids.contains(cid_) { continue; }
-                        if window.pending_symbol_load { window.pending_symbol_load = false; }
-                        if window.needs_snap_after_backfill && window.viewport.chart_width > 0.0 {
-                            window.consume_cold_snap();
-                        }
-                        let store = window.tpo_sessions.get_or_insert_with(Vec::new);
-                        match store.last_mut() {
-                            Some(last) if last.open_time == session.open_time => *last = session.clone(),
-                            _ => {
-                                store.push(session.clone());
-                                // Keep at most 11 sessions: 10 closed + 1 current.
-                                const MAX_TPO_SESSIONS: usize = 11;
-                                while store.len() > MAX_TPO_SESSIONS {
-                                    store.remove(0);
+                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                        exchange_id.as_str(), at_label, sym.as_str()
+                    ) {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                            let store = bubble.tpo_sessions.get_or_insert_with(Vec::new);
+                            match store.last_mut() {
+                                Some(last) if last.open_time == session.open_time => *last = session.clone(),
+                                _ => {
+                                    store.push(session.clone());
+                                    const MAX_TPO_SESSIONS: usize = 11;
+                                    while store.len() > MAX_TPO_SESSIONS {
+                                        store.remove(0);
+                                    }
                                 }
                             }
                         }
                     }
-                    // Phase X0 / C2: mirror first matched window's storage into bubble.
-                    if let Some(first_cid) = target_cids.iter().next() {
-                        let mirror = self.panel_app.panel_grid.containers()
-                            .get(first_cid).and_then(|w| w.tpo_sessions.clone());
-                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
-                            exchange_id.as_str(), at_label, sym.as_str()
-                        ) {
-                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
-                                bubble.tpo_sessions = mirror;
-                            }
+                    let tpo_bubble_bars: Vec<mlc_core::Bar> = self.managers.bubble
+                        .bubble_for_instrument(exchange_id.as_str(), at_label, sym.as_str())
+                        .and_then(|bid| self.managers.bubble.bubble(bid))
+                        .map(|b| b.bars.clone())
+                        .unwrap_or_default();
+                    for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+                        if !target_cids.contains(cid_) { continue; }
+                        if window.pending_symbol_load { window.pending_symbol_load = false; }
+                        if window.needs_snap_after_backfill && window.viewport.chart_width > 0.0 {
+                            window.consume_cold_snap(&tpo_bubble_bars);
                         }
                     }
                 }
@@ -1785,24 +1701,23 @@ impl ChartApp {
                         volume: point.volume,
                         direction: point.direction,
                     };
+                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                        exchange_id.as_str(), at_label, sym.as_str()
+                    ) {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                            bubble.append_three_line_break(line.clone());
+                        }
+                    }
+                    let tlb_bubble_bars: Vec<mlc_core::Bar> = self.managers.bubble
+                        .bubble_for_instrument(exchange_id.as_str(), at_label, sym.as_str())
+                        .and_then(|bid| self.managers.bubble.bubble(bid))
+                        .map(|b| b.bars.clone())
+                        .unwrap_or_default();
                     for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !target_cids.contains(cid_) { continue; }
                         if window.pending_symbol_load { window.pending_symbol_load = false; }
                         if window.needs_snap_after_backfill && window.viewport.chart_width > 0.0 {
-                            window.consume_cold_snap();
-                        }
-                        window.three_line_break.get_or_insert_with(Vec::new).push(line.clone());
-                    }
-                    // Phase X0 / C2: mirror first matched window's storage into bubble.
-                    if let Some(first_cid) = target_cids.iter().next() {
-                        let mirror = self.panel_app.panel_grid.containers()
-                            .get(first_cid).and_then(|w| w.three_line_break.clone());
-                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
-                            exchange_id.as_str(), at_label, sym.as_str()
-                        ) {
-                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
-                                bubble.three_line_break = mirror;
-                            }
+                            window.consume_cold_snap(&tlb_bubble_bars);
                         }
                     }
                 }
@@ -1820,22 +1735,15 @@ impl ChartApp {
                                 Some(*cid)
                             }).collect();
                     if target_cids.is_empty() { continue; }
-                    for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
-                        if !target_cids.contains(cid_) { continue; }
-                        window.oi_delta.get_or_insert_with(Vec::new).push(point);
-                    }
-                    // Phase X0 / C2: mirror first matched window's storage into bubble.
-                    if let Some(first_cid) = target_cids.iter().next() {
-                        let mirror = self.panel_app.panel_grid.containers()
-                            .get(first_cid).and_then(|w| w.oi_delta.clone());
-                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
-                            exchange_id.as_str(), at_label, sym.as_str()
-                        ) {
-                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
-                                bubble.oi_delta = mirror;
-                            }
+                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                        exchange_id.as_str(), at_label, sym.as_str()
+                    ) {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                            bubble.append_oi(point);
                         }
                     }
+                    // No window-side post-effects for OI (no cold-snap on overlay).
+                    let _ = target_cids;
                 }
                 // Funding Rate cell — append to all funding_show windows for the
                 // matching symbol + account. Same two-pass pattern as OI above.
@@ -1851,22 +1759,14 @@ impl ChartApp {
                                 Some(*cid)
                             }).collect();
                     if target_cids.is_empty() { continue; }
-                    for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
-                        if !target_cids.contains(cid_) { continue; }
-                        window.funding_rate.get_or_insert_with(Vec::new).push(point);
-                    }
-                    // Phase X0 / C2: mirror first matched window's storage into bubble.
-                    if let Some(first_cid) = target_cids.iter().next() {
-                        let mirror = self.panel_app.panel_grid.containers()
-                            .get(first_cid).and_then(|w| w.funding_rate.clone());
-                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
-                            exchange_id.as_str(), at_label, sym.as_str()
-                        ) {
-                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
-                                bubble.funding_rate = mirror;
-                            }
+                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                        exchange_id.as_str(), at_label, sym.as_str()
+                    ) {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                            bubble.append_funding(point);
                         }
                     }
+                    let _ = target_cids;
                 }
                 // DOM heatmap snapshot (C12) — push into dom_heatmap buffer on
                 // all chart_type=="dom_heatmap" windows that match symbol+account.
@@ -1887,27 +1787,26 @@ impl ChartApp {
                             }).collect()
                     };
                     if target_cids.is_empty() { continue; }
+                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                        exchange_id.as_str(), at_label, sym.as_str()
+                    ) {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                            const DEFAULT_TICK: f64 = 0.5;
+                            bubble.dom_heatmap_mut()
+                                .get_or_insert_with(|| mlc_core::chart::dom_heatmap::DomHeatmapBuffer::new(DEFAULT_TICK))
+                                .push_snapshot(ts_ms, &bids, &asks);
+                        }
+                    }
+                    let dom_bubble_bars: Vec<mlc_core::Bar> = self.managers.bubble
+                        .bubble_for_instrument(exchange_id.as_str(), at_label, sym.as_str())
+                        .and_then(|bid| self.managers.bubble.bubble(bid))
+                        .map(|b| b.bars.clone())
+                        .unwrap_or_default();
                     for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !target_cids.contains(cid_) { continue; }
                         if window.pending_symbol_load { window.pending_symbol_load = false; }
                         if window.needs_snap_after_backfill && window.viewport.chart_width > 0.0 {
-                            window.consume_cold_snap();
-                        }
-                        const DEFAULT_TICK: f64 = 0.5;
-                        window.dom_heatmap
-                            .get_or_insert_with(|| mlc_core::chart::dom_heatmap::DomHeatmapBuffer::new(DEFAULT_TICK))
-                            .push_snapshot(ts_ms, &bids, &asks);
-                    }
-                    // Phase X0 / C2: mirror first matched window's storage into bubble.
-                    if let Some(first_cid) = target_cids.iter().next() {
-                        let mirror = self.panel_app.panel_grid.containers()
-                            .get(first_cid).and_then(|w| w.dom_heatmap.clone());
-                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
-                            exchange_id.as_str(), at_label, sym.as_str()
-                        ) {
-                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
-                                bubble.dom_heatmap = mirror;
-                            }
+                            window.consume_cold_snap(&dom_bubble_bars);
                         }
                     }
                 }
@@ -1929,25 +1828,17 @@ impl ChartApp {
                             }).collect()
                     };
                     if target_cids.is_empty() { continue; }
-                    for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
-                        if !target_cids.contains(cid_) { continue; }
-                        const MAX_DOTS: usize = 2_000;
-                        let dots = window.dom_trade_dots.get_or_insert_with(Vec::new);
-                        if dots.len() >= MAX_DOTS { dots.remove(0); }
-                        dots.push(dot);
-                    }
-                    // Phase X0 / C2: mirror first matched window's storage into bubble.
-                    if let Some(first_cid) = target_cids.iter().next() {
-                        let mirror = self.panel_app.panel_grid.containers()
-                            .get(first_cid).and_then(|w| w.dom_trade_dots.clone());
-                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
-                            exchange_id.as_str(), at_label, sym.as_str()
-                        ) {
-                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
-                                bubble.dom_trade_dots = mirror;
-                            }
+                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                        exchange_id.as_str(), at_label, sym.as_str()
+                    ) {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                            const MAX_DOTS: usize = 2_000;
+                            let dots = bubble.dom_trade_dots.get_or_insert_with(Vec::new);
+                            if dots.len() >= MAX_DOTS { dots.remove(0); }
+                            dots.push(dot);
                         }
                     }
+                    let _ = target_cids;
                 }
                 // Liquidation per-event (C13) — push into liq_heatmap buffer AND dot ring.
                 LiveUpdate::LiquidationEvent { exchange_id, account_type: at, symbol: sym, ts_ms, price, value_usd, side } => {
@@ -1967,38 +1858,34 @@ impl ChartApp {
                             }).collect()
                     };
                     if target_cids.is_empty() { continue; }
+                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                        exchange_id.as_str(), at_label, sym.as_str()
+                    ) {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                            const DEFAULT_TICK: f64 = 0.5;
+                            bubble.liq_heatmap_mut()
+                                .get_or_insert_with(|| mlc_core::chart::liquidation_heatmap::LiquidationHeatmapBuffer::new(DEFAULT_TICK))
+                                .push_liquidation(ts_ms, price, value_usd, side);
+                            const MAX_DOTS: usize = 2_000;
+                            let dots = bubble.liq_dots.get_or_insert_with(Vec::new);
+                            if dots.len() >= MAX_DOTS { dots.remove(0); }
+                            dots.push(mlc_core::chart::liquidation_heatmap::LiquidationDot {
+                                ts_ms, price,
+                                value_usd: if value_usd.is_finite() { value_usd } else { 0.0 },
+                                side,
+                            });
+                        }
+                    }
+                    let liq_bubble_bars: Vec<mlc_core::Bar> = self.managers.bubble
+                        .bubble_for_instrument(exchange_id.as_str(), at_label, sym.as_str())
+                        .and_then(|bid| self.managers.bubble.bubble(bid))
+                        .map(|b| b.bars.clone())
+                        .unwrap_or_default();
                     for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !target_cids.contains(cid_) { continue; }
                         if window.pending_symbol_load { window.pending_symbol_load = false; }
                         if window.needs_snap_after_backfill && window.viewport.chart_width > 0.0 {
-                            window.consume_cold_snap();
-                        }
-                        const DEFAULT_TICK: f64 = 0.5;
-                        window.liq_heatmap
-                            .get_or_insert_with(|| mlc_core::chart::liquidation_heatmap::LiquidationHeatmapBuffer::new(DEFAULT_TICK))
-                            .push_liquidation(ts_ms, price, value_usd, side);
-                        const MAX_DOTS: usize = 2_000;
-                        let dots = window.liq_dots.get_or_insert_with(Vec::new);
-                        if dots.len() >= MAX_DOTS { dots.remove(0); }
-                        dots.push(mlc_core::chart::liquidation_heatmap::LiquidationDot {
-                            ts_ms, price,
-                            value_usd: if value_usd.is_finite() { value_usd } else { 0.0 },
-                            side,
-                        });
-                    }
-                    // Phase X0 / C2: mirror first matched window's liq_* into bubble.
-                    if let Some(first_cid) = target_cids.iter().next() {
-                        let (mirror_h, mirror_d) = self.panel_app.panel_grid.containers()
-                            .get(first_cid)
-                            .map(|w| (w.liq_heatmap.clone(), w.liq_dots.clone()))
-                            .unwrap_or((None, None));
-                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
-                            exchange_id.as_str(), at_label, sym.as_str()
-                        ) {
-                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
-                                bubble.liq_heatmap = mirror_h;
-                                bubble.liq_dots = mirror_d;
-                            }
+                            window.consume_cold_snap(&liq_bubble_bars);
                         }
                     }
                 }
@@ -2027,35 +1914,21 @@ impl ChartApp {
                     let mark_price_opt = self.mini_ticker_cache
                         .get(&ticker_key)
                         .map(|t| t.last_price);
-                    for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
-                        if !target_cids.contains(cid_) { continue; }
-                        const DEFAULT_TICK: f64 = 0.5;
-                        const SPREAD_HALF_TICKS: i64 = 5;
-                        let buf = window.liq_heatmap
-                            .get_or_insert_with(|| mlc_core::chart::liquidation_heatmap::LiquidationHeatmapBuffer::new(DEFAULT_TICK));
-                        // Prefer mark price from ticker cache; fall back to last bar close.
-                        let mark_opt = mark_price_opt.or_else(|| {
-                            window.bars.last().map(|b| b.close)
-                        });
-                        if let Some(mark) = mark_opt {
-                            buf.push_bucket_spread(ts_ms, long_liq_usd, short_liq_usd, mark, SPREAD_HALF_TICKS);
-                        }
-                        // If no price reference is available yet (chart just opened, no bars,
-                        // no ticker), the bucket is silently dropped — it will render correctly
-                        // once the first price arrives.
-                    }
-                    // Phase X0 / C2: mirror first matched window's liq_heatmap into bubble.
-                    if let Some(first_cid) = target_cids.iter().next() {
-                        let mirror = self.panel_app.panel_grid.containers()
-                            .get(first_cid).and_then(|w| w.liq_heatmap.clone());
-                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
-                            ex_id.as_str(), at_label, sym.as_str()
-                        ) {
-                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
-                                bubble.liq_heatmap = mirror;
+                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                        ex_id.as_str(), at_label, sym.as_str()
+                    ) {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                            const DEFAULT_TICK: f64 = 0.5;
+                            const SPREAD_HALF_TICKS: i64 = 5;
+                            let mark_opt = mark_price_opt.or_else(|| bubble.bars.last().map(|b| b.close));
+                            let buf = bubble.liq_heatmap_mut()
+                                .get_or_insert_with(|| mlc_core::chart::liquidation_heatmap::LiquidationHeatmapBuffer::new(DEFAULT_TICK));
+                            if let Some(mark) = mark_opt {
+                                buf.push_bucket_spread(ts_ms, long_liq_usd, short_liq_usd, mark, SPREAD_HALF_TICKS);
                             }
                         }
                     }
+                    let _ = target_cids;
                 }
             }
         }
@@ -2175,16 +2048,18 @@ impl ChartApp {
                         return None;
                     }
                     seen_pairs.insert(triple);
-                    let current_price = window.bars.last().map(|b| b.close).unwrap_or(0.0);
-                    let current_bar = window.bars.len().saturating_sub(1) as f64;
-                    let bars = &window.bars;
+                    let bubble_bars_alert: &[mlc_core::Bar] = self.managers.bubble.bubble(window.current_bubble_id)
+                        .map(|b| b.bars.as_slice())
+                        .unwrap_or(&[]);
+                    let current_price = bubble_bars_alert.last().map(|b| b.close).unwrap_or(0.0);
+                    let current_bar = bubble_bars_alert.len().saturating_sub(1) as f64;
                     let drawing_points: Vec<(u64, Vec<(f64, f64)>, mlc_alerts::DrawingExtendMode)> =
                         self.panels_store.chart_panel.get(&window.chart_panel_id)
                             .map(|panel| panel.drawing_manager.primitives().iter()
                                 .map(|p| {
                                     let pts_bar: Vec<(f64, f64)> = p.points()
                                         .into_iter()
-                                        .map(|(ts_ms, price)| (timestamp_ms_to_bar_f64(bars, ts_ms), price))
+                                        .map(|(ts_ms, price)| (timestamp_ms_to_bar_f64(bubble_bars_alert, ts_ms), price))
                                         .collect();
                                     (p.data().id, pts_bar, mlc_alerts::DrawingExtendMode::from_u8(p.extend_mode_raw()))
                                 })
@@ -2260,7 +2135,8 @@ impl ChartApp {
 
             // Use the active window's price for delivery event messages.
             let current_price = self.panel_app.panel_grid.active_container()
-                .and_then(|w| w.bars.last())
+                .and_then(|w| self.managers.bubble.bubble(w.current_bubble_id))
+                .and_then(|b| b.bars.last())
                 .map(|b| b.close)
                 .unwrap_or(0.0);
 
@@ -2327,7 +2203,10 @@ impl ChartApp {
                 for window_id in matching_ids {
                     let chart_id = ChartId(window_id);
                     if let Some(w) = self.panel_app.panel_grid.containers().get(&chart_id) {
-                        self.indicator_manager.calculate_for_window(window_id, &w.bars);
+                        let bars_recalc: &[mlc_core::Bar] = self.managers.bubble.bubble(w.current_bubble_id)
+                            .map(|b| b.bars.as_slice())
+                            .unwrap_or(&[]);
+                        self.indicator_manager.calculate_for_window(window_id, bars_recalc);
                     }
                 }
                 let _ = symbol; // legacy — `calculate_for_window` filters by window_id, no longer by symbol
@@ -2374,6 +2253,18 @@ impl ChartApp {
                     .collect()
             };
 
+            // Snapshot per-chart bar counts up-front; the scroll loop needs to
+            // know whether bars exist (was `w.bars.is_empty()`) and how many
+            // bars are currently loaded (was `w.bars.len() >= max_loaded`).
+            let bar_counts_by_chart: std::collections::HashMap<mlc_core::state::ChartId, usize> =
+                self.panel_app.panel_grid.containers().iter()
+                    .map(|(cid, w)| {
+                        let n = self.managers.bubble.bubble(w.current_bubble_id)
+                            .map(|b| b.bars.len())
+                            .unwrap_or(0);
+                        (*cid, n)
+                    })
+                    .collect();
             for (cid_scroll, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                 if window.scroll_fetch_in_flight {
                     if let Some(started) = window.scroll_fetch_started {
@@ -2385,14 +2276,15 @@ impl ChartApp {
                     }
                     if window.scroll_fetch_in_flight { continue; }
                 }
-                if window.bars.is_empty() { continue; }
+                let bar_count_scroll = bar_counts_by_chart.get(cid_scroll).copied().unwrap_or(0);
+                if bar_count_scroll == 0 { continue; }
                 if window.pending_symbol_load { continue; }
 
                 let visible = window.viewport.visible_bars() as f64;
                 let threshold = (visible * 0.20).max(5.0);
                 if window.viewport.view_start > threshold { continue; }
 
-                if max_loaded > 0 && window.bars.len() >= max_loaded as usize { continue; }
+                if max_loaded > 0 && bar_count_scroll >= max_loaded as usize { continue; }
 
                 let (win_sym_sc, win_tf_sc, win_exch_sc, win_at_sc) = match instrument_by_cid_scroll.get(cid_scroll) {
                     Some(t) => t,
@@ -2414,7 +2306,7 @@ impl ChartApp {
                 // Read oldest_ts from the window's bars directly.
                 let oldest_ts = self.panel_app.panel_grid.containers()
                     .get(&cid_req)
-                    .and_then(|w| w.bars.first().map(|b| b.timestamp))
+                    .and_then(|w| None::<&mlc_core::Bar>.map(|b| b.timestamp))
                     .unwrap_or(0);
 
                 if oldest_ts == 0 { continue; }
@@ -2536,7 +2428,7 @@ impl ChartApp {
             let attempted = &self.indicator_heal_attempted;
             let im = &self.indicator_manager;
             self.panel_app.panel_grid.iter_containers().any(|(_, w)| {
-                !w.bars.is_empty()
+                !true
                     && im.get_instances_for_window(w.id.0)
                         .iter()
                         .any(|i| i.values.is_empty() && !attempted.contains(&i.id))
@@ -2547,8 +2439,8 @@ impl ChartApp {
                 .panel_app
                 .panel_grid
                 .iter_containers()
-                .filter(|(_, w)| !w.bars.is_empty())
-                .map(|(_, w)| (w.id.0, w.bars.clone()))
+                .filter(|(_, w)| !true)
+                .map(|(_, w)| (w.id.0, Vec::<mlc_core::Bar>::new()))
                 .collect();
             for (wid, bars) in window_bars {
                 let needs_heal: Vec<u64> = self

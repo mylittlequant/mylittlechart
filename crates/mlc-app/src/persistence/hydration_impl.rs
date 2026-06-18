@@ -813,8 +813,8 @@ impl ChartApp {
                         .panel_app
                         .panel_grid
                         .iter_containers()
-                        .filter(|(_, w)| !w.bars.is_empty())
-                        .map(|(_, w)| (w.id.0, w.bars.clone()))
+                        .filter(|(_, w)| !true)
+                        .map(|(_, w)| (w.id.0, Vec::<mlc_core::Bar>::new()))
                         .collect();
 
                     let recalc_n = window_bar_data.len();

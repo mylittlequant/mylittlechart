@@ -351,7 +351,7 @@ impl ChartApp {
                                     window.restore_drawings_for_symbol(&symbol, &item_exchange, &item_account_type, &mut panel.drawing_manager);
                                 }
                             }
-                            window.bars.clear();
+                            {};
                             window.viewport.bar_count = 0;
                             window.viewport.view_start = 0.0;
                             window.pending_symbol_load = true;
@@ -2594,7 +2594,7 @@ impl ChartApp {
         // Pattern: "alert_add_button" — open alert settings modal for new alert
         if widget_id == "alert_add_button" {
             let price = self.panel_app.panel_grid.active_container()
-                .and_then(|w| w.bars.last())
+                .and_then(|w| None::<&mlc_core::Bar>)
                 .map(|b| b.close)
                 .unwrap_or(0.0);
             // S2.7.1e: read symbol via branch_meta (B1).
@@ -2867,7 +2867,7 @@ impl ChartApp {
         if widget_id.contains("_drw_alert_") || widget_id.starts_with("drw_alert_") {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 let mut price = self.panel_app.panel_grid.active_container()
-                    .and_then(|w| w.bars.last())
+                    .and_then(|w| None::<&mlc_core::Bar>)
                     .map(|b| b.close)
                     .unwrap_or(0.0);
                 let mut source_name = format!("Drawing {}", id);
@@ -2902,7 +2902,7 @@ impl ChartApp {
         if widget_id.contains("_ind_alert_") || widget_id.starts_with("ind_alert_") {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 let price = self.panel_app.panel_grid.active_container()
-                    .and_then(|w| w.bars.last())
+                    .and_then(|w| None::<&mlc_core::Bar>)
                     .map(|b| b.close)
                     .unwrap_or(0.0);
                 let source_name = self.indicator_manager.get_instance(id)
@@ -3005,6 +3005,7 @@ impl ChartApp {
                     // (and without the old Manual-mode force that broke peers).
                     if is_drw_row {
                         let active_pid_center = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                        let center_bars: Vec<mlc_core::Bar> = self.active_chart_bars();
                         // Mid timestamp from the primitive's anchor points. Price
                         // anchors (the `.1`) are no longer used for framing — Auto
                         // handles Y — so sentinel (0.0) prices are irrelevant here.
@@ -3019,7 +3020,7 @@ impl ChartApp {
                                     }
                                     let avg_ts = pts.iter().map(|p| p.0).sum::<i64>() / pts.len() as i64;
                                     self.panel_app.panel_grid.active_container()
-                                        .map(|w| mlc_core::timestamp_ms_to_bar_f64(&w.bars, avg_ts))
+                                        .map(|_w| mlc_core::timestamp_ms_to_bar_f64(&center_bars[..], avg_ts))
                                 }));
                         if let Some(mid_bar) = mid_bar {
                             use mlc_core::chart::types::price_scale::ScaleMode;
@@ -3031,7 +3032,7 @@ impl ChartApp {
                                 for state in window.sub_pane_y_state.values_mut() {
                                     state.auto_scale = true;
                                 }
-                                window.calc_auto_scale();
+                                window.calc_auto_scale(&center_bars);
                             }
                             // Raise the center intent on the tag: propagate X +
                             // Auto-Y to every sync-viewport peer. The peer applies
@@ -3073,11 +3074,12 @@ impl ChartApp {
             let parts: Vec<&str> = widget_id.strip_prefix("signal_").unwrap_or("").splitn(2, '_').collect();
             if parts.len() == 2 {
                 if let Ok(bar_index) = parts[1].parse::<i64>() {
+                    let signal_bars: Vec<mlc_core::Bar> = self.active_chart_bars();
                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         let visible_bars = window.viewport.chart_width / window.viewport.bar_spacing;
                         window.viewport.view_start = (bar_index as f64 - visible_bars / 2.0).max(0.0);
                         if window.price_scale.scale_mode.is_auto_y() {
-                            window.calc_auto_scale();
+                            window.calc_auto_scale(&signal_bars);
                         }
                     }
                     eprintln!("[Sidebar] Signal clicked: center on bar {}", bar_index);

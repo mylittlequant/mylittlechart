@@ -1376,6 +1376,7 @@ impl ChartPanelGrid {
         indicator_overlay_hit: impl Fn(f64, f64, f64) -> Option<u64>,
         indicator_subpane_hit: impl Fn(u64, f64, f64, f64) -> bool,
         active_dm: &mut crate::drawing::DrawingManager,
+        bars: &[crate::Bar],
     ) -> ChartRightClickHit {
         // ----------------------------------------------------------------
         // Step 1 & 2: primitive hit-test (main chart then sub-panes).
@@ -1398,7 +1399,7 @@ impl ChartPanelGrid {
                     active_dm.hit_test(
                         main_local_x,
                         main_local_y,
-                        &window.bars,
+                        bars,
                         &corrected_vp,
                         &window.price_scale,
                     )
@@ -1444,7 +1445,7 @@ impl ChartPanelGrid {
                             plx,
                             ply,
                             instance_id,
-                            &window.bars,
+                            bars,
                             &sub_viewport,
                             &sub_price_scale,
                         ) {
@@ -1593,6 +1594,7 @@ impl ChartPanelGrid {
         screen_y: f64,
         extended: &crate::state::geometry::ExtendedFrameLayout,
         active_dm: &mut crate::drawing::DrawingManager,
+        bars: &[crate::Bar],
     ) -> ChartDragStartHit {
         let chart_rect = extended.main_chart.chart;
         let local_x = screen_x - chart_rect.x;
@@ -1624,7 +1626,7 @@ impl ChartPanelGrid {
                     .unwrap_or(0.0);
                 let ts_ms = self
                     .active_container()
-                    .map(|w| crate::bar_f64_to_timestamp_ms(&w.bars, bar_f))
+                    .map(|_w| crate::bar_f64_to_timestamp_ms(bars, bar_f))
                     .unwrap_or(0);
                 let price =
                     price_max - (local_y / chart_rect.height) * (price_max - price_min);
@@ -1656,7 +1658,7 @@ impl ChartPanelGrid {
                     .unwrap_or(0.0);
                 let ts_ms = self
                     .active_container()
-                    .map(|w| crate::bar_f64_to_timestamp_ms(&w.bars, bar_f))
+                    .map(|_w| crate::bar_f64_to_timestamp_ms(bars, bar_f))
                     .unwrap_or(0);
                 let price =
                     price_max - (ply / content.height) * (price_max - price_min);
@@ -1687,7 +1689,7 @@ impl ChartPanelGrid {
                 if let Some(cp_type) = active_dm.hit_test_control_point(
                     local_x,
                     local_y,
-                    &window.bars,
+                    bars,
                     &corrected_vp,
                     &window.price_scale,
                 ) {
@@ -1708,7 +1710,7 @@ impl ChartPanelGrid {
                 if let Some(prim_idx) = active_dm.hit_test(
                     local_x,
                     local_y,
-                    &window.bars,
+                    bars,
                     &corrected_vp,
                     &window.price_scale,
                 ) {
@@ -1757,7 +1759,7 @@ impl ChartPanelGrid {
                         plx,
                         ply,
                         instance_id,
-                        &window.bars,
+                        bars,
                         &sub_viewport,
                         &sub_price_scale,
                     ) {
@@ -1778,7 +1780,7 @@ impl ChartPanelGrid {
                         plx,
                         ply,
                         instance_id,
-                        &window.bars,
+                        bars,
                         &sub_viewport,
                         &sub_price_scale,
                     ) {
@@ -1843,6 +1845,7 @@ impl ChartPanelGrid {
         extended: &crate::state::geometry::ExtendedFrameLayout,
         is_over_separator: bool,
         active_dm: &crate::drawing::DrawingManager,
+        bars: &[crate::Bar],
     ) -> Option<(i64, f64, bool, Option<usize>)> {
         use crate::engine::input::DragMode;
 
@@ -1910,7 +1913,7 @@ impl ChartPanelGrid {
                         window.crosshair.price = price;
                         if window.crosshair.is_magnet() {
                             let (snapped_price, snapped_y) = window.calculate_magnet_snap(
-                                bar_idx, price, chart_rect.height,
+                                bars, bar_idx, price, chart_rect.height,
                                 window.price_scale.price_min, window.price_scale.price_max,
                             );
                             window.crosshair.set_snapped(snapped_price, snapped_y);
@@ -1964,7 +1967,7 @@ impl ChartPanelGrid {
                     window.crosshair.visible = false;
                 }
             } else if let Some(window) = self.active_container_mut() {
-                window.update_crosshair_from_global(x, y, extended, drag_pane);
+                window.update_crosshair_from_global(x, y, extended, drag_pane, bars);
             }
         }
 
@@ -1972,16 +1975,16 @@ impl ChartPanelGrid {
         self.active_container().map(|w| {
             let bar_f64 = w.crosshair.bar_f64;
             let bar_idx = bar_f64 as usize;
-            let timestamp = if bar_idx < w.bars.len() {
-                w.bars[bar_idx].timestamp
-            } else if w.bars.len() >= 2 {
-                let last = w.bars[w.bars.len() - 1].timestamp;
-                let prev = w.bars[w.bars.len() - 2].timestamp;
+            let timestamp = if bar_idx < bars.len() {
+                bars[bar_idx].timestamp
+            } else if bars.len() >= 2 {
+                let last = bars[bars.len() - 1].timestamp;
+                let prev = bars[bars.len() - 2].timestamp;
                 let interval = last - prev;
-                let bars_past = bar_f64 - (w.bars.len() - 1) as f64;
+                let bars_past = bar_f64 - (bars.len() - 1) as f64;
                 last + (bars_past * interval as f64).round() as i64
-            } else if !w.bars.is_empty() {
-                w.bars[0].timestamp
+            } else if !bars.is_empty() {
+                bars[0].timestamp
             } else {
                 0
             };
@@ -2005,28 +2008,29 @@ impl ChartPanelGrid {
         leaf_id: LeafId,
         extended: &crate::state::geometry::ExtendedFrameLayout,
         is_over_separator: bool,
+        bars: &[crate::Bar],
     ) -> Option<(i64, f64, bool, Option<usize>)> {
         if is_over_separator {
             if let Some(window) = self.container_for_leaf_mut(leaf_id) {
                 window.crosshair.visible = false;
             }
         } else if let Some(window) = self.container_for_leaf_mut(leaf_id) {
-            window.update_crosshair_from_global(x, y, extended, None);
+            window.update_crosshair_from_global(x, y, extended, None, bars);
         }
 
         self.container_for_leaf(leaf_id).map(|w| {
             let bar_f64 = w.crosshair.bar_f64;
             let bar_idx = bar_f64 as usize;
-            let timestamp = if bar_idx < w.bars.len() {
-                w.bars[bar_idx].timestamp
-            } else if w.bars.len() >= 2 {
-                let last = w.bars[w.bars.len() - 1].timestamp;
-                let prev = w.bars[w.bars.len() - 2].timestamp;
+            let timestamp = if bar_idx < bars.len() {
+                bars[bar_idx].timestamp
+            } else if bars.len() >= 2 {
+                let last = bars[bars.len() - 1].timestamp;
+                let prev = bars[bars.len() - 2].timestamp;
                 let interval = last - prev;
-                let bars_past = bar_f64 - (w.bars.len() - 1) as f64;
+                let bars_past = bar_f64 - (bars.len() - 1) as f64;
                 last + (bars_past * interval as f64).round() as i64
-            } else if !w.bars.is_empty() {
-                w.bars[0].timestamp
+            } else if !bars.is_empty() {
+                bars[0].timestamp
             } else {
                 0
             };
@@ -2068,6 +2072,7 @@ impl ChartPanelGrid {
         screen_y: f64,
         extended: &crate::state::geometry::ExtendedFrameLayout,
         active_dm: &mut crate::drawing::DrawingManager,
+        bars: &[crate::Bar],
     ) -> bool {
         let is_active = active_dm.is_drawing() && active_dm.is_freehand_tool();
         let current_pane = active_dm.current_pane();
@@ -2105,9 +2110,9 @@ impl ChartPanelGrid {
             } else {
                 price_min
             };
-            if let Some(window) = self.active_container() {
-                let ts_ms = crate::bar_f64_to_timestamp_ms(&window.bars, bar_f);
-                let bar_interval_ms = crate::bar_interval_seconds(&window.bars) * 1000;
+            if let Some(_window) = self.active_container() {
+                let ts_ms = crate::bar_f64_to_timestamp_ms(bars, bar_f);
+                let bar_interval_ms = crate::bar_interval_seconds(bars) * 1000;
                 active_dm.add_freehand_point(ts_ms, price, bar_interval_ms);
             }
             return true;
@@ -2130,9 +2135,9 @@ impl ChartPanelGrid {
 
         let price = price_max - (local_y / chart_rect.height) * (price_max - price_min);
 
-        if let Some(window) = self.active_container() {
-            let ts_ms = crate::bar_f64_to_timestamp_ms(&window.bars, bar_f);
-            let bar_interval_ms = crate::bar_interval_seconds(&window.bars) * 1000;
+        if let Some(_window) = self.active_container() {
+            let ts_ms = crate::bar_f64_to_timestamp_ms(bars, bar_f);
+            let bar_interval_ms = crate::bar_interval_seconds(bars) * 1000;
             active_dm.add_freehand_point(ts_ms, price, bar_interval_ms);
         }
 

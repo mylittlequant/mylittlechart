@@ -150,7 +150,11 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                     .panel_app
                     .panel_grid
                     .iter_containers()
-                    .any(|(_, w)| !w.bars.is_empty());
+                    .any(|(_, w)| {
+                        pw.chart.managers.bubble.bubble(w.current_bubble_id)
+                            .map(|b| !b.bars.is_empty())
+                            .unwrap_or(false)
+                    });
                 if chart_populated {
                     pw.awaiting_first_live_frame = false;
                     pw.spinner_start = None;
@@ -710,7 +714,11 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 .panel_app
                 .panel_grid
                 .iter_containers()
-                .any(|(_, w)| !w.bars.is_empty());
+                .any(|(_, w)| {
+                    pw.chart.managers.bubble.bubble(w.current_bubble_id)
+                        .map(|b| !b.bars.is_empty())
+                        .unwrap_or(false)
+                });
             if chart_populated {
                 pw.awaiting_first_live_frame = false;
                 pw.spinner_start = None;

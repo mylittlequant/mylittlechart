@@ -20,13 +20,20 @@ impl App<'_> {
                     window_id, chart_id, view_start, bar_spacing, mode,
                 } => {
                     if let Some(pw) = self.windows.values_mut().find(|pw| pw.window_id == window_id) {
+                        // Resolve bar_count via immutable bubble lookup first, then take mut on the container.
+                        let target_bubble_id = pw.chart.panel_app.panel_grid.containers()
+                            .values().find(|cw| cw.id.0 == chart_id)
+                            .map(|cw| cw.current_bubble_id);
+                        let bar_count = target_bubble_id
+                            .and_then(|bid| pw.chart.managers.bubble.bubble(bid))
+                            .map(|b| b.bars.len())
+                            .unwrap_or(0);
                         if let Some(cw) = pw.chart.panel_app.panel_grid.containers_mut().values_mut()
                             .find(|cw| cw.id.0 == chart_id)
                         {
                             if let Some(mode_str) = &mode {
                                 match mode_str.as_str() {
                                     "focus" => {
-                                        let bar_count = cw.bars.len();
                                         if bar_count > 0 {
                                             let visible = if cw.viewport.bar_spacing > 0.0 {
                                                 (cw.viewport.chart_width / cw.viewport.bar_spacing).ceil() as usize
@@ -37,7 +44,6 @@ impl App<'_> {
                                         }
                                     }
                                     "fit" => {
-                                        let bar_count = cw.bars.len();
                                         if bar_count > 0 && cw.viewport.chart_width > 0.0 {
                                             cw.viewport.bar_spacing = cw.viewport.chart_width / bar_count as f64;
                                             cw.viewport.view_start = 0.0;
@@ -74,7 +80,8 @@ impl App<'_> {
                     if let Some(pw) = self.windows.values_mut().find(|pw| pw.window_id == window_id) {
                         let bars: Vec<mlc_core::Bar> = pw.chart.panel_app.panel_grid.containers()
                             .values().find(|cw| cw.id.0 == chart_id)
-                            .map(|cw| cw.bars.clone())
+                            .and_then(|cw| pw.chart.managers.bubble.bubble(cw.current_bubble_id))
+                            .map(|b| b.bars.clone())
                             .unwrap_or_default();
 
                         if let Some(new_id) = pw.chart.indicator_manager.create_instance(&type_id) {
@@ -135,7 +142,9 @@ impl App<'_> {
                             let bars: Vec<mlc_core::Bar> = wid
                                 .and_then(|w| pw.chart.panel_app.panel_grid.containers()
                                     .values().find(|cw| cw.id.0 == w)
-                                    .map(|cw| cw.bars.clone()))
+                                    .map(|cw| cw.current_bubble_id))
+                                .and_then(|bid| pw.chart.managers.bubble.bubble(bid))
+                                .map(|b| b.bars.clone())
                                 .unwrap_or_default();
                             pw.chart.indicator_manager.calculate(indicator_id, &bars);
                             eprintln!("[AgentCommand] UpdateIndicator: id={}", indicator_id);

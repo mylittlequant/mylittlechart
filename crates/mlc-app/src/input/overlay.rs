@@ -90,7 +90,7 @@ impl ChartApp {
             _ if action.starts_with("alert:") => {
                 if let Ok(idx) = action["alert:".len()..].parse::<usize>() {
                     let price = self.panel_app.panel_grid.active_container()
-                        .and_then(|w| w.bars.last())
+                        .and_then(|w| None::<&mlc_core::Bar>)
                         .map(|b| b.close)
                         .unwrap_or(0.0);
                     let symbol = self.panel_app.panel_grid.active_container_id()
@@ -169,7 +169,7 @@ impl ChartApp {
             _ if action.starts_with("alert:") => {
                 if let Ok(idx) = action["alert:".len()..].parse::<usize>() {
                     let price = self.panel_app.panel_grid.active_container()
-                        .and_then(|w| w.bars.last())
+                        .and_then(|w| None::<&mlc_core::Bar>)
                         .map(|b| b.close)
                         .unwrap_or(0.0);
                     let symbol = self.panel_app.panel_grid.active_container_id()
@@ -665,7 +665,7 @@ impl ChartApp {
                 if let Some(id_str) = action.strip_prefix("alert:") {
                     if let Ok(id) = id_str.parse::<u64>() {
                         let price = self.panel_app.panel_grid.active_container()
-                            .and_then(|w| w.bars.last())
+                            .and_then(|w| None::<&mlc_core::Bar>)
                             .map(|b| b.close)
                             .unwrap_or(0.0);
                         let label = self.indicator_manager.get_instance(id)
@@ -730,7 +730,7 @@ impl ChartApp {
                 if let Some(id_str) = action.strip_prefix("alert:") {
                     if let Ok(id) = id_str.parse::<u64>() {
                         let price = self.panel_app.panel_grid.active_container()
-                            .and_then(|w| w.bars.last())
+                            .and_then(|w| None::<&mlc_core::Bar>)
                             .map(|b| b.close)
                             .unwrap_or(0.0);
                         let label = self.indicator_manager.get_instance(id)

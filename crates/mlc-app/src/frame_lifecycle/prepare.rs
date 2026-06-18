@@ -166,28 +166,41 @@ impl ChartApp {
         // chart_width values (see below).
         if !self.panel_app.panel_grid.is_split() {
             let mut snapped_windows: Vec<(ChartId, f64, f64)> = Vec::new(); // (chart_id, view_start, bar_spacing)
+            // Snapshot bars per chart up front to avoid borrow conflict during the
+            // mut-iter loop below.
+            let bars_by_chart_pre: std::collections::HashMap<ChartId, Vec<mlc_core::Bar>> =
+                self.panel_app.panel_grid.containers().iter()
+                    .map(|(cid, w)| {
+                        let bars = self.managers.bubble.bubble(w.current_bubble_id)
+                            .map(|b| b.bars.clone())
+                            .unwrap_or_default();
+                        (*cid, bars)
+                    })
+                    .collect();
             for (&chart_id, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                 // needs_snap_after_backfill alone (without needs_auto_scale_after_bars)
                 // happens for startup-parked presets: update_bars() delivered bars
                 // while chart_width was still 0, and update_bars never sets the
                 // deferred-autoscale flag. Consume the cold-snap here once width
                 // is known so the flag cannot strand.
+                let bars_pre: &[mlc_core::Bar] = bars_by_chart_pre.get(&chart_id)
+                    .map(|v| v.as_slice()).unwrap_or(&[]);
                 if (window.needs_auto_scale_after_bars || window.needs_snap_after_backfill)
-                    && !window.bars.is_empty()
+                    && !bars_pre.is_empty()
                     && window.viewport.chart_width > 0.0
                 {
                     window.needs_auto_scale_after_bars = false;
                     if window.needs_snap_after_backfill {
                         // Cold-restore snap supersedes the plain deferred snap:
                         // consume_cold_snap snaps + force-autoscales + clears the flag.
-                        window.consume_cold_snap();
+                        window.consume_cold_snap(bars_pre);
                     } else {
                         // Snap to end with standard margin.
                         window.snap_to_end(mlc_core::DEFAULT_SNAP_MARGIN);
                         // No snap_cooldown needed: snap fires in prepare_frame AFTER
                         // sync_viewport_from_layout, so bar_shift cannot undo it this frame.
                         // Next frame old_width == new_width → bar_shift = 0.
-                        window.calc_auto_scale();
+                        window.calc_auto_scale(bars_pre);
                     }
                     // restore_scale_mode is already consumed inside set_bars() for the eager
                     // path; for the deferred path (chart_width was 0 at set_bars time),
@@ -673,7 +686,7 @@ impl ChartApp {
                             && self.managers.bubble.account_type_for_chart(**cid)
                                 .map_or(false, |a| a == sym_account_type)
                         })
-                        .and_then(|(_, w)| w.bars.last())
+                        .and_then(|(_, w)| None::<&mlc_core::Bar>)
                         .map(|bar| (bar.close, bar.open, bar.high, bar.low, bar.volume));
 
                     if let Some((price, open, high, low, volume)) = price_data {
@@ -953,13 +966,25 @@ impl ChartApp {
             // Deferred viewport snap for split mode: now chart_width is real.
             {
                 let mut snapped_windows: Vec<(ChartId, f64, f64)> = Vec::new();
+                // Snapshot bars per chart.
+                let bars_by_chart_split: std::collections::HashMap<ChartId, Vec<mlc_core::Bar>> =
+                    self.panel_app.panel_grid.containers().iter()
+                        .map(|(cid, w)| {
+                            let bars = self.managers.bubble.bubble(w.current_bubble_id)
+                                .map(|b| b.bars.clone())
+                                .unwrap_or_default();
+                            (*cid, bars)
+                        })
+                        .collect();
                 for (&chart_id, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
-                    if window.needs_auto_scale_after_bars && !window.bars.is_empty() && window.viewport.chart_width > 0.0 {
+                    let bars_split: &[mlc_core::Bar] = bars_by_chart_split.get(&chart_id)
+                        .map(|v| v.as_slice()).unwrap_or(&[]);
+                    if window.needs_auto_scale_after_bars && !bars_split.is_empty() && window.viewport.chart_width > 0.0 {
                         window.needs_auto_scale_after_bars = false;
                         // Snap to end with standard margin,
                         // using CURRENT bar_spacing (restored from preset).
                         window.snap_to_end(mlc_core::DEFAULT_SNAP_MARGIN);
-                        window.calc_auto_scale();
+                        window.calc_auto_scale(bars_split);
                         if let Some(mode) = window.restore_scale_mode.take() {
                             window.price_scale.scale_mode = mode;
                         }

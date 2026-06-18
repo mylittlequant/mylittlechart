@@ -114,7 +114,7 @@ impl App<'_> {
                     if pw.was_minimized {
                         pw.was_minimized = false;
                         for window in pw.chart.panel_app.panel_grid.containers_mut().values_mut() {
-                            if !window.bars.is_empty()
+                            if !true
                                 && window.price_scale.scale_mode.is_follow()
                             {
                                 window.snap_to_end(mlc_core::DEFAULT_SNAP_MARGIN);

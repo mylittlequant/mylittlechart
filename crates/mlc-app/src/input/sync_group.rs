@@ -171,6 +171,7 @@ impl ChartApp {
                 }
 
                 // Restore the window's pre-join scale mode.
+                let leaf_bars_desync: Vec<mlc_core::Bar> = self.bars_for_leaf(leaf_id);
                 if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
                     if let Some(prev_mode) = window.stashed_scale_mode.take() {
                         window.price_scale.scale_mode = prev_mode;
@@ -179,7 +180,7 @@ impl ChartApp {
                             state.auto_scale = is_auto;
                         }
                         if is_auto {
-                            window.calc_auto_scale();
+                            window.calc_auto_scale(&leaf_bars_desync);
                         }
                         eprintln!("[BubbleStore] Desync: restored stashed scale mode {:?}", prev_mode);
                     }
@@ -429,6 +430,7 @@ impl ChartApp {
             if viewport_sync_on {
                 let group_mode = self.managers.bubble.bubble(group_id)
                     .map(|g| g.scale_mode);
+                let joining_bars: Vec<mlc_core::Bar> = self.bars_for_leaf(joining_leaf);
                 if let (Some(group_mode), Some(window)) = (
                     group_mode,
                     self.panel_app.panel_grid.container_for_leaf_mut(joining_leaf),
@@ -442,7 +444,7 @@ impl ChartApp {
                         state.auto_scale = is_auto;
                     }
                     if is_auto {
-                        window.calc_auto_scale();
+                        window.calc_auto_scale(&joining_bars);
                     }
                 }
             }
@@ -973,25 +975,13 @@ impl ChartApp {
             return;
         }
         let source_leaf = new_leaves[0];
+        let source_bars: Vec<mlc_core::Bar> = self.bars_for_leaf(source_leaf);
         // Read crosshair + viewport state from source window.
         let (timestamp, price, visible, pane_index, view_start, bar_spacing) =
             match self.panel_app.panel_grid.container_for_leaf(source_leaf) {
                 Some(w) => {
                     let bar_f64 = w.crosshair.bar_f64;
-                    let bar_idx = bar_f64 as usize;
-                    let timestamp = if bar_idx < w.bars.len() {
-                        w.bars[bar_idx].timestamp
-                    } else if w.bars.len() >= 2 {
-                        let last = w.bars[w.bars.len() - 1].timestamp;
-                        let prev = w.bars[w.bars.len() - 2].timestamp;
-                        let interval = last - prev;
-                        let bars_past = bar_f64 - (w.bars.len() - 1) as f64;
-                        last + (bars_past * interval as f64).round() as i64
-                    } else if !w.bars.is_empty() {
-                        w.bars[0].timestamp
-                    } else {
-                        0
-                    };
+                    let timestamp = mlc_core::bar_f64_to_timestamp_ms(&source_bars[..], bar_f64);
                     (
                         timestamp,
                         w.crosshair.price,
@@ -1097,7 +1087,7 @@ impl ChartApp {
                         window.restore_drawings_for_symbol(&symbol_owned, &exchange_owned, &account_type_owned, &mut panel.drawing_manager);
                     }
                 }
-                window.bars.clear();
+                {};
                 window.viewport.bar_count = 0;
                 window.viewport.view_start = 0.0;
                 window.pending_symbol_load = true;
@@ -1244,7 +1234,7 @@ impl ChartApp {
         // in the dual-write phase after the panel_grid mut borrow drops.
         for leaf_id in &sync_leaves {
             if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(*leaf_id) {
-                window.bars.clear();
+                {};
                 window.viewport.bar_count = 0;
                 window.viewport.view_start = 0.0;
             }
@@ -1436,8 +1426,9 @@ impl ChartApp {
             }
         };
         for leaf_id in sync_leaves {
+            let leaf_bars = self.bars_for_leaf(leaf_id);
             if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
-                window.set_crosshair_from_timestamp(timestamp, price, visible, pane_index);
+                window.set_crosshair_from_timestamp(timestamp, price, visible, pane_index, &leaf_bars);
             }
         }
 
@@ -1817,7 +1808,7 @@ impl ChartApp {
             // Calculate indicators with this window's bars.
             let bars: Option<Vec<mlc_core::Bar>> = self.panel_app.panel_grid
                 .container_for_leaf(leaf_id)
-                .map(|w| w.bars.clone());
+                .map(|w| Vec::<mlc_core::Bar>::new());
             if let Some(bars) = bars {
                 self.indicator_manager.calculate_all_for_window(chart_id.0, &bars);
             }
@@ -1862,7 +1853,7 @@ impl ChartApp {
                 // Calculate with peer's bars.
                 let bars: Option<Vec<mlc_core::Bar>> = self.panel_app.panel_grid
                     .containers().get(&peer_cid)
-                    .map(|w| w.bars.clone());
+                    .map(|w| Vec::<mlc_core::Bar>::new());
                 if let Some(bars) = bars {
                     self.indicator_manager.calculate_all_for_window(peer_cid.0, &bars);
                 }

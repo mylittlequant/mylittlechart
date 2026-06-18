@@ -156,41 +156,12 @@ pub struct ChartContainer {
     pub current_bubble_id: BubbleId,
 
     // === Data ===
-    /// OHLC bars for this chart
-    pub bars: Vec<Bar>,
-
-    /// Footprint bars for cluster rendering. `None` for non-footprint
-    /// chart types. Populated by the live-data bridge on chart_type
-    /// switch to `footprint`; the renderer reads via
-    /// `ChartRenderState::footprint_bars`.
-    pub footprint_bars: Option<Vec<crate::types::FootprintBar>>,
-
-    /// Renko bricks. `None` for non-renko chart types. Populated by the
-    /// live-data bridge when `chart_type == "renko"`. Each entry is one
-    /// closed brick — no in-progress brick because Renko bricks are
-    /// atomic at the station level.
-    pub renko_bars: Option<Vec<crate::types::RenkoBrick>>,
-
-    /// Three Line Break lines. `None` for non-TLB chart types. Append-only —
-    /// each emit is one closed line.
-    pub three_line_break: Option<Vec<crate::types::ThreeLineBreakLine>>,
-
-    /// Point-and-Figure columns. `None` for non-pnf chart types. Each
-    /// emit replaces the same-`column_id` entry in-place; a new
-    /// `column_id` appends.
-    pub pnf_columns: Option<Vec<crate::types::PnfColumn>>,
-
-    /// Kagi segments. `None` for non-kagi chart types. Append-only —
-    /// each emit is a closed segment.
-    pub kagi_segments: Option<Vec<crate::types::KagiSegment>>,
-
-    /// Cumulative Volume Delta line samples. `None` for charts that
-    /// don't request the CVD overlay/panel. Append-only.
-    pub cvd_line: Option<Vec<crate::types::CvdSample>>,
-
-    /// TPO Market Profile session snapshots, keyed by `session_date_ms`
-    /// via in-place upsert on the last entry. `None` for non-TPO charts.
-    pub tpo_sessions: Option<Vec<crate::types::TpoSession>>,
+    // Phase X0 / C5c (2026-06-19): per-Kind series storage moved to DataBubble.
+    // ChartContainer no longer owns bars / footprint_bars / renko_bars /
+    // three_line_break / pnf_columns / kagi_segments / cvd_line / tpo_sessions /
+    // oi_delta / funding_rate / dom_heatmap / dom_trade_dots / liq_heatmap / liq_dots.
+    // The renderer reads them via `to_render_state(&bubble, ...)`; window
+    // methods take `bars: &[Bar]` parameters (caller passes `&bubble.bars`).
 
     /// Heikin Ashi memo cache. Populated by
     /// [`ChartContainer::ensure_ha_cache`] and invalidated whenever the
@@ -219,34 +190,13 @@ pub struct ChartContainer {
     /// Opt-in: defaults to `false` so existing presets are unaffected.
     pub vp_show: bool,
 
-    /// Open Interest Δ bars — one entry per OI event. Each entry carries
-    /// the absolute OI and the delta from the previous event. Populated
-    /// when `oi_show == true`; `None` otherwise.
-    pub oi_delta: Option<Vec<crate::types::OiDeltaBar>>,
     /// When `true` the OI Delta sub-pane is rendered below the main chart.
+    /// (Per-window display gate; storage lives on the bubble — Phase X0.)
     pub oi_show: bool,
 
-    /// Funding Rate cells — one entry per funding-rate event. Populated
-    /// when `funding_show == true`; `None` otherwise.
-    pub funding_rate: Option<Vec<crate::types::FundingRateCell>>,
     /// When `true` the Funding Rate strip is rendered at the bottom of the chart.
+    /// (Per-window display gate; storage lives on the bubble — Phase X0.)
     pub funding_show: bool,
-
-    /// Rolling 2-D depth heatmap buffer for `chart_type == "dom_heatmap"` (C12).
-    /// `None` when the chart is not in DOM-heatmap mode.
-    pub dom_heatmap: Option<crate::chart::dom_heatmap::DomHeatmapBuffer>,
-
-    /// Recent trades for the DOM heatmap circle overlay. Capped at 2 000 entries.
-    /// `None` when `dom_heatmap` is `None`.
-    pub dom_trade_dots: Option<Vec<crate::chart::dom_heatmap::DomTradeDot>>,
-
-    /// Rolling liquidation heatmap buffer for `chart_type == "liquidation_heatmap"` (C13).
-    /// `None` when the chart is not in liquidation-heatmap mode.
-    pub liq_heatmap: Option<crate::chart::liquidation_heatmap::LiquidationHeatmapBuffer>,
-
-    /// Liquidation dot overlay for the `liquidation_heatmap` chart-type. Capped at 2 000 entries.
-    /// `None` when `liq_heatmap` is `None`.
-    pub liq_dots: Option<Vec<crate::chart::liquidation_heatmap::LiquidationDot>>,
 
     // === Viewport & Scales ===
     /// Viewport state (pan/zoom)
@@ -506,28 +456,14 @@ impl ChartContainer {
             // immediately after construction via post-construction mutation.
             auto_bubble_id: BubbleId(0),
             current_bubble_id: BubbleId(0),
-            bars: Vec::new(),
-            footprint_bars: None,
-            renko_bars: None,
-            three_line_break: None,
-            pnf_columns: None,
-            kagi_segments: None,
-            cvd_line: None,
-            tpo_sessions: None,
             ha_cache: None,
             ha_cache_stamp: None,
             vp_overlay: None,
             vp_overlay_stamp: None,
             vp_mode: crate::chart::volume_profile::VpMode::default(),
             vp_show: false,
-            oi_delta: None,
             oi_show: false,
-            funding_rate: None,
             funding_show: false,
-            dom_heatmap: None,
-            dom_trade_dots: None,
-            liq_heatmap: None,
-            liq_dots: None,
             viewport: Viewport::default(),
             price_scale: PriceScale::default(),
             time_scale: TimeScale::new(),
@@ -839,32 +775,19 @@ impl ChartContainer {
             auto_bubble_id: BubbleId(0),
             current_bubble_id: BubbleId(0),
 
-            // === Data (cloned) ===
-            bars: self.bars.clone(),
-            footprint_bars: self.footprint_bars.clone(),
-            renko_bars: self.renko_bars.clone(),
-            three_line_break: self.three_line_break.clone(),
-            pnf_columns: self.pnf_columns.clone(),
-            kagi_segments: self.kagi_segments.clone(),
-            cvd_line: self.cvd_line.clone(),
-            tpo_sessions: self.tpo_sessions.clone(),
+            // === Data ===
+            // Phase X0 / C5c: per-Kind series live on the bubble. Split-child
+            // gets a fresh sentinel bubble (BubbleId(0)) and will attach to
+            // the correct bubble at split time — series are inherited via the
+            // bridge subscription on the matching instrument coordinates.
             ha_cache: None,
             ha_cache_stamp: None,
             vp_overlay: None,
             vp_overlay_stamp: None,
             vp_mode: self.vp_mode,
             vp_show: self.vp_show,
-            oi_delta: self.oi_delta.clone(),
             oi_show: self.oi_show,
-            funding_rate: self.funding_rate.clone(),
             funding_show: self.funding_show,
-            // DOM heatmap: not inherited — split child gets a fresh buffer when it
-            // switches to dom_heatmap chart_type independently.
-            dom_heatmap: None,
-            dom_trade_dots: None,
-            // Liquidation heatmap: not inherited — split child gets a fresh buffer.
-            liq_heatmap: None,
-            liq_dots: None,
 
             // === Viewport & Scales (cloned) ===
             viewport: self.viewport.clone(),
@@ -967,10 +890,11 @@ impl ChartContainer {
         }
     }
 
-    /// Calculate auto-scale for price axis based on visible data
-    pub fn calc_auto_scale(&mut self) {
+    /// Calculate auto-scale for price axis based on visible data.
+    /// Phase X0 / C5c: caller supplies `bars` (typically `&bubble.bars`).
+    pub fn calc_auto_scale(&mut self, bars: &[Bar]) {
         self.price_scale.calc_auto_scale(
-            &self.bars,
+            bars,
             self.viewport.visible_range(),
         );
     }
@@ -983,116 +907,84 @@ impl ChartContainer {
     /// bars as a flat line).  Then clears the flag so the snap fires exactly once
     /// regardless of which delivery path (cache-served BarsLoaded, first-frame
     /// deferred, or BackfillComplete) arrives first.
-    pub fn consume_cold_snap(&mut self) {
+    /// Phase X0 / C5c: caller supplies `bars` (typically `&bubble.bars`).
+    pub fn consume_cold_snap(&mut self, bars: &[Bar]) {
         self.snap_to_end(DEFAULT_SNAP_MARGIN);
-        // One-shot Y recompute bypassing the Manual-mode gate: the snapshot's
-        // price range belongs to a different viewport position — keeping it
-        // renders the fresh bars as a flat line.
         let saved_mode = self.price_scale.scale_mode;
         self.price_scale.scale_mode = crate::chart::types::price_scale::ScaleMode::Auto;
-        self.calc_auto_scale();
+        self.calc_auto_scale(bars);
         self.price_scale.scale_mode = saved_mode;
         self.needs_snap_after_backfill = false;
     }
 
-    /// Set bars for initial load — resets viewport position and auto-scales.
+    /// Reconcile viewport for initial load — resets viewport position and auto-scales.
     ///
-    /// Use this only for the first data load. For backfill / incremental
-    /// updates use [`update_bars`] which preserves the user's viewport.
+    /// Phase X0 / C5c: bars storage lives on the bubble; this method only
+    /// performs the viewport-side effects after `bubble.bars` has been
+    /// replaced. The `bars` parameter is `&bubble.bars`.
     ///
-    /// When `chart_width > 0` the snap fires eagerly here (most calls after
-    /// the first frame). When `chart_width == 0` (first-launch, brand-new
-    /// window) the snap is deferred to `prepare_frame()` via
-    /// `needs_auto_scale_after_bars`.
-    pub fn set_bars(&mut self, bars: Vec<Bar>) {
-        self.bars = bars;
-
+    /// Use for the first data load. For backfill / incremental updates use
+    /// [`reconcile_view_keep_anchor`] which preserves the user's viewport.
+    pub fn reconcile_view_fresh(&mut self, bars: &[Bar]) {
         // A successful delivery clears any prior fetch error.
         self.data_error = None;
 
         // Update prev close line if enabled (derives prev_close from bars[0].open)
-        self.update_prev_close_line();
+        self.update_prev_close_line(bars);
 
         // Update bar count so the viewport knows how many bars exist.
-        self.viewport.bar_count = self.bars.len();
+        self.viewport.bar_count = bars.len();
 
         if self.viewport.chart_width > 0.0 && self.viewport.bar_spacing > 0.0 {
-            // Eager snap: chart_width is valid, snap immediately.
             self.snap_to_end(DEFAULT_SNAP_MARGIN);
-            self.calc_auto_scale();
-            // Restore user's scale mode preference if LoadPreset set one.
+            self.calc_auto_scale(bars);
             if let Some(mode) = self.restore_scale_mode.take() {
                 self.price_scale.scale_mode = mode;
             }
             self.needs_auto_scale_after_bars = false;
         } else {
-            // Deferred: chart_width not yet set (first-launch, brand-new window).
-            // prepare_frame() will run the snap once layout sets real dimensions.
             self.needs_auto_scale_after_bars = true;
         }
     }
 
-    /// Replace bars without resetting viewport position or scale mode.
+    /// Reconcile viewport after backfill / scroll-load — keep anchor by ts,
+    /// keep user's pan/zoom and scale mode.
     ///
-    /// Used for backfill / WebSocket reconnect — the user's current pan/zoom
-    /// and scale mode are preserved.  Only `bar_count` and derived data
-    /// (prev-close) are recalculated.
-    ///
-    /// Viewport anchor: the bar at `view_start` is identified by timestamp
-    /// before the replacement and restored by timestamp afterwards.  This
-    /// prevents the viewport from drifting when the new series has a different
-    /// length or offset (e.g. a longer merged cache or a fresh fetch arriving
-    /// after a tab switch).
-    pub fn update_bars(&mut self, bars: Vec<Bar>) {
-        // Capture the timestamp of the bar currently at view_start so we can
-        // re-anchor after the replacement.  Clamp the lookup index to [0, len-1]
-        // so out-of-range view_start values still produce a valid anchor.
-        let anchor: Option<(i64, f64)> = if !self.bars.is_empty() {
-            let vs = self.viewport.view_start;
-            let clamped_idx = (vs.floor() as usize).min(self.bars.len().saturating_sub(1));
-            let frac = vs - vs.floor();
-            self.bars.get(clamped_idx).map(|b| (b.timestamp, frac))
-        } else {
-            None
-        };
+    /// Phase X0 / C5c: bars storage lives on the bubble.
+    /// `prev_anchor_ts` is the timestamp of the bar that WAS at view_start
+    /// before bubble.bars was replaced; caller captures it from the old
+    /// bubble state right before the bridge writes the new series.
+    pub fn reconcile_view_keep_anchor(
+        &mut self,
+        bars: &[Bar],
+        prev_anchor: Option<(i64, f64)>,
+    ) {
+        self.update_prev_close_line(bars);
 
-        self.bars = bars;
+        self.viewport.bar_count = bars.len();
 
-        self.update_prev_close_line();
-
-        self.viewport.bar_count = self.bars.len();
-        // NOTE: do NOT call snap_to_end here — all three callers
-        // (BarsLoaded backfill, BackfillComplete, ScrollBarsLoaded) explicitly
-        // preserve the user's pan/zoom. Snapping to the end on every prepend
-        // makes scroll-left appear to "jump back to newest" once the user has
-        // scrolled past the snap margin.
-
-        // Re-anchor view_start by the timestamp captured above.  If the anchor
-        // bar is still present in the new series, keep the exact fractional
-        // offset so the render position is stable.  If it is missing (the new
-        // series starts later than the anchor), leave view_start unchanged —
-        // the caller can decide how to handle that edge case.
-        if let Some((anchor_ts, frac)) = anchor {
-            if let Some(new_i) = self.bars.iter().position(|b| b.timestamp >= anchor_ts) {
+        if let Some((anchor_ts, frac)) = prev_anchor {
+            if let Some(new_i) = bars.iter().position(|b| b.timestamp >= anchor_ts) {
                 self.viewport.view_start = new_i as f64 + frac;
             }
-            // else: new series does not reach the anchor timestamp; leave
-            // view_start as-is so the viewport at least stays within the new data.
         }
 
         if self.price_scale.scale_mode.is_auto_y() {
-            self.calc_auto_scale();
+            self.calc_auto_scale(bars);
         }
     }
 
-    /// Get bar count
-    pub fn bar_count(&self) -> usize {
-        self.bars.len()
-    }
-
-    /// Check if window has data
-    pub fn has_data(&self) -> bool {
-        !self.bars.is_empty()
+    /// Capture the (timestamp, fractional offset) of the bar currently at
+    /// `view_start`. Used by callers before they replace bubble.bars so they
+    /// can pass it to `reconcile_view_keep_anchor` afterwards.
+    pub fn capture_view_anchor(&self, bars: &[Bar]) -> Option<(i64, f64)> {
+        if bars.is_empty() {
+            return None;
+        }
+        let vs = self.viewport.view_start;
+        let clamped_idx = (vs.floor() as usize).min(bars.len().saturating_sub(1));
+        let frac = vs - vs.floor();
+        bars.get(clamped_idx).map(|b| (b.timestamp, frac))
     }
 
     /// Clone data from another window (bars, viewport settings).
@@ -1103,6 +995,10 @@ impl ChartContainer {
     ///
     /// `dst_panel` is the destination window's `ChartPanelState`; this method
     /// calls `dst_panel.drawing_manager.set_current_symbol_key` on it (S2.8).
+    /// Phase X0 / C5c: bars storage lives on the bubble — only view state
+    /// is copied. Caller is responsible for ensuring the destination's
+    /// bubble has the same instrument coordinates as the source's bubble
+    /// (so the same bridge subscription fills both).
     pub fn clone_data_from(
         &mut self,
         source: &ChartContainer,
@@ -1111,8 +1007,6 @@ impl ChartContainer {
         account_type: &str,
         dst_panel: &mut ChartPanelState,
     ) {
-        self.bars = source.bars.clone();
-
         dst_panel.drawing_manager.set_current_symbol_key(symbol, exchange, account_type);
 
         self.viewport = source.viewport.clone();
@@ -1120,8 +1014,6 @@ impl ChartContainer {
 
         self.scale_settings = source.scale_settings.clone();
         self.price_scale.user_precision = self.scale_settings.user_precision;
-
-        eprintln!("[ChartContainer] Cloned data from window {}: {} bars", source.id, self.bars.len());
     }
 
     /// Create ChartRenderState from this window's view state + bubble's series storage.
@@ -1326,28 +1218,15 @@ impl ChartContainer {
             auto_bubble_id: BubbleId(0),
             current_bubble_id: BubbleId(0),
 
-            bars: self.bars.clone(),
-            footprint_bars: self.footprint_bars.clone(),
-            renko_bars: self.renko_bars.clone(),
-            three_line_break: self.three_line_break.clone(),
-            pnf_columns: self.pnf_columns.clone(),
-            kagi_segments: self.kagi_segments.clone(),
-            cvd_line: self.cvd_line.clone(),
-            tpo_sessions: self.tpo_sessions.clone(),
+            // Phase X0 / C5c: per-Kind series live on the bubble.
             ha_cache: None,
             ha_cache_stamp: None,
             vp_overlay: None,
             vp_overlay_stamp: None,
             vp_mode: self.vp_mode,
             vp_show: self.vp_show,
-            oi_delta: self.oi_delta.clone(),
             oi_show: self.oi_show,
-            funding_rate: self.funding_rate.clone(),
             funding_show: self.funding_show,
-            dom_heatmap: None,
-            dom_trade_dots: None,
-            liq_heatmap: None,
-            liq_dots: None,
             viewport: self.viewport.clone(),
             price_scale: self.price_scale.clone(),
             time_scale: self.time_scale.clone(),
@@ -1426,6 +1305,7 @@ impl ChartContainer {
         global_y: f64,
         layout: &crate::state::geometry::ExtendedFrameLayout,
         drag_pane: Option<Option<usize>>,
+        bars: &[Bar],
     ) -> bool {
         let main_chart = &layout.main_chart;
 
@@ -1444,7 +1324,7 @@ impl ChartContainer {
                             .unwrap_or((0.0, 100.0));
                         self.update_crosshair_internal(
                             local_x, local_y, pane_height, price_min, price_max,
-                            Some(pane_idx), main_chart.chart.width, true,
+                            Some(pane_idx), main_chart.chart.width, true, bars,
                         );
                         return true;
                     }
@@ -1460,7 +1340,7 @@ impl ChartContainer {
                     self.update_crosshair_internal(
                         local_x, local_y, pane_height,
                         self.price_scale.price_min, self.price_scale.price_max,
-                        None, main_chart.chart.width, true,
+                        None, main_chart.chart.width, true, bars,
                     );
                     return true;
                 }
@@ -1481,7 +1361,7 @@ impl ChartContainer {
                     .unwrap_or((0.0, 100.0));
                 self.update_crosshair_internal(
                     local_x, local_y, pane_height, price_min, price_max,
-                    Some(idx), main_chart.chart.width, false,
+                    Some(idx), main_chart.chart.width, false, bars,
                 );
                 return true;
             }
@@ -1494,7 +1374,7 @@ impl ChartContainer {
             self.update_crosshair_internal(
                 local_x, local_y, main_chart.chart.height,
                 self.price_scale.price_min, self.price_scale.price_max,
-                None, main_chart.chart.width, false,
+                None, main_chart.chart.width, false, bars,
             );
             return true;
         }
@@ -1504,7 +1384,8 @@ impl ChartContainer {
         false
     }
 
-    /// Internal crosshair update with all computed values
+    /// Internal crosshair update with all computed values.
+    /// Phase X0 / C5c: caller supplies `bars` for magnet-snap OHLC lookup.
     fn update_crosshair_internal(
         &mut self,
         local_x: f64,
@@ -1515,6 +1396,7 @@ impl ChartContainer {
         pane_index: Option<usize>,
         chart_width: f64,
         is_dragging: bool,
+        bars: &[Bar],
     ) {
         let clamped_x = local_x.clamp(0.0, chart_width);
 
@@ -1539,7 +1421,7 @@ impl ChartContainer {
 
         if pane_index.is_none() && !is_dragging {
             let (snapped_price, snapped_y) = self.calculate_magnet_snap(
-                bar_idx, price, pane_height, price_min, price_max,
+                bars, bar_idx, price, pane_height, price_min, price_max,
             );
             self.crosshair.set_snapped(snapped_price, snapped_y);
         } else {
@@ -1548,9 +1430,10 @@ impl ChartContainer {
         }
     }
 
-    /// Centralized magnet snap calculation.
+    /// Centralized magnet snap calculation. Phase X0 / C5c: caller supplies `bars`.
     pub fn calculate_magnet_snap(
         &self,
+        bars: &[Bar],
         bar_idx: Option<usize>,
         raw_price: f64,
         pane_height: f64,
@@ -1569,8 +1452,8 @@ impl ChartContainer {
         }
 
         if let Some(idx) = bar_idx {
-            if idx < self.bars.len() {
-                let bar = &self.bars[idx];
+            if idx < bars.len() {
+                let bar = &bars[idx];
                 let (snapped_price, snapped_y) = self.crosshair.find_nearest_ohlc(
                     bar,
                     raw_price,
@@ -1615,7 +1498,8 @@ impl ChartContainer {
     pub fn set_crosshair_from_bar(&mut self, bar_f64: f64, price: f64, visible: bool, pane_index: Option<usize>) {
         let x = self.viewport.bar_to_x_f64(bar_f64);
         self.crosshair.bar_f64 = bar_f64;
-        self.crosshair.bar_idx = if bar_f64 >= 0.0 && (bar_f64 as usize) < self.bars.len() {
+        // Phase X0 / C5c: bounds checked against viewport.bar_count (mirror of bubble.bars.len()).
+        self.crosshair.bar_idx = if bar_f64 >= 0.0 && (bar_f64 as usize) < self.viewport.bar_count {
             Some(bar_f64 as usize)
         } else {
             None
@@ -1676,52 +1560,48 @@ impl ChartContainer {
     /// correct way to propagate crosshairs across windows that may have
     /// different instruments or different bar counts — the bar index in the
     /// source window is meaningless on peers, but the timestamp is universal.
-    pub fn set_crosshair_from_timestamp(&mut self, timestamp: i64, price: f64, visible: bool, pane_index: Option<usize>) {
-        let bar_f64 = self.timestamp_to_bar_f64(timestamp);
+    pub fn set_crosshair_from_timestamp(&mut self, timestamp: i64, price: f64, visible: bool, pane_index: Option<usize>, bars: &[Bar]) {
+        let bar_f64 = Self::timestamp_to_bar_f64(bars, timestamp);
         self.set_crosshair_from_bar(bar_f64, price, visible, pane_index);
     }
 
     /// Convert a UTC timestamp (unix seconds) to a fractional bar index using
-    /// binary search.  Interpolates between bars and extrapolates beyond the
-    /// edges of the loaded bar array.
-    fn timestamp_to_bar_f64(&self, timestamp: i64) -> f64 {
-        if self.bars.is_empty() {
+    /// binary search. Phase X0 / C5c: associated function taking `bars` slice;
+    /// caller supplies `&bubble.bars`.
+    pub fn timestamp_to_bar_f64(bars: &[Bar], timestamp: i64) -> f64 {
+        if bars.is_empty() {
             return 0.0;
         }
-        if self.bars.len() == 1 {
+        if bars.len() == 1 {
             return 0.0;
         }
 
-        let first_ts = self.bars[0].timestamp;
-        let last_ts = self.bars[self.bars.len() - 1].timestamp;
+        let first_ts = bars[0].timestamp;
+        let last_ts = bars[bars.len() - 1].timestamp;
 
-        // Before first bar — extrapolate backwards.
         if timestamp <= first_ts {
-            let interval = self.bars[1].timestamp - first_ts;
+            let interval = bars[1].timestamp - first_ts;
             if interval > 0 {
                 return (timestamp - first_ts) as f64 / interval as f64;
             }
             return 0.0;
         }
 
-        // After last bar — extrapolate forwards.
         if timestamp >= last_ts {
-            let interval = last_ts - self.bars[self.bars.len() - 2].timestamp;
+            let interval = last_ts - bars[bars.len() - 2].timestamp;
             if interval > 0 {
-                return (self.bars.len() - 1) as f64
+                return (bars.len() - 1) as f64
                     + (timestamp - last_ts) as f64 / interval as f64;
             }
-            return (self.bars.len() - 1) as f64;
+            return (bars.len() - 1) as f64;
         }
 
-        // Binary search for an exact match or interpolation point.
-        match self.bars.binary_search_by_key(&timestamp, |b| b.timestamp) {
+        match bars.binary_search_by_key(&timestamp, |b| b.timestamp) {
             Ok(idx) => idx as f64,
             Err(idx) => {
-                // Between bars[idx-1] and bars[idx] — interpolate.
-                if idx > 0 && idx < self.bars.len() {
-                    let lo_ts = self.bars[idx - 1].timestamp;
-                    let hi_ts = self.bars[idx].timestamp;
+                if idx > 0 && idx < bars.len() {
+                    let lo_ts = bars[idx - 1].timestamp;
+                    let hi_ts = bars[idx].timestamp;
                     let frac = if hi_ts > lo_ts {
                         (timestamp - lo_ts) as f64 / (hi_ts - lo_ts) as f64
                     } else {
@@ -1743,7 +1623,7 @@ impl ChartContainer {
     ///
     /// `main_symbol` and `main_timeframe` are read from `branch_meta` by the
     /// caller (Phase 4 B — instrument fields removed from ChartContainer).
-    pub fn add_compare_symbol(&mut self, symbol: &str, main_symbol: &str, main_timeframe: &Timeframe) -> bool {
+    pub fn add_compare_symbol(&mut self, symbol: &str, main_symbol: &str, main_timeframe: &Timeframe, main_bars: &[Bar]) -> bool {
         if self.compare_overlay.has_symbol(symbol) || symbol == main_symbol {
             eprintln!("[Compare] Symbol {} already compared or is main symbol", symbol);
             return false;
@@ -1766,10 +1646,10 @@ impl ChartContainer {
         let series = CompareSeries::new(symbol, bars, color);
         self.compare_overlay.add_series(series);
 
-        if self.compare_overlay.series.len() == 1 && !self.bars.is_empty() {
+        if self.compare_overlay.series.len() == 1 && !main_bars.is_empty() {
             let (start, _) = self.viewport.visible_range();
-            let base_idx = start.min(self.bars.len().saturating_sub(1));
-            let base_bar = &self.bars[base_idx];
+            let base_idx = start.min(main_bars.len().saturating_sub(1));
+            let base_bar = &main_bars[base_idx];
             self.compare_overlay.set_main_base(base_bar.close, base_bar.timestamp);
         }
 
@@ -1822,13 +1702,13 @@ impl ChartContainer {
     // Previous Close Line
     // =========================================================================
 
-    /// Update previous close price line based on settings
-    pub fn update_prev_close_line(&mut self) {
+    /// Update previous close price line based on settings.
+    /// Phase X0 / C5c: caller supplies `bars` (typically `&bubble.bars`).
+    pub fn update_prev_close_line(&mut self, bars: &[Bar]) {
         self.price_lines.remove("prev_close");
 
         if self.scale_settings.show_prev_close_line {
-            // Phase 4 A — derive from bars[0].open instead of cached field.
-            if let Some(prev_close) = self.bars.first().map(|b| b.open) {
+            if let Some(prev_close) = bars.first().map(|b| b.open) {
                 let line = PriceLine {
                     id: "prev_close".to_string(),
                     price: prev_close,
@@ -2009,17 +1889,17 @@ impl ChartContainer {
     // =========================================================================
 
     /// Zoom in at chart center (1.1x bar spacing).
-    pub fn zoom_in(&mut self) {
+    pub fn zoom_in(&mut self, bars: &[Bar]) {
         let center_x = self.viewport.chart_width / 2.0;
         self.viewport.zoom_at(center_x, 1.1);
-        self.calc_auto_scale();
+        self.calc_auto_scale(bars);
     }
 
     /// Zoom out at chart center (0.9x bar spacing).
-    pub fn zoom_out(&mut self) {
+    pub fn zoom_out(&mut self, bars: &[Bar]) {
         let center_x = self.viewport.chart_width / 2.0;
         self.viewport.zoom_at(center_x, 0.9);
-        self.calc_auto_scale();
+        self.calc_auto_scale(bars);
     }
 
     /// Snap viewport to the most recent bar with `margin` bars of empty right space.
@@ -2032,28 +1912,31 @@ impl ChartContainer {
     /// Preconditions: `self.viewport.chart_width > 0.0` and
     /// `self.viewport.bar_spacing > 0.0` must both hold, or the result is
     /// meaningless (those are the same preconditions as [`Viewport::visible_bars`]).
+    /// Phase X0 / C5c: uses `viewport.bar_count` which is maintained by
+    /// `reconcile_view_to_bars` whenever bubble.bars length changes — no
+    /// direct reference to a bars slice needed here.
     pub fn snap_to_end(&mut self, margin: f64) {
         let visible_f = self.viewport.chart_width / self.viewport.bar_spacing;
-        let count = self.bars.len();
+        let count = self.viewport.bar_count;
         self.viewport.view_start = (count as f64 + margin - visible_f).max(0.0);
     }
 
-    /// Fit all bars into the visible chart area.
-    pub fn fit_content(&mut self) {
-        let bar_count = self.bars.len();
+    /// Fit all bars into the visible chart area. Phase X0 / C5c: bars supplied by caller.
+    pub fn fit_content(&mut self, bars: &[Bar]) {
+        let bar_count = bars.len();
         if bar_count > 0 {
             self.viewport.bar_spacing = self.viewport.chart_width / bar_count as f64;
             self.viewport.bar_spacing = self.viewport.bar_spacing.clamp(1.0, 30.0);
             self.snap_to_end(DEFAULT_SNAP_MARGIN);
-            self.calc_auto_scale();
+            self.calc_auto_scale(bars);
         }
     }
 
     /// Reset zoom to default bar spacing (8px) and scroll to end.
-    pub fn reset_zoom(&mut self) {
+    pub fn reset_zoom(&mut self, bars: &[Bar]) {
         self.viewport.bar_spacing = 8.0;
         self.snap_to_end(DEFAULT_SNAP_MARGIN);
-        self.calc_auto_scale();
+        self.calc_auto_scale(bars);
     }
 
     // =========================================================================
@@ -2064,10 +1947,10 @@ impl ChartContainer {
     ///
     /// Delegates to [`Viewport::pan`] which dispatches axis-aware
     /// (time mode shifts ts anchor, index mode converts via bar_spacing).
-    pub fn pan_horizontal(&mut self, pixel_delta: f64) {
+    pub fn pan_horizontal(&mut self, pixel_delta: f64, bars: &[Bar]) {
         self.viewport.pan(pixel_delta);
         if self.price_scale.scale_mode.is_auto_y() {
-            self.calc_auto_scale();
+            self.calc_auto_scale(bars);
         }
     }
 
@@ -2075,10 +1958,10 @@ impl ChartContainer {
     ///
     /// `factor` > 1.0 zooms in (more bars per pixel), < 1.0 zooms out.
     /// Delegates to [`Viewport::zoom_at`] which handles clamping.
-    pub fn zoom_horizontal(&mut self, center_x: f64, factor: f64) {
+    pub fn zoom_horizontal(&mut self, center_x: f64, factor: f64, bars: &[Bar]) {
         self.viewport.zoom_at(center_x, factor);
         if self.price_scale.scale_mode.is_auto_y() {
-            self.calc_auto_scale();
+            self.calc_auto_scale(bars);
         }
     }
 
@@ -2115,7 +1998,7 @@ impl ChartContainer {
     ///
     /// Returns `true` if the action was handled by this window, `false` if it
     /// requires app-level handling.
-    pub fn execute_chart_action(&mut self, panel: &mut ChartPanelState, action: &crate::ChartAction) -> bool {
+    pub fn execute_chart_action(&mut self, panel: &mut ChartPanelState, action: &crate::ChartAction, bars: &[Bar]) -> bool {
         use crate::ChartAction;
         match action {
             // === Series / Chart Type ===
@@ -2150,10 +2033,10 @@ impl ChartContainer {
             ChartAction::SetWatermarkText(t) => { self.set_watermark_text(panel, t); true }
 
             // === Zoom ===
-            ChartAction::ZoomIn => { self.zoom_in(); true }
-            ChartAction::ZoomOut => { self.zoom_out(); true }
-            ChartAction::FitContent => { self.fit_content(); true }
-            ChartAction::ResetZoom => { self.reset_zoom(); true }
+            ChartAction::ZoomIn => { self.zoom_in(bars); true }
+            ChartAction::ZoomOut => { self.zoom_out(bars); true }
+            ChartAction::FitContent => { self.fit_content(bars); true }
+            ChartAction::ResetZoom => { self.reset_zoom(bars); true }
 
             // === Drawing (drawing_manager now lives in ChartPanelState — S2.8) ===
             ChartAction::SelectTool(tool) => { panel.drawing_manager.set_tool(Some(tool)); true }

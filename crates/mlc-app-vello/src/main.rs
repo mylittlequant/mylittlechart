@@ -3935,7 +3935,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
 
                 // Clear bars on the window and mark pending load.
                 if let Some(window) = pw.chart.panel_app.panel_grid.active_container_mut() {
-                    window.bars.clear();
+                    {};
                     window.viewport.bar_count = 0;
                     window.viewport.view_start = 0.0;
                     window.pending_symbol_load = true;
@@ -3971,7 +3971,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         };
                         for peer_id in peers_matching {
                             if let Some(peer_window) = pw.chart.panel_app.panel_grid.containers_mut().get_mut(&peer_id) {
-                                peer_window.bars.clear();
+                                // Phase X0 / C5c: storage on bubble; window cleared via viewport reset only.
                                 peer_window.viewport.bar_count = 0;
                                 peer_window.viewport.view_start = 0.0;
                                 peer_window.pending_symbol_load = true;
@@ -4061,7 +4061,9 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             for pw in self.windows.values_mut() {
                 let total_bars: usize = pw.chart.panel_app.panel_grid.containers()
                     .values()
-                    .map(|w| w.bars.len())
+                    .map(|w| pw.chart.managers.bubble.bubble(w.current_bubble_id)
+                        .map(|b| b.bars.len())
+                        .unwrap_or(0))
                     .sum();
                 let lag_events = pw.chart.lag_event_count;
 
@@ -4337,7 +4339,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             .panel_app
                             .panel_grid
                             .active_container()
-                            .map(|w| w.has_data())
+                            .map(|_w| false)
                             .unwrap_or(false)
                         || pw.created_at.elapsed() >= std::time::Duration::from_secs(4);
                     if ready {

@@ -1017,6 +1017,30 @@ pub struct RenderOutput {
 }
 
 impl ChartApp {
+    /// Phase X0 / C5c helper: resolve the bubble's bars for a chart window.
+    /// Returns an owned Vec (cloned) to avoid borrow conflicts with
+    /// `panel_app.panel_grid.containers_mut()`.
+    pub fn bars_for_chart(&self, chart_id: mlc_core::state::ChartId) -> Vec<mlc_core::Bar> {
+        self.managers.bubble.bubble_for_chart(chart_id)
+            .and_then(|bid| self.managers.bubble.bubble(bid))
+            .map(|b| b.bars.clone())
+            .unwrap_or_default()
+    }
+
+    /// Phase X0 / C5c helper: resolve the bubble's bars for the active chart.
+    pub fn active_chart_bars(&self) -> Vec<mlc_core::Bar> {
+        self.panel_app.panel_grid.active_container_id()
+            .map(|cid| self.bars_for_chart(cid))
+            .unwrap_or_default()
+    }
+
+    /// Phase X0 / C5c helper: resolve bars for the chart attached to `leaf_id`.
+    pub fn bars_for_leaf(&self, leaf_id: uzor::panels::LeafId) -> Vec<mlc_core::Bar> {
+        self.panel_app.panel_grid.container_id_for_leaf(leaf_id)
+            .map(|cid| self.bars_for_chart(cid))
+            .unwrap_or_default()
+    }
+
     /// Create a new chart application for the given symbol.
     ///
     /// Connects to Binance as the default exchange. Bars are requested
@@ -2505,12 +2529,23 @@ impl ChartApp {
         // right margin (set_bars() couldn't do this because chart_width was 0).
         if self.needs_initial_viewport_fit {
             self.needs_initial_viewport_fit = false;
-            for window in self.panel_app.panel_grid.containers_mut().values_mut() {
+            // Snapshot bars per chart up front (immutable borrow), then mutate.
+            let bars_by_chart: std::collections::HashMap<mlc_core::state::ChartId, Vec<mlc_core::Bar>> =
+                self.panel_app.panel_grid.containers().iter()
+                    .map(|(cid, w)| {
+                        let bars = self.managers.bubble.bubble(w.current_bubble_id)
+                            .map(|b| b.bars.clone())
+                            .unwrap_or_default();
+                        (*cid, bars)
+                    })
+                    .collect();
+            for (cid, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+                let bars = bars_by_chart.get(cid).map(|v| v.as_slice()).unwrap_or(&[]);
                 // Only snap if chart dimensions are valid and bars are loaded.
-                if window.viewport.chart_width > 0.0 && window.viewport.bar_spacing > 0.0 && !window.bars.is_empty() {
+                if window.viewport.chart_width > 0.0 && window.viewport.bar_spacing > 0.0 && !bars.is_empty() {
                     window.snap_to_end(mlc_core::DEFAULT_SNAP_MARGIN);
                 }
-                window.calc_auto_scale();
+                window.calc_auto_scale(bars);
             }
         }
     }
@@ -2638,8 +2673,9 @@ impl ChartApp {
         // distinct fields, so Rust allows simultaneous borrows of both.
         for window_id in matching_ids {
             let chart_id = ChartId(window_id);
-            if let Some(w) = self.panel_app.panel_grid.containers().get(&chart_id) {
-                self.indicator_manager.calculate_for_window(window_id, &w.bars);
+            let bars = self.bars_for_chart(chart_id);
+            if self.panel_app.panel_grid.containers().get(&chart_id).is_some() {
+                self.indicator_manager.calculate_for_window(window_id, &bars[..]);
             }
         }
         let _ = symbol; // legacy — recalc filters by window_id, not symbol
@@ -2969,7 +3005,10 @@ impl ChartApp {
             > = self.panel_app.panel_grid.containers()
                 .iter()
                 .map(|(&chart_id, w)| {
-                    let bars = &w.bars;
+                    let bars_vec: Vec<mlc_core::Bar> = self.managers.bubble.bubble(w.current_bubble_id)
+                        .map(|b| b.bars.clone())
+                        .unwrap_or_default();
+                    let bars = &bars_vec[..];
                     let empty_prims: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> = Vec::new();
                     let prims_iter = self.panels_store.chart_panel.get(&w.chart_panel_id)
                         .map(|panel| panel.drawing_manager.primitives())
@@ -3072,7 +3111,7 @@ impl ChartApp {
                     self.indicator_manager.current_render_window_id.set(Some(chart_id.0));
                 }
 
-                let alert_current_bar = window.bars.len().saturating_sub(1) as f64;
+                let alert_current_bar = 0usize.saturating_sub(1) as f64;
                 // Look up pre-built drawing points from cache (computed once per
                 // chart window before this loop to avoid per-leaf reallocation).
                 let empty_pts: Vec<(u64, Vec<(f64, f64)>, mlc_alerts::DrawingExtendMode)> = Vec::new();
@@ -3213,13 +3252,16 @@ impl ChartApp {
                     // Skip chart-anchored bells when the main chart is collapsed
                     // (maximized sub-pane covers the container).
                     if chart_area.height >= 1.0 {
+                        let split_bars_vec: Vec<mlc_core::Bar> = self.managers.bubble.bubble(window.current_bubble_id)
+                            .map(|b| b.bars.clone())
+                            .unwrap_or_default();
                         let bells = Self::draw_alert_bell_icons(
                             ctx,
                             chart_area,
                             &corrected_vp,
                             window.price_scale.price_min,
                             window.price_scale.price_max,
-                            &window.bars,
+                            &split_bars_vec[..],
                             &split_panel.drawing_manager,
                             &self.indicator_manager,
                             &self.managers.alert,
@@ -3566,8 +3608,11 @@ impl ChartApp {
 
             let single_active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
             let (single_alert_current_bar, single_alert_drawing_points) = if let Some(window) = self.panel_app.panel_grid.active_container() {
-                let cb = window.bars.len().saturating_sub(1) as f64;
-                let bars = &window.bars;
+                let single_bars_vec: Vec<mlc_core::Bar> = self.managers.bubble.bubble(window.current_bubble_id)
+                    .map(|b| b.bars.clone())
+                    .unwrap_or_default();
+                let cb = single_bars_vec.len().saturating_sub(1) as f64;
+                let bars = &single_bars_vec[..];
                 let empty_prims2: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> = Vec::new();
                 let prims2_iter = single_active_pid
                     .and_then(|pid| self.panels_store.chart_panel.get(&pid))
@@ -3773,13 +3818,16 @@ impl ChartApp {
                     // Skip chart-anchored bells when the main chart is collapsed
                     // (maximized sub-pane covers the container).
                     if chart_area.height >= 1.0 {
+                        let single_bars_vec2: Vec<mlc_core::Bar> = self.managers.bubble.bubble(window.current_bubble_id)
+                            .map(|b| b.bars.clone())
+                            .unwrap_or_default();
                         let bells = Self::draw_alert_bell_icons(
                             ctx,
                             chart_area,
                             &corrected_vp,
                             window.price_scale.price_min,
                             window.price_scale.price_max,
-                            &window.bars,
+                            &single_bars_vec2[..],
                             &single_window_panel.drawing_manager,
                             &self.indicator_manager,
                             &self.managers.alert,
@@ -5957,7 +6005,7 @@ impl ChartApp {
                     .map(String::from)
                     .unwrap_or_default();
                 let (vs, ve) = window.viewport.visible_range();
-                let ve = ve.min(window.bars.len());
+                let ve = ve.min(0usize);
                 (leaf_id, chart_id_val, symbol, vs, ve)
             })
             .collect();
@@ -6430,9 +6478,13 @@ impl ChartApp {
     /// Mirrors `TerminalApp::process_output_actions` but simplified:
     /// no multi-window panel manager, no frame layout offset.
     pub(crate) fn process_output_actions(&mut self, actions: Vec<ChartOutputAction>) {
-        fn calc_visible_price_range(window: &mut mlc_core::ChartContainer) {
-            window.calc_auto_scale();
+        fn calc_visible_price_range(window: &mut mlc_core::ChartContainer, bars: &[mlc_core::Bar]) {
+            window.calc_auto_scale(bars);
         }
+        // Snapshot bars for the active chart once (read-only borrow), then proceed
+        // with all the mutable container access below. process_output_actions
+        // targets the active window throughout.
+        let active_bars: Vec<mlc_core::Bar> = self.active_chart_bars();
 
         // Compute chart layout ONCE for coordinate conversion.
         // All actions from DefaultChartInputHandler use screen-absolute coords;
@@ -6479,7 +6531,7 @@ impl ChartApp {
                             }
                         }
                     } else if window.price_scale.scale_mode.is_auto_y() {
-                        calc_visible_price_range(window);
+                        calc_visible_price_range(window, &active_bars);
                     } else {
                         let price_range = window.price_scale.price_max - window.price_scale.price_min;
                         let price_delta_scaled = price_delta * price_range / window.viewport.chart_height;
@@ -6504,7 +6556,7 @@ impl ChartApp {
                         // viewport.zoom_at dispatches axis-aware internally.
                         window.viewport.zoom_at(local_center_x, factor_x);
                         if window.price_scale.scale_mode.is_auto_y() {
-                            calc_visible_price_range(window);
+                            calc_visible_price_range(window, &active_bars);
                         }
                     }
                     if factor_y != 1.0 {
@@ -6576,14 +6628,14 @@ impl ChartApp {
                         }
                     } else {
                         window.price_scale.scale_mode = ScaleMode::Auto;
-                        calc_visible_price_range(window);
+                        calc_visible_price_range(window, &active_bars);
                     }
                 }
                 ChartOutputAction::ResetTimeScale => {
                     let Some(window) = self.panel_app.panel_grid.active_container_mut() else { continue; };
                     window.viewport.reset_to_default();
                     window.price_scale.scale_mode = ScaleMode::Auto;
-                    calc_visible_price_range(window);
+                    calc_visible_price_range(window, &active_bars);
                 }
                 ChartOutputAction::TogglePriceScaleMode => {
                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
@@ -6724,7 +6776,7 @@ impl ChartApp {
                                 let local_x = screen_x - chart_x;
                                 let bar_idx = w.viewport.x_to_bar(local_x);
                                 let (snapped, _) = w.calculate_magnet_snap(
-                                    bar_idx, data_price, chart_h,
+                                    &active_bars, bar_idx, data_price, chart_h,
                                     w.price_scale.price_min, w.price_scale.price_max,
                                 );
                                 snapped
@@ -6752,7 +6804,7 @@ impl ChartApp {
                         if let Some(pid) = active_pid_pd {
                             if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
                                 if let Some(idx) = panel.drawing_manager.find_index_by_id(id) {
-                                    let drag_ts_ms = mlc_core::bar_f64_to_timestamp_ms(&window.bars, data_bar);
+                                    let drag_ts_ms = mlc_core::bar_f64_to_timestamp_ms(&active_bars[..], data_bar);
                                     panel.drawing_manager.start_drag(idx, drag_ts_ms, data_price);
                                 }
                             }
@@ -6785,7 +6837,7 @@ impl ChartApp {
                                 let local_x = screen_x - chart_x;
                                 let bar_idx = w.viewport.x_to_bar(local_x);
                                 let (snapped, _) = w.calculate_magnet_snap(
-                                    bar_idx, data_price, chart_h,
+                                    &active_bars, bar_idx, data_price, chart_h,
                                     w.price_scale.price_min, w.price_scale.price_max,
                                 );
                                 snapped
@@ -6814,7 +6866,7 @@ impl ChartApp {
                         if let Some(pid) = active_pid_cpd {
                             if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
                                 if let Some(idx) = panel.drawing_manager.find_index_by_id(primitive_id) {
-                                    let cp_ts_ms = mlc_core::bar_f64_to_timestamp_ms(&window.bars, data_bar);
+                                    let cp_ts_ms = mlc_core::bar_f64_to_timestamp_ms(&active_bars[..], data_bar);
                                     panel.drawing_manager.start_control_point_drag(idx, control_point, cp_ts_ms, data_price);
                                 }
                             }
@@ -6847,7 +6899,7 @@ impl ChartApp {
                                 let local_x = screen_x - chart_x;
                                 let bar_idx = w.viewport.x_to_bar(local_x);
                                 let (snapped, _) = w.calculate_magnet_snap(
-                                    bar_idx, data_price, chart_h,
+                                    &active_bars, bar_idx, data_price, chart_h,
                                     w.price_scale.price_min, w.price_scale.price_max,
                                 );
                                 snapped
@@ -6869,7 +6921,7 @@ impl ChartApp {
                     if let Some(window) = self.panel_app.panel_grid.active_container() {
                         if let Some(pid) = active_pid_ud {
                             if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                let drag_ts_ms = mlc_core::bar_f64_to_timestamp_ms(&window.bars, data_bar);
+                                let drag_ts_ms = mlc_core::bar_f64_to_timestamp_ms(&active_bars[..], data_bar);
                                 panel.drawing_manager.update_drag(drag_ts_ms, data_price);
                             }
                         }
@@ -6983,7 +7035,7 @@ impl ChartApp {
                         .unwrap_or(0);
 
                     let click_ts_ms = self.panel_app.panel_grid.active_container()
-                        .map(|w| mlc_core::bar_f64_to_timestamp_ms(&w.bars, bar))
+                        .map(|_w| mlc_core::bar_f64_to_timestamp_ms(&active_bars[..], bar))
                         .unwrap_or(0);
                     if let Some(pid) = active_pid_dc {
                         if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
@@ -7206,24 +7258,25 @@ impl ChartApp {
         if !should_sync { return; }
 
         // Compute source visible bar count — the metric we actually sync.
+        let source_bars: Vec<mlc_core::Bar> = self.bars_for_leaf(source_leaf);
         let (source_chart_width, anchor_ts, frac) = match self.panel_app.panel_grid.container_for_leaf(source_leaf) {
             Some(w) => {
-                let ts = if w.bars.is_empty() {
+                let ts = if source_bars.is_empty() {
                     None
                 } else {
-                    let last_idx = w.bars.len() - 1;
+                    let last_idx = source_bars.len() - 1;
                     let fidx = view_start.floor();
                     if fidx > last_idx as f64 {
                         // Dragged past the last bar: extrapolate the anchor
                         // timestamp by the bar interval so sync peers follow
                         // into the future (find_bar_for_timestamp extrapolates
                         // right) instead of pinning at their last bar.
-                        let interval = mlc_core::bar_interval_seconds(&w.bars);
-                        Some(w.bars[last_idx].timestamp
+                        let interval = mlc_core::bar_interval_seconds(&source_bars[..]);
+                        Some(source_bars[last_idx].timestamp
                             + (fidx as i64 - last_idx as i64) * interval)
                     } else {
                         let idx = (fidx.max(0.0) as usize).min(last_idx);
-                        Some(w.bars[idx].timestamp)
+                        Some(source_bars[idx].timestamp)
                     }
                 };
                 (w.viewport.chart_width, ts, view_start - view_start.floor())
@@ -7252,7 +7305,11 @@ impl ChartApp {
                 None => return,
             }
         };
+        // Snapshot bars per peer leaf up front (immutable borrows), then mutate.
+        let peer_bars: std::collections::HashMap<mlc_core::LeafId, Vec<mlc_core::Bar>> =
+            sync_leaves.iter().map(|&lid| (lid, self.bars_for_leaf(lid))).collect();
         for leaf_id in sync_leaves {
+            let this_peer_bars: &[mlc_core::Bar] = peer_bars.get(&leaf_id).map(|v| v.as_slice()).unwrap_or(&[]);
             if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
                 // Apply scale_mode BEFORE the auto-scale check so the new mode takes effect.
                 if let Some(mode) = scale_mode {
@@ -7265,7 +7322,7 @@ impl ChartApp {
                 // Time-based sync: convert source timestamp to peer's bar index so
                 // windows with different bar counts land on the same calendar date.
                 let peer_view_start = anchor_ts
-                    .and_then(|ts| mlc_core::find_bar_for_timestamp(&window.bars, ts))
+                    .and_then(|ts| mlc_core::find_bar_for_timestamp(this_peer_bars, ts))
                     .map(|idx| idx as f64 + frac)
                     .unwrap_or(view_start);
                 // Sync visible bar count: peer gets the same number of bars in view,
@@ -7291,11 +7348,11 @@ impl ChartApp {
                     window.viewport.view_start = peer_view_start;
                     window.viewport.bar_spacing = peer_spacing;
                     if window.price_scale.scale_mode.is_auto_y() {
-                        window.calc_auto_scale();
+                        window.calc_auto_scale(this_peer_bars);
                     }
                 } else if scale_mode.is_some() && window.price_scale.scale_mode.is_auto_y() {
                     // Mode flip without viewport movement still needs one rescale.
-                    window.calc_auto_scale();
+                    window.calc_auto_scale(this_peer_bars);
                 }
             }
         }

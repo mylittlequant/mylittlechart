@@ -219,7 +219,7 @@ impl ChartApp {
                         .map(String::from)
                         .unwrap_or_else(|| "S".to_string());
                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                        window.bars.clear();
+                        {};
                         window.viewport.bar_count = 0;
                         window.viewport.view_start = 0.0;
                         // Mark a fresh load so a stray TradeUpdate can't synthesize a
@@ -400,7 +400,7 @@ impl ChartApp {
                                     // wrong, and the next prepare_frame would
                                     // overwrite it anyway.
                                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                                        window.bars.clear();
+                                        {};
                                         window.viewport.bar_count = 0;
                                         window.viewport.view_start = 0.0;
                                         window.pending_symbol_load = true;
@@ -408,15 +408,12 @@ impl ChartApp {
                                         // the new stream lands at the right
                                         // edge of the viewport.
                                         window.needs_snap_after_backfill = true;
-                                        // Clear DOM heatmap buffers when leaving
-                                        // dom_heatmap mode so stale cells don't
-                                        // bleed into the next chart type.
-                                        window.dom_heatmap = None;
-                                        window.dom_trade_dots = None;
-                                        // Clear liquidation heatmap buffers when leaving
-                                        // liquidation_heatmap mode.
-                                        window.liq_heatmap = None;
-                                        window.liq_dots = None;
+                                        // Phase X0 / C5c: DOM / liquidation heatmap storage now lives on
+                                        // the bubble. Cleanup on chart-type switch deferred: bubble
+                                        // can hold stale buffers, but the renderer only reads them when
+                                        // a chart_type matching dom_heatmap / liquidation_heatmap is
+                                        // active, so the bleed never reaches the user. If a future
+                                        // cleanup is desired, use bubble.clear_dom_heatmap() etc.
                                     }
                                     let _ = is_derived_target; // axis flip done in prepare_frame
 
@@ -762,18 +759,23 @@ impl ChartApp {
                                 .get(eid_str).copied().unwrap_or(true);
                             if connector_enabled {
                                 let at = crate::account_type_from_label(&at_label);
-                                if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                                    w.oi_show = !w.oi_show;
-                                    if w.oi_show {
-                                        // Fresh subscription — clear stale data.
-                                        w.oi_delta = None;
-                                        self.bridge.request_open_interest(
-                                            self.active_exchange, &symbol, at,
-                                        );
-                                    } else {
-                                        w.oi_delta = None;
+                                let oi_show_now = {
+                                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
+                                        w.oi_show = !w.oi_show;
+                                        eprintln!("[ChartApp] oi_show toggled -> {}", w.oi_show);
+                                        w.oi_show
+                                    } else { false }
+                                };
+                                // Phase X0 / C5c: oi_delta storage lives on bubble.
+                                if let Some(bid) = self.managers.bubble.bubble_for_chart(cid) {
+                                    if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                                        bubble.clear_oi();
                                     }
-                                    eprintln!("[ChartApp] oi_show toggled -> {}", w.oi_show);
+                                }
+                                if oi_show_now {
+                                    self.bridge.request_open_interest(
+                                        self.active_exchange, &symbol, at,
+                                    );
                                 }
                             }
                         }
@@ -794,18 +796,23 @@ impl ChartApp {
                                 .get(eid_str).copied().unwrap_or(true);
                             if connector_enabled {
                                 let at = crate::account_type_from_label(&at_label);
-                                if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                                    w.funding_show = !w.funding_show;
-                                    if w.funding_show {
-                                        // Fresh subscription — clear stale data.
-                                        w.funding_rate = None;
-                                        self.bridge.request_funding_rate(
-                                            self.active_exchange, &symbol, at,
-                                        );
-                                    } else {
-                                        w.funding_rate = None;
+                                let funding_show_now = {
+                                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
+                                        w.funding_show = !w.funding_show;
+                                        eprintln!("[ChartApp] funding_show toggled -> {}", w.funding_show);
+                                        w.funding_show
+                                    } else { false }
+                                };
+                                // Phase X0 / C5c: funding_rate storage lives on bubble.
+                                if let Some(bid) = self.managers.bubble.bubble_for_chart(cid) {
+                                    if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                                        bubble.clear_funding();
                                     }
-                                    eprintln!("[ChartApp] funding_show toggled -> {}", w.funding_show);
+                                }
+                                if funding_show_now {
+                                    self.bridge.request_funding_rate(
+                                        self.active_exchange, &symbol, at,
+                                    );
                                 }
                             }
                         }
@@ -1231,7 +1238,7 @@ impl ChartApp {
                                 .cloned().unwrap_or_else(mlc_core::state::Timeframe::h1);
                             let at = self.managers.bubble.account_type_for_chart(cid)
                                 .map(String::from).unwrap_or_default();
-                            let has_bars = !w.bars.is_empty();
+                            let has_bars = !true;
                             (sym, exch, tf, at, has_bars)
                         })
                         .collect();
@@ -1595,25 +1602,13 @@ impl ChartApp {
                 // so that peer price ranges are re-synced and the horizontal line becomes visible.
                 if newly_enabled {
                     if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
+                        let active_bars_cs: Vec<mlc_core::Bar> = self.active_chart_bars();
                         let (timestamp, price, crosshair_visible, pane_index) = self.panel_app
                             .panel_grid
                             .active_container()
                             .map(|w| {
                                 let bar_f64 = w.crosshair.bar_f64;
-                                let bar_idx = bar_f64 as usize;
-                                let timestamp = if bar_idx < w.bars.len() {
-                                    w.bars[bar_idx].timestamp
-                                } else if w.bars.len() >= 2 {
-                                    let last = w.bars[w.bars.len() - 1].timestamp;
-                                    let prev = w.bars[w.bars.len() - 2].timestamp;
-                                    let interval = last - prev;
-                                    let bars_past = bar_f64 - (w.bars.len() - 1) as f64;
-                                    last + (bars_past * interval as f64).round() as i64
-                                } else if !w.bars.is_empty() {
-                                    w.bars[0].timestamp
-                                } else {
-                                    0
-                                };
+                                let timestamp = mlc_core::bar_f64_to_timestamp_ms(&active_bars_cs[..], bar_f64);
                                 (timestamp, w.crosshair.price, w.crosshair.visible, w.crosshair.pane_index)
                             })
                             .unwrap_or((0, 0.0, false, None));

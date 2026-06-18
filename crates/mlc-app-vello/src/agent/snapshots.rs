@@ -113,13 +113,16 @@ impl App<'_> {
                             .collect())
                         .unwrap_or_default();
 
+                    let bar_count = pw.chart.managers.bubble.bubble(cw.current_bubble_id)
+                        .map(|b| b.bars.len())
+                        .unwrap_or(0);
                     Some(ChartSnapshot {
                         chart_id: cw.id.0,
                         leaf_id: leaf_id.0,
                         symbol,
                         exchange,
                         timeframe: tf_name,
-                        bar_count: cw.bars.len(),
+                        bar_count,
                         viewport: ViewportSnapshot {
                             view_start: viewport.view_start,
                             bar_spacing: viewport.bar_spacing,

@@ -84,6 +84,7 @@ pub fn execute_chart_action(
     action: &ChartAction,
     window: &mut ChartContainer,
     panel: &mut ChartPanelState,
+    bars: &[crate::Bar],
 ) -> Vec<ChartExternalEvent> {
     match action {
         // =====================================================================
@@ -269,22 +270,22 @@ pub fn execute_chart_action(
         // Zoom / Viewport
         // =====================================================================
         ChartAction::ZoomIn => {
-            window.zoom_in();
+            window.zoom_in(bars);
             eprintln!("[Chart] Zoom in");
             vec![]
         }
         ChartAction::ZoomOut => {
-            window.zoom_out();
+            window.zoom_out(bars);
             eprintln!("[Chart] Zoom out");
             vec![]
         }
         ChartAction::FitContent => {
-            window.fit_content();
+            window.fit_content(bars);
             eprintln!("[Chart] Fit content");
             vec![]
         }
         ChartAction::ResetZoom => {
-            window.reset_zoom();
+            window.reset_zoom(bars);
             eprintln!("[Chart] Reset zoom");
             vec![]
         }
