@@ -5736,6 +5736,38 @@ impl ChartApp {
                 s.exchange = exchange.clone();
                 s.account_type = account_type.clone();
             }
+            // Multi-DOM symbol sync: unsubscribe all exchanges on old symbol,
+            // re-subscribe on new symbol.  Exchange roster stays the same — only
+            // the symbol changes (tag-group driven).
+            let md_change = self.panels_store.multi_dom.get(&panel_id).and_then(|s| {
+                if s.symbol != symbol {
+                    Some((s.symbol.clone(), s.config.exchanges.clone()))
+                } else {
+                    None
+                }
+            });
+            if let Some((old_sym, exchanges)) = md_change {
+                let new_at = digdigdig3::AccountType::Spot;
+                for ex_label in &exchanges {
+                    if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
+                        if !old_sym.is_empty() {
+                            self.bridge.unsubscribe_orderbook(eid, &old_sym, new_at);
+                        }
+                        if !symbol.is_empty() {
+                            let _ = self.bridge.subscribe_orderbook(eid, &symbol, new_at);
+                        }
+                    }
+                }
+                if let Some(s) = self.panels_store.multi_dom.get_mut(&panel_id) {
+                    s.symbol = symbol.clone();
+                    // Clear stale book data; next snapshot refills.
+                    for (b, a) in &mut s.books_by_exchange {
+                        b.clear();
+                        a.clear();
+                    }
+                    s.merged.clear();
+                }
+            }
         }
 
         // Unsubscribe old depth streams that are no longer needed.  We deduplicate

@@ -159,6 +159,21 @@ pub enum PersistedFreeItemKind {
     PositionManager,
     TradeLog,
     RiskCalculator,
+    /// Multi-exchange consolidated DOM panel.
+    MultiDom {
+        /// Symbol (e.g. "BTCUSDT").
+        #[serde(default)]
+        symbol: String,
+        /// Ordered list of exchange labels (e.g. ["binance", "bybit"]).
+        #[serde(default)]
+        exchanges: Vec<String>,
+        /// Grid size (tick coalescence) — default 0.5.
+        #[serde(default = "default_multi_dom_grid_size")]
+        grid_size: f64,
+        /// Rows visible per side — default 25.
+        #[serde(default = "default_multi_dom_depth")]
+        depth_per_side: usize,
+    },
     TradingContainer {
         #[serde(default)]
         source: PersistedSymbolSource,
@@ -198,6 +213,8 @@ fn default_price_max() -> f64 { 100.0 }
 fn default_true() -> bool { true }
 fn default_bar_spacing() -> f64 { 8.0 }
 fn default_height_ratio() -> f32 { 1.0 }
+fn default_multi_dom_grid_size() -> f64 { 0.5 }
+fn default_multi_dom_depth() -> usize { 25 }
 
 impl ChartPreset {
     /// Create a new, empty preset with the given display name.

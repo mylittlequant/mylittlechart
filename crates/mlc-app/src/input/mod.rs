@@ -9294,8 +9294,15 @@ impl ChartApp {
                                 height_ratio: state.height_ratio,
                             }
                         }
-                        // MultiDom persistence not yet wired — skip like Chart.
-                        Panel::MultiDom(_) => return None,
+                        Panel::MultiDom(id) => {
+                            let state = self.panels_store.multi_dom.get(id)?;
+                            PersistedFreeItemKind::MultiDom {
+                                symbol: state.symbol.clone(),
+                                exchanges: state.config.exchanges.clone(),
+                                grid_size: state.config.grid_size,
+                                depth_per_side: state.config.depth_per_side,
+                            }
+                        }
                         // Chart persistence is wired in Stage 8 (panels_store
                         // ownership of ChartWindows + ChartWindowSnapshot).
                         // For now skip — chart leaf drops from preset and

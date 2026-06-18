@@ -1152,6 +1152,28 @@ impl ChartApp {
                                         self.panels_store.indicator_panel.insert(pid, s);
                                     }
                                 }
+                                PersistedFreeItemKind::MultiDom { symbol, exchanges, grid_size, depth_per_side } => {
+                                    if !self.panels_store.multi_dom.contains_key(&pid) {
+                                        let config = mlc_panels::trading::order_flow::multi_dom::MultiDomConfig {
+                                            exchanges: exchanges.clone(),
+                                            grid_size: *grid_size,
+                                            depth_per_side: *depth_per_side,
+                                        };
+                                        let s = mlc_panels::trading::order_flow::multi_dom::MultiDomState::new(
+                                            symbol.clone(), config,
+                                        );
+                                        // Subscribe orderbook for each configured exchange.
+                                        if !symbol.is_empty() {
+                                            for ex_label in exchanges {
+                                                if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
+                                                    let at = digdigdig3::AccountType::Spot;
+                                                    let _ = self.bridge.subscribe_orderbook(eid, symbol, at);
+                                                }
+                                            }
+                                        }
+                                        self.panels_store.multi_dom.insert(pid, s);
+                                    }
+                                }
                             }
                         }
 
@@ -1187,6 +1209,7 @@ impl ChartApp {
                                                 mlc_core::preset::preset::PersistedFreeItemKind::RiskCalculator           => Panel::RiskCalculator(pid),
                                                 mlc_core::preset::preset::PersistedFreeItemKind::TradingContainer { .. }  => Panel::TradingContainer(pid),
                                                 mlc_core::preset::preset::PersistedFreeItemKind::IndicatorPanel { .. }   => Panel::IndicatorPanel(pid),
+                                                mlc_core::preset::preset::PersistedFreeItemKind::MultiDom { .. }         => Panel::MultiDom(pid),
                                             };
                                             Some(item)
                                         }) {

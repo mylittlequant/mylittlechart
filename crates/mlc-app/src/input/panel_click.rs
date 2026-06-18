@@ -1265,33 +1265,20 @@ impl ChartApp {
                                 Some(mlc_core::state::Panel::Dom(pid))
                             }
                             "multi_dom" => {
-                                // Default exchange roster — owner can
-                                // edit MultiDomState::config.exchanges
-                                // at runtime via a future settings UI.
-                                // For now, prefill with the same 3
-                                // exchanges aggr.trade uses as its
-                                // default landing view.
-                                let default_exchanges = vec![
-                                    "binance".to_string(),
-                                    "bybit".to_string(),
-                                    "okx".to_string(),
-                                ];
+                                // Start with a single exchange (binance). Owner adds
+                                // more via the in-panel editor popup (right-click).
+                                let default_exchanges = vec!["binance".to_string()];
                                 let pid = self.panels_store.create_multi_dom(
                                     symbol.clone(),
                                     default_exchanges.clone(),
                                 );
                                 if !symbol.is_empty() {
-                                    let at = crate::account_type_from_label(&account_type_str);
-                                    // Subscribe orderbook from each
-                                    // configured exchange in parallel.
-                                    // The OrderbookDelta fan-out in
-                                    // tick.rs routes events into the
-                                    // panel by (symbol, exchange_label).
+                                    // AccountType is always Spot for multi-DOM (no
+                                    // single-exchange account context).
+                                    let at = digdigdig3::AccountType::Spot;
                                     for ex_label in &default_exchanges {
                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
-                                            let _ = self.bridge.subscribe_orderbook(
-                                                eid, &symbol, at,
-                                            );
+                                            let _ = self.bridge.subscribe_orderbook(eid, &symbol, at);
                                         }
                                     }
                                 }
@@ -1855,6 +1842,18 @@ impl ChartApp {
                                                     }
                                                 }
                                             }
+                                            if let mlc_core::state::Panel::MultiDom(pid) = &item {
+                                                if let Some(state) = self.panels_store.multi_dom.get(pid) {
+                                                    if !state.symbol.is_empty() {
+                                                        let at = digdigdig3::AccountType::Spot;
+                                                        for ex_label in &state.config.exchanges {
+                                                            if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
+                                                                self.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
                                             self.panels_store.remove(&item);
                                         }
                                         self.sidebar_state.focused_free_leaf = None;
@@ -2022,6 +2021,18 @@ impl ChartApp {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                 let at = crate::account_type_from_label(&state.account_type);
                                                 self.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
+                                            }
+                                        }
+                                    }
+                                }
+                                if let mlc_core::state::Panel::MultiDom(pid) = &item {
+                                    if let Some(state) = self.panels_store.multi_dom.get(pid) {
+                                        if !state.symbol.is_empty() {
+                                            let at = digdigdig3::AccountType::Spot;
+                                            for ex_label in &state.config.exchanges {
+                                                if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
+                                                    self.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
+                                                }
                                             }
                                         }
                                     }
@@ -2445,6 +2456,60 @@ impl ChartApp {
                                                 self.sidebar_data_dirty = true;
                                             }
                                         }
+                                    }
+                                }
+                                return;
+                            }
+
+                            // --- Multi-DOM editor clicks ---
+                            // local_id: "multi_dom:header" | "multi_dom:editor:*"
+                            // These may trigger bridge subscribe/unsubscribe.
+                            if local_id.starts_with("multi_dom:") {
+                                if let Ok(raw) = leaf_id_str.parse::<u64>() {
+                                    let leaf_id = uzor::panels::LeafId(raw);
+                                    let item_opt = self.sidebar_state.slot_dockings[idx]
+                                        .inner()
+                                        .tree()
+                                        .leaf(leaf_id)
+                                        .and_then(|l| l.active_panel().cloned());
+                                    if let Some(mlc_core::state::Panel::MultiDom(pid)) = item_opt {
+                                        // Snapshot exchanges + symbol BEFORE mutation.
+                                        let (old_exchanges, sym) = self.panels_store.multi_dom.get(&pid)
+                                            .map(|s| (s.config.exchanges.clone(), s.symbol.clone()))
+                                            .unwrap_or_default();
+
+                                        use mlc_panels::panel_trait::TradingPanel;
+                                        if let Some(state) = self.panels_store.multi_dom.get_mut(&pid) {
+                                            state.handle_click(local_id, x, y);
+                                        }
+
+                                        // Snapshot exchanges AFTER mutation and reconcile
+                                        // bridge subscriptions for added/removed exchanges.
+                                        if let Some(state) = self.panels_store.multi_dom.get(&pid) {
+                                            let new_exchanges = state.config.exchanges.clone();
+                                            let at = digdigdig3::AccountType::Spot;
+                                            // Unsubscribe removed exchanges.
+                                            for ex in &old_exchanges {
+                                                if !new_exchanges.iter().any(|e| e == ex) {
+                                                    if !sym.is_empty() {
+                                                        if let Some(eid) = digdigdig3::ExchangeId::from_str(ex) {
+                                                            self.bridge.unsubscribe_orderbook(eid, &sym, at);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            // Subscribe newly added exchanges.
+                                            for ex in &new_exchanges {
+                                                if !old_exchanges.iter().any(|e| e == ex) {
+                                                    if !sym.is_empty() {
+                                                        if let Some(eid) = digdigdig3::ExchangeId::from_str(ex) {
+                                                            let _ = self.bridge.subscribe_orderbook(eid, &sym, at);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        self.sidebar_data_dirty = true;
                                     }
                                 }
                                 return;
