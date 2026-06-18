@@ -2542,15 +2542,7 @@ impl ChartPanelApp {
                 border_enabled: true,
                 wick_enabled: true,
                 use_prev_close: false,
-                footprint_bars: {
-                    eprintln!(
-                        "[panel-app] BUILD state: leaf_id={:?} chart_panel_id={:?} chart_type={:?} fp_bars.is_some={} fp_bars.len={}",
-                        leaf_id, window.chart_panel_id, panel.chart_type,
-                        window.footprint_bars.is_some(),
-                        window.footprint_bars.as_ref().map(|v| v.len()).unwrap_or(0),
-                    );
-                    window.footprint_bars.as_deref()
-                },
+                footprint_bars: window.footprint_bars.as_deref(),
                 renko_bars: window.renko_bars.as_deref(),
                 three_line_break: window.three_line_break.as_deref(),
                 pnf_columns: window.pnf_columns.as_deref(),

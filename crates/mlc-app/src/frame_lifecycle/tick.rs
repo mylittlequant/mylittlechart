@@ -1363,11 +1363,6 @@ impl ChartApp {
                 // `window.footprint_bars` and paints Bid × Ask per level.
                 LiveUpdate::FootprintUpdate { exchange_id, account_type: fp_at, symbol: fp_sym, point } => {
                     let fp_at_label = fp_at.short_label();
-                    eprintln!(
-                        "[tick-fp] arrived sym={} at={} open_time={} levels.len={} vol={:.4} ohlc=[o={:.2} h={:.2} l={:.2} c={:.2}]",
-                        fp_sym, fp_at_label, point.open_time, point.levels.len(), point.volume,
-                        point.open, point.high, point.low, point.close,
-                    );
                     // Pre-collect (symbol, account_label, is_footprint) per cid
                     // to avoid holding &self.managers while mutating containers.
                     let footprint_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
@@ -1387,12 +1382,7 @@ impl ChartApp {
                             })
                             .collect()
                     };
-                    eprintln!(
-                        "[tick-fp] matched_windows={} (need chart_type=='footprint' && sym match && at match)",
-                        footprint_cids.len(),
-                    );
                     if footprint_cids.is_empty() {
-                        eprintln!("[tick-fp] no matching chart_type=footprint windows — drop");
                         continue;
                     }
                     // Build the local FootprintBar once; clone per matching window.
@@ -1454,19 +1444,12 @@ impl ChartApp {
                         let mut bar = new_bar_with_static.clone();
                         bar.set_cumulative_delta(prev_cvd);
                         // Same open_time → in-place update; new → append.
-                        let was_update = matches!(store.last(), Some(last) if last.open_time == bar.open_time);
                         match store.last_mut() {
                             Some(last) if last.open_time == bar.open_time => {
                                 *last = bar;
                             }
                             _ => store.push(bar),
                         }
-                        eprintln!(
-                            "[tick-fp] window.footprint_bars after {}: store.len={} last.levels.len={}",
-                            if was_update { "UPDATE" } else { "APPEND" },
-                            store.len(),
-                            store.last().map(|b| b.levels.len()).unwrap_or(0),
-                        );
 
                         // Mirror the live footprint bar as an OHLC Bar in
                         // `window.bars` so the klines backfill (seeded via
