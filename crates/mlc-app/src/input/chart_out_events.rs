@@ -692,6 +692,33 @@ impl ChartApp {
                 eprintln!("[ChartApp] grid toggled (all windows)");
                 state_mutated = true;
             }
+            ChartOutEvent::ToggleVolumeProfileOverlay => {
+                let new_val = if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
+                    w.vp_show = !w.vp_show;
+                    if !w.vp_show {
+                        w.vp_overlay = None;
+                        w.vp_overlay_stamp = None;
+                    }
+                    Some(w.vp_show)
+                } else { None };
+                eprintln!("[ChartApp] vp_show toggled -> {:?}", new_val);
+                state_mutated = true;
+            }
+            ChartOutEvent::CycleVolumeProfileMode => {
+                use mlc_core::chart::volume_profile::VpMode;
+                if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
+                    w.vp_mode = match w.vp_mode {
+                        VpMode::VisibleRange   => VpMode::Session,
+                        VpMode::Session        => VpMode::Composite,
+                        VpMode::Composite      => VpMode::VisibleRange,
+                        VpMode::FixedRange { .. } => VpMode::VisibleRange,
+                    };
+                    w.vp_overlay = None;
+                    w.vp_overlay_stamp = None;
+                    eprintln!("[ChartApp] vp_mode cycled -> {:?}", w.vp_mode);
+                }
+                state_mutated = true;
+            }
             ChartOutEvent::ToggleCrosshair => {
                 let new_val = if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                     w.toggle_crosshair();

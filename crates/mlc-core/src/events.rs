@@ -111,6 +111,13 @@ pub enum ChartOutEvent {
     /// re-issues the footprint subscription.
     UpdateChartTypeInterval { interval: String },
 
+    // === Overlays (C10 Volume Profile family) ===
+    /// Toggle the Volume Profile right-side overlay on the active chart.
+    ToggleVolumeProfileOverlay,
+    /// Cycle the Volume Profile aggregation mode
+    /// (VisibleRange → Session → Composite → VisibleRange).
+    CycleVolumeProfileMode,
+
     // === Theme (app-global) ===
     SetTheme(&'static str),
     SetStyle(&'static str),

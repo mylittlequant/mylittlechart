@@ -674,6 +674,20 @@ pub fn settings_menu_items() -> Vec<DropdownItemDef> {
             grid_columns: None,
         },
 
+        // Volume Profile overlay submenu (C10)
+        DropdownItemDef::Submenu {
+            id: "volume_profile_submenu".to_string(),
+            label: "Volume Profile".to_string(),
+            icon: Some(ToolbarIconId::new("Histogram")),
+            items: vec![
+                DropdownItemDef::action("vp_toggle", "Toggle overlay")
+                    .with_icon(ToolbarIconId::new("Histogram")),
+                DropdownItemDef::Separator,
+                DropdownItemDef::action("vp_mode_cycle", "Cycle mode (Visible / Session / Composite)"),
+            ],
+            grid_columns: None,
+        },
+
         // Crosshair submenu
         DropdownItemDef::Submenu {
             id: "crosshair_submenu".to_string(),

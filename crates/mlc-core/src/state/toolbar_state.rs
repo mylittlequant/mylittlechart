@@ -1195,6 +1195,10 @@ impl ChartToolbarState {
                     "grid_vert"     => vec![ChartOutEvent::ToggleGridVertical],
                     "grid_horz"     => vec![ChartOutEvent::ToggleGridHorizontal],
 
+                    // Volume Profile overlay (C10)
+                    "vp_toggle"     => vec![ChartOutEvent::ToggleVolumeProfileOverlay],
+                    "vp_mode_cycle" => vec![ChartOutEvent::CycleVolumeProfileMode],
+
                     // Crosshair
                     "crosshair_toggle" => vec![ChartOutEvent::ToggleCrosshair],
                     "ch_normal" => {
