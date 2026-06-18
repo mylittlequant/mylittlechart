@@ -195,17 +195,24 @@ pub struct ChartContainer {
     /// Heikin Ashi memo cache. Populated by
     /// [`ChartContainer::ensure_ha_cache`] and invalidated whenever the
     /// cache stamp no longer matches `bars`. The cache stamp is
-    /// `(bars.len(), bars.last().map(ts_ms).unwrap_or(0))`. Not
-    /// serialized — recomputed on first frame after deserialize.
+    /// `(bars.len(), last_ts_ms, last_close_bits, last_high_bits, last_low_bits)`.
+    /// Not serialized — recomputed on first frame after deserialize.
     pub ha_cache: Option<Vec<crate::types::HaBar>>,
-    /// Stamp paired with `ha_cache` — `(len, last_ts_ms)`.
-    pub ha_cache_stamp: Option<(usize, i64)>,
+    /// Stamp paired with `ha_cache` —
+    /// `(len, last_ts_ms, last_close_bits, last_high_bits, last_low_bits)`.
+    /// The three `_bits` fields are `f64::to_bits()` — bit-identical comparison
+    /// that is `Eq`-safe and catches in-place last-bar OHLC mutations (live tick
+    /// update on the still-open bar) that share the same `len` and `timestamp`.
+    pub ha_cache_stamp: Option<(usize, i64, u64, u64, u64)>,
 
     /// Volume Profile overlay data. Computed by `ensure_vp()` before each
     /// frame when `vp_show == true`. Not serialized — recomputed on load.
     pub vp_overlay: Option<crate::chart::volume_profile::VolumeProfileData>,
-    /// Stamp paired with `vp_overlay` — `(bars.len(), last_ts_ms, view_start_idx, visible_count, mode_hash)`.
-    pub vp_overlay_stamp: Option<(usize, i64, usize, usize, u64)>,
+    /// Stamp paired with `vp_overlay` —
+    /// `(bars.len(), last_ts_ms, view_start_idx, visible_count, mode_hash, last_close_bits, last_high_bits, last_low_bits)`.
+    /// The three `_bits` fields catch in-place last-bar OHLC mutations on the
+    /// still-open bar (same len + ts but different close/high/low).
+    pub vp_overlay_stamp: Option<(usize, i64, usize, usize, u64, u64, u64, u64)>,
     /// Which window of bars the VP aggregates over.
     pub vp_mode: crate::chart::volume_profile::VpMode,
     /// When `true` the VP histogram overlay is rendered on top of the chart.
@@ -1178,7 +1185,14 @@ impl ChartContainer {
     /// `self.ha_cache`. Called once per frame BEFORE
     /// `render_full_chart_panel` so the HA renderer can read the cache.
     pub fn ensure_ha_cache(&mut self) {
-        let stamp = (self.bars.len(), self.bars.last().map(|b| b.ts_ms()).unwrap_or(0));
+        let last = self.bars.last();
+        let stamp = (
+            self.bars.len(),
+            last.map(|b| b.ts_ms()).unwrap_or(0),
+            last.map(|b| b.close.to_bits()).unwrap_or(0),
+            last.map(|b| b.high.to_bits()).unwrap_or(0),
+            last.map(|b| b.low.to_bits()).unwrap_or(0),
+        );
         if self.ha_cache_stamp == Some(stamp) && self.ha_cache.is_some() { return; }
         if self.bars.is_empty() {
             self.ha_cache = Some(Vec::new());
@@ -1228,7 +1242,10 @@ impl ChartContainer {
 
         let mode = self.vp_mode;
 
-        // Stamp: (bars.len, last_ts_ms, view_start_idx, visible_count, mode_hash)
+        // Stamp: (bars.len, last_ts_ms, view_start_idx, visible_count, mode_hash,
+        //         last_close_bits, last_high_bits, last_low_bits)
+        // The three _bits fields detect in-place mutation of the still-open last bar
+        // (live tick update: same len + ts but different close/high/low).
         let mode_hash: u64 = match mode {
             VpMode::VisibleRange => 0,
             VpMode::Session => 1,
@@ -1237,12 +1254,16 @@ impl ChartContainer {
             }
             VpMode::Composite => 3,
         };
+        let vp_last = self.bars.last();
         let stamp = (
             self.bars.len(),
-            self.bars.last().map(|b| b.ts_ms()).unwrap_or(0),
+            vp_last.map(|b| b.ts_ms()).unwrap_or(0),
             self.viewport.view_start_idx(),
             visible_bars.len(),
             mode_hash,
+            vp_last.map(|b| b.close.to_bits()).unwrap_or(0),
+            vp_last.map(|b| b.high.to_bits()).unwrap_or(0),
+            vp_last.map(|b| b.low.to_bits()).unwrap_or(0),
         );
         if self.vp_overlay_stamp == Some(stamp) && self.vp_overlay.is_some() {
             return;

@@ -117,28 +117,48 @@ impl LiquidationHeatmapBuffer {
         self.push_cell(LiquidationCell { ts_ms: bucket, price_tick, long_value: long_delta, short_value: short_delta });
     }
 
-    /// Push from a `LiquidationBucketPoint`.
+    /// Push from a `LiquidationBucketPoint` spread across a price range.
     ///
     /// Field mapping (real dig3 field names):
     /// - `point.ts_ms` — bucket timestamp
     /// - `point.long_liq_usd` — long liquidation USD (NaN when absent)
     /// - `point.short_liq_usd` — short liquidation USD (NaN when absent)
     ///
-    /// Bucket points carry no price, so they feed a sentinel price_tick=0 cell
-    /// used for the time-series strip at the bottom of the heatmap.
-    pub fn push_bucket(
+    /// `mark_price` is the current last-traded price for the instrument.
+    /// The aggregate USD values are split uniformly across `2 * half_ticks + 1`
+    /// consecutive price rows centered on `mark_price`.  This is Option A
+    /// (uniform spread around mark price) — the CoinGlass-style approximation
+    /// for bucket events that carry no per-price breakdown.
+    pub fn push_bucket_spread(
         &mut self,
         ts_ms: i64,
         long_liq_usd: f64,
         short_liq_usd: f64,
+        mark_price: f64,
+        half_ticks: i64,
     ) {
         let bucket = self.bucket_of(ts_ms);
         let long_v = if long_liq_usd.is_finite() { long_liq_usd } else { 0.0 };
         let short_v = if short_liq_usd.is_finite() { short_liq_usd } else { 0.0 };
-        let total = long_v + short_v;
-        self.update_max(total);
-        // price_tick=0 marks a bucket-level aggregate (no per-price resolution).
-        self.push_cell(LiquidationCell { ts_ms: bucket, price_tick: 0, long_value: long_v, short_value: short_v });
+        let n = 2 * half_ticks + 1;
+        let long_per = long_v / n as f64;
+        let short_per = short_v / n as f64;
+        let center_tick = self.price_tick_of(mark_price);
+        for offset in -half_ticks..=half_ticks {
+            let price_tick = center_tick + offset;
+            // Skip zero tick — would render at price 0 and be clipped anyway.
+            if price_tick == 0 {
+                continue;
+            }
+            let total = long_per + short_per;
+            self.update_max(total);
+            self.push_cell(LiquidationCell {
+                ts_ms: bucket,
+                price_tick,
+                long_value: long_per,
+                short_value: short_per,
+            });
+        }
     }
 
     /// Update `max_volume_seen` with EMA decay.

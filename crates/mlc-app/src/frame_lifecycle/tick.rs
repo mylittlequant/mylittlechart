@@ -1680,7 +1680,7 @@ impl ChartApp {
                     }
                 }
                 // Liquidation bucket (C13) — push aggregate into liq_heatmap strip.
-                LiveUpdate::LiquidationBucketUpdate { account_type: at, symbol: sym, ts_ms, long_liq_usd, short_liq_usd, .. } => {
+                LiveUpdate::LiquidationBucketUpdate { exchange_id: ex_id, account_type: at, symbol: sym, ts_ms, long_liq_usd, short_liq_usd, .. } => {
                     let at_label = at.short_label();
                     let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
                         let panels_store = &self.panels_store;
@@ -1697,12 +1697,29 @@ impl ChartApp {
                             }).collect()
                     };
                     if target_cids.is_empty() { continue; }
+                    // Option A: spread bucket aggregate across ±5 ticks around mark price.
+                    // Mark price sourced from mini_ticker_cache (last-trade/BBO price).
+                    // Key format mirrors MiniTickerUpdate: "symbol:exchange:account_type".
+                    let ticker_key = format!("{}:{}:{}", sym, ex_id.as_str(), at_label);
+                    let mark_price_opt = self.mini_ticker_cache
+                        .get(&ticker_key)
+                        .map(|t| t.last_price);
                     for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !target_cids.contains(cid_) { continue; }
                         const DEFAULT_TICK: f64 = 0.5;
-                        window.liq_heatmap
-                            .get_or_insert_with(|| mlc_core::chart::liquidation_heatmap::LiquidationHeatmapBuffer::new(DEFAULT_TICK))
-                            .push_bucket(ts_ms, long_liq_usd, short_liq_usd);
+                        const SPREAD_HALF_TICKS: i64 = 5;
+                        let buf = window.liq_heatmap
+                            .get_or_insert_with(|| mlc_core::chart::liquidation_heatmap::LiquidationHeatmapBuffer::new(DEFAULT_TICK));
+                        // Prefer mark price from ticker cache; fall back to last bar close.
+                        let mark_opt = mark_price_opt.or_else(|| {
+                            window.bars.last().map(|b| b.close)
+                        });
+                        if let Some(mark) = mark_opt {
+                            buf.push_bucket_spread(ts_ms, long_liq_usd, short_liq_usd, mark, SPREAD_HALF_TICKS);
+                        }
+                        // If no price reference is available yet (chart just opened, no bars,
+                        // no ticker), the bucket is silently dropped — it will render correctly
+                        // once the first price arrives.
                     }
                 }
             }

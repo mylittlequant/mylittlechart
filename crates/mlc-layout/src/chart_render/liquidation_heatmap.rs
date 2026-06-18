@@ -72,8 +72,10 @@ pub fn draw_liquidation_heatmap(
 
     // ── Render cells ──────────────────────────────────────────────────────────
     for cell in &buf.cells {
-        // Skip bucket-level aggregate (price_tick == 0, no per-price placement).
-        if cell.price_tick == 0 && cell.long_value == 0.0 && cell.short_value == 0.0 {
+        // price_tick == 0 encodes "price unknown" — renders at price 0 which is
+        // always outside any visible range.  Guard here avoids the useless work
+        // and the misleading price=0 row if the range ever includes 0.
+        if cell.price_tick == 0 {
             continue;
         }
 
