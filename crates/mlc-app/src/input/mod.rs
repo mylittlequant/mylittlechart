@@ -8191,6 +8191,7 @@ impl ChartApp {
                     .map(String::from)
                     .unwrap_or_else(|| "S".to_string());
                 let mut new_exch: Option<String> = None;
+                let mut bars_for_bubble: Option<Vec<mlc_core::Bar>> = None;
                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     let exch = window.data_provider.exchange_name(new_symbol);
                     if let Some(bars) = window.data_provider.get_bars(new_symbol, &cur_tf) {
@@ -8199,6 +8200,7 @@ impl ChartApp {
                                 panel.drawing_manager.set_current_symbol_key(new_symbol, &exch, &cur_at_label);
                             }
                         }
+                        bars_for_bubble = Some(bars.clone());
                         window.set_bars(bars);
                         new_exch = Some(exch);
                         eprintln!("[Undo/Redo] Changed symbol to {}", new_symbol);
@@ -8211,6 +8213,10 @@ impl ChartApp {
                             bubble.timeframe = cur_tf;
                             bubble.exchange = exch;
                             bubble.account_type = cur_at_label.clone();
+                            // Phase X0 / C4: mirror bars into bubble storage.
+                            if let Some(b) = bars_for_bubble {
+                                bubble.bars = b;
+                            }
                         }
                     }
                 }
@@ -8223,8 +8229,10 @@ impl ChartApp {
                     .map(String::from)
                     .unwrap_or_default();
                 let mut changed = false;
+                let mut bars_for_bubble: Option<Vec<mlc_core::Bar>> = None;
                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     if let Some(bars) = window.data_provider.get_bars(&cur_sym, new_timeframe) {
+                        bars_for_bubble = Some(bars.clone());
                         window.set_bars(bars);
                         changed = true;
                         eprintln!("[Undo/Redo] Changed timeframe to {:?}", new_timeframe);
@@ -8235,6 +8243,10 @@ impl ChartApp {
                         if let Some(bid) = self.managers.bubble.bubble_for_chart(chart_id) {
                             if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
                                 bubble.timeframe = new_timeframe.clone();
+                                // Phase X0 / C4: mirror bars into bubble storage.
+                                if let Some(b) = bars_for_bubble {
+                                    bubble.bars = b;
+                                }
                             }
                         }
                     }
