@@ -352,6 +352,9 @@ fn chart_type_items() -> Vec<DropdownItemDef> {
         // ── Depth-of-market heatmap (C12) ────────────────────────────────────
         DropdownItemDef::action("dom_heatmap", "DOM Heatmap")
             .with_icon(ToolbarIconId::new("Histogram")),
+        // ── Liquidation heatmap (C13) ─────────────────────────────────────────
+        DropdownItemDef::action("liquidation_heatmap", "Liquidation Heatmap")
+            .with_icon(ToolbarIconId::new("Activity")),
     ]
 }
 

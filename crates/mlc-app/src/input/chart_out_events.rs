@@ -313,6 +313,8 @@ impl ChartApp {
                     "run_bar"              => Some("run_bar"),
                     // ── DOM Heatmap (C12) ──────────────────────────────────────
                     "dom_heatmap"          => Some("dom_heatmap"),
+                    // ── Liquidation Heatmap (C13) ──────────────────────────────
+                    "liquidation_heatmap"  => Some("liquidation_heatmap"),
                     _ => {
                         eprintln!("[ChartApp] unknown chart_type: {}", chart_type);
                         None
@@ -363,6 +365,7 @@ impl ChartApp {
                         | "dollar_bar" | "tick_imbalance_bar"
                         | "volume_imbalance_bar" | "run_bar"
                         | "dom_heatmap"
+                        | "liquidation_heatmap"
                     );
                     if let Some(active_leaf) = self.panel_app.panel_grid.active_container() {
                         let cid = active_leaf.id;
@@ -407,6 +410,10 @@ impl ChartApp {
                                         // bleed into the next chart type.
                                         window.dom_heatmap = None;
                                         window.dom_trade_dots = None;
+                                        // Clear liquidation heatmap buffers when leaving
+                                        // liquidation_heatmap mode.
+                                        window.liq_heatmap = None;
+                                        window.liq_dots = None;
                                     }
                                     let _ = is_derived_target; // axis flip done in prepare_frame
 
@@ -513,6 +520,12 @@ impl ChartApp {
                                         // ── DOM Heatmap (C12) ─────────────────
                                         "dom_heatmap" => {
                                             self.bridge.request_dom_heatmap(
+                                                self.active_exchange, &symbol, at,
+                                            );
+                                        }
+                                        // ── Liquidation Heatmap (C13) ─────────
+                                        "liquidation_heatmap" => {
+                                            self.bridge.request_liquidation_heatmap(
                                                 self.active_exchange, &symbol, at,
                                             );
                                         }

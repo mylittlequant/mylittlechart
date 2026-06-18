@@ -233,6 +233,14 @@ pub struct ChartContainer {
     /// `None` when `dom_heatmap` is `None`.
     pub dom_trade_dots: Option<Vec<crate::chart::dom_heatmap::DomTradeDot>>,
 
+    /// Rolling liquidation heatmap buffer for `chart_type == "liquidation_heatmap"` (C13).
+    /// `None` when the chart is not in liquidation-heatmap mode.
+    pub liq_heatmap: Option<crate::chart::liquidation_heatmap::LiquidationHeatmapBuffer>,
+
+    /// Liquidation dot overlay for the `liquidation_heatmap` chart-type. Capped at 2 000 entries.
+    /// `None` when `liq_heatmap` is `None`.
+    pub liq_dots: Option<Vec<crate::chart::liquidation_heatmap::LiquidationDot>>,
+
     // === Viewport & Scales ===
     /// Viewport state (pan/zoom)
     pub viewport: Viewport,
@@ -511,6 +519,8 @@ impl ChartContainer {
             funding_show: false,
             dom_heatmap: None,
             dom_trade_dots: None,
+            liq_heatmap: None,
+            liq_dots: None,
             viewport: Viewport::default(),
             price_scale: PriceScale::default(),
             time_scale: TimeScale::new(),
@@ -845,6 +855,9 @@ impl ChartContainer {
             // switches to dom_heatmap chart_type independently.
             dom_heatmap: None,
             dom_trade_dots: None,
+            // Liquidation heatmap: not inherited — split child gets a fresh buffer.
+            liq_heatmap: None,
+            liq_dots: None,
 
             // === Viewport & Scales (cloned) ===
             viewport: self.viewport.clone(),
@@ -1155,6 +1168,8 @@ impl ChartContainer {
             funding_rate_ref: None,
             dom_heatmap_ref: None,
             dom_trade_dots_ref: None,
+            liq_heatmap_ref: None,
+            liq_dots_ref: None,
         }
     }
 
@@ -1297,6 +1312,8 @@ impl ChartContainer {
             funding_show: self.funding_show,
             dom_heatmap: None,
             dom_trade_dots: None,
+            liq_heatmap: None,
+            liq_dots: None,
             viewport: self.viewport.clone(),
             price_scale: self.price_scale.clone(),
             time_scale: self.time_scale.clone(),

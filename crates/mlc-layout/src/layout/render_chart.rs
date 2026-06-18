@@ -30,7 +30,7 @@ use crate::chart_render::{
     draw_grid, draw_grid_extended, draw_candles, draw_bars, draw_hollow_candles, draw_heikin_ashi,
     draw_range_bars, draw_volume_bars, draw_tick_bars, draw_footprint, draw_renko, draw_pnf, draw_kagi,
     draw_cvd_chart, draw_tpo, draw_three_line_break, draw_volume_profile_overlay,
-    draw_oi_delta, draw_funding_rate_strip, draw_dom_heatmap,
+    draw_oi_delta, draw_funding_rate_strip, draw_dom_heatmap, draw_liquidation_heatmap,
     draw_line_series, draw_area_series, draw_baseline_series,
     draw_step_line, draw_line_with_markers, draw_hlc_area, draw_histogram, draw_columns,
     draw_price_scale, draw_time_scale,
@@ -230,6 +230,12 @@ pub fn draw_series(ctx: &mut dyn RenderContext, state: &ChartRenderState, chart_
         "dom_heatmap" => {
             if let Some(buf) = state.dom_heatmap_ref {
                 draw_dom_heatmap(ctx, state, buf, state.dom_trade_dots_ref);
+            }
+        }
+        // Liquidation Heatmap (C13): Hyblock/CoinGlass-style 2D liquidation heatmap.
+        "liquidation_heatmap" => {
+            if let Some(buf) = state.liq_heatmap_ref {
+                draw_liquidation_heatmap(ctx, state, buf, state.liq_dots_ref);
             }
         }
         // López de Prado quant bars (C9): output is OHLC BarPoint — render as
@@ -3125,6 +3131,8 @@ pub fn render_full_chart_panel(
         funding_rate_ref: data.state.funding_rate_ref,
         dom_heatmap_ref: data.state.dom_heatmap_ref,
         dom_trade_dots_ref: data.state.dom_trade_dots_ref,
+        liq_heatmap_ref: data.state.liq_heatmap_ref,
+        liq_dots_ref: data.state.liq_dots_ref,
     };
 
     // 1. Background — fill the full window rect to avoid gaps when scales are
@@ -3532,6 +3540,8 @@ pub fn render_chart_splits(
             funding_rate_ref: if window.funding_show { window.funding_rate.as_deref() } else { None },
             dom_heatmap_ref: window.dom_heatmap.as_ref(),
             dom_trade_dots_ref: window.dom_trade_dots.as_deref(),
+            liq_heatmap_ref: window.liq_heatmap.as_ref(),
+            liq_dots_ref: window.liq_dots.as_deref(),
         };
 
         // Build a config for this leaf, overriding chart_type from the window.
@@ -3721,6 +3731,8 @@ pub fn render_chart_overlay(
         funding_rate_ref: state.funding_rate_ref,
         dom_heatmap_ref: state.dom_heatmap_ref,
         dom_trade_dots_ref: state.dom_trade_dots_ref,
+        liq_heatmap_ref: state.liq_heatmap_ref,
+        liq_dots_ref: state.liq_dots_ref,
     };
 
     // Compute total chart bounds (main + all sub-panes) for the vertical crosshair span.

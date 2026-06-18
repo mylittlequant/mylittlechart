@@ -332,6 +332,35 @@ pub enum LiveUpdate {
         symbol: String,
         dot: mlc_core::chart::dom_heatmap::DomTradeDot,
     },
+
+    /// Per-event liquidation for the `liquidation_heatmap` chart-type (C13).
+    ///
+    /// Each `LiquidationPoint` from the station `Stream::Liquidation` is forwarded
+    /// here.  The tick consumer pushes it into `LiquidationHeatmapBuffer` AND
+    /// appends a `LiquidationDot` to the dot overlay ring.
+    LiquidationEvent {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        ts_ms: i64,
+        price: f64,
+        value_usd: f64,
+        /// 0 = short liquidated (green), 1 = long liquidated (red) — mirrors dig3 encoding.
+        side: u8,
+    },
+
+    /// Bucketed period-aggregate liquidation for the `liquidation_heatmap` chart-type (C13).
+    ///
+    /// Sourced from `Stream::LiquidationBucket` (GateIO stats endpoint).
+    /// Carries no per-price information — feeds the time-strip aggregate layer.
+    LiquidationBucketUpdate {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        ts_ms: i64,
+        long_liq_usd: f64,
+        short_liq_usd: f64,
+    },
 }
 
 /// Async-to-sync bridge that owns a tokio runtime and a connector pool.
@@ -1775,6 +1804,103 @@ impl DataBridge {
             }
             trade_handle.abort();
             eprintln!("[Bridge::dom-heatmap-ob exited] {:?} {}", exchange_id, sym_ob);
+        });
+
+        if let Ok(mut subs) = self.derived_subs.lock() {
+            subs.insert(sub_key, handle);
+        }
+    }
+
+    // ── Liquidation Heatmap subscription (C13) ───────────────────────────────
+
+    /// Subscribe to `Stream::Liquidation` and `Stream::LiquidationBucket` for the
+    /// liquidation heatmap chart-type (C13).
+    ///
+    /// Two tasks are spawned inside a single `JoinHandle`:
+    /// 1. `Stream::Liquidation` → `LiveUpdate::LiquidationEvent` per event.
+    /// 2. `Stream::LiquidationBucket` → `LiveUpdate::LiquidationBucketUpdate` per poll.
+    ///
+    /// If an exchange only supports one stream, the other will receive `WireAbsent`
+    /// and exit silently.  Both tasks share the same `derived_subs` slot.
+    pub fn request_liquidation_heatmap(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) {
+        self.abort_derived_sub(exchange_id, symbol, account_type);
+        let station = self.station.clone();
+        let tx = self.tx.clone();
+        let symbol_canonical = symbol.to_string();
+        let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
+        let sub_key = (exchange_id, symbol.to_string(), account_type);
+
+        let tx_liq = tx.clone();
+        let sym_liq = symbol_canonical.clone();
+        let sym_wire_liq = symbol_wire.clone();
+        let station_liq = station.clone();
+
+        let handle = self.runtime.spawn(async move {
+            // Task 1 — per-event liquidation → LiquidationEvent
+            let liq_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                exchange_id, sym_wire_liq.clone(), account_type,
+                [digdigdig3_station::Stream::Liquidation],
+            );
+            let mut liq_report = match station_liq.subscribe(liq_set).await {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("[Bridge::liq-heatmap-liq subscribe FAILED] {:?} {} wire={}: {:?}",
+                        exchange_id, sym_liq, sym_wire_liq, e);
+                    return;
+                }
+            };
+
+            // Task 2 — bucketed liquidation stats → LiquidationBucketUpdate
+            let tx_bkt = tx_liq.clone();
+            let sym_bkt = sym_liq.clone();
+            let sym_wire_bkt = sym_wire_liq.clone();
+            let station_bkt = station_liq.clone();
+            let bucket_handle = tokio::spawn(async move {
+                let bkt_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                    exchange_id, sym_wire_bkt.clone(), account_type,
+                    [digdigdig3_station::Stream::LiquidationBucket],
+                );
+                let mut bkt_report = match station_bkt.subscribe(bkt_set).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("[Bridge::liq-heatmap-bucket subscribe FAILED] {:?} {} wire={}: {:?}",
+                            exchange_id, sym_bkt, sym_wire_bkt, e);
+                        return;
+                    }
+                };
+                while let Some(ev) = bkt_report.handle.recv().await {
+                    if let digdigdig3_station::Event::LiquidationBucket { point, .. } = ev {
+                        let _ = tx_bkt.send(LiveUpdate::LiquidationBucketUpdate {
+                            exchange_id, account_type,
+                            symbol: sym_bkt.clone(),
+                            ts_ms: point.ts_ms,
+                            long_liq_usd: point.long_liq_usd,
+                            short_liq_usd: point.short_liq_usd,
+                        });
+                    }
+                }
+            });
+
+            // Drive the per-event liquidation stream; cancel bucket task when it exits.
+            while let Some(ev) = liq_report.handle.recv().await {
+                if let digdigdig3_station::Event::Liquidation { point, .. } = ev {
+                    let _ = tx_liq.send(LiveUpdate::LiquidationEvent {
+                        exchange_id, account_type,
+                        symbol: sym_liq.clone(),
+                        ts_ms: point.ts_ms,
+                        price: point.price,
+                        value_usd: point.value,
+                        side: point.side,
+                    });
+                }
+            }
+            bucket_handle.abort();
+            eprintln!("[Bridge::liq-heatmap-liq exited] {:?} {}", exchange_id, sym_liq);
         });
 
         if let Ok(mut subs) = self.derived_subs.lock() {

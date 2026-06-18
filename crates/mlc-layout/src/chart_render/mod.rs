@@ -41,6 +41,7 @@ mod volume_profile;
 mod oi_delta;
 mod funding_rate;
 mod dom_heatmap;
+mod liquidation_heatmap;
 
 // Re-export rendering functions
 pub use grid::{draw_grid, draw_grid_extended, draw_styled_line, draw_dashed_line};
@@ -56,6 +57,7 @@ pub use volume_profile::draw_volume_profile_overlay;
 pub use oi_delta::draw_oi_delta;
 pub use funding_rate::draw_funding_rate_strip;
 pub use dom_heatmap::draw_dom_heatmap;
+pub use liquidation_heatmap::draw_liquidation_heatmap;
 pub use series::{
     draw_line_series, draw_area_series, draw_histogram,
     draw_baseline_series, draw_step_line, draw_line_with_markers,

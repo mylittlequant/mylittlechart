@@ -2555,6 +2555,8 @@ impl ChartPanelApp {
                 funding_rate_ref: if window.funding_show { window.funding_rate.as_deref() } else { None },
                 dom_heatmap_ref: window.dom_heatmap.as_ref(),
                 dom_trade_dots_ref: window.dom_trade_dots.as_deref(),
+                liq_heatmap_ref: window.liq_heatmap.as_ref(),
+                liq_dots_ref: window.liq_dots.as_deref(),
             };
 
             let render_config = ChartRenderConfig {

@@ -257,6 +257,11 @@ pub struct ChartRenderState<'a> {
     pub dom_heatmap_ref: Option<&'a crate::chart::dom_heatmap::DomHeatmapBuffer>,
     /// DOM heatmap trade-circle overlay (C12).
     pub dom_trade_dots_ref: Option<&'a [crate::chart::dom_heatmap::DomTradeDot]>,
+    /// Liquidation heatmap buffer for the `liquidation_heatmap` chart-type (C13).
+    /// `None` for all other chart types.
+    pub liq_heatmap_ref: Option<&'a crate::chart::liquidation_heatmap::LiquidationHeatmapBuffer>,
+    /// Liquidation dot overlay for the `liquidation_heatmap` chart-type (C13).
+    pub liq_dots_ref: Option<&'a [crate::chart::liquidation_heatmap::LiquidationDot]>,
 }
 
 /// Configuration for scale rendering
