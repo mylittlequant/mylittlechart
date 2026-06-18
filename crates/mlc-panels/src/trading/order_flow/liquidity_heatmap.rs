@@ -247,7 +247,6 @@ impl LiquidityHeatmapState {
                     .collect();
                 drop(guard);
 
-                #[allow(deprecated)]
                 self.apply_snapshot(&bids, &asks, timestamp);
             }
         }
@@ -291,9 +290,8 @@ impl LiquidityHeatmapState {
     /// Apply an orderbook snapshot — rate-limited by snapshot_interval_ms.
     /// Returns true if a snapshot was actually recorded.
     ///
-    /// Deprecated — callers should use `tick()` to pull data from the shared
-    /// `OrderBookTracker`. This method is still called internally by `tick()`.
-    #[deprecated(note = "Use tick() to pull data from the shared OrderBookTracker instead")]
+    /// Called internally by `tick()` after pulling data from the shared
+    /// `OrderBookTracker`. Kept `pub` for tests / direct snapshot pushes.
     pub fn apply_snapshot(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)], timestamp_ms: i64) -> bool {
         // Rate-limit: skip if too soon since last snapshot
         if timestamp_ms - self.last_snapshot_ms < self.snapshot_interval_ms as i64 {

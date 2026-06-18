@@ -555,13 +555,6 @@ impl PrimitiveSettingsState {
         );
     }
 
-    /// Open color picker for a field at specified position (legacy, no smart positioning)
-    #[deprecated(note = "Use open_color_picker_smart instead for proper window bounds handling")]
-    pub fn open_color_picker(&mut self, field: &str, x: f64, y: f64, current_color: Option<&str>) {
-        self.color_picker_field = Some(field.to_string());
-        self.color_picker.open_l1(x, y, current_color);
-    }
-
     /// Close color picker
     pub fn close_color_picker(&mut self) {
         self.color_picker.close();

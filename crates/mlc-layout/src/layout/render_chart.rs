@@ -2813,60 +2813,6 @@ pub fn render_frame(
 }
 
 // =============================================================================
-// Legacy Aliases
-// =============================================================================
-
-/// Legacy alias for render_chart_window
-#[deprecated(note = "Use render_chart_window instead")]
-pub fn render_chart_area_with_buttons(
-    ctx: &mut dyn RenderContext,
-    layout: &ChartAreaLayout,
-    state: &ChartRenderState,
-    config: &ChartRenderConfig,
-    corner_state: &ScaleCornerState,
-) -> ScaleCornerHitZones {
-    render_chart_window(ctx, layout, state, config, corner_state)
-}
-
-/// Legacy alias - renders chart window with simple (non-interactive) corner
-#[deprecated(note = "Use render_chart_window instead")]
-pub fn render_chart_area(
-    ctx: &mut dyn RenderContext,
-    layout: &ChartAreaLayout,
-    state: &ChartRenderState,
-    config: &ChartRenderConfig,
-) {
-    // Render chart
-    render_chart(ctx, layout, state, config);
-
-    let mut leaf_scale_cfg = config.scale_config.clone();
-    leaf_scale_cfg.price_scale_width = layout.price_scale.width;
-    leaf_scale_cfg.time_scale_height = layout.time_scale.height;
-
-    // Render scales
-    draw_price_scale(
-        ctx,
-        state,
-        &leaf_scale_cfg,
-        &config.scale_theme,
-        layout.price_scale.x,
-        layout.price_scale.y,
-    );
-
-    draw_time_scale(
-        ctx,
-        state,
-        &leaf_scale_cfg,
-        &config.scale_theme,
-        layout.time_scale.x,
-        layout.time_scale.y,
-    );
-
-    // Simple corner (no buttons)
-    draw_scale_corner(ctx, &layout.scale_corner, &config.scale_theme);
-}
-
-// =============================================================================
 // Border Drawing (moved from core to break circular dependency)
 // =============================================================================
 
