@@ -1162,21 +1162,29 @@ impl ChartContainer {
             border_enabled: true,
             wick_enabled: true,
             use_prev_close: false,
-            footprint_bars: None,
-            renko_bars: None,
-            three_line_break: None,
-            pnf_columns: None,
-            kagi_segments: None,
-            cvd_line: None,
-            tpo_sessions: None,
-            ha_cache: None,
-            vp_overlay: None,
-            oi_delta_ref: None,
-            funding_rate_ref: None,
-            dom_heatmap_ref: None,
-            dom_trade_dots_ref: None,
-            liq_heatmap_ref: None,
-            liq_dots_ref: None,
+            // BUG FIX 2026-06-18: all of these used to be hardcoded `None`,
+            // which silently disabled every derived chart_type + overlay
+            // (footprint/renko/pnf/kagi/cvd/tpo/3lb/dom/liq/oi/funding/vp/ha)
+            // because mlc-app/src/lib.rs render path uses `window.to_render_state`
+            // to build the ChartRenderState — not the as_deref() builders in
+            // render_chart.rs / panel_app.rs which only the split-view code
+            // uses. The chart was literally rendering with empty refs no
+            // matter how much data sat in `self.footprint_bars`.
+            footprint_bars: self.footprint_bars.as_deref(),
+            renko_bars: self.renko_bars.as_deref(),
+            three_line_break: self.three_line_break.as_deref(),
+            pnf_columns: self.pnf_columns.as_deref(),
+            kagi_segments: self.kagi_segments.as_deref(),
+            cvd_line: self.cvd_line.as_deref(),
+            tpo_sessions: self.tpo_sessions.as_deref(),
+            ha_cache: self.ha_cache.as_deref(),
+            vp_overlay: if self.vp_show { self.vp_overlay.as_ref() } else { None },
+            oi_delta_ref: if self.oi_show { self.oi_delta.as_deref() } else { None },
+            funding_rate_ref: if self.funding_show { self.funding_rate.as_deref() } else { None },
+            dom_heatmap_ref: self.dom_heatmap.as_ref(),
+            dom_trade_dots_ref: self.dom_trade_dots.as_deref(),
+            liq_heatmap_ref: self.liq_heatmap.as_ref(),
+            liq_dots_ref: self.liq_dots.as_deref(),
         }
     }
 
