@@ -257,7 +257,7 @@ impl ChartApp {
                         eprintln!("[tick::BarsLoaded] no-listener, skipping");
                         continue;
                     }
-                    let loaded_tf = parse_timeframe_name(&tf_name);
+                    let _loaded_tf = parse_timeframe_name(&tf_name);
                     crate::dlog!("[ChartApp] BarsLoaded: {:?} {} tf={} bars={} first_ts={} last_ts={}",
                         exchange_id, symbol, tf_name, bars.len(),
                         bars.first().map(|b| b.timestamp).unwrap_or(0),
@@ -793,7 +793,7 @@ impl ChartApp {
                         }
                     }
                 }
-                LiveUpdate::TradeUpdate { exchange_id, symbol, price, quantity, timestamp, account_type, is_buyer_maker } => {
+                LiveUpdate::TradeUpdate { exchange_id, symbol, price, quantity, timestamp, account_type, is_buyer_maker: _ } => {
                     self.trade_count += 1;
                     self.last_trade_event_count += 1;
                     had_trade_update = true;

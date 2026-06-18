@@ -235,6 +235,21 @@ impl ChartApp {
             if is_ha {
                 window.ensure_ha_cache();
             }
+
+            // Volume Profile prepass — recompute when the visible slice, mode,
+            // or bars change. Cheap when the stamp matches (one tuple comparison).
+            if window.vp_show {
+                let (vis_start, vis_end) = window.viewport.visible_range();
+                let vis_end_clamped = vis_end.min(window.bars.len());
+                // Clone into an owned Vec to avoid a simultaneous borrow of
+                // `window.bars` (immutable) and `window` (mutable via ensure_vp).
+                let visible_owned: Vec<mlc_core::Bar> = if vis_start <= vis_end_clamped {
+                    window.bars[vis_start..vis_end_clamped].to_vec()
+                } else {
+                    Vec::new()
+                };
+                window.ensure_vp(&visible_owned, 24);
+            }
         }
 
         // Keep the alert-settings modal's alerts list always in sync.

@@ -29,7 +29,7 @@ use crate::chart_render::{
     ChartRenderState, ChartTheme, ChartRect,
     draw_grid, draw_grid_extended, draw_candles, draw_bars, draw_hollow_candles, draw_heikin_ashi,
     draw_range_bars, draw_volume_bars, draw_tick_bars, draw_footprint, draw_renko, draw_pnf, draw_kagi,
-    draw_cvd_chart, draw_tpo,
+    draw_cvd_chart, draw_tpo, draw_volume_profile_overlay,
     draw_line_series, draw_area_series, draw_baseline_series,
     draw_step_line, draw_line_with_markers, draw_hlc_area, draw_histogram, draw_columns,
     draw_price_scale, draw_time_scale,
@@ -2524,6 +2524,11 @@ pub fn render_chart(
 
     // 3. Series (candles, bars, line, area, etc.)
     draw_series(ctx, state, config.chart_type);
+
+    // 4. Volume Profile overlay (when enabled).
+    if let Some(vp) = state.vp_overlay {
+        draw_volume_profile_overlay(ctx, state, vp);
+    }
 }
 
 /// Render complete chart window (chart + scales + corner)
@@ -3155,6 +3160,7 @@ pub fn render_full_chart_panel(
         cvd_line: data.state.cvd_line,
         tpo_sessions: data.state.tpo_sessions,
         ha_cache: data.state.ha_cache,
+        vp_overlay: data.state.vp_overlay,
     };
 
     // 1. Background — fill the full window rect to avoid gaps when scales are
@@ -3223,6 +3229,11 @@ pub fn render_full_chart_panel(
 
         // 3. Series (candles, bars, line, etc.)
         draw_series(ctx, &corrected_state, data.config.chart_type);
+
+        // 3b. Volume Profile overlay (when enabled).
+        if let Some(vp) = corrected_state.vp_overlay {
+            draw_volume_profile_overlay(ctx, &corrected_state, vp);
+        }
 
         // 4. Last-price projection line.
         draw_last_price_line(ctx, &corrected_state);
@@ -3541,6 +3552,7 @@ pub fn render_chart_splits(
             cvd_line: window.cvd_line.as_deref(),
             tpo_sessions: window.tpo_sessions.as_deref(),
             ha_cache: window.ha_cache.as_deref(),
+            vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
         };
 
         // Build a config for this leaf, overriding chart_type from the window.
@@ -3724,6 +3736,7 @@ pub fn render_chart_overlay(
         cvd_line: state.cvd_line,
         tpo_sessions: state.tpo_sessions,
         ha_cache: state.ha_cache,
+        vp_overlay: state.vp_overlay,
     };
 
     // Compute total chart bounds (main + all sub-panes) for the vertical crosshair span.

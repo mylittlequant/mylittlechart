@@ -2549,6 +2549,7 @@ impl ChartPanelApp {
                 cvd_line: window.cvd_line.as_deref(),
                 tpo_sessions: window.tpo_sessions.as_deref(),
                 ha_cache: window.ha_cache.as_deref(),
+                vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
             };
 
             let render_config = ChartRenderConfig {

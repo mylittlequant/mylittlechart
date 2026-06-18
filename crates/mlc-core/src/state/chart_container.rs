@@ -197,6 +197,17 @@ pub struct ChartContainer {
     /// Stamp paired with `ha_cache` — `(len, last_ts_ms)`.
     pub ha_cache_stamp: Option<(usize, i64)>,
 
+    /// Volume Profile overlay data. Computed by `ensure_vp()` before each
+    /// frame when `vp_show == true`. Not serialized — recomputed on load.
+    pub vp_overlay: Option<crate::chart::volume_profile::VolumeProfileData>,
+    /// Stamp paired with `vp_overlay` — `(bars.len(), last_ts_ms, view_start_idx, visible_count, mode_hash)`.
+    pub vp_overlay_stamp: Option<(usize, i64, usize, usize, u64)>,
+    /// Which window of bars the VP aggregates over.
+    pub vp_mode: crate::chart::volume_profile::VpMode,
+    /// When `true` the VP histogram overlay is rendered on top of the chart.
+    /// Opt-in: defaults to `false` so existing presets are unaffected.
+    pub vp_show: bool,
+
     // === Viewport & Scales ===
     /// Viewport state (pan/zoom)
     pub viewport: Viewport,
@@ -464,6 +475,10 @@ impl ChartContainer {
             tpo_sessions: None,
             ha_cache: None,
             ha_cache_stamp: None,
+            vp_overlay: None,
+            vp_overlay_stamp: None,
+            vp_mode: crate::chart::volume_profile::VpMode::default(),
+            vp_show: false,
             viewport: Viewport::default(),
             price_scale: PriceScale::default(),
             time_scale: TimeScale::new(),
@@ -785,6 +800,10 @@ impl ChartContainer {
             tpo_sessions: self.tpo_sessions.clone(),
             ha_cache: None,
             ha_cache_stamp: None,
+            vp_overlay: None,
+            vp_overlay_stamp: None,
+            vp_mode: self.vp_mode,
+            vp_show: self.vp_show,
 
             // === Viewport & Scales (cloned) ===
             viewport: self.viewport.clone(),
@@ -1089,6 +1108,7 @@ impl ChartContainer {
             cvd_line: None,
             tpo_sessions: None,
             ha_cache: None,
+            vp_overlay: None,
         }
     }
 
@@ -1134,6 +1154,56 @@ impl ChartContainer {
         self.ha_cache_stamp = Some(stamp);
     }
 
+    /// Recompute the Volume Profile overlay if the bars window, viewport, or
+    /// mode changed since the last build.
+    ///
+    /// `visible_bars` is the pre-filtered slice of bars already clipped to the
+    /// viewport's visible range (caller computes it via `viewport.visible_range()`).
+    /// For Session / Composite modes the filtering is done inside `filter_bars_for_mode`.
+    ///
+    /// `bucket_count` controls bucket granularity (24 is a reasonable default).
+    pub fn ensure_vp(&mut self, visible_bars: &[Bar], bucket_count: usize) {
+        use crate::chart::volume_profile::{VolumeProfileData, VpMode, filter_bars_for_mode};
+
+        let mode = self.vp_mode;
+
+        // Stamp: (bars.len, last_ts_ms, view_start_idx, visible_count, mode_hash)
+        let mode_hash: u64 = match mode {
+            VpMode::VisibleRange => 0,
+            VpMode::Session => 1,
+            VpMode::FixedRange { start_ts_ms, end_ts_ms } => {
+                2u64.wrapping_add(start_ts_ms as u64).wrapping_add(end_ts_ms as u64)
+            }
+            VpMode::Composite => 3,
+        };
+        let stamp = (
+            self.bars.len(),
+            self.bars.last().map(|b| b.ts_ms()).unwrap_or(0),
+            self.viewport.view_start_idx(),
+            visible_bars.len(),
+            mode_hash,
+        );
+        if self.vp_overlay_stamp == Some(stamp) && self.vp_overlay.is_some() {
+            return;
+        }
+
+        let bars_to_profile: Vec<&Bar> = match mode {
+            VpMode::VisibleRange => visible_bars.iter().collect(),
+            _ => filter_bars_for_mode(&self.bars, mode, 5),
+        };
+
+        if bars_to_profile.is_empty() {
+            self.vp_overlay = Some(VolumeProfileData::compute(&[], mode, 0.70, bucket_count));
+            self.vp_overlay_stamp = Some(stamp);
+            return;
+        }
+
+        // Build an owned Vec<Bar> for the profile (bars_to_profile borrows self.bars).
+        let owned: Vec<Bar> = bars_to_profile.into_iter().copied().collect();
+        self.vp_overlay = Some(VolumeProfileData::compute(&owned, mode, 0.70, bucket_count));
+        self.vp_overlay_stamp = Some(stamp);
+    }
+
     /// Create a minimal clone of this chart window for use in `panel_grid::split_active`.
     ///
     /// Unlike `clone_for_split`, this variant does **not** take a source
@@ -1170,6 +1240,10 @@ impl ChartContainer {
             tpo_sessions: self.tpo_sessions.clone(),
             ha_cache: None,
             ha_cache_stamp: None,
+            vp_overlay: None,
+            vp_overlay_stamp: None,
+            vp_mode: self.vp_mode,
+            vp_show: self.vp_show,
             viewport: self.viewport.clone(),
             price_scale: self.price_scale.clone(),
             time_scale: self.time_scale.clone(),

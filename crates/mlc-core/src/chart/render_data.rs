@@ -239,6 +239,10 @@ pub struct ChartRenderState<'a> {
     /// instead of running the recursive HA formula from index 0 each
     /// frame. Window maintains the cache on `ChartContainer.ha_cache`.
     pub ha_cache: Option<&'a [crate::types::HaBar]>,
+    /// Pre-computed Volume Profile overlay. When `Some(_)` and
+    /// `vp_show == true` the VP renderer draws the right-side histogram.
+    /// Maintained by `ChartContainer::ensure_vp` in the prepare prepass.
+    pub vp_overlay: Option<&'a crate::chart::volume_profile::VolumeProfileData>,
 }
 
 /// Configuration for scale rendering

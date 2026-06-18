@@ -42,6 +42,7 @@ pub mod annotations;
 pub mod render_data;
 pub mod series;
 pub mod types;
+pub mod volume_profile;
 
 // Re-export all types for convenience
 pub use types::*;

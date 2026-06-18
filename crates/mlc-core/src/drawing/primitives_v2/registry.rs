@@ -296,6 +296,7 @@ impl PrimitiveRegistry {
         // Volume
         self.register(super::volume::fixed_volume_profile::metadata());
         self.register(super::volume::anchored_volume_profile::metadata());
+        self.register(super::volume::anchored_vwap::metadata());
 
         // Measurement
         self.register(super::measurement::price_range::metadata());
