@@ -359,6 +359,20 @@ impl TradingPanel for MultiDomState {
             &LayerId::main(),
         );
 
+        // Explicit ⚙ gear button at the far right of the header.
+        // Registered with CLICK so it is always reachable (right-click is unreliable on some
+        // platforms / panel configurations; owner reported it does not work).
+        let gear_btn_w = 20.0_f64;
+        let gear_btn_x = (x + w) as f64 - gear_btn_w;
+        let settings_id = format!("{}:multi_dom:settings", slot_prefix);
+        coordinator.register_composite(
+            settings_id,
+            WidgetKind::BlackboxPanel,
+            uzor::Rect::new(gear_btn_x, y as f64, gear_btn_w, HEADER_HEIGHT as f64),
+            Sense::CLICK,
+            &LayerId::main(),
+        );
+
         // Register interactive body for hover/scroll/drag.
         let body_id = format!("{}:multi_dom:body", slot_prefix);
         coordinator.register_composite(
@@ -439,12 +453,13 @@ impl TradingPanel for MultiDomState {
     fn handle_click(&mut self, local_id: &str, _x: f64, _y: f64) -> bool {
         // local_id examples:
         //   "multi_dom:header"          — right-click header → toggle editor
+        //   "multi_dom:settings"        — explicit ⚙ gear button click → toggle editor
         //   "multi_dom:editor:del:0"    — delete exchange at index 0
         //   "multi_dom:editor:add"      — cycle-add next unknown exchange
         //   "multi_dom:editor:grid"     — cycle grid size
         //   "multi_dom:editor:depth"    — cycle depth per side
 
-        if local_id == "multi_dom:header" {
+        if local_id == "multi_dom:header" || local_id == "multi_dom:settings" {
             self.editor_open = !self.editor_open;
             return true;
         }
@@ -499,18 +514,40 @@ impl MultiDomState {
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text(
-            "Multi-DOM — right-click to add exchanges",
+            "Multi-DOM — click \u{2699} to add exchanges",
             (x + 4.0) as f64,
             (y + HEADER_HEIGHT * 0.5) as f64,
         );
 
-        // Still need to register the header hit-zone.
+        // Gear icon at far right.
+        let gear_color = if self.editor_open { &theme.accent } else { &theme.text_muted };
+        ctx.set_fill_color(gear_color);
+        ctx.set_text_align(TextAlign::Center);
+        ctx.fill_text(
+            "\u{2699}",
+            (x + w - 10.0) as f64,
+            (y + HEADER_HEIGHT * 0.5) as f64,
+        );
+
+        // Register header hit-zone (right-click).
         let header_id = format!("{}:multi_dom:header", slot_prefix);
         coordinator.register_composite(
             header_id,
             WidgetKind::BlackboxPanel,
             uzor::Rect::new(x as f64, y as f64, w as f64, HEADER_HEIGHT as f64),
             Sense::RIGHT_CLICK,
+            &LayerId::main(),
+        );
+
+        // Register gear button hit-zone (left-click).
+        let gear_btn_w = 20.0_f64;
+        let gear_btn_x = (x + w) as f64 - gear_btn_w;
+        let settings_id = format!("{}:multi_dom:settings", slot_prefix);
+        coordinator.register_composite(
+            settings_id,
+            WidgetKind::BlackboxPanel,
+            uzor::Rect::new(gear_btn_x, y as f64, gear_btn_w, HEADER_HEIGHT as f64),
+            Sense::CLICK,
             &LayerId::main(),
         );
     }

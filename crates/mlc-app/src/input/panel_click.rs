@@ -1265,9 +1265,14 @@ impl ChartApp {
                                 Some(mlc_core::state::Panel::Dom(pid))
                             }
                             "multi_dom" => {
-                                // Start with a single exchange (binance). Owner adds
-                                // more via the in-panel editor popup (right-click).
-                                let default_exchanges = vec!["binance".to_string()];
+                                // Start with three exchanges so the owner sees a multi-column
+                                // view immediately on first open. More exchanges can be added
+                                // via the ⚙ gear button in the panel header.
+                                let default_exchanges = vec![
+                                    "binance".to_string(),
+                                    "bybit".to_string(),
+                                    "okx".to_string(),
+                                ];
                                 let pid = self.panels_store.create_multi_dom(
                                     symbol.clone(),
                                     default_exchanges.clone(),
