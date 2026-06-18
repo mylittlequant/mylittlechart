@@ -246,6 +246,12 @@ pub struct ChartRenderState<'a> {
     /// `vp_show == true` the VP renderer draws the right-side histogram.
     /// Maintained by `ChartContainer::ensure_vp` in the prepare prepass.
     pub vp_overlay: Option<&'a crate::chart::volume_profile::VolumeProfileData>,
+    /// Open Interest Δ bars for the OI Delta sub-pane renderer (C15).
+    /// `None` when the toggle is off or no data has arrived yet.
+    pub oi_delta_ref: Option<&'a [crate::types::OiDeltaBar]>,
+    /// Funding Rate cells for the strip renderer (C15).
+    /// `None` when the toggle is off or no data has arrived yet.
+    pub funding_rate_ref: Option<&'a [crate::types::FundingRateCell]>,
 }
 
 /// Configuration for scale rendering

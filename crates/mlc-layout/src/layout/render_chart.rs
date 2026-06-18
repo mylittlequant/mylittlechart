@@ -30,6 +30,7 @@ use crate::chart_render::{
     draw_grid, draw_grid_extended, draw_candles, draw_bars, draw_hollow_candles, draw_heikin_ashi,
     draw_range_bars, draw_volume_bars, draw_tick_bars, draw_footprint, draw_renko, draw_pnf, draw_kagi,
     draw_cvd_chart, draw_tpo, draw_three_line_break, draw_volume_profile_overlay,
+    draw_oi_delta, draw_funding_rate_strip,
     draw_line_series, draw_area_series, draw_baseline_series,
     draw_step_line, draw_line_with_markers, draw_hlc_area, draw_histogram, draw_columns,
     draw_price_scale, draw_time_scale,
@@ -3114,6 +3115,8 @@ pub fn render_full_chart_panel(
         tpo_sessions: data.state.tpo_sessions,
         ha_cache: data.state.ha_cache,
         vp_overlay: data.state.vp_overlay,
+        oi_delta_ref: data.state.oi_delta_ref,
+        funding_rate_ref: data.state.funding_rate_ref,
     };
 
     // 1. Background — fill the full window rect to avoid gaps when scales are
@@ -3186,6 +3189,16 @@ pub fn render_full_chart_panel(
         // 3b. Volume Profile overlay (when enabled).
         if let Some(vp) = corrected_state.vp_overlay {
             draw_volume_profile_overlay(ctx, &corrected_state, vp);
+        }
+
+        // 3c. OI Delta sub-pane (C15 — below main chart, above time scale).
+        if let Some(oi) = corrected_state.oi_delta_ref {
+            draw_oi_delta(ctx, &corrected_state, oi);
+        }
+
+        // 3d. Funding Rate strip (C15 — thin strip at bottom of chart area).
+        if let Some(fr) = corrected_state.funding_rate_ref {
+            draw_funding_rate_strip(ctx, &corrected_state, fr);
         }
 
         // 4. Last-price projection line.
@@ -3507,6 +3520,8 @@ pub fn render_chart_splits(
             tpo_sessions: window.tpo_sessions.as_deref(),
             ha_cache: window.ha_cache.as_deref(),
             vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
+            oi_delta_ref: if window.oi_show { window.oi_delta.as_deref() } else { None },
+            funding_rate_ref: if window.funding_show { window.funding_rate.as_deref() } else { None },
         };
 
         // Build a config for this leaf, overriding chart_type from the window.
@@ -3692,6 +3707,8 @@ pub fn render_chart_overlay(
         tpo_sessions: state.tpo_sessions,
         ha_cache: state.ha_cache,
         vp_overlay: state.vp_overlay,
+        oi_delta_ref: state.oi_delta_ref,
+        funding_rate_ref: state.funding_rate_ref,
     };
 
     // Compute total chart bounds (main + all sub-panes) for the vertical crosshair span.

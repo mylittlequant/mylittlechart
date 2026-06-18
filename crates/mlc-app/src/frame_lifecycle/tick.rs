@@ -1554,6 +1554,44 @@ impl ChartApp {
                         window.three_line_break.get_or_insert_with(Vec::new).push(line.clone());
                     }
                 }
+                // Open Interest Δ bar — append to all oi_show windows for the
+                // matching symbol + account. Mirrors the CVD/TLB two-pass pattern.
+                LiveUpdate::OpenInterestUpdate { account_type: at, symbol: sym, point, .. } => {
+                    let at_label = at.short_label();
+                    let target_cids: std::collections::HashSet<mlc_core::state::ChartId> =
+                        self.panel_app.panel_grid.containers().iter()
+                            .filter_map(|(cid, win)| {
+                                if !win.oi_show { return None; }
+                                let s = self.managers.bubble.symbol_for_chart(*cid)?;
+                                let a = self.managers.bubble.account_type_for_chart(*cid)?;
+                                if s != sym.as_str() || a != at_label { return None; }
+                                Some(*cid)
+                            }).collect();
+                    if target_cids.is_empty() { continue; }
+                    for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+                        if !target_cids.contains(cid_) { continue; }
+                        window.oi_delta.get_or_insert_with(Vec::new).push(point);
+                    }
+                }
+                // Funding Rate cell — append to all funding_show windows for the
+                // matching symbol + account. Same two-pass pattern as OI above.
+                LiveUpdate::FundingRateUpdate { account_type: at, symbol: sym, point, .. } => {
+                    let at_label = at.short_label();
+                    let target_cids: std::collections::HashSet<mlc_core::state::ChartId> =
+                        self.panel_app.panel_grid.containers().iter()
+                            .filter_map(|(cid, win)| {
+                                if !win.funding_show { return None; }
+                                let s = self.managers.bubble.symbol_for_chart(*cid)?;
+                                let a = self.managers.bubble.account_type_for_chart(*cid)?;
+                                if s != sym.as_str() || a != at_label { return None; }
+                                Some(*cid)
+                            }).collect();
+                    if target_cids.is_empty() { continue; }
+                    for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+                        if !target_cids.contains(cid_) { continue; }
+                        window.funding_rate.get_or_insert_with(Vec::new).push(point);
+                    }
+                }
             }
         }
         self.last_event_process_us = events_start.elapsed().as_micros() as u64;

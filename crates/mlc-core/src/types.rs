@@ -607,6 +607,38 @@ impl TpoSession {
     #[inline] pub fn ts_ms(&self) -> i64 { self.open_time }
 }
 
+/// One per-bar Open Interest Δ record used by the OI Delta sub-pane renderer.
+///
+/// The station emits raw `open_interest` values (absolute, in contracts or
+/// USD depending on the exchange and asset). We accumulate the running OI
+/// level per bar and compute delta = oi_now − oi_prev on arrival.
+/// The first bar produced after a subscription starts carries `delta = 0.0`
+/// because there is no previous OI to subtract from — this is the canonical
+/// "seed" value for a running difference, not a data error.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+pub struct OiDeltaBar {
+    /// Bar/event timestamp in milliseconds.
+    pub ts_ms: i64,
+    /// Open interest at this event (contracts / USD depending on venue).
+    pub oi: f64,
+    /// oi_now − oi_prev. Zero for the first bar — see module doc.
+    pub delta: f64,
+}
+
+/// One funding-rate event cell used by the Funding Rate strip renderer.
+///
+/// Each perp swap pays funding every `interval_hours` hours (8h on most
+/// venues). The `rate` is dimensionless (0.0001 = 1 bps = 0.01 %).
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+pub struct FundingRateCell {
+    /// Funding-rate event timestamp in milliseconds.
+    pub ts_ms: i64,
+    /// Funding rate (dimensionless, e.g. 0.0001 = 1 bps).
+    pub rate: f64,
+    /// Funding interval in hours. Most perp swaps use 8.
+    pub interval_hours: u8,
+}
+
 /// Pre-computed Heikin Ashi bar; cache element used by the renderer
 /// memo on `ChartContainer` so HA values aren't recomputed from index 0
 /// every frame.

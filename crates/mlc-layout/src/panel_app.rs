@@ -2551,6 +2551,8 @@ impl ChartPanelApp {
                 tpo_sessions: window.tpo_sessions.as_deref(),
                 ha_cache: window.ha_cache.as_deref(),
                 vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
+                oi_delta_ref: if window.oi_show { window.oi_delta.as_deref() } else { None },
+                funding_rate_ref: if window.funding_show { window.funding_rate.as_deref() } else { None },
             };
 
             let render_config = ChartRenderConfig {

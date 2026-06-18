@@ -288,6 +288,25 @@ pub enum LiveUpdate {
         symbol: String,
         point: digdigdig3_station::data::ThreeLineBreakLinePoint,
     },
+
+    /// Live Open Interest event from a `Stream::OpenInterest` subscription.
+    /// Each event carries the current absolute OI value; the delta is
+    /// computed in the forwarder by subtracting the previous OI level.
+    OpenInterestUpdate {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        point: mlc_core::types::OiDeltaBar,
+    },
+
+    /// Live Funding Rate event from a `Stream::FundingRate` subscription.
+    /// `interval_hours` defaults to 8 (standard perp swap schedule).
+    FundingRateUpdate {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        point: mlc_core::types::FundingRateCell,
+    },
 }
 
 /// Async-to-sync bridge that owns a tokio runtime and a connector pool.
@@ -1742,6 +1761,54 @@ impl DataBridge {
         }
     }
 
+    /// Subscribe to the Open Interest stream for an instrument (C15).
+    ///
+    /// Events arrive as `Event::OpenInterest { point: OpenInterestPoint }`.
+    /// The forwarder computes Δ = oi_now − oi_prev per event, yielding an
+    /// `OiDeltaBar` (delta = 0.0 for the first point — canonical seed value).
+    pub fn request_open_interest(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) {
+        let station = self.station.clone();
+        let tx = self.tx.clone();
+        let symbol_str = symbol.to_string();
+        let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
+        let sub_key = (exchange_id, symbol.to_string(), account_type);
+        let stream = digdigdig3_station::Stream::OpenInterest;
+        let handle = Self::spawn_open_interest_sub(
+            &self.runtime, station, tx, exchange_id, account_type,
+            symbol_str, symbol_wire, stream,
+        );
+        if let Ok(mut subs) = self.derived_subs.lock() {
+            subs.insert(sub_key, handle);
+        }
+    }
+
+    /// Subscribe to the Funding Rate stream for an instrument (C15).
+    pub fn request_funding_rate(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) {
+        let station = self.station.clone();
+        let tx = self.tx.clone();
+        let symbol_str = symbol.to_string();
+        let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
+        let sub_key = (exchange_id, symbol.to_string(), account_type);
+        let stream = digdigdig3_station::Stream::FundingRate;
+        let handle = Self::spawn_funding_rate_sub(
+            &self.runtime, station, tx, exchange_id, account_type,
+            symbol_str, symbol_wire, stream,
+        );
+        if let Ok(mut subs) = self.derived_subs.lock() {
+            subs.insert(sub_key, handle);
+        }
+    }
+
     /// Abort the active derived/footprint subscription for an instrument, if any.
     fn abort_derived_sub(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
         if let Ok(mut subs) = self.derived_subs.lock() {
@@ -2166,6 +2233,114 @@ impl DataBridge {
                 }
             }
             eprintln!("[Bridge::tpo-fwd exited] {:?} {} stream={}",
+                exchange_id, symbol_canonical, stream_label);
+        })
+    }
+
+    /// Spawn an Open Interest station subscriber (C15).
+    ///
+    /// Listens for `Event::OpenInterest { point }` and emits
+    /// `LiveUpdate::OpenInterestUpdate` with a running Δ computed from the
+    /// previous OI level. The first event carries delta = 0.0 — canonical seed.
+    fn spawn_open_interest_sub(
+        runtime: &Runtime,
+        station: std::sync::Arc<digdigdig3_station::Station>,
+        tx: tokio::sync::broadcast::Sender<LiveUpdate>,
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol_canonical: String,
+        symbol_wire: String,
+        stream: digdigdig3_station::Stream,
+    ) -> tokio::task::JoinHandle<()> {
+        runtime.spawn(async move {
+            let stream_label = format!("{:?}", stream);
+            let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                exchange_id, symbol_wire.clone(), account_type, [stream],
+            );
+            let mut report = match station.subscribe(sub_set).await {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("[Bridge::oi-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
+                        exchange_id, symbol_canonical, symbol_wire, e);
+                    return;
+                }
+            };
+            // Running OI level for delta computation.
+            // The first event sets `last_oi` and emits delta = 0.0 (seed).
+            let mut last_oi: Option<f64> = None;
+            while let Some(ev) = report.handle.recv().await {
+                if let digdigdig3_station::Event::OpenInterest { point, .. } = ev {
+                    let oi = point.open_interest;
+                    let delta = match last_oi {
+                        Some(prev) => oi - prev,
+                        // First bar — no previous OI, delta is 0.0 by convention.
+                        None => 0.0,
+                    };
+                    last_oi = Some(oi);
+                    let bar = mlc_core::types::OiDeltaBar {
+                        ts_ms: point.ts_ms,
+                        oi,
+                        delta,
+                    };
+                    let _ = tx.send(LiveUpdate::OpenInterestUpdate {
+                        exchange_id, account_type,
+                        symbol: symbol_canonical.clone(),
+                        point: bar,
+                    });
+                }
+            }
+            eprintln!("[Bridge::oi-fwd exited] {:?} {} stream={}",
+                exchange_id, symbol_canonical, stream_label);
+        })
+    }
+
+    /// Spawn a Funding Rate station subscriber (C15).
+    ///
+    /// Listens for `Event::FundingRate { point }` and emits
+    /// `LiveUpdate::FundingRateUpdate`. The `interval_hours` field defaults to
+    /// 8 hours — the standard perp funding cadence. If the station ever exposes
+    /// the interval directly (via a richer FundingRatePoint), that value should
+    /// be used instead.
+    fn spawn_funding_rate_sub(
+        runtime: &Runtime,
+        station: std::sync::Arc<digdigdig3_station::Station>,
+        tx: tokio::sync::broadcast::Sender<LiveUpdate>,
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol_canonical: String,
+        symbol_wire: String,
+        stream: digdigdig3_station::Stream,
+    ) -> tokio::task::JoinHandle<()> {
+        runtime.spawn(async move {
+            let stream_label = format!("{:?}", stream);
+            let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                exchange_id, symbol_wire.clone(), account_type, [stream],
+            );
+            let mut report = match station.subscribe(sub_set).await {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("[Bridge::fr-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
+                        exchange_id, symbol_canonical, symbol_wire, e);
+                    return;
+                }
+            };
+            while let Some(ev) = report.handle.recv().await {
+                if let digdigdig3_station::Event::FundingRate { point, .. } = ev {
+                    let cell = mlc_core::types::FundingRateCell {
+                        ts_ms: point.ts_ms,
+                        rate: point.rate,
+                        // FundingRatePoint does not carry the interval; default to 8h
+                        // (standard cadence for perpetual swaps on Binance, Bybit, OKX).
+                        interval_hours: 8,
+                    };
+                    let _ = tx.send(LiveUpdate::FundingRateUpdate {
+                        exchange_id, account_type,
+                        symbol: symbol_canonical.clone(),
+                        point: cell,
+                    });
+                }
+            }
+            eprintln!("[Bridge::fr-fwd exited] {:?} {} stream={}",
                 exchange_id, symbol_canonical, stream_label);
         })
     }

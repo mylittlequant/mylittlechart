@@ -1199,6 +1199,10 @@ impl ChartToolbarState {
                     "vp_toggle"     => vec![ChartOutEvent::ToggleVolumeProfileOverlay],
                     "vp_mode_cycle" => vec![ChartOutEvent::CycleVolumeProfileMode],
 
+                    // OI / Funding (C15)
+                    "oi_toggle"      => vec![ChartOutEvent::ToggleOpenInterestOverlay],
+                    "funding_toggle" => vec![ChartOutEvent::ToggleFundingRateStrip],
+
                     // Crosshair
                     "crosshair_toggle" => vec![ChartOutEvent::ToggleCrosshair],
                     "ch_normal" => {

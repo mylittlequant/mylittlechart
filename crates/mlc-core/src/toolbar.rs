@@ -688,6 +688,19 @@ pub fn settings_menu_items() -> Vec<DropdownItemDef> {
             grid_columns: None,
         },
 
+        // OI / Funding Rate submenu (C15)
+        DropdownItemDef::Submenu {
+            id: "oi_funding_submenu".to_string(),
+            label: "OI / Funding".to_string(),
+            icon: Some(ToolbarIconId::new("Activity")),
+            items: vec![
+                DropdownItemDef::action("oi_toggle", "Toggle OI Delta")
+                    .with_icon(ToolbarIconId::new("Histogram")),
+                DropdownItemDef::action("funding_toggle", "Toggle Funding Strip"),
+            ],
+            grid_columns: None,
+        },
+
         // Crosshair submenu
         DropdownItemDef::Submenu {
             id: "crosshair_submenu".to_string(),

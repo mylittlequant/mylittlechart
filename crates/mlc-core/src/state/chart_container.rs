@@ -212,6 +212,19 @@ pub struct ChartContainer {
     /// Opt-in: defaults to `false` so existing presets are unaffected.
     pub vp_show: bool,
 
+    /// Open Interest Δ bars — one entry per OI event. Each entry carries
+    /// the absolute OI and the delta from the previous event. Populated
+    /// when `oi_show == true`; `None` otherwise.
+    pub oi_delta: Option<Vec<crate::types::OiDeltaBar>>,
+    /// When `true` the OI Delta sub-pane is rendered below the main chart.
+    pub oi_show: bool,
+
+    /// Funding Rate cells — one entry per funding-rate event. Populated
+    /// when `funding_show == true`; `None` otherwise.
+    pub funding_rate: Option<Vec<crate::types::FundingRateCell>>,
+    /// When `true` the Funding Rate strip is rendered at the bottom of the chart.
+    pub funding_show: bool,
+
     // === Viewport & Scales ===
     /// Viewport state (pan/zoom)
     pub viewport: Viewport,
@@ -484,6 +497,10 @@ impl ChartContainer {
             vp_overlay_stamp: None,
             vp_mode: crate::chart::volume_profile::VpMode::default(),
             vp_show: false,
+            oi_delta: None,
+            oi_show: false,
+            funding_rate: None,
+            funding_show: false,
             viewport: Viewport::default(),
             price_scale: PriceScale::default(),
             time_scale: TimeScale::new(),
@@ -810,6 +827,10 @@ impl ChartContainer {
             vp_overlay_stamp: None,
             vp_mode: self.vp_mode,
             vp_show: self.vp_show,
+            oi_delta: self.oi_delta.clone(),
+            oi_show: self.oi_show,
+            funding_rate: self.funding_rate.clone(),
+            funding_show: self.funding_show,
 
             // === Viewport & Scales (cloned) ===
             viewport: self.viewport.clone(),
@@ -1116,6 +1137,8 @@ impl ChartContainer {
             tpo_sessions: None,
             ha_cache: None,
             vp_overlay: None,
+            oi_delta_ref: None,
+            funding_rate_ref: None,
         }
     }
 
@@ -1252,6 +1275,10 @@ impl ChartContainer {
             vp_overlay_stamp: None,
             vp_mode: self.vp_mode,
             vp_show: self.vp_show,
+            oi_delta: self.oi_delta.clone(),
+            oi_show: self.oi_show,
+            funding_rate: self.funding_rate.clone(),
+            funding_show: self.funding_show,
             viewport: self.viewport.clone(),
             price_scale: self.price_scale.clone(),
             time_scale: self.time_scale.clone(),

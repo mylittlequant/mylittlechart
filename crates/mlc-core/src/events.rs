@@ -118,6 +118,12 @@ pub enum ChartOutEvent {
     /// (VisibleRange → Session → Composite → VisibleRange).
     CycleVolumeProfileMode,
 
+    // === C15: OI Delta sub-pane + Funding Rate strip ===
+    /// Toggle the Open Interest Δ sub-pane on the active chart.
+    ToggleOpenInterestOverlay,
+    /// Toggle the Funding Rate strip at the bottom of the active chart.
+    ToggleFundingRateStrip,
+
     // === Theme (app-global) ===
     SetTheme(&'static str),
     SetStyle(&'static str),

@@ -38,6 +38,8 @@ mod cvd;
 mod tpo;
 mod three_line_break;
 mod volume_profile;
+mod oi_delta;
+mod funding_rate;
 
 // Re-export rendering functions
 pub use grid::{draw_grid, draw_grid_extended, draw_styled_line, draw_dashed_line};
@@ -50,6 +52,8 @@ pub use cvd::{draw_cvd_chart, draw_cvd_overlay};
 pub use tpo::draw_tpo;
 pub use three_line_break::draw_three_line_break;
 pub use volume_profile::draw_volume_profile_overlay;
+pub use oi_delta::draw_oi_delta;
+pub use funding_rate::draw_funding_rate_strip;
 pub use series::{
     draw_line_series, draw_area_series, draw_histogram,
     draw_baseline_series, draw_step_line, draw_line_with_markers,

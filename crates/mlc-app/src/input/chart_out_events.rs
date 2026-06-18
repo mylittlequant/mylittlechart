@@ -719,6 +719,70 @@ impl ChartApp {
                 }
                 state_mutated = true;
             }
+            // === C15: OI Delta sub-pane ===
+            ChartOutEvent::ToggleOpenInterestOverlay => {
+                let cid_opt = self.panel_app.panel_grid.active_container().map(|w| w.id);
+                if let Some(cid) = cid_opt {
+                    let symbol_opt = self.managers.bubble.symbol_for_chart(cid).map(String::from);
+                    let at_label_opt = self.managers.bubble.account_type_for_chart(cid).map(String::from);
+                    if let (Some(symbol), Some(at_label)) = (symbol_opt, at_label_opt) {
+                        if !symbol.is_empty() {
+                            let eid_str = self.active_exchange.as_str();
+                            let connector_enabled = self.sidebar_state.connector_enabled
+                                .get(eid_str).copied().unwrap_or(true);
+                            if connector_enabled {
+                                let at = crate::account_type_from_label(&at_label);
+                                if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
+                                    w.oi_show = !w.oi_show;
+                                    if w.oi_show {
+                                        // Fresh subscription — clear stale data.
+                                        w.oi_delta = None;
+                                        self.bridge.request_open_interest(
+                                            self.active_exchange, &symbol, at,
+                                        );
+                                    } else {
+                                        w.oi_delta = None;
+                                    }
+                                    eprintln!("[ChartApp] oi_show toggled -> {}", w.oi_show);
+                                }
+                            }
+                        }
+                    }
+                }
+                state_mutated = true;
+            }
+            // === C15: Funding Rate strip ===
+            ChartOutEvent::ToggleFundingRateStrip => {
+                let cid_opt = self.panel_app.panel_grid.active_container().map(|w| w.id);
+                if let Some(cid) = cid_opt {
+                    let symbol_opt = self.managers.bubble.symbol_for_chart(cid).map(String::from);
+                    let at_label_opt = self.managers.bubble.account_type_for_chart(cid).map(String::from);
+                    if let (Some(symbol), Some(at_label)) = (symbol_opt, at_label_opt) {
+                        if !symbol.is_empty() {
+                            let eid_str = self.active_exchange.as_str();
+                            let connector_enabled = self.sidebar_state.connector_enabled
+                                .get(eid_str).copied().unwrap_or(true);
+                            if connector_enabled {
+                                let at = crate::account_type_from_label(&at_label);
+                                if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
+                                    w.funding_show = !w.funding_show;
+                                    if w.funding_show {
+                                        // Fresh subscription — clear stale data.
+                                        w.funding_rate = None;
+                                        self.bridge.request_funding_rate(
+                                            self.active_exchange, &symbol, at,
+                                        );
+                                    } else {
+                                        w.funding_rate = None;
+                                    }
+                                    eprintln!("[ChartApp] funding_show toggled -> {}", w.funding_show);
+                                }
+                            }
+                        }
+                    }
+                }
+                state_mutated = true;
+            }
             ChartOutEvent::ToggleCrosshair => {
                 let new_val = if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                     w.toggle_crosshair();
