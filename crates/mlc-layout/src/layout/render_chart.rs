@@ -224,6 +224,11 @@ pub fn draw_series(ctx: &mut dyn RenderContext, state: &ChartRenderState, chart_
         "cvd" => draw_cvd_chart(ctx, state),
         "tpo" => draw_tpo(ctx, state),
         "footprint" => draw_footprint(ctx, state),
+        // López de Prado quant bars (C9): output is OHLC BarPoint — render as
+        // standard candles. Explicit arms avoid silent fallback for new types.
+        "dollar_bar" | "tick_imbalance_bar" | "volume_imbalance_bar" | "run_bar" => {
+            draw_candles(ctx, state)
+        }
         _ => draw_candles(ctx, state), // Default fallback
     }
 

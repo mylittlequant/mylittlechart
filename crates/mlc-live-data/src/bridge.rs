@@ -1601,6 +1601,113 @@ impl DataBridge {
         }
     }
 
+    // ── López de Prado quant bar subscriptions (C9) ───────────────────────────
+
+    /// Subscribe to a Dollar Bar stream (López de Prado, AFML ch.2).
+    ///
+    /// Bar closes when cumulative `price × quantity` ≥ `dollar_threshold`
+    /// (whole dollars). Station emits `Event::Bar`; re-emitted here as
+    /// `LiveUpdate::BarUpdate` via the same respawn-loop as RangeBar.
+    pub fn request_dollar_bars(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        dollar_threshold: u64,
+    ) {
+        self.abort_derived_sub(exchange_id, symbol, account_type);
+        let station = self.station.clone();
+        let tx = self.tx.clone();
+        let symbol_str = symbol.to_string();
+        let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
+        let sub_key = (exchange_id, symbol.to_string(), account_type);
+        let stream = digdigdig3_station::Stream::DollarBar { dollar_threshold };
+        let handle = Self::spawn_derived_bar_sub(
+            &self.runtime, station, tx, exchange_id, account_type,
+            symbol_str, symbol_wire, stream,
+        );
+        if let Ok(mut subs) = self.derived_subs.lock() {
+            subs.insert(sub_key, handle);
+        }
+    }
+
+    /// Subscribe to a Tick Imbalance Bar stream (López de Prado, AFML ch.2).
+    ///
+    /// `alpha_x100`: EMA smoothing × 100 (e.g. 20 → 0.20). `min_ticks`: floor.
+    pub fn request_tick_imbalance_bars(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        alpha_x100: u16,
+        min_ticks: u32,
+    ) {
+        self.abort_derived_sub(exchange_id, symbol, account_type);
+        let station = self.station.clone();
+        let tx = self.tx.clone();
+        let symbol_str = symbol.to_string();
+        let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
+        let sub_key = (exchange_id, symbol.to_string(), account_type);
+        let stream = digdigdig3_station::Stream::TickImbalanceBar { alpha_x100, min_ticks };
+        let handle = Self::spawn_derived_bar_sub(
+            &self.runtime, station, tx, exchange_id, account_type,
+            symbol_str, symbol_wire, stream,
+        );
+        if let Ok(mut subs) = self.derived_subs.lock() {
+            subs.insert(sub_key, handle);
+        }
+    }
+
+    /// Subscribe to a Volume Imbalance Bar stream (López de Prado, AFML ch.2).
+    pub fn request_volume_imbalance_bars(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        alpha_x100: u16,
+        min_ticks: u32,
+    ) {
+        self.abort_derived_sub(exchange_id, symbol, account_type);
+        let station = self.station.clone();
+        let tx = self.tx.clone();
+        let symbol_str = symbol.to_string();
+        let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
+        let sub_key = (exchange_id, symbol.to_string(), account_type);
+        let stream = digdigdig3_station::Stream::VolumeImbalanceBar { alpha_x100, min_ticks };
+        let handle = Self::spawn_derived_bar_sub(
+            &self.runtime, station, tx, exchange_id, account_type,
+            symbol_str, symbol_wire, stream,
+        );
+        if let Ok(mut subs) = self.derived_subs.lock() {
+            subs.insert(sub_key, handle);
+        }
+    }
+
+    /// Subscribe to a Run Bar stream (López de Prado, AFML ch.2).
+    pub fn request_run_bars(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        alpha_x100: u16,
+        min_ticks: u32,
+    ) {
+        self.abort_derived_sub(exchange_id, symbol, account_type);
+        let station = self.station.clone();
+        let tx = self.tx.clone();
+        let symbol_str = symbol.to_string();
+        let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
+        let sub_key = (exchange_id, symbol.to_string(), account_type);
+        let stream = digdigdig3_station::Stream::RunBar { alpha_x100, min_ticks };
+        let handle = Self::spawn_derived_bar_sub(
+            &self.runtime, station, tx, exchange_id, account_type,
+            symbol_str, symbol_wire, stream,
+        );
+        if let Ok(mut subs) = self.derived_subs.lock() {
+            subs.insert(sub_key, handle);
+        }
+    }
+
     /// Abort the active derived/footprint subscription for an instrument, if any.
     fn abort_derived_sub(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
         if let Ok(mut subs) = self.derived_subs.lock() {

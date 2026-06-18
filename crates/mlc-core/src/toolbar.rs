@@ -335,6 +335,17 @@ fn chart_type_items() -> Vec<DropdownItemDef> {
         DropdownItemDef::action("cvd", "CVD Line").with_icon(ToolbarIconId::new("LineChart")),
         DropdownItemDef::action_with_input("tpo", "Market Profile (TPO)", "bar_mode_param", "30")
             .with_icon(ToolbarIconId::new("Histogram")),
+        DropdownItemDef::Separator,
+        // ── López de Prado quant bars (C9) ───────────────────────────────────
+        // param = dollar threshold for dollar_bar; min_ticks for the rest.
+        DropdownItemDef::action_with_input("dollar_bar",           "Dollar Bar",         "bar_mode_param", "1000000")
+            .with_icon(ToolbarIconId::new("BarChart")),
+        DropdownItemDef::action_with_input("tick_imbalance_bar",   "Tick Imbalance",     "bar_mode_param", "50")
+            .with_icon(ToolbarIconId::new("BarChart")),
+        DropdownItemDef::action_with_input("volume_imbalance_bar", "Volume Imbalance",   "bar_mode_param", "50")
+            .with_icon(ToolbarIconId::new("BarChart")),
+        DropdownItemDef::action_with_input("run_bar",              "Run Bar",            "bar_mode_param", "50")
+            .with_icon(ToolbarIconId::new("BarChart")),
     ]
 }
 

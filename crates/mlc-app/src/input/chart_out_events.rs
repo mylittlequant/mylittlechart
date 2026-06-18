@@ -305,6 +305,11 @@ impl ChartApp {
                     "kagi"          => Some("kagi"),
                     "cvd"           => Some("cvd"),
                     "tpo"           => Some("tpo"),
+                    // ── López de Prado quant bars (C9) ────────────────────────
+                    "dollar_bar"           => Some("dollar_bar"),
+                    "tick_imbalance_bar"   => Some("tick_imbalance_bar"),
+                    "volume_imbalance_bar" => Some("volume_imbalance_bar"),
+                    "run_bar"              => Some("run_bar"),
                     _ => {
                         eprintln!("[ChartApp] unknown chart_type: {}", chart_type);
                         None
@@ -351,6 +356,8 @@ impl ChartApp {
                         ct,
                         "range_bar" | "volume_bar" | "tick_bar" | "footprint"
                         | "renko" | "pnf" | "kagi" | "cvd" | "tpo"
+                        | "dollar_bar" | "tick_imbalance_bar"
+                        | "volume_imbalance_bar" | "run_bar"
                     );
                     if let Some(active_leaf) = self.panel_app.panel_grid.active_container() {
                         let cid = active_leaf.id;
@@ -439,6 +446,49 @@ impl ChartApp {
                                                 mlc_live_data::TpoSource::TradeBucket,
                                             );
                                         }
+                                        // ── López de Prado quant bars (C9) ────
+                                        "dollar_bar" => {
+                                            // Default threshold = $1,000,000 (typical liquid futures).
+                                            let threshold = if chart_param > 0.0 {
+                                                chart_param as u64
+                                            } else {
+                                                1_000_000u64
+                                            };
+                                            self.bridge.request_dollar_bars(
+                                                self.active_exchange, &symbol, at, threshold,
+                                            );
+                                        }
+                                        "tick_imbalance_bar" => {
+                                            // alpha=0.20 (20%), min_ticks=50.
+                                            let min_ticks = if chart_param > 0.0 {
+                                                chart_param as u32
+                                            } else {
+                                                50u32
+                                            };
+                                            self.bridge.request_tick_imbalance_bars(
+                                                self.active_exchange, &symbol, at, 20, min_ticks,
+                                            );
+                                        }
+                                        "volume_imbalance_bar" => {
+                                            let min_ticks = if chart_param > 0.0 {
+                                                chart_param as u32
+                                            } else {
+                                                50u32
+                                            };
+                                            self.bridge.request_volume_imbalance_bars(
+                                                self.active_exchange, &symbol, at, 20, min_ticks,
+                                            );
+                                        }
+                                        "run_bar" => {
+                                            let min_ticks = if chart_param > 0.0 {
+                                                chart_param as u32
+                                            } else {
+                                                50u32
+                                            };
+                                            self.bridge.request_run_bars(
+                                                self.active_exchange, &symbol, at, 20, min_ticks,
+                                            );
+                                        }
                                         _ => {
                                             // Plain render type (candle /
                                             // bars / line / ...). Kline
@@ -497,6 +547,25 @@ impl ChartApp {
                                     "renko"      => self.bridge.request_renko_bars(self.active_exchange, &symbol, at, scaled, 2),
                                     "pnf"        => self.bridge.request_pnf_bars(self.active_exchange, &symbol, at, scaled, 3),
                                     "kagi"       => self.bridge.request_kagi_bars(self.active_exchange, &symbol, at, scaled),
+                                    // Quant bars (C9): param is reinterpreted per bar type.
+                                    // dollar_bar: param = dollar threshold (whole dollars).
+                                    "dollar_bar" => {
+                                        let threshold = if value > 0.0 { value as u64 } else { 1_000_000u64 };
+                                        self.bridge.request_dollar_bars(self.active_exchange, &symbol, at, threshold);
+                                    }
+                                    // imbalance/run bars: param = min_ticks floor.
+                                    "tick_imbalance_bar" => {
+                                        let min_ticks = if value > 0.0 { value as u32 } else { 50 };
+                                        self.bridge.request_tick_imbalance_bars(self.active_exchange, &symbol, at, 20, min_ticks);
+                                    }
+                                    "volume_imbalance_bar" => {
+                                        let min_ticks = if value > 0.0 { value as u32 } else { 50 };
+                                        self.bridge.request_volume_imbalance_bars(self.active_exchange, &symbol, at, 20, min_ticks);
+                                    }
+                                    "run_bar" => {
+                                        let min_ticks = if value > 0.0 { value as u32 } else { 50 };
+                                        self.bridge.request_run_bars(self.active_exchange, &symbol, at, 20, min_ticks);
+                                    }
                                     _ => {}
                                 }
                             }

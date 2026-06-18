@@ -693,7 +693,11 @@ impl ChartApp {
                                     .unwrap_or(false);
                                 let derived_chart_type = panels_store.chart_panel
                                     .get(&win.chart_panel_id)
-                                    .map(|p| matches!(p.chart_type, "range_bar" | "volume_bar" | "footprint"))
+                                    .map(|p| matches!(p.chart_type,
+                                        "range_bar" | "volume_bar" | "footprint"
+                                        | "dollar_bar" | "tick_imbalance_bar"
+                                        | "volume_imbalance_bar" | "run_bar"
+                                    ))
                                     .unwrap_or(false);
                                 let is_derived = is_tick_tf || derived_chart_type;
                                 Some((*cid, (sym, at, is_derived)))
