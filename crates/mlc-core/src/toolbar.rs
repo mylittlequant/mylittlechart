@@ -330,6 +330,8 @@ fn chart_type_items() -> Vec<DropdownItemDef> {
             .with_icon(ToolbarIconId::new("BarChart")),
         DropdownItemDef::action_with_input("kagi",       "Kagi",        "bar_mode_param", "10.0")
             .with_icon(ToolbarIconId::new("LineChart")),
+        DropdownItemDef::action_with_input("three_line_break", "3 Line Break", "bar_mode_param", "3")
+            .with_icon(ToolbarIconId::new("BarChart")),
         DropdownItemDef::Separator,
         // ── Orderflow / profile visualizations ───────────────────────────────
         DropdownItemDef::action("cvd", "CVD Line").with_icon(ToolbarIconId::new("LineChart")),

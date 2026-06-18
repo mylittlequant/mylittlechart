@@ -2544,6 +2544,7 @@ impl ChartPanelApp {
                 use_prev_close: false,
                 footprint_bars: window.footprint_bars.as_deref(),
                 renko_bars: window.renko_bars.as_deref(),
+                three_line_break: window.three_line_break.as_deref(),
                 pnf_columns: window.pnf_columns.as_deref(),
                 kagi_segments: window.kagi_segments.as_deref(),
                 cvd_line: window.cvd_line.as_deref(),

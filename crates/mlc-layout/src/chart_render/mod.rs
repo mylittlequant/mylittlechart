@@ -36,6 +36,7 @@ mod pnf;
 mod kagi;
 mod cvd;
 mod tpo;
+mod three_line_break;
 mod volume_profile;
 
 // Re-export rendering functions
@@ -47,6 +48,7 @@ pub use pnf::draw_pnf;
 pub use kagi::draw_kagi;
 pub use cvd::{draw_cvd_chart, draw_cvd_overlay};
 pub use tpo::draw_tpo;
+pub use three_line_break::draw_three_line_break;
 pub use volume_profile::draw_volume_profile_overlay;
 pub use series::{
     draw_line_series, draw_area_series, draw_histogram,

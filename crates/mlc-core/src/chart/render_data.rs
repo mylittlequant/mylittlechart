@@ -223,6 +223,9 @@ pub struct ChartRenderState<'a> {
     /// renko renderer draws filled rect bricks; otherwise renko dispatch
     /// renders nothing.
     pub renko_bars: Option<&'a [crate::types::RenkoBrick]>,
+    /// Three Line Break data. When `Some(_)` and chart_type ==
+    /// "three_line_break" the TLB renderer draws filled rect lines.
+    pub three_line_break: Option<&'a [crate::types::ThreeLineBreakLine]>,
     /// Point-and-Figure column data.
     pub pnf_columns: Option<&'a [crate::types::PnfColumn]>,
     /// Kagi segment data.

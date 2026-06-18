@@ -542,6 +542,42 @@ impl KagiSegment {
     #[inline] pub fn ts_ms(&self) -> i64 { self.open_time }
 }
 
+/// One Three Line Break line mirroring
+/// `digdigdig3_station::data::ThreeLineBreakLinePoint`.
+///
+/// `direction`: 0 = up, 1 = down.
+/// `high = max(open, close)`, `low = min(open, close)` (no wicks by
+/// construction — the algorithm only uses closes for boundaries).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ThreeLineBreakLine {
+    pub ts_open: i64,
+    pub ts_close: i64,
+    pub price_open: f64,
+    pub price_close: f64,
+    pub volume: f64,
+    pub direction: u8,
+}
+
+impl ThreeLineBreakLine {
+    /// Returns the timestamp used for X-axis positioning (line open).
+    #[inline]
+    pub fn ts_ms(&self) -> i64 {
+        self.ts_open
+    }
+
+    /// High of the line: `max(price_open, price_close)`.
+    #[inline]
+    pub fn high(&self) -> f64 {
+        self.price_open.max(self.price_close)
+    }
+
+    /// Low of the line: `min(price_open, price_close)`.
+    #[inline]
+    pub fn low(&self) -> f64 {
+        self.price_open.min(self.price_close)
+    }
+}
+
 /// One Cumulative Volume Delta sample mirroring
 /// `digdigdig3_station::data::ScalarBarPoint` but scoped to CVD usage.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]

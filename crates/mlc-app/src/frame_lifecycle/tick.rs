@@ -1523,6 +1523,37 @@ impl ChartApp {
                         }
                     }
                 }
+                // Three Line Break line stream — each emit is one closed line.
+                LiveUpdate::ThreeLineBreakUpdate { account_type: at, symbol: sym, point, .. } => {
+                    let at_label = at.short_label();
+                    let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
+                        let panels_store = &self.panels_store;
+                        self.panel_app.panel_grid.containers().iter()
+                            .filter_map(|(cid, win)| {
+                                let s = self.managers.bubble.symbol_for_chart(*cid)?;
+                                let a = self.managers.bubble.account_type_for_chart(*cid)?;
+                                let is_tlb = panels_store.chart_panel
+                                    .get(&win.chart_panel_id)
+                                    .map(|p| p.chart_type == "three_line_break")
+                                    .unwrap_or(false);
+                                if !is_tlb || s != sym.as_str() || a != at_label { return None; }
+                                Some(*cid)
+                            }).collect()
+                    };
+                    if target_cids.is_empty() { continue; }
+                    let line = mlc_core::types::ThreeLineBreakLine {
+                        ts_open: point.ts_open,
+                        ts_close: point.ts_close,
+                        price_open: point.open,
+                        price_close: point.close,
+                        volume: point.volume,
+                        direction: point.direction,
+                    };
+                    for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+                        if !target_cids.contains(cid_) { continue; }
+                        window.three_line_break.get_or_insert_with(Vec::new).push(line.clone());
+                    }
+                }
             }
         }
         self.last_event_process_us = events_start.elapsed().as_micros() as u64;

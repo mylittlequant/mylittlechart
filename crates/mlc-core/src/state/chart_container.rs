@@ -171,6 +171,10 @@ pub struct ChartContainer {
     /// atomic at the station level.
     pub renko_bars: Option<Vec<crate::types::RenkoBrick>>,
 
+    /// Three Line Break lines. `None` for non-TLB chart types. Append-only —
+    /// each emit is one closed line.
+    pub three_line_break: Option<Vec<crate::types::ThreeLineBreakLine>>,
+
     /// Point-and-Figure columns. `None` for non-pnf chart types. Each
     /// emit replaces the same-`column_id` entry in-place; a new
     /// `column_id` appends.
@@ -469,6 +473,7 @@ impl ChartContainer {
             bars: Vec::new(),
             footprint_bars: None,
             renko_bars: None,
+            three_line_break: None,
             pnf_columns: None,
             kagi_segments: None,
             cvd_line: None,
@@ -794,6 +799,7 @@ impl ChartContainer {
             bars: self.bars.clone(),
             footprint_bars: self.footprint_bars.clone(),
             renko_bars: self.renko_bars.clone(),
+            three_line_break: self.three_line_break.clone(),
             pnf_columns: self.pnf_columns.clone(),
             kagi_segments: self.kagi_segments.clone(),
             cvd_line: self.cvd_line.clone(),
@@ -1103,6 +1109,7 @@ impl ChartContainer {
             use_prev_close: false,
             footprint_bars: None,
             renko_bars: None,
+            three_line_break: None,
             pnf_columns: None,
             kagi_segments: None,
             cvd_line: None,
@@ -1234,6 +1241,7 @@ impl ChartContainer {
             bars: self.bars.clone(),
             footprint_bars: self.footprint_bars.clone(),
             renko_bars: self.renko_bars.clone(),
+            three_line_break: self.three_line_break.clone(),
             pnf_columns: self.pnf_columns.clone(),
             kagi_segments: self.kagi_segments.clone(),
             cvd_line: self.cvd_line.clone(),

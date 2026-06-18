@@ -305,6 +305,7 @@ impl ChartApp {
                     "kagi"          => Some("kagi"),
                     "cvd"           => Some("cvd"),
                     "tpo"           => Some("tpo"),
+                    "three_line_break" => Some("three_line_break"),
                     // ── López de Prado quant bars (C9) ────────────────────────
                     "dollar_bar"           => Some("dollar_bar"),
                     "tick_imbalance_bar"   => Some("tick_imbalance_bar"),
@@ -356,6 +357,7 @@ impl ChartApp {
                         ct,
                         "range_bar" | "volume_bar" | "tick_bar" | "footprint"
                         | "renko" | "pnf" | "kagi" | "cvd" | "tpo"
+                        | "three_line_break"
                         | "dollar_bar" | "tick_imbalance_bar"
                         | "volume_imbalance_bar" | "run_bar"
                     );
@@ -444,6 +446,17 @@ impl ChartApp {
                                             self.bridge.request_tpo(
                                                 self.active_exchange, &symbol, at, freq,
                                                 mlc_live_data::TpoSource::TradeBucket,
+                                            );
+                                        }
+                                        "three_line_break" => {
+                                            // Default N=3 (industry standard).
+                                            let lines_back = if chart_param > 0.0 {
+                                                (chart_param as u8).max(1)
+                                            } else {
+                                                3u8
+                                            };
+                                            self.bridge.request_three_line_break(
+                                                self.active_exchange, &symbol, at, lines_back,
                                             );
                                         }
                                         // ── López de Prado quant bars (C9) ────

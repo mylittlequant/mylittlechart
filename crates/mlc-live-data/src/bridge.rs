@@ -279,6 +279,15 @@ pub enum LiveUpdate {
         symbol: String,
         point: digdigdig3_station::data::TpoSessionPoint,
     },
+
+    /// Live Three Line Break line close from a `Stream::ThreeLineBreak`
+    /// subscription. Each event is one completed line.
+    ThreeLineBreakUpdate {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        point: digdigdig3_station::data::ThreeLineBreakLinePoint,
+    },
 }
 
 /// Async-to-sync bridge that owns a tokio runtime and a connector pool.
@@ -1708,6 +1717,31 @@ impl DataBridge {
         }
     }
 
+    /// Subscribe to a Three Line Break stream (`lines_back` = number of
+    /// recent lines a new price must exceed before a line prints; default 3).
+    pub fn request_three_line_break(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        lines_back: u8,
+    ) {
+        self.abort_derived_sub(exchange_id, symbol, account_type);
+        let station = self.station.clone();
+        let tx = self.tx.clone();
+        let symbol_str = symbol.to_string();
+        let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
+        let sub_key = (exchange_id, symbol.to_string(), account_type);
+        let stream = digdigdig3_station::Stream::ThreeLineBreak { lines_back };
+        let handle = Self::spawn_three_line_break_sub(
+            &self.runtime, station, tx, exchange_id, account_type,
+            symbol_str, symbol_wire, stream,
+        );
+        if let Ok(mut subs) = self.derived_subs.lock() {
+            subs.insert(sub_key, handle);
+        }
+    }
+
     /// Abort the active derived/footprint subscription for an instrument, if any.
     fn abort_derived_sub(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
         if let Ok(mut subs) = self.derived_subs.lock() {
@@ -1940,6 +1974,46 @@ impl DataBridge {
                 }
             }
             eprintln!("[Bridge::renko-fwd exited] {:?} {} stream={}",
+                exchange_id, symbol_canonical, stream_label);
+        })
+    }
+
+    /// Spawn a Three Line Break station subscriber. Station emits one
+    /// `Event::ThreeLineBreakUpdate` per closed line; we re-emit as
+    /// `LiveUpdate::ThreeLineBreakUpdate`.
+    fn spawn_three_line_break_sub(
+        runtime: &Runtime,
+        station: std::sync::Arc<digdigdig3_station::Station>,
+        tx: tokio::sync::broadcast::Sender<LiveUpdate>,
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol_canonical: String,
+        symbol_wire: String,
+        stream: digdigdig3_station::Stream,
+    ) -> tokio::task::JoinHandle<()> {
+        runtime.spawn(async move {
+            let stream_label = format!("{:?}", stream);
+            let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                exchange_id, symbol_wire.clone(), account_type, [stream],
+            );
+            let mut report = match station.subscribe(sub_set).await {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("[Bridge::tlb-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
+                        exchange_id, symbol_canonical, symbol_wire, e);
+                    return;
+                }
+            };
+            while let Some(ev) = report.handle.recv().await {
+                if let digdigdig3_station::Event::ThreeLineBreakUpdate { point, .. } = ev {
+                    let _ = tx.send(LiveUpdate::ThreeLineBreakUpdate {
+                        exchange_id, account_type,
+                        symbol: symbol_canonical.clone(),
+                        point,
+                    });
+                }
+            }
+            eprintln!("[Bridge::tlb-fwd exited] {:?} {} stream={}",
                 exchange_id, symbol_canonical, stream_label);
         })
     }
