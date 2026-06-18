@@ -1190,27 +1190,30 @@ impl ChartContainer {
         }
     }
 
-    /// Recompute the Heikin Ashi memo if (and only if) `bars` has
-    /// changed since the last build. Returns a slice borrowing from
-    /// `self.ha_cache`. Called once per frame BEFORE
-    /// `render_full_chart_panel` so the HA renderer can read the cache.
-    pub fn ensure_ha_cache(&mut self) {
-        let last = self.bars.last();
+    /// Recompute the Heikin Ashi memo if the supplied bars slice has changed
+    /// since the last build. Phase X0 / C5b (2026-06-19): caller passes the
+    /// bubble's `bars` slice; cache stays on the window because it is a
+    /// per-window render-time optimization.
+    pub fn ensure_ha_cache_from_bars(
+        &mut self,
+        bars: &[Bar],
+    ) {
+        let last = bars.last();
         let stamp = (
-            self.bars.len(),
+            bars.len(),
             last.map(|b| b.ts_ms()).unwrap_or(0),
             last.map(|b| b.close.to_bits()).unwrap_or(0),
             last.map(|b| b.high.to_bits()).unwrap_or(0),
             last.map(|b| b.low.to_bits()).unwrap_or(0),
         );
         if self.ha_cache_stamp == Some(stamp) && self.ha_cache.is_some() { return; }
-        if self.bars.is_empty() {
+        if bars.is_empty() {
             self.ha_cache = Some(Vec::new());
             self.ha_cache_stamp = Some(stamp);
             return;
         }
-        let mut out: Vec<crate::types::HaBar> = Vec::with_capacity(self.bars.len());
-        let first = &self.bars[0];
+        let mut out: Vec<crate::types::HaBar> = Vec::with_capacity(bars.len());
+        let first = &bars[0];
         let mut prev_open = (first.open + first.close) * 0.5;
         let mut prev_close = (first.open + first.high + first.low + first.close) * 0.25;
         out.push(crate::types::HaBar {
@@ -1220,7 +1223,7 @@ impl ChartContainer {
             low: first.low.min(prev_open).min(prev_close),
             close: prev_close,
         });
-        for bar in &self.bars[1..] {
+        for bar in &bars[1..] {
             let ha_close = (bar.open + bar.high + bar.low + bar.close) * 0.25;
             let ha_open = (prev_open + prev_close) * 0.5;
             let ha_high = bar.high.max(ha_open).max(ha_close);
@@ -1247,15 +1250,16 @@ impl ChartContainer {
     /// For Session / Composite modes the filtering is done inside `filter_bars_for_mode`.
     ///
     /// `bucket_count` controls bucket granularity (24 is a reasonable default).
-    pub fn ensure_vp(&mut self, visible_bars: &[Bar], bucket_count: usize) {
+    pub fn ensure_vp_from_bars(
+        &mut self,
+        bars: &[Bar],
+        visible_bars: &[Bar],
+        bucket_count: usize,
+    ) {
         use crate::chart::volume_profile::{VolumeProfileData, VpMode, filter_bars_for_mode};
 
         let mode = self.vp_mode;
 
-        // Stamp: (bars.len, last_ts_ms, view_start_idx, visible_count, mode_hash,
-        //         last_close_bits, last_high_bits, last_low_bits)
-        // The three _bits fields detect in-place mutation of the still-open last bar
-        // (live tick update: same len + ts but different close/high/low).
         let mode_hash: u64 = match mode {
             VpMode::VisibleRange => 0,
             VpMode::Session => 1,
@@ -1264,9 +1268,9 @@ impl ChartContainer {
             }
             VpMode::Composite => 3,
         };
-        let vp_last = self.bars.last();
+        let vp_last = bars.last();
         let stamp = (
-            self.bars.len(),
+            bars.len(),
             vp_last.map(|b| b.ts_ms()).unwrap_or(0),
             self.viewport.view_start_idx(),
             visible_bars.len(),
@@ -1281,7 +1285,7 @@ impl ChartContainer {
 
         let bars_to_profile: Vec<&Bar> = match mode {
             VpMode::VisibleRange => visible_bars.iter().collect(),
-            _ => filter_bars_for_mode(&self.bars, mode, 5),
+            _ => filter_bars_for_mode(bars, mode, 5),
         };
 
         if bars_to_profile.is_empty() {
@@ -1290,7 +1294,6 @@ impl ChartContainer {
             return;
         }
 
-        // Build an owned Vec<Bar> for the profile (bars_to_profile borrows self.bars).
         let owned: Vec<Bar> = bars_to_profile.into_iter().copied().collect();
         self.vp_overlay = Some(VolumeProfileData::compute(&owned, mode, 0.70, bucket_count));
         self.vp_overlay_stamp = Some(stamp);

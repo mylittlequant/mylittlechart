@@ -220,6 +220,17 @@ impl ChartApp {
         //
         // Defensive cleanup: if a stale time_axis from an earlier session
         // (pre-cutover) lingers on the viewport, drop it back to index.
+        // Phase X0 / C5b: ensure_ha_cache / ensure_vp now read bars from the
+        // bubble. We collect the bubble snapshots up front (immutable borrow on
+        // managers.bubble) so the mut-loop over containers can pass `&bubble`
+        // into the per-window helpers without re-borrowing the store.
+        let bubble_snapshot: std::collections::HashMap<
+            mlc_core::tag_manager::BubbleId,
+            (Vec<mlc_core::Bar>,)
+        > = self.managers.bubble.bubbles()
+            .map(|b| (b.id, (b.bars.clone(),)))
+            .collect();
+
         for (_cid, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
             if window.viewport.is_time_axis() {
                 window.viewport.disable_time_axis();
@@ -232,23 +243,27 @@ impl ChartApp {
                 .get(&window.chart_panel_id)
                 .map(|p| p.chart_type == "heikin_ashi")
                 .unwrap_or(false);
+            let bubble_bars: &[mlc_core::Bar] = bubble_snapshot
+                .get(&window.current_bubble_id)
+                .map(|(b,)| b.as_slice())
+                .unwrap_or(&[]);
             if is_ha {
-                window.ensure_ha_cache();
+                // Cheap proxy bubble carrying just the bars slice — ensure_ha_cache
+                // only reads bars + stamp. Avoids re-borrowing self.managers.bubble.
+                window.ensure_ha_cache_from_bars(bubble_bars);
             }
 
             // Volume Profile prepass — recompute when the visible slice, mode,
             // or bars change. Cheap when the stamp matches (one tuple comparison).
             if window.vp_show {
                 let (vis_start, vis_end) = window.viewport.visible_range();
-                let vis_end_clamped = vis_end.min(window.bars.len());
-                // Clone into an owned Vec to avoid a simultaneous borrow of
-                // `window.bars` (immutable) and `window` (mutable via ensure_vp).
+                let vis_end_clamped = vis_end.min(bubble_bars.len());
                 let visible_owned: Vec<mlc_core::Bar> = if vis_start <= vis_end_clamped {
-                    window.bars[vis_start..vis_end_clamped].to_vec()
+                    bubble_bars[vis_start..vis_end_clamped].to_vec()
                 } else {
                     Vec::new()
                 };
-                window.ensure_vp(&visible_owned, 24);
+                window.ensure_vp_from_bars(bubble_bars, &visible_owned, 24);
             }
         }
 
