@@ -1,3 +1,5 @@
+# diag logs from footprint pipeline debugging
+footprint-diag*.log
 # Build artifacts
 /target
 Cargo.lock
