@@ -2267,10 +2267,10 @@ impl DataBridge {
             while let Some(ev) = report.handle.recv().await {
                 if let digdigdig3_station::Event::Footprint { point, .. } = ev {
                     fp_n = fp_n.wrapping_add(1);
-                    if fp_n <= 3 || fp_n % 50 == 0 {
+                    if fp_n <= 5 || fp_n % 50 == 0 {
                         eprintln!(
-                            "[Bridge::footprint-fwd emit FootprintUpdate] n={} {:?} {} stream={} open_time={}",
-                            fp_n, exchange_id, symbol_canonical, stream_label, point.open_time,
+                            "[bridge-fp-fwd] emit n={} {:?} {} open_time={} levels.len={} vol={:.4}",
+                            fp_n, exchange_id, symbol_canonical, point.open_time, point.levels.len(), point.volume,
                         );
                     }
                     // Upsert-by-timestamp into the shared Vec BEFORE the

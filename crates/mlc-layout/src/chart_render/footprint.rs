@@ -35,7 +35,6 @@
 use mlc_core::render::{RenderContext, TextAlign, TextBaseline};
 use mlc_core::types::FootprintBar;
 use super::ChartRenderState;
-use super::candles::draw_candles;
 
 /// Minimum bar width (px) before we render text. Below this, collapse
 /// to a candle visual.
@@ -101,9 +100,11 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
     let bars = match state.footprint_bars {
         Some(b) if !b.is_empty() => b,
         _ => {
-            // No footprint data yet — show OHLCV candles so the chart is not
-            // a blank canvas while the bridge accumulates the first bar.
-            draw_candles(ctx, state);
+            // No footprint data yet — show explicit empty-state instead of
+            // pretending with candles. Owner needs to see "we have nothing"
+            // not a fake series.
+            eprintln!("[fp-render] state.footprint_bars empty/None — drawing No-data placeholder");
+            draw_no_data_placeholder(ctx, state, "Footprint: waiting for data…");
             return;
         }
     };
@@ -113,15 +114,21 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
     let rect = &state.chart_rect;
     let bar_w = viewport.bar_width();
 
-    // Collapse to candle visual when too zoomed-out for legible text.
+    eprintln!(
+        "[fp-render] enter: bars.len()={} bar_w={:.2} chart_rect=({:.0}x{:.0}) price_range={:.2}",
+        bars.len(), bar_w, rect.width, rect.height, price_scale.price_max - price_scale.price_min,
+    );
+
     if bar_w < MIN_BAR_WIDTH_PX {
-        draw_candles(ctx, state);
+        eprintln!("[fp-render] bar_w {:.2} < MIN_BAR_WIDTH_PX {:.0} — drawing zoom-out placeholder", bar_w, MIN_BAR_WIDTH_PX);
+        draw_no_data_placeholder(ctx, state, "Footprint: zoom in to see clusters");
         return;
     }
 
     let font_size = ((bar_w / 8.5).clamp(MIN_FONT_SIZE_PX, 16.0)).round();
     if font_size < MIN_FONT_SIZE_PX {
-        draw_candles(ctx, state);
+        eprintln!("[fp-render] font_size {:.0} < MIN — drawing zoom-out placeholder", font_size);
+        draw_no_data_placeholder(ctx, state, "Footprint: zoom in to see clusters");
         return;
     }
 
@@ -153,16 +160,19 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
     // still readable behind the cluster text.
     draw_wicks(ctx, state, bars, start, end, bar_w);
 
-    // Then the per-level cluster grid. For bars with no live cluster data
-    // (historical OHLC bars seeded by the klines backfill) draw a plain
-    // candle body so the chart is not blank to the left of live bars.
+    // Then the per-level cluster grid. Bars with empty levels are SKIPPED
+    // (no fake candle fallback — owner gets honest "no cluster data" for
+    // historical klines-only bars). The wick line drawn above still shows
+    // price excursion so the chart is not a blank canvas.
+    let mut bars_drawn = 0_usize;
+    let mut bars_skipped_empty = 0_usize;
     for i in start..end {
         let bar = &bars[i];
         if bar.levels.is_empty() {
-            // OHLC skeleton: body only — wicks already drawn by draw_wicks above.
-            draw_fp_ohlc_body(ctx, state, bar, i, bar_w);
+            bars_skipped_empty += 1;
             continue;
         }
+        bars_drawn += 1;
         let cx = viewport.bar_to_x(i) + rect.x;
         let cell_left  = cx - bar_w * 0.5;
         let cell_right = cx + bar_w * 0.5;
@@ -344,6 +354,11 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
         ctx.stroke();
     }
 
+    eprintln!(
+        "[fp-render] visible_range=[{}..{}) drawn_with_clusters={} skipped_empty_levels={} tick_size={:.4} row_h={:.2}",
+        start, end, bars_drawn, bars_skipped_empty, tick_size, row_h,
+    );
+
     // F5: CVD sub-strip across the visible window.
     if let Some((strip_y, strip_h)) = cvd_strip {
         draw_cvd_strip(ctx, state, bars, start, end, bar_w, strip_y, strip_h);
@@ -354,6 +369,18 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.set_line_dash(&[]);
+}
+
+/// Honest empty state — text in the middle of the chart, no fake bars.
+fn draw_no_data_placeholder(ctx: &mut dyn RenderContext, state: &ChartRenderState, msg: &str) {
+    let rect = &state.chart_rect;
+    ctx.set_fill_color("#787878");
+    ctx.set_font("12px sans-serif");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(msg, rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
 }
 
 /// CVD line drawn into a reserved horizontal strip at the bottom of the
@@ -466,23 +493,65 @@ fn fmt_vol(v: f64) -> String {
 
 /// Best-effort tick size from level spacing on the latest non-empty bar.
 fn infer_tick_size(bars: &[FootprintBar]) -> f64 {
-    for bar in bars.iter().rev().take(20) {
-        if bar.levels.len() < 2 {
-            continue;
-        }
-        // Smallest positive delta between consecutive levels.
-        let mut min_step = f64::INFINITY;
-        for w in bar.levels.windows(2) {
-            let d = (w[1].price - w[0].price).abs();
-            if d > 0.0 && d < min_step {
-                min_step = d;
+    // Aim for ~25-40 visible rows per bar (industry-standard density for
+    // legible cluster grids). The dig3 aggregator groups by raw f64 price,
+    // so each trade tick becomes its own level — thousands of rows per bar
+    // is the default, which renders as a vertical noise smear at typical
+    // chart heights. Quantize down to a "round" step picked from the
+    // ladder {0.01, 0.05, 0.1, 0.5, 1, 5, 10, 50, 100, 500, 1000}.
+    const ROW_TARGET: f64 = 32.0;
+    const STEP_LADDER: &[f64] = &[
+        0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 50.0, 100.0, 500.0, 1000.0,
+    ];
+    let mut best_span = 0.0_f64;
+    for bar in bars.iter().rev().take(8) {
+        if bar.high > bar.low && bar.high.is_finite() && bar.low.is_finite() {
+            let span = bar.high - bar.low;
+            if span > best_span {
+                best_span = span;
             }
         }
-        if min_step.is_finite() {
-            return min_step;
+    }
+    if best_span <= 0.0 {
+        return 1.0;
+    }
+    let raw = best_span / ROW_TARGET;
+    // Snap up to the next ladder step.
+    for &s in STEP_LADDER {
+        if s >= raw {
+            return s;
         }
     }
-    1.0
+    *STEP_LADDER.last().unwrap()
+}
+
+/// Bin a bar's per-trade levels into a coarser `tick_size` ladder so the
+/// cluster grid has ~25-40 legible rows instead of thousands of single-
+/// trade entries from the dig3 aggregator. NOT YET WIRED — pending the
+/// pipeline diag pass (we need to see how many levels actually arrive
+/// before deciding whether to bin in mlc or fix dig3 aggregator).
+#[allow(dead_code)]
+fn quantize_levels(bar: &FootprintBar, tick_size: f64) -> Vec<mlc_core::types::FootprintLevel> {
+    if tick_size <= 0.0 || bar.levels.is_empty() {
+        return bar.levels.clone();
+    }
+    use std::collections::BTreeMap;
+    let mut buckets: BTreeMap<i64, (f64, f64)> = BTreeMap::new();
+    for lv in &bar.levels {
+        let key = (lv.price / tick_size).round() as i64;
+        let entry = buckets.entry(key).or_insert((0.0, 0.0));
+        entry.0 += lv.buy_vol;
+        entry.1 += lv.sell_vol;
+    }
+    buckets.into_iter().map(|(key, (buy, sell))| {
+        mlc_core::types::FootprintLevel {
+            price: key as f64 * tick_size,
+            buy_vol: buy,
+            sell_vol: sell,
+            is_single_print: false,
+            is_unfinished: false,
+        }
+    }).collect()
 }
 
 fn price_to_y_local(price: f64, ps: &mlc_core::chart::types::PriceScale, h: f64) -> f64 {
@@ -491,39 +560,6 @@ fn price_to_y_local(price: f64, ps: &mlc_core::chart::types::PriceScale, h: f64)
         return h * 0.5;
     }
     h * (1.0 - (price - ps.price_min) / range)
-}
-
-/// Draw an OHLC candle body (no wick — wicks come from `draw_wicks`) for a
-/// footprint bar that has no cluster level data yet.  Used to fill the
-/// left-hand side of the chart with klines-backfill history.
-fn draw_fp_ohlc_body(
-    ctx: &mut dyn RenderContext,
-    state: &ChartRenderState,
-    bar: &FootprintBar,
-    bar_index: usize,
-    bar_w: f64,
-) {
-    let viewport = state.viewport;
-    let price_scale = state.price_scale;
-    let rect = &state.chart_rect;
-    let theme = state.theme;
-
-    let cx = viewport.bar_to_x(bar_index) + rect.x;
-    let cell_left = cx - bar_w * 0.5;
-    let cell_right = cx + bar_w * 0.5;
-    if cell_right < rect.x || cell_left > rect.x + rect.width {
-        return;
-    }
-
-    let is_up = bar.is_bullish();
-    let body_color = if is_up { &theme.candle_up } else { &theme.candle_down };
-
-    let top_y = rect.y + price_to_y_local(bar.open.max(bar.close), price_scale, rect.height);
-    let bot_y = rect.y + price_to_y_local(bar.open.min(bar.close), price_scale, rect.height);
-    let body_h = (bot_y - top_y).max(1.0);
-
-    ctx.set_fill_color(body_color);
-    ctx.fill_rect(cell_left, top_y, bar_w, body_h);
 }
 
 #[cfg(test)]
