@@ -219,6 +219,60 @@ pub struct DataBubble {
 
     /// Padding between marker and bar in pixels. Default: 3.0.
     pub marker_padding: f64,
+
+    // =========================================================================
+    // === Per-Kind series storage (Phase X0, 2026-06-19) ======================
+    // =========================================================================
+    // Owner mandate: the bubble is a storage hub. Bridge writes raw via the
+    // append_*/replace_*/clear_* methods below. Methods mutate ONLY the
+    // storage — no viewport calls, no derived recompute, no callbacks.
+    // Consumers (ChartContainer) PULL state during their own frame prepare.
+    // See nemo/docs/mlc/plans/xaxis-phase-x0-ownership-refactor-2026-06-19.md
+    // =========================================================================
+
+    /// OHLC bars for the bubble's instrument. Written by `BarsLoaded`,
+    /// `BackfillComplete`, `ScrollBarsLoaded`, `BarUpdate`, `TradeUpdate`.
+    pub bars: Vec<crate::Bar>,
+
+    /// Footprint cluster bars. Written by `FootprintUpdate`.
+    pub footprint_bars: Option<Vec<crate::types::FootprintBar>>,
+
+    /// Renko bricks. Written by `RenkoBarUpdate`.
+    pub renko_bars: Option<Vec<crate::types::RenkoBrick>>,
+
+    /// Three Line Break lines. Written by `ThreeLineBreakUpdate`.
+    pub three_line_break: Option<Vec<crate::types::ThreeLineBreakLine>>,
+
+    /// Point-and-Figure columns. Written by `PnfBarUpdate`.
+    pub pnf_columns: Option<Vec<crate::types::PnfColumn>>,
+
+    /// Kagi segments. Written by `KagiBarUpdate`.
+    pub kagi_segments: Option<Vec<crate::types::KagiSegment>>,
+
+    /// Cumulative Volume Delta samples. Written by `CvdLineUpdate`.
+    pub cvd_line: Option<Vec<crate::types::CvdSample>>,
+
+    /// TPO Market Profile session snapshots. Written by `TpoProfileUpdate`.
+    pub tpo_sessions: Option<Vec<crate::types::TpoSession>>,
+
+    /// Open Interest Δ bars. Written by `OpenInterestUpdate`.
+    pub oi_delta: Option<Vec<crate::types::OiDeltaBar>>,
+
+    /// Funding Rate cells. Written by `FundingRateUpdate`.
+    pub funding_rate: Option<Vec<crate::types::FundingRateCell>>,
+
+    /// DOM heatmap ring buffer. Written by `DomHeatmapSnapshot`.
+    pub dom_heatmap: Option<crate::chart::dom_heatmap::DomHeatmapBuffer>,
+
+    /// DOM trade-circle ring overlay. Written by `DomTradeDot`.
+    pub dom_trade_dots: Option<Vec<crate::chart::dom_heatmap::DomTradeDot>>,
+
+    /// Liquidation heatmap ring buffer. Written by `LiquidationBucketUpdate`
+    /// (and aggregated from `LiquidationEvent`).
+    pub liq_heatmap: Option<crate::chart::liquidation_heatmap::LiquidationHeatmapBuffer>,
+
+    /// Liquidation dot overlay. Written by `LiquidationEvent`.
+    pub liq_dots: Option<Vec<crate::chart::liquidation_heatmap::LiquidationDot>>,
 }
 
 
@@ -241,6 +295,97 @@ impl DataBubble {
             .unwrap_or(self.sync_flags.sync_crosshair)
     }
 
+    // =========================================================================
+    // === Per-Kind storage mutators (Phase X0) ================================
+    // =========================================================================
+    // Mutate ONLY the storage field. No viewport calls, no derived recompute,
+    // no callbacks. Consumers pull state and run their own reconcile.
+    // =========================================================================
+
+    pub fn replace_bars(&mut self, bars: Vec<crate::Bar>) { self.bars = bars; }
+    pub fn append_bar(&mut self, bar: crate::Bar) { self.bars.push(bar); }
+    pub fn last_bar_mut(&mut self) -> Option<&mut crate::Bar> { self.bars.last_mut() }
+    pub fn clear_bars(&mut self) { self.bars.clear(); }
+
+    pub fn append_footprint(&mut self, bar: crate::types::FootprintBar) {
+        self.footprint_bars.get_or_insert_with(Vec::new).push(bar);
+    }
+    pub fn last_footprint_mut(&mut self) -> Option<&mut crate::types::FootprintBar> {
+        self.footprint_bars.as_mut().and_then(|v| v.last_mut())
+    }
+    pub fn clear_footprint(&mut self) { self.footprint_bars = None; }
+
+    pub fn append_renko(&mut self, brick: crate::types::RenkoBrick) {
+        self.renko_bars.get_or_insert_with(Vec::new).push(brick);
+    }
+    pub fn clear_renko(&mut self) { self.renko_bars = None; }
+
+    pub fn append_three_line_break(&mut self, line: crate::types::ThreeLineBreakLine) {
+        self.three_line_break.get_or_insert_with(Vec::new).push(line);
+    }
+    pub fn clear_three_line_break(&mut self) { self.three_line_break = None; }
+
+    pub fn append_pnf(&mut self, col: crate::types::PnfColumn) {
+        self.pnf_columns.get_or_insert_with(Vec::new).push(col);
+    }
+    pub fn last_pnf_mut(&mut self) -> Option<&mut crate::types::PnfColumn> {
+        self.pnf_columns.as_mut().and_then(|v| v.last_mut())
+    }
+    pub fn clear_pnf(&mut self) { self.pnf_columns = None; }
+
+    pub fn append_kagi(&mut self, seg: crate::types::KagiSegment) {
+        self.kagi_segments.get_or_insert_with(Vec::new).push(seg);
+    }
+    pub fn clear_kagi(&mut self) { self.kagi_segments = None; }
+
+    pub fn append_cvd(&mut self, sample: crate::types::CvdSample) {
+        self.cvd_line.get_or_insert_with(Vec::new).push(sample);
+    }
+    pub fn clear_cvd(&mut self) { self.cvd_line = None; }
+
+    pub fn append_tpo(&mut self, sess: crate::types::TpoSession) {
+        self.tpo_sessions.get_or_insert_with(Vec::new).push(sess);
+    }
+    pub fn last_tpo_mut(&mut self) -> Option<&mut crate::types::TpoSession> {
+        self.tpo_sessions.as_mut().and_then(|v| v.last_mut())
+    }
+    pub fn clear_tpo(&mut self) { self.tpo_sessions = None; }
+
+    pub fn append_oi(&mut self, point: crate::types::OiDeltaBar) {
+        self.oi_delta.get_or_insert_with(Vec::new).push(point);
+    }
+    pub fn clear_oi(&mut self) { self.oi_delta = None; }
+
+    pub fn append_funding(&mut self, point: crate::types::FundingRateCell) {
+        self.funding_rate.get_or_insert_with(Vec::new).push(point);
+    }
+    pub fn clear_funding(&mut self) { self.funding_rate = None; }
+
+    pub fn dom_heatmap_mut(&mut self) -> &mut Option<crate::chart::dom_heatmap::DomHeatmapBuffer> {
+        &mut self.dom_heatmap
+    }
+    pub fn clear_dom_heatmap(&mut self) { self.dom_heatmap = None; }
+
+    pub fn append_dom_trade_dot(&mut self, dot: crate::chart::dom_heatmap::DomTradeDot) {
+        self.dom_trade_dots.get_or_insert_with(Vec::new).push(dot);
+    }
+    pub fn dom_trade_dots_mut(&mut self) -> Option<&mut Vec<crate::chart::dom_heatmap::DomTradeDot>> {
+        self.dom_trade_dots.as_mut()
+    }
+    pub fn clear_dom_trade_dots(&mut self) { self.dom_trade_dots = None; }
+
+    pub fn liq_heatmap_mut(&mut self) -> &mut Option<crate::chart::liquidation_heatmap::LiquidationHeatmapBuffer> {
+        &mut self.liq_heatmap
+    }
+    pub fn clear_liq_heatmap(&mut self) { self.liq_heatmap = None; }
+
+    pub fn append_liq_dot(&mut self, dot: crate::chart::liquidation_heatmap::LiquidationDot) {
+        self.liq_dots.get_or_insert_with(Vec::new).push(dot);
+    }
+    pub fn liq_dots_mut(&mut self) -> Option<&mut Vec<crate::chart::liquidation_heatmap::LiquidationDot>> {
+        self.liq_dots.as_mut()
+    }
+    pub fn clear_liq_dots(&mut self) { self.liq_dots = None; }
 }
 
 impl Clone for DataBubble {
@@ -277,6 +422,21 @@ impl Clone for DataBubble {
             marker_recalculation_required: self.marker_recalculation_required,
             marker_base_size: self.marker_base_size,
             marker_padding: self.marker_padding,
+            // === Per-Kind storage (Phase X0) ===
+            bars: self.bars.clone(),
+            footprint_bars: self.footprint_bars.clone(),
+            renko_bars: self.renko_bars.clone(),
+            three_line_break: self.three_line_break.clone(),
+            pnf_columns: self.pnf_columns.clone(),
+            kagi_segments: self.kagi_segments.clone(),
+            cvd_line: self.cvd_line.clone(),
+            tpo_sessions: self.tpo_sessions.clone(),
+            oi_delta: self.oi_delta.clone(),
+            funding_rate: self.funding_rate.clone(),
+            dom_heatmap: self.dom_heatmap.clone(),
+            dom_trade_dots: self.dom_trade_dots.clone(),
+            liq_heatmap: self.liq_heatmap.clone(),
+            liq_dots: self.liq_dots.clone(),
         }
     }
 }
@@ -401,6 +561,21 @@ impl BubbleStore {
             marker_recalculation_required: false,
             marker_base_size: 10.0,
             marker_padding: 3.0,
+            // === Per-Kind storage (Phase X0) ===
+            bars: Vec::new(),
+            footprint_bars: None,
+            renko_bars: None,
+            three_line_break: None,
+            pnf_columns: None,
+            kagi_segments: None,
+            cvd_line: None,
+            tpo_sessions: None,
+            oi_delta: None,
+            funding_rate: None,
+            dom_heatmap: None,
+            dom_trade_dots: None,
+            liq_heatmap: None,
+            liq_dots: None,
         };
         self.bubbles.insert(id, bubble);
         id
@@ -445,6 +620,21 @@ impl BubbleStore {
             marker_recalculation_required: false,
             marker_base_size: 10.0,
             marker_padding: 3.0,
+            // === Per-Kind storage (Phase X0) ===
+            bars: Vec::new(),
+            footprint_bars: None,
+            renko_bars: None,
+            three_line_break: None,
+            pnf_columns: None,
+            kagi_segments: None,
+            cvd_line: None,
+            tpo_sessions: None,
+            oi_delta: None,
+            funding_rate: None,
+            dom_heatmap: None,
+            dom_trade_dots: None,
+            liq_heatmap: None,
+            liq_dots: None,
         };
         self.bubbles.insert(id, bubble);
         id
@@ -582,6 +772,27 @@ impl BubbleStore {
             .and_then(|bid| self.bubble(bid))
             .map(|b| b.account_type.as_str())
             .filter(|s| !s.is_empty())
+    }
+
+    /// Resolve the bubble that owns the given instrument coordinates.
+    ///
+    /// Reverse of `symbol_for_chart` / `exchange_for_chart` / `account_type_for_chart`:
+    /// instead of "what does this chart show?", answers "which bubble holds the
+    /// stream for `(exchange, account_type, symbol)`?". Used by the live-data
+    /// bridge to route per-Kind series writes into bubble storage (Phase X0).
+    ///
+    /// Returns the first matching bubble. Instrument coordinates are intended
+    /// to be unique per bubble.
+    pub fn bubble_for_instrument(
+        &self,
+        exchange: &str,
+        account_type: &str,
+        symbol: &str,
+    ) -> Option<BubbleId> {
+        self.bubbles.iter().find_map(|(id, b)| {
+            (b.exchange == exchange && b.account_type == account_type && b.symbol == symbol)
+                .then_some(*id)
+        })
     }
 
     /// Previous close price of the bubble that contains `chart_id`. `None` when no bubble or unset.
@@ -1038,6 +1249,23 @@ impl BubbleStore {
             marker_recalculation_required: !snap.markers.is_empty(),
             marker_base_size: 10.0,
             marker_padding: 3.0,
+            // === Per-Kind storage (Phase X0) ===
+            // Not persisted in snapshot; bubble starts empty and fills from
+            // the next bridge tick after restore.
+            bars: Vec::new(),
+            footprint_bars: None,
+            renko_bars: None,
+            three_line_break: None,
+            pnf_columns: None,
+            kagi_segments: None,
+            cvd_line: None,
+            tpo_sessions: None,
+            oi_delta: None,
+            funding_rate: None,
+            dom_heatmap: None,
+            dom_trade_dots: None,
+            liq_heatmap: None,
+            liq_dots: None,
         };
 
         // Advance ID counters past any restored IDs so new entries never
