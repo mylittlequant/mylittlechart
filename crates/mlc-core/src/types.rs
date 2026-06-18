@@ -511,6 +511,11 @@ impl RenkoBrick {
 /// `digdigdig3_station::data::PnfColumnPoint`. Renderer groups consecutive
 /// emits with the same `column_id` into one column block (the same id
 /// emits multiple times as the column extends).
+///
+/// `box_size` is the fixed user-supplied price increment (from
+/// `Kind::PnfBar(box_size_e8, _)` decoded as `box_size_e8 as f64 / 1e8`).
+/// Populated by the bridge at subscription time — renderer uses it directly,
+/// no geometry-based heuristic.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PnfColumn {
     pub open_time: i64,
@@ -520,6 +525,9 @@ pub struct PnfColumn {
     pub top: f64,
     pub volume: f64,
     pub trades_count: u64,
+    /// Fixed box size in native price units (e.g. 10.0 for a $10 box on BTC).
+    /// Supplied by the analyst via toolbar; never inferred from column geometry.
+    pub box_size: f64,
 }
 
 impl PnfColumn {

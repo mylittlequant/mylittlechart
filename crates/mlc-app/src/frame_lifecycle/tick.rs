@@ -1391,7 +1391,7 @@ impl ChartApp {
                 }
                 // P&F column stream — emit may update the current open
                 // column (same column_id) or roll into a new one.
-                LiveUpdate::PnfBarUpdate { account_type: at, symbol: sym, point, .. } => {
+                LiveUpdate::PnfBarUpdate { account_type: at, symbol: sym, point, box_size: bs, .. } => {
                     let at_label = at.short_label();
                     let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
                         let panels_store = &self.panels_store;
@@ -1416,6 +1416,7 @@ impl ChartApp {
                         top: point.top,
                         volume: point.volume,
                         trades_count: point.trades_count,
+                        box_size: bs,
                     };
                     for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !target_cids.contains(cid_) { continue; }
@@ -1519,7 +1520,14 @@ impl ChartApp {
                         let store = window.tpo_sessions.get_or_insert_with(Vec::new);
                         match store.last_mut() {
                             Some(last) if last.open_time == session.open_time => *last = session.clone(),
-                            _ => store.push(session.clone()),
+                            _ => {
+                                store.push(session.clone());
+                                // Keep at most 11 sessions: 10 closed + 1 current.
+                                const MAX_TPO_SESSIONS: usize = 11;
+                                while store.len() > MAX_TPO_SESSIONS {
+                                    store.remove(0);
+                                }
+                            }
                         }
                     }
                 }

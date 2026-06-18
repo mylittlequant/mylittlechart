@@ -12,7 +12,6 @@
 //! render "O".
 
 use mlc_core::render::RenderContext;
-use mlc_core::types::PnfColumn;
 use super::ChartRenderState;
 
 /// Draw P&F columns from `state.pnf_columns`.
@@ -34,10 +33,11 @@ pub fn draw_pnf(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     let end = end.min(columns.len());
     if start >= end { return; }
 
-    // Detect box size: smallest delta between consecutive box edges
-    // across all visible columns. Falls back to 1% of price_range.
-    let box_size = infer_box_size(&columns[start..end])
-        .unwrap_or_else(|| (price_range * 0.01).max(0.01));
+    // Box size is the fixed user-supplied increment stored on every column by
+    // the bridge (from `Kind::PnfBar(box_size_units, _)` at subscription time).
+    // Using the first visible column is correct for the full visible window —
+    // all columns in a single P&F subscription share the same box_size.
+    let box_size = columns[start].box_size.max(1e-12);
 
     let box_h_px = (rect.height * box_size / price_range).max(6.0);
     let font_size = (box_h_px * 0.8).clamp(7.0, 18.0);
@@ -72,18 +72,3 @@ pub fn draw_pnf(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     ctx.set_text_baseline(uzor::render::TextBaseline::Top);
 }
 
-/// Infer box size from the spacing within each column.
-fn infer_box_size(columns: &[PnfColumn]) -> Option<f64> {
-    for col in columns {
-        let height = (col.top - col.bottom).abs();
-        if height > 0.0 {
-            // P&F columns are an integer number of boxes — divide height
-            // by box count (which we estimate from the column shape).
-            // Heuristic: 1 box = 1/N where N is at least 1. Use the
-            // smallest delta we can extract.
-            // For a single-box column, height == box_size directly.
-            return Some(height.max(0.01));
-        }
-    }
-    None
-}

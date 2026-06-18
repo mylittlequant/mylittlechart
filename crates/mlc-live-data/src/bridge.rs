@@ -249,6 +249,11 @@ pub enum LiveUpdate {
         account_type: AccountType,
         symbol: String,
         point: digdigdig3_station::data::PnfColumnPoint,
+        /// Fixed box size in native price units (`box_size_units as f64 / 1e8`).
+        /// Derived from the user-supplied `Kind::PnfBar(box_size_units, _)` at
+        /// subscription time — passed through so the renderer never needs to
+        /// infer box size from column geometry.
+        box_size: f64,
     },
 
     /// Live Kagi segment / connector close from a `Stream::KagiBar`
@@ -1598,9 +1603,10 @@ impl DataBridge {
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
         let sub_key = (exchange_id, symbol.to_string(), account_type);
         let stream = digdigdig3_station::Stream::PnfBar(box_size_units, reversal_count);
+        let box_size = box_size_units as f64 / 1e8;
         let handle = Self::spawn_pnf_sub(
             &self.runtime, station, tx, exchange_id, account_type,
-            symbol_str, symbol_wire, stream,
+            symbol_str, symbol_wire, stream, box_size,
         );
         if let Ok(mut subs) = self.derived_subs.lock() {
             subs.insert(sub_key, handle);
@@ -2374,6 +2380,7 @@ impl DataBridge {
         symbol_canonical: String,
         symbol_wire: String,
         stream: digdigdig3_station::Stream,
+        box_size: f64,
     ) -> tokio::task::JoinHandle<()> {
         runtime.spawn(async move {
             let stream_label = format!("{:?}", stream);
@@ -2394,6 +2401,7 @@ impl DataBridge {
                         exchange_id, account_type,
                         symbol: symbol_canonical.clone(),
                         point,
+                        box_size,
                     });
                 }
             }
