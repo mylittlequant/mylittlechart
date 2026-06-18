@@ -1818,6 +1818,24 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "columns" => Some(ICON_COLUMNS),
         // Renko uses candlestick as fallback
         "renko" => Some(ICON_CANDLESTICK),
+        // Derived bar chart types — fallback to BarChart / Candlestick / Histogram.
+        // Dedicated SVGs can be added later; these prevent the "blank icon" gap
+        // in chart_type_selector dropdown.
+        "range_bar" | "rangebar" => Some(ICON_BAR_CHART),
+        "volume_bar" | "volumebar" => Some(ICON_BAR_CHART),
+        "tick_bar" | "tickbar" | "tick" => Some(ICON_BAR_CHART),
+        "footprint" => Some(ICON_HISTOGRAM),
+        "pnf" | "point_and_figure" | "pointandfigure" => Some(ICON_BAR_CHART),
+        "kagi" => Some(ICON_LINE_CHART),
+        "three_line_break" | "threelinebreak" | "3lb" => Some(ICON_BAR_CHART),
+        "cvd" => Some(ICON_LINE_CHART),
+        "tpo" | "market_profile" => Some(ICON_HISTOGRAM),
+        "dollar_bar" | "dollarbar" => Some(ICON_BAR_CHART),
+        "tick_imbalance_bar" | "tickimbalancebar" => Some(ICON_BAR_CHART),
+        "volume_imbalance_bar" | "volumeimbalancebar" => Some(ICON_BAR_CHART),
+        "run_bar" | "runbar" => Some(ICON_BAR_CHART),
+        "dom_heatmap" | "domheatmap" => Some(ICON_HISTOGRAM),
+        "liquidation_heatmap" | "liquidationheatmap" => Some(ICON_HISTOGRAM),
 
         // Drawing tools
         "trend_line" | "trendline" => Some(ICON_TREND_LINE),

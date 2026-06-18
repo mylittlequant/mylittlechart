@@ -694,7 +694,7 @@ impl ChartApp {
                                 let derived_chart_type = panels_store.chart_panel
                                     .get(&win.chart_panel_id)
                                     .map(|p| matches!(p.chart_type,
-                                        "range_bar" | "volume_bar" | "footprint"
+                                        "range_bar" | "volume_bar" | "tick_bar" | "footprint"
                                         | "dollar_bar" | "tick_imbalance_bar"
                                         | "volume_imbalance_bar" | "run_bar"
                                     ))
@@ -730,6 +730,14 @@ impl ChartApp {
                         // a BarsLoaded that never comes.
                         if window.pending_symbol_load {
                             window.pending_symbol_load = false;
+                        }
+                        // Consume the cold-snap one-shot flag on the first delivery so the
+                        // last bar lands at the right edge of the viewport (not stranded
+                        // at view_start=0 on the left).
+                        if window.needs_snap_after_backfill
+                            && window.viewport.chart_width > 0.0
+                        {
+                            window.consume_cold_snap();
                         }
 
                         // Upsert: same timestamp → update last bar in-place; newer → push.
@@ -1337,6 +1345,12 @@ impl ChartApp {
                     new_bar_with_static.compute_static_extras(3.0, 3, 0.15, 0.05, tick_size);
                     for (cid_fp, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !footprint_cids.contains(cid_fp) { continue; }
+                        // First derived bar IS the load signal — clear spinner gate and
+                        // snap viewport to the right edge on cold open.
+                        if window.pending_symbol_load { window.pending_symbol_load = false; }
+                        if window.needs_snap_after_backfill && window.viewport.chart_width > 0.0 {
+                            window.consume_cold_snap();
+                        }
                         let store = window.footprint_bars.get_or_insert_with(Vec::new);
                         let prev_cvd = match store.last() {
                             Some(last) if last.open_time != new_bar_with_static.open_time => last.cumulative_delta,
@@ -1386,6 +1400,10 @@ impl ChartApp {
                     };
                     for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !target_cids.contains(cid_) { continue; }
+                        if window.pending_symbol_load { window.pending_symbol_load = false; }
+                        if window.needs_snap_after_backfill && window.viewport.chart_width > 0.0 {
+                            window.consume_cold_snap();
+                        }
                         window.renko_bars.get_or_insert_with(Vec::new).push(brick.clone());
                     }
                 }
@@ -1420,6 +1438,10 @@ impl ChartApp {
                     };
                     for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !target_cids.contains(cid_) { continue; }
+                        if window.pending_symbol_load { window.pending_symbol_load = false; }
+                        if window.needs_snap_after_backfill && window.viewport.chart_width > 0.0 {
+                            window.consume_cold_snap();
+                        }
                         let store = window.pnf_columns.get_or_insert_with(Vec::new);
                         match store.last_mut() {
                             Some(last) if last.column_id == col.column_id => *last = col.clone(),
@@ -1456,6 +1478,10 @@ impl ChartApp {
                     };
                     for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !target_cids.contains(cid_) { continue; }
+                        if window.pending_symbol_load { window.pending_symbol_load = false; }
+                        if window.needs_snap_after_backfill && window.viewport.chart_width > 0.0 {
+                            window.consume_cold_snap();
+                        }
                         window.kagi_segments.get_or_insert_with(Vec::new).push(seg.clone());
                     }
                 }
@@ -1483,6 +1509,10 @@ impl ChartApp {
                     };
                     for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !target_cids.contains(cid_) { continue; }
+                        if window.pending_symbol_load { window.pending_symbol_load = false; }
+                        if window.needs_snap_after_backfill && window.viewport.chart_width > 0.0 {
+                            window.consume_cold_snap();
+                        }
                         window.cvd_line.get_or_insert_with(Vec::new).push(sample);
                     }
                 }
@@ -1517,6 +1547,10 @@ impl ChartApp {
                     };
                     for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !target_cids.contains(cid_) { continue; }
+                        if window.pending_symbol_load { window.pending_symbol_load = false; }
+                        if window.needs_snap_after_backfill && window.viewport.chart_width > 0.0 {
+                            window.consume_cold_snap();
+                        }
                         let store = window.tpo_sessions.get_or_insert_with(Vec::new);
                         match store.last_mut() {
                             Some(last) if last.open_time == session.open_time => *last = session.clone(),
@@ -1559,6 +1593,10 @@ impl ChartApp {
                     };
                     for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !target_cids.contains(cid_) { continue; }
+                        if window.pending_symbol_load { window.pending_symbol_load = false; }
+                        if window.needs_snap_after_backfill && window.viewport.chart_width > 0.0 {
+                            window.consume_cold_snap();
+                        }
                         window.three_line_break.get_or_insert_with(Vec::new).push(line.clone());
                     }
                 }
@@ -1621,6 +1659,10 @@ impl ChartApp {
                     if target_cids.is_empty() { continue; }
                     for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !target_cids.contains(cid_) { continue; }
+                        if window.pending_symbol_load { window.pending_symbol_load = false; }
+                        if window.needs_snap_after_backfill && window.viewport.chart_width > 0.0 {
+                            window.consume_cold_snap();
+                        }
                         const DEFAULT_TICK: f64 = 0.5;
                         window.dom_heatmap
                             .get_or_insert_with(|| mlc_core::chart::dom_heatmap::DomHeatmapBuffer::new(DEFAULT_TICK))
@@ -1673,6 +1715,10 @@ impl ChartApp {
                     if target_cids.is_empty() { continue; }
                     for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !target_cids.contains(cid_) { continue; }
+                        if window.pending_symbol_load { window.pending_symbol_load = false; }
+                        if window.needs_snap_after_backfill && window.viewport.chart_width > 0.0 {
+                            window.consume_cold_snap();
+                        }
                         const DEFAULT_TICK: f64 = 0.5;
                         window.liq_heatmap
                             .get_or_insert_with(|| mlc_core::chart::liquidation_heatmap::LiquidationHeatmapBuffer::new(DEFAULT_TICK))

@@ -644,6 +644,7 @@ fn projection_section() -> ToolbarSectionDef {
             DropdownItemDef::Header { label: MK::HeaderVolume.get(lang).to_string() },
             DropdownItemDef::action("fixed_volume_profile", PN::FixedVolumeProfile.get(lang)).with_icon(ToolbarIconId::new("VolumeProfile")),
             DropdownItemDef::action("anchored_volume_profile", PN::AnchoredVolumeProfile.get(lang)).with_icon(ToolbarIconId::new("VolumeProfile")),
+            DropdownItemDef::action("anchored_vwap", "Anchored VWAP").with_icon(ToolbarIconId::new("LineChart")),
             // Measurement
             DropdownItemDef::Separator,
             DropdownItemDef::Header { label: MK::HeaderMeasurement.get(lang).to_string() },

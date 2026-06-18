@@ -226,6 +226,9 @@ impl ChartApp {
                         // bar before BarsLoaded arrives (which would strand view_start
                         // at 0 = oldest bar at the left edge).
                         window.pending_symbol_load = true;
+                        // Snap to right edge once first batch lands — without this
+                        // the last bar sits at view_start=0 (left edge) after TF switch.
+                        window.needs_snap_after_backfill = true;
                         // NOTE: the X-axis kind (index vs time) is reconciled centrally
                         // in prepare_frame from tf.is_tick() + real bar timestamps — do
                         // NOT set time_axis here (it has no bars to anchor from yet).
