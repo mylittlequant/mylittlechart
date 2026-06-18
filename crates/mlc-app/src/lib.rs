@@ -2717,36 +2717,37 @@ impl ChartApp {
                 let overlay_panel = self.panels_store.chart_panel
                     .get(&overlay_panel_id)
                     .unwrap_or(&overlay_default_panel);
-                let overlay_bubble = self.managers.bubble.bubble(window.current_bubble_id);
-                let render_state = window.to_render_state(
-                    overlay_bubble,
-                    chart_rect,
-                    &chart_theme,
-                    Some(overlay_tf_name.as_str()),
-                    Some(&window.scale_settings.time_format),
-                    overlay_tf_interval_ms,
-                    &overlay_panel.grid_options,
-                    &overlay_panel.legend,
-                );
-                let crosshair_config = mlc_core::chart::CrosshairConfig::default();
-                let render_config = ChartRenderConfig {
-                    scale_theme: self.panel_app.scale_theme_for_render(),
-                    chart_type: overlay_panel.chart_type,
-                    crosshair_config,
-                    ..ChartRenderConfig::default()
-                };
+                if let Some(overlay_bubble) = self.managers.bubble.bubble(window.current_bubble_id) {
+                    let render_state = window.to_render_state(
+                        overlay_bubble,
+                        chart_rect,
+                        &chart_theme,
+                        Some(overlay_tf_name.as_str()),
+                        Some(&window.scale_settings.time_format),
+                        overlay_tf_interval_ms,
+                        &overlay_panel.grid_options,
+                        &overlay_panel.legend,
+                    );
+                    let crosshair_config = mlc_core::chart::CrosshairConfig::default();
+                    let render_config = ChartRenderConfig {
+                        scale_theme: self.panel_app.scale_theme_for_render(),
+                        chart_type: overlay_panel.chart_type,
+                        crosshair_config,
+                        ..ChartRenderConfig::default()
+                    };
 
-                render_chart_overlay(
-                    ctx,
-                    &render_state,
-                    layout,
-                    &render_config,
-                    None, // sub_pane_ranges not cached here; callers needing accurate labels cache from RenderOutput
-                    Some(&overlay_panel.drawing_manager),
-                    Some(&overlay_panel.tooltip),
-                    Some(overlay_symbol.as_str()),
-                    &overlay_tf_name,
-                );
+                    render_chart_overlay(
+                        ctx,
+                        &render_state,
+                        layout,
+                        &render_config,
+                        None, // sub_pane_ranges not cached here; callers needing accurate labels cache from RenderOutput
+                        Some(&overlay_panel.drawing_manager),
+                        Some(&overlay_panel.tooltip),
+                        Some(overlay_symbol.as_str()),
+                        &overlay_tf_name,
+                    );
+                }
             }
         } else {
             // Single-window path: use active_frame_layout.
@@ -2790,36 +2791,37 @@ impl ChartApp {
             let single_panel = self.panels_store.chart_panel
                 .get(&single_pid)
                 .unwrap_or(&single_default_panel);
-            let single_overlay_bubble = self.managers.bubble.bubble(window.current_bubble_id);
-            let render_state = window.to_render_state(
-                single_overlay_bubble,
-                chart_rect,
-                &chart_theme,
-                Some(single_overlay_tf_name.as_str()),
-                Some(&window.scale_settings.time_format),
-                single_overlay_tf_interval_ms,
-                &single_panel.grid_options,
-                &single_panel.legend,
-            );
-            let crosshair_config = mlc_core::chart::CrosshairConfig::default();
-            let render_config = ChartRenderConfig {
-                scale_theme: self.panel_app.scale_theme_for_render(),
-                chart_type: single_panel.chart_type,
-                crosshair_config,
-                ..ChartRenderConfig::default()
-            };
+            if let Some(single_overlay_bubble) = self.managers.bubble.bubble(window.current_bubble_id) {
+                let render_state = window.to_render_state(
+                    single_overlay_bubble,
+                    chart_rect,
+                    &chart_theme,
+                    Some(single_overlay_tf_name.as_str()),
+                    Some(&window.scale_settings.time_format),
+                    single_overlay_tf_interval_ms,
+                    &single_panel.grid_options,
+                    &single_panel.legend,
+                );
+                let crosshair_config = mlc_core::chart::CrosshairConfig::default();
+                let render_config = ChartRenderConfig {
+                    scale_theme: self.panel_app.scale_theme_for_render(),
+                    chart_type: single_panel.chart_type,
+                    crosshair_config,
+                    ..ChartRenderConfig::default()
+                };
 
-            render_chart_overlay(
-                ctx,
-                &render_state,
-                layout,
-                &render_config,
-                None,
-                Some(&single_panel.drawing_manager),
-                Some(&single_panel.tooltip),
-                Some(single_overlay_symbol.as_str()),
-                &single_overlay_tf_name,
-            );
+                render_chart_overlay(
+                    ctx,
+                    &render_state,
+                    layout,
+                    &render_config,
+                    None,
+                    Some(&single_panel.drawing_manager),
+                    Some(&single_panel.tooltip),
+                    Some(single_overlay_symbol.as_str()),
+                    &single_overlay_tf_name,
+                );
+            }
         }
     }
 
@@ -3038,7 +3040,10 @@ impl ChartApp {
                     .get(&split_pid)
                     .unwrap_or(&split_default_panel);
                 let scale_corner_state = window.to_corner_state();
-                let split_bubble = self.managers.bubble.bubble(window.current_bubble_id);
+                let split_bubble = match self.managers.bubble.bubble(window.current_bubble_id) {
+                    Some(b) => b,
+                    None => continue,  // window not yet attached to a bubble
+                };
                 let render_state = window.to_render_state(
                     split_bubble,
                     chart_rect,
@@ -3631,7 +3636,9 @@ impl ChartApp {
                 .and_then(|pid| self.panels_store.chart_panel.get(&pid))
                 .unwrap_or(&single_fallback_panel);
             let window_opt = self.panel_app.panel_grid.active_container();
-            let corner_zones_single = if let Some(window) = window_opt {
+            let corner_zones_single = if let Some(window) = window_opt
+                .filter(|w| self.managers.bubble.bubble(w.current_bubble_id).is_some())
+            {
                 use mlc_core::chart::ChartRect;
                 let chart_rect = ChartRect::new(
                     content_rect.x,
@@ -3639,7 +3646,8 @@ impl ChartApp {
                     content_rect.width,
                     content_rect.height,
                 );
-                let single_window_bubble = self.managers.bubble.bubble(window.current_bubble_id);
+                let single_window_bubble = self.managers.bubble.bubble(window.current_bubble_id)
+                    .expect("checked by filter above");
                 let render_state = window.to_render_state(
                     single_window_bubble,
                     chart_rect,
