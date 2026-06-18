@@ -368,6 +368,18 @@ impl ChartApp {
                         }
                     }
 
+                    // Phase X0 / C2: mirror bars into bubble storage.
+                    // BarsLoaded targets exactly the bubble owning (exchange, account, symbol).
+                    if any_matched {
+                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                            exchange_id.as_str(), account_type.short_label(), &symbol
+                        ) {
+                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                                bubble.bars = bars.clone();
+                            }
+                        }
+                    }
+
                     // Trigger Layer 2 background backfill for initial loads.
                     // Done after the window loop to avoid borrow conflicts with self.bridge.
                     let bg_target = self.panel_app.user_manager.profile.data_load.background_bar_count;
@@ -566,6 +578,15 @@ impl ChartApp {
                         }
                     }
 
+                    // Phase X0 / C2: mirror bars into bubble storage.
+                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                        exchange_id.as_str(), account_type.short_label(), &symbol
+                    ) {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                            bubble.bars = bars.clone();
+                        }
+                    }
+
                     // Recalculate indicators for matched windows.
                     let matched_ids: Vec<(u64, Vec<mlc_core::Bar>)> = self
                         .panel_app
@@ -573,7 +594,7 @@ impl ChartApp {
                         .containers()
                         .iter()
                         .filter(|(cid, _w)| {
-            
+
                             self.managers.bubble.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
                                 && self.managers.bubble.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
                                 && self.managers.bubble.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
@@ -667,8 +688,30 @@ impl ChartApp {
                             self.indicator_manager.calculate_for_window(*wid, bars_for_window);
                         }
                     }
+                    // Phase X0 / C2: mirror first matched window's bars into bubble storage.
+                    // ScrollBarsLoaded replaces the whole window.bars (extended history),
+                    // so mirror the post-window-loop state.
+                    if any_matched {
+                        let mirror = self.panel_app.panel_grid.containers().iter()
+                            .find(|(cid, _w)| {
+                                self.managers.bubble.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
+                                    && self.managers.bubble.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
+                                    && self.managers.bubble.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
+                                    && self.managers.bubble.account_type_for_chart(**cid).map_or(false, |a| a == at_label)
+                            })
+                            .map(|(_, w)| w.bars.clone());
+                        if let Some(mirror_bars) = mirror {
+                            if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                                exchange_id.as_str(), at_label, &symbol
+                            ) {
+                                if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                                    bubble.bars = mirror_bars;
+                                }
+                            }
+                        }
+                    }
                 }
-                LiveUpdate::BarUpdate { exchange_id: _bar_exch, account_type: bar_account_type, symbol: bar_symbol, bar } => {
+                LiveUpdate::BarUpdate { exchange_id: bar_exch, account_type: bar_account_type, symbol: bar_symbol, bar } => {
                     // Derived bar modes (Range/Tick/Volume/Footprint) receive bars
                     // exclusively via BarUpdate from dig3. TimeBased windows still
                     // aggregate from TradeUpdate; this handler is a no-op for them.
@@ -800,6 +843,25 @@ impl ChartApp {
                                     self.indicator_manager.mark_new_bar(sym);
                                 } else {
                                     self.indicator_manager.mark_dirty(sym);
+                                }
+                            }
+                        }
+                    }
+                    // Phase X0 / C2: mirror first matched window's bars into bubble storage.
+                    if bu_symbol_for_recalc.is_some() {
+                        let bar_at_label = bar_account_type.short_label();
+                        let mirror = self.panel_app.panel_grid.containers().iter()
+                            .find(|(cid, _w)| {
+                                self.managers.bubble.symbol_for_chart(**cid).map_or(false, |s| s == bar_symbol.as_str())
+                                    && self.managers.bubble.account_type_for_chart(**cid).map_or(false, |a| a == bar_at_label)
+                            })
+                            .map(|(_, w)| w.bars.clone());
+                        if let Some(mirror_bars) = mirror {
+                            if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                                bar_exch.as_str(), bar_at_label, bar_symbol.as_str()
+                            ) {
+                                if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                                    bubble.bars = mirror_bars;
                                 }
                             }
                         }
@@ -1074,6 +1136,27 @@ impl ChartApp {
                         (symbol.clone(), exchange_id.as_str().to_string(), account_type.short_label().to_string()),
                         price,
                     );
+                    // Phase X0 / C2: mirror first matched window's bars into bubble storage.
+                    // TradeUpdate aggregates into the open bar (in-place) or rolls a new one,
+                    // so the post-loop window.bars carries the live aggregation result.
+                    {
+                        let at_label = account_type.short_label();
+                        let mirror = self.panel_app.panel_grid.containers().iter()
+                            .find(|(cid, _w)| {
+                                self.managers.bubble.symbol_for_chart(**cid).map_or(false, |s| s == symbol.as_str())
+                                    && self.managers.bubble.account_type_for_chart(**cid).map_or(false, |a| a == at_label)
+                            })
+                            .map(|(_, w)| w.bars.clone());
+                        if let Some(mirror_bars) = mirror {
+                            if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                                exchange_id.as_str(), at_label, &symbol
+                            ) {
+                                if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                                    bubble.bars = mirror_bars;
+                                }
+                            }
+                        }
+                    }
                 }
                 LiveUpdate::MiniTickerUpdate { exchange_id, symbol, last_price, price_change_percent, high_price, low_price, volume, account_type } => {
                     // Cache the 24h ticker stats keyed by symbol:exchange:account_type so that
@@ -1278,7 +1361,7 @@ impl ChartApp {
                 // (symbol, account_type) matches this update. The renderer
                 // (`chart_render::footprint::draw_footprint_cluster`) reads
                 // `window.footprint_bars` and paints Bid × Ask per level.
-                LiveUpdate::FootprintUpdate { exchange_id: _fp_exch, account_type: fp_at, symbol: fp_sym, point } => {
+                LiveUpdate::FootprintUpdate { exchange_id, account_type: fp_at, symbol: fp_sym, point } => {
                     let fp_at_label = fp_at.short_label();
                     eprintln!(
                         "[tick-fp] arrived sym={} at={} open_time={} levels.len={} vol={:.4} ohlc=[o={:.2} h={:.2} l={:.2} c={:.2}]",
@@ -1419,12 +1502,29 @@ impl ChartApp {
                             window.bars.push(ohlc_bar);
                         }
                     }
+                    // Phase X0 / C2: mirror window's footprint_bars + bars into bubble storage.
+                    // Take the first matched window's state — all matched windows of
+                    // the same bubble run the same compute, so any one is canonical.
+                    if let Some(first_cid) = footprint_cids.iter().next() {
+                        let (mirror_fp, mirror_bars) = self.panel_app.panel_grid.containers()
+                            .get(first_cid)
+                            .map(|w| (w.footprint_bars.clone(), w.bars.clone()))
+                            .unwrap_or((None, Vec::new()));
+                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                            exchange_id.as_str(), fp_at_label, fp_sym.as_str()
+                        ) {
+                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                                bubble.footprint_bars = mirror_fp;
+                                bubble.bars = mirror_bars;
+                            }
+                        }
+                    }
                     let _ = new_bar;
                 }
                 // Renko brick stream — each emit is one closed brick.
                 // Append to `window.renko_bars` for every window whose
                 // chart_type == "renko" and (symbol, account) matches.
-                LiveUpdate::RenkoBarUpdate { account_type: at, symbol: sym, point, .. } => {
+                LiveUpdate::RenkoBarUpdate { exchange_id, account_type: at, symbol: sym, point } => {
                     let at_label = at.short_label();
                     let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
                         let panels_store = &self.panels_store;
@@ -1457,10 +1557,22 @@ impl ChartApp {
                         }
                         window.renko_bars.get_or_insert_with(Vec::new).push(brick.clone());
                     }
+                    // Phase X0 / C2: mirror first matched window's storage into bubble.
+                    if let Some(first_cid) = target_cids.iter().next() {
+                        let mirror = self.panel_app.panel_grid.containers()
+                            .get(first_cid).and_then(|w| w.renko_bars.clone());
+                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                            exchange_id.as_str(), at_label, sym.as_str()
+                        ) {
+                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                                bubble.renko_bars = mirror;
+                            }
+                        }
+                    }
                 }
                 // P&F column stream — emit may update the current open
                 // column (same column_id) or roll into a new one.
-                LiveUpdate::PnfBarUpdate { account_type: at, symbol: sym, point, box_size: bs, .. } => {
+                LiveUpdate::PnfBarUpdate { exchange_id, account_type: at, symbol: sym, point, box_size: bs } => {
                     let at_label = at.short_label();
                     let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
                         let panels_store = &self.panels_store;
@@ -1499,10 +1611,22 @@ impl ChartApp {
                             _ => store.push(col.clone()),
                         }
                     }
+                    // Phase X0 / C2: mirror first matched window's storage into bubble.
+                    if let Some(first_cid) = target_cids.iter().next() {
+                        let mirror = self.panel_app.panel_grid.containers()
+                            .get(first_cid).and_then(|w| w.pnf_columns.clone());
+                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                            exchange_id.as_str(), at_label, sym.as_str()
+                        ) {
+                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                                bubble.pnf_columns = mirror;
+                            }
+                        }
+                    }
                 }
                 // Kagi segment stream — append-only, one event per
                 // closed segment.
-                LiveUpdate::KagiBarUpdate { account_type: at, symbol: sym, point, .. } => {
+                LiveUpdate::KagiBarUpdate { exchange_id, account_type: at, symbol: sym, point } => {
                     let at_label = at.short_label();
                     let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
                         let panels_store = &self.panels_store;
@@ -1535,9 +1659,21 @@ impl ChartApp {
                         }
                         window.kagi_segments.get_or_insert_with(Vec::new).push(seg.clone());
                     }
+                    // Phase X0 / C2: mirror first matched window's storage into bubble.
+                    if let Some(first_cid) = target_cids.iter().next() {
+                        let mirror = self.panel_app.panel_grid.containers()
+                            .get(first_cid).and_then(|w| w.kagi_segments.clone());
+                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                            exchange_id.as_str(), at_label, sym.as_str()
+                        ) {
+                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                                bubble.kagi_segments = mirror;
+                            }
+                        }
+                    }
                 }
                 // CVD line update — append a scalar sample.
-                LiveUpdate::CvdLineUpdate { account_type: at, symbol: sym, point, .. } => {
+                LiveUpdate::CvdLineUpdate { exchange_id, account_type: at, symbol: sym, point } => {
                     let at_label = at.short_label();
                     let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
                         let panels_store = &self.panels_store;
@@ -1566,10 +1702,22 @@ impl ChartApp {
                         }
                         window.cvd_line.get_or_insert_with(Vec::new).push(sample);
                     }
+                    // Phase X0 / C2: mirror first matched window's storage into bubble.
+                    if let Some(first_cid) = target_cids.iter().next() {
+                        let mirror = self.panel_app.panel_grid.containers()
+                            .get(first_cid).and_then(|w| w.cvd_line.clone());
+                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                            exchange_id.as_str(), at_label, sym.as_str()
+                        ) {
+                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                                bubble.cvd_line = mirror;
+                            }
+                        }
+                    }
                 }
                 // TPO session snapshot — upsert in place by session_date
                 // (the last entry IS the current session; new date appends).
-                LiveUpdate::TpoProfileUpdate { account_type: at, symbol: sym, point, .. } => {
+                LiveUpdate::TpoProfileUpdate { exchange_id, account_type: at, symbol: sym, point } => {
                     let at_label = at.short_label();
                     let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
                         let panels_store = &self.panels_store;
@@ -1615,9 +1763,21 @@ impl ChartApp {
                             }
                         }
                     }
+                    // Phase X0 / C2: mirror first matched window's storage into bubble.
+                    if let Some(first_cid) = target_cids.iter().next() {
+                        let mirror = self.panel_app.panel_grid.containers()
+                            .get(first_cid).and_then(|w| w.tpo_sessions.clone());
+                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                            exchange_id.as_str(), at_label, sym.as_str()
+                        ) {
+                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                                bubble.tpo_sessions = mirror;
+                            }
+                        }
+                    }
                 }
                 // Three Line Break line stream — each emit is one closed line.
-                LiveUpdate::ThreeLineBreakUpdate { account_type: at, symbol: sym, point, .. } => {
+                LiveUpdate::ThreeLineBreakUpdate { exchange_id, account_type: at, symbol: sym, point } => {
                     let at_label = at.short_label();
                     let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
                         let panels_store = &self.panels_store;
@@ -1650,10 +1810,22 @@ impl ChartApp {
                         }
                         window.three_line_break.get_or_insert_with(Vec::new).push(line.clone());
                     }
+                    // Phase X0 / C2: mirror first matched window's storage into bubble.
+                    if let Some(first_cid) = target_cids.iter().next() {
+                        let mirror = self.panel_app.panel_grid.containers()
+                            .get(first_cid).and_then(|w| w.three_line_break.clone());
+                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                            exchange_id.as_str(), at_label, sym.as_str()
+                        ) {
+                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                                bubble.three_line_break = mirror;
+                            }
+                        }
+                    }
                 }
                 // Open Interest Δ bar — append to all oi_show windows for the
                 // matching symbol + account. Mirrors the CVD/TLB two-pass pattern.
-                LiveUpdate::OpenInterestUpdate { account_type: at, symbol: sym, point, .. } => {
+                LiveUpdate::OpenInterestUpdate { exchange_id, account_type: at, symbol: sym, point } => {
                     let at_label = at.short_label();
                     let target_cids: std::collections::HashSet<mlc_core::state::ChartId> =
                         self.panel_app.panel_grid.containers().iter()
@@ -1669,10 +1841,22 @@ impl ChartApp {
                         if !target_cids.contains(cid_) { continue; }
                         window.oi_delta.get_or_insert_with(Vec::new).push(point);
                     }
+                    // Phase X0 / C2: mirror first matched window's storage into bubble.
+                    if let Some(first_cid) = target_cids.iter().next() {
+                        let mirror = self.panel_app.panel_grid.containers()
+                            .get(first_cid).and_then(|w| w.oi_delta.clone());
+                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                            exchange_id.as_str(), at_label, sym.as_str()
+                        ) {
+                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                                bubble.oi_delta = mirror;
+                            }
+                        }
+                    }
                 }
                 // Funding Rate cell — append to all funding_show windows for the
                 // matching symbol + account. Same two-pass pattern as OI above.
-                LiveUpdate::FundingRateUpdate { account_type: at, symbol: sym, point, .. } => {
+                LiveUpdate::FundingRateUpdate { exchange_id, account_type: at, symbol: sym, point } => {
                     let at_label = at.short_label();
                     let target_cids: std::collections::HashSet<mlc_core::state::ChartId> =
                         self.panel_app.panel_grid.containers().iter()
@@ -1688,10 +1872,22 @@ impl ChartApp {
                         if !target_cids.contains(cid_) { continue; }
                         window.funding_rate.get_or_insert_with(Vec::new).push(point);
                     }
+                    // Phase X0 / C2: mirror first matched window's storage into bubble.
+                    if let Some(first_cid) = target_cids.iter().next() {
+                        let mirror = self.panel_app.panel_grid.containers()
+                            .get(first_cid).and_then(|w| w.funding_rate.clone());
+                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                            exchange_id.as_str(), at_label, sym.as_str()
+                        ) {
+                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                                bubble.funding_rate = mirror;
+                            }
+                        }
+                    }
                 }
                 // DOM heatmap snapshot (C12) — push into dom_heatmap buffer on
                 // all chart_type=="dom_heatmap" windows that match symbol+account.
-                LiveUpdate::DomHeatmapSnapshot { account_type: at, symbol: sym, ts_ms, bids, asks, .. } => {
+                LiveUpdate::DomHeatmapSnapshot { exchange_id, account_type: at, symbol: sym, ts_ms, bids, asks } => {
                     let at_label = at.short_label();
                     let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
                         let panels_store = &self.panels_store;
@@ -1719,9 +1915,21 @@ impl ChartApp {
                             .get_or_insert_with(|| mlc_core::chart::dom_heatmap::DomHeatmapBuffer::new(DEFAULT_TICK))
                             .push_snapshot(ts_ms, &bids, &asks);
                     }
+                    // Phase X0 / C2: mirror first matched window's storage into bubble.
+                    if let Some(first_cid) = target_cids.iter().next() {
+                        let mirror = self.panel_app.panel_grid.containers()
+                            .get(first_cid).and_then(|w| w.dom_heatmap.clone());
+                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                            exchange_id.as_str(), at_label, sym.as_str()
+                        ) {
+                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                                bubble.dom_heatmap = mirror;
+                            }
+                        }
+                    }
                 }
                 // DOM heatmap trade dot (C12) — append to dom_trade_dots ring.
-                LiveUpdate::DomTradeDot { account_type: at, symbol: sym, dot, .. } => {
+                LiveUpdate::DomTradeDot { exchange_id, account_type: at, symbol: sym, dot } => {
                     let at_label = at.short_label();
                     let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
                         let panels_store = &self.panels_store;
@@ -1745,9 +1953,21 @@ impl ChartApp {
                         if dots.len() >= MAX_DOTS { dots.remove(0); }
                         dots.push(dot);
                     }
+                    // Phase X0 / C2: mirror first matched window's storage into bubble.
+                    if let Some(first_cid) = target_cids.iter().next() {
+                        let mirror = self.panel_app.panel_grid.containers()
+                            .get(first_cid).and_then(|w| w.dom_trade_dots.clone());
+                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                            exchange_id.as_str(), at_label, sym.as_str()
+                        ) {
+                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                                bubble.dom_trade_dots = mirror;
+                            }
+                        }
+                    }
                 }
                 // Liquidation per-event (C13) — push into liq_heatmap buffer AND dot ring.
-                LiveUpdate::LiquidationEvent { account_type: at, symbol: sym, ts_ms, price, value_usd, side, .. } => {
+                LiveUpdate::LiquidationEvent { exchange_id, account_type: at, symbol: sym, ts_ms, price, value_usd, side } => {
                     let at_label = at.short_label();
                     let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
                         let panels_store = &self.panels_store;
@@ -1782,6 +2002,21 @@ impl ChartApp {
                             value_usd: if value_usd.is_finite() { value_usd } else { 0.0 },
                             side,
                         });
+                    }
+                    // Phase X0 / C2: mirror first matched window's liq_* into bubble.
+                    if let Some(first_cid) = target_cids.iter().next() {
+                        let (mirror_h, mirror_d) = self.panel_app.panel_grid.containers()
+                            .get(first_cid)
+                            .map(|w| (w.liq_heatmap.clone(), w.liq_dots.clone()))
+                            .unwrap_or((None, None));
+                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                            exchange_id.as_str(), at_label, sym.as_str()
+                        ) {
+                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                                bubble.liq_heatmap = mirror_h;
+                                bubble.liq_dots = mirror_d;
+                            }
+                        }
                     }
                 }
                 // Liquidation bucket (C13) — push aggregate into liq_heatmap strip.
@@ -1825,6 +2060,18 @@ impl ChartApp {
                         // If no price reference is available yet (chart just opened, no bars,
                         // no ticker), the bucket is silently dropped — it will render correctly
                         // once the first price arrives.
+                    }
+                    // Phase X0 / C2: mirror first matched window's liq_heatmap into bubble.
+                    if let Some(first_cid) = target_cids.iter().next() {
+                        let mirror = self.panel_app.panel_grid.containers()
+                            .get(first_cid).and_then(|w| w.liq_heatmap.clone());
+                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                            ex_id.as_str(), at_label, sym.as_str()
+                        ) {
+                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                                bubble.liq_heatmap = mirror;
+                            }
+                        }
                     }
                 }
             }
