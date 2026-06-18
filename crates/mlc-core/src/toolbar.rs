@@ -348,6 +348,10 @@ fn chart_type_items() -> Vec<DropdownItemDef> {
             .with_icon(ToolbarIconId::new("BarChart")),
         DropdownItemDef::action_with_input("run_bar",              "Run Bar",            "bar_mode_param", "50")
             .with_icon(ToolbarIconId::new("BarChart")),
+        DropdownItemDef::Separator,
+        // ── Depth-of-market heatmap (C12) ────────────────────────────────────
+        DropdownItemDef::action("dom_heatmap", "DOM Heatmap")
+            .with_icon(ToolbarIconId::new("Histogram")),
     ]
 }
 

@@ -1592,6 +1592,59 @@ impl ChartApp {
                         window.funding_rate.get_or_insert_with(Vec::new).push(point);
                     }
                 }
+                // DOM heatmap snapshot (C12) — push into dom_heatmap buffer on
+                // all chart_type=="dom_heatmap" windows that match symbol+account.
+                LiveUpdate::DomHeatmapSnapshot { account_type: at, symbol: sym, ts_ms, bids, asks, .. } => {
+                    let at_label = at.short_label();
+                    let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
+                        let panels_store = &self.panels_store;
+                        self.panel_app.panel_grid.containers().iter()
+                            .filter_map(|(cid, win)| {
+                                let s = self.managers.bubble.symbol_for_chart(*cid)?;
+                                let a = self.managers.bubble.account_type_for_chart(*cid)?;
+                                let is_dom = panels_store.chart_panel
+                                    .get(&win.chart_panel_id)
+                                    .map(|p| p.chart_type == "dom_heatmap")
+                                    .unwrap_or(false);
+                                if !is_dom || s != sym.as_str() || a != at_label { return None; }
+                                Some(*cid)
+                            }).collect()
+                    };
+                    if target_cids.is_empty() { continue; }
+                    for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+                        if !target_cids.contains(cid_) { continue; }
+                        const DEFAULT_TICK: f64 = 0.5;
+                        window.dom_heatmap
+                            .get_or_insert_with(|| mlc_core::chart::dom_heatmap::DomHeatmapBuffer::new(DEFAULT_TICK))
+                            .push_snapshot(ts_ms, &bids, &asks);
+                    }
+                }
+                // DOM heatmap trade dot (C12) — append to dom_trade_dots ring.
+                LiveUpdate::DomTradeDot { account_type: at, symbol: sym, dot, .. } => {
+                    let at_label = at.short_label();
+                    let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
+                        let panels_store = &self.panels_store;
+                        self.panel_app.panel_grid.containers().iter()
+                            .filter_map(|(cid, win)| {
+                                let s = self.managers.bubble.symbol_for_chart(*cid)?;
+                                let a = self.managers.bubble.account_type_for_chart(*cid)?;
+                                let is_dom = panels_store.chart_panel
+                                    .get(&win.chart_panel_id)
+                                    .map(|p| p.chart_type == "dom_heatmap")
+                                    .unwrap_or(false);
+                                if !is_dom || s != sym.as_str() || a != at_label { return None; }
+                                Some(*cid)
+                            }).collect()
+                    };
+                    if target_cids.is_empty() { continue; }
+                    for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+                        if !target_cids.contains(cid_) { continue; }
+                        const MAX_DOTS: usize = 2_000;
+                        let dots = window.dom_trade_dots.get_or_insert_with(Vec::new);
+                        if dots.len() >= MAX_DOTS { dots.remove(0); }
+                        dots.push(dot);
+                    }
+                }
             }
         }
         self.last_event_process_us = events_start.elapsed().as_micros() as u64;

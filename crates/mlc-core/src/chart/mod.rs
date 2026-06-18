@@ -39,6 +39,7 @@
 //! ```
 
 pub mod annotations;
+pub mod dom_heatmap;
 pub mod render_data;
 pub mod series;
 pub mod types;

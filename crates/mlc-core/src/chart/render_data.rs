@@ -252,6 +252,11 @@ pub struct ChartRenderState<'a> {
     /// Funding Rate cells for the strip renderer (C15).
     /// `None` when the toggle is off or no data has arrived yet.
     pub funding_rate_ref: Option<&'a [crate::types::FundingRateCell]>,
+    /// DOM heatmap buffer for the `dom_heatmap` chart-type (C12).
+    /// `None` for all other chart types.
+    pub dom_heatmap_ref: Option<&'a crate::chart::dom_heatmap::DomHeatmapBuffer>,
+    /// DOM heatmap trade-circle overlay (C12).
+    pub dom_trade_dots_ref: Option<&'a [crate::chart::dom_heatmap::DomTradeDot]>,
 }
 
 /// Configuration for scale rendering

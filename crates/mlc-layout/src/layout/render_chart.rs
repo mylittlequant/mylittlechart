@@ -30,7 +30,7 @@ use crate::chart_render::{
     draw_grid, draw_grid_extended, draw_candles, draw_bars, draw_hollow_candles, draw_heikin_ashi,
     draw_range_bars, draw_volume_bars, draw_tick_bars, draw_footprint, draw_renko, draw_pnf, draw_kagi,
     draw_cvd_chart, draw_tpo, draw_three_line_break, draw_volume_profile_overlay,
-    draw_oi_delta, draw_funding_rate_strip,
+    draw_oi_delta, draw_funding_rate_strip, draw_dom_heatmap,
     draw_line_series, draw_area_series, draw_baseline_series,
     draw_step_line, draw_line_with_markers, draw_hlc_area, draw_histogram, draw_columns,
     draw_price_scale, draw_time_scale,
@@ -226,6 +226,12 @@ pub fn draw_series(ctx: &mut dyn RenderContext, state: &ChartRenderState, chart_
         "tpo" => draw_tpo(ctx, state),
         "three_line_break" => draw_three_line_break(ctx, state),
         "footprint" => draw_footprint(ctx, state),
+        // DOM Heatmap (C12): Bookmap-style 2D depth heatmap.
+        "dom_heatmap" => {
+            if let Some(buf) = state.dom_heatmap_ref {
+                draw_dom_heatmap(ctx, state, buf, state.dom_trade_dots_ref);
+            }
+        }
         // López de Prado quant bars (C9): output is OHLC BarPoint — render as
         // standard candles. Explicit arms avoid silent fallback for new types.
         "dollar_bar" | "tick_imbalance_bar" | "volume_imbalance_bar" | "run_bar" => {
@@ -3117,6 +3123,8 @@ pub fn render_full_chart_panel(
         vp_overlay: data.state.vp_overlay,
         oi_delta_ref: data.state.oi_delta_ref,
         funding_rate_ref: data.state.funding_rate_ref,
+        dom_heatmap_ref: data.state.dom_heatmap_ref,
+        dom_trade_dots_ref: data.state.dom_trade_dots_ref,
     };
 
     // 1. Background — fill the full window rect to avoid gaps when scales are
@@ -3522,6 +3530,8 @@ pub fn render_chart_splits(
             vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
             oi_delta_ref: if window.oi_show { window.oi_delta.as_deref() } else { None },
             funding_rate_ref: if window.funding_show { window.funding_rate.as_deref() } else { None },
+            dom_heatmap_ref: window.dom_heatmap.as_ref(),
+            dom_trade_dots_ref: window.dom_trade_dots.as_deref(),
         };
 
         // Build a config for this leaf, overriding chart_type from the window.
@@ -3709,6 +3719,8 @@ pub fn render_chart_overlay(
         vp_overlay: state.vp_overlay,
         oi_delta_ref: state.oi_delta_ref,
         funding_rate_ref: state.funding_rate_ref,
+        dom_heatmap_ref: state.dom_heatmap_ref,
+        dom_trade_dots_ref: state.dom_trade_dots_ref,
     };
 
     // Compute total chart bounds (main + all sub-panes) for the vertical crosshair span.

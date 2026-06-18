@@ -225,6 +225,14 @@ pub struct ChartContainer {
     /// When `true` the Funding Rate strip is rendered at the bottom of the chart.
     pub funding_show: bool,
 
+    /// Rolling 2-D depth heatmap buffer for `chart_type == "dom_heatmap"` (C12).
+    /// `None` when the chart is not in DOM-heatmap mode.
+    pub dom_heatmap: Option<crate::chart::dom_heatmap::DomHeatmapBuffer>,
+
+    /// Recent trades for the DOM heatmap circle overlay. Capped at 2 000 entries.
+    /// `None` when `dom_heatmap` is `None`.
+    pub dom_trade_dots: Option<Vec<crate::chart::dom_heatmap::DomTradeDot>>,
+
     // === Viewport & Scales ===
     /// Viewport state (pan/zoom)
     pub viewport: Viewport,
@@ -501,6 +509,8 @@ impl ChartContainer {
             oi_show: false,
             funding_rate: None,
             funding_show: false,
+            dom_heatmap: None,
+            dom_trade_dots: None,
             viewport: Viewport::default(),
             price_scale: PriceScale::default(),
             time_scale: TimeScale::new(),
@@ -831,6 +841,10 @@ impl ChartContainer {
             oi_show: self.oi_show,
             funding_rate: self.funding_rate.clone(),
             funding_show: self.funding_show,
+            // DOM heatmap: not inherited — split child gets a fresh buffer when it
+            // switches to dom_heatmap chart_type independently.
+            dom_heatmap: None,
+            dom_trade_dots: None,
 
             // === Viewport & Scales (cloned) ===
             viewport: self.viewport.clone(),
@@ -1139,6 +1153,8 @@ impl ChartContainer {
             vp_overlay: None,
             oi_delta_ref: None,
             funding_rate_ref: None,
+            dom_heatmap_ref: None,
+            dom_trade_dots_ref: None,
         }
     }
 
@@ -1279,6 +1295,8 @@ impl ChartContainer {
             oi_show: self.oi_show,
             funding_rate: self.funding_rate.clone(),
             funding_show: self.funding_show,
+            dom_heatmap: None,
+            dom_trade_dots: None,
             viewport: self.viewport.clone(),
             price_scale: self.price_scale.clone(),
             time_scale: self.time_scale.clone(),

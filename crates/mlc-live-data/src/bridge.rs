@@ -307,6 +307,31 @@ pub enum LiveUpdate {
         symbol: String,
         point: mlc_core::types::FundingRateCell,
     },
+
+    /// DOM heatmap snapshot for `chart_type == "dom_heatmap"` (C12).
+    ///
+    /// Sourced from an `OrderBook` station stream: each full book snapshot
+    /// is forwarded as bids/asks slices.  The tick consumer calls
+    /// `DomHeatmapBuffer::push_snapshot` to bucket and store the depth.
+    DomHeatmapSnapshot {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        ts_ms: i64,
+        bids: Vec<(f64, f64)>,
+        asks: Vec<(f64, f64)>,
+    },
+
+    /// Trade dot for the DOM heatmap overlay (C12).
+    ///
+    /// One event per trade tick.  The consumer appends to
+    /// `ChartContainer::dom_trade_dots` (ring-capped at 2 000).
+    DomTradeDot {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        dot: mlc_core::chart::dom_heatmap::DomTradeDot,
+    },
 }
 
 /// Async-to-sync bridge that owns a tokio runtime and a connector pool.
@@ -1624,6 +1649,134 @@ impl DataBridge {
             &self.runtime, station, tx, exchange_id, account_type,
             symbol_str, symbol_wire, stream,
         );
+        if let Ok(mut subs) = self.derived_subs.lock() {
+            subs.insert(sub_key, handle);
+        }
+    }
+
+    // ── DOM Heatmap subscription (C12) ───────────────────────────────────────
+
+    /// Subscribe to the combined OrderBook + Trade stream for the DOM heatmap
+    /// chart-type (C12).
+    ///
+    /// Spawns two tasks:
+    /// 1. `OrderBook` station stream → `LiveUpdate::DomHeatmapSnapshot` per event.
+    /// 2. `Trade` station stream → `LiveUpdate::DomTradeDot` per event.
+    ///
+    /// Both tasks share the same `derived_subs` slot via a combined `JoinHandle`
+    /// that cancels both on abort.  Calling `abort_derived_sub` (triggered by any
+    /// chart_type switch) stops both tasks.
+    pub fn request_dom_heatmap(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) {
+        self.abort_derived_sub(exchange_id, symbol, account_type);
+        let station = self.station.clone();
+        let tx = self.tx.clone();
+        let symbol_canonical = symbol.to_string();
+        let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
+        let sub_key = (exchange_id, symbol.to_string(), account_type);
+
+        let tx_clone = tx.clone();
+        let sym_ob = symbol_canonical.clone();
+        let sym_wire_ob = symbol_wire.clone();
+        let station_ob = station.clone();
+
+        let handle = self.runtime.spawn(async move {
+            // Task 1 — OrderBook snapshots → DomHeatmapSnapshot
+            let ob_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                exchange_id, sym_wire_ob.clone(), account_type,
+                [digdigdig3_station::Stream::Orderbook],
+            );
+            let mut ob_report = match station_ob.subscribe(ob_set).await {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("[Bridge::dom-heatmap-ob subscribe FAILED] {:?} {} wire={}: {:?}",
+                        exchange_id, sym_ob, sym_wire_ob, e);
+                    return;
+                }
+            };
+
+            // Task 2 — Trade ticks → DomTradeDot  (spawned inside, shared lifetime)
+            let tx_t = tx_clone.clone();
+            let sym_tr = sym_ob.clone();
+            let sym_wire_tr = sym_wire_ob.clone();
+            let station_t = station_ob.clone();
+            let trade_handle = tokio::spawn(async move {
+                let tr_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                    exchange_id, sym_wire_tr.clone(), account_type,
+                    [digdigdig3_station::Stream::Trade],
+                );
+                let mut tr_report = match station_t.subscribe(tr_set).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("[Bridge::dom-heatmap-trade subscribe FAILED] {:?} {} wire={}: {:?}",
+                            exchange_id, sym_tr, sym_wire_tr, e);
+                        return;
+                    }
+                };
+                while let Some(ev) = tr_report.handle.recv().await {
+                    if let digdigdig3_station::Event::Trade { point, .. } = ev {
+                        let dot = mlc_core::chart::dom_heatmap::DomTradeDot {
+                            ts_ms: point.ts_ms,
+                            price: point.price,
+                            quantity: point.quantity,
+                            side: if point.side == 0 { 0 } else { 1 },
+                        };
+                        let _ = tx_t.send(LiveUpdate::DomTradeDot {
+                            exchange_id, account_type,
+                            symbol: sym_tr.clone(),
+                            dot,
+                        });
+                    }
+                }
+            });
+
+            // Drive the order-book stream; cancel trade task when ob exits.
+            while let Some(ev) = ob_report.handle.recv().await {
+                match ev {
+                    digdigdig3_station::Event::OrderbookSnapshot { point, .. } => {
+                        // bids/asks are already Vec<(f64, f64)> in dig3-station.
+                        let bids_f: Vec<(f64, f64)> = point.bids.iter()
+                            .map(|(p, q)| (*p, *q))
+                            .collect();
+                        let asks_f: Vec<(f64, f64)> = point.asks.iter()
+                            .map(|(p, q)| (*p, *q))
+                            .collect();
+                        let _ = tx_clone.send(LiveUpdate::DomHeatmapSnapshot {
+                            exchange_id, account_type,
+                            symbol: sym_ob.clone(),
+                            ts_ms: point.ts_ms,
+                            bids: bids_f,
+                            asks: asks_f,
+                        });
+                    }
+                    digdigdig3_station::Event::OrderbookDelta { point, .. } => {
+                        // Treat deltas as thin snapshots — the consumer's buffer
+                        // coalesces them into the current bucket.
+                        let bids_f: Vec<(f64, f64)> = point.bid_changes.iter()
+                            .map(|(p, q)| (*p, *q))
+                            .collect();
+                        let asks_f: Vec<(f64, f64)> = point.ask_changes.iter()
+                            .map(|(p, q)| (*p, *q))
+                            .collect();
+                        let _ = tx_clone.send(LiveUpdate::DomHeatmapSnapshot {
+                            exchange_id, account_type,
+                            symbol: sym_ob.clone(),
+                            ts_ms: point.ts_ms,
+                            bids: bids_f,
+                            asks: asks_f,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            trade_handle.abort();
+            eprintln!("[Bridge::dom-heatmap-ob exited] {:?} {}", exchange_id, sym_ob);
+        });
+
         if let Ok(mut subs) = self.derived_subs.lock() {
             subs.insert(sub_key, handle);
         }

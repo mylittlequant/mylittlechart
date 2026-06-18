@@ -311,6 +311,8 @@ impl ChartApp {
                     "tick_imbalance_bar"   => Some("tick_imbalance_bar"),
                     "volume_imbalance_bar" => Some("volume_imbalance_bar"),
                     "run_bar"              => Some("run_bar"),
+                    // ── DOM Heatmap (C12) ──────────────────────────────────────
+                    "dom_heatmap"          => Some("dom_heatmap"),
                     _ => {
                         eprintln!("[ChartApp] unknown chart_type: {}", chart_type);
                         None
@@ -360,6 +362,7 @@ impl ChartApp {
                         | "three_line_break"
                         | "dollar_bar" | "tick_imbalance_bar"
                         | "volume_imbalance_bar" | "run_bar"
+                        | "dom_heatmap"
                     );
                     if let Some(active_leaf) = self.panel_app.panel_grid.active_container() {
                         let cid = active_leaf.id;
@@ -399,6 +402,11 @@ impl ChartApp {
                                         // the new stream lands at the right
                                         // edge of the viewport.
                                         window.needs_snap_after_backfill = true;
+                                        // Clear DOM heatmap buffers when leaving
+                                        // dom_heatmap mode so stale cells don't
+                                        // bleed into the next chart type.
+                                        window.dom_heatmap = None;
+                                        window.dom_trade_dots = None;
                                     }
                                     let _ = is_derived_target; // axis flip done in prepare_frame
 
@@ -500,6 +508,12 @@ impl ChartApp {
                                             };
                                             self.bridge.request_run_bars(
                                                 self.active_exchange, &symbol, at, 20, min_ticks,
+                                            );
+                                        }
+                                        // ── DOM Heatmap (C12) ─────────────────
+                                        "dom_heatmap" => {
+                                            self.bridge.request_dom_heatmap(
+                                                self.active_exchange, &symbol, at,
                                             );
                                         }
                                         _ => {

@@ -2553,6 +2553,8 @@ impl ChartPanelApp {
                 vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
                 oi_delta_ref: if window.oi_show { window.oi_delta.as_deref() } else { None },
                 funding_rate_ref: if window.funding_show { window.funding_rate.as_deref() } else { None },
+                dom_heatmap_ref: window.dom_heatmap.as_ref(),
+                dom_trade_dots_ref: window.dom_trade_dots.as_deref(),
             };
 
             let render_config = ChartRenderConfig {
