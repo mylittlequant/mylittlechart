@@ -620,6 +620,33 @@ impl IndicatorManager {
         for definition in definitions {
             self.definitions.insert(definition.type_id.clone(), definition);
         }
+
+        self.register_builtins();
+    }
+
+    /// Register built-in indicator overlays that are computed directly from
+    /// bar data without going through the mli catalog.
+    ///
+    /// `builtin_volume` — volume histogram strip pinned to the bottom 18 % of
+    /// the main chart area.  Uses `IndicatorOutputRenderType::Histogram` so
+    /// `draw_volume_overlay` in `render_chart.rs` handles the actual draw.
+    fn register_builtins(&mut self) {
+        let volume_overlay = IndicatorDefinition {
+            type_id: "builtin_volume".to_string(),
+            name: "Volume".to_string(),
+            short_name: "Volume".to_string(),
+            description: "Volume histogram — bars proportional to trade volume, pinned to the bottom of the chart.".to_string(),
+            category: IndicatorCategory::Volume,
+            params: vec![],
+            outputs: vec![IndicatorOutput::histogram("volume", "Volume", "#26A69A80")],
+            overlay: true,
+            precision: 0,
+            bounds: None,
+            zero_baseline: true,
+            histogram_style: HistogramStyle::FromBottom,
+            machine_id: None,
+        };
+        self.definitions.insert(volume_overlay.type_id.clone(), volume_overlay);
     }
 
     /// Return the total number of active indicator instances.
@@ -1054,6 +1081,9 @@ impl IndicatorManager {
         use rayon::prelude::*;
         use super::indicator_calculator::IndicatorCalculator;
 
+        // Built-ins are handled separately (direct bar-data copy, no mli catalog).
+        self.calculate_builtins_for_window(window_id, bars);
+
         let ids: Vec<u64> = self
             .by_window_id
             .get(&window_id)
@@ -1120,6 +1150,34 @@ impl IndicatorManager {
         }
     }
 
+    /// Compute built-in indicators (those with `machine_id == None`) for a
+    /// window.  Currently the only built-in is `builtin_volume`, which copies
+    /// `bar.volume` directly into its output Vec — no mli catalog needed.
+    ///
+    /// Called from both `calculate_all_for_window` and `calculate_for_window`
+    /// so that built-ins always run regardless of which recalc path is active.
+    fn calculate_builtins_for_window(&mut self, window_id: u64, bars: &[mlc_core::Bar]) {
+        let ids: Vec<u64> = self
+            .by_window_id
+            .get(&window_id)
+            .cloned()
+            .unwrap_or_default();
+
+        for id in ids {
+            let type_id = match self.instances.get(&id) {
+                Some(inst) => inst.type_id.clone(),
+                None => continue,
+            };
+
+            if type_id == "builtin_volume" {
+                let volumes: Vec<f64> = bars.iter().map(|b| b.volume).collect();
+                if let Some(inst) = self.instances.get_mut(&id) {
+                    inst.set_values("volume", volumes);
+                }
+            }
+        }
+    }
+
     /// Calculate only the instances for a symbol that belong to a specific window.
     ///
     /// Uses an **incremental path** (O(1) per indicator) when:
@@ -1136,6 +1194,9 @@ impl IndicatorManager {
     pub fn calculate_for_window(&mut self, window_id: u64, bars: &[mlc_core::Bar]) {
         use rayon::prelude::*;
         use super::indicator_calculator::IndicatorCalculator;
+
+        // Built-ins are handled separately (direct bar-data copy, no mli catalog).
+        self.calculate_builtins_for_window(window_id, bars);
 
         let ids: Vec<u64> = self
             .by_window_id
@@ -2053,8 +2114,8 @@ impl IndicatorManager {
             }
         }
 
-        // Special case: volume indicator color params
-        if inst.type_id == "volume" || inst.type_id == "vol" {
+        // Special case: volume indicator color params (including builtin_volume overlay)
+        if inst.type_id == "volume" || inst.type_id == "vol" || inst.type_id == "builtin_volume" {
             color_params.entry("up_color".to_string())
                 .or_insert_with(|| "#26A69A80".to_string());
             color_params.entry("down_color".to_string())

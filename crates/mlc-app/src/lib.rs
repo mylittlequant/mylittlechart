@@ -2040,6 +2040,14 @@ impl ChartApp {
                     app.panel_app.active_preset_id = untitled_id;
                 }
 
+                // Add the builtin volume histogram overlay to the fresh window.
+                // This is the default-on state for brand-new charts that have no saved preset.
+                if let Some(chart_id) = active_chart_id {
+                    if let Some(new_vol_id) = app.indicator_manager.create_instance("builtin_volume") {
+                        app.indicator_manager.assign_window(new_vol_id, Some(chart_id.0));
+                    }
+                }
+
                 bridge.ensure_connector(exchange_id);
                 bridge.request_bars(
                     exchange_id,

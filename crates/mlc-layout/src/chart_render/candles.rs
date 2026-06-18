@@ -454,18 +454,15 @@ pub fn draw_range_bars(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     draw_bars(ctx, state);
 }
 
-/// Draw Volume Bars — standard candle + bottom intensity strip
-/// (MotiveWave Volumetric Bars style).
+/// Draw Volume Bars — standard OHLC candles.
 ///
-/// Volume bars are derived in dig3-station's `TradeToVolumeBarDerived`. We
-/// render them as standard OHLC candles, then overlay a bottom strip whose
-/// height is proportional to the bar's volume share of the visible window's
-/// maximum volume. This makes high-volume bars visually punch above their
-/// neighbours regardless of price excursion (which is meaningless when
-/// every bar consumed the same volume threshold).
+/// Volume bars are derived in dig3-station's `TradeToVolumeBarDerived`. The
+/// bar is a regular OHLC bar where the close is determined by a cumulative
+/// volume threshold. It renders identically to standard candles; the visual
+/// volume-intensity strip is now a separate `builtin_volume` indicator overlay
+/// so it works across ALL chart types, not just volume_bar.
 pub fn draw_volume_bars(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     draw_candles(ctx, state);
-    draw_volume_intensity_strip(ctx, state);
 }
 
 /// Draw Tick Bars — standard candle with body opacity scaled by volume
@@ -536,35 +533,6 @@ pub fn draw_tick_bars(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
             ctx.set_fill_color(&body_color);
             ctx.fill_rect(body_x, body_y, body_w, body_h);
         }
-    }
-}
-
-/// Overlay a bottom strip whose per-bar height is `bar.volume / max_vol *
-/// 0.20 * chart_height`. Used by `draw_volume_bars`.
-fn draw_volume_intensity_strip(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
-    let rect = &state.chart_rect;
-    let viewport = state.viewport;
-    let theme = state.theme;
-    let bars = state.bars;
-    let dpr = ctx.dpr();
-    let (start, end) = viewport.visible_range();
-    let max_vol = max_volume_in_range(bars, start, end);
-    if max_vol <= 0.0 { return; }
-    let bar_w = viewport.bar_width();
-    let strip_max = (rect.height * 0.20).max(2.0);
-    let baseline_y = rect.y + rect.height; // strip grows upward from bottom.
-    for i in start..end {
-        if i >= bars.len() { break; }
-        let bar = &bars[i];
-        let is_up = bar.is_bullish();
-        let color = if is_up { &theme.candle_up } else { &theme.candle_down };
-        let strip_color = apply_alpha_to_color(color, 0.5);
-        let h = strip_max * (bar.volume / max_vol).clamp(0.0, 1.0);
-        if h < 1.0 { continue; }
-        let cx = viewport.x_for_bar(i, bar.ts_ms());
-        let (rx, ry, rw, rh) = crisp_rect(cx - bar_w / 2.0, baseline_y - rect.y - h, bar_w, h, dpr);
-        ctx.set_fill_color(&strip_color);
-        ctx.fill_rect(rect.x + rx, rect.y + ry, rw, rh);
     }
 }
 
