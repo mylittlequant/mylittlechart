@@ -2717,7 +2717,9 @@ impl ChartApp {
                 let overlay_panel = self.panels_store.chart_panel
                     .get(&overlay_panel_id)
                     .unwrap_or(&overlay_default_panel);
+                let overlay_bubble = self.managers.bubble.bubble(window.current_bubble_id);
                 let render_state = window.to_render_state(
+                    overlay_bubble,
                     chart_rect,
                     &chart_theme,
                     Some(overlay_tf_name.as_str()),
@@ -2788,7 +2790,9 @@ impl ChartApp {
             let single_panel = self.panels_store.chart_panel
                 .get(&single_pid)
                 .unwrap_or(&single_default_panel);
+            let single_overlay_bubble = self.managers.bubble.bubble(window.current_bubble_id);
             let render_state = window.to_render_state(
+                single_overlay_bubble,
                 chart_rect,
                 &chart_theme,
                 Some(single_overlay_tf_name.as_str()),
@@ -3034,7 +3038,9 @@ impl ChartApp {
                     .get(&split_pid)
                     .unwrap_or(&split_default_panel);
                 let scale_corner_state = window.to_corner_state();
+                let split_bubble = self.managers.bubble.bubble(window.current_bubble_id);
                 let render_state = window.to_render_state(
+                    split_bubble,
                     chart_rect,
                     &chart_theme,
                     Some(split_tf_name.as_str()),
@@ -3633,7 +3639,9 @@ impl ChartApp {
                     content_rect.width,
                     content_rect.height,
                 );
+                let single_window_bubble = self.managers.bubble.bubble(window.current_bubble_id);
                 let render_state = window.to_render_state(
+                    single_window_bubble,
                     chart_rect,
                     &chart_theme,
                     Some(single_tf_name),

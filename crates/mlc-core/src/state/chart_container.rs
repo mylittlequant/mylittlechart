@@ -1124,16 +1124,23 @@ impl ChartContainer {
         eprintln!("[ChartContainer] Cloned data from window {}: {} bars", source.id, self.bars.len());
     }
 
-    /// Create ChartRenderState from this window's data.
+    /// Create ChartRenderState from this window's view state + bubble's series storage.
     ///
-    /// `grid` and `legend` are supplied by the caller from `ChartPanelState`
-    /// (they were removed from `ChartContainer` in Phase 4 C).
+    /// Phase X0 / C3 (2026-06-19): per-Kind series fields (bars + 13 derived)
+    /// are sourced from `bubble` when supplied. Bubble is the storage hub;
+    /// ChartContainer owns viewport / scales / crosshair / per-window
+    /// derived caches (ha_cache, vp_overlay).
     ///
-    /// `timeframe_interval_ms` is provided by the caller from `branch_meta` via
-    /// `read_timeframe(...).map(|t| t.interval_ms)` — the field was removed from
-    /// `ChartContainer` in Phase 4 B.
+    /// During C3..C4 the `bubble` parameter is `Option<&DataBubble>` so
+    /// callsites that cannot yet resolve the bubble (e.g. sentinel `BubbleId(0)`)
+    /// keep working by falling back to `self.*` storage. In C5 the parameter
+    /// becomes required and `self.*` storage is removed.
+    ///
+    /// `grid` and `legend` are supplied by the caller from `ChartPanelState`.
+    /// `timeframe_interval_ms` is provided by the caller from `branch_meta`.
     pub fn to_render_state<'a>(
         &'a self,
+        bubble: Option<&'a crate::tag_manager::DataBubble>,
         chart_rect: crate::chart::render_data::ChartRect,
         theme: &'a crate::chart::render_data::ChartTheme,
         current_timeframe: Option<&'a str>,
@@ -1142,11 +1149,53 @@ impl ChartContainer {
         grid: &'a GridOptions,
         legend: &'a Legend,
     ) -> crate::chart::render_data::ChartRenderState<'a> {
+        // Bars + 13 derived series: prefer bubble, fall back to self (C3..C4 only).
+        let bars: &[Bar] = bubble.map(|b| b.bars.as_slice()).unwrap_or(&self.bars);
+        let footprint_bars = bubble
+            .and_then(|b| b.footprint_bars.as_deref())
+            .or_else(|| self.footprint_bars.as_deref());
+        let renko_bars = bubble
+            .and_then(|b| b.renko_bars.as_deref())
+            .or_else(|| self.renko_bars.as_deref());
+        let three_line_break = bubble
+            .and_then(|b| b.three_line_break.as_deref())
+            .or_else(|| self.three_line_break.as_deref());
+        let pnf_columns = bubble
+            .and_then(|b| b.pnf_columns.as_deref())
+            .or_else(|| self.pnf_columns.as_deref());
+        let kagi_segments = bubble
+            .and_then(|b| b.kagi_segments.as_deref())
+            .or_else(|| self.kagi_segments.as_deref());
+        let cvd_line = bubble
+            .and_then(|b| b.cvd_line.as_deref())
+            .or_else(|| self.cvd_line.as_deref());
+        let tpo_sessions = bubble
+            .and_then(|b| b.tpo_sessions.as_deref())
+            .or_else(|| self.tpo_sessions.as_deref());
+        let oi_delta_src = bubble
+            .and_then(|b| b.oi_delta.as_deref())
+            .or_else(|| self.oi_delta.as_deref());
+        let funding_rate_src = bubble
+            .and_then(|b| b.funding_rate.as_deref())
+            .or_else(|| self.funding_rate.as_deref());
+        let dom_heatmap_ref = bubble
+            .and_then(|b| b.dom_heatmap.as_ref())
+            .or_else(|| self.dom_heatmap.as_ref());
+        let dom_trade_dots_ref = bubble
+            .and_then(|b| b.dom_trade_dots.as_deref())
+            .or_else(|| self.dom_trade_dots.as_deref());
+        let liq_heatmap_ref = bubble
+            .and_then(|b| b.liq_heatmap.as_ref())
+            .or_else(|| self.liq_heatmap.as_ref());
+        let liq_dots_ref = bubble
+            .and_then(|b| b.liq_dots.as_deref())
+            .or_else(|| self.liq_dots.as_deref());
+
         crate::chart::render_data::ChartRenderState {
             viewport: &self.viewport,
             price_scale: &self.price_scale,
             time_scale: &self.time_scale,
-            bars: &self.bars,
+            bars,
             grid,
             crosshair: &self.crosshair,
             legend,
@@ -1162,29 +1211,24 @@ impl ChartContainer {
             border_enabled: true,
             wick_enabled: true,
             use_prev_close: false,
-            // BUG FIX 2026-06-18: all of these used to be hardcoded `None`,
-            // which silently disabled every derived chart_type + overlay
-            // (footprint/renko/pnf/kagi/cvd/tpo/3lb/dom/liq/oi/funding/vp/ha)
-            // because mlc-app/src/lib.rs render path uses `window.to_render_state`
-            // to build the ChartRenderState — not the as_deref() builders in
-            // render_chart.rs / panel_app.rs which only the split-view code
-            // uses. The chart was literally rendering with empty refs no
-            // matter how much data sat in `self.footprint_bars`.
-            footprint_bars: self.footprint_bars.as_deref(),
-            renko_bars: self.renko_bars.as_deref(),
-            three_line_break: self.three_line_break.as_deref(),
-            pnf_columns: self.pnf_columns.as_deref(),
-            kagi_segments: self.kagi_segments.as_deref(),
-            cvd_line: self.cvd_line.as_deref(),
-            tpo_sessions: self.tpo_sessions.as_deref(),
+            footprint_bars,
+            renko_bars,
+            three_line_break,
+            pnf_columns,
+            kagi_segments,
+            cvd_line,
+            tpo_sessions,
+            // ha_cache + vp_overlay are window-local derived caches (viewport-coupled).
             ha_cache: self.ha_cache.as_deref(),
             vp_overlay: if self.vp_show { self.vp_overlay.as_ref() } else { None },
-            oi_delta_ref: if self.oi_show { self.oi_delta.as_deref() } else { None },
-            funding_rate_ref: if self.funding_show { self.funding_rate.as_deref() } else { None },
-            dom_heatmap_ref: self.dom_heatmap.as_ref(),
-            dom_trade_dots_ref: self.dom_trade_dots.as_deref(),
-            liq_heatmap_ref: self.liq_heatmap.as_ref(),
-            liq_dots_ref: self.liq_dots.as_deref(),
+            // Display gates (oi_show / funding_show) are per-window view state;
+            // storage is unconditional on bubble.
+            oi_delta_ref: if self.oi_show { oi_delta_src } else { None },
+            funding_rate_ref: if self.funding_show { funding_rate_src } else { None },
+            dom_heatmap_ref,
+            dom_trade_dots_ref,
+            liq_heatmap_ref,
+            liq_dots_ref,
         }
     }
 
