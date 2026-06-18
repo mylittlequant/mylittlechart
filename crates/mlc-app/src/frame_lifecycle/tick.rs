@@ -1367,6 +1367,40 @@ impl ChartApp {
                             }
                             _ => store.push(bar),
                         }
+
+                        // Mirror the live footprint bar as an OHLC Bar in
+                        // `window.bars` so the klines backfill (seeded via
+                        // request_bars parallel call) and live cluster bars
+                        // are in the same array. The footprint renderer draws
+                        // OHLC candle bodies for bars whose `levels[]` is
+                        // empty (historical klines), and cluster grids for
+                        // bars that have real bid/ask levels (live). This
+                        // upsert keeps the OHLC skeleton in sync with the
+                        // live footprint bar so price scale and crosshair
+                        // always see the current bar.
+                        //
+                        // `open_time` is UTC ms; `Bar.timestamp` is seconds.
+                        let ohlc_ts = new_bar_with_static.open_time / 1000;
+                        let ohlc_bar = mlc_core::Bar::with_volume(
+                            ohlc_ts,
+                            new_bar_with_static.open,
+                            new_bar_with_static.high,
+                            new_bar_with_static.low,
+                            new_bar_with_static.close,
+                            new_bar_with_static.volume,
+                        );
+                        let last_ohlc_ts = window.bars.last().map(|b| b.timestamp);
+                        if last_ohlc_ts == Some(ohlc_ts) {
+                            if let Some(last) = window.bars.last_mut() {
+                                last.open   = ohlc_bar.open;
+                                last.high   = ohlc_bar.high;
+                                last.low    = ohlc_bar.low;
+                                last.close  = ohlc_bar.close;
+                                last.volume = ohlc_bar.volume;
+                            }
+                        } else {
+                            window.bars.push(ohlc_bar);
+                        }
                     }
                     let _ = new_bar;
                 }

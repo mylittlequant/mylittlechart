@@ -1511,6 +1511,20 @@ impl DataBridge {
             "[Bridge::request_footprint enter] {:?} {} at={:?} interval={}",
             exchange_id, symbol, account_type, interval,
         );
+
+        // Fire a parallel klines REST backfill so `window.bars` is pre-populated
+        // with ~300 historical OHLC bars before the first live footprint cluster
+        // arrives. The footprint cluster grid renders OHLC candles for bars whose
+        // `levels[]` is empty (historical), and cluster numbers only for live bars
+        // that have real bid/ask data — the klines backfill fills that gap.
+        // warm_start=5000 aggTrades ≈ 30s at BTC rates = 0-1 closed bars; a klines
+        // fetch gives 300+ immediately.
+        {
+            let interval_ms = footprint_interval_to_ms(interval);
+            let tf = mlc_core::state::Timeframe::new(interval, interval_ms);
+            self.request_bars(exchange_id, symbol, &tf, account_type, None, Some(500), false);
+        }
+
         self.abort_derived_sub(exchange_id, symbol, account_type);
 
         let station = self.station.clone();
@@ -4474,5 +4488,34 @@ fn ob_delta_point_to_orderbook_delta(
         first_update_id: None,
         event_time: None,
         checksum: None,
+    }
+}
+
+/// Convert a kline interval string (e.g. "1m", "5m", "1h", "4h", "1d") to
+/// milliseconds for use as a `Timeframe::interval_ms`.
+///
+/// Used by `request_footprint` to fire a parallel klines backfill using the
+/// same timeframe as the footprint cluster window.
+fn footprint_interval_to_ms(interval: &str) -> i64 {
+    match interval.to_lowercase().as_str() {
+        "1s"          =>          1_000,
+        "1m"          =>         60_000,
+        "3m"          =>        180_000,
+        "5m"          =>        300_000,
+        "15m"         =>        900_000,
+        "30m"         =>      1_800_000,
+        "1h"          =>      3_600_000,
+        "2h"          =>      7_200_000,
+        "4h"          =>     14_400_000,
+        "6h"          =>     21_600_000,
+        "8h"          =>     28_800_000,
+        "12h"         =>     43_200_000,
+        "1d"          =>     86_400_000,
+        "3d"          =>    259_200_000,
+        "1w"          =>    604_800_000,
+        "1month" | "1M" => 2_592_000_000,
+        // Unknown: fall back to 1 minute so the Timeframe at least sorts
+        // correctly; the interval string itself is what the klines REST uses.
+        _             =>         60_000,
     }
 }

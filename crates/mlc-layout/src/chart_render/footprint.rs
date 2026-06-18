@@ -153,10 +153,14 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
     // still readable behind the cluster text.
     draw_wicks(ctx, state, bars, start, end, bar_w);
 
-    // Then the per-level cluster grid.
+    // Then the per-level cluster grid. For bars with no live cluster data
+    // (historical OHLC bars seeded by the klines backfill) draw a plain
+    // candle body so the chart is not blank to the left of live bars.
     for i in start..end {
         let bar = &bars[i];
         if bar.levels.is_empty() {
+            // OHLC skeleton: body only — wicks already drawn by draw_wicks above.
+            draw_fp_ohlc_body(ctx, state, bar, i, bar_w);
             continue;
         }
         let cx = viewport.bar_to_x(i) + rect.x;
@@ -487,6 +491,39 @@ fn price_to_y_local(price: f64, ps: &mlc_core::chart::types::PriceScale, h: f64)
         return h * 0.5;
     }
     h * (1.0 - (price - ps.price_min) / range)
+}
+
+/// Draw an OHLC candle body (no wick — wicks come from `draw_wicks`) for a
+/// footprint bar that has no cluster level data yet.  Used to fill the
+/// left-hand side of the chart with klines-backfill history.
+fn draw_fp_ohlc_body(
+    ctx: &mut dyn RenderContext,
+    state: &ChartRenderState,
+    bar: &FootprintBar,
+    bar_index: usize,
+    bar_w: f64,
+) {
+    let viewport = state.viewport;
+    let price_scale = state.price_scale;
+    let rect = &state.chart_rect;
+    let theme = state.theme;
+
+    let cx = viewport.bar_to_x(bar_index) + rect.x;
+    let cell_left = cx - bar_w * 0.5;
+    let cell_right = cx + bar_w * 0.5;
+    if cell_right < rect.x || cell_left > rect.x + rect.width {
+        return;
+    }
+
+    let is_up = bar.is_bullish();
+    let body_color = if is_up { &theme.candle_up } else { &theme.candle_down };
+
+    let top_y = rect.y + price_to_y_local(bar.open.max(bar.close), price_scale, rect.height);
+    let bot_y = rect.y + price_to_y_local(bar.open.min(bar.close), price_scale, rect.height);
+    let body_h = (bot_y - top_y).max(1.0);
+
+    ctx.set_fill_color(body_color);
+    ctx.fill_rect(cell_left, top_y, bar_w, body_h);
 }
 
 #[cfg(test)]
