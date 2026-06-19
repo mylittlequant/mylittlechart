@@ -70,8 +70,7 @@ impl From<AppSession> for AppSessionOut {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -84,6 +83,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(DEFAULT_PORT);
 
+    // CRITICAL: construct DataBridge synchronously FIRST. It owns its own
+    // tokio runtime, built via block_on internally. Calling that from inside
+    // a `#[tokio::main]` async fn panics ("Cannot start a runtime from
+    // within a runtime"). The daemon's HTTP runtime is a separate Tokio
+    // instance, spun up below after the bridge already exists.
     let (bridge, _live_rx, _connector_ready_rx) = DataBridge::new();
     let bridge = Arc::new(bridge);
     let core = BackendCore::new(bridge.clone(), None);
@@ -95,8 +99,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tick_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
     };
 
+    // HTTP runtime — separate from the bridge runtime.
+    let http_rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .worker_threads(2)
+        .thread_name("mlc-backend-daemon-http")
+        .build()?;
+
     let tick_state = state.clone();
-    tokio::spawn(async move {
+    http_rt.spawn(async move {
         let mut interval = tokio::time::interval(TICK_PERIOD);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
@@ -126,15 +137,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    tracing::info!(target: "mlc-backend-daemon", "listening on http://{addr}");
-
-    tokio::select! {
-        res = axum::serve(listener, app) => res?,
-        _ = tokio::signal::ctrl_c() => {
-            tracing::info!(target: "mlc-backend-daemon", "ctrl-c received, shutting down");
+    http_rt.block_on(async move {
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        tracing::info!(target: "mlc-backend-daemon", "listening on http://{addr}");
+        tokio::select! {
+            res = axum::serve(listener, app) => res?,
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!(target: "mlc-backend-daemon", "ctrl-c received, shutting down");
+            }
         }
-    }
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })?;
 
     Ok(())
 }
