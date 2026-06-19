@@ -109,7 +109,7 @@ impl ChartApp {
                                             snap_exchange_id,
                                             snap_exchange_id.as_str().to_string(),
                                             snap_at,
-                                            std::sync::Arc::clone(&self.bridge),
+                                            std::sync::Arc::clone(&self.core.bridge),
                                         ),
                                     );
 
@@ -350,7 +350,7 @@ impl ChartApp {
                                             patch_exchange_id,
                                             patch_exchange_id.as_str().to_string(),
                                             patch_at,
-                                            std::sync::Arc::clone(&self.bridge),
+                                            std::sync::Arc::clone(&self.core.bridge),
                                         ),
                                     );
                                     window.viewport = snap.viewport.clone();
@@ -965,8 +965,8 @@ impl ChartApp {
                                         if !s.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
-                                                s.shared_orderbook = self.bridge.subscribe_orderbook(eid, &s.symbol, at);
-                                                let trade_handle = self.bridge.subscribe_trades(eid, &s.symbol, at);
+                                                s.shared_orderbook = self.core.bridge.subscribe_orderbook(eid, &s.symbol, at);
+                                                let trade_handle = self.core.bridge.subscribe_trades(eid, &s.symbol, at);
                                                 s.shared_trades = trade_handle;
                                             }
                                         }
@@ -988,7 +988,7 @@ impl ChartApp {
                                         if !s.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
-                                                let handle = self.bridge.subscribe_trades(eid, &s.symbol, at);
+                                                let handle = self.core.bridge.subscribe_trades(eid, &s.symbol, at);
                                                 s.shared_trades = handle;
                                             }
                                         }
@@ -1010,7 +1010,7 @@ impl ChartApp {
                                         if !s.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
-                                                let handle = self.bridge.subscribe_trades(eid, &s.symbol, at);
+                                                let handle = self.core.bridge.subscribe_trades(eid, &s.symbol, at);
                                                 s.shared_trades = handle;
                                             }
                                         }
@@ -1032,7 +1032,7 @@ impl ChartApp {
                                         if !s.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
-                                                s.shared_orderbook = self.bridge.subscribe_orderbook(eid, &s.symbol, at);
+                                                s.shared_orderbook = self.core.bridge.subscribe_orderbook(eid, &s.symbol, at);
                                             }
                                         }
                                         self.panels_store.liquidity_heatmap.insert(pid, s);
@@ -1054,7 +1054,7 @@ impl ChartApp {
                                         if !s.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
-                                                let handle = self.bridge.subscribe_trades(eid, &s.symbol, at);
+                                                let handle = self.core.bridge.subscribe_trades(eid, &s.symbol, at);
                                                 s.shared_trades = handle;
                                             }
                                         }
@@ -1077,7 +1077,7 @@ impl ChartApp {
                                         if !s.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
-                                                s.shared_orderbook = self.bridge.subscribe_orderbook(eid, &s.symbol, at);
+                                                s.shared_orderbook = self.core.bridge.subscribe_orderbook(eid, &s.symbol, at);
                                             }
                                         }
                                         self.panels_store.l2_tape.insert(pid, s);
@@ -1099,7 +1099,7 @@ impl ChartApp {
                                         if !s.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
-                                                let handle = self.bridge.subscribe_trades(eid, &s.symbol, at);
+                                                let handle = self.core.bridge.subscribe_trades(eid, &s.symbol, at);
                                                 s.shared_trades = handle;
                                             }
                                         }
@@ -1183,7 +1183,7 @@ impl ChartApp {
                                             for ex_label in exchanges {
                                                 if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
                                                     let at = digdigdig3::AccountType::Spot;
-                                                    let _ = self.bridge.subscribe_orderbook(eid, symbol, at);
+                                                    let _ = self.core.bridge.subscribe_orderbook(eid, symbol, at);
                                                 }
                                             }
                                         }
@@ -1263,7 +1263,7 @@ impl ChartApp {
                         let mut depth_subs: Vec<(digdigdig3::ExchangeId, String, digdigdig3::AccountType)> = Vec::new();
 
                         let resolve_eid = |exchange_str: &str| -> digdigdig3::ExchangeId {
-                            self.exchange_symbols
+                            self.core.exchange_symbols_read()
                                 .keys()
                                 .find(|e| e.as_str() == exchange_str)
                                 .copied()
@@ -1308,7 +1308,7 @@ impl ChartApp {
                         let mut seen: std::collections::HashSet<(digdigdig3::ExchangeId, String, digdigdig3::AccountType)> = std::collections::HashSet::new();
                         for (eid, sym, at) in depth_subs {
                             if seen.insert((eid, sym.clone(), at)) {
-                                self.bridge.subscribe_depth(eid, &sym, at);
+                                self.core.bridge.subscribe_depth(eid, &sym, at);
                             }
                         }
                     }
@@ -1339,7 +1339,7 @@ impl ChartApp {
 
                     for (eid, symbol) in &old_subscriptions {
                         if !new_subscriptions.contains(&(*eid, symbol.clone())) {
-                            self.bridge.unsubscribe_trades(*eid, symbol, digdigdig3::AccountType::default());
+                            self.core.bridge.unsubscribe_trades(*eid, symbol, digdigdig3::AccountType::default());
                             eprintln!("[ChartApp] unsubscribed trades: {}/{}", eid.as_str(), symbol);
                         }
                     }
@@ -1379,8 +1379,8 @@ impl ChartApp {
                             continue;
                         }
                         let at = crate::account_type_from_label(at_label);
-                        self.bridge.ensure_connector(eid);
-                        self.bridge.request_bars(eid, sym, tf, at, None, Some(bar_count), true);
+                        self.core.bridge.ensure_connector(eid);
+                        self.core.bridge.request_bars(eid, sym, tf, at, None, Some(bar_count), true);
                         bars_requested += 1;
                     }
                     eprintln!("[ChartApp] LoadPreset: requesting bars for {} windows", bars_requested);
@@ -1478,7 +1478,7 @@ impl ChartApp {
         // Layout above lists steps in the order they execute. Look for the
         // biggest bucket — that's where Stage 4 (Send carve-out + worker
         // dispatch) buys you the most off-main-thread time. Steps that
-        // touch `self.bridge.*` (`depth_subs`, `unsubs`, `request_bars`,
+        // touch `self.core.bridge.*` (`depth_subs`, `unsubs`, `request_bars`,
         // and parts of `slots`) cannot move off main today; everything
         // else is pure CPU and is the target of the worker thread.
         eprintln!(

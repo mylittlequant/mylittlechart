@@ -177,7 +177,7 @@ impl ChartApp {
             if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id).cloned() {
                 if desc.mode == gate4agent::InstanceMode::Pty {
                     let id = desc.instance_id;
-                    let _ = self.bridge.runtime().block_on(self.agent.write_pty_instance(id, text));
+                    let _ = self.core.bridge.runtime().block_on(self.agent.write_pty_instance(id, text));
                 }
             }
         }
@@ -6401,7 +6401,7 @@ impl ChartApp {
                         if desc.mode == gate4agent::InstanceMode::Pty {
                             let text = String::from_utf8_lossy(&bytes).to_string();
                             let id = desc.instance_id;
-                            let _ = self.bridge.runtime().block_on(self.agent.write_pty_instance(id, &text));
+                            let _ = self.core.bridge.runtime().block_on(self.agent.write_pty_instance(id, &text));
                         }
                     }
                 }
@@ -6422,7 +6422,7 @@ impl ChartApp {
                         eprintln!("[gate4agent::chat] Enter via on_char text_len={}", text.len());
                         if !text.is_empty() {
                             let id = desc.instance_id;
-                            match self.bridge.runtime().block_on(self.agent.send_chat_instance(id, &text)) {
+                            match self.core.bridge.runtime().block_on(self.agent.send_chat_instance(id, &text)) {
                                 Ok(()) => {
                                     let buf = self.sidebar_state.agent_input_buffers
                                         .entry(leaf_id).or_default();
@@ -7353,7 +7353,7 @@ impl ChartApp {
                     {
                         let q = self.modal_state.search_query.clone();
                         self.modal_state.symbol_search_results =
-                            crate::ChartApp::build_demo_symbol_results(&q, &self.sidebar_state.watchlist_manager, &self.exchange_symbols);
+                            crate::ChartApp::build_demo_symbol_results(&q, &self.sidebar_state.watchlist_manager, &self.core.exchange_symbols_read());
                     }
                 }
                 c if !c.is_control() => {
@@ -7365,7 +7365,7 @@ impl ChartApp {
                     {
                         let q = self.modal_state.search_query.clone();
                         self.modal_state.symbol_search_results =
-                            crate::ChartApp::build_demo_symbol_results(&q, &self.sidebar_state.watchlist_manager, &self.exchange_symbols);
+                            crate::ChartApp::build_demo_symbol_results(&q, &self.sidebar_state.watchlist_manager, &self.core.exchange_symbols_read());
                     }
                 }
                 _ => {}
@@ -7690,7 +7690,7 @@ impl ChartApp {
                             if desc.mode == gate4agent::InstanceMode::Pty {
                                 let text = String::from_utf8_lossy(&bytes).to_string();
                                 let id = desc.instance_id;
-                                let _ = self.bridge.runtime().block_on(self.agent.write_pty_instance(id, &text));
+                                let _ = self.core.bridge.runtime().block_on(self.agent.write_pty_instance(id, &text));
                             }
                         }
                     }
@@ -7835,7 +7835,7 @@ impl ChartApp {
             {
                 let q = self.modal_state.search_query.clone();
                 self.modal_state.symbol_search_results =
-                    crate::ChartApp::build_demo_symbol_results(&q, &self.sidebar_state.watchlist_manager, &self.exchange_symbols);
+                    crate::ChartApp::build_demo_symbol_results(&q, &self.sidebar_state.watchlist_manager, &self.core.exchange_symbols_read());
             }
             return;
         }
@@ -8999,7 +8999,7 @@ impl ChartApp {
                         digdigdig3::ExchangeId::Binance,
                         exchange_name.clone(),
                         digdigdig3::AccountType::Spot,
-                        self.bridge.clone(),
+                        self.core.bridge.clone(),
                     ),
                 );
                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
@@ -9010,8 +9010,8 @@ impl ChartApp {
                     window.pending_symbol_load = true;
                     window.needs_snap_after_backfill = true;
                 }
-                self.bridge.ensure_connector(digdigdig3::ExchangeId::Binance);
-                self.bridge.request_bars(
+                self.core.bridge.ensure_connector(digdigdig3::ExchangeId::Binance);
+                self.core.bridge.request_bars(
                     digdigdig3::ExchangeId::Binance,
                     "BTCUSDT",
                     &default_timeframe,

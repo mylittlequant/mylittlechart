@@ -18,8 +18,8 @@ impl ChartApp {
         let drain_t0 = std::time::Instant::now();
         let n = work.len();
         for (eid, sym, tf, at, force) in work {
-            self.bridge.ensure_connector(eid);
-            self.bridge.request_bars(eid, &sym, &tf, at, None, Some(bar_count), force);
+            self.core.bridge.ensure_connector(eid);
+            self.core.bridge.request_bars(eid, &sym, &tf, at, None, Some(bar_count), force);
         }
         eprintln!("[ChartApp] drained {} cure jobs in {}us", n, drain_t0.elapsed().as_micros());
     }
@@ -256,14 +256,14 @@ impl ChartApp {
                             // prior tick subscription is owned by abort_tick_bars).
                             if let Some(ref prev_tf) = prev_tf_opt {
                                 if prev_tf.tick_count().is_none() {
-                                    self.bridge.abort_kline_bars(self.active_exchange, &symbol, at, &prev_tf.name);
+                                    self.core.bridge.abort_kline_bars(self.active_exchange, &symbol, at, &prev_tf.name);
                                 }
                             }
                             if let Some(count) = tf.tick_count() {
-                                self.bridge.request_tick_bars(self.active_exchange, &symbol, at, count);
+                                self.core.bridge.request_tick_bars(self.active_exchange, &symbol, at, count);
                             } else {
-                                self.bridge.abort_tick_bars(self.active_exchange, &symbol, at);
-                                self.bridge.request_bars(self.active_exchange, &symbol, &tf, at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), true);
+                                self.core.bridge.abort_tick_bars(self.active_exchange, &symbol, at);
+                                self.core.bridge.request_bars(self.active_exchange, &symbol, &tf, at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), true);
                             }
                         }
                     }
@@ -387,7 +387,7 @@ impl ChartApp {
                                     // Step 1: always abort any derived
                                     // subscription. The bridge.abort_* call is
                                     // idempotent when nothing's live.
-                                    self.bridge.abort_derived_chart(
+                                    self.core.bridge.abort_derived_chart(
                                         self.active_exchange, &symbol, at,
                                     );
 
@@ -423,42 +423,42 @@ impl ChartApp {
                                         "range_bar" => {
                                             let units = if chart_param > 0.0 { chart_param } else { 10.0 };
                                             let scaled = (units * 1e8) as u64;
-                                            self.bridge.request_range_bars(self.active_exchange, &symbol, at, scaled);
+                                            self.core.bridge.request_range_bars(self.active_exchange, &symbol, at, scaled);
                                         }
                                         "volume_bar" => {
                                             let units = if chart_param > 0.0 { chart_param } else { 1000.0 };
                                             let scaled = (units * 1e8) as u64;
-                                            self.bridge.request_volume_bars(self.active_exchange, &symbol, at, scaled);
+                                            self.core.bridge.request_volume_bars(self.active_exchange, &symbol, at, scaled);
                                         }
                                         "footprint" => {
                                             let iv = if !chart_interval.is_empty() { chart_interval } else { "1m" };
-                                            self.bridge.request_footprint(self.active_exchange, &symbol, at, iv);
+                                            self.core.bridge.request_footprint(self.active_exchange, &symbol, at, iv);
                                         }
                                         "renko" => {
                                             // Default: 0.5 % of last close for the box size; reversal = 2 (TradeStation classic).
                                             let units = if chart_param > 0.0 { chart_param } else { 10.0 };
                                             let scaled = (units * 1e8) as u64;
-                                            self.bridge.request_renko_bars(self.active_exchange, &symbol, at, scaled, 2);
+                                            self.core.bridge.request_renko_bars(self.active_exchange, &symbol, at, scaled, 2);
                                         }
                                         "pnf" => {
                                             // Default reversal = 3 (TradeStation classic).
                                             let units = if chart_param > 0.0 { chart_param } else { 10.0 };
                                             let scaled = (units * 1e8) as u64;
-                                            self.bridge.request_pnf_bars(self.active_exchange, &symbol, at, scaled, 3);
+                                            self.core.bridge.request_pnf_bars(self.active_exchange, &symbol, at, scaled, 3);
                                         }
                                         "kagi" => {
                                             // Default reversal = 1 % of current price expressed as absolute units.
                                             let units = if chart_param > 0.0 { chart_param } else { 10.0 };
                                             let scaled = (units * 1e8) as u64;
-                                            self.bridge.request_kagi_bars(self.active_exchange, &symbol, at, scaled);
+                                            self.core.bridge.request_kagi_bars(self.active_exchange, &symbol, at, scaled);
                                         }
                                         "cvd" => {
-                                            self.bridge.request_cvd_line(self.active_exchange, &symbol, at);
+                                            self.core.bridge.request_cvd_line(self.active_exchange, &symbol, at);
                                         }
                                         "tpo" => {
                                             // Default 30-min letter buckets, Trade-source path (sub-tick precision, fast cold start).
                                             let freq = if chart_param > 0.0 { chart_param as u16 } else { 30 };
-                                            self.bridge.request_tpo(
+                                            self.core.bridge.request_tpo(
                                                 self.active_exchange, &symbol, at, freq,
                                                 mlc_live_data::TpoSource::TradeBucket,
                                             );
@@ -470,7 +470,7 @@ impl ChartApp {
                                             } else {
                                                 3u8
                                             };
-                                            self.bridge.request_three_line_break(
+                                            self.core.bridge.request_three_line_break(
                                                 self.active_exchange, &symbol, at, lines_back,
                                             );
                                         }
@@ -482,7 +482,7 @@ impl ChartApp {
                                             } else {
                                                 1_000_000u64
                                             };
-                                            self.bridge.request_dollar_bars(
+                                            self.core.bridge.request_dollar_bars(
                                                 self.active_exchange, &symbol, at, threshold,
                                             );
                                         }
@@ -493,7 +493,7 @@ impl ChartApp {
                                             } else {
                                                 50u32
                                             };
-                                            self.bridge.request_tick_imbalance_bars(
+                                            self.core.bridge.request_tick_imbalance_bars(
                                                 self.active_exchange, &symbol, at, 20, min_ticks,
                                             );
                                         }
@@ -503,7 +503,7 @@ impl ChartApp {
                                             } else {
                                                 50u32
                                             };
-                                            self.bridge.request_volume_imbalance_bars(
+                                            self.core.bridge.request_volume_imbalance_bars(
                                                 self.active_exchange, &symbol, at, 20, min_ticks,
                                             );
                                         }
@@ -513,19 +513,19 @@ impl ChartApp {
                                             } else {
                                                 50u32
                                             };
-                                            self.bridge.request_run_bars(
+                                            self.core.bridge.request_run_bars(
                                                 self.active_exchange, &symbol, at, 20, min_ticks,
                                             );
                                         }
                                         // ── DOM Heatmap (C12) ─────────────────
                                         "dom_heatmap" => {
-                                            self.bridge.request_dom_heatmap(
+                                            self.core.bridge.request_dom_heatmap(
                                                 self.active_exchange, &symbol, at,
                                             );
                                         }
                                         // ── Liquidation Heatmap (C13) ─────────
                                         "liquidation_heatmap" => {
-                                            self.bridge.request_liquidation_heatmap(
+                                            self.core.bridge.request_liquidation_heatmap(
                                                 self.active_exchange, &symbol, at,
                                             );
                                         }
@@ -536,7 +536,7 @@ impl ChartApp {
                                             // tick TF (tick TF flips into
                                             // derived path above).
                                             if !on_tick_tf {
-                                                self.bridge.request_bars(
+                                                self.core.bridge.request_bars(
                                                     self.active_exchange, &symbol, &tf, at,
                                                     None,
                                                     Some(self.panel_app.user_manager.profile.bar_count as usize),
@@ -582,29 +582,29 @@ impl ChartApp {
                                 let at = crate::account_type_from_label(&at_label);
                                 let scaled = (value * 1e8) as u64;
                                 match active_ct.as_str() {
-                                    "range_bar"  => self.bridge.request_range_bars(self.active_exchange, &symbol, at, scaled),
-                                    "volume_bar" => self.bridge.request_volume_bars(self.active_exchange, &symbol, at, scaled),
-                                    "renko"      => self.bridge.request_renko_bars(self.active_exchange, &symbol, at, scaled, 2),
-                                    "pnf"        => self.bridge.request_pnf_bars(self.active_exchange, &symbol, at, scaled, 3),
-                                    "kagi"       => self.bridge.request_kagi_bars(self.active_exchange, &symbol, at, scaled),
+                                    "range_bar"  => self.core.bridge.request_range_bars(self.active_exchange, &symbol, at, scaled),
+                                    "volume_bar" => self.core.bridge.request_volume_bars(self.active_exchange, &symbol, at, scaled),
+                                    "renko"      => self.core.bridge.request_renko_bars(self.active_exchange, &symbol, at, scaled, 2),
+                                    "pnf"        => self.core.bridge.request_pnf_bars(self.active_exchange, &symbol, at, scaled, 3),
+                                    "kagi"       => self.core.bridge.request_kagi_bars(self.active_exchange, &symbol, at, scaled),
                                     // Quant bars (C9): param is reinterpreted per bar type.
                                     // dollar_bar: param = dollar threshold (whole dollars).
                                     "dollar_bar" => {
                                         let threshold = if value > 0.0 { value as u64 } else { 1_000_000u64 };
-                                        self.bridge.request_dollar_bars(self.active_exchange, &symbol, at, threshold);
+                                        self.core.bridge.request_dollar_bars(self.active_exchange, &symbol, at, threshold);
                                     }
                                     // imbalance/run bars: param = min_ticks floor.
                                     "tick_imbalance_bar" => {
                                         let min_ticks = if value > 0.0 { value as u32 } else { 50 };
-                                        self.bridge.request_tick_imbalance_bars(self.active_exchange, &symbol, at, 20, min_ticks);
+                                        self.core.bridge.request_tick_imbalance_bars(self.active_exchange, &symbol, at, 20, min_ticks);
                                     }
                                     "volume_imbalance_bar" => {
                                         let min_ticks = if value > 0.0 { value as u32 } else { 50 };
-                                        self.bridge.request_volume_imbalance_bars(self.active_exchange, &symbol, at, 20, min_ticks);
+                                        self.core.bridge.request_volume_imbalance_bars(self.active_exchange, &symbol, at, 20, min_ticks);
                                     }
                                     "run_bar" => {
                                         let min_ticks = if value > 0.0 { value as u32 } else { 50 };
-                                        self.bridge.request_run_bars(self.active_exchange, &symbol, at, 20, min_ticks);
+                                        self.core.bridge.request_run_bars(self.active_exchange, &symbol, at, 20, min_ticks);
                                     }
                                     _ => {}
                                 }
@@ -648,7 +648,7 @@ impl ChartApp {
                             let eid_str = self.active_exchange.as_str();
                             if self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
                                 let at = crate::account_type_from_label(&at_label);
-                                self.bridge.request_footprint(self.active_exchange, &symbol, at, static_iv);
+                                self.core.bridge.request_footprint(self.active_exchange, &symbol, at, static_iv);
                             }
                         }
                     }
@@ -667,7 +667,7 @@ impl ChartApp {
             ChartOutEvent::OpenSymbolSearch => {
                 self.modal_state.open(OpenModal::SymbolSearch);
                 self.modal_state.symbol_search_results =
-                    crate::ChartApp::build_demo_symbol_results("", &self.sidebar_state.watchlist_manager, &self.exchange_symbols);
+                    crate::ChartApp::build_demo_symbol_results("", &self.sidebar_state.watchlist_manager, &self.core.exchange_symbols_read());
                 self.modal_state.start_editing(0);
                 eprintln!("[ChartApp] symbol search modal opened");
             }
@@ -675,7 +675,7 @@ impl ChartApp {
                 use mlc_core::state::ChartId;
                 let target_cid = ChartId(chart_id);
 
-                let resolved_exchange = self.exchange_symbols
+                let resolved_exchange = self.core.exchange_symbols_read()
                     .keys()
                     .find(|eid| eid.as_str() == exchange.as_str())
                     .copied()
@@ -688,7 +688,7 @@ impl ChartApp {
                     .map(crate::account_type_from_label)
                     .unwrap_or(digdigdig3::AccountType::Spot);
                 let old_trade_exchange = self.managers.bubble.exchange_for_chart(target_cid)
-                    .and_then(|s| self.exchange_symbols.keys().find(|eid| eid.as_str() == s).copied())
+                    .and_then(|s| self.core.exchange_symbols_read().keys().find(|eid| eid.as_str() == s).copied())
                     .unwrap_or(self.active_exchange);
 
                 let timeframe = self.managers.bubble.timeframe_for_chart(target_cid)
@@ -735,15 +735,15 @@ impl ChartApp {
 
                 self.active_exchange = resolved_exchange;
                 if !previous_symbol.is_empty() {
-                    self.bridge.unsubscribe_trades(old_trade_exchange, &previous_symbol, old_trade_at);
+                    self.core.bridge.unsubscribe_trades(old_trade_exchange, &previous_symbol, old_trade_at);
                 }
                 let eid_str = resolved_exchange.as_str();
                 if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
                     eprintln!("[ChartApp] ApplySymbol: exchange {} disabled, skipping connector call", eid_str);
                 } else {
                     let at = crate::account_type_from_label(&account_type);
-                    self.bridge.ensure_connector(resolved_exchange);
-                    self.bridge.request_bars(
+                    self.core.bridge.ensure_connector(resolved_exchange);
+                    self.core.bridge.request_bars(
                         resolved_exchange, &symbol, &timeframe, at, None,
                         Some(self.panel_app.user_manager.profile.bar_count as usize), false,
                     );
@@ -773,7 +773,7 @@ impl ChartApp {
             ChartOutEvent::OpenCompareSearch => {
                 self.modal_state.open(OpenModal::CompareSearch);
                 self.modal_state.symbol_search_results =
-                    crate::ChartApp::build_demo_symbol_results("", &self.sidebar_state.watchlist_manager, &self.exchange_symbols);
+                    crate::ChartApp::build_demo_symbol_results("", &self.sidebar_state.watchlist_manager, &self.core.exchange_symbols_read());
                 self.modal_state.start_editing(0);
                 eprintln!("[ChartApp] compare search modal opened");
             }
@@ -872,7 +872,7 @@ impl ChartApp {
                                     }
                                 }
                                 if oi_show_now {
-                                    self.bridge.request_open_interest(
+                                    self.core.bridge.request_open_interest(
                                         self.active_exchange, &symbol, at,
                                     );
                                 }
@@ -909,7 +909,7 @@ impl ChartApp {
                                     }
                                 }
                                 if funding_show_now {
-                                    self.bridge.request_funding_rate(
+                                    self.core.bridge.request_funding_rate(
                                         self.active_exchange, &symbol, at,
                                     );
                                 }

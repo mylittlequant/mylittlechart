@@ -15,6 +15,7 @@
 //! ```
 
 pub mod agent;
+pub mod backend_core;
 pub mod chart_panel_bridge;
 pub mod chart_panel_state;
 pub mod chart_state;
@@ -178,12 +179,12 @@ fn parse_timeframe_name(name: &str) -> Option<mlc_core::state::Timeframe> {
 /// One entry per symbol, updated every second from `LiveUpdate::MiniTickerUpdate`.
 /// Used as a fallback price source in the watchlist sidebar for symbols that
 /// do not have a chart window open.
-struct MiniTickerData {
-    last_price: f64,
-    price_change_percent: f64,
-    high_price: f64,
-    low_price: f64,
-    volume: f64,
+pub struct MiniTickerData {
+    pub last_price: f64,
+    pub price_change_percent: f64,
+    pub high_price: f64,
+    pub low_price: f64,
+    pub volume: f64,
 }
 
 // =============================================================================
@@ -395,28 +396,17 @@ pub struct ChartApp {
     /// of right margin.
     needs_initial_viewport_fit: bool,
 
-    /// Live data bridge — owns the tokio runtime and connector pool.
-    bridge: std::sync::Arc<DataBridge>,
+    /// Shared backend data plane — bridge, mini-ticker cache, exchange symbol
+    /// catalogue, trading manager. One per process; every `ChartApp` instance
+    /// holds an `Arc::clone`. See `backend_core.rs` for the migration plan
+    /// (more fields move here in subsequent passes).
+    pub core: std::sync::Arc<crate::backend_core::BackendCore>,
 
     /// Receiver for async live data updates (bars loaded, errors, etc.).
     live_update_rx: tokio::sync::broadcast::Receiver<LiveUpdate>,
 
-    /// Cached mini ticker prices from WebSocket (symbol → 24h stats).
-    ///
-    /// Updated every second from `LiveUpdate::MiniTickerUpdate`. Used as a
-    /// fallback price source for watchlist items whose symbol is not open in
-    /// any chart window.
-    mini_ticker_cache: std::collections::HashMap<String, MiniTickerData>,
-
     /// Currently active exchange.
     pub active_exchange: digdigdig3::ExchangeId,
-
-    /// Real exchange symbols loaded from the exchange info endpoint.
-    ///
-    /// Populated asynchronously via `LiveUpdate::SymbolsLoaded`. Keyed by
-    /// `ExchangeId` so that symbols from multiple exchanges are stored
-    /// simultaneously. Used by the symbol search overlay.
-    exchange_symbols: std::collections::HashMap<digdigdig3::ExchangeId, Vec<mlc_live_data::SymbolInfo>>,
 
     /// Unique identifier for this OS window (e.g. "win_1728503941").
     ///
@@ -783,9 +773,6 @@ pub struct ChartApp {
     /// `(panel_id, last_x, last_y)`.
     pub(crate) slot_tradetape_drag: Option<(mlc_core::state::PanelId, f64, f64)>,
 
-    /// Trading manager — order routing, position tracking, paper engine.
-    pub mlc_trading_manager: Option<mlc_trading_manager::TradingManager>,
-
     /// Active-leaf (or single-window) chart geometry for the current frame.
     ///
     /// PRODUCED once per frame by the layout phase (`sync_sub_pane_geometry`),
@@ -1045,7 +1032,7 @@ impl ChartApp {
     /// to inject synthetic LiveUpdates via `debug_broadcast_tx`.
     #[doc(hidden)]
     pub fn bridge_arc(&self) -> std::sync::Arc<DataBridge> {
-        self.bridge.clone()
+        self.core.bridge.clone()
     }
 
     /// Create a new chart application for the given symbol.
@@ -1061,6 +1048,11 @@ impl ChartApp {
         let bridge = std::sync::Arc::new(bridge);
         // live_update_rx is a broadcast::Receiver — see DataBridge::add_listener()
         // for spawning additional windows that share this bridge.
+        let trading = mlc_trading_manager::TradingManager::new(
+            bridge.clone(),
+            std::path::PathBuf::from("."),
+        ).ok();
+        let core = crate::backend_core::BackendCore::new(bridge.clone(), trading);
 
         let mut app = Self {
             panel_app: ChartPanelApp::new(symbol),
@@ -1107,11 +1099,9 @@ impl ChartApp {
             wl_group_name_input: WatchlistGroupNameInputState::new(),
             last_wl_group_name_result: None,
             needs_initial_viewport_fit: false,
-            bridge: bridge.clone(),
+            core,
             live_update_rx,
-            mini_ticker_cache: std::collections::HashMap::new(),
             active_exchange: digdigdig3::ExchangeId::Binance,
-            exchange_symbols: std::collections::HashMap::new(),
             window_id: format!("win_{}", std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -1190,15 +1180,11 @@ impl ChartApp {
 
             active_drag_panel: None,
             slot_tradetape_drag: None,
-            mlc_trading_manager: mlc_trading_manager::TradingManager::new(
-                bridge.clone(),
-                std::path::PathBuf::from("."),
-            ).ok(),
             active_frame_layout: None,
             frame_layouts: std::collections::HashMap::new(),
         };
 
-        if let Some(tm) = &app.mlc_trading_manager {
+        if let Some(tm) = app.core.trading_lock() {
             app.panels_store.set_trading_snapshot(tm.snapshot());
         }
 
@@ -1408,6 +1394,14 @@ impl ChartApp {
     /// this window gets its own queue of live updates.
     pub fn new_empty(bridge: std::sync::Arc<DataBridge>) -> Self {
         let live_update_rx = bridge.add_listener();
+        let exchange_symbols_seed = bridge.symbols_snapshot();
+        let core = crate::backend_core::BackendCore::new(bridge.clone(), None);
+        // Seed exchange_symbols cache from the bridge's session-long catalogue
+        // so windows created after the connect wave start populated.
+        {
+            let mut es = core.exchange_symbols_mut();
+            *es = exchange_symbols_seed;
+        }
 
         let mut app = Self {
             panel_app: ChartPanelApp::new(""),
@@ -1454,15 +1448,9 @@ impl ChartApp {
             wl_group_name_input: WatchlistGroupNameInputState::new(),
             last_wl_group_name_result: None,
             needs_initial_viewport_fit: false,
-            bridge: bridge.clone(),
+            core,
             live_update_rx,
-            mini_ticker_cache: std::collections::HashMap::new(),
             active_exchange: digdigdig3::ExchangeId::Binance,
-            // Seed from the bridge's session-long symbol cache so that windows
-            // created after the connect wave (notably the live window after
-            // skeleton→live promote) start with every venue already loaded
-            // instead of waiting for re-broadcast that never comes.
-            exchange_symbols: bridge.symbols_snapshot(),
             window_id: format!(
                 "win_{}",
                 std::time::SystemTime::now()
@@ -1544,7 +1532,6 @@ impl ChartApp {
 
             active_drag_panel: None,
             slot_tradetape_drag: None,
-            mlc_trading_manager: None,
             active_frame_layout: None,
             frame_layouts: std::collections::HashMap::new(),
         };
@@ -1670,6 +1657,12 @@ impl ChartApp {
         user_manager: &mlc_core::ProfileManager,
         skeleton: bool,
     ) -> Self {
+        let exchange_symbols_seed = bridge.symbols_snapshot();
+        let core = crate::backend_core::BackendCore::new(bridge.clone(), None);
+        {
+            let mut es = core.exchange_symbols_mut();
+            *es = exchange_symbols_seed;
+        }
         let mut app = Self {
             panel_app: ChartPanelApp::new(""),
             input_coordinator: RefCell::new(InputCoordinator::new()),
@@ -1715,12 +1708,9 @@ impl ChartApp {
             wl_group_name_input: WatchlistGroupNameInputState::new(),
             last_wl_group_name_result: None,
             needs_initial_viewport_fit: false,
-            bridge: bridge.clone(),
+            core,
             live_update_rx,
-            mini_ticker_cache: std::collections::HashMap::new(),
             active_exchange: digdigdig3::ExchangeId::Binance,
-            // Seed from the bridge's session-long symbol cache (see new_empty).
-            exchange_symbols: bridge.symbols_snapshot(),
             window_id,
             window_x: None,
             window_y: None,
@@ -1796,7 +1786,6 @@ impl ChartApp {
 
             active_drag_panel: None,
             slot_tradetape_drag: None,
-            mlc_trading_manager: None,
             active_frame_layout: None,
             frame_layouts: std::collections::HashMap::new(),
         };
@@ -2333,7 +2322,7 @@ impl ChartApp {
     /// Return a clone of the `Arc<DataBridge>` so it can be shared with other
     /// windows created via [`new_empty`].
     pub fn bridge(&self) -> std::sync::Arc<DataBridge> {
-        self.bridge.clone()
+        self.core.bridge.clone()
     }
 
     // -------------------------------------------------------------------------
@@ -2376,7 +2365,7 @@ impl ChartApp {
             .map(|at_str| account_type_from_label(at_str))
             .unwrap_or(digdigdig3::AccountType::Spot);
 
-        let bridge = self.bridge.clone();
+        let bridge = self.core.bridge.clone();
         self.active_exchange = exchange_id;
 
         // Start the connector (no-op if already running).
@@ -2698,7 +2687,7 @@ impl ChartApp {
             };
             // Passing `None` for both limit and total_bars lets the bridge
             // pick up incremental mode from its bar cache.
-            self.bridge.request_bars(eid, sym, &tf, at, None, None, false);
+            self.core.bridge.request_bars(eid, sym, &tf, at, None, None, false);
         }
     }
 
@@ -4727,7 +4716,7 @@ impl ChartApp {
                     if desc.mode == gate4agent::InstanceMode::Pty {
                         let cols = ((rect.width / 7.0) as u16).max(1);
                         let rows = ((rect.height / 19.0) as u16).max(1);
-                        self.bridge.runtime().block_on(self.agent.resize_instance(desc.instance_id, cols, rows));
+                        self.core.bridge.runtime().block_on(self.agent.resize_instance(desc.instance_id, cols, rows));
                     }
                 }
             }
@@ -5187,7 +5176,7 @@ impl ChartApp {
                     if desc.mode == gate4agent::InstanceMode::Pty {
                         let cols = ((rect.width / 7.0) as u16).max(1);
                         let rows = ((rect.height / 19.0) as u16).max(1);
-                        self.bridge.runtime().block_on(self.agent.resize_instance(desc.instance_id, cols, rows));
+                        self.core.bridge.runtime().block_on(self.agent.resize_instance(desc.instance_id, cols, rows));
                     }
                 }
             }
@@ -5298,7 +5287,7 @@ impl ChartApp {
                     .unwrap_or(true)
             })
             .collect();
-        self.bridge.warmup_all_connectors(&enabled);
+        self.core.bridge.warmup_all_connectors(&enabled);
     }
 
     // -------------------------------------------------------------------------
@@ -5648,16 +5637,16 @@ impl ChartApp {
                 if !old_sym.is_empty() {
                     if let Some(eid) = digdigdig3::ExchangeId::from_str(&old_exch) {
                         let old_at = account_type_from_label(&old_at_label);
-                        self.bridge.unsubscribe_orderbook(eid, &old_sym, old_at);
-                        self.bridge.unsubscribe_trades(eid, &old_sym, old_at);
+                        self.core.bridge.unsubscribe_orderbook(eid, &old_sym, old_at);
+                        self.core.bridge.unsubscribe_trades(eid, &old_sym, old_at);
                     }
                 }
                 // Subscribe new orderbook and trades.
                 let (new_ob_handle, new_trade_handle) = if !symbol.is_empty() {
                     if let Some(eid) = digdigdig3::ExchangeId::from_str(&exchange) {
                         let new_at = account_type_from_label(&account_type);
-                        let ob = self.bridge.subscribe_orderbook(eid, &symbol, new_at);
-                        let tr = self.bridge.subscribe_trades(eid, &symbol, new_at);
+                        let ob = self.core.bridge.subscribe_orderbook(eid, &symbol, new_at);
+                        let tr = self.core.bridge.subscribe_trades(eid, &symbol, new_at);
                         (ob, tr)
                     } else {
                         (None, None)
@@ -5719,14 +5708,14 @@ impl ChartApp {
                 if !old_sym.is_empty() {
                     if let Some(eid) = digdigdig3::ExchangeId::from_str(&old_exch) {
                         let old_at = account_type_from_label(&old_at_label);
-                        self.bridge.unsubscribe_trades(eid, &old_sym, old_at);
+                        self.core.bridge.unsubscribe_trades(eid, &old_sym, old_at);
                     }
                 }
                 // Subscribe new.
                 let new_handle = if !symbol.is_empty() {
                     digdigdig3::ExchangeId::from_str(&exchange).and_then(|eid| {
                         let new_at = account_type_from_label(&account_type);
-                        self.bridge.subscribe_trades(eid, &symbol, new_at)
+                        self.core.bridge.subscribe_trades(eid, &symbol, new_at)
                     })
                 } else {
                     None
@@ -5753,13 +5742,13 @@ impl ChartApp {
                 if !old_sym.is_empty() {
                     if let Some(eid) = digdigdig3::ExchangeId::from_str(&old_exch) {
                         let old_at = account_type_from_label(&old_at_label);
-                        self.bridge.unsubscribe_trades(eid, &old_sym, old_at);
+                        self.core.bridge.unsubscribe_trades(eid, &old_sym, old_at);
                     }
                 }
                 let new_handle = if !symbol.is_empty() {
                     digdigdig3::ExchangeId::from_str(&exchange).and_then(|eid| {
                         let new_at = account_type_from_label(&account_type);
-                        self.bridge.subscribe_trades(eid, &symbol, new_at)
+                        self.core.bridge.subscribe_trades(eid, &symbol, new_at)
                     })
                 } else {
                     None
@@ -5789,13 +5778,13 @@ impl ChartApp {
                 if !old_sym.is_empty() {
                     if let Some(eid) = digdigdig3::ExchangeId::from_str(&old_exch) {
                         let old_at = account_type_from_label(&old_at_label);
-                        self.bridge.unsubscribe_trades(eid, &old_sym, old_at);
+                        self.core.bridge.unsubscribe_trades(eid, &old_sym, old_at);
                     }
                 }
                 let new_handle = if !symbol.is_empty() {
                     digdigdig3::ExchangeId::from_str(&exchange).and_then(|eid| {
                         let new_at = account_type_from_label(&account_type);
-                        self.bridge.subscribe_trades(eid, &symbol, new_at)
+                        self.core.bridge.subscribe_trades(eid, &symbol, new_at)
                     })
                 } else {
                     None
@@ -5823,13 +5812,13 @@ impl ChartApp {
                 if !old_sym.is_empty() {
                     if let Some(eid) = digdigdig3::ExchangeId::from_str(&old_exch) {
                         let old_at = account_type_from_label(&old_at_label);
-                        self.bridge.unsubscribe_trades(eid, &old_sym, old_at);
+                        self.core.bridge.unsubscribe_trades(eid, &old_sym, old_at);
                     }
                 }
                 let new_handle = if !symbol.is_empty() {
                     digdigdig3::ExchangeId::from_str(&exchange).and_then(|eid| {
                         let new_at = account_type_from_label(&account_type);
-                        self.bridge.subscribe_trades(eid, &symbol, new_at)
+                        self.core.bridge.subscribe_trades(eid, &symbol, new_at)
                     })
                 } else {
                     None
@@ -5883,10 +5872,10 @@ impl ChartApp {
                 for ex_label in &exchanges {
                     if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
                         if !old_sym.is_empty() {
-                            self.bridge.unsubscribe_orderbook(eid, &old_sym, new_at);
+                            self.core.bridge.unsubscribe_orderbook(eid, &old_sym, new_at);
                         }
                         if !symbol.is_empty() {
-                            let _ = self.bridge.subscribe_orderbook(eid, &symbol, new_at);
+                            let _ = self.core.bridge.subscribe_orderbook(eid, &symbol, new_at);
                         }
                     }
                 }
@@ -5912,13 +5901,13 @@ impl ChartApp {
             if old_sym == &symbol && old_exch == &exchange && old_at_label == &account_type {
                 continue;
             }
-            let old_eid = self.exchange_symbols
+            let old_eid = self.core.exchange_symbols_read()
                 .keys()
                 .find(|e| e.as_str() == old_exch.as_str())
                 .copied()
                 .unwrap_or(self.active_exchange);
             let old_at = crate::account_type_from_label(old_at_label);
-            self.bridge.unsubscribe_depth(old_eid, old_sym, old_at);
+            self.core.bridge.unsubscribe_depth(old_eid, old_sym, old_at);
             dlog!(
                 "[BubbleStore] unsubscribed depth for panel group {} ← {} @ {} ({})",
                 group_id.0, old_sym, old_exch, old_at_label
@@ -5928,13 +5917,13 @@ impl ChartApp {
         // If any panel needs orderbook data for the new symbol, subscribe the depth
         // WebSocket stream so live updates start arriving for it.
         if needs_depth_sub && !symbol.is_empty() {
-            let eid = self.exchange_symbols
+            let eid = self.core.exchange_symbols_read()
                 .keys()
                 .find(|e| e.as_str() == exchange)
                 .copied()
                 .unwrap_or(self.active_exchange);
             let at = crate::account_type_from_label(&account_type);
-            self.bridge.subscribe_depth(eid, &symbol, at);
+            self.core.bridge.subscribe_depth(eid, &symbol, at);
             dlog!(
                 "[BubbleStore] subscribed depth for panel group {} → {} @ {} ({})",
                 group_id.0, symbol, exchange, account_type
@@ -5987,8 +5976,8 @@ impl ChartApp {
             let eid = digdigdig3::ExchangeId::from_str(&exch)
                 .unwrap_or(digdigdig3::ExchangeId::Binance);
             let at = account_type_from_label(&at_label);
-            self.bridge.ensure_connector(eid);
-            self.bridge.request_bars(eid, &sym, &tf, at, None, Some(bar_count), false);
+            self.core.bridge.ensure_connector(eid);
+            self.core.bridge.request_bars(eid, &sym, &tf, at, None, Some(bar_count), false);
             warmed += 1;
         }
         eprintln!("[ChartApp] startup: warmed {} background tab series", warmed);
@@ -6034,8 +6023,8 @@ impl ChartApp {
         let eid = digdigdig3::ExchangeId::from_str(exch)
             .unwrap_or(digdigdig3::ExchangeId::Binance);
         let at = account_type_from_label(at_label);
-        self.bridge.ensure_connector(eid);
-        self.bridge.request_bars(eid, sym, tf, at, None, Some(bar_count), false);
+        self.core.bridge.ensure_connector(eid);
+        self.core.bridge.request_bars(eid, sym, tf, at, None, Some(bar_count), false);
     }
 
     /// Synchronise `window.inner_docking` with the external `IndicatorManager`.

@@ -367,7 +367,7 @@ impl ChartApp {
                         (composite, self.active_exchange.as_str(), "S".to_string())
                     };
                 // Resolve ExchangeId from string.
-                let resolved_exchange = self.exchange_symbols
+                let resolved_exchange = self.core.exchange_symbols_read()
                     .keys()
                     .find(|eid| eid.as_str() == exchange_part)
                     .copied()
@@ -434,15 +434,15 @@ impl ChartApp {
                 // Unsubscribe only the old symbol's trade stream, leaving other
                 // windows' streams intact.
                 if !old_trade_symbol.is_empty() {
-                    self.bridge.unsubscribe_trades(old_trade_exchange, &old_trade_symbol, old_trade_at);
+                    self.core.bridge.unsubscribe_trades(old_trade_exchange, &old_trade_symbol, old_trade_at);
                 }
                 let eid_str = resolved_exchange.as_str();
                 if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
                     eprintln!("[ChartApp] Exchange {} is disabled, skipping connector call (watchlist modal item click)", eid_str);
                 } else {
                     let wl_at = crate::account_type_from_label(&wl_at_label);
-                    self.bridge.ensure_connector(resolved_exchange);
-                    self.bridge.request_bars(resolved_exchange, sym_part, &timeframe, wl_at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), false);
+                    self.core.bridge.ensure_connector(resolved_exchange);
+                    self.core.bridge.request_bars(resolved_exchange, sym_part, &timeframe, wl_at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), false);
                 }
                 self.autosave_snapshot();
                 eprintln!("[WatchlistModal] symbol selected: {} @ {}", sym_part, exchange_part);
@@ -829,7 +829,7 @@ impl ChartApp {
                 let resolved_exchange = if exchange_id_part.is_empty() {
                     self.active_exchange
                 } else {
-                    self.exchange_symbols
+                    self.core.exchange_symbols_read()
                         .keys()
                         .find(|eid| eid.as_str() == exchange_id_part)
                         .copied()
@@ -902,15 +902,15 @@ impl ChartApp {
                         // Unsubscribe only the old symbol's trade stream, leaving other
                         // windows' streams intact.
                         if !previous_symbol.is_empty() {
-                            self.bridge.unsubscribe_trades(old_trade_exchange, &previous_symbol, old_trade_at);
+                            self.core.bridge.unsubscribe_trades(old_trade_exchange, &previous_symbol, old_trade_at);
                         }
                         let eid_str = resolved_exchange.as_str();
                         if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
                             eprintln!("[ChartApp] Exchange {} is disabled, skipping connector call (search symbol select)", eid_str);
                         } else {
                             let search_at = crate::account_type_from_label(&search_at_label);
-                            self.bridge.ensure_connector(resolved_exchange);
-                            self.bridge.request_bars(resolved_exchange, symbol_part, &timeframe, search_at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), false);
+                            self.core.bridge.ensure_connector(resolved_exchange);
+                            self.core.bridge.request_bars(resolved_exchange, symbol_part, &timeframe, search_at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), false);
                         }
                         // Record ChangeSymbol if it actually changed.
                         if previous_symbol != new_symbol_str {
@@ -2317,7 +2317,7 @@ impl ChartApp {
                     "symbol_search" => {
                         self.modal_state.open(OpenModal::SymbolSearch);
                         self.modal_state.symbol_search_results =
-                            crate::ChartApp::build_demo_symbol_results("", &self.sidebar_state.watchlist_manager, &self.exchange_symbols);
+                            crate::ChartApp::build_demo_symbol_results("", &self.sidebar_state.watchlist_manager, &self.core.exchange_symbols_read());
                         self.modal_state.start_editing(0);
                         eprintln!("[ChartApp] symbol search opened from context menu");
                     }

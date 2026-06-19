@@ -1113,7 +1113,7 @@ impl ChartApp {
             if symbol_owned.is_empty() {
                 continue;
             }
-            let resolved_exchange = self.exchange_symbols
+            let resolved_exchange = self.core.exchange_symbols_read()
                 .keys()
                 .find(|eid| eid.as_str() == exchange_owned)
                 .copied()
@@ -1127,8 +1127,8 @@ impl ChartApp {
                 continue;
             }
             let at = crate::account_type_from_label(&account_type_owned);
-            self.bridge.ensure_connector(resolved_exchange);
-            self.bridge.request_bars(resolved_exchange, &symbol_owned, &timeframe, at, None, Some(bar_count), false);
+            self.core.bridge.ensure_connector(resolved_exchange);
+            self.core.bridge.request_bars(resolved_exchange, &symbol_owned, &timeframe, at, None, Some(bar_count), false);
             eprintln!(
                 "[BubbleStore] Requested bars for peer {} @ {} tf={:?} (symbol propagation)",
                 symbol_owned, eid_str, timeframe
@@ -1256,7 +1256,7 @@ impl ChartApp {
             if symbol.is_empty() {
                 continue;
             }
-            let resolved_exchange = self.exchange_symbols
+            let resolved_exchange = self.core.exchange_symbols_read()
                 .keys()
                 .find(|eid| eid.as_str() == exchange_str)
                 .copied()
@@ -1270,13 +1270,13 @@ impl ChartApp {
                 continue;
             }
             let at = crate::account_type_from_label(&at_label);
-            self.bridge.ensure_connector(resolved_exchange);
+            self.core.bridge.ensure_connector(resolved_exchange);
             if let Some(count) = tf.tick_count() {
                 // Tick TF peer: subscribe to the dig3 TickBar stream.
-                self.bridge.request_tick_bars(resolved_exchange, &symbol, at, count);
+                self.core.bridge.request_tick_bars(resolved_exchange, &symbol, at, count);
             } else {
-                self.bridge.abort_tick_bars(resolved_exchange, &symbol, at);
-                self.bridge.request_bars(resolved_exchange, &symbol, &tf, at, None, Some(bar_count), true);
+                self.core.bridge.abort_tick_bars(resolved_exchange, &symbol, at);
+                self.core.bridge.request_bars(resolved_exchange, &symbol, &tf, at, None, Some(bar_count), true);
             }
             eprintln!(
                 "[BubbleStore] Requested bars for peer {} @ {} tf={:?} (timeframe propagation)",

@@ -393,11 +393,11 @@ impl ChartApp {
                     // C5c: bubble write already done above (no second write needed).
 
                     // Trigger Layer 2 background backfill for initial loads.
-                    // Done after the window loop to avoid borrow conflicts with self.bridge.
+                    // Done after the window loop to avoid borrow conflicts with self.core.bridge.
                     let bg_target = self.panel_app.user_manager.profile.data_load.background_bar_count;
                     for (sym, tf, at) in backfill_requests {
                         crate::dlog!("[ChartApp] Scheduling background backfill: {} {} tf={} target={}", exchange_id.as_str(), sym, tf.name, bg_target);
-                        self.bridge.request_background_backfill(exchange_id, &sym, &tf, at, bg_target);
+                        self.core.bridge.request_background_backfill(exchange_id, &sym, &tf, at, bg_target);
                     }
 
                     // Before diagnosing a true no-match, try to deliver bars to
@@ -536,7 +536,7 @@ impl ChartApp {
 
                     if any_matched {
                         if self.sidebar_state.connector_enabled.get(exchange_id.as_str()).copied().unwrap_or(true) {
-                            self.bridge.subscribe_trades(exchange_id, &symbol, account_type);
+                            self.core.bridge.subscribe_trades(exchange_id, &symbol, account_type);
                         }
                     }
                 }
@@ -1001,7 +1001,7 @@ impl ChartApp {
                     // Multi-bar gap detected — trigger REST backfill to fill missing candles.
                     if needs_backfill {
                         crate::dlog!("[ChartApp] Multi-bar gap detected for {} — requesting REST backfill", symbol);
-                        let bridge = self.bridge.clone();
+                        let bridge = self.core.bridge.clone();
                         for cid in self.panel_app.panel_grid.containers().keys() {
                             let sym_match = self.managers.bubble.symbol_for_chart(*cid).map_or(false, |s| s == symbol);
                             let at_match = self.managers.bubble.account_type_for_chart(*cid).map_or(false, |at| at == account_type.short_label());
@@ -1072,7 +1072,7 @@ impl ChartApp {
                         {
                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                 let at = account_type_from_label(&state.account_type);
-                                let h = self.bridge.subscribe_trades(eid, &state.symbol, at);
+                                let h = self.core.bridge.subscribe_trades(eid, &state.symbol, at);
                                 state.shared_trades = h;
                                 state.last_seen_ts_ms = 0;
                             }
@@ -1127,7 +1127,7 @@ impl ChartApp {
                     // None for those fields and must not overwrite the values that
                     // a prior full-snapshot event already wrote into the cache.
                     let cache_key = format!("{}:{}:{}", symbol, exchange_id.as_str(), account_type.short_label());
-                    let entry = self.mini_ticker_cache
+                    let mut entry = self.core.mini_ticker
                         .entry(cache_key)
                         .or_insert(crate::MiniTickerData {
                             last_price,
@@ -1166,7 +1166,7 @@ impl ChartApp {
                     // the Spot+Futures REST work on the bridge's 2-worker runtime
                     // during the startup wave. Cache fills on the first response;
                     // any later window reading symbols hits the cache anyway.
-                    let bridge = self.bridge.clone();
+                    let bridge = self.core.bridge.clone();
 
                     // Subscribe mini-tickers for watchlist symbols on this exchange.
                     let exchange_str = exchange_id.as_str();
@@ -1209,20 +1209,20 @@ impl ChartApp {
                             }
                         }
                     }
-                    if let Some(tm) = &mut self.mlc_trading_manager {
+                    if let Some(mut tm) = self.core.trading_lock() {
                         tm.on_connector_ready(exchange_id);
                     }
                 }
                 LiveUpdate::SymbolsLoaded { exchange_id, symbols } => {
                     let _t = std::time::Instant::now();
-                    self.exchange_symbols.insert(exchange_id, symbols);
+                    self.core.exchange_symbols_mut().insert(exchange_id, symbols);
                     symbols_insert_us += _t.elapsed().as_micros() as u64;
                     // Preload bridge's wire_symbol cache for this exchange.
                     // Trades one O(N) scan now for ~180ms saved on the FIRST
                     // request_bars / subscribe_* per (symbol, account_type)
                     // pair later — turns the first cold tab click into a
                     // pure UI swap instead of a 180ms freeze.
-                    self.bridge.prewarm_wire_symbol_cache(exchange_id);
+                    self.core.bridge.prewarm_wire_symbol_cache(exchange_id);
                 }
                 LiveUpdate::Error { exchange_id, account_type, symbol, timeframe: tf_name_err, message } => {
                     eprintln!("[ChartApp] live-data error ({:?}): {}", exchange_id, message);
@@ -1956,7 +1956,7 @@ impl ChartApp {
                     // Mark price sourced from mini_ticker_cache (last-trade/BBO price).
                     // Key format mirrors MiniTickerUpdate: "symbol:exchange:account_type".
                     let ticker_key = format!("{}:{}:{}", sym, ex_id.as_str(), at_label);
-                    let mark_price_opt = self.mini_ticker_cache
+                    let mark_price_opt = self.core.mini_ticker
                         .get(&ticker_key)
                         .map(|t| t.last_price);
                     let liqbk_targets: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
@@ -2055,7 +2055,7 @@ impl ChartApp {
         }
 
         if !trading_updates.is_empty() {
-            if let Some(tm) = &mut self.mlc_trading_manager {
+            if let Some(mut tm) = self.core.trading_lock() {
                 tm.tick(&trading_updates);
             }
             for state in self.panels_store.order_entry.values_mut() {
@@ -2363,7 +2363,7 @@ impl ChartApp {
                 let at = account_type_from_label(&at_label);
 
                 if let Some(tf) = parse_timeframe_name(&tf_name) {
-                    self.bridge.request_scroll_bars(eid, &symbol, &tf, at, oldest_ts, 500);
+                    self.core.bridge.request_scroll_bars(eid, &symbol, &tf, at, oldest_ts, 500);
                 }
             }
         }
@@ -2410,7 +2410,7 @@ impl ChartApp {
         // Snapshot growable structures so the [PERF] line can show whether they
         // grow unbounded over time (the suspected "leak" / load-storm).
         self.diag_queue_len = self.live_update_rx.len();
-        self.diag_mini_ticker = self.mini_ticker_cache.len();
+        self.diag_mini_ticker = self.core.mini_ticker.len();
 
         // ── Tick spike log ───────────────────────────────────────────────────
         // Print a one-line breakdown ONLY when this tick blew past budget, so we

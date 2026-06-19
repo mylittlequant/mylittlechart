@@ -705,7 +705,7 @@ impl ChartApp {
                             volume_24h: volume,
                             account_type: sym_account_type.clone(),
                         });
-                    } else if let Some(ticker) = self.mini_ticker_cache.get(&format!("{}:{}:{}", sym_name, sym_exchange, sym_account_type)) {
+                    } else if let Some(ticker) = self.core.mini_ticker.get(&format!("{}:{}:{}", sym_name, sym_exchange, sym_account_type)) {
                         self.sidebar_state.watchlist_items.push(WatchlistItem {
                             symbol: sym_name.clone(),
                             exchange: sym_exchange.clone(),
@@ -737,10 +737,10 @@ impl ChartApp {
                 use mlc_sidebar_content::types::ConnectorGroup;
 
                 self.sidebar_state.connector_items.clear();
-                let active_ids = self.bridge.pool().list_connected();
+                let active_ids = self.core.bridge.pool().list_connected();
 
                 let metrics_map: std::collections::HashMap<String, (digdigdig3::core::types::ConnectorStats, usize)> =
-                    self.bridge.collect_metrics()
+                    self.core.bridge.collect_metrics()
                         .into_iter()
                         .map(|(eid, stats, ws)| (eid.as_str().to_string(), (stats, ws)))
                         .collect();
@@ -767,7 +767,7 @@ impl ChartApp {
                 }
 
                 for exchange_id in &active_ids {
-                    let hub = self.bridge.pool();
+                    let hub = self.core.bridge.pool();
                     let at = digdigdig3::AccountType::Spot;
                     let connector = match hub.rest(*exchange_id) {
                         Some(c) => c,
@@ -892,7 +892,7 @@ impl ChartApp {
         {
             let query = self.modal_state.search_query.clone();
             self.modal_state.symbol_search_results =
-                Self::build_demo_symbol_results(&query, &self.sidebar_state.watchlist_manager, &self.exchange_symbols);
+                Self::build_demo_symbol_results(&query, &self.sidebar_state.watchlist_manager, &self.core.exchange_symbols_read());
         }
 
         // --- Split-pane layout and viewport sync ---
