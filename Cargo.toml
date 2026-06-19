@@ -21,6 +21,7 @@ members = [
     "crates/mlc-trading-manager",
     "crates/mlc-test-harness",
     "crates/mlc-backend-core",
+    "crates/mlc-backend-daemon",
     "crates/mlc-headless-core",
     "crates/mlc-headless",
 ]
