@@ -57,6 +57,31 @@ fn add_charts(app: &mut ChartApp, count: usize, symbol: &str, exchange: &str, tf
     out
 }
 
+/// Live-bug repro: insert a `phantom` auto-bubble that holds matching
+/// instrument identity but has no chart attached, plus a chart in its own
+/// (separate) auto-bubble for the same instrument. Mirrors the runtime
+/// state the diag logs showed (chart attached to BubbleId(94) while
+/// `bubble_for_instrument` returns BubbleId(70)).
+fn add_chart_plus_phantom(
+    app: &mut ChartApp,
+    symbol: &str,
+    exchange: &str,
+    tf: Timeframe,
+) -> mlc_core::state::ChartId {
+    // Phantom — no chart attached.
+    let phantom_bid = app.managers.bubble.create_group_auto(
+        [0.0; 4], symbol.to_string(), tf.clone(),
+    );
+    if let Some(b) = app.managers.bubble.bubble_mut(phantom_bid) {
+        b.exchange = exchange.to_string();
+        b.account_type = "S".to_string();
+    }
+
+    // Real chart in its own auto-bubble, also carrying matching instrument.
+    let cids = add_charts(app, 1, symbol, exchange, tf);
+    cids[0]
+}
+
 #[test]
 fn four_tabs_same_instrument_all_bubbles_get_bars_after_tick() {
     // 1. Spin up a real DataBridge (real tokio runtime, no network requests).
@@ -101,6 +126,40 @@ fn four_tabs_same_instrument_all_bubbles_get_bars_after_tick() {
     }
     assert!(empty.is_empty(), "no bubble should remain empty — bug repro left {:?} empty", empty);
     assert_eq!(filled, 4, "all 4 bubbles must be filled after the fan-out write");
+}
+
+#[test]
+fn live_bug_repro_chart_with_phantom_bubble_still_gets_bars() {
+    // This is the EXACT runtime shape the diag dump exposed: a chart attached
+    // to one auto-bubble, plus a separate phantom bubble holding the matching
+    // instrument identity. The old singular `bubble_for_instrument` path
+    // would write into the phantom and leave the renderer's bubble empty.
+    let (bridge, _initial_rx, _connector_ready_rx) = DataBridge::new();
+    let bridge = Arc::new(bridge);
+    let tx = bridge.debug_broadcast_tx();
+
+    let mut app = ChartApp::new_empty(bridge.clone());
+    let chart_id = add_chart_plus_phantom(&mut app, "BTCUSDT", "binance", Timeframe::m1());
+
+    let bars = mk_bars(300);
+    tx.send(LiveUpdate::BarsLoaded {
+        exchange_id: ExchangeId::Binance,
+        account_type: AccountType::Spot,
+        symbol: "BTCUSDT".to_string(),
+        timeframe: "1m".to_string(),
+        bars: bars.clone(),
+    }).expect("broadcast send");
+
+    std::thread::sleep(Duration::from_millis(50));
+    app.tick(0);
+
+    let win = app.panel_app.panel_grid.containers().get(&chart_id).expect("chart");
+    let renderer_bars = app.managers.bubble.bubble(win.current_bubble_id)
+        .map(|b| b.bars.len())
+        .unwrap_or(0);
+    assert_eq!(renderer_bars, 300,
+        "chart's renderer (which reads via current_bubble_id) must see 300 bars \
+         — the phantom bubble must NOT swallow the write");
 }
 
 #[test]

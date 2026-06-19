@@ -6,7 +6,7 @@
 
 use mlc_core::tag_manager::BubbleId;
 use mlc_core::state::Timeframe;
-use mlc_test_harness::fixtures::{n_charts_same_instrument, mk_bars};
+use mlc_test_harness::fixtures::{n_charts_same_instrument, mk_bars, chart_with_phantom_instrument_bubble};
 
 #[test]
 fn bubbles_for_instrument_returns_all_matching_bubbles() {
@@ -99,6 +99,45 @@ fn new_writer_pattern_fills_all_attached_bubbles() {
         let bars_len = store.bubble(*bubble_id).map(|b| b.bars.len()).unwrap_or(0);
         assert_eq!(bars_len, 300, "every chart's own bubble has bars now");
     }
+}
+
+#[test]
+fn live_bug_repro_writer_via_instrument_misses_chart_bubble() {
+    // Live bug repro: chart is attached to a bubble whose instrument fields
+    // are unset; a SEPARATE phantom bubble holds the matching instrument.
+    // Writer routed via `bubble_for_instrument` writes into the phantom and
+    // the chart's renderer (which reads via current_bubble_id) sees zero bars.
+    let (mut store, chart_id, attached_bid, phantom_bid) =
+        chart_with_phantom_instrument_bubble("binance", "S", "BTCUSDT", Timeframe::m1());
+    let new_bars = mk_bars(300);
+
+    // OLD pattern: write via bubble_for_instrument.
+    let bid = store.bubble_for_instrument("binance", "S", "BTCUSDT").expect("phantom");
+    assert_eq!(bid, phantom_bid, "instrument lookup returns the phantom, not the chart's bubble");
+    store.bubble_mut(bid).unwrap().bars = new_bars.clone();
+
+    // Renderer reads via bubble_for_chart — still empty.
+    let renderer_bid = store.bubble_for_chart(chart_id).expect("chart attached");
+    assert_eq!(renderer_bid, attached_bid);
+    assert!(store.bubble(renderer_bid).unwrap().bars.is_empty(), "spinner repro");
+}
+
+#[test]
+fn new_writer_via_bubble_for_chart_fills_renderer_bubble() {
+    // Same setup, but the new writer routes via bubble_for_chart(matched_cid).
+    let (mut store, chart_id, attached_bid, _phantom_bid) =
+        chart_with_phantom_instrument_bubble("binance", "S", "BTCUSDT", Timeframe::m1());
+    let new_bars = mk_bars(300);
+
+    // NEW pattern: write directly to the chart's attached bubble.
+    let bid = store.bubble_for_chart(chart_id).expect("chart attached");
+    assert_eq!(bid, attached_bid);
+    store.bubble_mut(bid).unwrap().bars = new_bars.clone();
+
+    // Renderer reads via current_bubble_id (same path) — populated.
+    let renderer_bid = store.bubble_for_chart(chart_id).expect("chart attached");
+    let bars = &store.bubble(renderer_bid).unwrap().bars;
+    assert_eq!(bars.len(), 300, "spinner retires");
 }
 
 #[test]

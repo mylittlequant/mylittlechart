@@ -317,13 +317,20 @@ impl ChartApp {
                         }
                     }
 
-                    // Write bubble.bars into EVERY bubble carrying this instrument.
-                    // Multiple charts can each hold their own auto-bubble; the old
-                    // `bubble_for_instrument` (singular) starved all but the first.
+                    // Write bubble.bars into EVERY bubble that ANY matched chart is
+                    // attached to (resolved via `bubble_for_chart`). The renderer
+                    // reads via `window.current_bubble_id`, so this MUST be the
+                    // source of truth for routing — `bubble_for_instrument` can
+                    // return a DIFFERENT bubble (e.g. an instrument-tagged search
+                    // hit) than the chart's `current_bubble_id`, which would write
+                    // into a phantom bubble while the live chart's bubble stays
+                    // empty (the renderer would then see 0 bars and spinner-loop).
                     if any_matched {
-                        for bid in self.managers.bubble.bubbles_for_instrument(
-                            exchange_id.as_str(), account_type.short_label(), &symbol
-                        ) {
+                        let target_bubbles: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
+                            matched_windows.iter()
+                                .filter_map(|(cid, _, _)| self.managers.bubble.bubble_for_chart(*cid))
+                                .collect();
+                        for bid in target_bubbles {
                             if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
                                 bubble.bars = bars.clone();
                             }
@@ -577,10 +584,14 @@ impl ChartApp {
                         matched_anchors.push((*chart_id_key, window.capture_view_anchor(&prev_bars_for_anchor)));
                     }
 
-                    // Write bubble.bars into every bubble carrying this instrument.
-                    for bid in self.managers.bubble.bubbles_for_instrument(
-                        exchange_id.as_str(), account_type.short_label(), &symbol
-                    ) {
+                    // Write bubble.bars into each matched chart's own bubble
+                    // (resolved via bubble_for_chart — same source of truth the
+                    // renderer reads).
+                    let target_bubbles: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
+                        matched_anchors.iter()
+                            .filter_map(|(cid, _)| self.managers.bubble.bubble_for_chart(*cid))
+                            .collect();
+                    for bid in target_bubbles {
                         if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
                             bubble.bars = bars.clone();
                         }
@@ -665,9 +676,11 @@ impl ChartApp {
                         matched_anchors.push((*chart_id_key, window.capture_view_anchor(&prev_bars_for_anchor)));
                     }
 
-                    for bid in self.managers.bubble.bubbles_for_instrument(
-                        exchange_id.as_str(), at_label, &symbol
-                    ) {
+                    let target_bubbles: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
+                        matched_anchors.iter()
+                            .filter_map(|(cid, _)| self.managers.bubble.bubble_for_chart(*cid))
+                            .collect();
+                    for bid in target_bubbles {
                         if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
                             bubble.bars = bars.clone();
                         }
@@ -749,13 +762,18 @@ impl ChartApp {
                     let mut bu_symbol_for_recalc: Option<String> = None;
                     let mut bu_is_new_bar = false;
 
-                    // Phase X0 / C5c: write every bubble carrying this instrument
-                    // (upsert by ts), then loop derived windows.
+                    // Phase X0 / C5c: write every bubble whose chart matches this
+                    // instrument AND is a derived-bar chart (upsert by ts).
                     let bar_at_label = bar_account_type.short_label();
-                    for bid in self.managers.bubble.bubbles_for_instrument(
-                        bar_exch.as_str(), bar_at_label, bar_symbol.as_str()
-                    ) {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                    let target_bubbles_bu: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
+                        instrument_by_cid_bu.iter()
+                            .filter(|(_, (sym, at, is_derived))|
+                                *is_derived && sym == bar_symbol.as_str() && at == bar_at_label
+                            )
+                            .filter_map(|(cid, _)| self.managers.bubble.bubble_for_chart(*cid))
+                            .collect();
+                    for bid in &target_bubbles_bu {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
                             let last_ts = bubble.bars.last().map(|b| b.timestamp);
                             if last_ts == Some(bar.timestamp) {
                                 if let Some(last) = bubble.last_bar_mut() {
@@ -772,11 +790,10 @@ impl ChartApp {
                             }
                         }
                     }
-                    // Snapshot bars from the first matching bubble (all match-instrument
-                    // bubbles now carry identical bars after the loop above).
-                    let bu_bubble_bars: Vec<mlc_core::Bar> = self.managers.bubble
-                        .bubble_for_instrument(bar_exch.as_str(), bar_at_label, bar_symbol.as_str())
-                        .and_then(|bid| self.managers.bubble.bubble(bid))
+                    // Snapshot bars from any one of the target bubbles for the
+                    // window reconcile loop below.
+                    let bu_bubble_bars: Vec<mlc_core::Bar> = target_bubbles_bu.iter().next()
+                        .and_then(|bid| self.managers.bubble.bubble(*bid))
                         .map(|b| b.bars.clone())
                         .unwrap_or_default();
 
@@ -1379,10 +1396,12 @@ impl ChartApp {
                         new_bar_with_static.close,
                         new_bar_with_static.volume,
                     );
-                    for bid in self.managers.bubble.bubbles_for_instrument(
-                        exchange_id.as_str(), fp_at_label, fp_sym.as_str()
-                    ) {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                    let fp_target_bubbles: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
+                        footprint_cids.iter()
+                            .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid))
+                            .collect();
+                    for bid in &fp_target_bubbles {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
                             // Footprint upsert with CVD continuation.
                             let store = bubble.footprint_bars.get_or_insert_with(Vec::new);
                             let prev_cvd = match store.last() {
@@ -1456,11 +1475,13 @@ impl ChartApp {
                         volume: point.volume,
                         trades_count: point.trades_count,
                     };
-                    // Phase X0 / C5c: write every bubble carrying this instrument.
-                    for bid in self.managers.bubble.bubbles_for_instrument(
-                        exchange_id.as_str(), at_label, sym.as_str()
-                    ) {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                    // Phase X0 / C5c: write every bubble whose chart is in target_cids.
+                    let renko_targets: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
+                        target_cids.iter()
+                            .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid))
+                            .collect();
+                    for bid in &renko_targets {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
                             bubble.append_renko(brick.clone());
                         }
                     }
@@ -1506,12 +1527,13 @@ impl ChartApp {
                         trades_count: point.trades_count,
                         box_size: bs,
                     };
-                    // Phase X0 / C5c: write every bubble carrying this instrument
-                    // with column-id upsert.
-                    for bid in self.managers.bubble.bubbles_for_instrument(
-                        exchange_id.as_str(), at_label, sym.as_str()
-                    ) {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                    // Phase X0 / C5c: write every bubble whose chart is in target_cids.
+                    let pnf_targets: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
+                        target_cids.iter()
+                            .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid))
+                            .collect();
+                    for bid in &pnf_targets {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
                             let store = bubble.pnf_columns.get_or_insert_with(Vec::new);
                             match store.last_mut() {
                                 Some(last) if last.column_id == col.column_id => *last = col.clone(),
@@ -1559,10 +1581,12 @@ impl ChartApp {
                         yang: point.yang,
                         is_connector: point.is_connector,
                     };
-                    for bid in self.managers.bubble.bubbles_for_instrument(
-                        exchange_id.as_str(), at_label, sym.as_str()
-                    ) {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                    let kagi_targets: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
+                        target_cids.iter()
+                            .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid))
+                            .collect();
+                    for bid in &kagi_targets {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
                             bubble.append_kagi(seg.clone());
                         }
                     }
@@ -1601,10 +1625,12 @@ impl ChartApp {
                         ts_ms: point.ts_ms,
                         value: point.value,
                     };
-                    for bid in self.managers.bubble.bubbles_for_instrument(
-                        exchange_id.as_str(), at_label, sym.as_str()
-                    ) {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                    let cvd_targets: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
+                        target_cids.iter()
+                            .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid))
+                            .collect();
+                    for bid in &cvd_targets {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
                             bubble.append_cvd(sample);
                         }
                     }
@@ -1650,10 +1676,12 @@ impl ChartApp {
                         val_price: point.val_price,
                         rows: point.rows.clone(),
                     };
-                    for bid in self.managers.bubble.bubbles_for_instrument(
-                        exchange_id.as_str(), at_label, sym.as_str()
-                    ) {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                    let tpo_targets: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
+                        target_cids.iter()
+                            .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid))
+                            .collect();
+                    for bid in &tpo_targets {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
                             let store = bubble.tpo_sessions.get_or_insert_with(Vec::new);
                             match store.last_mut() {
                                 Some(last) if last.open_time == session.open_time => *last = session.clone(),
@@ -1706,10 +1734,12 @@ impl ChartApp {
                         volume: point.volume,
                         direction: point.direction,
                     };
-                    for bid in self.managers.bubble.bubbles_for_instrument(
-                        exchange_id.as_str(), at_label, sym.as_str()
-                    ) {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                    let tlb_targets: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
+                        target_cids.iter()
+                            .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid))
+                            .collect();
+                    for bid in &tlb_targets {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
                             bubble.append_three_line_break(line.clone());
                         }
                     }
@@ -1740,10 +1770,12 @@ impl ChartApp {
                                 Some(*cid)
                             }).collect();
                     if target_cids.is_empty() { continue; }
-                    for bid in self.managers.bubble.bubbles_for_instrument(
-                        exchange_id.as_str(), at_label, sym.as_str()
-                    ) {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                    let oi_targets: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
+                        target_cids.iter()
+                            .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid))
+                            .collect();
+                    for bid in &oi_targets {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
                             bubble.append_oi(point);
                         }
                     }
@@ -1764,10 +1796,12 @@ impl ChartApp {
                                 Some(*cid)
                             }).collect();
                     if target_cids.is_empty() { continue; }
-                    for bid in self.managers.bubble.bubbles_for_instrument(
-                        exchange_id.as_str(), at_label, sym.as_str()
-                    ) {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                    let funding_targets: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
+                        target_cids.iter()
+                            .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid))
+                            .collect();
+                    for bid in &funding_targets {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
                             bubble.append_funding(point);
                         }
                     }
@@ -1792,10 +1826,12 @@ impl ChartApp {
                             }).collect()
                     };
                     if target_cids.is_empty() { continue; }
-                    for bid in self.managers.bubble.bubbles_for_instrument(
-                        exchange_id.as_str(), at_label, sym.as_str()
-                    ) {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                    let dom_targets: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
+                        target_cids.iter()
+                            .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid))
+                            .collect();
+                    for bid in &dom_targets {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
                             const DEFAULT_TICK: f64 = 0.5;
                             bubble.dom_heatmap_mut()
                                 .get_or_insert_with(|| mlc_core::chart::dom_heatmap::DomHeatmapBuffer::new(DEFAULT_TICK))
@@ -1833,10 +1869,12 @@ impl ChartApp {
                             }).collect()
                     };
                     if target_cids.is_empty() { continue; }
-                    for bid in self.managers.bubble.bubbles_for_instrument(
-                        exchange_id.as_str(), at_label, sym.as_str()
-                    ) {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                    let domdot_targets: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
+                        target_cids.iter()
+                            .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid))
+                            .collect();
+                    for bid in &domdot_targets {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
                             const MAX_DOTS: usize = 2_000;
                             let dots = bubble.dom_trade_dots.get_or_insert_with(Vec::new);
                             if dots.len() >= MAX_DOTS { dots.remove(0); }
@@ -1863,10 +1901,12 @@ impl ChartApp {
                             }).collect()
                     };
                     if target_cids.is_empty() { continue; }
-                    for bid in self.managers.bubble.bubbles_for_instrument(
-                        exchange_id.as_str(), at_label, sym.as_str()
-                    ) {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                    let liqev_targets: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
+                        target_cids.iter()
+                            .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid))
+                            .collect();
+                    for bid in &liqev_targets {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
                             const DEFAULT_TICK: f64 = 0.5;
                             bubble.liq_heatmap_mut()
                                 .get_or_insert_with(|| mlc_core::chart::liquidation_heatmap::LiquidationHeatmapBuffer::new(DEFAULT_TICK))
@@ -1919,10 +1959,12 @@ impl ChartApp {
                     let mark_price_opt = self.mini_ticker_cache
                         .get(&ticker_key)
                         .map(|t| t.last_price);
-                    for bid in self.managers.bubble.bubbles_for_instrument(
-                        ex_id.as_str(), at_label, sym.as_str()
-                    ) {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                    let liqbk_targets: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
+                        target_cids.iter()
+                            .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid))
+                            .collect();
+                    for bid in &liqbk_targets {
+                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
                             const DEFAULT_TICK: f64 = 0.5;
                             const SPREAD_HALF_TICKS: i64 = 5;
                             let mark_opt = mark_price_opt.or_else(|| bubble.bars.last().map(|b| b.close));
