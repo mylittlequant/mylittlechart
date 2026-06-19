@@ -767,20 +767,20 @@ impl ChartApp {
                     // Step 6: Restore indicators
                     // ----------------------------------------------------------------
                     let _t_indicators = std::time::Instant::now();
-                    self.indicator_manager.clear_all();
+                    self.core.indicators_mut().clear_all();
                     // Re-arm the one-shot indicator heal (tick.rs): restored
                     // instances reuse ids from the previous preset.
                     self.indicator_heal_attempted.clear();
                     for ind_snap in &preset.indicators {
-                        if self.indicator_manager.create_instance_with_id(
+                        if self.core.indicators_mut().create_instance_with_id(
                             ind_snap.id,
                             &ind_snap.type_id,
                         ) {
                             // Bind to the persisted window_id via the index  -  direct
                             // field assignment would leak the instance into the
                             // wrong by_window_id bucket.
-                            self.indicator_manager.assign_window(ind_snap.id, ind_snap.window_id);
-                            if let Some(inst) = self.indicator_manager.get_instance_mut(ind_snap.id) {
+                            self.core.indicators_mut().assign_window(ind_snap.id, ind_snap.window_id);
+                            if let Some(inst) = self.core.indicators_mut().get_instance_mut(ind_snap.id) {
                                 inst.name = ind_snap.name.clone();
                                 inst.pane = ind_snap.pane;
                                 inst.order = ind_snap.order;
@@ -834,7 +834,7 @@ impl ChartApp {
 
                     let recalc_n = window_bar_data.len();
                     for (window_id, bars) in window_bar_data {
-                        self.indicator_manager.calculate_for_window(window_id, &bars);
+                        self.core.indicators_mut().calculate_for_window(window_id, &bars);
                     }
                     eprintln!("[ChartApp] recalculated indicators for all windows with bars");
                     let recalc_us = _t_recalc.elapsed().as_micros();

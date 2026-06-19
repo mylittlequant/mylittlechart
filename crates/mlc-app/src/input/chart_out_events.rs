@@ -761,7 +761,7 @@ impl ChartApp {
                 let bars: Vec<mlc_core::Bar> = self.bubble_for_chart(target_cid)
                     .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()))
                     .unwrap_or_default();
-                self.indicator_manager.calculate_all_for_window(chart_id, &bars);
+                self.core.indicators_mut().calculate_all_for_window(chart_id, &bars);
                 self.sync_sub_panes_from_manager();
                 self.sidebar_data_dirty = true;
                 self.autosave_snapshot();
@@ -1893,9 +1893,7 @@ impl ChartApp {
                             .map(|g| g.indicator_configs.iter().map(|c| c.id).collect())
                             .unwrap_or_default();
 
-                        let to_hide: Vec<u64> = self
-                            .indicator_manager
-                            .instances_iter()
+                        let to_hide: Vec<u64> = self.core.indicators().instances_iter()
                             .filter(|i| {
                                 i.window_id == Some(chart_id.0)
                                     && pre_tag_ids.contains(&i.id)
@@ -1905,7 +1903,7 @@ impl ChartApp {
                             .collect();
 
                         for id in &to_hide {
-                            if let Some(inst) = self.indicator_manager.get_instance_mut(*id) {
+                            if let Some(inst) = self.core.indicators_mut().get_instance_mut(*id) {
                                 inst.visible = false;
                             }
                         }
@@ -1915,9 +1913,7 @@ impl ChartApp {
                         );
                     } else {
                         // ON  ->  OFF: unhide window-local (pre_tag) indicators.
-                        let to_show: Vec<u64> = self
-                            .indicator_manager
-                            .instances_iter()
+                        let to_show: Vec<u64> = self.core.indicators().instances_iter()
                             .filter(|i| {
                                 i.window_id == Some(chart_id.0)
                                     && pre_tag_ids.contains(&i.id)
@@ -1927,7 +1923,7 @@ impl ChartApp {
                             .collect();
 
                         for id in &to_show {
-                            if let Some(inst) = self.indicator_manager.get_instance_mut(*id) {
+                            if let Some(inst) = self.core.indicators_mut().get_instance_mut(*id) {
                                 inst.visible = true;
                             }
                         }

@@ -97,7 +97,7 @@ pub fn update_terminal_snapshot<H: AgentHost>(host: &H, agent_state: &AgentState
                 let tf_name = chart.timeframe_for_chart(*chart_id)
                     .map(|tf| tf.name.clone()).unwrap_or_default();
 
-                let indicators: Vec<IndicatorSummary> = chart.indicator_manager
+                let indicators: Vec<IndicatorSummary> = chart.core.indicators()
                     .instances_iter()
                     .filter(|inst| inst.window_id == Some(cw.id.0))
                     .map(|inst| IndicatorSummary {
@@ -203,7 +203,8 @@ pub fn update_indicator_snapshot<H: AgentHost>(host: &H, agent_state: &AgentStat
             })
             .collect();
 
-        for inst in chart.indicator_manager.instances_iter() {
+        let im = chart.core.indicators();
+        for inst in im.instances_iter() {
             let params: std::collections::HashMap<String, serde_json::Value> = inst
                 .params
                 .iter()

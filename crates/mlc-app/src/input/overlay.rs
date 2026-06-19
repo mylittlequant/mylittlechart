@@ -646,7 +646,7 @@ impl ChartApp {
             }
             _ if action.starts_with("vis:") => {
                 if let Ok(id) = action["vis:".len()..].parse::<u64>() {
-                    self.indicator_manager.toggle_visibility(id);
+                    self.core.indicators_mut().toggle_visibility(id);
                     eprintln!("[ChartApp] indicator {} visibility toggled", id);
                 }
             }
@@ -668,7 +668,7 @@ impl ChartApp {
                             .and_then(|w| None::<&mlc_core::Bar>)
                             .map(|b| b.close)
                             .unwrap_or(0.0);
-                        let label = self.indicator_manager.get_instance(id)
+                        let label = self.core.indicators().get_instance(id)
                             .map(|inst| inst.name.clone())
                             .unwrap_or_else(|| format!("Indicator {}", id));
                         let symbol = self.panel_app.panel_grid.active_container_id()
@@ -711,7 +711,7 @@ impl ChartApp {
             }
             _ if action.starts_with("vis:") => {
                 if let Ok(id) = action["vis:".len()..].parse::<u64>() {
-                    self.indicator_manager.toggle_visibility(id);
+                    self.core.indicators_mut().toggle_visibility(id);
                     eprintln!("[ChartApp] indicator {} visibility toggled (leaf {})", id, leaf_id.0);
                 }
             }
@@ -733,7 +733,7 @@ impl ChartApp {
                             .and_then(|w| None::<&mlc_core::Bar>)
                             .map(|b| b.close)
                             .unwrap_or(0.0);
-                        let label = self.indicator_manager.get_instance(id)
+                        let label = self.core.indicators().get_instance(id)
                             .map(|inst| inst.name.clone())
                             .unwrap_or_else(|| format!("Indicator {}", id));
                         let symbol = self.panel_app.panel_grid.active_container_id()
@@ -770,7 +770,7 @@ impl ChartApp {
     /// of the same `type_id` across ALL group member windows are removed so that
     /// peer windows do not keep stale renders alive.
     pub(super) fn delete_indicator_instance(&mut self, id: u64) {
-        let type_id = match self.indicator_manager.get_instance(id) {
+        let type_id = match self.core.indicators().get_instance(id) {
             Some(inst) => inst.type_id.clone(),
             None => return,
         };
@@ -811,14 +811,14 @@ impl ChartApp {
         }
 
         // Find the window that owns the specific instance being deleted.
-        let origin_window_id = self.indicator_manager.instances_iter()
+        let origin_window_id = self.core.indicators().instances_iter()
             .find(|inst| inst.id == id)
             .and_then(|inst| inst.window_id);
 
         // Sweep only PEER windows (same type_id, same group, but NOT the originating window).
         // This prevents deleting a second "ac" indicator on the same window when only one
         // was requested to be removed.
-        let peer_instances: Vec<u64> = self.indicator_manager.instances_iter()
+        let peer_instances: Vec<u64> = self.core.indicators().instances_iter()
             .filter(|inst| {
                 inst.type_id == type_id
                     && inst.id != id
@@ -833,7 +833,7 @@ impl ChartApp {
         all_to_remove.extend(peer_instances);
 
         for inst_id in &all_to_remove {
-            self.indicator_manager.remove_instance(*inst_id);
+            self.core.indicators_mut().remove_instance(*inst_id);
             self.core.bubble_mut().alert.remove_alerts_for_indicator(*inst_id);
         }
 

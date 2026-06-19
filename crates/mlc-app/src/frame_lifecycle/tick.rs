@@ -533,7 +533,7 @@ impl ChartApp {
                         .map(|(cid, _w)| cid.0)
                         .collect();
                     for wid in &matched_ids {
-                        self.indicator_manager.calculate_for_window(*wid, &bars);
+                        self.core.indicators_mut().calculate_for_window(*wid, &bars);
                     }
 
                     if any_matched {
@@ -634,7 +634,7 @@ impl ChartApp {
                         .map(|(cid, _w)| cid.0)
                         .collect();
                     for wid in &matched_ids {
-                        self.indicator_manager.calculate_for_window(*wid, &bars);
+                        self.core.indicators_mut().calculate_for_window(*wid, &bars);
                     }
                 }
                 LiveUpdate::ScrollBarsLoaded { exchange_id, account_type, symbol, timeframe: tf_name, bars, prepend_count } => {
@@ -724,7 +724,7 @@ impl ChartApp {
                             .map(|(cid, _w)| cid.0)
                             .collect();
                         for wid in &matched_ids {
-                            self.indicator_manager.calculate_for_window(*wid, &bars);
+                            self.core.indicators_mut().calculate_for_window(*wid, &bars);
                         }
                     }
                 }
@@ -853,20 +853,21 @@ impl ChartApp {
                     // window applied this bar — mirrors the TradeUpdate recalc path.
                     if let Some(ref sym) = bu_symbol_for_recalc {
                         had_trade_update = true;
-                        match self.indicator_manager.recalc_mode {
+                        let recalc_mode = self.core.indicators().recalc_mode;
+                        match recalc_mode {
                             RecalcMode::PerTick => {
                                 let _ri_start = std::time::Instant::now();
                                 self.recalc_indicators_for_symbol(sym);
                                 self.last_indicator_recalc_us += _ri_start.elapsed().as_micros() as u64;
                             }
                             RecalcMode::PerFrame => {
-                                self.indicator_manager.mark_dirty(sym);
+                                self.core.indicators_mut().mark_dirty(sym);
                             }
                             RecalcMode::PerBar => {
                                 if bu_is_new_bar {
-                                    self.indicator_manager.mark_new_bar(sym);
+                                    self.core.indicators_mut().mark_new_bar(sym);
                                 } else {
-                                    self.indicator_manager.mark_dirty(sym);
+                                    self.core.indicators_mut().mark_dirty(sym);
                                 }
                             }
                         }
@@ -1086,7 +1087,8 @@ impl ChartApp {
                     self.last_trade_panel_us += _trade_panel_start.elapsed().as_micros() as u64;
 
                     // Schedule indicator recalculation according to the current mode.
-                    match self.indicator_manager.recalc_mode {
+                    let recalc_mode = self.core.indicators().recalc_mode;
+                    match recalc_mode {
                         RecalcMode::PerTick => {
                             // Immediate recalc — pull bars from ALL windows with this symbol
                             // (fixes the bug where only the active window was considered).
@@ -1096,16 +1098,16 @@ impl ChartApp {
                         }
                         RecalcMode::PerFrame => {
                             // Defer to end-of-tick flush; all trades in this frame are batched.
-                            self.indicator_manager.mark_dirty(&symbol);
+                            self.core.indicators_mut().mark_dirty(&symbol);
                         }
                         RecalcMode::PerBar => {
                             if is_new_bar {
                                 crate::dlog!("[ChartApp] PerBar: new bar detected for {}", symbol);
-                                self.indicator_manager.mark_new_bar(&symbol);
+                                self.core.indicators_mut().mark_new_bar(&symbol);
                             } else {
                                 // Still mark dirty so the flag exists; drain_pending_recalc
                                 // will ignore it in PerBar mode unless a new bar formed.
-                                self.indicator_manager.mark_dirty(&symbol);
+                                self.core.indicators_mut().mark_dirty(&symbol);
                             }
                         }
                     }
@@ -2144,7 +2146,7 @@ impl ChartApp {
 
             let indicator_values = Self::build_indicator_values_for_alerts(
                 &self.core.bubble().alert,
-                &self.indicator_manager,
+                &self.core.indicators(),
             );
 
             let mut all_triggered_ids: Vec<u64> = Vec::new();
@@ -2167,9 +2169,7 @@ impl ChartApp {
             {
                 use mlc_indicators::signals::signal::BarConfirmation;
 
-                let signal_batch: Vec<(u64, usize, i8, u8, String)> = self
-                    .indicator_manager
-                    .instances_iter()
+                let signal_batch: Vec<(u64, usize, i8, u8, String)> = self.core.indicators().instances_iter()
                     .flat_map(|inst| {
                         let ind_id = inst.id;
                         inst.signals.iter().map(move |s| {
@@ -2245,7 +2245,7 @@ impl ChartApp {
         // ── Deferred indicator recalculation flush (PerFrame / PerBar) ────────
         // For PerTick mode drain_pending_recalc returns an empty Vec, so this
         // block is a no-op — PerTick was already handled inline above.
-        let pending = self.indicator_manager.drain_pending_recalc();
+        let pending = self.core.indicators_mut().drain_pending_recalc();
         if !pending.is_empty() {
             let _deferred_start = std::time::Instant::now();
             for symbol in &pending {
@@ -2270,7 +2270,7 @@ impl ChartApp {
                     let bid_opt = self.panel_app.panel_grid.containers().get(&chart_id).map(|w| w.current_bubble_id);
                     if let Some(bid) = bid_opt {
                         let bars_recalc: Vec<mlc_core::Bar> = self.with_bubble(bid, |b| b.bars.clone()).unwrap_or_default();
-                        self.indicator_manager.calculate_for_window(window_id, &bars_recalc);
+                        self.core.indicators_mut().calculate_for_window(window_id, &bars_recalc);
                     }
                 }
                 let _ = symbol; // legacy — `calculate_for_window` filters by window_id, no longer by symbol
@@ -2285,7 +2285,7 @@ impl ChartApp {
         if self.diagnostics_enabled
             && self.recalc_log_timer.elapsed() >= std::time::Duration::from_secs(5)
         {
-            let mode = match self.indicator_manager.recalc_mode {
+            let mode = match self.core.indicators().recalc_mode {
                 RecalcMode::PerTick => "PerTick",
                 RecalcMode::PerFrame => "PerFrame",
                 RecalcMode::PerBar => "PerBar",
@@ -2490,7 +2490,7 @@ impl ChartApp {
         // and part of the first-live-frame cost.
         let any_unhealed = {
             let attempted = &self.indicator_heal_attempted;
-            let im = &self.indicator_manager;
+            let im = self.core.indicators();
             self.panel_app.panel_grid.iter_containers().any(|(_, w)| {
                 !true
                     && im.get_instances_for_window(w.id.0)
@@ -2507,9 +2507,7 @@ impl ChartApp {
                 .map(|(_, w)| (w.id.0, Vec::<mlc_core::Bar>::new()))
                 .collect();
             for (wid, bars) in window_bars {
-                let needs_heal: Vec<u64> = self
-                    .indicator_manager
-                    .get_instances_for_window(wid)
+                let needs_heal: Vec<u64> = self.core.indicators().get_instances_for_window(wid)
                     .iter()
                     .filter(|i| i.values.is_empty() && !self.indicator_heal_attempted.contains(&i.id))
                     .map(|i| i.id)
@@ -2522,7 +2520,7 @@ impl ChartApp {
                         "[ChartApp] indicator heal: window {} has {} bars, {} never-computed instance(s) {:?} — recalculating",
                         wid, bars.len(), needs_heal.len(), needs_heal
                     );
-                    self.indicator_manager.calculate_for_window(wid, &bars);
+                    self.core.indicators_mut().calculate_for_window(wid, &bars);
                 }
             }
         }

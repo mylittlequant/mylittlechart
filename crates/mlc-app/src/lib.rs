@@ -272,9 +272,6 @@ pub struct ChartApp {
     /// Inline floating bar rect from last render — used for drag hit-testing.
     pub(crate) last_inline_bar_rect: Option<LayoutRect>,
 
-    /// Indicator manager — owns all indicator instances and definitions.
-    pub indicator_manager: IndicatorManager,
-
     /// Modal state for search overlays (indicator search, symbol search).
     modal_state: ModalState,
 
@@ -1148,7 +1145,6 @@ impl ChartApp {
             last_mouse_pos: (0.0, 0.0),
             content_rect: LayoutRect::new(0.0, 0.0, 1280.0, 800.0),
             last_inline_bar_rect: None,
-            indicator_manager: IndicatorManager::new(),
             modal_state: ModalState::new(),
             pending_screenshot: false,
             pending_reset_cache: false,
@@ -1496,7 +1492,6 @@ impl ChartApp {
             last_mouse_pos: (0.0, 0.0),
             content_rect: LayoutRect::new(0.0, 0.0, 1280.0, 800.0),
             last_inline_bar_rect: None,
-            indicator_manager: IndicatorManager::new(),
             modal_state: ModalState::new(),
             pending_screenshot: false,
             pending_reset_cache: false,
@@ -1755,7 +1750,6 @@ impl ChartApp {
             last_mouse_pos: (0.0, 0.0),
             content_rect: LayoutRect::new(0.0, 0.0, 1280.0, 800.0),
             last_inline_bar_rect: None,
-            indicator_manager: IndicatorManager::new(),
             modal_state: ModalState::new(),
             pending_screenshot: false,
             pending_reset_cache: false,
@@ -2139,8 +2133,8 @@ impl ChartApp {
                 // Add the builtin volume histogram overlay to the fresh window.
                 // This is the default-on state for brand-new charts that have no saved preset.
                 if let Some(chart_id) = active_chart_id {
-                    if let Some(new_vol_id) = app.indicator_manager.create_instance("builtin_volume") {
-                        app.indicator_manager.assign_window(new_vol_id, Some(chart_id.0));
+                    if let Some(new_vol_id) = app.core.indicators_mut().create_instance("builtin_volume") {
+                        app.core.indicators_mut().assign_window(new_vol_id, Some(chart_id.0));
                     }
                 }
 
@@ -2799,7 +2793,7 @@ impl ChartApp {
             let chart_id = ChartId(window_id);
             let bars = self.bars_for_chart(chart_id);
             if self.panel_app.panel_grid.containers().get(&chart_id).is_some() {
-                self.indicator_manager.calculate_for_window(window_id, &bars[..]);
+                self.core.indicators_mut().calculate_for_window(window_id, &bars[..]);
             }
         }
         let _ = symbol; // legacy — recalc filters by window_id, not symbol
@@ -3115,7 +3109,7 @@ impl ChartApp {
             // and can be reused across all split-pane leaves.
             let alert_indicator_values_cache = Self::build_indicator_values_for_alerts(
                 &self.core.bubble().alert,
-                &self.indicator_manager,
+                &self.core.indicators(),
             );
 
             // Pre-build drawing points per chart window. In split-pane mode the
@@ -3154,6 +3148,10 @@ impl ChartApp {
             // Collect rendered scale-corner zones per leaf so handle_canvas_click
             // can hit-test them in split mode (avoids the empty-default bug).
             let mut split_corner_zones: Vec<(mlc_core::LeafId, ScaleCornerHitZones)> = Vec::new();
+
+            // Hold the indicator manager read guard for the duration of the
+            // split-render loop so `&self.indicator_manager` borrows stay alive.
+            let indicator_guard_split = self.core.indicators();
 
             for (leaf_id, sub_rect) in leaf_rects {
                 let window = match self.panel_app.panel_grid.container_for_leaf(leaf_id) {
@@ -3230,7 +3228,7 @@ impl ChartApp {
                 // Scope indicator queries to this window so each split pane only
                 // renders the indicators that belong to it.
                 if let Some(chart_id) = leaf_chart_id {
-                    self.indicator_manager.current_render_window_id.set(Some(chart_id.0));
+                    self.core.indicators().current_render_window_id.set(Some(chart_id.0));
                 }
 
                 let alert_current_bar = 0usize.saturating_sub(1) as f64;
@@ -3270,7 +3268,7 @@ impl ChartApp {
                     config: &render_config,
                     corner_state: &scale_corner_state,
                     drawing_manager: Some(&split_panel.drawing_manager),
-                    indicator_source: Some(&self.indicator_manager),
+                    indicator_source: Some(&*indicator_guard_split),
                     symbol: Some(split_symbol.as_str()),
                     sub_pane_y_state: Some(&window.sub_pane_y_state),
                     compare_overlay: Some(&window.compare_overlay),
@@ -3314,15 +3312,15 @@ impl ChartApp {
                     // indicator_manager visibility is a filter applied on top.
                     // S2.7.1: use split_symbol (from branch_meta) for indicator lookup.
                     let visible_set: std::collections::HashSet<u64> = if let Some(chart_id) = leaf_chart_id {
-                        self.indicator_manager
-                            .get_instances_for_symbol_in_window(&split_symbol, chart_id.0)
+                        self.core.indicators()
+                                .get_instances_for_symbol_in_window(&split_symbol, chart_id.0)
                             .into_iter()
                             .filter(|i| i.visible && i.pane > 0)
                             .map(|i| i.id)
                             .collect()
                     } else {
-                        self.indicator_manager
-                            .get_instances_for_symbol(&split_symbol)
+                        self.core.indicators()
+                                .get_instances_for_symbol(&split_symbol)
                             .into_iter()
                             .filter(|i| i.visible && i.pane > 0)
                             .map(|i| i.id)
@@ -3385,7 +3383,7 @@ impl ChartApp {
                             window.price_scale.price_max,
                             &split_bars_vec[..],
                             &split_panel.drawing_manager,
-                            &self.indicator_manager,
+                            &self.core.indicators(),
                             &self.core.bubble().alert,
                             window_id,
                             &split_symbol,
@@ -3412,7 +3410,7 @@ impl ChartApp {
                 }
 
                 // Reset render scope after this leaf is done.
-                self.indicator_manager.current_render_window_id.set(None);
+                self.core.indicators().current_render_window_id.set(None);
 
                 // Render overlay tab header at the top-left of this leaf.
                 let is_active_leaf = self.panel_app.panel_grid.docking()
@@ -3491,12 +3489,12 @@ impl ChartApp {
                         .iter()
                         .map(|s| (s.symbol.clone(), s.visible, s.color.clone()))
                         .collect();
-                    let instances = if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
-                        self.indicator_manager.get_instances_for_symbol_in_window(&symbol, chart_id.0)
+                    let instances_empty = if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
+                        self.core.indicators().get_instances_for_symbol_in_window(&symbol, chart_id.0).is_empty()
                     } else {
-                        self.indicator_manager.get_instances_for_symbol(&symbol)
+                        self.core.indicators().get_instances_for_symbol(&symbol).is_empty()
                     };
-                    let _has_indicators = !instances.is_empty();
+                    let _has_indicators = !instances_empty;
                     let _has_compare = !compare_series_info.is_empty();
 
                     // overlay visibility was set in prepare_frame; read the state here.
@@ -3509,22 +3507,30 @@ impl ChartApp {
                     // leaf_tab_visible: hidden while a maximized sub-pane covers
                     // the container (chevron belongs to the chart layer).
                     if leaf_tab_visible && (overlay_state.visible || overlay_state.is_open) {
-                        let mut indicators: Vec<IndicatorOverlayInfo> = instances
-                            .iter()
-                            .map(|inst| {
-                                let display_name = Self::format_indicator_display_name(
-                                    &self.indicator_manager, inst,
-                                );
-                                IndicatorOverlayInfo {
-                                    id: inst.id,
-                                    display_name,
-                                    visible: inst.visible,
-                                    is_compare: false,
-                                    symbol: None,
-                                    color: None,
-                                }
-                            })
-                            .collect();
+                        let mut indicators: Vec<IndicatorOverlayInfo> = {
+                            let im = self.core.indicators();
+                            let instances = if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
+                                im.get_instances_for_symbol_in_window(&symbol, chart_id.0)
+                            } else {
+                                im.get_instances_for_symbol(&symbol)
+                            };
+                            instances
+                                .iter()
+                                .map(|inst| {
+                                    let display_name = Self::format_indicator_display_name(
+                                        &*im, inst,
+                                    );
+                                    IndicatorOverlayInfo {
+                                        id: inst.id,
+                                        display_name,
+                                        visible: inst.visible,
+                                        is_compare: false,
+                                        symbol: None,
+                                        color: None,
+                                    }
+                                })
+                                .collect()
+                        };
 
                         for (sym, vis, col) in &compare_series_info {
                             indicators.push(IndicatorOverlayInfo {
@@ -3723,8 +3729,12 @@ impl ChartApp {
 
             // Scope indicator queries to the active window for single-window mode.
             if let Some(chart_id) = self.panel_app.panel_grid.active_container_id() {
-                self.indicator_manager.current_render_window_id.set(Some(chart_id.0));
+                self.core.indicators().current_render_window_id.set(Some(chart_id.0));
             }
+
+            // Hold the indicator manager read guard for the duration of the
+            // single-window render path so `&self.indicator_manager` borrows stay alive.
+            let indicator_guard_single = self.core.indicators();
 
             // Group primitive sync was done in prepare_frame; use the already-synced drawing_manager here.
 
@@ -3756,7 +3766,7 @@ impl ChartApp {
             };
             let single_alert_indicator_values = Self::build_indicator_values_for_alerts(
                 &self.core.bubble().alert,
-                &self.indicator_manager,
+                &self.core.indicators(),
             );
             let single_alert_render_data: Vec<AlertRenderData> = {
                 // single_window_info = (symbol, timeframe, exchange, account_type) captured above.
@@ -3834,7 +3844,7 @@ impl ChartApp {
                     config: &render_config,
                     corner_state: &scale_corner_state,
                     drawing_manager: Some(&single_window_panel.drawing_manager),
-                    indicator_source: Some(&self.indicator_manager),
+                    indicator_source: Some(&*indicator_guard_single),
                     symbol: Some(single_sym),
                     sub_pane_y_state: Some(&window.sub_pane_y_state),
                     compare_overlay: Some(&window.compare_overlay),
@@ -3879,15 +3889,15 @@ impl ChartApp {
                     // render_full_chart_panel's internal ExtendedFrameLayout).
                     // S2.7.1: use single_sym from branch_meta for indicator lookup.
                     let visible_set: std::collections::HashSet<u64> = if let Some(chart_id) = self.panel_app.panel_grid.active_container_id() {
-                        self.indicator_manager
-                            .get_instances_for_symbol_in_window(single_sym, chart_id.0)
+                        self.core.indicators()
+                                .get_instances_for_symbol_in_window(single_sym, chart_id.0)
                             .into_iter()
                             .filter(|i| i.visible && i.pane > 0)
                             .map(|i| i.id)
                             .collect()
                     } else {
-                        self.indicator_manager
-                            .get_instances_for_symbol(single_sym)
+                        self.core.indicators()
+                                .get_instances_for_symbol(single_sym)
                             .into_iter()
                             .filter(|i| i.visible && i.pane > 0)
                             .map(|i| i.id)
@@ -3952,7 +3962,7 @@ impl ChartApp {
                             window.price_scale.price_max,
                             &single_bars_vec2[..],
                             &single_window_panel.drawing_manager,
-                            &self.indicator_manager,
+                            &self.core.indicators(),
                             &self.core.bubble().alert,
                             window_id,
                             single_sym,
@@ -4026,7 +4036,7 @@ impl ChartApp {
             }
 
             // Reset render scope after single-window render is complete.
-            self.indicator_manager.current_render_window_id.set(None);
+            self.core.indicators().current_render_window_id.set(None);
 
             // Render overlay tab header (single mode) — skipped while a
             // maximized sub-pane covers the container.
@@ -4165,27 +4175,30 @@ impl ChartApp {
                             .collect())
                         .unwrap_or_default();
 
-                let instances = if let Some(chart_id) = ind_overlay_chart_id {
-                    self.indicator_manager.get_instances_for_symbol_in_window(&symbol, chart_id.0)
-                } else {
-                    self.indicator_manager.get_instances_for_symbol(&symbol)
+                let mut indicators: Vec<IndicatorOverlayInfo> = {
+                    let im = self.core.indicators();
+                    let instances = if let Some(chart_id) = ind_overlay_chart_id {
+                        im.get_instances_for_symbol_in_window(&symbol, chart_id.0)
+                    } else {
+                        im.get_instances_for_symbol(&symbol)
+                    };
+                    instances
+                        .iter()
+                        .map(|inst| {
+                            let display_name = Self::format_indicator_display_name(
+                                &*im, inst,
+                            );
+                            IndicatorOverlayInfo {
+                                id: inst.id,
+                                display_name,
+                                visible: inst.visible,
+                                is_compare: false,
+                                symbol: None,
+                                color: None,
+                            }
+                        })
+                        .collect()
                 };
-                let mut indicators: Vec<IndicatorOverlayInfo> = instances
-                    .iter()
-                    .map(|inst| {
-                        let display_name = Self::format_indicator_display_name(
-                            &self.indicator_manager, inst,
-                        );
-                        IndicatorOverlayInfo {
-                            id: inst.id,
-                            display_name,
-                            visible: inst.visible,
-                            is_compare: false,
-                            symbol: None,
-                            color: None,
-                        }
-                    })
-                    .collect();
 
                 for (sym, vis, col) in compare_series {
                     indicators.push(IndicatorOverlayInfo {
@@ -5463,12 +5476,13 @@ impl ChartApp {
         let chart_settings_data = self.build_chart_settings_data();
         let theme_manager_ptr: *const mlc_core::theme::ThemeManager =
             &self.panel_app.theme_manager as *const _;
+        let indicator_guard_modals = self.core.indicators();
 
         let modal_result = self.panel_app.render_modals(
             ctx,
             &modal_layout,
             dm_ref,
-            Some(&self.indicator_manager as &dyn IndicatorSource),
+            Some(&*indicator_guard_modals as &dyn IndicatorSource),
             Some(&chart_settings_data),
             // SAFETY: theme_manager lives inside panel_app which render_modals
             // does not mutate (it only reads modal state fields).
@@ -6162,13 +6176,11 @@ impl ChartApp {
 
         // Step 2: for each window, collect desired instance_ids from indicator_manager.
         for (leaf_id, chart_id_val, symbol, visible_start, visible_end) in &window_data {
-            let sub_pane_data: Vec<(u64, Option<(f64, f64)>)> = self
-                .indicator_manager
-                .get_instances_for_symbol_in_window(symbol, *chart_id_val)
+            let sub_pane_data: Vec<(u64, Option<(f64, f64)>)> = self.core.indicators().get_instances_for_symbol_in_window(symbol, *chart_id_val)
                 .into_iter()
                 .filter(|i| i.pane > 0)
                 .map(|i| {
-                    let range = self.indicator_manager.calculate_pane_range(
+                    let range = self.core.indicators_mut().calculate_pane_range(
                         i.id,
                         *visible_start,
                         *visible_end,
@@ -6417,7 +6429,7 @@ impl ChartApp {
 
     /// Build indicator catalog items from the IndicatorManager definitions.
     fn build_indicator_catalog(&self) -> Vec<IndicatorCatalogItem> {
-        let mut items: Vec<IndicatorCatalogItem> = self.indicator_manager.get_definitions().iter().map(|def| {
+        let mut items: Vec<IndicatorCatalogItem> = self.core.indicators().get_definitions().iter().map(|def| {
             IndicatorCatalogItem::new(&def.type_id, &def.name, &def.short_name, def.category)
                 .with_description(&def.description)
                 .with_overlay(def.overlay)
@@ -7766,7 +7778,7 @@ impl ChartApp {
     /// app-level snapshot store, keyed by the indicator's `type_id`.
     pub fn snapshot_indicator_settings_to_user_manager(&mut self) {
         if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
-            if let Some(inst) = self.indicator_manager.get_instance(ind_id) {
+            if let Some(inst) = self.core.indicators().get_instance(ind_id) {
                 let type_id = inst.type_id.to_string();
                 if let Ok(val) = serde_json::to_value(inst) {
                     self.snapshot_actions.push(SnapshotAction::IndicatorSettings { type_id, data: val });

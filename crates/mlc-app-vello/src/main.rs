@@ -2893,7 +2893,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 };
                 let recalc_mode = self.app_state.recalc_mode;
                 for pw in self.windows.values_mut() {
-                    pw.chart.indicator_manager.recalc_mode = recalc_mode;
+                    pw.chart.core.indicators_mut().recalc_mode = recalc_mode;
                 }
                 // Persist to DeviceSettings so the choice survives restarts.
                 let mut ds = mlc_core::user_profile::DeviceSettings::load();
@@ -3886,7 +3886,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             let recalc_mode = self.app_state.recalc_mode;
             let scale_mode = self.app_state.scale_mode;
             for pw in self.windows.values_mut() {
-                pw.chart.indicator_manager.recalc_mode = recalc_mode;
+                pw.chart.core.indicators_mut().recalc_mode = recalc_mode;
                 pw.chart.default_scale_mode = scale_mode;
             }
 
@@ -4090,9 +4090,9 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 // Internal CPU profiling fields — read directly from ChartApp.
                 perf.tick_us = pw.chart.last_tick_us;
                 perf.indicator_recalc_us = pw.chart.last_indicator_recalc_us;
-                perf.indicator_recalc_count = pw.chart.indicator_manager.instances_count() as u32;
-                perf.indicator_incremental_count = pw.chart.indicator_manager.last_incremental_count;
-                perf.indicator_full_count = pw.chart.indicator_manager.last_full_count;
+                perf.indicator_recalc_count = pw.chart.core.indicators().instances_count() as u32;
+                perf.indicator_incremental_count = pw.chart.core.indicators().last_incremental_count;
+                perf.indicator_full_count = pw.chart.core.indicators().last_full_count;
                 perf.event_process_us = pw.chart.last_event_process_us;
                 perf.auto_scale_us = pw.chart.last_auto_scale_us;
 

@@ -186,8 +186,8 @@ impl ChartApp {
                 }
 
                 // Remove tag indicators; unhide pre-tag indicators.
-                let to_remove: Vec<u64> = self.indicator_manager
-                    .instances_iter()
+                let to_remove: Vec<u64> = self.core.indicators()
+                                .instances_iter()
                     .filter(|i| {
                         i.window_id == Some(chart_id.0)
                             && !pre_tag_ids.contains(&i.id)
@@ -196,10 +196,10 @@ impl ChartApp {
                     .collect();
                 let remove_count = to_remove.len();
                 for id in &to_remove {
-                    self.indicator_manager.remove_instance(*id);
+                    self.core.indicators_mut().remove_instance(*id);
                 }
                 for &id in &pre_tag_ids {
-                    if let Some(inst) = self.indicator_manager.get_instance_mut(id) {
+                    if let Some(inst) = self.core.indicators_mut().get_instance_mut(id) {
                         inst.visible = true;
                     }
                 }
@@ -225,7 +225,7 @@ impl ChartApp {
                         panel.drawing_manager.purge_synced_primitives();
                     }
                 }
-                self.indicator_manager.purge_synced_instances_for_window(chart_id.0);
+                self.core.indicators_mut().purge_synced_instances_for_window(chart_id.0);
                 if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
                     window.current_bubble_id = auto_bid;
                 }
@@ -291,8 +291,8 @@ impl ChartApp {
             }
 
             // Snapshot pre-tag indicator ids (these survive desync).
-            let pre_tag_ids: Vec<u64> = self.indicator_manager
-                .instances_iter()
+            let pre_tag_ids: Vec<u64> = self.core.indicators()
+                                .instances_iter()
                 .filter(|i| i.window_id == Some(chart_id.0) && i.origin_id.is_none())
                 .map(|i| i.id)
                 .collect();
@@ -388,9 +388,7 @@ impl ChartApp {
                         .unwrap_or_else(|| "S".to_string());
                     (sym, exch, at)
                 };
-                let mut configs: Vec<mlc_core::tag_manager::IndicatorGroupConfig> = self
-                    .indicator_manager
-                    .instances_iter()
+                let mut configs: Vec<mlc_core::tag_manager::IndicatorGroupConfig> = self.core.indicators().instances_iter()
                     .filter(|i| i.origin_id.is_none() && i.window_id == Some(chart_id.0))
                     .map(|i| mlc_core::tag_manager::IndicatorGroupConfig {
                         id: i.id,
@@ -482,7 +480,7 @@ impl ChartApp {
 
             // Hide pre-tag indicators by setting visible=false.
             for &id in &pre_tag_ids {
-                if let Some(inst) = self.indicator_manager.get_instance_mut(id) {
+                if let Some(inst) = self.core.indicators_mut().get_instance_mut(id) {
                     inst.visible = false;
                 }
             }
@@ -788,8 +786,8 @@ impl ChartApp {
             // into its auto_bubble so desync can restore them.
             if is_new_group {
                 if let Some(&(source_leaf, source_cid)) = leaf_chart_ids.first() {
-                    let pre_tag_ids: Vec<u64> = self.indicator_manager
-                        .instances_iter()
+                    let pre_tag_ids: Vec<u64> = self.core.indicators()
+                                .instances_iter()
                         .filter(|i| i.window_id == Some(source_cid.0) && i.origin_id.is_none())
                         .map(|i| i.id)
                         .collect();
@@ -911,9 +909,7 @@ impl ChartApp {
                             .unwrap_or_else(|| "S".to_string());
                         (sym, exch, at)
                     };
-                    let mut configs: Vec<mlc_core::tag_manager::IndicatorGroupConfig> = self
-                        .indicator_manager
-                        .instances_iter()
+                    let mut configs: Vec<mlc_core::tag_manager::IndicatorGroupConfig> = self.core.indicators().instances_iter()
                         .filter(|i| {
                             i.origin_id.is_none() && i.window_id == Some(source_chart_id.0)
                         })
@@ -1516,8 +1512,8 @@ impl ChartApp {
         let source_cid = self.panel_app.panel_grid.container_id_for_leaf(source_leaf);
         let src_pane_type_ord: Option<(String, usize)> = src_pane_id.and_then(|pid| {
             let cid = source_cid?;
-            let mut sub_pane_insts: Vec<(u64, String, usize, u64)> = self.indicator_manager
-                .get_instances_for_window(cid.0)
+            let mut sub_pane_insts: Vec<(u64, String, usize, u64)> = self.core.indicators()
+                                .get_instances_for_window(cid.0)
                 .into_iter()
                 .filter(|i| i.pane > 0)
                 .map(|i| (i.id, i.type_id.clone(), i.pane, i.id))
@@ -1541,8 +1537,8 @@ impl ChartApp {
             // Remap source pane_id to the peer's corresponding instance_id.
             let peer_pane_id: Option<u64> = src_pane_type_ord.as_ref().and_then(|(type_id, ord)| {
                 let cid = peer_cid?;
-                let mut sub_pane_insts: Vec<(u64, String, usize, u64)> = self.indicator_manager
-                    .get_instances_for_window(cid.0)
+                let mut sub_pane_insts: Vec<(u64, String, usize, u64)> = self.core.indicators()
+                                .get_instances_for_window(cid.0)
                     .into_iter()
                     .filter(|i| i.pane > 0)
                     .map(|i| (i.id, i.type_id.clone(), i.pane, i.id))
@@ -1775,14 +1771,14 @@ impl ChartApp {
         for &(leaf_id, chart_id) in new_leaf_chart_ids {
             for (type_id, name) in &configs {
                 // Check if this window already has this indicator type.
-                let already_has = self.indicator_manager.instances_iter()
+                let already_has = self.core.indicators().instances_iter()
                     .any(|i| i.window_id == Some(chart_id.0) && i.type_id == *type_id);
                 if already_has {
                     continue;
                 }
 
-                if let Some(new_id) = self.indicator_manager.create_instance(type_id) {
-                    self.indicator_manager.assign_window(new_id, Some(chart_id.0));
+                if let Some(new_id) = self.core.indicators_mut().create_instance(type_id) {
+                    self.core.indicators_mut().assign_window(new_id, Some(chart_id.0));
                     eprintln!(
                         "[BubbleStore] Split sync: created indicator '{}' (id={}) for chart {:?}",
                         name, new_id, chart_id
@@ -1795,7 +1791,7 @@ impl ChartApp {
                 .container_for_leaf(leaf_id)
                 .map(|w| Vec::<mlc_core::Bar>::new());
             if let Some(bars) = bars {
-                self.indicator_manager.calculate_all_for_window(chart_id.0, &bars);
+                self.core.indicators_mut().calculate_all_for_window(chart_id.0, &bars);
             }
         }
         self.sync_sub_panes_from_manager();
@@ -1830,9 +1826,9 @@ impl ChartApp {
             .collect();
 
         for peer_cid in peer_cids {
-            if let Some(new_id) = self.indicator_manager.create_instance(type_id) {
-                self.indicator_manager.assign_window(new_id, Some(peer_cid.0));
-                if let Some(inst) = self.indicator_manager.get_instance_mut(new_id) {
+            if let Some(new_id) = self.core.indicators_mut().create_instance(type_id) {
+                self.core.indicators_mut().assign_window(new_id, Some(peer_cid.0));
+                if let Some(inst) = self.core.indicators_mut().get_instance_mut(new_id) {
                     inst.origin_id = None; // It's a group-managed indicator, not a clone.
                 }
                 // Calculate with peer's bars.
@@ -1840,7 +1836,7 @@ impl ChartApp {
                     .containers().get(&peer_cid)
                     .map(|w| Vec::<mlc_core::Bar>::new());
                 if let Some(bars) = bars {
-                    self.indicator_manager.calculate_all_for_window(peer_cid.0, &bars);
+                    self.core.indicators_mut().calculate_all_for_window(peer_cid.0, &bars);
                 }
                 eprintln!(
                     "[BubbleStore] Synced indicator '{}' (id={}) to peer chart {:?}",

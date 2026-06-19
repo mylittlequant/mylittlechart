@@ -31,6 +31,7 @@ use dashmap::DashMap;
 
 use digdigdig3::ExchangeId;
 use mlc_core::managers::Managers;
+use mlc_indicators::IndicatorManager;
 use mlc_live_data::{DataBridge, SymbolInfo};
 use mlc_trading_manager::TradingManager;
 
@@ -50,6 +51,12 @@ pub struct BackendCore {
     /// renderer running sequentially) lock contention is zero — guards are
     /// taken and dropped each tick frame, no waits.
     pub managers: std::sync::RwLock<Managers>,
+
+    /// Indicator manager — owns all indicator instances + recalc state +
+    /// per-window assignment + global definitions catalog. Cannot live inside
+    /// `Managers` (mlc-core) because mlc-indicators is above mlc-core in the
+    /// dep graph; that's the architectural reason BackendCore exists.
+    pub indicators: std::sync::RwLock<IndicatorManager>,
 
     /// Live data bridge — owns the tokio runtime, station, connector pool,
     /// broadcast channel. Already internally synchronised; `Arc::clone` is
@@ -80,11 +87,24 @@ impl BackendCore {
     pub fn new(bridge: Arc<DataBridge>, trading: Option<TradingManager>) -> Arc<Self> {
         Arc::new(Self {
             managers: std::sync::RwLock::new(Managers::new()),
+            indicators: std::sync::RwLock::new(IndicatorManager::new()),
             bridge,
             mini_ticker: DashMap::new(),
             exchange_symbols: std::sync::RwLock::new(HashMap::new()),
             trading: trading.map(std::sync::Mutex::new),
         })
+    }
+
+    /// Read guard for the indicator manager.
+    #[inline]
+    pub fn indicators(&self) -> std::sync::RwLockReadGuard<'_, IndicatorManager> {
+        self.indicators.read().expect("BackendCore.indicators poisoned (read)")
+    }
+
+    /// Write guard for the indicator manager.
+    #[inline]
+    pub fn indicators_mut(&self) -> std::sync::RwLockWriteGuard<'_, IndicatorManager> {
+        self.indicators.write().expect("BackendCore.indicators poisoned (write)")
     }
 
     /// Read guard for the bubble store + all managers. Hold for the duration

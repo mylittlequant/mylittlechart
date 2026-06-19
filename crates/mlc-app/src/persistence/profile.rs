@@ -182,7 +182,7 @@ impl ChartApp {
         let pk_bubble_us = t0.elapsed().as_micros();
         let t0 = std::time::Instant::now();
         let indicator_manager = std::mem::replace(
-            &mut self.indicator_manager,
+            &mut *self.core.indicators_mut(),
             IndicatorManager::new(),
         );
         let pk_ind_us = t0.elapsed().as_micros();
@@ -252,7 +252,7 @@ impl ChartApp {
         self.core.bubble_mut().bubble = state.tag_manager;
         let up_bubble_us = t0.elapsed().as_micros();
         let t0 = std::time::Instant::now();
-        self.indicator_manager = state.indicator_manager;
+        *self.core.indicators_mut() = state.indicator_manager;
         let up_ind_us = t0.elapsed().as_micros();
         let t0 = std::time::Instant::now();
         self.core.bubble_mut().alert = state.alert_manager;

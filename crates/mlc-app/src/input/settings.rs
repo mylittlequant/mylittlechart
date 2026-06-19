@@ -2201,10 +2201,10 @@ impl ChartApp {
                     .as_ref().map(|e| e.text.clone()).unwrap_or_default();
                 if !name.is_empty() {
                     if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
-                        let type_id = self.indicator_manager.get_instance(ind_id)
+                        let type_id = self.core.indicators().get_instance(ind_id)
                             .map(|inst| inst.type_id.to_string())
                             .unwrap_or_default();
-                        let params = self.indicator_manager.get_instance(ind_id)
+                        let params = self.core.indicators().get_instance(ind_id)
                             .map(|inst| {
                                 inst.params.iter().map(|(k, v): (&String, &mlc_indicators::IndicatorParamValue)| {
                                     let json_val = match v {
@@ -2722,7 +2722,7 @@ impl ChartApp {
                         self.panel_app.indicator_settings_state.template_dropdown_open = false;
                         self.panel_app.indicator_settings_state.applied_template_id = None;
                         if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
-                            if let Some(inst) = self.indicator_manager.get_instance_mut(ind_id) {
+                            if let Some(inst) = self.core.indicators_mut().get_instance_mut(ind_id) {
                                 inst.params.clear();
                                 inst.outputs.clear();  // Reset output styles to defaults
                             }
@@ -2730,7 +2730,7 @@ impl ChartApp {
                             let bars_opt = self.panel_app.panel_grid.active_container().map(|w| Vec::<mlc_core::Bar>::new());
                             let active_cid = self.panel_app.panel_grid.active_container_id().map(|c| c.0).unwrap_or(0);
                             if let Some(bars) = bars_opt {
-                                self.indicator_manager.calculate_all_for_window(active_cid, &bars);
+                                self.core.indicators_mut().calculate_all_for_window(active_cid, &bars);
                             }
                         }
                         self.snapshot_indicator_settings_to_user_manager();
@@ -2755,7 +2755,7 @@ impl ChartApp {
                             // Apply params from template to the indicator instance
                             if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
                                 use mlc_indicators::IndicatorParamValue as IndValue;
-                                if let Some(inst) = self.indicator_manager.get_instance_mut(ind_id) {
+                                if let Some(inst) = self.core.indicators_mut().get_instance_mut(ind_id) {
                                     for (k, v) in &tmpl.params {
                                         let pv = match v {
                                             serde_json::Value::Number(n) if n.is_f64() => IndValue::Float(n.as_f64().unwrap_or(0.0)),
@@ -2770,7 +2770,7 @@ impl ChartApp {
                                 let bars_opt = self.panel_app.panel_grid.active_container().map(|w| Vec::<mlc_core::Bar>::new());
                                 let active_cid = self.panel_app.panel_grid.active_container_id().map(|c| c.0).unwrap_or(0);
                                 if let Some(bars) = bars_opt {
-                                    self.indicator_manager.calculate_all_for_window(active_cid, &bars);
+                                    self.core.indicators_mut().calculate_all_for_window(active_cid, &bars);
                                 }
                             }
                             self.snapshot_indicator_settings_to_user_manager();
@@ -2784,17 +2784,17 @@ impl ChartApp {
             }
             "signals_toggle" => {
                 if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
-                    let new_val = self.indicator_manager
-                        .get_instance(ind_id)
+                    let new_val = self.core.indicators()
+                                .get_instance(ind_id)
                         .map(|inst| !inst.signals_enabled);
                     if let Some(enabled) = new_val {
-                        if let Some(inst) = self.indicator_manager.get_instance_mut(ind_id) {
+                        if let Some(inst) = self.core.indicators_mut().get_instance_mut(ind_id) {
                             inst.signals_enabled = enabled;
                         }
                         let bars_opt = self.panel_app.panel_grid.active_container().map(|w| Vec::<mlc_core::Bar>::new());
                         let active_cid = self.panel_app.panel_grid.active_container_id().map(|c| c.0).unwrap_or(0);
                         if let Some(bars) = bars_opt {
-                            self.indicator_manager.calculate_all_for_window(active_cid, &bars);
+                            self.core.indicators_mut().calculate_all_for_window(active_cid, &bars);
                         }
                         eprintln!("[ChartApp] Signals toggle: {}", enabled);
                     }
@@ -2818,7 +2818,7 @@ impl ChartApp {
         if let Some(param_name) = field.strip_prefix("indicator_param:") {
             use mlc_indicators::IndicatorParamValue as IndValue;
             if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
-                if let Some(inst) = self.indicator_manager.get_instance_mut(ind_id) {
+                if let Some(inst) = self.core.indicators_mut().get_instance_mut(ind_id) {
                     let value = if let Ok(f) = text.trim().parse::<f64>() {
                         IndValue::Float(f)
                     } else if let Ok(i) = text.trim().parse::<i32>() {
@@ -2831,7 +2831,7 @@ impl ChartApp {
                 let bars_opt = self.panel_app.panel_grid.active_container().map(|w| Vec::<mlc_core::Bar>::new());
                 let active_cid = self.panel_app.panel_grid.active_container_id().map(|c| c.0).unwrap_or(0);
                 if let Some(bars) = bars_opt {
-                    self.indicator_manager.calculate_all_for_window(active_cid, &bars);
+                    self.core.indicators_mut().calculate_all_for_window(active_cid, &bars);
                 }
             }
             eprintln!("[ChartApp] ind_settings param '{}' auto-committed: {}", param_name, text);
@@ -2872,8 +2872,8 @@ impl ChartApp {
             let screen_w = self.width as f64;
             let screen_h = self.height as f64;
             let current_color: Option<String> = if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
-                self.indicator_manager
-                    .get_instance(ind_id)
+                self.core.indicators()
+                                .get_instance(ind_id)
                     .and_then(|inst| inst.outputs.get(output_name))
                     .and_then(|o| o.color.clone())
             } else {
@@ -2913,12 +2913,12 @@ impl ChartApp {
             if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
                 // Collect what we need with an immutable borrow first.
                 let cycle_info: Option<(String, Vec<String>)> = {
-                    self.indicator_manager.get_instance(ind_id).and_then(|inst| {
+                    self.core.indicators().get_instance(ind_id).and_then(|inst| {
                         let type_id = inst.type_id.clone();
                         let current_val = inst.params.get(param_name)
                             .and_then(|v| v.as_string())
                             .map(|s| s.to_string());
-                        self.indicator_manager.get_definition(&type_id).and_then(|def| {
+                        self.core.indicators().get_definition(&type_id).and_then(|def| {
                             def.params.iter().find(|p| p.name == param_name).map(|p| {
                                 let options = p.get_options_as_strings();
                                 let next_val = if let Some(ref cur) = current_val {
@@ -2935,14 +2935,14 @@ impl ChartApp {
                 };
 
                 if let Some((next_val, _options)) = cycle_info {
-                    if let Some(inst) = self.indicator_manager.get_instance_mut(ind_id) {
+                    if let Some(inst) = self.core.indicators_mut().get_instance_mut(ind_id) {
                         inst.set_param(param_name, IndValue::String(next_val.clone()));
                     }
                     // Recalculate.
                     let bars_opt = self.panel_app.panel_grid.active_container().map(|w| Vec::<mlc_core::Bar>::new());
                     let active_cid = self.panel_app.panel_grid.active_container_id().map(|c| c.0).unwrap_or(0);
                     if let Some(bars) = bars_opt {
-                        self.indicator_manager.calculate_all_for_window(active_cid, &bars);
+                        self.core.indicators_mut().calculate_all_for_window(active_cid, &bars);
                     }
                     self.autosave_snapshot();
                     self.snapshot_indicator_settings_to_user_manager();
@@ -2963,13 +2963,13 @@ impl ChartApp {
             self.panel_app.indicator_settings_state.open_param_dropdown = None;
 
             if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
-                if let Some(inst) = self.indicator_manager.get_instance_mut(ind_id) {
+                if let Some(inst) = self.core.indicators_mut().get_instance_mut(ind_id) {
                     inst.set_param(&param_name, IndValue::String(value.clone()));
                 }
                 let bars_opt = self.panel_app.panel_grid.active_container().map(|w| Vec::<mlc_core::Bar>::new());
                 let active_cid = self.panel_app.panel_grid.active_container_id().map(|c| c.0).unwrap_or(0);
                 if let Some(bars) = bars_opt {
-                    self.indicator_manager.calculate_all_for_window(active_cid, &bars);
+                    self.core.indicators_mut().calculate_all_for_window(active_cid, &bars);
                 }
                 self.autosave_snapshot();
                 self.snapshot_indicator_settings_to_user_manager();
@@ -2981,19 +2981,19 @@ impl ChartApp {
         // ── Toggle boolean parameter ──────────────────────────────────────────
         if let Some(param_name) = item_id.strip_prefix("toggle:") {
             if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
-                let current_bool: Option<bool> = self.indicator_manager
-                    .get_instance(ind_id)
+                let current_bool: Option<bool> = self.core.indicators()
+                                .get_instance(ind_id)
                     .and_then(|inst| inst.params.get(param_name))
                     .and_then(|v| v.as_bool());
 
                 if let Some(cur) = current_bool {
-                    if let Some(inst) = self.indicator_manager.get_instance_mut(ind_id) {
+                    if let Some(inst) = self.core.indicators_mut().get_instance_mut(ind_id) {
                         inst.set_param(param_name, IndValue::Bool(!cur));
                     }
                     let bars_opt = self.panel_app.panel_grid.active_container().map(|w| Vec::<mlc_core::Bar>::new());
                     let active_cid = self.panel_app.panel_grid.active_container_id().map(|c| c.0).unwrap_or(0);
                     if let Some(bars) = bars_opt {
-                        self.indicator_manager.calculate_all_for_window(active_cid, &bars);
+                        self.core.indicators_mut().calculate_all_for_window(active_cid, &bars);
                     }
                     self.autosave_snapshot();
                     self.snapshot_indicator_settings_to_user_manager();
@@ -3012,7 +3012,7 @@ impl ChartApp {
                 .and_then(|s| s.parse::<usize>().ok())
             {
                 if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
-                    if let Some(inst) = self.indicator_manager.get_instance_mut(ind_id) {
+                    if let Some(inst) = self.core.indicators_mut().get_instance_mut(ind_id) {
                         let mut tf_config = inst.timeframe_visibility.clone()
                             .unwrap_or_else(mlc_core::drawing::TimeframeVisibilityConfig::all);
                         match tf_idx {
@@ -3046,8 +3046,7 @@ impl ChartApp {
                 .and_then(|s| s.parse::<usize>().ok())
             {
                 self.panel_app.indicator_settings_state.indicator_id
-                    .and_then(|ind_id| self.indicator_manager.get_instance(ind_id))
-                    .map(|inst| {
+                    .and_then(|ind_id| self.core.indicators().get_instance(ind_id).map(|inst| {
                         let tf = inst.timeframe_visibility.clone()
                             .unwrap_or_else(TimeframeVisibilityConfig::all);
                         let range = match tf_idx {
@@ -3060,7 +3059,7 @@ impl ChartApp {
                             _ => (0, 0),
                         };
                         if is_min { range.0.to_string() } else { range.1.to_string() }
-                    })
+                    }))
                     .unwrap_or_default()
             } else {
                 String::new()
@@ -3081,9 +3080,12 @@ impl ChartApp {
         if let Some(param_name_str) = item_id.strip_prefix("input:") {
             let param_name = param_name_str.to_string();
             let current_value: String = self.panel_app.indicator_settings_state.indicator_id
-                .and_then(|ind_id| self.indicator_manager.get_instance(ind_id))
-                .and_then(|inst| inst.params.get(&param_name))
-                .map(|v| v.to_display_string())
+                .and_then(|ind_id| {
+                    let im = self.core.indicators();
+                    im.get_instance(ind_id)
+                        .and_then(|inst| inst.params.get(&param_name))
+                        .map(|v| v.to_display_string())
+                })
                 .unwrap_or_default();
             let cursor = current_value.chars().count();
             let field_id = format!("indicator_param:{}", param_name);
@@ -3115,7 +3117,7 @@ impl ChartApp {
                             return;
                         }
                     };
-                    if let Some(inst) = self.indicator_manager.get_instance_mut(ind_id) {
+                    if let Some(inst) = self.core.indicators_mut().get_instance_mut(ind_id) {
                         inst.signal_display.shape = shape;
                         eprintln!("[ChartApp] ind_settings signal_shape = {:?}", shape);
                     }
@@ -3124,8 +3126,8 @@ impl ChartApp {
                 } else if item_id == "ind_set:signal_bullish_color" {
                     let screen_w = self.width as f64;
                     let screen_h = self.height as f64;
-                    let current_color = self.indicator_manager
-                        .get_instance(ind_id)
+                    let current_color = self.core.indicators()
+                                .get_instance(ind_id)
                         .map(|inst| inst.signal_display.bullish_color.clone());
                     let widget_id_str = format!("ind_settings:item:{}", item_id);
                     let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId::from(widget_id_str));
@@ -3143,8 +3145,8 @@ impl ChartApp {
                 } else if item_id == "ind_set:signal_bearish_color" {
                     let screen_w = self.width as f64;
                     let screen_h = self.height as f64;
-                    let current_color = self.indicator_manager
-                        .get_instance(ind_id)
+                    let current_color = self.core.indicators()
+                                .get_instance(ind_id)
                         .map(|inst| inst.signal_display.bearish_color.clone());
                     let widget_id_str = format!("ind_settings:item:{}", item_id);
                     let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId::from(widget_id_str));
@@ -3160,28 +3162,28 @@ impl ChartApp {
                     );
                     eprintln!("[ChartApp] ind_settings opened color picker for signal_bearish_color");
                 } else if item_id == "ind_set:signal_size_inc" {
-                    if let Some(inst) = self.indicator_manager.get_instance_mut(ind_id) {
+                    if let Some(inst) = self.core.indicators_mut().get_instance_mut(ind_id) {
                         inst.signal_display.size = (inst.signal_display.size + 2.0).min(24.0);
                         eprintln!("[ChartApp] ind_settings signal_size = {}", inst.signal_display.size);
                     }
                     self.autosave_snapshot();
                     self.snapshot_indicator_settings_to_user_manager();
                 } else if item_id == "ind_set:signal_size_dec" {
-                    if let Some(inst) = self.indicator_manager.get_instance_mut(ind_id) {
+                    if let Some(inst) = self.core.indicators_mut().get_instance_mut(ind_id) {
                         inst.signal_display.size = (inst.signal_display.size - 2.0).max(8.0);
                         eprintln!("[ChartApp] ind_settings signal_size = {}", inst.signal_display.size);
                     }
                     self.autosave_snapshot();
                     self.snapshot_indicator_settings_to_user_manager();
                 } else if item_id == "ind_set:signal_offset_inc" {
-                    if let Some(inst) = self.indicator_manager.get_instance_mut(ind_id) {
+                    if let Some(inst) = self.core.indicators_mut().get_instance_mut(ind_id) {
                         inst.signal_display.offset = (inst.signal_display.offset + 2.0).min(16.0);
                         eprintln!("[ChartApp] ind_settings signal_offset = {}", inst.signal_display.offset);
                     }
                     self.autosave_snapshot();
                     self.snapshot_indicator_settings_to_user_manager();
                 } else if item_id == "ind_set:signal_offset_dec" {
-                    if let Some(inst) = self.indicator_manager.get_instance_mut(ind_id) {
+                    if let Some(inst) = self.core.indicators_mut().get_instance_mut(ind_id) {
                         inst.signal_display.offset = (inst.signal_display.offset - 2.0).max(0.0);
                         eprintln!("[ChartApp] ind_settings signal_offset = {}", inst.signal_display.offset);
                     }

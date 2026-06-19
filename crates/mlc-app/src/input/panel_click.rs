@@ -2725,7 +2725,7 @@ impl ChartApp {
         if widget_id.contains("_ind_delete_") || widget_id.starts_with("ind_delete_") {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 // Try live indicator_manager first (Active + WindowOtherKey).
-                if self.indicator_manager.get_instance(id).is_some() {
+                if self.core.indicators().get_instance(id).is_some() {
                     self.delete_indicator_instance(id);
                     return;
                 }
@@ -2797,7 +2797,7 @@ impl ChartApp {
         // --- Indicator visibility ---
         if widget_id.contains("_ind_vis_") || widget_id.starts_with("ind_vis_") {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
-                self.indicator_manager.toggle_visibility(id);
+                self.core.indicators_mut().toggle_visibility(id);
                 self.sidebar_data_dirty = true;
                 eprintln!("[Sidebar] Indicator visibility toggled: {}", id);
             }
@@ -2913,7 +2913,7 @@ impl ChartApp {
                     .and_then(|w| None::<&mlc_core::Bar>)
                     .map(|b| b.close)
                     .unwrap_or(0.0);
-                let source_name = self.indicator_manager.get_instance(id)
+                let source_name = self.core.indicators().get_instance(id)
                     .map(|inst| inst.name.clone())
                     .unwrap_or_else(|| format!("Indicator {}", id));
                 // S2.7.1e: read symbol via branch_meta (B1).
@@ -3900,7 +3900,7 @@ impl ChartApp {
                         _ => { eprintln!("[ChartApp] user_settings unknown recalc mode: {}", mode_str); return; }
                     };
                     self.panel_app.user_settings_state.recalc_mode_label = label.to_string();
-                    self.indicator_manager.recalc_mode = match mode_str {
+                    self.core.indicators_mut().recalc_mode = match mode_str {
                         "PerTick" => RecalcMode::PerTick,
                         "PerBar"  => RecalcMode::PerBar,
                         _         => RecalcMode::PerFrame,
@@ -3910,7 +3910,7 @@ impl ChartApp {
                     self.recalc_count = 0;
                     self.trade_count = 0;
                     self.recalc_log_timer = std::time::Instant::now();
-                    self.indicator_manager.clear_pending();
+                    self.core.indicators_mut().clear_pending();
                     eprintln!("[ChartApp] user_settings recalc_mode set to: {}", mode_str);
                 }
                 // Language radio option selected — hit id: "language:{code}"

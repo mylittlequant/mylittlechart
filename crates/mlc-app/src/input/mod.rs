@@ -575,7 +575,7 @@ impl ChartApp {
         };
 
         let indicator_overlay_hit = |lx: f64, ly: f64, chart_height: f64| {
-            self.indicator_manager.hit_test_overlay(
+            self.core.indicators().hit_test_overlay(
                 lx, ly, &symbol, &viewport, &price_scale, chart_height, 8.0,
             )
         };
@@ -585,7 +585,7 @@ impl ChartApp {
                 .find(|(id, _, _)| *id == instance_id)
                 .map(|&(_, mn, mx)| (mn, mx))
                 .unwrap_or((0.0, 100.0));
-            self.indicator_manager.hit_test_sub_pane(
+            self.core.indicators().hit_test_sub_pane(
                 instance_id, plx, ply, &viewport, price_min, price_max, pane_height, 8.0,
             )
         };
@@ -2243,7 +2243,7 @@ impl ChartApp {
                                             .and_then(|s| s.strip_suffix("_slider"))
                                             .and_then(|s| s.parse::<usize>().ok())
                                         {
-                                            self.indicator_manager.get_instance(ind_id)
+                                            self.core.indicators().get_instance(ind_id)
                                                 .and_then(|inst| {
                                                     let tf_config = inst.timeframe_visibility.clone()
                                                         .unwrap_or_else(mlc_core::drawing::TimeframeVisibilityConfig::all);
@@ -2553,8 +2553,8 @@ impl ChartApp {
                 .map(|w| mlc_core::state::chart_container::collect_inner_instance_ids(&w.inner_docking))
                 .unwrap_or_default();
             let inst_dump: Vec<String> = active_cid
-                .map(|cid| self.indicator_manager
-                    .get_instances_for_symbol_in_window("", cid.0)
+                .map(|cid| self.core.indicators()
+                                .get_instances_for_symbol_in_window("", cid.0)
                     .into_iter()
                     .map(|i| format!("inst(id={},win={:?},pane={},vis={})", i.id, i.window_id, i.pane, i.visible))
                     .collect())
@@ -7134,7 +7134,7 @@ impl ChartApp {
                     if let Some(param_name) = field.strip_prefix("indicator_param:") {
                         use mlc_indicators::IndicatorParamValue as IndValue;
                         if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
-                            if let Some(inst) = self.indicator_manager.get_instance_mut(ind_id) {
+                            if let Some(inst) = self.core.indicators_mut().get_instance_mut(ind_id) {
                                 // Try parsing as float first, then int, else string
                                 let value = if let Ok(f) = text.trim().parse::<f64>() {
                                     IndValue::Float(f)
@@ -7150,7 +7150,7 @@ impl ChartApp {
                                 .map(|c| c.0);
                             let bars_opt = self.panel_app.panel_grid.active_container().map(|w| Vec::<mlc_core::Bar>::new());
                             if let (Some(cid), Some(bars)) = (active_cid, bars_opt) {
-                                self.indicator_manager.calculate_all_for_window(cid, &bars);
+                                self.core.indicators_mut().calculate_all_for_window(cid, &bars);
                             }
                         }
                         eprintln!("[ChartApp] ind_settings param '{}' committed: {}", param_name, text);
@@ -8316,9 +8316,9 @@ impl ChartApp {
                     Some(w) => (Vec::<mlc_core::Bar>::new(), w.id),
                     None => return,
                 };
-                if self.indicator_manager.create_instance_with_id(*instance_id, type_id) {
-                    self.indicator_manager.assign_window(*instance_id, Some(chart_id_val.0));
-                    self.indicator_manager.calculate(*instance_id, &bars_snapshot);
+                if self.core.indicators_mut().create_instance_with_id(*instance_id, type_id) {
+                    self.core.indicators_mut().assign_window(*instance_id, Some(chart_id_val.0));
+                    self.core.indicators_mut().calculate(*instance_id, &bars_snapshot);
                     // Re-add to auto_bubble.pre_tag_indicator_ids for Object Tree visibility.
                     let auto_bid = self.panel_app.panel_grid.containers()
                         .get(&chart_id_val)
@@ -8337,7 +8337,7 @@ impl ChartApp {
                 }
             }
             Command::RemoveIndicator { instance_id, .. } => {
-                if self.indicator_manager.remove_instance(*instance_id).is_some() {
+                if self.core.indicators_mut().remove_instance(*instance_id).is_some() {
                     // Remove stale entries from auto_bubble.pre_tag_indicator_ids.
                     let removed_id = *instance_id;
                     let auto_bids: Vec<mlc_core::tag_manager::BubbleId> = self.panel_app.panel_grid
@@ -8417,15 +8417,15 @@ impl ChartApp {
                 .unwrap_or_default();
             let chart_id = active_chart_id.map(|cid| cid.0);
             if let Some(cid) = chart_id {
-                self.indicator_manager
-                    .get_instances_for_symbol_in_window(&symbol, cid)
+                self.core.indicators()
+                                .get_instances_for_symbol_in_window(&symbol, cid)
                     .into_iter()
                     .filter(|i| i.visible && i.pane > 0)
                     .map(|i| i.id)
                     .collect()
             } else {
-                self.indicator_manager
-                    .get_instances_for_symbol(&symbol)
+                self.core.indicators()
+                                .get_instances_for_symbol(&symbol)
                     .into_iter()
                     .filter(|i| i.visible && i.pane > 0)
                     .map(|i| i.id)
@@ -8519,15 +8519,15 @@ impl ChartApp {
                 .map(String::from)
                 .unwrap_or_default();
             if let Some(cid) = chart_id {
-                self.indicator_manager
-                    .get_instances_for_symbol_in_window(&symbol, cid.0)
+                self.core.indicators()
+                                .get_instances_for_symbol_in_window(&symbol, cid.0)
                     .into_iter()
                     .filter(|i| i.visible && i.pane > 0)
                     .map(|i| i.id)
                     .collect()
             } else {
-                self.indicator_manager
-                    .get_instances_for_symbol(&symbol)
+                self.core.indicators()
+                                .get_instances_for_symbol(&symbol)
                     .into_iter()
                     .filter(|i| i.visible && i.pane > 0)
                     .map(|i| i.id)
@@ -8716,7 +8716,7 @@ impl ChartApp {
                         Some((cid.0, bars))
                     })
                     .unwrap_or((0u64, Vec::new()));
-                self.indicator_manager.calculate_all_for_window(active_cid, &bars);
+                self.core.indicators_mut().calculate_all_for_window(active_cid, &bars);
                 self.sync_sub_panes_from_manager();
                 // Propagate to sync group peers
                 // S2.7.1e: read exchange/account_type via branch_meta (B1).
@@ -8745,7 +8745,7 @@ impl ChartApp {
                         Some((cid.0, bars))
                     })
                     .unwrap_or((0u64, Vec::new()));
-                self.indicator_manager.calculate_all_for_window(active_cid, &bars);
+                self.core.indicators_mut().calculate_all_for_window(active_cid, &bars);
                 self.sync_sub_panes_from_manager();
                 // Propagate to sync group peers
                 if let Some(leaf) = self.panel_app.panel_grid.docking().active_leaf() {
@@ -8949,7 +8949,7 @@ impl ChartApp {
             panel.drawing_manager.clear_all_primitives();
         }
         self.core.bubble_mut().bubble.clear();
-        self.indicator_manager.clear_all();
+        self.core.indicators_mut().clear_all();
         self.panel_app.indicator_overlay_states.clear();
         self.panel_app.leaf_color_tags.clear();
         self.core.bubble_mut().alert.clear();
@@ -9145,35 +9145,38 @@ impl ChartApp {
         }
 
         // Snapshot indicators (sorted by display order so restore preserves sequence).
-        let mut sorted_instances: Vec<_> = self.indicator_manager.instances_iter().collect();
-        sorted_instances.sort_by_key(|inst| inst.order);
-        for inst in sorted_instances {
-            let outputs = inst.outputs.iter().map(|(k, v)| {
-                (k.clone(), OutputConfigSnapshot {
-                    color: v.color.clone(),
-                    line_width: v.line_width,
-                    visible: Some(v.visible),
-                })
-            }).collect();
-            preset.indicators.push(IndicatorSnapshot {
-                id: inst.id,
-                type_id: inst.type_id.clone(),
-                name: inst.name.clone(),
-                params: inst.params.iter().map(|(k, v)| {
-                    (k.clone(), serde_json::to_value(v).unwrap_or_default())
-                }).collect(),
-                outputs,
-                pane: inst.pane,
-                order: inst.order,
-                visible: inst.visible,
-                locked: inst.locked,
-                symbol: String::new(),
-                window_id: inst.window_id,
-                origin_id: inst.origin_id,
-                signals_enabled: inst.signals_enabled,
-                timeframe_visibility: inst.timeframe_visibility.clone(),
-                values: (*inst.values).clone(),
-            });
+        {
+            let im = self.core.indicators();
+            let mut sorted_instances: Vec<_> = im.instances_iter().collect();
+            sorted_instances.sort_by_key(|inst| inst.order);
+            for inst in sorted_instances {
+                let outputs = inst.outputs.iter().map(|(k, v)| {
+                    (k.clone(), OutputConfigSnapshot {
+                        color: v.color.clone(),
+                        line_width: v.line_width,
+                        visible: Some(v.visible),
+                    })
+                }).collect();
+                preset.indicators.push(IndicatorSnapshot {
+                    id: inst.id,
+                    type_id: inst.type_id.clone(),
+                    name: inst.name.clone(),
+                    params: inst.params.iter().map(|(k, v)| {
+                        (k.clone(), serde_json::to_value(v).unwrap_or_default())
+                    }).collect(),
+                    outputs,
+                    pane: inst.pane,
+                    order: inst.order,
+                    visible: inst.visible,
+                    locked: inst.locked,
+                    symbol: String::new(),
+                    window_id: inst.window_id,
+                    origin_id: inst.origin_id,
+                    signals_enabled: inst.signals_enabled,
+                    timeframe_visibility: inst.timeframe_visibility.clone(),
+                    values: (*inst.values).clone(),
+                });
+            }
         }
 
         // Snapshot alerts
