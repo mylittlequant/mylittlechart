@@ -671,6 +671,105 @@ impl ChartApp {
                 self.modal_state.start_editing(0);
                 eprintln!("[ChartApp] symbol search modal opened");
             }
+            ChartOutEvent::ApplySymbol { chart_id, symbol, exchange, account_type } => {
+                use mlc_core::state::ChartId;
+                let target_cid = ChartId(chart_id);
+
+                let resolved_exchange = self.exchange_symbols
+                    .keys()
+                    .find(|eid| eid.as_str() == exchange.as_str())
+                    .copied()
+                    .unwrap_or(self.active_exchange);
+
+                let previous_symbol: String = self.managers.bubble.symbol_for_chart(target_cid)
+                    .map(String::from)
+                    .unwrap_or_default();
+                let old_trade_at = self.managers.bubble.account_type_for_chart(target_cid)
+                    .map(crate::account_type_from_label)
+                    .unwrap_or(digdigdig3::AccountType::Spot);
+                let old_trade_exchange = self.managers.bubble.exchange_for_chart(target_cid)
+                    .and_then(|s| self.exchange_symbols.keys().find(|eid| eid.as_str() == s).copied())
+                    .unwrap_or(self.active_exchange);
+
+                let timeframe = self.managers.bubble.timeframe_for_chart(target_cid)
+                    .cloned()
+                    .unwrap_or_default();
+
+                let old_sym_search = previous_symbol.clone();
+                let old_exch_search = self.managers.bubble.exchange_for_chart(target_cid)
+                    .map(String::from).unwrap_or_default();
+                let old_at_search = self.managers.bubble.account_type_for_chart(target_cid)
+                    .map(String::from).unwrap_or_else(|| "S".to_string());
+
+                let target_leaf = self.panel_app.panel_grid.iter_containers()
+                    .find(|(_, w)| w.id == target_cid)
+                    .map(|(lid, _)| lid);
+                let target_pid = self.panel_app.panel_grid.containers().values()
+                    .find(|w| w.id == target_cid)
+                    .map(|w| w.chart_panel_id);
+
+                if let Some(window) = self.panel_app.panel_grid.containers_mut().values_mut()
+                    .find(|w| w.id == target_cid)
+                {
+                    if let Some(pid) = target_pid {
+                        if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
+                            window.snapshot_drawings_for_symbol(&old_sym_search, &old_exch_search, &old_at_search, &panel.drawing_manager);
+                            panel.drawing_manager.set_current_symbol_key(&symbol, resolved_exchange.as_str(), &account_type);
+                            panel.drawing_manager.clear_all_primitives();
+                            window.restore_drawings_for_symbol(&symbol, resolved_exchange.as_str(), &account_type, &mut panel.drawing_manager);
+                        }
+                    }
+                    window.viewport.bar_count = 0;
+                    window.viewport.view_start = 0.0;
+                    window.pending_symbol_load = true;
+                }
+
+                if let Some(bid) = self.managers.bubble.bubble_for_chart(target_cid) {
+                    if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                        bubble.symbol = symbol.clone();
+                        bubble.timeframe = timeframe.clone();
+                        bubble.exchange = resolved_exchange.as_str().to_string();
+                        bubble.account_type = account_type.clone();
+                    }
+                }
+
+                self.active_exchange = resolved_exchange;
+                if !previous_symbol.is_empty() {
+                    self.bridge.unsubscribe_trades(old_trade_exchange, &previous_symbol, old_trade_at);
+                }
+                let eid_str = resolved_exchange.as_str();
+                if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
+                    eprintln!("[ChartApp] ApplySymbol: exchange {} disabled, skipping connector call", eid_str);
+                } else {
+                    let at = crate::account_type_from_label(&account_type);
+                    self.bridge.ensure_connector(resolved_exchange);
+                    self.bridge.request_bars(
+                        resolved_exchange, &symbol, &timeframe, at, None,
+                        Some(self.panel_app.user_manager.profile.bar_count as usize), false,
+                    );
+                }
+
+                if previous_symbol != symbol {
+                    self.push_undo_command(mlc_core::Command::ChangeSymbol {
+                        previous_symbol: previous_symbol.clone(),
+                        new_symbol: symbol.clone(),
+                    });
+                    eprintln!("[ChartApp] ApplySymbol {} -> {} (chart {})", previous_symbol, symbol, chart_id);
+                    if let Some(leaf) = target_leaf {
+                        self.propagate_symbol_to_sync_group(leaf, &symbol, resolved_exchange.as_str(), &account_type);
+                    }
+                }
+
+                let bars: Vec<mlc_core::Bar> = self.managers.bubble.bubble_for_chart(target_cid)
+                    .and_then(|bid| self.managers.bubble.bubble(bid))
+                    .map(|b| b.bars.clone())
+                    .unwrap_or_default();
+                self.indicator_manager.calculate_all_for_window(chart_id, &bars);
+                self.sync_sub_panes_from_manager();
+                self.sidebar_data_dirty = true;
+                self.autosave_snapshot();
+                state_mutated = true;
+            }
             ChartOutEvent::OpenCompareSearch => {
                 self.modal_state.open(OpenModal::CompareSearch);
                 self.modal_state.symbol_search_results =

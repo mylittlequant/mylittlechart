@@ -275,6 +275,38 @@ pub enum AgentCommand {
         account_type: String,
     },
 
+    /// Change chart type on a chart (candles / renko / pnf / kagi / footprint / ...).
+    /// Routed through `ChartOutEvent::ChangeChartType` — same path as the
+    /// chart-type dropdown click.
+    SwitchChartType {
+        window_id: String,
+        chart_id: u64,
+        chart_type: String,
+    },
+
+    /// Change timeframe on a chart. Routed through `ChartOutEvent::ChangeTimeframe`.
+    SwitchTimeframe {
+        window_id: String,
+        chart_id: u64,
+        timeframe_id: String,
+    },
+
+    /// Switch to a different preset tab on a window. Routed through
+    /// `ChartOutEvent::LoadPreset`.
+    SwitchPreset {
+        window_id: String,
+        preset_id: String,
+    },
+
+    /// Apply an internal layout split to the active window.
+    /// `kind` matches the keys accepted by `ChartApp::set_internal_layout`:
+    /// `"single"`, `"h"`, `"v"`, `"2x2"`, `"2l1r"`, `"1l2r"`, `"2t1b"`,
+    /// `"1t2b"`, `"3cols"`, `"3rows"`, `"1big3small"`.
+    SetInternalLayout {
+        window_id: String,
+        kind: String,
+    },
+
     // -- Indicator CRUD (Phase 3) --
     AddIndicator {
         window_id: String,

@@ -66,11 +66,68 @@ impl App<'_> {
                 mlc_agentic_server::state::AgentCommand::SwitchSymbol {
                     window_id, chart_id, symbol, exchange, timeframe, account_type,
                 } => {
-                    eprintln!(
-                        "[AgentCommand] SwitchSymbol: window={}, chart={}, symbol={}/{}/{} acct={}",
-                        window_id, chart_id, exchange, symbol, timeframe, account_type,
-                    );
-                    // TODO: implement actual symbol switch via DataBridge request
+                    if let Some(pw) = self.windows.values_mut().find(|pw| pw.window_id == window_id) {
+                        if !timeframe.is_empty() {
+                            pw.chart.change_timeframe(&timeframe);
+                        }
+                        pw.chart.apply_symbol(
+                            mlc_core::state::ChartId(chart_id),
+                            &symbol, &exchange, &account_type,
+                        );
+                        eprintln!(
+                            "[AgentCommand] SwitchSymbol: window={}, chart={}, symbol={}/{}/{} acct={}",
+                            window_id, chart_id, exchange, symbol, timeframe, account_type,
+                        );
+                    } else {
+                        eprintln!("[AgentCommand] SwitchSymbol: window not found: {}", window_id);
+                    }
+                }
+
+                mlc_agentic_server::state::AgentCommand::SwitchChartType {
+                    window_id, chart_id: _, chart_type,
+                } => {
+                    if let Some(pw) = self.windows.values_mut().find(|pw| pw.window_id == window_id) {
+                        pw.chart.change_chart_type(&chart_type);
+                        eprintln!("[AgentCommand] SwitchChartType: window={}, type={}", window_id, chart_type);
+                    } else {
+                        eprintln!("[AgentCommand] SwitchChartType: window not found: {}", window_id);
+                    }
+                }
+
+                mlc_agentic_server::state::AgentCommand::SwitchTimeframe {
+                    window_id, chart_id: _, timeframe_id,
+                } => {
+                    if let Some(pw) = self.windows.values_mut().find(|pw| pw.window_id == window_id) {
+                        pw.chart.change_timeframe(&timeframe_id);
+                        eprintln!("[AgentCommand] SwitchTimeframe: window={}, tf={}", window_id, timeframe_id);
+                    } else {
+                        eprintln!("[AgentCommand] SwitchTimeframe: window not found: {}", window_id);
+                    }
+                }
+
+                mlc_agentic_server::state::AgentCommand::SwitchPreset {
+                    window_id, preset_id,
+                } => {
+                    if let Some(pw) = self.windows.values_mut().find(|pw| pw.window_id == window_id) {
+                        pw.chart.load_preset(&preset_id);
+                        eprintln!("[AgentCommand] SwitchPreset: window={}, preset={}", window_id, preset_id);
+                    } else {
+                        eprintln!("[AgentCommand] SwitchPreset: window not found: {}", window_id);
+                    }
+                }
+
+                mlc_agentic_server::state::AgentCommand::SetInternalLayout {
+                    window_id, kind,
+                } => {
+                    if let Some(pw) = self.windows.values_mut().find(|pw| pw.window_id == window_id) {
+                        if pw.chart.set_internal_layout(&kind) {
+                            eprintln!("[AgentCommand] SetInternalLayout: window={}, kind={}", window_id, kind);
+                        } else {
+                            eprintln!("[AgentCommand] SetInternalLayout: unknown kind '{}'", kind);
+                        }
+                    } else {
+                        eprintln!("[AgentCommand] SetInternalLayout: window not found: {}", window_id);
+                    }
                 }
 
                 // ── Indicator CRUD ──────────────────────────────────────

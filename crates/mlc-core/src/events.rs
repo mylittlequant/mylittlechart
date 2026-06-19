@@ -15,6 +15,19 @@ pub enum ChartOutEvent {
     /// Chart changed its symbol internally (for cross-window sync).
     SymbolChanged { symbol: String },
 
+    /// Programmatic symbol change for a specific chart, bypassing the
+    /// symbol-search modal. Emitted by headless drivers (test harness,
+    /// agent HTTP API) so external clients can switch instrument without
+    /// touching the modal flow. Handler updates the bubble, re-subscribes
+    /// streams, propagates via sync group — same effect as user-driven
+    /// symbol search confirmation.
+    ApplySymbol {
+        chart_id: u64,
+        symbol: String,
+        exchange: String,
+        account_type: String,
+    },
+
     // === Sidebar / Panel toggles (app-level) ===
     ToggleWatchlist,
     ToggleAlerts,

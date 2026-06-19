@@ -1,6 +1,7 @@
 pub mod bars;
 pub mod catalog;
 pub mod connectors_status;
+pub mod controls;
 pub mod health;
 pub mod indicators;
 pub mod indicators_crud;

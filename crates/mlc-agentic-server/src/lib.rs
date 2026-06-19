@@ -50,6 +50,7 @@ pub fn start_server(
         .merge(routes::indicators::routes())
         .merge(routes::windows::routes())
         .merge(routes::viewport::routes())
+        .merge(routes::controls::routes())
         .merge(routes::indicators_crud::routes())
         .merge(routes::primitives::routes())
         .merge(routes::screenshot::routes())

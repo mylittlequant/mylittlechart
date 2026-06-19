@@ -2493,6 +2493,59 @@ impl ChartApp {
         self.process_chart_out_event(mlc_core::events::ChartOutEvent::OpenUserSettings);
     }
 
+    /// Programmatic symbol change for a specific chart, bypassing the
+    /// symbol-search modal. Same effect as user-driven modal confirmation.
+    pub fn apply_symbol(&mut self, chart_id: mlc_core::state::ChartId, symbol: &str, exchange: &str, account_type: &str) {
+        self.process_chart_out_event(mlc_core::events::ChartOutEvent::ApplySymbol {
+            chart_id: chart_id.0,
+            symbol: symbol.to_string(),
+            exchange: exchange.to_string(),
+            account_type: account_type.to_string(),
+        });
+    }
+
+    /// Switch chart type on the active chart (e.g. `"candles"`, `"renko"`,
+    /// `"footprint"`, ...). Routed through the same `ChartOutEvent::ChangeChartType`
+    /// path the toolbar dropdown uses.
+    pub fn change_chart_type(&mut self, chart_type: &str) {
+        self.process_chart_out_event(mlc_core::events::ChartOutEvent::ChangeChartType {
+            chart_type: chart_type.to_string(),
+        });
+    }
+
+    /// Change timeframe on the active chart (e.g. `"1m"`, `"1h"`, `"1D"`).
+    /// Routed through `ChartOutEvent::ChangeTimeframe`.
+    pub fn change_timeframe(&mut self, timeframe_id: &str) {
+        self.process_chart_out_event(mlc_core::events::ChartOutEvent::ChangeTimeframe {
+            timeframe_id: timeframe_id.to_string(),
+        });
+    }
+
+    /// Apply an internal layout split / restore to the active window.
+    ///
+    /// `kind` accepts the same keys the layout dropdown emits:
+    /// `"single"`, `"h"`, `"v"`, `"2x2"`, `"2l1r"`, `"1l2r"`,
+    /// `"2t1b"`, `"1t2b"`, `"3cols"`, `"3rows"`, `"1big3small"`.
+    pub fn set_internal_layout(&mut self, kind: &str) -> bool {
+        use mlc_core::events::ChartOutEvent as E;
+        let event = match kind {
+            "single"    => E::InternalSetLayoutSingle,
+            "h"         => E::InternalSplitHorizontal,
+            "v"         => E::InternalSplitVertical,
+            "2x2"       => E::InternalSplitGrid2x2,
+            "2l1r"      => E::InternalSplit2Left1Right,
+            "1l2r"      => E::InternalSplit1Left2Right,
+            "2t1b"      => E::InternalSplit2Top1Bottom,
+            "1t2b"      => E::InternalSplit1Top2Bottom,
+            "3cols"     => E::InternalSplit3Columns,
+            "3rows"     => E::InternalSplit3Rows,
+            "1big3small"=> E::InternalSplit1Big3Small,
+            _ => return false,
+        };
+        self.process_chart_out_event(event);
+        true
+    }
+
     /// Drain the pending screenshot request.
     ///
     /// Returns `true` if a screenshot was requested since the last call.
