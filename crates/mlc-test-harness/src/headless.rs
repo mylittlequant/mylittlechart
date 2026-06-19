@@ -155,6 +155,50 @@ impl HeadlessChartApp {
     pub fn inner_mut(&mut self) -> &mut ChartApp {
         &mut self.app
     }
+
+    /// Element counts for every Phase X0 derived series on this chart's
+    /// bubble. Mirrors `mlc_agentic_server::state::DerivedSeriesCounts` so
+    /// HeadlessChartApp asserts and the agent-server HTTP snapshot agree.
+    pub fn derived_counts(&self, cid: ChartId) -> DerivedCounts {
+        let Some(bid) = self.chart_bubble(cid) else { return DerivedCounts::default(); };
+        let Some(b) = (&self.app.managers.bubble).bubble(bid) else { return DerivedCounts::default(); };
+        DerivedCounts {
+            bars:                b.bars.len(),
+            footprint_bars:      b.footprint_bars.as_ref().map(|v| v.len()).unwrap_or(0),
+            renko_bars:          b.renko_bars.as_ref().map(|v| v.len()).unwrap_or(0),
+            three_line_break:    b.three_line_break.as_ref().map(|v| v.len()).unwrap_or(0),
+            pnf_columns:         b.pnf_columns.as_ref().map(|v| v.len()).unwrap_or(0),
+            kagi_segments:       b.kagi_segments.as_ref().map(|v| v.len()).unwrap_or(0),
+            cvd_line:            b.cvd_line.as_ref().map(|v| v.len()).unwrap_or(0),
+            tpo_sessions:        b.tpo_sessions.as_ref().map(|v| v.len()).unwrap_or(0),
+            oi_delta:            b.oi_delta.as_ref().map(|v| v.len()).unwrap_or(0),
+            funding_rate:        b.funding_rate.as_ref().map(|v| v.len()).unwrap_or(0),
+            dom_heatmap_columns: b.dom_heatmap.as_ref().map(|h| h.bucket_count()).unwrap_or(0),
+            dom_trade_dots:      b.dom_trade_dots.as_ref().map(|v| v.len()).unwrap_or(0),
+            liq_heatmap_columns: b.liq_heatmap.as_ref().map(|h| h.bucket_count()).unwrap_or(0),
+            liq_dots:            b.liq_dots.as_ref().map(|v| v.len()).unwrap_or(0),
+        }
+    }
+}
+
+/// Same shape as `mlc_agentic_server::state::DerivedSeriesCounts` plus the
+/// primary `bars` count. Returned by `HeadlessChartApp::derived_counts`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DerivedCounts {
+    pub bars: usize,
+    pub footprint_bars: usize,
+    pub renko_bars: usize,
+    pub three_line_break: usize,
+    pub pnf_columns: usize,
+    pub kagi_segments: usize,
+    pub cvd_line: usize,
+    pub tpo_sessions: usize,
+    pub oi_delta: usize,
+    pub funding_rate: usize,
+    pub dom_heatmap_columns: usize,
+    pub dom_trade_dots: usize,
+    pub liq_heatmap_columns: usize,
+    pub liq_dots: usize,
 }
 
 /// Flat summary of one bubble for test assertions / debug dumps.
