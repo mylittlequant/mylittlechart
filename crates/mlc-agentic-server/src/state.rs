@@ -157,6 +157,43 @@ pub struct ChartSnapshot {
     pub indicators: Vec<IndicatorSummary>,
     /// Summary of primitives (id + type_id only).
     pub primitives: Vec<PrimitiveSummary>,
+    /// Element counts for every derived series the chart can carry on its
+    /// `DataBubble`. Zeros mean the writer arm never fed that kind for this
+    /// instrument. Headless drivers + lightweight viz clients use these
+    /// numbers to assert which streams actually reached the chart's bubble.
+    #[serde(default)]
+    pub derived: DerivedSeriesCounts,
+}
+
+/// Element counts for every Phase X0 per-Kind series carried on `DataBubble`.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct DerivedSeriesCounts {
+    /// Footprint cluster bars.
+    pub footprint_bars: usize,
+    /// Renko bricks.
+    pub renko_bars: usize,
+    /// Three-Line-Break lines.
+    pub three_line_break: usize,
+    /// Point-and-Figure columns.
+    pub pnf_columns: usize,
+    /// Kagi segments.
+    pub kagi_segments: usize,
+    /// Cumulative volume delta samples.
+    pub cvd_line: usize,
+    /// TPO market profile sessions.
+    pub tpo_sessions: usize,
+    /// Open-interest delta samples.
+    pub oi_delta: usize,
+    /// Funding-rate samples.
+    pub funding_rate: usize,
+    /// DOM heatmap snapshots (column count).
+    pub dom_heatmap_columns: usize,
+    /// DOM trade dot ring length.
+    pub dom_trade_dots: usize,
+    /// Liquidation heatmap column count.
+    pub liq_heatmap_columns: usize,
+    /// Liquidation dot ring length.
+    pub liq_dots: usize,
 }
 
 /// Viewport state of a chart.

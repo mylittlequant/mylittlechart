@@ -113,9 +113,23 @@ impl App<'_> {
                             .collect())
                         .unwrap_or_default();
 
-                    let bar_count = pw.chart.managers.bubble.bubble(cw.current_bubble_id)
-                        .map(|b| b.bars.len())
-                        .unwrap_or(0);
+                    let bubble = pw.chart.managers.bubble.bubble(cw.current_bubble_id);
+                    let bar_count = bubble.map(|b| b.bars.len()).unwrap_or(0);
+                    let derived = bubble.map(|b| mlc_agentic_server::state::DerivedSeriesCounts {
+                        footprint_bars:      b.footprint_bars.as_ref().map(|v| v.len()).unwrap_or(0),
+                        renko_bars:          b.renko_bars.as_ref().map(|v| v.len()).unwrap_or(0),
+                        three_line_break:    b.three_line_break.as_ref().map(|v| v.len()).unwrap_or(0),
+                        pnf_columns:         b.pnf_columns.as_ref().map(|v| v.len()).unwrap_or(0),
+                        kagi_segments:       b.kagi_segments.as_ref().map(|v| v.len()).unwrap_or(0),
+                        cvd_line:            b.cvd_line.as_ref().map(|v| v.len()).unwrap_or(0),
+                        tpo_sessions:        b.tpo_sessions.as_ref().map(|v| v.len()).unwrap_or(0),
+                        oi_delta:            b.oi_delta.as_ref().map(|v| v.len()).unwrap_or(0),
+                        funding_rate:        b.funding_rate.as_ref().map(|v| v.len()).unwrap_or(0),
+                        dom_heatmap_columns: b.dom_heatmap.as_ref().map(|h| h.bucket_count()).unwrap_or(0),
+                        dom_trade_dots:      b.dom_trade_dots.as_ref().map(|v| v.len()).unwrap_or(0),
+                        liq_heatmap_columns: b.liq_heatmap.as_ref().map(|h| h.bucket_count()).unwrap_or(0),
+                        liq_dots:            b.liq_dots.as_ref().map(|v| v.len()).unwrap_or(0),
+                    }).unwrap_or_default();
                     Some(ChartSnapshot {
                         chart_id: cw.id.0,
                         leaf_id: leaf_id.0,
@@ -134,6 +148,7 @@ impl App<'_> {
                         primitive_count: primitives.len(),
                         indicators,
                         primitives,
+                        derived,
                     })
                 })
                 .collect();
