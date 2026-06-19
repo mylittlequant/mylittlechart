@@ -171,7 +171,7 @@ impl ChartApp {
             let bars_by_chart_pre: std::collections::HashMap<ChartId, Vec<mlc_core::Bar>> =
                 self.panel_app.panel_grid.containers().iter()
                     .map(|(cid, w)| {
-                        let bars = self.managers.bubble.bubble(w.current_bubble_id)
+                        let bars = self.core.bubble().bubble.bubble(w.current_bubble_id)
                             .map(|b| b.bars.clone())
                             .unwrap_or_default();
                         (*cid, bars)
@@ -240,7 +240,7 @@ impl ChartApp {
         let bubble_snapshot: std::collections::HashMap<
             mlc_core::tag_manager::BubbleId,
             (Vec<mlc_core::Bar>,)
-        > = self.managers.bubble.bubbles()
+        > = self.core.bubble().bubble.bubbles()
             .map(|b| (b.id, (b.bars.clone(),)))
             .collect();
 
@@ -283,7 +283,7 @@ impl ChartApp {
         // Keep the alert-settings modal's alerts list always in sync.
         if self.panel_app.alert_settings_state.is_open() {
             self.panel_app.alert_settings_state.all_alerts =
-                self.managers.alert.items().to_vec();
+                self.core.bubble().alert.items().to_vec();
         }
 
         // Auto-dirty sidebar when active leaf changes (for object tree refresh).
@@ -296,7 +296,7 @@ impl ChartApp {
             // chart's group and apply the group's instrument key to their states.
             if let Some(new_active_group) = self.panel_app.panel_grid
                 .active_container_id()
-                .and_then(|cid| self.managers.bubble.bubble_for_chart(cid))
+                .and_then(|cid| self.bubble_for_chart(cid))
             {
                 // Sync the group's full instrument key from the new active window.
                 // symbol included — without this, restored groups carry stale
@@ -304,19 +304,19 @@ impl ChartApp {
                 // overwrites panel state.symbol with that stale value on the very
                 // first frame (when last_active_leaf=None ≠ current_leaf).
                 if let Some(active_cid_sync) = self.panel_app.panel_grid.active_container_id() {
-                    let sym = self.managers.bubble.symbol_for_chart(active_cid_sync)
+                    let sym = self.symbol_for_chart(active_cid_sync)
                         .map(String::from).unwrap_or_default();
-                    let exch = self.managers.bubble.exchange_for_chart(active_cid_sync)
+                    let exch = self.exchange_for_chart(active_cid_sync)
                         .map(String::from).unwrap_or_default();
-                    let at = self.managers.bubble.account_type_for_chart(active_cid_sync)
+                    let at = self.account_type_for_chart(active_cid_sync)
                         .map(String::from).unwrap_or_else(|| "S".to_string());
-                    if let Some(g) = self.managers.bubble.bubble_mut(new_active_group) {
+                    if let Some(g) = self.core.bubble_mut().bubble.bubble_mut(new_active_group) {
                         g.symbol = sym;
                         g.exchange = exch;
                         g.account_type = at;
                     }
                 }
-                self.managers.bubble.reassign_synced_panels(new_active_group);
+                self.core.bubble_mut().bubble.reassign_synced_panels(new_active_group);
                 self.apply_key_to_panels_in_group(new_active_group);
             }
         }
@@ -329,10 +329,26 @@ impl ChartApp {
             let active_cid = self.panel_app.panel_grid.active_container_id();
 
             // Determine whether the active window is in a real (non-auto_created) tag group.
-            let tagged_group = active_cid
-                .and_then(|cid| self.managers.bubble.bubble_for_chart(cid))
-                .and_then(|gid| self.managers.bubble.bubble(gid))
-                .filter(|g| !g.auto_created);
+            // Snapshot the fields we need (sync flags, primitives, indicator configs) so
+            // the RwLock guard can drop before iterating them.
+            struct TaggedGroupSnapshot {
+                sync_flags: mlc_core::tag_manager::SyncFlags,
+                primitives: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>>,
+                indicator_configs: Vec<mlc_core::tag_manager::IndicatorGroupConfig>,
+            }
+            let tagged_group: Option<TaggedGroupSnapshot> = active_cid
+                .and_then(|cid| self.bubble_for_chart(cid))
+                .and_then(|gid| self.with_bubble(gid, |g| {
+                    if g.auto_created {
+                        None
+                    } else {
+                        Some(TaggedGroupSnapshot {
+                            sync_flags: g.sync_flags.clone(),
+                            primitives: g.primitives.iter().map(|p| p.clone_box()).collect(),
+                            indicator_configs: g.indicator_configs.clone(),
+                        })
+                    }
+                }).flatten());
 
             // Helper: convert a PrimitiveKind into an ObjectCategory.
             let prim_category = |kind: mlc_core::PrimitiveKind| match kind {
@@ -347,13 +363,13 @@ impl ChartApp {
             let active_cid_obj = self.panel_app.panel_grid.active_container_id();
             let (active_window_sym, active_window_exchange, active_window_account_type) = {
                 let sym = active_cid_obj
-                    .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                    .and_then(|cid| self.symbol_for_chart(cid))
                     .map(String::from).unwrap_or_default();
                 let exch = active_cid_obj
-                    .and_then(|cid| self.managers.bubble.exchange_for_chart(cid))
+                    .and_then(|cid| self.exchange_for_chart(cid))
                     .map(String::from).unwrap_or_default();
                 let at = active_cid_obj
-                    .and_then(|cid| self.managers.bubble.account_type_for_chart(cid))
+                    .and_then(|cid| self.account_type_for_chart(cid))
                     .map(String::from).unwrap_or_else(|| "S".to_string());
                 (sym, exch, at)
             };
@@ -447,9 +463,9 @@ impl ChartApp {
                 let stashed_prim_data: Vec<_> = active_cid
                     .and_then(|cid| {
                         let auto_bid = self.panel_app.panel_grid.containers().get(&cid)?.auto_bubble_id;
-                        self.managers.bubble.bubble(auto_bid)
+                        Some(auto_bid)
                     })
-                    .map(|auto_bub| {
+                    .and_then(|auto_bid| self.with_bubble(auto_bid, |auto_bub| {
                         auto_bub.primitives.iter()
                             .map(|p| {
                                 let data = p.data();
@@ -458,16 +474,16 @@ impl ChartApp {
                                 (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone(), data.symbol.clone())
                             })
                             .collect()
-                    })
+                    }))
                     .unwrap_or_default();
 
                 // Read pre_tag_indicator_ids from auto_bubble.
                 let pre_tag_ids: Vec<u64> = active_cid
                     .and_then(|cid| {
                         let auto_bid = self.panel_app.panel_grid.containers().get(&cid)?.auto_bubble_id;
-                        self.managers.bubble.bubble(auto_bid)
+                        Some(auto_bid)
                     })
-                    .map(|auto_bub| auto_bub.pre_tag_indicator_ids.clone())
+                    .and_then(|auto_bid| self.with_bubble(auto_bid, |auto_bub| auto_bub.pre_tag_indicator_ids.clone()))
                     .unwrap_or_default();
 
                 let has_window_section = !stashed_prim_data.is_empty() || !pre_tag_ids.is_empty();
@@ -679,12 +695,12 @@ impl ChartApp {
                 for (sym_name, sym_exchange, sym_account_type) in &watchlist_entries {
                     let price_data = self.panel_app.panel_grid.containers().iter()
                         .find(|(cid, _)| {
-                            self.managers.bubble.symbol_for_chart(**cid)
-                                .map_or(false, |s| s == sym_name)
-                            && self.managers.bubble.exchange_for_chart(**cid)
-                                .map_or(false, |e| e == sym_exchange)
-                            && self.managers.bubble.account_type_for_chart(**cid)
-                                .map_or(false, |a| a == sym_account_type)
+                            self.symbol_for_chart(**cid)
+                                .map_or(false, |s| &s == sym_name)
+                            && self.exchange_for_chart(**cid)
+                                .map_or(false, |e| &e == sym_exchange)
+                            && self.account_type_for_chart(**cid)
+                                .map_or(false, |a| &a == sym_account_type)
                         })
                         .and_then(|(_, w)| None::<&mlc_core::Bar>)
                         .map(|bar| (bar.close, bar.open, bar.high, bar.low, bar.volume));
@@ -861,11 +877,12 @@ impl ChartApp {
             }
 
             // --- Alerts: copy from alert manager ---
-            self.sidebar_state.alert_items = self.managers.alert.items().to_vec();
+            self.sidebar_state.alert_items = self.core.bubble().alert.items().to_vec();
 
             // --- ObjectTree: mark items that have bound alerts ---
             {
-                let alert_items = self.managers.alert.items();
+                let alert_items = self.core.bubble().alert.items().to_vec();
+                let alert_items = alert_items.as_slice();
                 for tree_item in &mut self.sidebar_state.object_tree_items {
                     tree_item.has_alert = alert_items.iter().any(|a| match &a.source {
                         mlc_alerts::AlertSource::Drawing { primitive_id, .. } => {
@@ -970,7 +987,7 @@ impl ChartApp {
                 let bars_by_chart_split: std::collections::HashMap<ChartId, Vec<mlc_core::Bar>> =
                     self.panel_app.panel_grid.containers().iter()
                         .map(|(cid, w)| {
-                            let bars = self.managers.bubble.bubble(w.current_bubble_id)
+                            let bars = self.core.bubble().bubble.bubble(w.current_bubble_id)
                                 .map(|b| b.bars.clone())
                                 .unwrap_or_default();
                             (*cid, bars)
@@ -1051,14 +1068,14 @@ impl ChartApp {
                 let mut syncs = Vec::new();
                 for &(leaf_id, _) in &leaf_rects {
                     if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
-                        let window_symbol = self.managers.bubble.symbol_for_chart(chart_id)
+                        let window_symbol = self.symbol_for_chart(chart_id)
                             .map(String::from)
                             .unwrap_or_default();
                         if let Some(group_id) = self.panel_app.panel_grid
                             .container_id_for_leaf(leaf_id)
-                            .and_then(|cid| self.managers.bubble.bubble_for_chart(cid))
+                            .and_then(|cid| self.bubble_for_chart(cid))
                         {
-                            if let Some(group) = self.managers.bubble.bubble(group_id) {
+                            if let Some(group) = self.core.bubble().bubble.bubble(group_id) {
                                 // Skip sync only for auto-created solo groups — their primitives
                                 // live directly in drawing_manager (intercept returns false for them).
                                 // Non-auto tagged groups with a single member still need the forward
@@ -1154,7 +1171,7 @@ impl ChartApp {
             // Sync indicator overlay visibility per leaf.
             for &(leaf_id, _) in &leaf_rects {
                 let symbol = self.panel_app.panel_grid.container_id_for_leaf(leaf_id)
-                    .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                    .and_then(|cid| self.symbol_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_default();
                 let has_compare = self.panel_app.panel_grid.container_for_leaf(leaf_id)
@@ -1177,7 +1194,7 @@ impl ChartApp {
                     .unwrap_or(false);
                 let chart_id_opt = self.panel_app.panel_grid.active_container_id();
                 let group_id_opt = chart_id_opt
-                    .and_then(|cid| self.managers.bubble.bubble_for_chart(cid));
+                    .and_then(|cid| self.bubble_for_chart(cid));
                 if let (Some(group_id), Some(chart_id)) = (group_id_opt, chart_id_opt) {
                     if !is_dragging {
                         // Respect the sync_drawings flag — skip forward sync if disabled.
@@ -1185,7 +1202,7 @@ impl ChartApp {
                         // directly in drawing_manager. Non-auto tagged groups with ≤1 member
                         // still need the forward sync (group.primitives → drawing_manager) so
                         // drawings loaded from a preset are visible on the canvas.
-                        let (drawings_on, is_auto_mono) = self.managers.bubble
+                        let (drawings_on, is_auto_mono) = self.core.bubble().bubble
                             .bubble(group_id)
                             .map(|g| (g.sync_flags.sync_drawings, g.auto_created && g.members.len() <= 1))
                             .unwrap_or((true, false));
@@ -1193,11 +1210,11 @@ impl ChartApp {
                             // Capture the window's current symbol so we can filter
                             // primitives — stale drawings from the previous symbol
                             // must not be re-injected by the forward sync.
-                            let window_symbol = self.managers.bubble.symbol_for_chart(chart_id)
+                            let window_symbol = self.symbol_for_chart(chart_id)
                                 .map(String::from)
                                 .unwrap_or_default();
                             let cloned: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
-                                self.managers.bubble
+                                self.core.bubble().bubble
                                     .bubble(group_id)
                                     .map(|g| g.primitives.iter()
                                         .filter(|p| {
@@ -1221,7 +1238,7 @@ impl ChartApp {
             // Single pane: sync indicator overlay visibility.
             let active_cid_single = self.panel_app.panel_grid.active_container_id();
             let symbol = active_cid_single
-                .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                .and_then(|cid| self.symbol_for_chart(cid))
                 .map(String::from)
                 .unwrap_or_default();
             let has_compare = self.panel_app.panel_grid.active_container()

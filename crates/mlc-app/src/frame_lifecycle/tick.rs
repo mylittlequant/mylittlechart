@@ -129,10 +129,10 @@ impl ChartApp {
             let mut set = std::collections::HashSet::new();
             for cid in self.panel_app.panel_grid.containers().keys() {
                 if let (Some(s), Some(e), Some(tf), Some(at)) = (
-                    self.managers.bubble.symbol_for_chart(*cid),
-                    self.managers.bubble.exchange_for_chart(*cid),
-                    self.managers.bubble.timeframe_for_chart(*cid),
-                    self.managers.bubble.account_type_for_chart(*cid),
+                    self.symbol_for_chart(*cid),
+                    self.exchange_for_chart(*cid),
+                    self.timeframe_for_chart(*cid),
+                    self.account_type_for_chart(*cid),
                 ) {
                     set.insert((s.to_string(), e.to_string(), tf.name.clone(), at.to_string()));
                 }
@@ -174,10 +174,10 @@ impl ChartApp {
                 Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
                     self.lag_event_count += 1;
                     crate::dlog!("[ChartApp:{}] broadcast LAGGED — skipped {} messages (total lag events: {})",
-                        self.managers.bubble.bubbles()
+                        self.core.bubble().bubble.bubbles()
                             .find(|b| !b.symbol.is_empty())
-                            .map(|b| b.symbol.as_str())
-                            .unwrap_or("?"),
+                            .map(|b| b.symbol.clone())
+                            .unwrap_or_else(|| "?".to_string()),
                         n, self.lag_event_count);
                     // Always trigger backfill — the receiver has jumped forward
                     // and missed Trade updates are permanently lost.
@@ -277,10 +277,10 @@ impl ChartApp {
                     let instrument_by_cid: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::state::Timeframe, String, String)> = {
                         self.panel_app.panel_grid.containers().keys()
                             .filter_map(|cid| {
-                                let sym = self.managers.bubble.symbol_for_chart(*cid).map(String::from)?;
-                                let tf = self.managers.bubble.timeframe_for_chart(*cid).cloned()?;
-                                let exch = self.managers.bubble.exchange_for_chart(*cid).map(String::from)?;
-                                let at = self.managers.bubble.account_type_for_chart(*cid).map(String::from)?;
+                                let sym = self.symbol_for_chart(*cid)?;
+                                let tf = self.timeframe_for_chart(*cid)?;
+                                let exch = self.exchange_for_chart(*cid)?;
+                                let at = self.account_type_for_chart(*cid)?;
                                                                 Some((*cid, (sym, tf, exch, at)))
                             })
                             .collect()
@@ -290,11 +290,13 @@ impl ChartApp {
                     // determine is_backfill (was the window already showing data?).
                     // Then write bubble.bars ONCE, then loop windows for reconcile.
                     let mut matched_windows: Vec<(mlc_core::state::ChartId, bool, Option<(i64, f64)>)> = Vec::new();
-                    let prev_bars_for_anchor: Vec<mlc_core::Bar> = self.managers.bubble
-                        .bubble_for_instrument(exchange_id.as_str(), account_type.short_label(), &symbol)
-                        .and_then(|bid| self.managers.bubble.bubble(bid))
-                        .map(|b| b.bars.clone())
-                        .unwrap_or_default();
+                    let prev_bars_for_anchor: Vec<mlc_core::Bar> = {
+                        let m = self.core.bubble();
+                        m.bubble.bubble_for_instrument(exchange_id.as_str(), account_type.short_label(), &symbol)
+                            .and_then(|bid| m.bubble.bubble(bid))
+                            .map(|b| b.bars.clone())
+                            .unwrap_or_default()
+                    };
                     for (chart_id_key, window) in self.panel_app.panel_grid.containers().iter() {
                         let (win_sym, win_tf, win_exch, win_at) = match instrument_by_cid.get(chart_id_key) {
                             Some(t) => t,
@@ -328,10 +330,10 @@ impl ChartApp {
                     if any_matched {
                         let target_bubbles: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
                             matched_windows.iter()
-                                .filter_map(|(cid, _, _)| self.managers.bubble.bubble_for_chart(*cid))
+                                .filter_map(|(cid, _, _)| self.bubble_for_chart(*cid))
                                 .collect();
                         for bid in target_bubbles {
-                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                            if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(bid) {
                                 bubble.bars = bars.clone();
                             }
                         }
@@ -383,8 +385,8 @@ impl ChartApp {
                         prev_close_mirrors.push((*chart_id_key, new_bars_clone.first().map(|b| b.open)));
                     }
                     for (chart_id, prev_close) in prev_close_mirrors {
-                        if let Some(bid) = self.managers.bubble.bubble_for_chart(chart_id) {
-                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                        if let Some(bid) = self.bubble_for_chart(chart_id) {
+                            if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(bid) {
                                 bubble.prev_close_price = prev_close;
                             }
                         }
@@ -479,11 +481,11 @@ impl ChartApp {
                     if !any_matched && !parked_matched {
                         let window_keys: Vec<String> = self.panel_app.panel_grid.containers().keys()
                             .map(|cid| {
-                                let sym = self.managers.bubble.symbol_for_chart(*cid).unwrap_or("?");
-                                let exch = self.managers.bubble.exchange_for_chart(*cid).unwrap_or("?");
-                                let at = self.managers.bubble.account_type_for_chart(*cid).unwrap_or("?");
-                                let tf = self.managers.bubble.timeframe_for_chart(*cid)
-                                    .map(|t| t.name.as_str()).unwrap_or("?");
+                                let sym = self.symbol_for_chart(*cid).unwrap_or_else(|| "?".to_string());
+                                let exch = self.exchange_for_chart(*cid).unwrap_or_else(|| "?".to_string());
+                                let at = self.account_type_for_chart(*cid).unwrap_or_else(|| "?".to_string());
+                                let tf = self.timeframe_for_chart(*cid)
+                                    .map(|t| t.name.clone()).unwrap_or_else(|| "?".to_string());
                                 format!("{}@{}:{}/{}", sym, exch, at, tf)
                             })
                             .collect();
@@ -500,10 +502,10 @@ impl ChartApp {
                         if let Some(w) = self.panel_app.panel_grid.containers().iter()
                             .find(|(cid, _w)| {
                 
-                                self.managers.bubble.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
-                                    && self.managers.bubble.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
-                                    && self.managers.bubble.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
-                                    && self.managers.bubble.account_type_for_chart(**cid).map_or(false, |at| at == account_type.short_label())
+                                self.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
+                                    && self.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
+                                    && self.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
+                                    && self.account_type_for_chart(**cid).map_or(false, |at| at == account_type.short_label())
                             })
                             .map(|(_cid, w)| w)
                         {
@@ -523,10 +525,10 @@ impl ChartApp {
                         .containers()
                         .iter()
                         .filter(|(cid, _w)| {
-                            self.managers.bubble.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
-                                && self.managers.bubble.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
-                                && self.managers.bubble.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
-                                && self.managers.bubble.account_type_for_chart(**cid).map_or(false, |at| at == account_type.short_label())
+                            self.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
+                                && self.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
+                                && self.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
+                                && self.account_type_for_chart(**cid).map_or(false, |at| at == account_type.short_label())
                         })
                         .map(|(cid, _w)| cid.0)
                         .collect();
@@ -553,21 +555,23 @@ impl ChartApp {
                     let instrument_by_cid_bc: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::state::Timeframe, String, String)> = {
                         self.panel_app.panel_grid.containers().keys()
                             .filter_map(|cid| {
-                                let sym = self.managers.bubble.symbol_for_chart(*cid).map(String::from)?;
-                                let tf = self.managers.bubble.timeframe_for_chart(*cid).cloned()?;
-                                let exch = self.managers.bubble.exchange_for_chart(*cid).map(String::from)?;
-                                let at = self.managers.bubble.account_type_for_chart(*cid).map(String::from)?;
+                                let sym = self.symbol_for_chart(*cid)?;
+                                let tf = self.timeframe_for_chart(*cid)?;
+                                let exch = self.exchange_for_chart(*cid)?;
+                                let at = self.account_type_for_chart(*cid)?;
                                                                 Some((*cid, (sym, tf, exch, at)))
                             })
                             .collect()
                     };
 
                     // Phase X0 / C5c: capture anchors before bubble write.
-                    let prev_bars_for_anchor: Vec<mlc_core::Bar> = self.managers.bubble
-                        .bubble_for_instrument(exchange_id.as_str(), account_type.short_label(), &symbol)
-                        .and_then(|bid| self.managers.bubble.bubble(bid))
-                        .map(|b| b.bars.clone())
-                        .unwrap_or_default();
+                    let prev_bars_for_anchor: Vec<mlc_core::Bar> = {
+                        let mgr = self.core.bubble();
+                        mgr.bubble.bubble_for_instrument(exchange_id.as_str(), account_type.short_label(), &symbol)
+                            .and_then(|bid| mgr.bubble.bubble(bid))
+                            .map(|b| b.bars.clone())
+                            .unwrap_or_default()
+                    };
                     let mut matched_anchors: Vec<(mlc_core::state::ChartId, Option<(i64, f64)>)> = Vec::new();
                     for (chart_id_key, window) in self.panel_app.panel_grid.containers().iter() {
                         let (win_sym, win_tf, win_exch, win_at) = match instrument_by_cid_bc.get(chart_id_key) {
@@ -589,10 +593,10 @@ impl ChartApp {
                     // renderer reads).
                     let target_bubbles: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
                         matched_anchors.iter()
-                            .filter_map(|(cid, _)| self.managers.bubble.bubble_for_chart(*cid))
+                            .filter_map(|(cid, _)| self.bubble_for_chart(*cid))
                             .collect();
                     for bid in target_bubbles {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                        if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(bid) {
                             bubble.bars = bars.clone();
                         }
                     }
@@ -608,8 +612,8 @@ impl ChartApp {
                         prev_close_mirrors.push((*chart_id_key, bars.first().map(|b| b.open)));
                     }
                     for (chart_id, prev_close) in prev_close_mirrors {
-                        if let Some(bid) = self.managers.bubble.bubble_for_chart(chart_id) {
-                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                        if let Some(bid) = self.bubble_for_chart(chart_id) {
+                            if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(bid) {
                                 bubble.prev_close_price = prev_close;
                             }
                         }
@@ -622,10 +626,10 @@ impl ChartApp {
                         .containers()
                         .iter()
                         .filter(|(cid, _w)| {
-                            self.managers.bubble.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
-                                && self.managers.bubble.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
-                                && self.managers.bubble.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
-                                && self.managers.bubble.account_type_for_chart(**cid).map_or(false, |at| at == account_type.short_label())
+                            self.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
+                                && self.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
+                                && self.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
+                                && self.account_type_for_chart(**cid).map_or(false, |at| at == account_type.short_label())
                         })
                         .map(|(cid, _w)| cid.0)
                         .collect();
@@ -644,21 +648,23 @@ impl ChartApp {
                     let instrument_by_cid_sb: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::state::Timeframe, String, String)> = {
                         self.panel_app.panel_grid.containers().keys()
                             .filter_map(|cid| {
-                                let sym = self.managers.bubble.symbol_for_chart(*cid).map(String::from)?;
-                                let tf = self.managers.bubble.timeframe_for_chart(*cid).cloned()?;
-                                let exch = self.managers.bubble.exchange_for_chart(*cid).map(String::from)?;
-                                let at = self.managers.bubble.account_type_for_chart(*cid).map(String::from)?;
+                                let sym = self.symbol_for_chart(*cid)?;
+                                let tf = self.timeframe_for_chart(*cid)?;
+                                let exch = self.exchange_for_chart(*cid)?;
+                                let at = self.account_type_for_chart(*cid)?;
                                                                 Some((*cid, (sym, tf, exch, at)))
                             })
                             .collect()
                     };
 
                     // Phase X0 / C5c: capture anchors before bubble write.
-                    let prev_bars_for_anchor: Vec<mlc_core::Bar> = self.managers.bubble
-                        .bubble_for_instrument(exchange_id.as_str(), at_label, &symbol)
-                        .and_then(|bid| self.managers.bubble.bubble(bid))
-                        .map(|b| b.bars.clone())
-                        .unwrap_or_default();
+                    let prev_bars_for_anchor: Vec<mlc_core::Bar> = {
+                        let mgr = self.core.bubble();
+                        mgr.bubble.bubble_for_instrument(exchange_id.as_str(), at_label, &symbol)
+                            .and_then(|bid| mgr.bubble.bubble(bid))
+                            .map(|b| b.bars.clone())
+                            .unwrap_or_default()
+                    };
                     let mut matched_anchors: Vec<(mlc_core::state::ChartId, Option<(i64, f64)>)> = Vec::new();
                     for (chart_id_key, window) in self.panel_app.panel_grid.containers().iter() {
                         let (win_sym, win_tf, win_exch, win_at) = match instrument_by_cid_sb.get(chart_id_key) {
@@ -678,10 +684,10 @@ impl ChartApp {
 
                     let target_bubbles: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
                         matched_anchors.iter()
-                            .filter_map(|(cid, _)| self.managers.bubble.bubble_for_chart(*cid))
+                            .filter_map(|(cid, _)| self.bubble_for_chart(*cid))
                             .collect();
                     for bid in target_bubbles {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                        if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(bid) {
                             bubble.bars = bars.clone();
                         }
                     }
@@ -697,8 +703,8 @@ impl ChartApp {
                         prev_close_mirrors.push((*chart_id_key, bars.first().map(|b| b.open)));
                     }
                     for (chart_id, prev_close) in prev_close_mirrors {
-                        if let Some(bid) = self.managers.bubble.bubble_for_chart(chart_id) {
-                            if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                        if let Some(bid) = self.bubble_for_chart(chart_id) {
+                            if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(bid) {
                                 bubble.prev_close_price = prev_close;
                             }
                         }
@@ -711,9 +717,9 @@ impl ChartApp {
                             .containers()
                             .iter()
                             .filter(|(cid, _w)| {
-                                self.managers.bubble.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
-                                    && self.managers.bubble.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
-                                    && self.managers.bubble.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
+                                self.symbol_for_chart(**cid).map_or(false, |s| s == symbol)
+                                    && self.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
+                                    && self.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == tf_name)
                             })
                             .map(|(cid, _w)| cid.0)
                             .collect();
@@ -740,9 +746,9 @@ impl ChartApp {
                         let panels_store = &self.panels_store;
                         self.panel_app.panel_grid.containers().iter()
                             .filter_map(|(cid, win)| {
-                                let sym = self.managers.bubble.symbol_for_chart(*cid).map(String::from)?;
-                                let at = self.managers.bubble.account_type_for_chart(*cid).map(String::from)?;
-                                let is_tick_tf = self.managers.bubble.timeframe_for_chart(*cid)
+                                let sym = self.symbol_for_chart(*cid)?;
+                                let at = self.account_type_for_chart(*cid)?;
+                                let is_tick_tf = self.timeframe_for_chart(*cid)
                                     .map(|tf| tf.is_tick())
                                     .unwrap_or(false);
                                 let derived_chart_type = panels_store.chart_panel
@@ -770,10 +776,10 @@ impl ChartApp {
                             .filter(|(_, (sym, at, is_derived))|
                                 *is_derived && sym == bar_symbol.as_str() && at == bar_at_label
                             )
-                            .filter_map(|(cid, _)| self.managers.bubble.bubble_for_chart(*cid))
+                            .filter_map(|(cid, _)| self.bubble_for_chart(*cid))
                             .collect();
                     for bid in &target_bubbles_bu {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
+                        if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(*bid) {
                             let last_ts = bubble.bars.last().map(|b| b.timestamp);
                             if last_ts == Some(bar.timestamp) {
                                 if let Some(last) = bubble.last_bar_mut() {
@@ -793,8 +799,7 @@ impl ChartApp {
                     // Snapshot bars from any one of the target bubbles for the
                     // window reconcile loop below.
                     let bu_bubble_bars: Vec<mlc_core::Bar> = target_bubbles_bu.iter().next()
-                        .and_then(|bid| self.managers.bubble.bubble(*bid))
-                        .map(|b| b.bars.clone())
+                        .and_then(|bid| self.with_bubble(*bid, |b| b.bars.clone()))
                         .unwrap_or_default();
 
                     for (cid_bu, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
@@ -885,10 +890,10 @@ impl ChartApp {
                     let instrument_by_cid_tu: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::state::Timeframe, String, String)> = {
                         self.panel_app.panel_grid.containers().keys()
                             .filter_map(|cid| {
-                                let sym = self.managers.bubble.symbol_for_chart(*cid).map(String::from)?;
-                                let tf = self.managers.bubble.timeframe_for_chart(*cid).cloned()?;
-                                let exch = self.managers.bubble.exchange_for_chart(*cid).map(String::from)?;
-                                let at = self.managers.bubble.account_type_for_chart(*cid).map(String::from)?;
+                                let sym = self.symbol_for_chart(*cid)?;
+                                let tf = self.timeframe_for_chart(*cid)?;
+                                let exch = self.exchange_for_chart(*cid)?;
+                                let at = self.account_type_for_chart(*cid)?;
                                                                 Some((*cid, (sym, tf, exch, at)))
                             })
                             .collect()
@@ -899,7 +904,7 @@ impl ChartApp {
                     let derived_cids_tu: std::collections::HashSet<mlc_core::state::ChartId> = {
                         self.panel_app.panel_grid.containers().keys()
                             .filter(|cid| {
-                                self.managers.bubble.timeframe_for_chart(**cid)
+                                self.timeframe_for_chart(**cid)
                                     .map(|tf| tf.is_tick())
                                     .unwrap_or(false)
                             })
@@ -922,13 +927,13 @@ impl ChartApp {
                         }
                         let period_secs = win_tf_tu.interval_ms / 1000;
                         if period_secs <= 0 { continue; }
-                        if let Some(bid) = self.managers.bubble.bubble_for_chart(*cid_tu) {
+                        if let Some(bid) = self.bubble_for_chart(*cid_tu) {
                             bubble_periods.insert(bid, period_secs);
                         }
                     }
                     // Apply trade to each affected bubble's bars.
                     for (bid, period_secs) in &bubble_periods {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
+                        if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(*bid) {
                             let trade_ts_secs = timestamp / 1000;
                             if let Some(last_ts) = bubble.bars.last().map(|b| b.timestamp) {
                                 let candle_end = last_ts + period_secs;
@@ -1003,14 +1008,13 @@ impl ChartApp {
                         crate::dlog!("[ChartApp] Multi-bar gap detected for {} — requesting REST backfill", symbol);
                         let bridge = self.core.bridge.clone();
                         for cid in self.panel_app.panel_grid.containers().keys() {
-                            let sym_match = self.managers.bubble.symbol_for_chart(*cid).map_or(false, |s| s == symbol);
-                            let at_match = self.managers.bubble.account_type_for_chart(*cid).map_or(false, |at| at == account_type.short_label());
+                            let sym_match = self.symbol_for_chart(*cid).map_or(false, |s| s == symbol);
+                            let at_match = self.account_type_for_chart(*cid).map_or(false, |at| at == account_type.short_label());
                             if sym_match && at_match {
-                                let at = account_type_from_label(
-                                    self.managers.bubble.account_type_for_chart(*cid).unwrap_or("")
-                                );
-                                if let Some(tf) = self.managers.bubble.timeframe_for_chart(*cid) {
-                                    bridge.request_bars(exchange_id, &symbol, tf, at, None, None, false);
+                                let at_label = self.account_type_for_chart(*cid).unwrap_or_default();
+                                let at = account_type_from_label(&at_label);
+                                if let Some(tf) = self.timeframe_for_chart(*cid) {
+                                    bridge.request_bars(exchange_id, &symbol, &tf, at, None, None, false);
                                 }
                             }
                         }
@@ -1183,16 +1187,15 @@ impl ChartApp {
                     // force=true bypasses the cache_is_fresh guard so a reconnect always
                     // fetches fresh data even if the last cached bar is recent.
                     for (cid, _window) in self.panel_app.panel_grid.containers().iter() {
-                        let sym = self.managers.bubble.symbol_for_chart(*cid).unwrap_or("");
+                        let sym = self.symbol_for_chart(*cid).unwrap_or_default();
                         if sym.is_empty() { continue; }
-                        let exch = self.managers.bubble.exchange_for_chart(*cid).unwrap_or("");
-                        let win_eid = digdigdig3::ExchangeId::from_str(exch)
+                        let exch = self.exchange_for_chart(*cid).unwrap_or_default();
+                        let win_eid = digdigdig3::ExchangeId::from_str(&exch)
                             .unwrap_or(digdigdig3::ExchangeId::Binance);
                         if win_eid == exchange_id {
-                            let at = account_type_from_label(
-                                self.managers.bubble.account_type_for_chart(*cid).unwrap_or("")
-                            );
-                            if let Some(tf) = self.managers.bubble.timeframe_for_chart(*cid) {
+                            let at_label = self.account_type_for_chart(*cid).unwrap_or_default();
+                            let at = account_type_from_label(&at_label);
+                            if let Some(tf) = self.timeframe_for_chart(*cid) {
                                 // ConnectorReady fires on initial connect AND reconnects.
                                 // force=false lets the bridge skip if a Stream::Kline
                                 // forwarder is already piping live ticks for this key —
@@ -1205,7 +1208,7 @@ impl ChartApp {
                                     "[tick::ConnectorReady -> request_bars] {:?} {} at={:?} tf={} force=false",
                                     exchange_id, sym, at, tf.name,
                                 );
-                                bridge.request_bars(exchange_id, sym, tf, at, None, None, false);
+                                bridge.request_bars(exchange_id, &sym, &tf, at, None, None, false);
                             }
                         }
                     }
@@ -1235,10 +1238,10 @@ impl ChartApp {
                         let error_instrument_map: std::collections::HashMap<mlc_core::state::ChartId, bool> = {
                             self.panel_app.panel_grid.containers().keys()
                                 .filter_map(|cid| {
-                                    let win_exch = self.managers.bubble.exchange_for_chart(*cid)?;
-                                    let win_sym = self.managers.bubble.symbol_for_chart(*cid)?;
-                                    let win_at = self.managers.bubble.account_type_for_chart(*cid)?;
-                                    let win_tf = self.managers.bubble.timeframe_for_chart(*cid)?;
+                                    let win_exch = self.exchange_for_chart(*cid)?;
+                                    let win_sym = self.symbol_for_chart(*cid)?;
+                                    let win_at = self.account_type_for_chart(*cid)?;
+                                    let win_tf = self.timeframe_for_chart(*cid)?;
                                     let matches = win_exch == exchange_id.as_str()
                                         && win_sym == symbol
                                         && win_at == at_label
@@ -1329,8 +1332,8 @@ impl ChartApp {
                         let panels_store = &self.panels_store;
                         self.panel_app.panel_grid.containers().iter()
                             .filter_map(|(cid, win)| {
-                                let sym = self.managers.bubble.symbol_for_chart(*cid)?;
-                                let at = self.managers.bubble.account_type_for_chart(*cid)?;
+                                let sym = self.symbol_for_chart(*cid)?;
+                                let at = self.account_type_for_chart(*cid)?;
                                 let is_footprint = panels_store.chart_panel
                                     .get(&win.chart_panel_id)
                                     .map(|p| p.chart_type == "footprint")
@@ -1398,10 +1401,10 @@ impl ChartApp {
                     );
                     let fp_target_bubbles: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
                         footprint_cids.iter()
-                            .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid))
+                            .filter_map(|cid| self.bubble_for_chart(*cid))
                             .collect();
                     for bid in &fp_target_bubbles {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
+                        if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(*bid) {
                             // Footprint upsert with CVD continuation.
                             let store = bubble.footprint_bars.get_or_insert_with(Vec::new);
                             let prev_cvd = match store.last() {
@@ -1431,11 +1434,13 @@ impl ChartApp {
                         }
                     }
                     // Snapshot updated bubble bars for window post-effects.
-                    let fp_bubble_bars: Vec<mlc_core::Bar> = self.managers.bubble
-                        .bubble_for_instrument(exchange_id.as_str(), fp_at_label, fp_sym.as_str())
-                        .and_then(|bid| self.managers.bubble.bubble(bid))
-                        .map(|b| b.bars.clone())
-                        .unwrap_or_default();
+                    let fp_bubble_bars: Vec<mlc_core::Bar> = {
+                        let mgr = self.core.bubble();
+                        mgr.bubble.bubble_for_instrument(exchange_id.as_str(), fp_at_label, fp_sym.as_str())
+                            .and_then(|bid| mgr.bubble.bubble(bid))
+                            .map(|b| b.bars.clone())
+                            .unwrap_or_default()
+                    };
 
                     for (cid_fp, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !footprint_cids.contains(cid_fp) { continue; }
@@ -1456,8 +1461,8 @@ impl ChartApp {
                         let panels_store = &self.panels_store;
                         self.panel_app.panel_grid.containers().iter()
                             .filter_map(|(cid, win)| {
-                                let s = self.managers.bubble.symbol_for_chart(*cid)?;
-                                let a = self.managers.bubble.account_type_for_chart(*cid)?;
+                                let s = self.symbol_for_chart(*cid)?;
+                                let a = self.account_type_for_chart(*cid)?;
                                 let is_renko = panels_store.chart_panel
                                     .get(&win.chart_panel_id)
                                     .map(|p| p.chart_type == "renko")
@@ -1478,18 +1483,20 @@ impl ChartApp {
                     // Phase X0 / C5c: write every bubble whose chart is in target_cids.
                     let renko_targets: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
                         target_cids.iter()
-                            .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid))
+                            .filter_map(|cid| self.bubble_for_chart(*cid))
                             .collect();
                     for bid in &renko_targets {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
+                        if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(*bid) {
                             bubble.append_renko(brick.clone());
                         }
                     }
-                    let renko_bubble_bars: Vec<mlc_core::Bar> = self.managers.bubble
-                        .bubble_for_instrument(exchange_id.as_str(), at_label, sym.as_str())
-                        .and_then(|bid| self.managers.bubble.bubble(bid))
-                        .map(|b| b.bars.clone())
-                        .unwrap_or_default();
+                    let renko_bubble_bars: Vec<mlc_core::Bar> = {
+                        let mgr = self.core.bubble();
+                        mgr.bubble.bubble_for_instrument(exchange_id.as_str(), at_label, sym.as_str())
+                            .and_then(|bid| mgr.bubble.bubble(bid))
+                            .map(|b| b.bars.clone())
+                            .unwrap_or_default()
+                    };
                     for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !target_cids.contains(cid_) { continue; }
                         if window.pending_symbol_load { window.pending_symbol_load = false; }
@@ -1506,8 +1513,8 @@ impl ChartApp {
                         let panels_store = &self.panels_store;
                         self.panel_app.panel_grid.containers().iter()
                             .filter_map(|(cid, win)| {
-                                let s = self.managers.bubble.symbol_for_chart(*cid)?;
-                                let a = self.managers.bubble.account_type_for_chart(*cid)?;
+                                let s = self.symbol_for_chart(*cid)?;
+                                let a = self.account_type_for_chart(*cid)?;
                                 let is_pnf = panels_store.chart_panel
                                     .get(&win.chart_panel_id)
                                     .map(|p| p.chart_type == "pnf")
@@ -1530,10 +1537,10 @@ impl ChartApp {
                     // Phase X0 / C5c: write every bubble whose chart is in target_cids.
                     let pnf_targets: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
                         target_cids.iter()
-                            .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid))
+                            .filter_map(|cid| self.bubble_for_chart(*cid))
                             .collect();
                     for bid in &pnf_targets {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
+                        if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(*bid) {
                             let store = bubble.pnf_columns.get_or_insert_with(Vec::new);
                             match store.last_mut() {
                                 Some(last) if last.column_id == col.column_id => *last = col.clone(),
@@ -1541,11 +1548,13 @@ impl ChartApp {
                             }
                         }
                     }
-                    let pnf_bubble_bars: Vec<mlc_core::Bar> = self.managers.bubble
-                        .bubble_for_instrument(exchange_id.as_str(), at_label, sym.as_str())
-                        .and_then(|bid| self.managers.bubble.bubble(bid))
-                        .map(|b| b.bars.clone())
-                        .unwrap_or_default();
+                    let pnf_bubble_bars: Vec<mlc_core::Bar> = {
+                        let mgr = self.core.bubble();
+                        mgr.bubble.bubble_for_instrument(exchange_id.as_str(), at_label, sym.as_str())
+                            .and_then(|bid| mgr.bubble.bubble(bid))
+                            .map(|b| b.bars.clone())
+                            .unwrap_or_default()
+                    };
                     for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !target_cids.contains(cid_) { continue; }
                         if window.pending_symbol_load { window.pending_symbol_load = false; }
@@ -1562,8 +1571,8 @@ impl ChartApp {
                         let panels_store = &self.panels_store;
                         self.panel_app.panel_grid.containers().iter()
                             .filter_map(|(cid, win)| {
-                                let s = self.managers.bubble.symbol_for_chart(*cid)?;
-                                let a = self.managers.bubble.account_type_for_chart(*cid)?;
+                                let s = self.symbol_for_chart(*cid)?;
+                                let a = self.account_type_for_chart(*cid)?;
                                 let is_kagi = panels_store.chart_panel
                                     .get(&win.chart_panel_id)
                                     .map(|p| p.chart_type == "kagi")
@@ -1583,18 +1592,20 @@ impl ChartApp {
                     };
                     let kagi_targets: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
                         target_cids.iter()
-                            .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid))
+                            .filter_map(|cid| self.bubble_for_chart(*cid))
                             .collect();
                     for bid in &kagi_targets {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
+                        if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(*bid) {
                             bubble.append_kagi(seg.clone());
                         }
                     }
-                    let kagi_bubble_bars: Vec<mlc_core::Bar> = self.managers.bubble
-                        .bubble_for_instrument(exchange_id.as_str(), at_label, sym.as_str())
-                        .and_then(|bid| self.managers.bubble.bubble(bid))
-                        .map(|b| b.bars.clone())
-                        .unwrap_or_default();
+                    let kagi_bubble_bars: Vec<mlc_core::Bar> = {
+                        let mgr = self.core.bubble();
+                        mgr.bubble.bubble_for_instrument(exchange_id.as_str(), at_label, sym.as_str())
+                            .and_then(|bid| mgr.bubble.bubble(bid))
+                            .map(|b| b.bars.clone())
+                            .unwrap_or_default()
+                    };
                     for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !target_cids.contains(cid_) { continue; }
                         if window.pending_symbol_load { window.pending_symbol_load = false; }
@@ -1610,8 +1621,8 @@ impl ChartApp {
                         let panels_store = &self.panels_store;
                         self.panel_app.panel_grid.containers().iter()
                             .filter_map(|(cid, win)| {
-                                let s = self.managers.bubble.symbol_for_chart(*cid)?;
-                                let a = self.managers.bubble.account_type_for_chart(*cid)?;
+                                let s = self.symbol_for_chart(*cid)?;
+                                let a = self.account_type_for_chart(*cid)?;
                                 let is_cvd = panels_store.chart_panel
                                     .get(&win.chart_panel_id)
                                     .map(|p| p.chart_type == "cvd")
@@ -1627,18 +1638,20 @@ impl ChartApp {
                     };
                     let cvd_targets: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
                         target_cids.iter()
-                            .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid))
+                            .filter_map(|cid| self.bubble_for_chart(*cid))
                             .collect();
                     for bid in &cvd_targets {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
+                        if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(*bid) {
                             bubble.append_cvd(sample);
                         }
                     }
-                    let cvd_bubble_bars: Vec<mlc_core::Bar> = self.managers.bubble
-                        .bubble_for_instrument(exchange_id.as_str(), at_label, sym.as_str())
-                        .and_then(|bid| self.managers.bubble.bubble(bid))
-                        .map(|b| b.bars.clone())
-                        .unwrap_or_default();
+                    let cvd_bubble_bars: Vec<mlc_core::Bar> = {
+                        let mgr = self.core.bubble();
+                        mgr.bubble.bubble_for_instrument(exchange_id.as_str(), at_label, sym.as_str())
+                            .and_then(|bid| mgr.bubble.bubble(bid))
+                            .map(|b| b.bars.clone())
+                            .unwrap_or_default()
+                    };
                     for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !target_cids.contains(cid_) { continue; }
                         if window.pending_symbol_load { window.pending_symbol_load = false; }
@@ -1655,8 +1668,8 @@ impl ChartApp {
                         let panels_store = &self.panels_store;
                         self.panel_app.panel_grid.containers().iter()
                             .filter_map(|(cid, win)| {
-                                let s = self.managers.bubble.symbol_for_chart(*cid)?;
-                                let a = self.managers.bubble.account_type_for_chart(*cid)?;
+                                let s = self.symbol_for_chart(*cid)?;
+                                let a = self.account_type_for_chart(*cid)?;
                                 let is_tpo = panels_store.chart_panel
                                     .get(&win.chart_panel_id)
                                     .map(|p| p.chart_type == "tpo")
@@ -1678,10 +1691,10 @@ impl ChartApp {
                     };
                     let tpo_targets: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
                         target_cids.iter()
-                            .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid))
+                            .filter_map(|cid| self.bubble_for_chart(*cid))
                             .collect();
                     for bid in &tpo_targets {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
+                        if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(*bid) {
                             let store = bubble.tpo_sessions.get_or_insert_with(Vec::new);
                             match store.last_mut() {
                                 Some(last) if last.open_time == session.open_time => *last = session.clone(),
@@ -1695,11 +1708,13 @@ impl ChartApp {
                             }
                         }
                     }
-                    let tpo_bubble_bars: Vec<mlc_core::Bar> = self.managers.bubble
-                        .bubble_for_instrument(exchange_id.as_str(), at_label, sym.as_str())
-                        .and_then(|bid| self.managers.bubble.bubble(bid))
-                        .map(|b| b.bars.clone())
-                        .unwrap_or_default();
+                    let tpo_bubble_bars: Vec<mlc_core::Bar> = {
+                        let mgr = self.core.bubble();
+                        mgr.bubble.bubble_for_instrument(exchange_id.as_str(), at_label, sym.as_str())
+                            .and_then(|bid| mgr.bubble.bubble(bid))
+                            .map(|b| b.bars.clone())
+                            .unwrap_or_default()
+                    };
                     for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !target_cids.contains(cid_) { continue; }
                         if window.pending_symbol_load { window.pending_symbol_load = false; }
@@ -1715,8 +1730,8 @@ impl ChartApp {
                         let panels_store = &self.panels_store;
                         self.panel_app.panel_grid.containers().iter()
                             .filter_map(|(cid, win)| {
-                                let s = self.managers.bubble.symbol_for_chart(*cid)?;
-                                let a = self.managers.bubble.account_type_for_chart(*cid)?;
+                                let s = self.symbol_for_chart(*cid)?;
+                                let a = self.account_type_for_chart(*cid)?;
                                 let is_tlb = panels_store.chart_panel
                                     .get(&win.chart_panel_id)
                                     .map(|p| p.chart_type == "three_line_break")
@@ -1736,18 +1751,20 @@ impl ChartApp {
                     };
                     let tlb_targets: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
                         target_cids.iter()
-                            .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid))
+                            .filter_map(|cid| self.bubble_for_chart(*cid))
                             .collect();
                     for bid in &tlb_targets {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
+                        if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(*bid) {
                             bubble.append_three_line_break(line.clone());
                         }
                     }
-                    let tlb_bubble_bars: Vec<mlc_core::Bar> = self.managers.bubble
-                        .bubble_for_instrument(exchange_id.as_str(), at_label, sym.as_str())
-                        .and_then(|bid| self.managers.bubble.bubble(bid))
-                        .map(|b| b.bars.clone())
-                        .unwrap_or_default();
+                    let tlb_bubble_bars: Vec<mlc_core::Bar> = {
+                        let mgr = self.core.bubble();
+                        mgr.bubble.bubble_for_instrument(exchange_id.as_str(), at_label, sym.as_str())
+                            .and_then(|bid| mgr.bubble.bubble(bid))
+                            .map(|b| b.bars.clone())
+                            .unwrap_or_default()
+                    };
                     for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !target_cids.contains(cid_) { continue; }
                         if window.pending_symbol_load { window.pending_symbol_load = false; }
@@ -1764,18 +1781,18 @@ impl ChartApp {
                         self.panel_app.panel_grid.containers().iter()
                             .filter_map(|(cid, win)| {
                                 if !win.oi_show { return None; }
-                                let s = self.managers.bubble.symbol_for_chart(*cid)?;
-                                let a = self.managers.bubble.account_type_for_chart(*cid)?;
+                                let s = self.symbol_for_chart(*cid)?;
+                                let a = self.account_type_for_chart(*cid)?;
                                 if s != sym.as_str() || a != at_label { return None; }
                                 Some(*cid)
                             }).collect();
                     if target_cids.is_empty() { continue; }
                     let oi_targets: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
                         target_cids.iter()
-                            .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid))
+                            .filter_map(|cid| self.bubble_for_chart(*cid))
                             .collect();
                     for bid in &oi_targets {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
+                        if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(*bid) {
                             bubble.append_oi(point);
                         }
                     }
@@ -1790,18 +1807,18 @@ impl ChartApp {
                         self.panel_app.panel_grid.containers().iter()
                             .filter_map(|(cid, win)| {
                                 if !win.funding_show { return None; }
-                                let s = self.managers.bubble.symbol_for_chart(*cid)?;
-                                let a = self.managers.bubble.account_type_for_chart(*cid)?;
+                                let s = self.symbol_for_chart(*cid)?;
+                                let a = self.account_type_for_chart(*cid)?;
                                 if s != sym.as_str() || a != at_label { return None; }
                                 Some(*cid)
                             }).collect();
                     if target_cids.is_empty() { continue; }
                     let funding_targets: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
                         target_cids.iter()
-                            .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid))
+                            .filter_map(|cid| self.bubble_for_chart(*cid))
                             .collect();
                     for bid in &funding_targets {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
+                        if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(*bid) {
                             bubble.append_funding(point);
                         }
                     }
@@ -1815,8 +1832,8 @@ impl ChartApp {
                         let panels_store = &self.panels_store;
                         self.panel_app.panel_grid.containers().iter()
                             .filter_map(|(cid, win)| {
-                                let s = self.managers.bubble.symbol_for_chart(*cid)?;
-                                let a = self.managers.bubble.account_type_for_chart(*cid)?;
+                                let s = self.symbol_for_chart(*cid)?;
+                                let a = self.account_type_for_chart(*cid)?;
                                 let is_dom = panels_store.chart_panel
                                     .get(&win.chart_panel_id)
                                     .map(|p| p.chart_type == "dom_heatmap")
@@ -1828,21 +1845,23 @@ impl ChartApp {
                     if target_cids.is_empty() { continue; }
                     let dom_targets: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
                         target_cids.iter()
-                            .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid))
+                            .filter_map(|cid| self.bubble_for_chart(*cid))
                             .collect();
                     for bid in &dom_targets {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
+                        if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(*bid) {
                             const DEFAULT_TICK: f64 = 0.5;
                             bubble.dom_heatmap_mut()
                                 .get_or_insert_with(|| mlc_core::chart::dom_heatmap::DomHeatmapBuffer::new(DEFAULT_TICK))
                                 .push_snapshot(ts_ms, &bids, &asks);
                         }
                     }
-                    let dom_bubble_bars: Vec<mlc_core::Bar> = self.managers.bubble
-                        .bubble_for_instrument(exchange_id.as_str(), at_label, sym.as_str())
-                        .and_then(|bid| self.managers.bubble.bubble(bid))
-                        .map(|b| b.bars.clone())
-                        .unwrap_or_default();
+                    let dom_bubble_bars: Vec<mlc_core::Bar> = {
+                        let mgr = self.core.bubble();
+                        mgr.bubble.bubble_for_instrument(exchange_id.as_str(), at_label, sym.as_str())
+                            .and_then(|bid| mgr.bubble.bubble(bid))
+                            .map(|b| b.bars.clone())
+                            .unwrap_or_default()
+                    };
                     for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !target_cids.contains(cid_) { continue; }
                         if window.pending_symbol_load { window.pending_symbol_load = false; }
@@ -1858,8 +1877,8 @@ impl ChartApp {
                         let panels_store = &self.panels_store;
                         self.panel_app.panel_grid.containers().iter()
                             .filter_map(|(cid, win)| {
-                                let s = self.managers.bubble.symbol_for_chart(*cid)?;
-                                let a = self.managers.bubble.account_type_for_chart(*cid)?;
+                                let s = self.symbol_for_chart(*cid)?;
+                                let a = self.account_type_for_chart(*cid)?;
                                 let is_dom = panels_store.chart_panel
                                     .get(&win.chart_panel_id)
                                     .map(|p| p.chart_type == "dom_heatmap")
@@ -1871,10 +1890,10 @@ impl ChartApp {
                     if target_cids.is_empty() { continue; }
                     let domdot_targets: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
                         target_cids.iter()
-                            .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid))
+                            .filter_map(|cid| self.bubble_for_chart(*cid))
                             .collect();
                     for bid in &domdot_targets {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
+                        if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(*bid) {
                             const MAX_DOTS: usize = 2_000;
                             let dots = bubble.dom_trade_dots.get_or_insert_with(Vec::new);
                             if dots.len() >= MAX_DOTS { dots.remove(0); }
@@ -1890,8 +1909,8 @@ impl ChartApp {
                         let panels_store = &self.panels_store;
                         self.panel_app.panel_grid.containers().iter()
                             .filter_map(|(cid, win)| {
-                                let s = self.managers.bubble.symbol_for_chart(*cid)?;
-                                let a = self.managers.bubble.account_type_for_chart(*cid)?;
+                                let s = self.symbol_for_chart(*cid)?;
+                                let a = self.account_type_for_chart(*cid)?;
                                 let is_liq = panels_store.chart_panel
                                     .get(&win.chart_panel_id)
                                     .map(|p| p.chart_type == "liquidation_heatmap")
@@ -1903,10 +1922,10 @@ impl ChartApp {
                     if target_cids.is_empty() { continue; }
                     let liqev_targets: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
                         target_cids.iter()
-                            .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid))
+                            .filter_map(|cid| self.bubble_for_chart(*cid))
                             .collect();
                     for bid in &liqev_targets {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
+                        if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(*bid) {
                             const DEFAULT_TICK: f64 = 0.5;
                             bubble.liq_heatmap_mut()
                                 .get_or_insert_with(|| mlc_core::chart::liquidation_heatmap::LiquidationHeatmapBuffer::new(DEFAULT_TICK))
@@ -1921,11 +1940,13 @@ impl ChartApp {
                             });
                         }
                     }
-                    let liq_bubble_bars: Vec<mlc_core::Bar> = self.managers.bubble
-                        .bubble_for_instrument(exchange_id.as_str(), at_label, sym.as_str())
-                        .and_then(|bid| self.managers.bubble.bubble(bid))
-                        .map(|b| b.bars.clone())
-                        .unwrap_or_default();
+                    let liq_bubble_bars: Vec<mlc_core::Bar> = {
+                        let mgr = self.core.bubble();
+                        mgr.bubble.bubble_for_instrument(exchange_id.as_str(), at_label, sym.as_str())
+                            .and_then(|bid| mgr.bubble.bubble(bid))
+                            .map(|b| b.bars.clone())
+                            .unwrap_or_default()
+                    };
                     for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if !target_cids.contains(cid_) { continue; }
                         if window.pending_symbol_load { window.pending_symbol_load = false; }
@@ -1941,8 +1962,8 @@ impl ChartApp {
                         let panels_store = &self.panels_store;
                         self.panel_app.panel_grid.containers().iter()
                             .filter_map(|(cid, win)| {
-                                let s = self.managers.bubble.symbol_for_chart(*cid)?;
-                                let a = self.managers.bubble.account_type_for_chart(*cid)?;
+                                let s = self.symbol_for_chart(*cid)?;
+                                let a = self.account_type_for_chart(*cid)?;
                                 let is_liq = panels_store.chart_panel
                                     .get(&win.chart_panel_id)
                                     .map(|p| p.chart_type == "liquidation_heatmap")
@@ -1961,10 +1982,10 @@ impl ChartApp {
                         .map(|t| t.last_price);
                     let liqbk_targets: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
                         target_cids.iter()
-                            .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid))
+                            .filter_map(|cid| self.bubble_for_chart(*cid))
                             .collect();
                     for bid in &liqbk_targets {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(*bid) {
+                        if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(*bid) {
                             const DEFAULT_TICK: f64 = 0.5;
                             const SPREAD_HALF_TICKS: i64 = 5;
                             let mark_opt = mark_price_opt.or_else(|| bubble.bars.last().map(|b| b.close));
@@ -2087,17 +2108,15 @@ impl ChartApp {
             let window_data: Vec<WindowAlertData> = self.panel_app.panel_grid.containers()
                 .iter()
                 .filter_map(|(cid, window)| {
-                    let sym = self.managers.bubble.symbol_for_chart(*cid).unwrap_or("").to_string();
-                    let exch = self.managers.bubble.exchange_for_chart(*cid).unwrap_or("").to_string();
-                    let at = self.managers.bubble.account_type_for_chart(*cid).unwrap_or("").to_string();
+                    let sym = self.symbol_for_chart(*cid).unwrap_or_default();
+                    let exch = self.exchange_for_chart(*cid).unwrap_or_default();
+                    let at = self.account_type_for_chart(*cid).unwrap_or_default();
                     let triple = (sym.clone(), exch.clone(), at.clone());
                     if seen_pairs.contains(&triple) {
                         return None;
                     }
                     seen_pairs.insert(triple);
-                    let bubble_bars_alert: &[mlc_core::Bar] = self.managers.bubble.bubble(window.current_bubble_id)
-                        .map(|b| b.bars.as_slice())
-                        .unwrap_or(&[]);
+                    let bubble_bars_alert: Vec<mlc_core::Bar> = self.with_bubble(window.current_bubble_id, |b| b.bars.clone()).unwrap_or_default();
                     let current_price = bubble_bars_alert.last().map(|b| b.close).unwrap_or(0.0);
                     let current_bar = bubble_bars_alert.len().saturating_sub(1) as f64;
                     let drawing_points: Vec<(u64, Vec<(f64, f64)>, mlc_alerts::DrawingExtendMode)> =
@@ -2106,7 +2125,7 @@ impl ChartApp {
                                 .map(|p| {
                                     let pts_bar: Vec<(f64, f64)> = p.points()
                                         .into_iter()
-                                        .map(|(ts_ms, price)| (timestamp_ms_to_bar_f64(bubble_bars_alert, ts_ms), price))
+                                        .map(|(ts_ms, price)| (timestamp_ms_to_bar_f64(&bubble_bars_alert, ts_ms), price))
                                         .collect();
                                     (p.data().id, pts_bar, mlc_alerts::DrawingExtendMode::from_u8(p.extend_mode_raw()))
                                 })
@@ -2124,13 +2143,13 @@ impl ChartApp {
                 .collect();
 
             let indicator_values = Self::build_indicator_values_for_alerts(
-                &self.managers.alert,
+                &self.core.bubble().alert,
                 &self.indicator_manager,
             );
 
             let mut all_triggered_ids: Vec<u64> = Vec::new();
             for wd in &window_data {
-                let triggered = self.managers.alert.check_crossings_dynamic(
+                let triggered = self.core.bubble_mut().alert.check_crossings_dynamic(
                     wd.current_price,
                     wd.current_bar,
                     &wd.symbol,
@@ -2165,7 +2184,7 @@ impl ChartApp {
                     .collect();
 
                 for wd in &window_data {
-                    let triggered = self.managers.alert.check_signal_alerts(
+                    let triggered = self.core.bubble_mut().alert.check_signal_alerts(
                         &wd.symbol,
                         &wd.exchange,
                         &wd.account_type,
@@ -2182,15 +2201,14 @@ impl ChartApp {
 
             // Use the active window's price for delivery event messages.
             let current_price = self.panel_app.panel_grid.active_container()
-                .and_then(|w| self.managers.bubble.bubble(w.current_bubble_id))
-                .and_then(|b| b.bars.last())
-                .map(|b| b.close)
+                .map(|w| w.current_bubble_id)
+                .and_then(|bid| self.with_bubble(bid, |b| b.bars.last().map(|bar| bar.close)).flatten())
                 .unwrap_or(0.0);
 
             // Build delivery events for triggered alerts.
             if !triggered_ids.is_empty() {
                 let symbol = self.panel_app.panel_grid.active_container_id()
-                    .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                    .and_then(|cid| self.symbol_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_default();
                 let now = std::time::SystemTime::now()
@@ -2199,7 +2217,7 @@ impl ChartApp {
                     .unwrap_or(0);
 
                 for id in &triggered_ids {
-                    if let Some(alert) = self.managers.alert.get(*id) {
+                    if let Some(alert) = self.core.bubble().alert.get(*id) {
                         self.pending_delivery_events.push(mlc_alert_delivery::DeliveryEvent {
                             alert_name: alert.name.clone(),
                             symbol: symbol.clone(),
@@ -2240,7 +2258,7 @@ impl ChartApp {
                     .panel_grid
                     .containers()
                     .keys()
-                    .filter(|cid| self.managers.bubble.symbol_for_chart(**cid)
+                    .filter(|cid| self.symbol_for_chart(**cid)
                         .map_or(false, |s| s == *symbol))
                     .map(|cid| cid.0)
                     .collect();
@@ -2249,11 +2267,10 @@ impl ChartApp {
                 // are distinct struct fields, so both can be used simultaneously.
                 for window_id in matching_ids {
                     let chart_id = ChartId(window_id);
-                    if let Some(w) = self.panel_app.panel_grid.containers().get(&chart_id) {
-                        let bars_recalc: &[mlc_core::Bar] = self.managers.bubble.bubble(w.current_bubble_id)
-                            .map(|b| b.bars.as_slice())
-                            .unwrap_or(&[]);
-                        self.indicator_manager.calculate_for_window(window_id, bars_recalc);
+                    let bid_opt = self.panel_app.panel_grid.containers().get(&chart_id).map(|w| w.current_bubble_id);
+                    if let Some(bid) = bid_opt {
+                        let bars_recalc: Vec<mlc_core::Bar> = self.with_bubble(bid, |b| b.bars.clone()).unwrap_or_default();
+                        self.indicator_manager.calculate_for_window(window_id, &bars_recalc);
                     }
                 }
                 let _ = symbol; // legacy — `calculate_for_window` filters by window_id, no longer by symbol
@@ -2291,10 +2308,10 @@ impl ChartApp {
             let instrument_by_cid_scroll: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::state::Timeframe, String, String)> = {
                 self.panel_app.panel_grid.containers().keys()
                     .filter_map(|cid| {
-                        let sym = self.managers.bubble.symbol_for_chart(*cid).map(String::from)?;
-                        let tf = self.managers.bubble.timeframe_for_chart(*cid).cloned()?;
-                        let exch = self.managers.bubble.exchange_for_chart(*cid).map(String::from)?;
-                        let at = self.managers.bubble.account_type_for_chart(*cid).map(String::from)?;
+                        let sym = self.symbol_for_chart(*cid)?;
+                        let tf = self.timeframe_for_chart(*cid)?;
+                        let exch = self.exchange_for_chart(*cid)?;
+                        let at = self.account_type_for_chart(*cid)?;
                                                 Some((*cid, (sym, tf, exch, at)))
                     })
                     .collect()
@@ -2306,7 +2323,7 @@ impl ChartApp {
             let bar_counts_by_chart: std::collections::HashMap<mlc_core::state::ChartId, usize> =
                 self.panel_app.panel_grid.containers().iter()
                     .map(|(cid, w)| {
-                        let n = self.managers.bubble.bubble(w.current_bubble_id)
+                        let n = self.core.bubble().bubble.bubble(w.current_bubble_id)
                             .map(|b| b.bars.len())
                             .unwrap_or(0);
                         (*cid, n)

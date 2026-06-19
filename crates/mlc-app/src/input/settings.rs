@@ -711,8 +711,8 @@ impl ChartApp {
         // ── Dropdown option selection ─────────────────────────────────────────
         if let Some(rest) = item_id.strip_prefix("dropdown_option:") {
             let mut parts = rest.splitn(2, ':');
-            let field = parts.next().unwrap_or("").to_string();
-            let value = parts.next().unwrap_or("").to_string();
+            let field = parts.next().unwrap_or_default().to_string();
+            let value = parts.next().unwrap_or_default().to_string();
 
             match field.as_str() {
                 "crosshair_mode" => {
@@ -1848,7 +1848,7 @@ impl ChartApp {
                         eprintln!("[ChartApp] prim_settings style_prop '{}' toggled: {} -> {}", prop_id, current, !current);
                     }
                     PropertyType::Select { ref options } => {
-                        let current = prop_value.as_string().unwrap_or("").to_string();
+                        let current = prop_value.as_string().unwrap_or_default().to_string();
                         let current_idx = options.iter().position(|o| o.value == current).unwrap_or(0);
                         let next_idx = (current_idx + 1) % options.len().max(1);
                         if let Some(next_opt) = options.get(next_idx) {
@@ -1929,7 +1929,7 @@ impl ChartApp {
                         eprintln!("[ChartApp] prim_settings level_prop '{}' toggled: {} -> {}", prop_id, current, !current);
                     }
                     PropertyType::Select { ref options } => {
-                        let current = prop_value.as_string().unwrap_or("").to_string();
+                        let current = prop_value.as_string().unwrap_or_default().to_string();
                         let current_idx = options.iter().position(|o| o.value == current).unwrap_or(0);
                         let next_idx = (current_idx + 1) % options.len().max(1);
                         if let Some(next_opt) = options.get(next_idx) {
@@ -1992,7 +1992,7 @@ impl ChartApp {
                         eprintln!("[ChartApp] prim_settings text_prop '{}' toggled: {} -> {}", prop_id, current, !current);
                     }
                     PropertyType::Select { ref options } => {
-                        let current = prop_value.as_string().unwrap_or("").to_string();
+                        let current = prop_value.as_string().unwrap_or_default().to_string();
                         let current_idx = options.iter().position(|o| o.value == current).unwrap_or(0);
                         let next_idx = (current_idx + 1) % options.len().max(1);
                         if let Some(next_opt) = options.get(next_idx) {
@@ -2315,15 +2315,15 @@ impl ChartApp {
                 let transports = state.build_transports();
 
                 let alert_id = if let Some(existing_id) = state.editing_alert_id {
-                    self.managers.alert.update_full(
+                    self.core.bubble_mut().alert.update_full(
                         existing_id, source, &name, price, price2, percentage,
                         condition, trigger_mode, transports,
                     );
                     existing_id
                 } else {
-                    let id = self.managers.alert.create(source, &name, price, condition);
+                    let id = self.core.bubble_mut().alert.create(source, &name, price, condition);
                     // Set extra fields on the newly created alert
-                    if let Some(alert) = self.managers.alert.get_mut(id) {
+                    if let Some(alert) = self.core.bubble_mut().alert.get_mut(id) {
                         alert.price2 = price2;
                         alert.percentage = percentage;
                         alert.trigger_mode = trigger_mode;
@@ -2331,15 +2331,15 @@ impl ChartApp {
                         // Stamp scoping fields from branch_meta / active window id.
                         let active_cid = self.panel_app.panel_grid.active_container_id();
                         let active_exchange = active_cid
-                            .and_then(|cid| self.managers.bubble.exchange_for_chart(cid))
+                            .and_then(|cid| self.exchange_for_chart(cid))
                             .map(String::from)
                             .unwrap_or_default();
                         let active_tf_name = active_cid
-                            .and_then(|cid| self.managers.bubble.timeframe_for_chart(cid))
+                            .and_then(|cid| self.timeframe_for_chart(cid))
                             .map(|tf| tf.name.clone())
                             .unwrap_or_default();
                         let active_sym = active_cid
-                            .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                            .and_then(|cid| self.symbol_for_chart(cid))
                             .map(String::from)
                             .unwrap_or_default();
                         if let Some(window) = self.panel_app.panel_grid.active_container() {
@@ -2347,7 +2347,7 @@ impl ChartApp {
                             alert.timeframe = active_tf_name;
                             alert.window_id_hint = Some(window.id.0);
                             alert.group_id = active_cid
-                                .and_then(|cid| self.managers.bubble.bubble_for_chart(cid))
+                                .and_then(|cid| self.bubble_for_chart(cid))
                                 .map(|g| g.0);
                             if !matches!(alert.source, mlc_alerts::AlertSource::Price { .. }) {
                                 alert.set_symbol(active_sym);
@@ -2383,7 +2383,7 @@ impl ChartApp {
             // --- Tab switching ---
             _ if rest.starts_with("tab:") => {
                 use mlc_layout::ui::modal_settings::AlertSettingsTab;
-                let tab = match rest.strip_prefix("tab:").unwrap_or("") {
+                let tab = match rest.strip_prefix("tab:").unwrap_or_default() {
                     "settings" => Some(AlertSettingsTab::Settings),
                     "notifications" => Some(AlertSettingsTab::Notifications),
                     "list" => Some(AlertSettingsTab::AlertsList),
@@ -2397,7 +2397,7 @@ impl ChartApp {
                     // Refresh alerts list when switching to list tab
                     if t == mlc_layout::ui::modal_settings::AlertSettingsTab::AlertsList {
                         self.panel_app.alert_settings_state.all_alerts =
-                            self.managers.alert.items().to_vec();
+                            self.core.bubble().alert.items().to_vec();
                     }
                 }
             }
@@ -2486,7 +2486,7 @@ impl ChartApp {
                 eprintln!("[AlertSettings] Telegram detect users requested");
             }
             _ if rest.starts_with("notif:tg_sub_toggle:") => {
-                if let Ok(idx) = rest.strip_prefix("notif:tg_sub_toggle:").unwrap_or("").parse::<usize>() {
+                if let Ok(idx) = rest.strip_prefix("notif:tg_sub_toggle:").unwrap_or_default().parse::<usize>() {
                     let s = &mut self.panel_app.alert_settings_state;
                     if let Some(sub) = s.notification_settings.telegram.subscribers.get_mut(idx) {
                         sub.active = !sub.active;
@@ -2495,7 +2495,7 @@ impl ChartApp {
                 }
             }
             _ if rest.starts_with("notif:tg_sub_remove:") => {
-                if let Ok(idx) = rest.strip_prefix("notif:tg_sub_remove:").unwrap_or("").parse::<usize>() {
+                if let Ok(idx) = rest.strip_prefix("notif:tg_sub_remove:").unwrap_or_default().parse::<usize>() {
                     let s = &mut self.panel_app.alert_settings_state;
                     if idx < s.notification_settings.telegram.subscribers.len() {
                         s.notification_settings.telegram.subscribers.remove(idx);
@@ -2504,7 +2504,7 @@ impl ChartApp {
                 }
             }
             _ if rest.starts_with("notif:tg_add_detected:") => {
-                if let Ok(idx) = rest.strip_prefix("notif:tg_add_detected:").unwrap_or("").parse::<usize>() {
+                if let Ok(idx) = rest.strip_prefix("notif:tg_add_detected:").unwrap_or_default().parse::<usize>() {
                     let s = &mut self.panel_app.alert_settings_state;
                     if let Some((cid, name, uname)) = s.tg_detected_users.get(idx).cloned() {
                         // Only add if not already present
@@ -2533,7 +2533,7 @@ impl ChartApp {
             // --- Alerts list filter ---
             _ if rest.starts_with("filter:") => {
                 use mlc_layout::ui::modal_settings::AlertListFilter;
-                let filter = match rest.strip_prefix("filter:").unwrap_or("") {
+                let filter = match rest.strip_prefix("filter:").unwrap_or_default() {
                     "all" => Some(AlertListFilter::All),
                     "active" => Some(AlertListFilter::Active),
                     "triggered" => Some(AlertListFilter::Triggered),
@@ -2547,7 +2547,7 @@ impl ChartApp {
             _ if rest.starts_with("list_item:") => {
                 if let Some(id_str) = rest.strip_prefix("list_item:") {
                     if let Ok(id) = id_str.parse::<u64>() {
-                        if let Some(alert) = self.managers.alert.get(id) {
+                        if let Some(alert) = self.core.bubble().alert.get(id) {
                             self.panel_app.alert_settings_state.open_edit(alert);
                             self.panel_app.alert_settings_state.pin_initial_position(
                                 self.content_rect.width, self.content_rect.height,
@@ -2560,10 +2560,10 @@ impl ChartApp {
             _ if rest.starts_with("list_delete:") => {
                 if let Some(id_str) = rest.strip_prefix("list_delete:") {
                     if let Ok(id) = id_str.parse::<u64>() {
-                        self.managers.alert.remove(id);
+                        self.core.bubble_mut().alert.remove(id);
                         // Refresh the list
                         self.panel_app.alert_settings_state.all_alerts =
-                            self.managers.alert.items().to_vec();
+                            self.core.bubble().alert.items().to_vec();
                         self.sidebar_data_dirty = true;
                         self.autosave_snapshot();
                     }
@@ -2573,7 +2573,7 @@ impl ChartApp {
             _ if rest.starts_with("list_pause:") => {
                 if let Some(id_str) = rest.strip_prefix("list_pause:") {
                     if let Ok(id) = id_str.parse::<u64>() {
-                        if let Some(alert) = self.managers.alert.get_mut(id) {
+                        if let Some(alert) = self.core.bubble_mut().alert.get_mut(id) {
                             alert.status = match alert.status {
                                 mlc_alerts::AlertStatus::Active => mlc_alerts::AlertStatus::Paused,
                                 mlc_alerts::AlertStatus::Paused => mlc_alerts::AlertStatus::Active,
@@ -2581,7 +2581,7 @@ impl ChartApp {
                             };
                         }
                         self.panel_app.alert_settings_state.all_alerts =
-                            self.managers.alert.items().to_vec();
+                            self.core.bubble().alert.items().to_vec();
                         self.sidebar_data_dirty = true;
                         self.autosave_snapshot();
                     }
@@ -2651,7 +2651,7 @@ impl ChartApp {
                     let editing_field = self.panel_app.indicator_settings_state.editing_text_state
                         .as_ref()
                         .map(|e| e.field_id.as_str())
-                        .unwrap_or("");
+                        .unwrap_or_default();
                     if let Some(input_name) = item_id.strip_prefix("input:") {
                         // "input:<name>" maps to "indicator_param:<name>"
                         let active_field_id = format!("indicator_param:{}", input_name);
@@ -2957,8 +2957,8 @@ impl ChartApp {
         // ── Dropdown option selected: "param_option:{param_name}:{value}" ────
         if let Some(rest) = item_id.strip_prefix("param_option:") {
             let mut parts = rest.splitn(2, ':');
-            let param_name = parts.next().unwrap_or("").to_string();
-            let value = parts.next().unwrap_or("").to_string();
+            let param_name = parts.next().unwrap_or_default().to_string();
+            let value = parts.next().unwrap_or_default().to_string();
 
             self.panel_app.indicator_settings_state.open_param_dropdown = None;
 

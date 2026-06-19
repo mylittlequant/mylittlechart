@@ -90,11 +90,11 @@ pub fn update_terminal_snapshot<H: AgentHost>(host: &H, agent_state: &AgentState
                     0
                 };
 
-                let symbol = chart.managers.bubble.symbol_for_chart(*chart_id)
+                let symbol = chart.symbol_for_chart(*chart_id)
                     .map(String::from).unwrap_or_default();
-                let exchange = chart.managers.bubble.exchange_for_chart(*chart_id)
+                let exchange = chart.exchange_for_chart(*chart_id)
                     .map(String::from).unwrap_or_default();
-                let tf_name = chart.managers.bubble.timeframe_for_chart(*chart_id)
+                let tf_name = chart.timeframe_for_chart(*chart_id)
                     .map(|tf| tf.name.clone()).unwrap_or_default();
 
                 let indicators: Vec<IndicatorSummary> = chart.indicator_manager
@@ -117,9 +117,7 @@ pub fn update_terminal_snapshot<H: AgentHost>(host: &H, agent_state: &AgentState
                         .collect())
                     .unwrap_or_default();
 
-                let bubble = chart.managers.bubble.bubble(cw.current_bubble_id);
-                let bar_count = bubble.map(|b| b.bars.len()).unwrap_or(0);
-                let derived = bubble.map(|b| DerivedSeriesCounts {
+                let (bar_count, derived) = chart.with_bubble(cw.current_bubble_id, |b| (b.bars.len(), DerivedSeriesCounts {
                     footprint_bars:      b.footprint_bars.as_ref().map(|v| v.len()).unwrap_or(0),
                     renko_bars:          b.renko_bars.as_ref().map(|v| v.len()).unwrap_or(0),
                     three_line_break:    b.three_line_break.as_ref().map(|v| v.len()).unwrap_or(0),
@@ -133,7 +131,7 @@ pub fn update_terminal_snapshot<H: AgentHost>(host: &H, agent_state: &AgentState
                     dom_trade_dots:      b.dom_trade_dots.as_ref().map(|v| v.len()).unwrap_or(0),
                     liq_heatmap_columns: b.liq_heatmap.as_ref().map(|h| h.bucket_count()).unwrap_or(0),
                     liq_dots:            b.liq_dots.as_ref().map(|v| v.len()).unwrap_or(0),
-                }).unwrap_or_default();
+                })).unwrap_or_default();
 
                 Some(ChartSnapshot {
                     chart_id: cw.id.0,
@@ -199,7 +197,7 @@ pub fn update_indicator_snapshot<H: AgentHost>(host: &H, agent_state: &AgentStat
             .containers()
             .keys()
             .map(|cid| {
-                let sym = chart.managers.bubble.symbol_for_chart(*cid)
+                let sym = chart.symbol_for_chart(*cid)
                     .map(String::from).unwrap_or_default();
                 (cid.0, sym)
             })

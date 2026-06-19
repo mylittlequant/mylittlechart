@@ -33,8 +33,7 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     .values().find(|cw| cw.id.0 == chart_id)
                     .map(|cw| cw.current_bubble_id);
                 let bar_count = target_bubble_id
-                    .and_then(|bid| chart.managers.bubble.bubble(bid))
-                    .map(|b| b.bars.len())
+                    .and_then(|bid| chart.with_bubble(bid, |b| b.bars.len()))
                     .unwrap_or(0);
                 let Some(cw) = chart.panel_app.panel_grid.containers_mut().values_mut()
                     .find(|cw| cw.id.0 == chart_id) else {
@@ -139,8 +138,8 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                 let chart = &mut *w.chart;
                 let bars: Vec<mlc_core::Bar> = chart.panel_app.panel_grid.containers()
                     .values().find(|cw| cw.id.0 == chart_id)
-                    .and_then(|cw| chart.managers.bubble.bubble(cw.current_bubble_id))
-                    .map(|b| b.bars.clone())
+                    .map(|cw| cw.current_bubble_id)
+                    .and_then(|bid| chart.with_bubble(bid, |b| b.bars.clone()))
                     .unwrap_or_default();
 
                 if let Some(new_id) = chart.indicator_manager.create_instance(&type_id) {
@@ -198,8 +197,7 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                         .and_then(|win| chart.panel_app.panel_grid.containers()
                             .values().find(|cw| cw.id.0 == win)
                             .map(|cw| cw.current_bubble_id))
-                        .and_then(|bid| chart.managers.bubble.bubble(bid))
-                        .map(|b| b.bars.clone())
+                        .and_then(|bid| chart.with_bubble(bid, |b| b.bars.clone()))
                         .unwrap_or_default();
                     chart.indicator_manager.calculate(indicator_id, &bars);
                     eprintln!("[AgentCommand] UpdateIndicator: id={}", indicator_id);

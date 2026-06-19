@@ -3912,17 +3912,16 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 let active_cid_rc = pw.chart.panel_app.panel_grid.active_container_id();
                 let (symbol, exchange, account_type, timeframe, bar_count) = {
                     let sym = active_cid_rc
-                        .and_then(|cid| pw.chart.managers.bubble.symbol_for_chart(cid))
+                        .and_then(|cid| pw.chart.symbol_for_chart(cid))
                         .map(String::from).unwrap_or_default();
                     let exch = active_cid_rc
-                        .and_then(|cid| pw.chart.managers.bubble.exchange_for_chart(cid))
+                        .and_then(|cid| pw.chart.exchange_for_chart(cid))
                         .map(String::from).unwrap_or_default();
                     let at = active_cid_rc
-                        .and_then(|cid| pw.chart.managers.bubble.account_type_for_chart(cid))
+                        .and_then(|cid| pw.chart.account_type_for_chart(cid))
                         .map(String::from).unwrap_or_else(|| "S".to_string());
                     let tf = active_cid_rc
-                        .and_then(|cid| pw.chart.managers.bubble.timeframe_for_chart(cid))
-                        .cloned()
+                        .and_then(|cid| pw.chart.timeframe_for_chart(cid))
                         .unwrap_or_else(mlc_core::state::Timeframe::h1);
                     if sym.is_empty() && active_cid_rc.is_none() {
                         continue;
@@ -3945,16 +3944,13 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 // the same symbol key, when sync_symbol is enabled.
                 let group_info = active_cid_rc
                     .and_then(|cid| {
-                        let gid = pw.chart.managers.bubble.bubble_for_chart(cid)?;
+                        let gid = pw.chart.bubble_for_chart(cid)?;
                         Some((cid, gid))
                     });
                 if let Some((active_cid, group_id)) = group_info {
-                    let sync_symbol_on = pw.chart.managers.bubble
-                        .bubble(group_id)
-                        .map(|g| g.sync_flags.sync_symbol)
-                        .unwrap_or(false);
+                    let sync_symbol_on = pw.chart.with_bubble(group_id, |g| g.sync_flags.sync_symbol).unwrap_or(false);
                     if sync_symbol_on {
-                        let peer_ids: Vec<mlc_core::ChartId> = pw.chart.managers.bubble
+                        let peer_ids: Vec<mlc_core::ChartId> = pw.chart.core.bubble().bubble
                             .chart_member_ids(group_id)
                             .into_iter()
                             .filter(|&m| m != active_cid)
@@ -3962,9 +3958,9 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         let peers_matching: Vec<mlc_core::ChartId> = {
                             peer_ids.iter()
                                 .filter(|&&pid| {
-                                    pw.chart.managers.bubble.symbol_for_chart(pid).map_or(false, |s| s == symbol)
-                                    && pw.chart.managers.bubble.exchange_for_chart(pid).map_or(false, |e| e == exchange)
-                                    && pw.chart.managers.bubble.account_type_for_chart(pid).map_or(false, |a| a == account_type)
+                                    pw.chart.symbol_for_chart(pid).map_or(false, |s| s == symbol.as_str())
+                                    && pw.chart.exchange_for_chart(pid).map_or(false, |e| e == exchange.as_str())
+                                    && pw.chart.account_type_for_chart(pid).map_or(false, |a| a == account_type.as_str())
                                 })
                                 .copied()
                                 .collect()
@@ -4061,7 +4057,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             for pw in self.windows.values_mut() {
                 let total_bars: usize = pw.chart.panel_app.panel_grid.containers()
                     .values()
-                    .map(|w| pw.chart.managers.bubble.bubble(w.current_bubble_id)
+                    .map(|w| pw.chart.core.bubble().bubble.bubble(w.current_bubble_id)
                         .map(|b| b.bars.len())
                         .unwrap_or(0))
                     .sum();

@@ -176,7 +176,7 @@ impl ChartApp {
         let pk_grid_us = t0.elapsed().as_micros();
         let t0 = std::time::Instant::now();
         let tag_manager = std::mem::replace(
-            &mut self.managers.bubble,
+            &mut self.core.bubble_mut().bubble,
             mlc_core::tag_manager::BubbleStore::new(),
         );
         let pk_bubble_us = t0.elapsed().as_micros();
@@ -188,7 +188,7 @@ impl ChartApp {
         let pk_ind_us = t0.elapsed().as_micros();
         let t0 = std::time::Instant::now();
         let alert_manager = std::mem::replace(
-            &mut self.managers.alert,
+            &mut self.core.bubble_mut().alert,
             mlc_alerts::AlertManager::new(),
         );
         let pk_alert_us = t0.elapsed().as_micros();
@@ -249,13 +249,13 @@ impl ChartApp {
         self.panel_app.panel_grid = state.panel_grid;
         let up_grid_us = t0.elapsed().as_micros();
         let t0 = std::time::Instant::now();
-        self.managers.bubble = state.tag_manager;
+        self.core.bubble_mut().bubble = state.tag_manager;
         let up_bubble_us = t0.elapsed().as_micros();
         let t0 = std::time::Instant::now();
         self.indicator_manager = state.indicator_manager;
         let up_ind_us = t0.elapsed().as_micros();
         let t0 = std::time::Instant::now();
-        self.managers.alert = state.alert_manager;
+        self.core.bubble_mut().alert = state.alert_manager;
         let up_alert_us = t0.elapsed().as_micros();
         let t0 = std::time::Instant::now();
         self.panel_app.leaf_color_tags = state.leaf_color_tags;

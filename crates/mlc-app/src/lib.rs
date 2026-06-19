@@ -336,9 +336,6 @@ pub struct ChartApp {
     /// Applied to windows on initial bar load.
     pub default_scale_mode: ScaleMode,
 
-    /// Top-level manager container (K2.7 — alert moved here from ChartApp direct field).
-    pub managers: mlc_core::managers::Managers,
-
     /// Triggered alert events waiting for delivery (Telegram, toast, etc.)
     pub pending_delivery_events: Vec<mlc_alert_delivery::DeliveryEvent>,
 
@@ -1004,12 +1001,94 @@ pub struct RenderOutput {
 }
 
 impl ChartApp {
+    // -------------------------------------------------------------------------
+    // BackendCore-backed accessor helpers (Session 2 of the cutover).
+    //
+    // These return owned values (`String` / `Option<BubbleId>` etc) instead of
+    // `&str` references into the `RwLock` guard. That avoids the "guard
+    // dropped while borrowed" class of errors (E0515/E0716) at call sites,
+    // and keeps the lock held only for the duration of the helper call.
+    //
+    // The lock is reader-preferring and is taken once per call. In the
+    // single-threaded embedded path lock contention is zero — these are RAII
+    // guard acquisitions, not waits.
+    // -------------------------------------------------------------------------
+
+    /// Resolve the `BubbleId` attached to this chart, if any.
+    #[inline]
+    pub fn bubble_for_chart(&self, chart_id: mlc_core::state::ChartId) -> Option<mlc_core::tag_manager::BubbleId> {
+        self.core.bubble().bubble.bubble_for_chart(chart_id)
+    }
+
+    /// Symbol of the bubble attached to this chart (cloned).
+    #[inline]
+    pub fn symbol_for_chart(&self, chart_id: mlc_core::state::ChartId) -> Option<String> {
+        self.core.bubble().bubble.symbol_for_chart(chart_id).map(String::from)
+    }
+
+    /// Exchange identifier of the bubble attached to this chart (cloned).
+    #[inline]
+    pub fn exchange_for_chart(&self, chart_id: mlc_core::state::ChartId) -> Option<String> {
+        self.core.bubble().bubble.exchange_for_chart(chart_id).map(String::from)
+    }
+
+    /// Account-type label (`"S"`, `"FC"`, ...) of the bubble attached to this chart (cloned).
+    #[inline]
+    pub fn account_type_for_chart(&self, chart_id: mlc_core::state::ChartId) -> Option<String> {
+        self.core.bubble().bubble.account_type_for_chart(chart_id).map(String::from)
+    }
+
+    /// Timeframe of the bubble attached to this chart (cloned).
+    #[inline]
+    pub fn timeframe_for_chart(&self, chart_id: mlc_core::state::ChartId) -> Option<mlc_core::state::Timeframe> {
+        self.core.bubble().bubble.timeframe_for_chart(chart_id).cloned()
+    }
+
+    /// Resolve the group/bubble id for any sync member id.
+    #[inline]
+    pub fn group_for_member(&self, member: mlc_core::tag_manager::SyncMemberId) -> Option<mlc_core::tag_manager::BubbleId> {
+        self.core.bubble().bubble.group_for_member(member)
+    }
+
+    /// Run a closure with read access to a specific bubble, returning whatever
+    /// the closure produces (owned). The lock is held only for the duration
+    /// of `f`. Returns `None` if the bubble id is invalid.
+    ///
+    /// Use this when a chained read pattern would escape the RwLock guard.
+    /// Example:
+    /// ```ignore
+    /// // Bad — guard drops before .map can deref &DataBubble:
+    /// let v: u32 = self.core.bubble().bubble.bubble(bid).map(|b| b.field).unwrap_or(0);
+    /// // Good:
+    /// let v: u32 = self.with_bubble(bid, |b| b.field).unwrap_or(0);
+    /// ```
+    #[inline]
+    pub fn with_bubble<R>(
+        &self,
+        bid: mlc_core::tag_manager::BubbleId,
+        f: impl FnOnce(&mlc_core::tag_manager::DataBubble) -> R,
+    ) -> Option<R> {
+        self.core.bubble().bubble.bubble(bid).map(f)
+    }
+
+    /// Same as `with_bubble` but resolves the bubble by chart id.
+    #[inline]
+    pub fn with_chart_bubble<R>(
+        &self,
+        cid: mlc_core::state::ChartId,
+        f: impl FnOnce(&mlc_core::tag_manager::DataBubble) -> R,
+    ) -> Option<R> {
+        let m = self.core.bubble();
+        m.bubble.bubble_for_chart(cid).and_then(|bid| m.bubble.bubble(bid)).map(f)
+    }
+
     /// Phase X0 / C5c helper: resolve the bubble's bars for a chart window.
     /// Returns an owned Vec (cloned) to avoid borrow conflicts with
     /// `panel_app.panel_grid.containers_mut()`.
     pub fn bars_for_chart(&self, chart_id: mlc_core::state::ChartId) -> Vec<mlc_core::Bar> {
-        self.managers.bubble.bubble_for_chart(chart_id)
-            .and_then(|bid| self.managers.bubble.bubble(bid))
+        let m = self.core.bubble();
+        m.bubble.bubble_for_chart(chart_id)
+            .and_then(|bid| m.bubble.bubble(bid))
             .map(|b| b.bars.clone())
             .unwrap_or_default()
     }
@@ -1085,7 +1164,6 @@ impl ChartApp {
             leaf_tab_hovered_leaf: None,
             last_toolbar_result: None,
             default_scale_mode: ScaleMode::Auto,
-            managers: mlc_core::managers::Managers::new(),
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
             sidebar_state: mlc_sidebar_content::state::SidebarState::new(),
@@ -1226,10 +1304,10 @@ impl ChartApp {
                 let containers = app.panel_app.panel_grid.containers();
                 containers.keys()
                     .filter_map(|cid| {
-                        let sym = app.managers.bubble.symbol_for_chart(*cid).map(String::from).unwrap_or_default();
-                        let exch = app.managers.bubble.exchange_for_chart(*cid).map(String::from).unwrap_or_default();
-                        let tf = app.managers.bubble.timeframe_for_chart(*cid).cloned().unwrap_or_else(mlc_core::state::Timeframe::h1);
-                        let at = app.managers.bubble.account_type_for_chart(*cid).map(String::from).unwrap_or_else(|| "S".to_string());
+                        let sym = app.symbol_for_chart(*cid).unwrap_or_default();
+                        let exch = app.exchange_for_chart(*cid).unwrap_or_default();
+                        let tf = app.timeframe_for_chart(*cid).unwrap_or_else(mlc_core::state::Timeframe::h1);
+                        let at = app.account_type_for_chart(*cid).unwrap_or_else(|| "S".to_string());
                         Some((sym, exch, tf, at))
                     })
                     .collect()
@@ -1239,8 +1317,8 @@ impl ChartApp {
             let provider_seeds: Vec<(mlc_core::state::ChartId, String, String)> = {
                 app.panel_app.panel_grid.containers().keys()
                     .map(|cid| {
-                        let exch = app.managers.bubble.exchange_for_chart(*cid).map(String::from).unwrap_or_default();
-                        let at = app.managers.bubble.account_type_for_chart(*cid).map(String::from).unwrap_or_else(|| "S".to_string());
+                        let exch = app.exchange_for_chart(*cid).unwrap_or_default();
+                        let at = app.account_type_for_chart(*cid).unwrap_or_else(|| "S".to_string());
                         (*cid, exch, at)
                     })
                     .collect()
@@ -1261,15 +1339,15 @@ impl ChartApp {
             // Set active_exchange from the active window's exchange.
             // S2.7.1: read exchange via branch_meta instead of struct field.
             if let Some(cid) = app.panel_app.panel_grid.active_container_id() {
-                let exch = app.managers.bubble.exchange_for_chart(cid)
-                    .unwrap_or("");
-                app.active_exchange = digdigdig3::ExchangeId::from_str(exch)
+                let exch = app.exchange_for_chart(cid)
+                    .unwrap_or_default();
+                app.active_exchange = digdigdig3::ExchangeId::from_str(&exch)
                     .unwrap_or(digdigdig3::ExchangeId::Binance);
             }
 
             // Ensure connectors are ready and request bars for each window's own exchange.
             for (sym, exch, tf, at_label) in &window_data {
-                let eid = digdigdig3::ExchangeId::from_str(exch)
+                let eid = digdigdig3::ExchangeId::from_str(&exch)
                     .unwrap_or(digdigdig3::ExchangeId::Binance);
                 if !app.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
                     continue;
@@ -1297,17 +1375,17 @@ impl ChartApp {
             }
             if let Some(chart_id) = active_chart_id {
                 // Create auto-bubble for the initial chart and assign instrument.
-                let auto_bid = app.managers.bubble.create_group_auto(
+                let auto_bid = app.core.bubble_mut().bubble.create_group_auto(
                     [0.0, 0.0, 0.0, 0.0],
                     "BTCUSDT".to_string(),
                     mlc_core::state::Timeframe::new("1H", 60),
                 );
-                let _ = app.managers.bubble.attach_chart_to_bubble(chart_id, auto_bid);
+                let _ = app.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, auto_bid);
                 if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
                     window.auto_bubble_id = auto_bid;
                     window.current_bubble_id = auto_bid;
                 }
-                if let Some(bubble) = app.managers.bubble.bubble_mut(auto_bid) {
+                if let Some(bubble) = app.core.bubble_mut().bubble.bubble_mut(auto_bid) {
                     bubble.symbol = "BTCUSDT".to_string();
                     bubble.timeframe = mlc_core::state::Timeframe::new("1H", 60);
                     bubble.exchange = exchange_name.clone();
@@ -1315,7 +1393,7 @@ impl ChartApp {
                 }
                 // Bind drawing manager style store to auto-bubble's shared Arc.
                 if let Some(pid) = active_pid_init {
-                    if let Some(style_arc) = app.managers.bubble
+                    if let Some(style_arc) = app.core.bubble().bubble
                         .bubble(auto_bid)
                         .map(|g| g.last_used_style.clone())
                     {
@@ -1434,7 +1512,6 @@ impl ChartApp {
             leaf_tab_hovered_leaf: None,
             last_toolbar_result: None,
             default_scale_mode: ScaleMode::Auto,
-            managers: mlc_core::managers::Managers::new(),
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
             sidebar_state: mlc_sidebar_content::state::SidebarState::new(),
@@ -1567,24 +1644,24 @@ impl ChartApp {
         }
         // Create auto-bubble for the initial chart and assign instrument.
         if let Some(chart_id) = active_chart_id {
-            let auto_bid = app.managers.bubble.create_group_auto(
+            let auto_bid = app.core.bubble_mut().bubble.create_group_auto(
                 [0.0, 0.0, 0.0, 0.0],
                 "BTCUSDT".to_string(),
                 mlc_core::state::Timeframe::new("1H", 60),
             );
-            let _ = app.managers.bubble.attach_chart_to_bubble(chart_id, auto_bid);
+            let _ = app.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, auto_bid);
             if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
                 window.auto_bubble_id = auto_bid;
                 window.current_bubble_id = auto_bid;
             }
-            if let Some(bubble) = app.managers.bubble.bubble_mut(auto_bid) {
+            if let Some(bubble) = app.core.bubble_mut().bubble.bubble_mut(auto_bid) {
                 bubble.symbol = "BTCUSDT".to_string();
                 bubble.timeframe = mlc_core::state::Timeframe::new("1H", 60);
                 bubble.exchange = exchange_name.clone();
                 bubble.account_type = "S".to_string();
             }
             if let Some(pid) = active_pid_init2 {
-                if let Some(style_arc) = app.managers.bubble
+                if let Some(style_arc) = app.core.bubble().bubble
                     .bubble(auto_bid)
                     .map(|g| g.last_used_style.clone())
                 {
@@ -1694,7 +1771,6 @@ impl ChartApp {
             leaf_tab_hovered_leaf: None,
             last_toolbar_result: None,
             default_scale_mode: ScaleMode::Auto,
-            managers: mlc_core::managers::Managers::new(),
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
             sidebar_state: mlc_sidebar_content::state::SidebarState::new(),
@@ -1928,10 +2004,10 @@ impl ChartApp {
                     let containers = app.panel_app.panel_grid.containers();
                     containers.keys()
                         .filter_map(|cid| {
-                            let sym = app.managers.bubble.symbol_for_chart(*cid).map(String::from).unwrap_or_default();
-                            let exch = app.managers.bubble.exchange_for_chart(*cid).map(String::from).unwrap_or_default();
-                            let tf = app.managers.bubble.timeframe_for_chart(*cid).cloned().unwrap_or_else(mlc_core::state::Timeframe::h1);
-                            let at = app.managers.bubble.account_type_for_chart(*cid).map(String::from).unwrap_or_else(|| "S".to_string());
+                            let sym = app.symbol_for_chart(*cid).unwrap_or_default();
+                            let exch = app.exchange_for_chart(*cid).unwrap_or_default();
+                            let tf = app.timeframe_for_chart(*cid).unwrap_or_else(mlc_core::state::Timeframe::h1);
+                            let at = app.account_type_for_chart(*cid).unwrap_or_else(|| "S".to_string());
                             Some((sym, exch, tf, at))
                         })
                         .collect()
@@ -1940,8 +2016,8 @@ impl ChartApp {
                 let provider_seeds_win: Vec<(mlc_core::state::ChartId, String, String)> = {
                     app.panel_app.panel_grid.containers().keys()
                         .map(|cid| {
-                            let exch = app.managers.bubble.exchange_for_chart(*cid).map(String::from).unwrap_or_default();
-                            let at = app.managers.bubble.account_type_for_chart(*cid).map(String::from).unwrap_or_else(|| "S".to_string());
+                            let exch = app.exchange_for_chart(*cid).unwrap_or_default();
+                            let at = app.account_type_for_chart(*cid).unwrap_or_else(|| "S".to_string());
                             (*cid, exch, at)
                         })
                         .collect()
@@ -1961,16 +2037,16 @@ impl ChartApp {
 
                 // S2.7.1: read exchange via branch_meta instead of struct field.
                 if let Some(cid) = app.panel_app.panel_grid.active_container_id() {
-                    let exch = app.managers.bubble.exchange_for_chart(cid)
-                        .unwrap_or("");
-                    app.active_exchange = digdigdig3::ExchangeId::from_str(exch)
+                    let exch = app.exchange_for_chart(cid)
+                        .unwrap_or_default();
+                    app.active_exchange = digdigdig3::ExchangeId::from_str(&exch)
                         .unwrap_or(digdigdig3::ExchangeId::Binance);
                 }
 
                 let _t_nw_reqbars = std::time::Instant::now();
                 let mut nw_reqbars_n: usize = 0;
                 for (sym, exch, tf, at_label) in &window_data {
-                    let eid = digdigdig3::ExchangeId::from_str(exch)
+                    let eid = digdigdig3::ExchangeId::from_str(&exch)
                         .unwrap_or(digdigdig3::ExchangeId::Binance);
                     if !app.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
                         continue;
@@ -2015,24 +2091,24 @@ impl ChartApp {
                 }
                 // Create auto-bubble for the initial chart and assign instrument.
                 if let Some(chart_id) = active_chart_id {
-                    let auto_bid = app.managers.bubble.create_group_auto(
+                    let auto_bid = app.core.bubble_mut().bubble.create_group_auto(
                         [0.0, 0.0, 0.0, 0.0],
                         "BTCUSDT".to_string(),
                         mlc_core::state::Timeframe::new("1H", 60),
                     );
-                    let _ = app.managers.bubble.attach_chart_to_bubble(chart_id, auto_bid);
+                    let _ = app.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, auto_bid);
                     if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
                         window.auto_bubble_id = auto_bid;
                         window.current_bubble_id = auto_bid;
                     }
-                    if let Some(bubble) = app.managers.bubble.bubble_mut(auto_bid) {
+                    if let Some(bubble) = app.core.bubble_mut().bubble.bubble_mut(auto_bid) {
                         bubble.symbol = "BTCUSDT".to_string();
                         bubble.timeframe = mlc_core::state::Timeframe::new("1H", 60);
                         bubble.exchange = exchange_name.clone();
                         bubble.account_type = "S".to_string();
                     }
                     if let Some(pid) = active_pid_init3 {
-                        if let Some(style_arc) = app.managers.bubble
+                        if let Some(style_arc) = app.core.bubble().bubble
                             .bubble(auto_bid)
                             .map(|g| g.last_used_style.clone())
                         {
@@ -2357,12 +2433,12 @@ impl ChartApp {
         // S2.7.1: read symbol/account_type via branch_meta instead of struct field.
         let old_chart_id = self.panel_app.panel_grid.active_container_id();
         let old_trade_symbol = old_chart_id
-            .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+            .and_then(|cid| self.symbol_for_chart(cid))
             .map(String::from)
             .unwrap_or_default();
         let old_trade_at = old_chart_id
-            .and_then(|cid| self.managers.bubble.account_type_for_chart(cid))
-            .map(|at_str| account_type_from_label(at_str))
+            .and_then(|cid| self.account_type_for_chart(cid))
+            .map(|at_str| account_type_from_label(&at_str))
             .unwrap_or(digdigdig3::AccountType::Spot);
 
         let bridge = self.core.bridge.clone();
@@ -2377,8 +2453,8 @@ impl ChartApp {
         // Use the active window's account_type for the new provider.
         // S2.7.1: read account_type via branch_meta.
         let switch_at = self.panel_app.panel_grid.active_container_id()
-            .and_then(|cid| self.managers.bubble.account_type_for_chart(cid))
-            .map(account_type_from_label)
+            .and_then(|cid| self.account_type_for_chart(cid))
+            .map(|at| account_type_from_label(&at))
             .unwrap_or(digdigdig3::AccountType::Spot);
 
         // Build a LiveDataProvider backed by this bridge.
@@ -2402,15 +2478,14 @@ impl ChartApp {
         // Phase 4 B: read symbol/timeframe/account_type from branch_meta.
         let active_cid_exc = self.panel_app.panel_grid.active_container_id();
         let cur_sym_exc = active_cid_exc
-            .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+            .and_then(|cid| self.symbol_for_chart(cid))
             .map(String::from)
             .unwrap_or_default();
         let cur_tf_exc = active_cid_exc
-            .and_then(|cid| self.managers.bubble.timeframe_for_chart(cid))
-            .cloned()
+            .and_then(|cid| self.timeframe_for_chart(cid))
             .unwrap_or_else(mlc_core::state::Timeframe::h1);
         let cur_at_label_exc = active_cid_exc
-            .and_then(|cid| self.managers.bubble.account_type_for_chart(cid))
+            .and_then(|cid| self.account_type_for_chart(cid))
             .map(String::from)
             .unwrap_or_else(|| "S".to_string());
         let mut mirror_args: Option<(String, mlc_core::state::Timeframe, String, String)> = None;
@@ -2421,8 +2496,8 @@ impl ChartApp {
             bridge.request_bars(exchange_id, &cur_sym_exc, &cur_tf_exc, at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), false);
         }
         if let (Some(chart_id), Some((_, _, exch, _))) = (active_chart_id, mirror_args) {
-            if let Some(bid) = self.managers.bubble.bubble_for_chart(chart_id) {
-                if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+            if let Some(bid) = self.bubble_for_chart(chart_id) {
+                if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(bid) {
                     bubble.exchange = exch;
                 }
             }
@@ -2582,7 +2657,7 @@ impl ChartApp {
             let bars_by_chart: std::collections::HashMap<mlc_core::state::ChartId, Vec<mlc_core::Bar>> =
                 self.panel_app.panel_grid.containers().iter()
                     .map(|(cid, w)| {
-                        let bars = self.managers.bubble.bubble(w.current_bubble_id)
+                        let bars = self.core.bubble().bubble.bubble(w.current_bubble_id)
                             .map(|b| b.bars.clone())
                             .unwrap_or_default();
                         (*cid, bars)
@@ -2670,24 +2745,24 @@ impl ChartApp {
     fn trigger_backfill_after_lag(&self) {
         // S2.7.1: iterate .iter() to get chart_id, then read via branch_meta.
         for (chart_id, _window) in self.panel_app.panel_grid.containers().iter() {
-            let sym = match self.managers.bubble.symbol_for_chart(*chart_id) {
+            let sym = match self.symbol_for_chart(*chart_id) {
                 Some(s) if !s.is_empty() => s,
                 _ => continue,
             };
-            let exch = self.managers.bubble.exchange_for_chart(*chart_id)
-                .unwrap_or("");
-            let eid = digdigdig3::ExchangeId::from_str(exch)
+            let exch = self.exchange_for_chart(*chart_id)
+                .unwrap_or_default();
+            let eid = digdigdig3::ExchangeId::from_str(&exch)
                 .unwrap_or(digdigdig3::ExchangeId::Binance);
-            let at_str = self.managers.bubble.account_type_for_chart(*chart_id)
-                .unwrap_or("");
-            let at = account_type_from_label(at_str);
-            let tf = match self.managers.bubble.timeframe_for_chart(*chart_id) {
-                Some(t) => t.clone(),
+            let at_str = self.account_type_for_chart(*chart_id)
+                .unwrap_or_default();
+            let at = account_type_from_label(&at_str);
+            let tf = match self.timeframe_for_chart(*chart_id) {
+                Some(t) => t,
                 None => continue,
             };
             // Passing `None` for both limit and total_bars lets the bridge
             // pick up incremental mode from its bar cache.
-            self.core.bridge.request_bars(eid, sym, &tf, at, None, None, false);
+            self.core.bridge.request_bars(eid, sym.as_str(), &tf, at, None, None, false);
         }
     }
 
@@ -2712,7 +2787,7 @@ impl ChartApp {
             .containers()
             .iter()
             .filter(|(id, _w)| {
-                self.managers.bubble.symbol_for_chart(**id)
+                self.symbol_for_chart(**id)
                     .map_or(false, |s| s == symbol)
             })
             .map(|(id, _w)| id.0)
@@ -2780,12 +2855,11 @@ impl ChartApp {
                 // S2.7.1: read instrument fields via branch_meta.
                 let chart_id = self.panel_app.panel_grid.container_id_for_leaf(leaf_id);
                 let overlay_tf = chart_id
-                    .and_then(|cid| self.managers.bubble.timeframe_for_chart(cid))
-                    .cloned();
+                    .and_then(|cid| self.timeframe_for_chart(cid));
                 let overlay_tf_name: String = overlay_tf.as_ref().map(|tf| tf.name.clone()).unwrap_or_default();
                 let overlay_tf_interval_ms: Option<i64> = overlay_tf.map(|tf| tf.interval_ms);
                 let overlay_symbol: String = chart_id
-                    .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                    .and_then(|cid| self.symbol_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_default();
 
@@ -2802,7 +2876,7 @@ impl ChartApp {
                 let overlay_panel = self.panels_store.chart_panel
                     .get(&overlay_panel_id)
                     .unwrap_or(&overlay_default_panel);
-                if let Some(overlay_bubble) = self.managers.bubble.bubble(window.current_bubble_id) {
+                if let Some(overlay_bubble) = self.core.bubble().bubble.bubble(window.current_bubble_id) {
                     let render_state = window.to_render_state(
                         overlay_bubble,
                         chart_rect,
@@ -2855,12 +2929,11 @@ impl ChartApp {
             // S2.7.1: read instrument fields via branch_meta for overlay.
             let single_overlay_cid = self.panel_app.panel_grid.active_container_id();
             let single_overlay_tf = single_overlay_cid
-                .and_then(|cid| self.managers.bubble.timeframe_for_chart(cid))
-                .cloned();
+                .and_then(|cid| self.timeframe_for_chart(cid));
             let single_overlay_tf_name: String = single_overlay_tf.as_ref().map(|tf| tf.name.clone()).unwrap_or_default();
             let single_overlay_tf_interval_ms: Option<i64> = single_overlay_tf.map(|tf| tf.interval_ms);
             let single_overlay_symbol: String = single_overlay_cid
-                .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                .and_then(|cid| self.symbol_for_chart(cid))
                 .map(String::from)
                 .unwrap_or_default();
 
@@ -2876,7 +2949,7 @@ impl ChartApp {
             let single_panel = self.panels_store.chart_panel
                 .get(&single_pid)
                 .unwrap_or(&single_default_panel);
-            if let Some(single_overlay_bubble) = self.managers.bubble.bubble(window.current_bubble_id) {
+            if let Some(single_overlay_bubble) = self.core.bubble().bubble.bubble(window.current_bubble_id) {
                 let render_state = window.to_render_state(
                     single_overlay_bubble,
                     chart_rect,
@@ -3041,7 +3114,7 @@ impl ChartApp {
             // window-independent (only depend on alert_manager + indicator_manager)
             // and can be reused across all split-pane leaves.
             let alert_indicator_values_cache = Self::build_indicator_values_for_alerts(
-                &self.managers.alert,
+                &self.core.bubble().alert,
                 &self.indicator_manager,
             );
 
@@ -3054,7 +3127,7 @@ impl ChartApp {
             > = self.panel_app.panel_grid.containers()
                 .iter()
                 .map(|(&chart_id, w)| {
-                    let bars_vec: Vec<mlc_core::Bar> = self.managers.bubble.bubble(w.current_bubble_id)
+                    let bars_vec: Vec<mlc_core::Bar> = self.core.bubble().bubble.bubble(w.current_bubble_id)
                         .map(|b| b.bars.clone())
                         .unwrap_or_default();
                     let bars = &bars_vec[..];
@@ -3091,20 +3164,19 @@ impl ChartApp {
                 // branch_meta and panel_app.panel_grid are disjoint fields — split borrow OK.
                 let leaf_chart_id = self.panel_app.panel_grid.container_id_for_leaf(leaf_id);
                 let split_symbol: String = leaf_chart_id
-                    .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                    .and_then(|cid| self.symbol_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_default();
                 let split_exchange: String = leaf_chart_id
-                    .and_then(|cid| self.managers.bubble.exchange_for_chart(cid))
+                    .and_then(|cid| self.exchange_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_default();
                 let split_account_type: String = leaf_chart_id
-                    .and_then(|cid| self.managers.bubble.account_type_for_chart(cid))
+                    .and_then(|cid| self.account_type_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_default();
                 let split_tf = leaf_chart_id
-                    .and_then(|cid| self.managers.bubble.timeframe_for_chart(cid))
-                    .cloned();
+                    .and_then(|cid| self.timeframe_for_chart(cid));
                 let split_tf_name: String = split_tf.as_ref().map(|tf| tf.name.clone()).unwrap_or_default();
                 let split_tf_interval_ms: Option<i64> = split_tf.map(|tf| tf.interval_ms);
 
@@ -3128,7 +3200,8 @@ impl ChartApp {
                     .get(&split_pid)
                     .unwrap_or(&split_default_panel);
                 let scale_corner_state = window.to_corner_state();
-                let split_bubble = match self.managers.bubble.bubble(window.current_bubble_id) {
+                let split_bubble_mgr = self.core.bubble();
+                let split_bubble = match split_bubble_mgr.bubble.bubble(window.current_bubble_id) {
                     Some(b) => b,
                     None => continue,  // window not yet attached to a bubble
                 };
@@ -3171,7 +3244,7 @@ impl ChartApp {
                         .unwrap_or(&empty_pts);
                 // Reuse the indicator values computed once before this loop.
                 let alert_indicator_values = &alert_indicator_values_cache;
-                let alert_render_data: Vec<AlertRenderData> = self.managers.alert.items()
+                let alert_render_data: Vec<AlertRenderData> = self.core.bubble().alert.items()
                     .iter()
                     .filter(|a| a.status == mlc_alerts::AlertStatus::Active)
                     .filter(|a| matches!(a.source, mlc_alerts::AlertSource::Price { .. }))
@@ -3301,7 +3374,7 @@ impl ChartApp {
                     // Skip chart-anchored bells when the main chart is collapsed
                     // (maximized sub-pane covers the container).
                     if chart_area.height >= 1.0 {
-                        let split_bars_vec: Vec<mlc_core::Bar> = self.managers.bubble.bubble(window.current_bubble_id)
+                        let split_bars_vec: Vec<mlc_core::Bar> = self.core.bubble().bubble.bubble(window.current_bubble_id)
                             .map(|b| b.bars.clone())
                             .unwrap_or_default();
                         let bells = Self::draw_alert_bell_icons(
@@ -3313,7 +3386,7 @@ impl ChartApp {
                             &split_bars_vec[..],
                             &split_panel.drawing_manager,
                             &self.indicator_manager,
-                            &self.managers.alert,
+                            &self.core.bubble().alert,
                             window_id,
                             &split_symbol,
                             &split_exchange,
@@ -3632,20 +3705,20 @@ impl ChartApp {
             let single_window_info: Option<(String, String, String, String)> = {
                 let cid = self.panel_app.panel_grid.active_container_id();
                 cid.map(|chart_id| {
-                    let sym = self.managers.bubble.symbol_for_chart(chart_id)
+                    let sym = self.symbol_for_chart(chart_id)
                         .map(String::from).unwrap_or_default();
-                    let tf_name = self.managers.bubble.timeframe_for_chart(chart_id)
+                    let tf_name = self.timeframe_for_chart(chart_id)
                         .map(|tf| tf.name.clone())
                         .unwrap_or_default();
-                    let exch = self.managers.bubble.exchange_for_chart(chart_id)
+                    let exch = self.exchange_for_chart(chart_id)
                         .map(String::from).unwrap_or_default();
-                    let at = self.managers.bubble.account_type_for_chart(chart_id)
+                    let at = self.account_type_for_chart(chart_id)
                         .map(String::from).unwrap_or_default();
                     (sym, tf_name, exch, at)
                 })
             };
             let single_tf_interval_ms: Option<i64> = self.panel_app.panel_grid.active_container_id()
-                .and_then(|cid| self.managers.bubble.timeframe_for_chart(cid))
+                .and_then(|cid| self.timeframe_for_chart(cid))
                 .map(|tf| tf.interval_ms);
 
             // Scope indicator queries to the active window for single-window mode.
@@ -3657,7 +3730,7 @@ impl ChartApp {
 
             let single_active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
             let (single_alert_current_bar, single_alert_drawing_points) = if let Some(window) = self.panel_app.panel_grid.active_container() {
-                let single_bars_vec: Vec<mlc_core::Bar> = self.managers.bubble.bubble(window.current_bubble_id)
+                let single_bars_vec: Vec<mlc_core::Bar> = self.core.bubble().bubble.bubble(window.current_bubble_id)
                     .map(|b| b.bars.clone())
                     .unwrap_or_default();
                 let cb = single_bars_vec.len().saturating_sub(1) as f64;
@@ -3682,7 +3755,7 @@ impl ChartApp {
                 (0.0, Vec::new())
             };
             let single_alert_indicator_values = Self::build_indicator_values_for_alerts(
-                &self.managers.alert,
+                &self.core.bubble().alert,
                 &self.indicator_manager,
             );
             let single_alert_render_data: Vec<AlertRenderData> = {
@@ -3691,7 +3764,7 @@ impl ChartApp {
                     .as_ref()
                     .map(|(s, tf, e, at)| (s.as_str(), tf.as_str(), e.as_str(), at.as_str()))
                     .unwrap_or(("", "", "", ""));
-                self.managers.alert.items()
+                self.core.bubble().alert.items()
                     .iter()
                     .filter(|a| a.status == mlc_alerts::AlertStatus::Active)
                     .filter(|a| matches!(a.source, mlc_alerts::AlertSource::Price { .. }))
@@ -3731,7 +3804,7 @@ impl ChartApp {
                 .unwrap_or(&single_fallback_panel);
             let window_opt = self.panel_app.panel_grid.active_container();
             let corner_zones_single = if let Some(window) = window_opt
-                .filter(|w| self.managers.bubble.bubble(w.current_bubble_id).is_some())
+                .filter(|w| self.core.bubble().bubble.bubble(w.current_bubble_id).is_some())
             {
                 use mlc_core::chart::ChartRect;
                 let chart_rect = ChartRect::new(
@@ -3740,7 +3813,8 @@ impl ChartApp {
                     content_rect.width,
                     content_rect.height,
                 );
-                let single_window_bubble = self.managers.bubble.bubble(window.current_bubble_id)
+                let single_window_bubble_mgr = self.core.bubble();
+                let single_window_bubble = single_window_bubble_mgr.bubble.bubble(window.current_bubble_id)
                     .expect("checked by filter above");
                 let render_state = window.to_render_state(
                     single_window_bubble,
@@ -3867,7 +3941,7 @@ impl ChartApp {
                     // Skip chart-anchored bells when the main chart is collapsed
                     // (maximized sub-pane covers the container).
                     if chart_area.height >= 1.0 {
-                        let single_bars_vec2: Vec<mlc_core::Bar> = self.managers.bubble.bubble(window.current_bubble_id)
+                        let single_bars_vec2: Vec<mlc_core::Bar> = self.core.bubble().bubble.bubble(window.current_bubble_id)
                             .map(|b| b.bars.clone())
                             .unwrap_or_default();
                         let bells = Self::draw_alert_bell_icons(
@@ -3879,7 +3953,7 @@ impl ChartApp {
                             &single_bars_vec2[..],
                             &single_window_panel.drawing_manager,
                             &self.indicator_manager,
-                            &self.managers.alert,
+                            &self.core.bubble().alert,
                             window_id,
                             single_sym,
                             single_exch,
@@ -4081,7 +4155,7 @@ impl ChartApp {
                 // S2.7.1: read symbol from branch_meta; compare_series still needs window borrow.
                 let ind_overlay_chart_id = self.panel_app.panel_grid.active_container_id();
                 let symbol: String = ind_overlay_chart_id
-                    .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                    .and_then(|cid| self.symbol_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_default();
                 let compare_series: Vec<(String, bool, String)> =
@@ -4233,12 +4307,12 @@ impl ChartApp {
             // S2.7.1: read active symbol/timeframe from branch_meta.
             let (active_sym_str, active_tf_str, active_gid) = {
                 let cid = self.panel_app.panel_grid.active_container_id();
-                let sym = cid.and_then(|c| self.managers.bubble.symbol_for_chart(c))
+                let sym = cid.and_then(|c| self.symbol_for_chart(c))
                     .map(String::from).unwrap_or_default();
-                let tf = cid.and_then(|c| self.managers.bubble.timeframe_for_chart(c))
+                let tf = cid.and_then(|c| self.timeframe_for_chart(c))
                     .map(|tf| tf.name.clone())
                     .unwrap_or_default();
-                let gid = cid.and_then(|c| self.managers.bubble.bubble_for_chart(c));
+                let gid = cid.and_then(|c| self.bubble_for_chart(c));
                 (sym, tf, gid)
             };
             let toolbar_result = self.panel_app.render_toolbars_with_theme(
@@ -4251,7 +4325,7 @@ impl ChartApp {
                 Some(active_tf_str.as_str()),
                 sidebar_w,
                 active_gid,
-                &self.managers.bubble,
+                &self.core.bubble().bubble,
             );
             Some(toolbar_result)
         } else {
@@ -4474,6 +4548,33 @@ impl ChartApp {
             let sidebar_toolbar_theme = self.panel_app.toolbar_theme_for_render();
             let panel_theme = panels_render::panel_theme_from_runtime(self.panel_app.theme_manager.current());
 
+            // Pre-compute per-panel color + sync-flags maps before render_right_sidebar
+            // mutably borrows self.sidebar_state. This avoids E0502 between the &mut
+            // borrow of sidebar_state and the closures' immutable reads of self.core.bubble.
+            let (sidebar_panel_color_map, sidebar_panel_sync_flags_map): (
+                std::collections::HashMap<u64, [f32; 4]>,
+                std::collections::HashMap<u64, mlc_sidebar_content::render::PanelSyncFlagsSnapshot>,
+            ) = {
+                use mlc_core::tag_manager::SyncMemberId;
+                let mgr = self.core.bubble();
+                let mut colors = std::collections::HashMap::new();
+                let mut flags = std::collections::HashMap::new();
+                for bubble in mgr.bubble.bubbles() {
+                    for member in bubble.members.iter() {
+                        if let SyncMemberId::Panel(pid) = member {
+                            if !bubble.auto_created {
+                                colors.insert(*pid, bubble.color);
+                            }
+                            flags.insert(*pid, mlc_sidebar_content::render::PanelSyncFlagsSnapshot {
+                                sync_symbol: bubble.effective_sync_symbol(*member),
+                                sync_crosshair: bubble.effective_sync_crosshair(*member),
+                            });
+                        }
+                    }
+                }
+                (colors, flags)
+            };
+
             // Draw sidebar and register hit zones every frame.
             // When the cached sidebar_scene is composited on top these pixels
             // are overwritten, but the widget registrations survive until end_frame().
@@ -4544,23 +4645,10 @@ impl ChartApp {
                     }
                 },
                 &|item: &mlc_core::state::Panel| -> Option<[f32; 4]> {
-                    use mlc_core::tag_manager::SyncMemberId;
-                    let panel_id = item.panel_id().0;
-                    let member = SyncMemberId::Panel(panel_id);
-                    let gid = self.managers.bubble.group_for_member(member)?;
-                    let group = self.managers.bubble.bubble(gid)?;
-                    if group.auto_created { None } else { Some(group.color) }
+                    sidebar_panel_color_map.get(&item.panel_id().0).copied()
                 },
                 &|item: &mlc_core::state::Panel| -> Option<mlc_sidebar_content::render::PanelSyncFlagsSnapshot> {
-                    use mlc_core::tag_manager::SyncMemberId;
-                    let panel_id = item.panel_id().0;
-                    let member = SyncMemberId::Panel(panel_id);
-                    let gid = self.managers.bubble.group_for_member(member)?;
-                    let group = self.managers.bubble.bubble(gid)?;
-                    Some(mlc_sidebar_content::render::PanelSyncFlagsSnapshot {
-                        sync_symbol: group.effective_sync_symbol(member),
-                        sync_crosshair: group.effective_sync_crosshair(member),
-                    })
+                    sidebar_panel_sync_flags_map.get(&item.panel_id().0).cloned()
                 },
                 &|item: &mlc_core::state::Panel| -> Option<(String, String, String)> {
                     use mlc_core::state::Panel;
@@ -4912,12 +5000,12 @@ impl ChartApp {
         // S2.7.1: read active symbol/timeframe from branch_meta.
         let (active_sym_str, active_tf_str, active_gid) = {
             let cid = self.panel_app.panel_grid.active_container_id();
-            let sym = cid.and_then(|c| self.managers.bubble.symbol_for_chart(c))
+            let sym = cid.and_then(|c| self.symbol_for_chart(c))
                 .map(String::from).unwrap_or_default();
-            let tf = cid.and_then(|c| self.managers.bubble.timeframe_for_chart(c))
+            let tf = cid.and_then(|c| self.timeframe_for_chart(c))
                 .map(|tf| tf.name.clone())
                 .unwrap_or_default();
-            let gid = cid.and_then(|c| self.managers.bubble.bubble_for_chart(c));
+            let gid = cid.and_then(|c| self.bubble_for_chart(c));
             (sym, tf, gid)
         };
 
@@ -4931,7 +5019,7 @@ impl ChartApp {
             Some(active_tf_str.as_str()),
             sidebar_w,
             active_gid,
-            &self.managers.bubble,
+            &self.core.bubble().bubble,
         );
 
         self.last_toolbar_result = Some(toolbar_result);
@@ -5004,6 +5092,31 @@ impl ChartApp {
             }
         }
 
+        // Pre-compute per-panel maps before render_right_sidebar mut-borrows sidebar_state.
+        let (panel_color_map_main, panel_sync_flags_map_main): (
+            std::collections::HashMap<u64, [f32; 4]>,
+            std::collections::HashMap<u64, mlc_sidebar_content::render::PanelSyncFlagsSnapshot>,
+        ) = {
+            use mlc_core::tag_manager::SyncMemberId;
+            let mgr = self.core.bubble();
+            let mut colors = std::collections::HashMap::new();
+            let mut flags = std::collections::HashMap::new();
+            for bubble in mgr.bubble.bubbles() {
+                for member in bubble.members.iter() {
+                    if let SyncMemberId::Panel(pid) = member {
+                        if !bubble.auto_created {
+                            colors.insert(*pid, bubble.color);
+                        }
+                        flags.insert(*pid, mlc_sidebar_content::render::PanelSyncFlagsSnapshot {
+                            sync_symbol: bubble.effective_sync_symbol(*member),
+                            sync_crosshair: bubble.effective_sync_crosshair(*member),
+                        });
+                    }
+                }
+            }
+            (colors, flags)
+        };
+
         let panels_store = &self.panels_store;
         let sidebar_result = mlc_sidebar_content::render::render_right_sidebar(
             ctx,
@@ -5070,23 +5183,10 @@ impl ChartApp {
                 }
             },
             &|item: &mlc_core::state::Panel| -> Option<[f32; 4]> {
-                use mlc_core::tag_manager::SyncMemberId;
-                let panel_id = item.panel_id().0;
-                let member = SyncMemberId::Panel(panel_id);
-                let gid = self.managers.bubble.group_for_member(member)?;
-                let group = self.managers.bubble.bubble(gid)?;
-                if group.auto_created { None } else { Some(group.color) }
+                panel_color_map_main.get(&item.panel_id().0).copied()
             },
             &|item: &mlc_core::state::Panel| -> Option<mlc_sidebar_content::render::PanelSyncFlagsSnapshot> {
-                use mlc_core::tag_manager::SyncMemberId;
-                let panel_id = item.panel_id().0;
-                let member = SyncMemberId::Panel(panel_id);
-                let gid = self.managers.bubble.group_for_member(member)?;
-                let group = self.managers.bubble.bubble(gid)?;
-                Some(mlc_sidebar_content::render::PanelSyncFlagsSnapshot {
-                    sync_symbol: group.effective_sync_symbol(member),
-                    sync_crosshair: group.effective_sync_crosshair(member),
-                })
+                panel_sync_flags_map_main.get(&item.panel_id().0).cloned()
             },
             &|item: &mlc_core::state::Panel| -> Option<(String, String, String)> {
                 use mlc_core::state::Panel;
@@ -5261,7 +5361,7 @@ impl ChartApp {
                 &modal_layout,
                 &toolbar_theme,
                 &mut self.input_coordinator.borrow_mut(),
-                &self.managers.bubble,
+                &self.core.bubble().bubble,
             );
         }
 
@@ -5378,7 +5478,7 @@ impl ChartApp {
             &toolbar_state,
             current_time_ms,
             &mut self.input_coordinator.borrow_mut(),
-            &self.managers.bubble,
+            &self.core.bubble().bubble,
         );
         let mut frame_result: Option<ChartModalRenderResult> = Some(modal_result);
 
@@ -5450,7 +5550,7 @@ impl ChartApp {
                 &modal_layout,
                 &toolbar_theme,
                 &mut self.input_coordinator.borrow_mut(),
-                &self.managers.bubble,
+                &self.core.bubble().bubble,
             );
             if let Some(ref mut fr) = frame_result {
                 if cp_result.color_picker.is_some() {
@@ -5469,7 +5569,7 @@ impl ChartApp {
                     .map(|item| {
                         self.sidebar_state.watchlist_manager.active_list()
                             .and_then(|l| l.get_color_flag(&item.symbol, &item.exchange, &item.account_type))
-                            .unwrap_or("")
+                            .unwrap_or_default()
                             .to_string()
                     })
                     .collect();
@@ -5600,7 +5700,8 @@ impl ChartApp {
         group_id: mlc_core::tag_manager::BubbleId,
     ) {
         let (symbol, exchange, account_type, panel_ids) = {
-            let group = match self.managers.bubble.bubble(group_id) {
+            let mgr = self.core.bubble();
+            let group = match mgr.bubble.bubble(group_id) {
                 Some(g) => g,
                 None => return,
             };
@@ -5608,7 +5709,7 @@ impl ChartApp {
                 group.symbol.clone(),
                 group.exchange.clone(),
                 group.account_type.clone(),
-                self.managers.bubble.panel_members(group_id),
+                mgr.bubble.panel_members(group_id),
             )
         };
 
@@ -6020,7 +6121,7 @@ impl ChartApp {
     pub fn warm_one_background_tab(&mut self, target: &(String, String, mlc_core::state::Timeframe, String)) {
         let (sym, exch, tf, at_label) = target;
         let bar_count = self.panel_app.user_manager.profile.bar_count as usize;
-        let eid = digdigdig3::ExchangeId::from_str(exch)
+        let eid = digdigdig3::ExchangeId::from_str(&exch)
             .unwrap_or(digdigdig3::ExchangeId::Binance);
         let at = account_type_from_label(at_label);
         self.core.bridge.ensure_connector(eid);
@@ -6050,7 +6151,7 @@ impl ChartApp {
                 let chart_id = self.panel_app.panel_grid.container_id_for_leaf(leaf_id);
                 let chart_id_val = chart_id.map(|cid| cid.0).unwrap_or(0);
                 let symbol = chart_id
-                    .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                    .and_then(|cid| self.symbol_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_default();
                 let (vs, ve) = window.viewport.visible_range();
@@ -6343,7 +6444,7 @@ impl ChartApp {
         // Part 1 filters exchanges (full slug, slug prefix, or a short alias),
         // part 2 filters account type ("s"/"f", also "spot"/"fut"/"futures"/"perp").
         let mut q_parts = q_full.splitn(3, ':');
-        let q = q_parts.next().unwrap_or("").to_string();
+        let q = q_parts.next().unwrap_or_default().to_string();
         let q_exchange = q_parts.next().map(str::trim).filter(|p| !p.is_empty());
         let q_at = q_parts.next().map(str::trim).filter(|p| !p.is_empty());
 
@@ -6633,9 +6734,9 @@ impl ChartApp {
                         if let Some(active_leaf) = active_leaf_opt {
                             let viewport_sync_on = self.panel_app.panel_grid
                                 .container_id_for_leaf(active_leaf)
-                                .and_then(|cid| self.managers.bubble.bubble_for_chart(cid))
+                                .and_then(|cid| self.bubble_for_chart(cid))
                                 .and_then(|gid| {
-                                    self.managers.bubble.bubble_mut(gid).map(|g| {
+                                    self.core.bubble_mut().bubble.bubble_mut(gid).map(|g| {
                                         g.scale_mode = ScaleMode::Manual;
                                         g.sync_flags.sync_viewport
                                     })
@@ -7190,14 +7291,14 @@ impl ChartApp {
     ) -> bool {
         let group_id = self.panel_app.panel_grid
             .container_id_for_leaf(source_leaf)
-            .and_then(|cid| self.managers.bubble.bubble_for_chart(cid));
+            .and_then(|cid| self.bubble_for_chart(cid));
         let group_id = match group_id {
             Some(gid) => gid,
             None => return false,
         };
 
         // Respect the sync_drawings flag — if disabled, do not write drag result back to group.
-        if let Some(group) = self.managers.bubble.bubble(group_id) {
+        if let Some(group) = self.core.bubble().bubble.bubble(group_id) {
             if !group.sync_flags.sync_drawings {
                 return false;
             }
@@ -7223,7 +7324,7 @@ impl ChartApp {
         };
 
         // Replace the primitive in the group by id.
-        if let Some(group) = self.managers.bubble.bubble_mut(group_id) {
+        if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(group_id) {
             if let Some(pos) = group.primitives.iter().position(|p| p.data().id == primitive_id) {
                 group.primitives[pos] = updated_prim;
                 return true;
@@ -7300,9 +7401,8 @@ impl ChartApp {
         scale_mode: Option<mlc_core::ScaleMode>,
     ) {
         let should_sync = self.panel_app.panel_grid.container_id_for_leaf(source_leaf)
-            .and_then(|cid| self.managers.bubble.bubble_for_chart(cid))
-            .and_then(|gid| self.managers.bubble.bubble(gid))
-            .map(|g| g.sync_flags.sync_viewport)
+            .and_then(|cid| self.bubble_for_chart(cid))
+            .and_then(|gid| self.with_bubble(gid, |g| g.sync_flags.sync_viewport))
             .unwrap_or(true);
         if !should_sync { return; }
 
@@ -7337,9 +7437,9 @@ impl ChartApp {
         // Enumerate peers via TagManager group membership so untagged groups propagate too.
         let source_chart_id_vp = self.panel_app.panel_grid.container_id_for_leaf(source_leaf);
         let group_id_vp = source_chart_id_vp
-            .and_then(|cid| self.managers.bubble.bubble_for_chart(cid));
+            .and_then(|cid| self.bubble_for_chart(cid));
         let sync_leaves: Vec<mlc_core::LeafId> = if let Some(gid) = group_id_vp {
-            self.managers.bubble
+            self.core.bubble().bubble
                 .chart_member_ids(gid)
                 .into_iter()
                 .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))

@@ -30,6 +30,7 @@ use std::collections::HashMap;
 use dashmap::DashMap;
 
 use digdigdig3::ExchangeId;
+use mlc_core::managers::Managers;
 use mlc_live_data::{DataBridge, SymbolInfo};
 use mlc_trading_manager::TradingManager;
 
@@ -40,6 +41,16 @@ use crate::MiniTickerData;
 /// to every `ChartApp` they spawn. Mode-2 daemon hosts own one `Arc<BackendCore>`
 /// and serve it through the HTTP/WS API.
 pub struct BackendCore {
+    /// All `mlc-core` managers: bubble store (with bars + 13 derived series +
+    /// signals + trades + markers + primitives + indicator_configs), alert
+    /// manager, plus stateless signal/trade/marker dispatchers. Held under a
+    /// single `RwLock` because their data slices touch the same bubble.
+    ///
+    /// In single-threaded embedded mode (one main loop = one writer + one
+    /// renderer running sequentially) lock contention is zero — guards are
+    /// taken and dropped each tick frame, no waits.
+    pub managers: std::sync::RwLock<Managers>,
+
     /// Live data bridge — owns the tokio runtime, station, connector pool,
     /// broadcast channel. Already internally synchronised; `Arc::clone` is
     /// the only thing consumers need.
@@ -68,11 +79,26 @@ impl BackendCore {
     /// Construct a fresh backend wrapping an already-spawned `DataBridge`.
     pub fn new(bridge: Arc<DataBridge>, trading: Option<TradingManager>) -> Arc<Self> {
         Arc::new(Self {
+            managers: std::sync::RwLock::new(Managers::new()),
             bridge,
             mini_ticker: DashMap::new(),
             exchange_symbols: std::sync::RwLock::new(HashMap::new()),
             trading: trading.map(std::sync::Mutex::new),
         })
+    }
+
+    /// Read guard for the bubble store + all managers. Hold for the duration
+    /// of one logical read operation. The guard drops automatically.
+    #[inline]
+    pub fn bubble(&self) -> std::sync::RwLockReadGuard<'_, Managers> {
+        self.managers.read().expect("BackendCore.managers poisoned (read)")
+    }
+
+    /// Write guard for the bubble store + all managers. Take one per writer
+    /// arm in tick.rs; release at end of arm.
+    #[inline]
+    pub fn bubble_mut(&self) -> std::sync::RwLockWriteGuard<'_, Managers> {
+        self.managers.write().expect("BackendCore.managers poisoned (write)")
     }
 
     /// Lock the trading manager for mutation. Returns `None` if trading is
