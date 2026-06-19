@@ -1,0 +1,30 @@
+[package]
+name = "mlc-test-harness"
+version.workspace = true
+edition.workspace = true
+description = "Headless debug harness for mlc — fast iteration on routing / lifecycle / data-flow logic without the 16-min release build."
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+name = "mlc_test_harness"
+path = "src/lib.rs"
+
+[dependencies]
+mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
+mlc-app = { path = "../mlc-app", package = "mylittlechart-app" }
+digdigdig3 = "=0.3.23"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread", "macros", "time"] }
+
+[[test]]
+name = "unit_bubble_routing"
+path = "tests/unit/bubble_routing.rs"
+
+[[test]]
+name = "integration_tick_bars_loaded"
+path = "tests/integration/tick_bars_loaded.rs"
+
+[[test]]
+name = "e2e_chartapp_full_load"
+path = "tests/e2e/chartapp_full_load.rs"

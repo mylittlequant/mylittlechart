@@ -317,9 +317,11 @@ impl ChartApp {
                         }
                     }
 
-                    // Write bubble.bars ONCE (replaces the storage hub).
+                    // Write bubble.bars into EVERY bubble carrying this instrument.
+                    // Multiple charts can each hold their own auto-bubble; the old
+                    // `bubble_for_instrument` (singular) starved all but the first.
                     if any_matched {
-                        if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                        for bid in self.managers.bubble.bubbles_for_instrument(
                             exchange_id.as_str(), account_type.short_label(), &symbol
                         ) {
                             if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
@@ -575,8 +577,8 @@ impl ChartApp {
                         matched_anchors.push((*chart_id_key, window.capture_view_anchor(&prev_bars_for_anchor)));
                     }
 
-                    // Write bubble.bars ONCE.
-                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                    // Write bubble.bars into every bubble carrying this instrument.
+                    for bid in self.managers.bubble.bubbles_for_instrument(
                         exchange_id.as_str(), account_type.short_label(), &symbol
                     ) {
                         if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
@@ -663,7 +665,7 @@ impl ChartApp {
                         matched_anchors.push((*chart_id_key, window.capture_view_anchor(&prev_bars_for_anchor)));
                     }
 
-                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                    for bid in self.managers.bubble.bubbles_for_instrument(
                         exchange_id.as_str(), at_label, &symbol
                     ) {
                         if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
@@ -747,9 +749,10 @@ impl ChartApp {
                     let mut bu_symbol_for_recalc: Option<String> = None;
                     let mut bu_is_new_bar = false;
 
-                    // Phase X0 / C5c: write bubble FIRST (upsert by ts), then loop derived windows.
+                    // Phase X0 / C5c: write every bubble carrying this instrument
+                    // (upsert by ts), then loop derived windows.
                     let bar_at_label = bar_account_type.short_label();
-                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                    for bid in self.managers.bubble.bubbles_for_instrument(
                         bar_exch.as_str(), bar_at_label, bar_symbol.as_str()
                     ) {
                         if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
@@ -769,7 +772,8 @@ impl ChartApp {
                             }
                         }
                     }
-                    // Snapshot the just-updated bubble bars for the window reconcile loop.
+                    // Snapshot bars from the first matching bubble (all match-instrument
+                    // bubbles now carry identical bars after the loop above).
                     let bu_bubble_bars: Vec<mlc_core::Bar> = self.managers.bubble
                         .bubble_for_instrument(bar_exch.as_str(), bar_at_label, bar_symbol.as_str())
                         .and_then(|bid| self.managers.bubble.bubble(bid))
@@ -1375,7 +1379,7 @@ impl ChartApp {
                         new_bar_with_static.close,
                         new_bar_with_static.volume,
                     );
-                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                    for bid in self.managers.bubble.bubbles_for_instrument(
                         exchange_id.as_str(), fp_at_label, fp_sym.as_str()
                     ) {
                         if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
@@ -1403,7 +1407,7 @@ impl ChartApp {
                                     last.volume = ohlc_bar.volume;
                                 }
                             } else {
-                                bubble.append_bar(ohlc_bar);
+                                bubble.append_bar(ohlc_bar.clone());
                             }
                         }
                     }
@@ -1452,8 +1456,8 @@ impl ChartApp {
                         volume: point.volume,
                         trades_count: point.trades_count,
                     };
-                    // Phase X0 / C5c: write bubble FIRST.
-                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                    // Phase X0 / C5c: write every bubble carrying this instrument.
+                    for bid in self.managers.bubble.bubbles_for_instrument(
                         exchange_id.as_str(), at_label, sym.as_str()
                     ) {
                         if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
@@ -1502,8 +1506,9 @@ impl ChartApp {
                         trades_count: point.trades_count,
                         box_size: bs,
                     };
-                    // Phase X0 / C5c: write bubble FIRST with column-id upsert.
-                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                    // Phase X0 / C5c: write every bubble carrying this instrument
+                    // with column-id upsert.
+                    for bid in self.managers.bubble.bubbles_for_instrument(
                         exchange_id.as_str(), at_label, sym.as_str()
                     ) {
                         if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
@@ -1554,7 +1559,7 @@ impl ChartApp {
                         yang: point.yang,
                         is_connector: point.is_connector,
                     };
-                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                    for bid in self.managers.bubble.bubbles_for_instrument(
                         exchange_id.as_str(), at_label, sym.as_str()
                     ) {
                         if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
@@ -1596,7 +1601,7 @@ impl ChartApp {
                         ts_ms: point.ts_ms,
                         value: point.value,
                     };
-                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                    for bid in self.managers.bubble.bubbles_for_instrument(
                         exchange_id.as_str(), at_label, sym.as_str()
                     ) {
                         if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
@@ -1645,7 +1650,7 @@ impl ChartApp {
                         val_price: point.val_price,
                         rows: point.rows.clone(),
                     };
-                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                    for bid in self.managers.bubble.bubbles_for_instrument(
                         exchange_id.as_str(), at_label, sym.as_str()
                     ) {
                         if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
@@ -1701,7 +1706,7 @@ impl ChartApp {
                         volume: point.volume,
                         direction: point.direction,
                     };
-                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                    for bid in self.managers.bubble.bubbles_for_instrument(
                         exchange_id.as_str(), at_label, sym.as_str()
                     ) {
                         if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
@@ -1735,7 +1740,7 @@ impl ChartApp {
                                 Some(*cid)
                             }).collect();
                     if target_cids.is_empty() { continue; }
-                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                    for bid in self.managers.bubble.bubbles_for_instrument(
                         exchange_id.as_str(), at_label, sym.as_str()
                     ) {
                         if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
@@ -1759,7 +1764,7 @@ impl ChartApp {
                                 Some(*cid)
                             }).collect();
                     if target_cids.is_empty() { continue; }
-                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                    for bid in self.managers.bubble.bubbles_for_instrument(
                         exchange_id.as_str(), at_label, sym.as_str()
                     ) {
                         if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
@@ -1787,7 +1792,7 @@ impl ChartApp {
                             }).collect()
                     };
                     if target_cids.is_empty() { continue; }
-                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                    for bid in self.managers.bubble.bubbles_for_instrument(
                         exchange_id.as_str(), at_label, sym.as_str()
                     ) {
                         if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
@@ -1828,7 +1833,7 @@ impl ChartApp {
                             }).collect()
                     };
                     if target_cids.is_empty() { continue; }
-                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                    for bid in self.managers.bubble.bubbles_for_instrument(
                         exchange_id.as_str(), at_label, sym.as_str()
                     ) {
                         if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
@@ -1858,7 +1863,7 @@ impl ChartApp {
                             }).collect()
                     };
                     if target_cids.is_empty() { continue; }
-                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                    for bid in self.managers.bubble.bubbles_for_instrument(
                         exchange_id.as_str(), at_label, sym.as_str()
                     ) {
                         if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
@@ -1914,7 +1919,7 @@ impl ChartApp {
                     let mark_price_opt = self.mini_ticker_cache
                         .get(&ticker_key)
                         .map(|t| t.last_price);
-                    if let Some(bid) = self.managers.bubble.bubble_for_instrument(
+                    for bid in self.managers.bubble.bubbles_for_instrument(
                         ex_id.as_str(), at_label, sym.as_str()
                     ) {
                         if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {

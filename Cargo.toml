@@ -19,6 +19,7 @@ members = [
     "crates/mlc-tiny-skia-context",
     "crates/mlc-diagnostics",
     "crates/mlc-trading-manager",
+    "crates/mlc-test-harness",
 ]
 resolver = "2"
 

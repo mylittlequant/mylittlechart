@@ -795,6 +795,26 @@ impl BubbleStore {
         })
     }
 
+    /// All bubbles whose `(exchange, account_type, symbol)` matches.
+    ///
+    /// Required for live-data writers when multiple charts each hold their
+    /// own auto-bubble pointing at the same instrument — writing only to
+    /// the singular result of `bubble_for_instrument` would starve every
+    /// chart except the first one (see `mlc-test-harness` unit tier).
+    pub fn bubbles_for_instrument(
+        &self,
+        exchange: &str,
+        account_type: &str,
+        symbol: &str,
+    ) -> Vec<BubbleId> {
+        self.bubbles.iter()
+            .filter_map(|(id, b)| {
+                (b.exchange == exchange && b.account_type == account_type && b.symbol == symbol)
+                    .then_some(*id)
+            })
+            .collect()
+    }
+
     /// Previous close price of the bubble that contains `chart_id`. `None` when no bubble or unset.
     pub fn prev_close_price_for_chart(&self, chart_id: ChartId) -> Option<f64> {
         self.bubble_for_chart(chart_id)
