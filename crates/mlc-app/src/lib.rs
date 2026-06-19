@@ -88,7 +88,7 @@ use mlc_core::state::modal_state::{ModalState, IndicatorCatalogItem};
 use mlc_layout::ui::modal_settings::{ChartScreenArea, WatchlistModalState, WatchlistGroupNameInputState};
 use mlc_layout::layout::modals::watchlist_modal::{render_watchlist_modal, WatchlistEntry, WatchlistGroupInfo, render_wl_group_name_input, WlGroupNameInputResult};
 use mlc_layout::layout::modals::clock_popup::render_clock_popup;
-use mlc_live_data::{DataBridge, LiveUpdate, LiveDataProvider};
+use mlc_live_data::{DataBridge, LiveDataProvider};
 
 use mlc_layout::panel_app::ChartPanelApp;
 use uzor::input::{InputCoordinator, InputState};
@@ -382,9 +382,6 @@ pub struct ChartApp {
     /// holds an `Arc::clone`. See `backend_core.rs` for the migration plan
     /// (more fields move here in subsequent passes).
     pub core: std::sync::Arc<mlc_backend_core::BackendCore>,
-
-    /// Receiver for async live data updates (bars loaded, errors, etc.).
-    live_update_rx: tokio::sync::broadcast::Receiver<LiveUpdate>,
 
     /// Currently active exchange.
     pub active_exchange: digdigdig3::ExchangeId,
@@ -1107,10 +1104,10 @@ impl ChartApp {
         // The third value is a ConnectorReady mpsc receiver used by the
         // chart-app-vello App struct; here it is dropped since ChartApp::tick()
         // receives ConnectorReady via the broadcast channel directly.
-        let (bridge, live_update_rx, _connector_ready_rx) = DataBridge::new();
+        let (bridge, _first_rx, _connector_ready_rx) = DataBridge::new();
         let bridge = std::sync::Arc::new(bridge);
-        // live_update_rx is a broadcast::Receiver — see DataBridge::add_listener()
-        // for spawning additional windows that share this bridge.
+        // _first_rx is the broadcast::Receiver from DataBridge::new(). BackendCore::new
+        // calls bridge.add_listener() internally, so _first_rx is dropped here.
         let trading = mlc_trading_manager::TradingManager::new(
             bridge.clone(),
             std::path::PathBuf::from("."),
@@ -1161,7 +1158,6 @@ impl ChartApp {
             last_wl_group_name_result: None,
             needs_initial_viewport_fit: false,
             core,
-            live_update_rx,
             active_exchange: digdigdig3::ExchangeId::Binance,
             window_id: format!("win_{}", std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1463,7 +1459,6 @@ impl ChartApp {
     /// broadcast receiver is created via [`DataBridge::add_listener`] so that
     /// this window gets its own queue of live updates.
     pub fn new_empty(bridge: std::sync::Arc<DataBridge>) -> Self {
-        let live_update_rx = bridge.add_listener();
         let exchange_symbols_seed = bridge.symbols_snapshot();
         let core = mlc_backend_core::BackendCore::new(bridge.clone(), None);
         // Seed exchange_symbols cache from the bridge's session-long catalogue
@@ -1517,7 +1512,6 @@ impl ChartApp {
             last_wl_group_name_result: None,
             needs_initial_viewport_fit: false,
             core,
-            live_update_rx,
             active_exchange: digdigdig3::ExchangeId::Binance,
             window_id: format!(
                 "win_{}",
@@ -1718,7 +1712,6 @@ impl ChartApp {
     /// for each window.
     pub fn new_window(
         bridge: std::sync::Arc<DataBridge>,
-        live_update_rx: tokio::sync::broadcast::Receiver<LiveUpdate>,
         window_id: String,
         restore: Option<&mlc_core::WindowState>,
         profile: &mlc_core::UserProfile,
@@ -1775,7 +1768,6 @@ impl ChartApp {
             last_wl_group_name_result: None,
             needs_initial_viewport_fit: false,
             core,
-            live_update_rx,
             active_exchange: digdigdig3::ExchangeId::Binance,
             window_id,
             window_x: None,

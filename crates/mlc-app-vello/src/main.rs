@@ -1077,10 +1077,8 @@ impl App<'_> {
         };
 
         // All windows are equal — all use the shared bridge and profile.
-        let live_update_rx = self.bridge.add_listener();
         let mut chart = mlc_app::ChartApp::new_window(
             self.bridge.clone(),
-            live_update_rx,
             window_id.clone(),
             restore,
             &self.profile,
@@ -1514,10 +1512,8 @@ impl App<'_> {
                     });
 
                 // Build the live ChartApp (the heavy ~1.7s part).
-                let live_update_rx = bridge.add_listener();
                 let mut chart = mlc_app::ChartApp::new_window(
                     bridge.clone(),
-                    live_update_rx,
                     window_id.clone(),
                     restore,
                     &profile,

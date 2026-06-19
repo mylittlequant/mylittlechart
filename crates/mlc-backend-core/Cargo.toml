@@ -15,3 +15,4 @@ mlc-trading-manager = { path = "../mlc-trading-manager", package = "mylittlechar
 mlc-sidebar-content = { path = "../mlc-sidebar-content", package = "mylittlechart-sidebar-content" }
 digdigdig3 = "=0.3.23"
 dashmap = "6"
+tokio = { version = "1", features = ["sync"] }
