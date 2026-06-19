@@ -29,3 +29,7 @@ path = "tests/integration/tick_bars_loaded.rs"
 [[test]]
 name = "e2e_chartapp_full_load"
 path = "tests/e2e/chartapp_full_load.rs"
+
+[[test]]
+name = "e2e_headless_full_lifecycle"
+path = "tests/e2e/headless_full_lifecycle.rs"

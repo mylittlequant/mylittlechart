@@ -1041,6 +1041,13 @@ impl ChartApp {
             .unwrap_or_default()
     }
 
+    /// Test-only: clone of the `DataBridge` handle. Headless harness uses it
+    /// to inject synthetic LiveUpdates via `debug_broadcast_tx`.
+    #[doc(hidden)]
+    pub fn bridge_arc(&self) -> std::sync::Arc<DataBridge> {
+        self.bridge.clone()
+    }
+
     /// Create a new chart application for the given symbol.
     ///
     /// Connects to Binance as the default exchange. Bars are requested

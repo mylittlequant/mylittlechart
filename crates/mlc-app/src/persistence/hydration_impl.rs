@@ -683,6 +683,17 @@ impl ChartApp {
                             .map(|g| g.last_used_style.clone());
                         for &(leaf_id, chart_id) in &leaf_chart_ids {
                             let _ = self.managers.bubble.attach_chart_to_bubble(chart_id, group_id);
+                            // Sync the window-side bubble pointer so the renderer's
+                            // `window.current_bubble_id` lookup matches the writer's
+                            // `bubble_for_chart` lookup. Without this, the BubbleStore
+                            // member_to_bubble map points at the new group while the
+                            // window still carries the sentinel BubbleId(0) — the
+                            // writer fills group_id, the renderer reads sentinel,
+                            // chart stays empty.
+                            if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&chart_id) {
+                                window.auto_bubble_id = group_id;
+                                window.current_bubble_id = group_id;
+                            }
                             if let Some(pid) = self.panel_app.panel_grid.container_for_leaf(leaf_id).map(|w| w.chart_panel_id) {
                                 if let Some(ref arc) = style_arc {
                                     if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
@@ -733,6 +744,11 @@ impl ChartApp {
                                 bubble.account_type = if at.is_empty() { "S".to_string() } else { at };
                             }
                             let _ = self.managers.bubble.attach_chart_to_bubble(chart_id, group_id);
+                            // Sync window-side bubble pointer (see Step 5b for rationale).
+                            if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&chart_id) {
+                                window.auto_bubble_id = group_id;
+                                window.current_bubble_id = group_id;
+                            }
                             if let Some(pid) = self.panel_app.panel_grid.container_for_leaf(leaf_id).map(|w| w.chart_panel_id) {
                                 let panel = crate::chart_panel_bridge::ensure_chart_panel_state(
                                     &mut self.panels_store,
@@ -1419,6 +1435,36 @@ impl ChartApp {
                         }
                     }
                     let orphan_prune_us = _t_orphan_prune.elapsed().as_micros();
+
+        // ── Window↔bubble pointer sync sweep ─────────────────────────────
+        // Many code paths attach a chart to a bubble via
+        // `attach_chart_to_bubble` (which updates BubbleStore.member_to_bubble)
+        // WITHOUT also writing `window.auto_bubble_id / current_bubble_id`.
+        // The writer reads `bubble_for_chart(cid)` (canonical); the renderer
+        // reads `window.current_bubble_id`. When they diverge, the writer
+        // fills the right bubble and the renderer reads the wrong (empty)
+        // one — the chart stays blank forever.
+        //
+        // This sweep is the single source-of-truth fixup: snapshot
+        // `bubble_for_chart` per container BEFORE taking containers_mut,
+        // then write the result onto each window's two bubble pointers.
+        // Cheap (one HashMap lookup per chart) and idempotent.
+        {
+            let bid_by_chart: std::collections::HashMap<mlc_core::ChartId, mlc_core::tag_manager::BubbleId> =
+                self.panel_app.panel_grid.containers().keys()
+                    .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid).map(|bid| (*cid, bid)))
+                    .collect();
+            for (cid, bid) in &bid_by_chart {
+                if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(cid) {
+                    if window.current_bubble_id != *bid {
+                        window.current_bubble_id = *bid;
+                    }
+                    if window.auto_bubble_id != *bid && window.auto_bubble_id == mlc_core::tag_manager::BubbleId(0) {
+                        window.auto_bubble_id = *bid;
+                    }
+                }
+            }
+        }
 
         let lp_cold_body_us = lp_cold_start.elapsed().as_micros();
         eprintln!("[ChartApp] preset '{}' fully restored (cold_body={}us total={}us)",
