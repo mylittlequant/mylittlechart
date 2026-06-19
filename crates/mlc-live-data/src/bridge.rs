@@ -4225,22 +4225,37 @@ fn station_bar_key(exchange: ExchangeId, account: AccountType, symbol: &str, tim
     StationSeriesKey::new(exchange, account, symbol, StationKind::Kline(iv))
 }
 
-/// SYNC read of all bars from the station's `Series<BarPoint>` ring.
+/// Read all bars from the station's `Series<BarPoint>` ring.
 ///
-/// SAFE ONLY from the app thread (sync bridge API surface). Calling this
-/// from inside a tokio task on the bridge runtime panics with
-/// "cannot block within runtime".
+/// Works from BOTH the app thread (sync bridge API surface) and from inside
+/// a tokio task — uses `try_read` which never blocks. If the writer holds
+/// the lock right now, returns an empty Vec; the caller is expected to
+/// treat empty as "not ready yet" and retry. The window is microseconds —
+/// any miss is acceptable.
+///
+/// Previously this used `blocking_read()`, which panicked with
+/// "Cannot block the current thread from within a runtime" whenever an
+/// agent-server HTTP handler (running on tokio) called `get_cached_bars`.
 fn station_read_bars(station: &digdigdig3_station::Station, key: &StationSeriesKey) -> Vec<Bar> {
     let Some(arc) = station.series::<BarPoint>(key) else { return Vec::new(); };
-    let guard = arc.blocking_read();
-    guard.snapshot().iter().map(bar_point_to_bar).collect()
+    let result = match arc.try_read() {
+        Ok(guard) => guard.snapshot().iter().map(bar_point_to_bar).collect(),
+        Err(_) => Vec::new(),
+    };
+    drop(arc);
+    result
 }
 
-/// SYNC count of bars in the station's `Series<BarPoint>` ring. App-thread only.
+/// Count of bars in the station's `Series<BarPoint>` ring. Non-blocking;
+/// returns 0 when the writer holds the lock (treat as "unknown / retry").
 fn station_read_bars_len(station: &digdigdig3_station::Station, key: &StationSeriesKey) -> usize {
     let Some(arc) = station.series::<BarPoint>(key) else { return 0; };
-    let guard = arc.blocking_read();
-    guard.len()
+    let result = match arc.try_read() {
+        Ok(guard) => guard.len(),
+        Err(_) => 0,
+    };
+    drop(arc);
+    result
 }
 
 
