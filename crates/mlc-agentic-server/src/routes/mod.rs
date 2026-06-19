@@ -1,3 +1,4 @@
+pub mod apps;
 pub mod bars;
 pub mod catalog;
 pub mod connectors_status;

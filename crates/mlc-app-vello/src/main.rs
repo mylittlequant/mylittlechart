@@ -1085,6 +1085,12 @@ impl App<'_> {
             &self.profile_manager,
             skeleton,
         );
+        // Attach this chart's backend to the AgentState so /api/v1/apps
+        // routes resolve. Every ChartApp in this process shares one
+        // Arc<BackendCore>, so the last writer wins safely.
+        if let Some(ref agent_state) = self.agent_state {
+            agent_state.attach_core(chart.core.clone());
+        }
         // Apply the app-level theme so new windows start with the correct preset.
         if !self.app_state.theme_preset.is_empty() {
             chart.panel_app.theme_manager.set_preset(&self.app_state.theme_preset);

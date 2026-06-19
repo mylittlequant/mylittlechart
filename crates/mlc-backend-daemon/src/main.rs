@@ -36,11 +36,9 @@ use axum::{
     routing::{delete, get, post},
     Json, Router,
 };
-use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
-use mlc_backend_core::BackendCore;
+use mlc_backend_core::{AppSession, BackendCore};
 use mlc_live_data::DataBridge;
 
 const DEFAULT_PORT: u16 = 19470;
@@ -50,21 +48,26 @@ const SESSION_IDLE_TIMEOUT_SECS: u64 = 60;
 #[derive(Clone)]
 struct AppState {
     core: Arc<BackendCore>,
-    sessions: Arc<RwLock<SessionRegistry>>,
     tick_count: Arc<std::sync::atomic::AtomicU64>,
 }
 
-#[derive(Default)]
-struct SessionRegistry {
-    by_id: std::collections::HashMap<String, AppSession>,
-}
-
-#[derive(Clone, Serialize)]
-struct AppSession {
+#[derive(Serialize)]
+struct AppSessionOut {
     app_id: String,
     label: Option<String>,
     created_at_secs: u64,
     last_heartbeat_secs: u64,
+}
+
+impl From<AppSession> for AppSessionOut {
+    fn from(s: AppSession) -> Self {
+        Self {
+            app_id: s.app_id,
+            label: s.label,
+            created_at_secs: s.created_at_secs,
+            last_heartbeat_secs: s.last_heartbeat_secs,
+        }
+    }
 }
 
 #[tokio::main]
@@ -89,7 +92,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let state = AppState {
         core: core.clone(),
-        sessions: Arc::new(RwLock::new(SessionRegistry::default())),
         tick_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
     };
 
@@ -105,12 +107,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .tick_count
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-            // Lazy session GC: drop sessions whose heartbeat is stale.
+            // Drop idle sessions whose heartbeat lapsed.
             let now_secs = now_ms / 1000;
-            let mut reg = tick_state.sessions.write();
-            reg.by_id.retain(|_, s| {
-                now_secs.saturating_sub(s.last_heartbeat_secs) < SESSION_IDLE_TIMEOUT_SECS
-            });
+            tick_state
+                .core
+                .reap_idle_sessions(now_secs, SESSION_IDLE_TIMEOUT_SECS);
         }
     });
 
@@ -157,7 +158,7 @@ async fn health(State(s): State<AppState>) -> impl IntoResponse {
     Json(HealthOut {
         ok: true,
         tick_count: s.tick_count.load(std::sync::atomic::Ordering::Relaxed),
-        sessions: s.sessions.read().by_id.len(),
+        sessions: s.core.sessions_snapshot().len(),
     })
 }
 
@@ -220,26 +221,23 @@ async fn register_app(
     State(s): State<AppState>,
     Json(body): Json<RegisterIn>,
 ) -> impl IntoResponse {
-    let app_id = Uuid::new_v4().to_string();
     let now = wall_clock_ms() / 1000;
-    let session = AppSession {
-        app_id: app_id.clone(),
-        label: body.label,
-        created_at_secs: now,
-        last_heartbeat_secs: now,
-    };
-    s.sessions.write().by_id.insert(app_id.clone(), session);
+    let app_id = s.core.register_session(body.label, now);
     (StatusCode::CREATED, Json(RegisterOut { app_id }))
 }
 
 #[derive(Serialize)]
 struct AppsListOut {
-    apps: Vec<AppSession>,
+    apps: Vec<AppSessionOut>,
 }
 
 async fn list_apps(State(s): State<AppState>) -> impl IntoResponse {
-    let reg = s.sessions.read();
-    let apps: Vec<AppSession> = reg.by_id.values().cloned().collect();
+    let apps: Vec<AppSessionOut> = s
+        .core
+        .sessions_snapshot()
+        .into_iter()
+        .map(AppSessionOut::from)
+        .collect();
     Json(AppsListOut { apps })
 }
 
@@ -247,8 +245,7 @@ async fn deregister_app(
     Path(app_id): Path<String>,
     State(s): State<AppState>,
 ) -> impl IntoResponse {
-    let removed = s.sessions.write().by_id.remove(&app_id).is_some();
-    if removed {
+    if s.core.deregister_session(&app_id) {
         StatusCode::NO_CONTENT
     } else {
         StatusCode::NOT_FOUND
@@ -260,9 +257,7 @@ async fn heartbeat_app(
     State(s): State<AppState>,
 ) -> impl IntoResponse {
     let now = wall_clock_ms() / 1000;
-    let mut reg = s.sessions.write();
-    if let Some(session) = reg.by_id.get_mut(&app_id) {
-        session.last_heartbeat_secs = now;
+    if s.core.heartbeat_session(&app_id, now) {
         StatusCode::OK
     } else {
         StatusCode::NOT_FOUND

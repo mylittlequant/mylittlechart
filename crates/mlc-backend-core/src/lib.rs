@@ -346,6 +346,38 @@ pub struct BackendCore {
     /// sidebar render, input handlers, and agent snapshot builder all read from
     /// one place.
     pub watchlist_manager: std::sync::RwLock<WatchlistManager>,
+
+    /// Registry of attached `AppSession`s. One per consumer of this backend.
+    ///
+    /// In Mode 1 (embedded `ChartApp`) the host calls `register_session` once
+    /// at construction and `deregister_session` on shutdown. In Mode 2 the
+    /// daemon registers a session per external HTTP client.
+    ///
+    /// Sessions are pure metadata for now — `(app_id, label, created_at_secs,
+    /// last_heartbeat_secs)`. The reactor logic that runs per session lives
+    /// on the per-app side (`ChartApp::react_to_bubble_event`); session id
+    /// is the handle the agent server uses to scope queries.
+    pub sessions: std::sync::RwLock<SessionRegistry>,
+}
+
+/// Registry of attached `AppSession`s. Shared across the agent server's
+/// `/v1/apps` endpoints and the daemon's `/v1/apps` endpoints — both end up
+/// pointing at this one registry on the per-process `BackendCore`.
+#[derive(Default)]
+pub struct SessionRegistry {
+    pub by_id: HashMap<String, AppSession>,
+}
+
+/// One attached consumer of the backend. Pure metadata. The render thread,
+/// reactor, and persist layer all run regardless of how many sessions are
+/// registered; sessions exist so external observers can correlate their own
+/// client state with backend events.
+#[derive(Clone, Debug)]
+pub struct AppSession {
+    pub app_id: String,
+    pub label: Option<String>,
+    pub created_at_secs: u64,
+    pub last_heartbeat_secs: u64,
 }
 
 impl BackendCore {
@@ -363,7 +395,74 @@ impl BackendCore {
             presets: std::sync::RwLock::new(HashMap::new()),
             template_manager: std::sync::RwLock::new(TemplateManager::new()),
             watchlist_manager: std::sync::RwLock::new(WatchlistManager::default()),
+            sessions: std::sync::RwLock::new(SessionRegistry::default()),
         })
+    }
+
+    /// Register a new AppSession. Returns the freshly minted `app_id`.
+    pub fn register_session(&self, label: Option<String>, now_secs: u64) -> String {
+        let app_id = format!("app-{:016x}", rand_u64());
+        let session = AppSession {
+            app_id: app_id.clone(),
+            label,
+            created_at_secs: now_secs,
+            last_heartbeat_secs: now_secs,
+        };
+        self.sessions
+            .write()
+            .expect("BackendCore.sessions poisoned (write)")
+            .by_id
+            .insert(app_id.clone(), session);
+        app_id
+    }
+
+    /// Drop a session by id. Returns true if it existed.
+    pub fn deregister_session(&self, app_id: &str) -> bool {
+        self.sessions
+            .write()
+            .expect("BackendCore.sessions poisoned (write)")
+            .by_id
+            .remove(app_id)
+            .is_some()
+    }
+
+    /// Bump the heartbeat on a session. Returns true if the session existed.
+    pub fn heartbeat_session(&self, app_id: &str, now_secs: u64) -> bool {
+        let mut reg = self
+            .sessions
+            .write()
+            .expect("BackendCore.sessions poisoned (write)");
+        if let Some(s) = reg.by_id.get_mut(app_id) {
+            s.last_heartbeat_secs = now_secs;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Drop sessions whose heartbeat is older than `idle_timeout_secs`.
+    /// Returns the number reaped. Callers (Mode-2 daemon, embedded host idle
+    /// timer) drive this periodically.
+    pub fn reap_idle_sessions(&self, now_secs: u64, idle_timeout_secs: u64) -> usize {
+        let mut reg = self
+            .sessions
+            .write()
+            .expect("BackendCore.sessions poisoned (write)");
+        let before = reg.by_id.len();
+        reg.by_id
+            .retain(|_, s| now_secs.saturating_sub(s.last_heartbeat_secs) < idle_timeout_secs);
+        before - reg.by_id.len()
+    }
+
+    /// Snapshot of all currently-registered sessions.
+    pub fn sessions_snapshot(&self) -> Vec<AppSession> {
+        self.sessions
+            .read()
+            .expect("BackendCore.sessions poisoned (read)")
+            .by_id
+            .values()
+            .cloned()
+            .collect()
     }
 
     /// Read guard for the indicator manager.
@@ -1053,4 +1152,30 @@ impl BackendCore {
     pub fn tick_bridge_only(&self, now_ms: u64) {
         let _ = self.tick_writers(now_ms);
     }
+}
+
+/// xorshift64 over a thread-local seed; good enough for app-id uniqueness
+/// in-process. Not a security-grade RNG; never use for crypto.
+fn rand_u64() -> u64 {
+    use std::cell::Cell;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    thread_local! {
+        static STATE: Cell<u64> = Cell::new(0);
+    }
+    STATE.with(|s| {
+        let mut x = s.get();
+        if x == 0 {
+            // Lazy seed from wall clock + thread id hash.
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0xdead_beef);
+            x = now ^ 0x9E37_79B9_7F4A_7C15;
+        }
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        s.set(x);
+        x
+    })
 }
