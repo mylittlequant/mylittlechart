@@ -13,6 +13,7 @@ path = "src/lib.rs"
 [dependencies]
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 mlc-app = { path = "../mlc-app", package = "mylittlechart-app" }
+mlc-live-data = { path = "../mlc-live-data", package = "mylittlechart-live-data" }
 digdigdig3 = "=0.3.23"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread", "macros", "time"] }

@@ -697,6 +697,15 @@ impl DataBridge {
         self.tx.subscribe()
     }
 
+    /// Test-only: clone of the broadcast sender, so harness tests can inject
+    /// synthetic `LiveUpdate`s without going through a real WebSocket / Station.
+    /// Production code MUST NOT call this — emit events through the bridge's
+    /// public request API instead.
+    #[doc(hidden)]
+    pub fn debug_broadcast_tx(&self) -> broadcast::Sender<LiveUpdate> {
+        self.tx.clone()
+    }
+
     /// Snapshot the bridge's per-exchange symbol cache.
     ///
     /// Returns every exchange whose REST `exchange_info` has already resolved
