@@ -546,12 +546,6 @@ pub struct ChartApp {
     /// on every subsequent frame.
     pub background_warm_seeded: bool,
 
-    /// Timestamp of the last backfill triggered after a broadcast lag event.
-    ///
-    /// Used to debounce rapid successive `Lagged` errors — backfill is only
-    /// triggered when at least 1 second has elapsed since the last one.
-    last_backfill_time: std::time::Instant,
-
     /// Count of broadcast lag events since startup (for performance monitoring).
     pub lag_event_count: u64,
 
@@ -582,16 +576,6 @@ pub struct ChartApp {
     /// Tracks the last active leaf so we can detect leaf switches and
     /// mark sidebar_data_dirty automatically.
     last_active_leaf: Option<mlc_core::LeafId>,
-
-    /// Rate-limit gate for the per-live-event sidebar dirty mark (Watchlist /
-    /// Connectors panels). Live data (ticks, connector-ready) arrives in bursts
-    /// — at startup all ~21 connectors flood it in one frame, forcing a full
-    /// sidebar rebuild (~30ms) per frame. We collapse that: a live-data event
-    /// only re-marks the sidebar dirty at most once per this interval. The
-    /// per-second prepare-timer guarantees the panel still refreshes even if no
-    /// event slips through. Input-driven marks (clicks, settings) are NOT gated
-    /// — they set sidebar_data_dirty directly for instant feedback.
-    last_sidebar_data_mark: Option<std::time::Instant>,
 
     /// Last render timing breakdown in microseconds (for PERF diagnostics).
     /// Tuple: (chart_us, toolbar_us, sidebar_us, setup_us)
@@ -1192,7 +1176,6 @@ impl ChartApp {
             pending_cold_apply: None,
             pending_background_warm: std::collections::VecDeque::new(),
             background_warm_seeded: false,
-            last_backfill_time: std::time::Instant::now(),
             lag_event_count: 0,
             recalc_count: 0,
             recalc_log_timer: std::time::Instant::now(),
@@ -1200,7 +1183,6 @@ impl ChartApp {
             diagnostics_enabled: false,
             sidebar_data_dirty: true,
             last_active_leaf: None,
-            last_sidebar_data_mark: None,
             render_timing_us: (0, 0, 0, 0),
             pending_sub_pane_ratios: std::collections::HashMap::new(),
             indicator_heal_attempted: std::collections::HashSet::new(),
@@ -1549,7 +1531,6 @@ impl ChartApp {
             pending_cold_apply: None,
             pending_background_warm: std::collections::VecDeque::new(),
             background_warm_seeded: false,
-            last_backfill_time: std::time::Instant::now(),
             lag_event_count: 0,
             recalc_count: 0,
             recalc_log_timer: std::time::Instant::now(),
@@ -1557,7 +1538,6 @@ impl ChartApp {
             diagnostics_enabled: false,
             sidebar_data_dirty: true,
             last_active_leaf: None,
-            last_sidebar_data_mark: None,
             render_timing_us: (0, 0, 0, 0),
             pending_sub_pane_ratios: std::collections::HashMap::new(),
             indicator_heal_attempted: std::collections::HashSet::new(),
@@ -1799,7 +1779,6 @@ impl ChartApp {
             pending_cold_apply: None,
             pending_background_warm: std::collections::VecDeque::new(),
             background_warm_seeded: false,
-            last_backfill_time: std::time::Instant::now(),
             lag_event_count: 0,
             recalc_count: 0,
             recalc_log_timer: std::time::Instant::now(),
@@ -1807,7 +1786,6 @@ impl ChartApp {
             diagnostics_enabled: false,
             sidebar_data_dirty: true,
             last_active_leaf: None,
-            last_sidebar_data_mark: None,
             render_timing_us: (0, 0, 0, 0),
             pending_sub_pane_ratios: std::collections::HashMap::new(),
             indicator_heal_attempted: std::collections::HashSet::new(),
@@ -2742,32 +2720,6 @@ impl ChartApp {
     /// `last_cached_ts`), this call is cheap — it downloads the gap, not the
     /// full history.
     ///
-    /// Call sites must check the debounce guard (`last_backfill_time`) before
-    /// invoking this method.
-    fn trigger_backfill_after_lag(&self) {
-        // S2.7.1: iterate .iter() to get chart_id, then read via branch_meta.
-        for (chart_id, _window) in self.panel_app.panel_grid.containers().iter() {
-            let sym = match self.symbol_for_chart(*chart_id) {
-                Some(s) if !s.is_empty() => s,
-                _ => continue,
-            };
-            let exch = self.exchange_for_chart(*chart_id)
-                .unwrap_or_default();
-            let eid = digdigdig3::ExchangeId::from_str(&exch)
-                .unwrap_or(digdigdig3::ExchangeId::Binance);
-            let at_str = self.account_type_for_chart(*chart_id)
-                .unwrap_or_default();
-            let at = account_type_from_label(&at_str);
-            let tf = match self.timeframe_for_chart(*chart_id) {
-                Some(t) => t,
-                None => continue,
-            };
-            // Passing `None` for both limit and total_bars lets the bridge
-            // pick up incremental mode from its bar cache.
-            self.core.bridge.request_bars(eid, sym.as_str(), &tf, at, None, None, false);
-        }
-    }
-
     // -------------------------------------------------------------------------
     // Indicator recalculation helpers
     // -------------------------------------------------------------------------
