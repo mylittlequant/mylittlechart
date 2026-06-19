@@ -1,15 +1,16 @@
-//! Phase 4 S2.8 — `ChartPanelState`: per-canvas display options + drawing manager.
+//! Phase 4 S2.8 — `ChartPanelState`: per-canvas display options.
 //!
 //! Moved into `zengeld-chart` so that both the chart crate and `chart-app`
 //! can reference the type without a circular dependency.
 //!
 //! Stored in `TradingPanelsStore.chart_panel` (chart-app) keyed by
-//! [`ChartPanelId`].  Replaces the 18 duplicate display-option fields (S2.7)
-//! and the `drawing_manager` field (S2.8) that were formerly on
-//! [`super::chart_container::ChartContainer`].
+//! [`ChartPanelId`].  Replaces the 18 duplicate display-option fields (S2.7).
+//!
+//! The `drawing_manager` field (S2.8) was previously here; it was lifted to
+//! `BackendCore::DrawingRegistry` (backend-cutover) so that all consumers
+//! access it through a single authoritative location.
 
 use crate::chart::{CrosshairOptions, GridOptions, Legend, Tooltip, Watermark};
-use crate::drawing::DrawingManager;
 use crate::state::chart_container_leaf::ChartPanelId;
 
 /// State of one chart canvas leaf.
@@ -66,14 +67,6 @@ pub struct ChartPanelState {
     /// Default: `"1m"`. Unused for non-footprint chart types.
     pub chart_type_interval: &'static str,
 
-    // ── Drawing manager ───────────────────────────────────────────────────────
-    /// Drawing primitives manager for this canvas leaf.
-    ///
-    /// Migrated here from [`super::chart_container::ChartContainer`] in Phase 4
-    /// S2.8. Callers that need to draw, read primitives, or hit-test must look
-    /// up the `ChartPanelState` via `TradingPanelsStore.chart_panel`.
-    pub drawing_manager: DrawingManager,
-
     // ── Display options ───────────────────────────────────────────────────────
     /// Grid display options (vertical + horizontal lines).
     pub grid_options: GridOptions,
@@ -112,7 +105,6 @@ impl ChartPanelState {
             chart_type: "candles",
             chart_type_param: 0.0,
             chart_type_interval: "1m",
-            drawing_manager: DrawingManager::new(),
             grid_options: GridOptions::default(),
             crosshair_options: CrosshairOptions::default(),
             legend: Legend::default(),

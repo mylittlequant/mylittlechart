@@ -222,6 +222,7 @@ impl ChartWindowSnapshot {
     pub fn from_window(
         window: &ChartContainer,
         panel: &ChartPanelState,
+        drawing_manager: &crate::drawing::DrawingManager,
         leaf_id: u64,
         bubble_id: Option<u64>,
         pre_tag_indicator_ids: Vec<u64>,
@@ -232,7 +233,7 @@ impl ChartWindowSnapshot {
         exchange: String,
         account_type: String,
     ) -> Self {
-        let drawings = DrawingSnapshot::from_manager(window.id.0, &panel.drawing_manager);
+        let drawings = DrawingSnapshot::from_manager(window.id.0, drawing_manager);
 
         // Save full viewport — chart_width, bar_spacing, bar_count are all valid
         // and needed for immediate snap in set_bars(). If app window was resized,

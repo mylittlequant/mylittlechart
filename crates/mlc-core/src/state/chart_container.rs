@@ -481,7 +481,7 @@ impl ChartContainer {
             drag_start_spacing: 0.0,
             drag_start_price_min: 0.0,
             drag_start_price_max: 0.0,
-            // Object managers (drawing_manager now lives in ChartPanelState)
+            // Object managers (DrawingManager lives in BackendCore::DrawingRegistry)
             price_lines: HashMap::new(),
             // Compare overlay (per-window)
             compare_overlay: CompareOverlay::new(),
@@ -651,7 +651,7 @@ impl ChartContainer {
     /// The cache key is `"symbol:exchange:account_type"` (e.g. `"BTCUSDT:binance:S"`).
     /// If there are no drawings, any existing cache entry for the key is removed.
     ///
-    /// `drawing_manager` is taken from the caller's `ChartPanelState` (S2.8 migration).
+    /// `drawing_manager` is taken from `BackendCore::DrawingRegistry` by the caller.
     pub fn snapshot_drawings_for_symbol(
         &mut self,
         symbol: &str,
@@ -677,7 +677,7 @@ impl ChartContainer {
     /// The cache key is `"symbol:exchange:account_type"` (e.g. `"BTCUSDT:binance:S"`).
     /// Returns `true` if drawings were restored, `false` if no cache entry exists.
     ///
-    /// `drawing_manager` is taken from the caller's `ChartPanelState` (S2.8 migration).
+    /// `drawing_manager` is taken from `BackendCore::DrawingRegistry` by the caller.
     pub fn restore_drawings_for_symbol(
         &mut self,
         symbol: &str,
@@ -714,15 +714,18 @@ impl ChartContainer {
     /// `branch_meta` in chart-app; callers pass them in from `read_*` helpers.
     ///
     /// `src_drawing_manager` is the source window's `DrawingManager` (from
-    /// `ChartPanelState` after S2.8 migration).
+    /// `BackendCore::DrawingRegistry` after the backend-cutover).
     ///
     /// When `sync_drawings` is `true`, all existing primitives are cloned into the
     /// new window as synced copies (`origin_id` is set to the original's id).
     /// When `false`, the new window starts with an empty drawing manager.
     ///
-    /// Returns a `(ChartContainer, ChartPanelState)` tuple.  The caller must
-    /// insert the `ChartPanelState` into `TradingPanelsStore.chart_panel` under
-    /// the new `chart_panel_id` (available as `new_container.chart_panel_id`).
+    /// Returns a `(ChartContainer, ChartPanelState, DrawingManager)` tuple.
+    /// The caller must:
+    ///   1. Insert `ChartPanelState` into `TradingPanelsStore.chart_panel` under
+    ///      the new `chart_panel_id` (`new_container.chart_panel_id`).
+    ///   2. Insert `DrawingManager` into `BackendCore::DrawingRegistry` under
+    ///      the same `chart_panel_id`.
     pub fn clone_for_split(
         &self,
         new_chart_id: ChartId,
@@ -732,7 +735,7 @@ impl ChartContainer {
         account_type: &str,
         src_drawing_manager: &crate::drawing::DrawingManager,
         src_panel: &ChartPanelState,
-    ) -> (Self, ChartPanelState) {
+    ) -> (Self, ChartPanelState, crate::drawing::DrawingManager) {
         let new_panel_id = crate::state::chart_container_leaf::generate_chart_panel_id();
         let mut drawing_manager = crate::drawing::DrawingManager::new();
         drawing_manager.set_current_window(Some(new_chart_id.0));
@@ -763,7 +766,6 @@ impl ChartContainer {
         new_panel.legend = src_panel.legend.clone();
         new_panel.watermark = src_panel.watermark.clone();
         new_panel.tooltip = src_panel.tooltip.clone();
-        new_panel.drawing_manager = drawing_manager;
 
         let new_container = Self {
             // New chart ID
@@ -818,7 +820,7 @@ impl ChartContainer {
             drag_start_price_min: 0.0,
             drag_start_price_max: 0.0,
 
-            // === Object Managers (drawing_manager now lives in ChartPanelState) ===
+            // === Object Managers (DrawingManager lives in BackendCore::DrawingRegistry) ===
             price_lines: self.price_lines.clone(),
 
             // === Compare Overlay (reset) ===
@@ -864,7 +866,7 @@ impl ChartContainer {
             // state survives a split operation.
             sub_pane_above_main: self.sub_pane_above_main.clone(),
         };
-        (new_container, new_panel)
+        (new_container, new_panel, drawing_manager)
     }
 
     /// Crosshair state for rendering (respects render flag).
@@ -993,8 +995,9 @@ impl ChartContainer {
     /// `branch_meta` in chart-app; the caller is responsible for mirroring
     /// the source window's instrument into branch_meta for the dest chart_id.
     ///
-    /// `dst_panel` is the destination window's `ChartPanelState`; this method
-    /// calls `dst_panel.drawing_manager.set_current_symbol_key` on it (S2.8).
+    /// `dst_dm` is the destination window's `DrawingManager` (from
+    /// `BackendCore::DrawingRegistry` after the backend-cutover); this method
+    /// calls `dst_dm.set_current_symbol_key` on it.
     /// Phase X0 / C5c: bars storage lives on the bubble — only view state
     /// is copied. Caller is responsible for ensuring the destination's
     /// bubble has the same instrument coordinates as the source's bubble
@@ -1005,9 +1008,9 @@ impl ChartContainer {
         symbol: &str,
         exchange: &str,
         account_type: &str,
-        dst_panel: &mut ChartPanelState,
+        dst_dm: &mut crate::drawing::DrawingManager,
     ) {
-        dst_panel.drawing_manager.set_current_symbol_key(symbol, exchange, account_type);
+        dst_dm.set_current_symbol_key(symbol, exchange, account_type);
 
         self.viewport = source.viewport.clone();
         self.price_scale = source.price_scale.clone();
@@ -1195,10 +1198,10 @@ impl ChartContainer {
     ///
     /// Unlike `clone_for_split`, this variant does **not** take a source
     /// `DrawingManager` or `ChartPanelState`.  It creates a fresh `ChartContainer`
-    /// with an empty drawing_manager hint (just the window-id set).  The caller
+    /// shell with no drawing state.  The caller
     /// (chart-app `sync_group.rs`) is responsible for seeding the real
-    /// `ChartPanelState` (including the `drawing_manager`) into `panels_store`
-    /// after the split returns the new leaf ids.
+    /// `ChartPanelState` and a fresh `DrawingManager` into `panels_store` and
+    /// `BackendCore::DrawingRegistry` after the split returns the new leaf ids.
     ///
     /// This overload exists so that `ChartPanelGrid::split_active` (inside the
     /// `zengeld-chart` crate) can call it without needing to know about
@@ -1996,9 +1999,12 @@ impl ChartContainer {
 
     /// Execute a chart action, mutating chart state and panel display state.
     ///
+    /// `drawing_manager` is the per-panel `DrawingManager` from
+    /// `BackendCore::DrawingRegistry` (backend-cutover).
+    ///
     /// Returns `true` if the action was handled by this window, `false` if it
     /// requires app-level handling.
-    pub fn execute_chart_action(&mut self, panel: &mut ChartPanelState, action: &crate::ChartAction, bars: &[Bar]) -> bool {
+    pub fn execute_chart_action(&mut self, panel: &mut ChartPanelState, drawing_manager: &mut crate::drawing::DrawingManager, action: &crate::ChartAction, bars: &[Bar]) -> bool {
         use crate::ChartAction;
         match action {
             // === Series / Chart Type ===
@@ -2038,12 +2044,12 @@ impl ChartContainer {
             ChartAction::FitContent => { self.fit_content(bars); true }
             ChartAction::ResetZoom => { self.reset_zoom(bars); true }
 
-            // === Drawing (drawing_manager now lives in ChartPanelState — S2.8) ===
-            ChartAction::SelectTool(tool) => { panel.drawing_manager.set_tool(Some(tool)); true }
-            ChartAction::ToggleLockDrawings => { panel.drawing_manager.toggle_lock(); true }
-            ChartAction::ToggleDrawingsVisible => { panel.drawing_manager.toggle_visible(); true }
-            ChartAction::DeleteSelected => { panel.drawing_manager.delete_selected(); true }
-            ChartAction::DeleteAll => { panel.drawing_manager.clear(); true }
+            // === Drawing (drawing_manager comes from BackendCore::DrawingRegistry) ===
+            ChartAction::SelectTool(tool) => { drawing_manager.set_tool(Some(tool)); true }
+            ChartAction::ToggleLockDrawings => { drawing_manager.toggle_lock(); true }
+            ChartAction::ToggleDrawingsVisible => { drawing_manager.toggle_visible(); true }
+            ChartAction::DeleteSelected => { drawing_manager.delete_selected(); true }
+            ChartAction::DeleteAll => { drawing_manager.clear(); true }
 
             // === Undo / Redo ===
             ChartAction::Undo => self.command_history.can_undo(),

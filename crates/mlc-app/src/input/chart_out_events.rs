@@ -710,12 +710,12 @@ impl ChartApp {
                     .find(|w| w.id == target_cid)
                 {
                     if let Some(pid) = target_pid {
-                        if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                            window.snapshot_drawings_for_symbol(&old_sym_search, &old_exch_search, &old_at_search, &panel.drawing_manager);
-                            panel.drawing_manager.set_current_symbol_key(&symbol, resolved_exchange.as_str(), &account_type);
-                            panel.drawing_manager.clear_all_primitives();
-                            window.restore_drawings_for_symbol(&symbol, resolved_exchange.as_str(), &account_type, &mut panel.drawing_manager);
-                        }
+                        let mut guard = self.core.drawings_mut();
+                        let dm = guard.entry_or_default(pid);
+                        window.snapshot_drawings_for_symbol(&old_sym_search, &old_exch_search, &old_at_search, dm);
+                        dm.set_current_symbol_key(&symbol, resolved_exchange.as_str(), &account_type);
+                        dm.clear_all_primitives();
+                        window.restore_drawings_for_symbol(&symbol, resolved_exchange.as_str(), &account_type, dm);
                     }
                     window.viewport.bar_count = 0;
                     window.viewport.view_start = 0.0;
@@ -1819,22 +1819,22 @@ impl ChartApp {
                         // sync.  Save current drawing_manager locals into auto_bubble.primitives
                         // (they are the "home" state; auto_bubble must hold them for desync).
                         if let (Some(bid), Some(pid)) = (auto_bid, active_pid) {
-                            if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                let local: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
-                                    panel.drawing_manager.primitives().iter()
+                            let local: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
+                                self.core.drawings().get(pid)
+                                    .map(|dm| dm.primitives().iter()
                                         .filter(|p| p.data().origin_id.is_none())
                                         .map(|p| p.clone_box())
-                                        .collect();
-                                let stash_count = local.len();
-                                if let Some(auto_bub) = self.core.bubble_mut().bubble.bubble_mut(bid) {
-                                    auto_bub.primitives = local;
-                                }
-                                panel.drawing_manager.clear_all_primitives();
-                                eprintln!(
-                                    "[BubbleStore] sync_drawings ON: moved {} window-local primitives into auto-bubble {:?}",
-                                    stash_count, bid
-                                );
+                                        .collect())
+                                    .unwrap_or_default();
+                            let stash_count = local.len();
+                            if let Some(auto_bub) = self.core.bubble_mut().bubble.bubble_mut(bid) {
+                                auto_bub.primitives = local;
                             }
+                            self.core.drawings_mut().entry_or_default(pid).clear_all_primitives();
+                            eprintln!(
+                                "[BubbleStore] sync_drawings ON: moved {} window-local primitives into auto-bubble {:?}",
+                                stash_count, bid
+                            );
                         }
                     } else {
                         // sync_drawings ON -> OFF: restore home drawings from auto_bubble into
@@ -1845,10 +1845,10 @@ impl ChartApp {
                                     .map(|bub| bub.primitives.iter().map(|p| p.clone_box()).collect())
                                     .unwrap_or_default();
                             let count = restored.len();
-                            if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                panel.drawing_manager.clear_all_primitives();
-                                panel.drawing_manager.add_synced_primitives(restored);
-                            }
+                            let mut guard = self.core.drawings_mut();
+                            let dm = guard.entry_or_default(pid);
+                            dm.clear_all_primitives();
+                            dm.add_synced_primitives(restored);
                             eprintln!(
                                 "[BubbleStore] sync_drawings OFF: restored {} primitives from auto-bubble {:?}",
                                 count, bid

@@ -265,10 +265,8 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                         .find(|cw| cw.id.0 == chart_id)
                         .map(|cw| cw.chart_panel_id);
                     if let Some(pid) = cw_pid {
-                        if let Some(panel) = chart.panels_store.chart_panel.get_mut(&pid) {
-                            panel.drawing_manager.add_external_primitive(prim);
-                            eprintln!("[AgentCommand] AddPrimitive: type={}, chart={}", type_id, chart_id);
-                        }
+                        chart.core.drawings_mut().entry_or_default(pid).add_external_primitive(prim);
+                        eprintln!("[AgentCommand] AddPrimitive: type={}, chart={}", type_id, chart_id);
                     } else {
                         eprintln!("[AgentCommand] AddPrimitive: chart not found: {}", chart_id);
                     }
@@ -289,25 +287,25 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     .find(|cw| cw.id.0 == chart_id)
                     .map(|cw| cw.chart_panel_id);
                 if let Some(pid) = cw_pid {
-                    if let Some(panel) = chart.panels_store.chart_panel.get_mut(&pid) {
-                        let prim = panel.drawing_manager.primitives_mut()
-                            .iter_mut().find(|p| p.data().id == primitive_id);
-                        if let Some(prim) = prim {
-                            if let Some(pts) = points {
-                                let new_pts: Vec<(i64, f64)> = pts.iter().map(|p| (p[0] as i64, p[1])).collect();
-                                prim.set_points(&new_pts);
-                            }
-                            if let Some(s) = style {
-                                prim.data_mut().color = mlc_core::drawing::primitives_v2::PrimitiveColor {
-                                    stroke: s.color,
-                                    fill: s.fill_color,
-                                };
-                                prim.data_mut().width = s.width;
-                            }
-                            eprintln!("[AgentCommand] UpdatePrimitive: id={}", primitive_id);
-                        } else {
-                            eprintln!("[AgentCommand] UpdatePrimitive: primitive not found: {}", primitive_id);
+                    let mut dreg = chart.core.drawings_mut();
+                    let dm = dreg.entry_or_default(pid);
+                    let prim = dm.primitives_mut()
+                        .iter_mut().find(|p| p.data().id == primitive_id);
+                    if let Some(prim) = prim {
+                        if let Some(pts) = points {
+                            let new_pts: Vec<(i64, f64)> = pts.iter().map(|p| (p[0] as i64, p[1])).collect();
+                            prim.set_points(&new_pts);
                         }
+                        if let Some(s) = style {
+                            prim.data_mut().color = mlc_core::drawing::primitives_v2::PrimitiveColor {
+                                stroke: s.color,
+                                fill: s.fill_color,
+                            };
+                            prim.data_mut().width = s.width;
+                        }
+                        eprintln!("[AgentCommand] UpdatePrimitive: id={}", primitive_id);
+                    } else {
+                        eprintln!("[AgentCommand] UpdatePrimitive: primitive not found: {}", primitive_id);
                     }
                 } else {
                     eprintln!("[AgentCommand] UpdatePrimitive: chart not found: {}", chart_id);
@@ -325,13 +323,13 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     .find(|cw| cw.id.0 == chart_id)
                     .map(|cw| cw.chart_panel_id);
                 let removed = if let Some(pid) = cw_pid {
-                    if let Some(panel) = chart.panels_store.chart_panel.get_mut(&pid) {
-                        let idx = panel.drawing_manager.primitives()
-                            .iter().position(|p| p.data().id == primitive_id);
-                        if let Some(idx) = idx {
-                            panel.drawing_manager.remove(idx);
-                            true
-                        } else { false }
+                    let mut dreg = chart.core.drawings_mut();
+                    let dm = dreg.entry_or_default(pid);
+                    let idx = dm.primitives()
+                        .iter().position(|p| p.data().id == primitive_id);
+                    if let Some(idx) = idx {
+                        dm.remove(idx);
+                        true
                     } else { false }
                 } else { false };
                 if removed {

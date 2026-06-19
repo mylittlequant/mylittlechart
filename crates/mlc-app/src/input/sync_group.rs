@@ -132,15 +132,15 @@ impl ChartApp {
 
                 // Apply restored state to window and drawing_manager.
                 if let Some(pid) = pid_desync {
-                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                        panel.drawing_manager.clear_all_primitives();
-                        if !restored_prims.is_empty() {
-                            let count = restored_prims.len();
-                            panel.drawing_manager.add_synced_primitives(restored_prims);
-                            eprintln!("[BubbleStore] Desync: restored {} primitives from auto-bubble", count);
-                        } else {
-                            eprintln!("[BubbleStore] Desync: auto-bubble had no primitives (fresh chart)");
-                        }
+                    let mut guard = self.core.drawings_mut();
+                    let dm = guard.entry_or_default(pid);
+                    dm.clear_all_primitives();
+                    if !restored_prims.is_empty() {
+                        let count = restored_prims.len();
+                        dm.add_synced_primitives(restored_prims);
+                        eprintln!("[BubbleStore] Desync: restored {} primitives from auto-bubble", count);
+                    } else {
+                        eprintln!("[BubbleStore] Desync: auto-bubble had no primitives (fresh chart)");
                     }
                 }
 
@@ -163,9 +163,7 @@ impl ChartApp {
                         .bubble(auto_bid)
                         .map(|g| g.last_used_style.clone())
                     {
-                        if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                            panel.drawing_manager.bind_style_store(style_arc);
-                        }
+                        self.core.drawings_mut().entry_or_default(pid).bind_style_store(style_arc);
                     }
                 }
 
@@ -212,8 +210,7 @@ impl ChartApp {
                 // are the authoritative home-state for future join cycles.
                 let dm_prims: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
                     pid_desync
-                        .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                        .map(|panel| panel.drawing_manager.primitives().iter().map(|p| p.clone_box()).collect())
+                        .and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.primitives().iter().map(|p| p.clone_box()).collect::<Vec<_>>()))
                         .unwrap_or_default();
                 if let Some(auto_bub) = self.core.bubble_mut().bubble.bubble_mut(auto_bid) {
                     auto_bub.primitives = dm_prims;
@@ -221,9 +218,7 @@ impl ChartApp {
             } else {
                 // Was not in a color group — just purge synced primitives and update ids.
                 if let Some(pid) = pid_desync {
-                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                        panel.drawing_manager.purge_synced_primitives();
-                    }
+                    self.core.drawings_mut().entry_or_default(pid).purge_synced_primitives();
                 }
                 self.core.indicators_mut().purge_synced_instances_for_window(chart_id.0);
                 if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
@@ -284,9 +279,7 @@ impl ChartApp {
                 .map(|g| g.last_used_style.clone())
             {
                 if let Some(pid) = pid_join {
-                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                        panel.drawing_manager.bind_style_store(style_arc);
-                    }
+                    self.core.drawings_mut().entry_or_default(pid).bind_style_store(style_arc);
                 }
             }
 
@@ -355,11 +348,10 @@ impl ChartApp {
                             .unwrap_or_default()
                     } else {
                         // Fallback: read from drawing_manager if no valid auto_bubble.
-                        pid_join.and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                            .map(|panel| panel.drawing_manager.primitives().iter()
+                        pid_join.and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.primitives().iter()
                                 .filter(|p| p.data().origin_id.is_none())
                                 .map(|p| p.clone_box())
-                                .collect())
+                                .collect::<Vec<_>>()))
                             .unwrap_or_default()
                     };
                 let mut group_prims = source_prims;
@@ -447,9 +439,7 @@ impl ChartApp {
 
             // Clear drawing_manager; group prims arrive via per-frame sync.
             if let Some(pid) = pid_join {
-                if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                    panel.drawing_manager.clear_all_primitives();
-                }
+                self.core.drawings_mut().entry_or_default(pid).clear_all_primitives();
             }
 
             // Get auto_bubble_id before taking mutable window borrow.
@@ -601,17 +591,17 @@ impl ChartApp {
             if let Some(pid) = pid_opt {
                 let style_arc = self.bubble_for_chart(chart_id)
                     .and_then(|bid| self.with_bubble(bid, |g| g.last_used_style.clone()));
-                let panel = crate::chart_panel_bridge::ensure_chart_panel_state(
+                let _panel = crate::chart_panel_bridge::ensure_chart_panel_state(
                     &mut self.panels_store,
                     pid,
                 );
-                panel.drawing_manager.set_current_symbol_key(
-                    &source_sym,
-                    &source_exch,
-                    &source_at,
-                );
-                if let Some(style_arc) = style_arc {
-                    panel.drawing_manager.bind_style_store(style_arc);
+                {
+                    let mut guard = self.core.drawings_mut();
+                    let dm = guard.entry_or_default(pid);
+                    dm.set_current_symbol_key(&source_sym, &source_exch, &source_at);
+                    if let Some(arc) = style_arc {
+                        dm.bind_style_store(arc);
+                    }
                 }
             }
         }
@@ -774,9 +764,7 @@ impl ChartApp {
             for &(leaf_id, _) in &leaf_chart_ids {
                 if let Some(pid) = self.panel_app.panel_grid.container_for_leaf(leaf_id).map(|w| w.chart_panel_id) {
                     if let Some(ref arc) = style_arc {
-                        if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                            panel.drawing_manager.bind_style_store(arc.clone());
-                        }
+                        self.core.drawings_mut().entry_or_default(pid).bind_style_store(arc.clone());
                     }
                 }
             }
@@ -830,9 +818,7 @@ impl ChartApp {
             // from the group each frame.
             for &(leaf_id, _) in leaf_chart_ids.iter().skip(1) {
                 if let Some(pid) = self.panel_app.panel_grid.container_for_leaf(leaf_id).map(|w| w.chart_panel_id) {
-                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                        panel.drawing_manager.clear_all_primitives();
-                    }
+                    self.core.drawings_mut().entry_or_default(pid).clear_all_primitives();
                 }
             }
 
@@ -864,12 +850,14 @@ impl ChartApp {
                 let mut source_prims: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
                     self.panel_app.panel_grid
                         .container_for_leaf(new_leaves[0])
-                        .and_then(|w| self.panels_store.chart_panel.get(&w.chart_panel_id))
-                        .map(|panel| {
-                            panel.drawing_manager.primitives().iter()
-                                .filter(|p| p.data().origin_id.is_none())
-                                .map(|p| p.clone_box())
-                                .collect()
+                        .map(|w| w.chart_panel_id)
+                        .and_then(|pid| {
+                            self.core.drawings().get(pid).map(|dm| {
+                                dm.primitives().iter()
+                                    .filter(|p| p.data().origin_id.is_none())
+                                    .map(|p| p.clone_box())
+                                    .collect::<Vec<_>>()
+                            })
                         })
                         .unwrap_or_default();
                 for p in &mut source_prims {
@@ -1064,14 +1052,13 @@ impl ChartApp {
             let pid_opt = self.panel_app.panel_grid.container_for_leaf(*leaf_id).map(|w| w.chart_panel_id);
             if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(*leaf_id) {
                 if let Some(pid) = pid_opt {
-                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                        window.snapshot_drawings_for_symbol(old_symbol, old_exchange, old_account_type, &panel.drawing_manager);
-                        panel.drawing_manager.set_current_symbol_key(&symbol_owned, &exchange_owned, &account_type_owned);
-                        panel.drawing_manager.clear_all_primitives();
-                        window.restore_drawings_for_symbol(&symbol_owned, &exchange_owned, &account_type_owned, &mut panel.drawing_manager);
-                    }
+                    let mut guard = self.core.drawings_mut();
+                    let dm = guard.entry_or_default(pid);
+                    window.snapshot_drawings_for_symbol(old_symbol, old_exchange, old_account_type, dm);
+                    dm.set_current_symbol_key(&symbol_owned, &exchange_owned, &account_type_owned);
+                    dm.clear_all_primitives();
+                    window.restore_drawings_for_symbol(&symbol_owned, &exchange_owned, &account_type_owned, dm);
                 }
-                {};
                 window.viewport.bar_count = 0;
                 window.viewport.view_start = 0.0;
                 window.pending_symbol_load = true;
@@ -1315,8 +1302,7 @@ impl ChartApp {
         }
 
         let src_pid = self.panel_app.panel_grid.containers().get(&source_chart_id).map(|w| w.chart_panel_id);
-        let prim_id = match src_pid.and_then(|pid| self.panels_store.chart_panel.get(&pid))
-            .and_then(|panel| panel.drawing_manager.last_original_id())
+        let prim_id = match src_pid.and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.last_original_id()))
         {
             Some(id) => id,
             None => return,
@@ -1330,8 +1316,8 @@ impl ChartApp {
             };
 
             // Clone the primitive from the source window.
-            let cloned = match src_pid.and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                .and_then(|panel| panel.drawing_manager.clone_primitive_for_sync(prim_id, peer_chart_id.0))
+            let cloned = match src_pid.and_then(|pid| self.core.drawings().get(pid)
+                .and_then(|dm| dm.clone_primitive_for_sync(prim_id, peer_chart_id.0)))
             {
                 Some(c) => c,
                 None => continue,
@@ -1339,10 +1325,8 @@ impl ChartApp {
 
             // Insert the clone into the peer window.
             if let Some(peer_pid) = self.panel_app.panel_grid.containers().get(&peer_chart_id).map(|w| w.chart_panel_id) {
-                if let Some(peer_panel) = self.panels_store.chart_panel.get_mut(&peer_pid) {
-                    peer_panel.drawing_manager.add_synced_primitives(vec![cloned]);
-                    eprintln!("[ChartApp] Synced primitive {} to peer chart {:?}", prim_id, peer_chart_id);
-                }
+                self.core.drawings_mut().entry_or_default(peer_pid).add_synced_primitives(vec![cloned]);
+                eprintln!("[ChartApp] Synced primitive {} to peer chart {:?}", prim_id, peer_chart_id);
             }
         }
     }
@@ -1493,17 +1477,20 @@ impl ChartApp {
         // Read the current drawing state and active pane from the source window.
         // Extracted before taking mutable borrows on peer windows.
         let src_pid_ds = self.panel_app.panel_grid.container_for_leaf(source_leaf).map(|w| w.chart_panel_id);
-        let (tool_id, points, src_pane_id) = match src_pid_ds.and_then(|pid| self.panels_store.chart_panel.get(&pid)) {
-            Some(panel) => {
-                let pane = panel.drawing_manager.current_pane();
-                match panel.drawing_manager.drawing_state() {
-                    mlc_core::drawing::DrawingState::Creating { tool_id, points } => {
-                        (Some(tool_id.clone()), points.clone(), pane)
+        let (tool_id, points, src_pane_id) = {
+            let guard = self.core.drawings();
+            match src_pid_ds.and_then(|pid| guard.get(pid)) {
+                Some(dm) => {
+                    let pane = dm.current_pane();
+                    match dm.drawing_state() {
+                        mlc_core::drawing::DrawingState::Creating { tool_id, points } => {
+                            (Some(tool_id.clone()), points.clone(), pane)
+                        }
+                        mlc_core::drawing::DrawingState::Idle => (None, Vec::new(), pane),
                     }
-                    mlc_core::drawing::DrawingState::Idle => (None, Vec::new(), pane),
                 }
+                None => return,
             }
-            None => return,
         };
 
         // Build a reverse map: source instance_id -> (type_id, ordinal).
@@ -1556,18 +1543,16 @@ impl ChartApp {
             });
 
             if let Some(peer_pid) = self.panel_app.panel_grid.container_for_leaf(*peer_leaf).map(|w| w.chart_panel_id) {
-                if let Some(peer_panel) = self.panels_store.chart_panel.get_mut(&peer_pid) {
-                    peer_panel.drawing_manager.set_synced_drawing_state(tool_id.clone(), points.clone());
-                    // Sync the pane context so the preview renders in the correct sub-pane
-                    // on the peer (not on the main chart). When the source drawing is on
-                    // the main chart (src_pane_id = None), clear any stale pane context.
-                    if src_pane_id.is_some() {
-                        // peer_pane_id is None when the peer lacks the indicator — the
-                        // preview then falls back to the main chart, which is acceptable.
-                        peer_panel.drawing_manager.set_current_pane(peer_pane_id);
-                    } else {
-                        peer_panel.drawing_manager.set_current_pane(None);
-                    }
+                let mut guard = self.core.drawings_mut();
+                let peer_dm = guard.entry_or_default(peer_pid);
+                peer_dm.set_synced_drawing_state(tool_id.clone(), points.clone());
+                // Sync the pane context so the preview renders in the correct sub-pane
+                // on the peer (not on the main chart). When the source drawing is on
+                // the main chart (src_pane_id = None), clear any stale pane context.
+                if src_pane_id.is_some() {
+                    peer_dm.set_current_pane(peer_pane_id);
+                } else {
+                    peer_dm.set_current_pane(None);
                 }
             }
         }
@@ -1615,15 +1600,17 @@ impl ChartApp {
         // Pop the last primitive from the window's drawing_manager.
         let active_pid_intercept = self.panel_app.panel_grid.containers().get(&chart_id).map(|w| w.chart_panel_id);
         let prim = {
-            let panel = match active_pid_intercept.and_then(|pid| self.panels_store.chart_panel.get_mut(&pid)) {
+            let pid = match active_pid_intercept {
                 Some(p) => p,
                 None => return false,
             };
-            let idx = match panel.drawing_manager.last_index() {
+            let mut guard = self.core.drawings_mut();
+            let dm = guard.entry_or_default(pid);
+            let idx = match dm.last_index() {
                 Some(i) => i,
                 None => return false,
             };
-            match panel.drawing_manager.remove(idx) {
+            match dm.remove(idx) {
                 Some(p) => p,
                 None => return false,
             }
@@ -1663,9 +1650,7 @@ impl ChartApp {
         } else {
             // Group disappeared — put the primitive back into drawing_manager.
             if let Some(pid) = active_pid_intercept {
-                if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                    panel.drawing_manager.add_synced_primitives(vec![prim]);
-                }
+                self.core.drawings_mut().entry_or_default(pid).add_synced_primitives(vec![prim]);
             }
             false
         }
@@ -1720,8 +1705,8 @@ impl ChartApp {
         }
         let new_prims: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
             self.panel_app.panel_grid.containers().get(&chart_id)
-                .and_then(|w| self.panels_store.chart_panel.get(&w.chart_panel_id))
-                .map(|panel| panel.drawing_manager.primitives().iter().map(|p| p.clone_box()).collect())
+                .map(|w| w.chart_panel_id)
+                .and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.primitives().iter().map(|p| p.clone_box()).collect::<Vec<_>>()))
                 .unwrap_or_default();
         if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(group_id) {
             group.primitives = new_prims;

@@ -354,11 +354,19 @@ impl ChartApp {
                         let active_pid_pc = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                             if let Some(pid) = active_pid_pc {
-                                if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                    window.snapshot_drawings_for_symbol(&old_sym_pc, &old_exch_pc, &old_at_pc, &panel.drawing_manager);
-                                    panel.drawing_manager.set_current_symbol_key(&symbol, &item_exchange, &item_account_type);
-                                    panel.drawing_manager.clear_all_primitives();
-                                    window.restore_drawings_for_symbol(&symbol, &item_exchange, &item_account_type, &mut panel.drawing_manager);
+                                // snapshot then clear+restore via registry
+                                {
+                                    let guard = self.core.drawings();
+                                    if let Some(dm) = guard.get(pid) {
+                                        window.snapshot_drawings_for_symbol(&old_sym_pc, &old_exch_pc, &old_at_pc, dm);
+                                    }
+                                }
+                                {
+                                    let mut guard = self.core.drawings_mut();
+                                    let dm = guard.entry_or_default(pid);
+                                    dm.set_current_symbol_key(&symbol, &item_exchange, &item_account_type);
+                                    dm.clear_all_primitives();
+                                    window.restore_drawings_for_symbol(&symbol, &item_exchange, &item_account_type, dm);
                                 }
                             }
                             {};
@@ -2660,10 +2668,11 @@ impl ChartApp {
                 // 1. Try active drawing_manager first (handles Active + WindowOtherKey).
                 let active_pid_del = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                 let removed_from_dm = active_pid_del
-                    .and_then(|pid| self.panels_store.chart_panel.get_mut(&pid))
-                    .and_then(|panel| {
-                        panel.drawing_manager.find_index_by_id(id).map(|idx| {
-                            panel.drawing_manager.remove(idx);
+                    .and_then(|pid| {
+                        let mut guard = self.core.drawings_mut();
+                        let dm = guard.entry_or_default(pid);
+                        dm.find_index_by_id(id).map(|idx| {
+                            dm.remove(idx);
                             true
                         })
                     })
@@ -2770,11 +2779,10 @@ impl ChartApp {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 let active_pid_settings = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                 if let Some(pid) = active_pid_settings {
-                    if let Some(panel) = self.panels_store.chart_panel.get(&pid) {
-                        if let Some(idx) = panel.drawing_manager.find_index_by_id(id) {
-                            self.panel_app.primitive_settings_state.open(idx);
-                            eprintln!("[Sidebar] Primitive settings opened: {} (idx={})", id, idx);
-                        }
+                    let guard = self.core.drawings();
+                    if let Some(idx) = guard.get(pid).and_then(|dm| dm.find_index_by_id(id)) {
+                        self.panel_app.primitive_settings_state.open(idx);
+                        eprintln!("[Sidebar] Primitive settings opened: {} (idx={})", id, idx);
                     }
                 }
             }
@@ -2793,11 +2801,11 @@ impl ChartApp {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 let active_pid_vis = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                 if let Some(pid) = active_pid_vis {
-                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                        if let Some(idx) = panel.drawing_manager.find_index_by_id(id) {
-                            let v = panel.drawing_manager.primitives_mut()[idx].data().visible;
-                            panel.drawing_manager.primitives_mut()[idx].data_mut().visible = !v;
-                        }
+                    let mut guard = self.core.drawings_mut();
+                    let dm = guard.entry_or_default(pid);
+                    if let Some(idx) = dm.find_index_by_id(id) {
+                        let v = dm.primitives_mut()[idx].data().visible;
+                        dm.primitives_mut()[idx].data_mut().visible = !v;
                     }
                 }
                 self.sidebar_data_dirty = true;
@@ -2819,11 +2827,11 @@ impl ChartApp {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 let active_pid_lock = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                 if let Some(pid) = active_pid_lock {
-                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                        if let Some(idx) = panel.drawing_manager.find_index_by_id(id) {
-                            let l = panel.drawing_manager.primitives_mut()[idx].data().locked;
-                            panel.drawing_manager.primitives_mut()[idx].data_mut().locked = !l;
-                        }
+                    let mut guard = self.core.drawings_mut();
+                    let dm = guard.entry_or_default(pid);
+                    if let Some(idx) = dm.find_index_by_id(id) {
+                        let l = dm.primitives_mut()[idx].data().locked;
+                        dm.primitives_mut()[idx].data_mut().locked = !l;
                     }
                 }
                 self.sidebar_data_dirty = true;
@@ -2892,9 +2900,10 @@ impl ChartApp {
                 let mut source_name = format!("Drawing {}", id);
                 let active_pid_alert = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                 if let Some(pid) = active_pid_alert {
-                    if let Some(panel) = self.panels_store.chart_panel.get(&pid) {
-                        if let Some(idx) = panel.drawing_manager.find_index_by_id(id) {
-                            let prim = &panel.drawing_manager.primitives()[idx];
+                    let guard = self.core.drawings();
+                    if let Some(dm) = guard.get(pid) {
+                        if let Some(idx) = dm.find_index_by_id(id) {
+                            let prim = &dm.primitives()[idx];
                             source_name = localize_primitive_name(prim.type_id(), prim.display_name());
                             let pts = prim.points();
                             if !pts.is_empty() {
@@ -3029,18 +3038,22 @@ impl ChartApp {
                         // anchors (the `.1`) are no longer used for framing — Auto
                         // handles Y — so sentinel (0.0) prices are irrelevant here.
                         let mid_bar = active_pid_center
-                            .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                            .and_then(|panel| panel.drawing_manager.primitives().iter()
-                                .find(|p| p.data().id == id)
-                                .and_then(|prim| {
-                                    let pts = prim.points();
-                                    if pts.is_empty() {
-                                        return None;
-                                    }
-                                    let avg_ts = pts.iter().map(|p| p.0).sum::<i64>() / pts.len() as i64;
-                                    self.panel_app.panel_grid.active_container()
-                                        .map(|_w| mlc_core::timestamp_ms_to_bar_f64(&center_bars[..], avg_ts))
-                                }));
+                            .and_then(|pid| {
+                                let guard = self.core.drawings();
+                                guard.get(pid).and_then(|dm| {
+                                    dm.primitives().iter()
+                                        .find(|p| p.data().id == id)
+                                        .and_then(|prim| {
+                                            let pts = prim.points();
+                                            if pts.is_empty() {
+                                                return None;
+                                            }
+                                            let avg_ts = pts.iter().map(|p| p.0).sum::<i64>() / pts.len() as i64;
+                                            self.panel_app.panel_grid.active_container()
+                                                .map(|_w| mlc_core::timestamp_ms_to_bar_f64(&center_bars[..], avg_ts))
+                                        })
+                                })
+                            });
                         if let Some(mid_bar) = mid_bar {
                             use mlc_core::chart::types::price_scale::ScaleMode;
                             // Center the active leaf on X and switch it to Auto-Y.
@@ -3228,15 +3241,15 @@ impl ChartApp {
             if !window_ptr.is_null() {
                 // SAFETY: toolbar_state does not access panel_grid.
                 let window = unsafe { &mut *window_ptr };
-                let dm_ref: Option<&mut mlc_core::DrawingManager> = active_pid_tb
-                    .and_then(|pid| self.panels_store.chart_panel.get_mut(&pid))
-                    .map(|p| &mut p.drawing_manager);
-                if let Some(dm) = dm_ref {
+                if let Some(pid) = active_pid_tb {
+                    let mut guard = self.core.drawings_mut();
+                    let dm = guard.entry_or_default(pid);
                     let events = self.panel_app.toolbar_state.handle_toolbar_click_with_chart(
                         &item_id,
                         &mut window.crosshair,
                         dm,
                     );
+                    drop(guard);
                     for event in events {
                         self.process_chart_out_event(event);
                     }
@@ -3281,10 +3294,9 @@ impl ChartApp {
                 if !window_ptr.is_null() {
                     // SAFETY: toolbar_state does not access panel_grid.
                     let window = unsafe { &mut *window_ptr };
-                    let dm_ref: Option<&mut mlc_core::DrawingManager> = active_pid_dd
-                        .and_then(|pid| self.panels_store.chart_panel.get_mut(&pid))
-                        .map(|p| &mut p.drawing_manager);
-                    if let Some(dm) = dm_ref {
+                    if let Some(pid) = active_pid_dd {
+                        let mut guard = self.core.drawings_mut();
+                        let dm = guard.entry_or_default(pid);
                         let autosave = self.panel_app.autosave_enabled;
                         let events = self.panel_app.toolbar_state.handle_dropdown_select_with_chart(
                             &dropdown_id,
@@ -3293,6 +3305,7 @@ impl ChartApp {
                             dm,
                             autosave,
                         );
+                        drop(guard);
                         for event in events {
                             self.process_chart_out_event(event);
                         }

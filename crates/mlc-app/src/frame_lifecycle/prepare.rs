@@ -531,15 +531,18 @@ impl ChartApp {
 
                 // Primitives from window-local drawing_manager — all symbols, annotated by state.
                 let local_prims: Vec<_> = self.panel_app.panel_grid.active_container()
-                    .and_then(|w| self.panels_store.chart_panel.get(&w.chart_panel_id))
-                    .map(|panel| panel.drawing_manager.primitives().iter()
-                        .map(|p| {
-                            let data = p.data();
-                            let kind = p.kind();
-                            let display = localize_primitive_name(&data.type_id, p.display_name());
-                            (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone(), data.symbol.clone(), data.exchange.clone(), data.account_type.clone())
-                        })
-                        .collect())
+                    .map(|w| w.chart_panel_id)
+                    .and_then(|pid| {
+                        let guard = self.core.drawings();
+                        guard.get(pid).map(|dm| dm.primitives().iter()
+                            .map(|p| {
+                                let data = p.data();
+                                let kind = p.kind();
+                                let display = localize_primitive_name(&data.type_id, p.display_name());
+                                (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone(), data.symbol.clone(), data.exchange.clone(), data.account_type.clone())
+                            })
+                            .collect::<Vec<_>>())
+                    })
                     .unwrap_or_default();
 
                 for (id, display, type_id, kind, visible, locked, stroke, prim_sym, prim_exchange, prim_account_type) in &local_prims {
@@ -1159,10 +1162,10 @@ impl ChartApp {
             for (chart_id, cloned_prims) in group_prim_sync {
                 if let Some(window) = self.panel_app.panel_grid.containers().get(&chart_id) {
                     let panel_id = window.chart_panel_id;
-                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&panel_id) {
-                        if !panel.drawing_manager.is_dragging() {
-                            panel.drawing_manager.sync_from_group_primitives(&cloned_prims);
-                        }
+                    let mut guard = self.core.drawings_mut();
+                    let dm = guard.entry_or_default(panel_id);
+                    if !dm.is_dragging() {
+                        dm.sync_from_group_primitives(&cloned_prims);
                     }
                 }
             }
@@ -1188,8 +1191,8 @@ impl ChartApp {
             // Single pane: sync group primitives.
             if let Some(active_container) = self.panel_app.panel_grid.active_container() {
                 let active_pid = active_container.chart_panel_id;
-                let is_dragging = self.panels_store.chart_panel.get(&active_pid)
-                    .map(|p| p.drawing_manager.is_dragging())
+                let is_dragging = self.core.drawings().get(active_pid)
+                    .map(|dm| dm.is_dragging())
                     .unwrap_or(false);
                 let chart_id_opt = self.panel_app.panel_grid.active_container_id();
                 let group_id_opt = chart_id_opt
@@ -1225,9 +1228,8 @@ impl ChartApp {
                                     .unwrap_or_default();
                             if let Some(window) = self.panel_app.panel_grid.containers().get(&chart_id) {
                                 let pid = window.chart_panel_id;
-                                if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                    panel.drawing_manager.sync_from_group_primitives(&cloned);
-                                }
+                                let mut guard = self.core.drawings_mut();
+                                guard.entry_or_default(pid).sync_from_group_primitives(&cloned);
                             }
                         }
                     }

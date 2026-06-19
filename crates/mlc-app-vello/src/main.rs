@@ -1121,9 +1121,10 @@ impl App<'_> {
         }
         chart.panel_app.user_manager.snapshots = self.app_state.snapshots.clone();
         // Apply persisted last-used drawing styles to all DrawingManagers in this new window.
-        let drawing_styles = &self.app_state.snapshots.last_used_drawing_styles;
-        for panel in chart.panels_store.chart_panel.values_mut() {
-            panel.drawing_manager.load_last_styles(drawing_styles);
+        let drawing_styles = self.app_state.snapshots.last_used_drawing_styles.clone();
+        let all_pids_styles: Vec<_> = chart.panels_store.chart_panel.keys().copied().collect();
+        for pid in all_pids_styles {
+            chart.core.drawings_mut().entry_or_default(pid).load_last_styles(&drawing_styles);
         }
         *chart.core.template_manager_mut() = self.app_state.template_manager.clone();
         // Sync server settings so the User Settings modal shows current state.
@@ -1539,9 +1540,10 @@ impl App<'_> {
                 }
                 chart.panel_app.user_manager.snapshots = snapshots.clone();
                 {
-                    let drawing_styles = &snapshots.last_used_drawing_styles;
-                    for panel in chart.panels_store.chart_panel.values_mut() {
-                        panel.drawing_manager.load_last_styles(drawing_styles);
+                    let drawing_styles = snapshots.last_used_drawing_styles.clone();
+                    let all_pids_ls: Vec<_> = chart.panels_store.chart_panel.keys().copied().collect();
+                    for pid in all_pids_ls {
+                        chart.core.drawings_mut().entry_or_default(pid).load_last_styles(&drawing_styles);
                     }
                 }
                 *chart.core.template_manager_mut() = template_manager.clone();
@@ -3863,14 +3865,15 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 self.app_state.presets_dirty = false;
             }
             if self.app_state.snapshots_dirty {
-                let drawing_styles = &self.app_state.snapshots.last_used_drawing_styles;
+                let drawing_styles = self.app_state.snapshots.last_used_drawing_styles.clone();
                 for pw in self.windows.values_mut() {
                     pw.chart.panel_app.user_manager.snapshots =
                         self.app_state.snapshots.clone();
                     // Apply persisted last-used drawing styles to every DrawingManager
                     // so new primitives of each type inherit the user's last-used style.
-                    for panel in pw.chart.panels_store.chart_panel.values_mut() {
-                        panel.drawing_manager.load_last_styles(drawing_styles);
+                    let all_pids_sd: Vec<_> = pw.chart.panels_store.chart_panel.keys().copied().collect();
+                    for pid in all_pids_sd {
+                        pw.chart.core.drawings_mut().entry_or_default(pid).load_last_styles(&drawing_styles);
                     }
                 }
                 self.app_state.snapshots_dirty = false;

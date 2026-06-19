@@ -306,18 +306,20 @@ impl ChartApp {
                     let bubble_bars_alert: Vec<mlc_core::Bar> = self.with_bubble(window.current_bubble_id, |b| b.bars.clone()).unwrap_or_default();
                     let current_price = bubble_bars_alert.last().map(|b| b.close).unwrap_or(0.0);
                     let current_bar = bubble_bars_alert.len().saturating_sub(1) as f64;
-                    let drawing_points: Vec<(u64, Vec<(f64, f64)>, mlc_alerts::DrawingExtendMode)> =
-                        self.panels_store.chart_panel.get(&window.chart_panel_id)
-                            .map(|panel| panel.drawing_manager.primitives().iter()
-                                .map(|p| {
-                                    let pts_bar: Vec<(f64, f64)> = p.points()
-                                        .into_iter()
-                                        .map(|(ts_ms, price)| (timestamp_ms_to_bar_f64(&bubble_bars_alert, ts_ms), price))
-                                        .collect();
-                                    (p.data().id, pts_bar, mlc_alerts::DrawingExtendMode::from_u8(p.extend_mode_raw()))
-                                })
-                                .collect())
-                            .unwrap_or_default();
+                    let drawing_points: Vec<(u64, Vec<(f64, f64)>, mlc_alerts::DrawingExtendMode)> = {
+                        let pid = window.chart_panel_id;
+                        let guard = self.core.drawings();
+                        guard.get(pid).map(|dm| dm.primitives().iter()
+                            .map(|p| {
+                                let pts_bar: Vec<(f64, f64)> = p.points()
+                                    .into_iter()
+                                    .map(|(ts_ms, price)| (timestamp_ms_to_bar_f64(&bubble_bars_alert, ts_ms), price))
+                                    .collect();
+                                (p.data().id, pts_bar, mlc_alerts::DrawingExtendMode::from_u8(p.extend_mode_raw()))
+                            })
+                            .collect())
+                        .unwrap_or_default()
+                    };
                     Some(WindowAlertData {
                         symbol: sym,
                         exchange: exch,

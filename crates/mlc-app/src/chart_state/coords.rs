@@ -10,11 +10,12 @@ impl ChartApp {
     /// Used by the winit runner to call `SetCapture` so that `CursorMoved` events
     /// continue arriving even when the cursor leaves the window boundary.
     pub fn is_drawing(&self) -> bool {
+        let drawings = self.core.drawings();
         self.panel_app
             .panel_grid
             .active_container()
-            .and_then(|w| self.panels_store.chart_panel.get(&w.chart_panel_id))
-            .map(|panel| panel.drawing_manager.is_drawing())
+            .and_then(|w| drawings.get(w.chart_panel_id))
+            .map(|dm| dm.is_drawing())
             .unwrap_or(false)
     }
 
@@ -22,13 +23,14 @@ impl ChartApp {
     /// Used by the runner to always route mouse-release to `on_click` instead of
     /// `on_drag_end`, so accidental micro-drags don't swallow the click.
     pub fn has_click_drawing_tool(&self) -> bool {
+        let drawings = self.core.drawings();
         self.panel_app
             .panel_grid
             .active_container()
-            .and_then(|w| self.panels_store.chart_panel.get(&w.chart_panel_id))
-            .map(|panel| {
-                panel.drawing_manager.current_tool().is_some()
-                    && !panel.drawing_manager.is_freehand_tool()
+            .and_then(|w| drawings.get(w.chart_panel_id))
+            .map(|dm| {
+                dm.current_tool().is_some()
+                    && !dm.is_freehand_tool()
             })
             .unwrap_or(false)
     }

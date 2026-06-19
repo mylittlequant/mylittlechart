@@ -1020,19 +1020,17 @@ impl ChartApp {
         if field == "text_content" {
             if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
                 if let Some(pid) = active_pid_prim {
-                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                        if let Some(mut data) = panel.drawing_manager.get_data_at(idx) {
-                            if let Some(ref mut t) = data.text {
-                                t.content = text.clone();
-                            } else {
-                                use mlc_core::drawing::primitives_v2::PrimitiveText;
-                                data.text = Some(PrimitiveText {
-                                    content: text.clone(),
-                                    ..PrimitiveText::default()
-                                });
-                            }
-                            panel.drawing_manager.set_data_at(idx, &data);
+                    if let Some(mut data) = self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)) {
+                        if let Some(ref mut t) = data.text {
+                            t.content = text.clone();
+                        } else {
+                            use mlc_core::drawing::primitives_v2::PrimitiveText;
+                            data.text = Some(PrimitiveText {
+                                content: text.clone(),
+                                ..PrimitiveText::default()
+                            });
                         }
+                        self.core.drawings_mut().entry_or_default(pid).set_data_at(idx, &data);
                     }
                 }
             }
@@ -1042,11 +1040,9 @@ impl ChartApp {
             if let Ok(width) = text.trim().parse::<f64>() {
                 if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
                     if let Some(pid) = active_pid_prim {
-                        if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                            if let Some(mut data) = panel.drawing_manager.get_data_at(idx) {
-                                data.width = width.clamp(0.5, 20.0);
-                                panel.drawing_manager.set_data_at(idx, &data);
-                            }
+                        if let Some(mut data) = self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)) {
+                            data.width = width.clamp(0.5, 20.0);
+                            self.core.drawings_mut().entry_or_default(pid).set_data_at(idx, &data);
                         }
                     }
                 }
@@ -1055,9 +1051,7 @@ impl ChartApp {
         } else if field == "text_font_size" {
             if let Ok(font_size) = text.trim().parse::<f64>() {
                 if let Some(pid) = active_pid_prim {
-                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                        panel.drawing_manager.set_selected_text_font_size(font_size);
-                    }
+                    self.core.drawings_mut().entry_or_default(pid).set_selected_text_font_size(font_size);
                 }
             }
             eprintln!("[ChartApp] prim_settings text_font_size auto-committed: {}", text);
@@ -1091,14 +1085,13 @@ impl ChartApp {
                         .and_then(|s| s.parse::<usize>().ok())
                     {
                         if let Some(pid) = active_pid_prim {
-                            if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                let prims = panel.drawing_manager.primitives_mut();
-                                if idx < prims.len() {
-                                    if let Some(mut configs) = prims[idx].level_configs() {
-                                        if level_idx < configs.len() {
-                                            configs[level_idx].level = val;
-                                            prims[idx].set_level_configs(configs);
-                                        }
+                            let mut guard = self.core.drawings_mut();
+                            let prims = guard.entry_or_default(pid).primitives_mut();
+                            if idx < prims.len() {
+                                if let Some(mut configs) = prims[idx].level_configs() {
+                                    if level_idx < configs.len() {
+                                        configs[level_idx].level = val;
+                                        prims[idx].set_level_configs(configs);
                                     }
                                 }
                             }
@@ -1114,14 +1107,13 @@ impl ChartApp {
                         .and_then(|s| s.parse::<usize>().ok())
                     {
                         if let Some(pid) = active_pid_prim {
-                            if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                let prims = panel.drawing_manager.primitives_mut();
-                                if idx < prims.len() {
-                                    let mut pts = prims[idx].points().to_vec();
-                                    if pt_idx < pts.len() {
-                                        pts[pt_idx].1 = price;
-                                        prims[idx].set_points(&pts);
-                                    }
+                            let mut guard = self.core.drawings_mut();
+                            let prims = guard.entry_or_default(pid).primitives_mut();
+                            if idx < prims.len() {
+                                let mut pts = prims[idx].points().to_vec();
+                                if pt_idx < pts.len() {
+                                    pts[pt_idx].1 = price;
+                                    prims[idx].set_points(&pts);
                                 }
                             }
                         }
@@ -1139,14 +1131,13 @@ impl ChartApp {
                             let coord_bars: Vec<mlc_core::Bar> = self.active_chart_bars();
                             let ts_ms = mlc_core::bar_f64_to_timestamp_ms(&coord_bars[..], bar);
                             if let Some(pid) = active_pid_prim {
-                                if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                    let prims = panel.drawing_manager.primitives_mut();
-                                    if idx < prims.len() {
-                                        let mut pts = prims[idx].points().to_vec();
-                                        if pt_idx < pts.len() {
-                                            pts[pt_idx].0 = ts_ms;
-                                            prims[idx].set_points(&pts);
-                                        }
+                                let mut guard = self.core.drawings_mut();
+                                let prims = guard.entry_or_default(pid).primitives_mut();
+                                if idx < prims.len() {
+                                    let mut pts = prims[idx].points().to_vec();
+                                    if pt_idx < pts.len() {
+                                        pts[pt_idx].0 = ts_ms;
+                                        prims[idx].set_points(&pts);
                                     }
                                 }
                             }
@@ -1158,14 +1149,16 @@ impl ChartApp {
             use mlc_core::drawing::primitives_v2::config::{PropertyValue, PropertyType};
             if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
                 let prop_type_opt = active_pid_prim
-                    .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                    .and_then(|panel| {
-                        let prims = panel.drawing_manager.primitives();
-                        prims.get(idx).and_then(|p| {
-                            p.text_properties().and_then(|props| {
-                                props.into_iter()
-                                    .find(|p| p.id == prop_id)
-                                    .map(|p| p.prop_type)
+                    .and_then(|pid| {
+                        let guard = self.core.drawings();
+                        guard.get(pid).and_then(|dm| {
+                            let prims = dm.primitives();
+                            prims.get(idx).and_then(|p| {
+                                p.text_properties().and_then(|props| {
+                                    props.into_iter()
+                                        .find(|p| p.id == prop_id)
+                                        .map(|p| p.prop_type)
+                                })
                             })
                         })
                     });
@@ -1180,9 +1173,7 @@ impl ChartApp {
                     }
                 };
                 if let Some(pid) = active_pid_prim {
-                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                        panel.drawing_manager.apply_text_property(idx, prop_id, value);
-                    }
+                    self.core.drawings_mut().entry_or_default(pid).apply_text_property(idx, prop_id, value);
                 }
             }
             self.sync_drawing_back_to_group();
@@ -1193,9 +1184,7 @@ impl ChartApp {
             if let Ok(val) = text.trim().parse::<f64>() {
                 if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
                     if let Some(pid) = active_pid_prim {
-                        if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                            panel.drawing_manager.apply_style_property(idx, prop_id, PropertyValue::Number(val));
-                        }
+                        self.core.drawings_mut().entry_or_default(pid).apply_style_property(idx, prop_id, PropertyValue::Number(val));
                     }
                 }
             }
@@ -1255,8 +1244,7 @@ impl ChartApp {
         // ── Color swatches ────────────────────────────────────────────────────
         if matches!(item_id, "stroke_color" | "fill_color" | "text_color") {
             let current_color: Option<String> = active_pid_prim
-                .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                .and_then(|panel| panel.drawing_manager.get_data_at(idx))
+                .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
                 .and_then(|data| match item_id {
                     "stroke_color" => Some(data.color.stroke.clone()),
                     "fill_color"   => data.color.fill.clone(),
@@ -1264,9 +1252,8 @@ impl ChartApp {
                                           .or_else(|| {
                                               // fallback to stroke color
                                               active_pid_prim
-                                                  .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                                                  .and_then(|panel| panel.drawing_manager.get_data_at(idx))
-                                                  .map(|d| d.color.stroke.clone())
+                                                  .and_then(|pid2| self.core.drawings().get(pid2).map(|dm| dm.get_data_at(idx).map(|d| d.color.stroke.clone())))
+                                                  .flatten()
                                           }),
                     _ => None,
                 });
@@ -1285,8 +1272,7 @@ impl ChartApp {
             // Close any open dropdown first
             self.panel_app.primitive_settings_state.open_line_style_dropdown = false;
             let data_opt = active_pid_prim
-                .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                .and_then(|panel| panel.drawing_manager.get_data_at(idx));
+                .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)));
             if let Some(mut data) = data_opt {
                 data.style = match data.style {
                     LineStyle::Solid        => LineStyle::Dashed,
@@ -1297,9 +1283,7 @@ impl ChartApp {
                 };
                 let style_str = data.style.as_str().to_string();
                 if let Some(pid) = active_pid_prim {
-                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                        panel.drawing_manager.set_data_at(idx, &data);
-                    }
+                    self.core.drawings_mut().entry_or_default(pid).set_data_at(idx, &data);
                 }
                 self.sync_drawing_back_to_group();
                 eprintln!("[ChartApp] prim_settings line_style cycled to: {}", style_str);
@@ -1328,14 +1312,11 @@ impl ChartApp {
             };
             if let Some(style) = new_style {
                 let data_opt = active_pid_prim
-                    .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                    .and_then(|panel| panel.drawing_manager.get_data_at(idx));
+                    .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)));
                 if let Some(mut data) = data_opt {
                     data.style = style;
                     if let Some(pid) = active_pid_prim {
-                        if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                            panel.drawing_manager.set_data_at(idx, &data);
-                        }
+                        self.core.drawings_mut().entry_or_default(pid).set_data_at(idx, &data);
                     }
                     self.sync_drawing_back_to_group();
                     eprintln!("[ChartApp] prim_settings line_style set to: {}", style_name);
@@ -1372,14 +1353,14 @@ impl ChartApp {
                     let value = &rest[colon_pos + 1..];
                     let new_val = mlc_core::drawing::primitives_v2::config::PropertyValue::String(value.to_string());
                     if let Some(pid) = active_pid_prim {
-                        if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                            if prefix.starts_with("style") {
-                                panel.drawing_manager.apply_style_property(idx, prop_id, new_val);
-                            } else if prefix.starts_with("text") {
-                                panel.drawing_manager.apply_text_property(idx, prop_id, new_val);
-                            } else {
-                                panel.drawing_manager.apply_level_property(idx, prop_id, new_val);
-                            }
+                        let mut guard = self.core.drawings_mut();
+                        let dm = guard.entry_or_default(pid);
+                        if prefix.starts_with("style") {
+                            dm.apply_style_property(idx, prop_id, new_val);
+                        } else if prefix.starts_with("text") {
+                            dm.apply_text_property(idx, prop_id, new_val);
+                        } else {
+                            dm.apply_level_property(idx, prop_id, new_val);
                         }
                     }
                     self.sync_drawing_back_to_group();
@@ -1395,8 +1376,7 @@ impl ChartApp {
         if item_id == "stroke_width_value" {
             use mlc_core::state::modal_data::TextEditingState;
             let current_width = active_pid_prim
-                .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                .and_then(|panel| panel.drawing_manager.get_data_at(idx))
+                .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
                 .map(|data| format!("{}", data.width as u32))
                 .unwrap_or_default();
             let cursor = current_width.chars().count();
@@ -1415,8 +1395,7 @@ impl ChartApp {
             use mlc_core::state::modal_data::TextEditingState;
             // Read the current text value from the primitive
             let current_text = active_pid_prim
-                .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                .and_then(|panel| panel.drawing_manager.get_data_at(idx))
+                .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
                 .and_then(|data| data.text.map(|t| t.content.clone()))
                 .unwrap_or_default();
             let cursor = current_text.chars().count();
@@ -1435,8 +1414,7 @@ impl ChartApp {
         if item_id == "text_font_size" {
             use mlc_core::state::modal_data::TextEditingState;
             let current_font_size = active_pid_prim
-                .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                .and_then(|panel| panel.drawing_manager.get_data_at(idx))
+                .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
                 .and_then(|data| data.text.map(|t| format!("{:.0}", t.font_size)))
                 .unwrap_or_else(|| "14".to_string());
             let cursor = current_font_size.chars().count();
@@ -1454,16 +1432,13 @@ impl ChartApp {
         // ── Text bold toggle ──────────────────────────────────────────────────
         if item_id == "text_bold" {
             let data_opt = active_pid_prim
-                .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                .and_then(|panel| panel.drawing_manager.get_data_at(idx));
+                .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)));
             if let Some(mut data) = data_opt {
                 if let Some(ref mut text) = data.text {
                     text.bold = !text.bold;
                     let new_bold = text.bold;
                     if let Some(pid) = active_pid_prim {
-                        if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                            panel.drawing_manager.set_data_at(idx, &data);
-                        }
+                        self.core.drawings_mut().entry_or_default(pid).set_data_at(idx, &data);
                     }
                     self.sync_drawing_back_to_group();
                     eprintln!("[ChartApp] prim_settings text_bold = {}", new_bold);
@@ -1475,16 +1450,13 @@ impl ChartApp {
         // ── Text italic toggle ────────────────────────────────────────────────
         if item_id == "text_italic" {
             let data_opt = active_pid_prim
-                .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                .and_then(|panel| panel.drawing_manager.get_data_at(idx));
+                .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)));
             if let Some(mut data) = data_opt {
                 if let Some(ref mut text) = data.text {
                     text.italic = !text.italic;
                     let new_italic = text.italic;
                     if let Some(pid) = active_pid_prim {
-                        if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                            panel.drawing_manager.set_data_at(idx, &data);
-                        }
+                        self.core.drawings_mut().entry_or_default(pid).set_data_at(idx, &data);
                     }
                     self.sync_drawing_back_to_group();
                     eprintln!("[ChartApp] prim_settings text_italic = {}", new_italic);
@@ -1500,8 +1472,7 @@ impl ChartApp {
                 let v_align = TextAlign::from_str(parts[0]);
                 let h_align = TextAlign::from_str(parts[1]);
                 let data_opt = active_pid_prim
-                    .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                    .and_then(|panel| panel.drawing_manager.get_data_at(idx));
+                    .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)));
                 if let Some(mut data) = data_opt {
                     if data.text.is_none() {
                         data.text = Some(mlc_core::drawing::primitives_v2::PrimitiveText::default());
@@ -1511,9 +1482,7 @@ impl ChartApp {
                         text.h_align = h_align;
                     }
                     if let Some(pid) = active_pid_prim {
-                        if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                            panel.drawing_manager.set_data_at(idx, &data);
-                        }
+                        self.core.drawings_mut().entry_or_default(pid).set_data_at(idx, &data);
                     }
                     self.sync_drawing_back_to_group();
                     eprintln!("[ChartApp] prim_settings text_pos: {}", item_id);
@@ -1525,8 +1494,7 @@ impl ChartApp {
         // ── Timeframe visibility toggle: tf_{i}_toggle ────────────────────────
         if item_id.starts_with("tf_") && item_id.ends_with("_toggle") {
             let data_opt = active_pid_prim
-                .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                .and_then(|panel| panel.drawing_manager.get_data_at(idx));
+                .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)));
             if let Some(mut data) = data_opt {
                 let mut tf_config = data.timeframe_visibility.clone()
                     .unwrap_or_else(mlc_core::drawing::TimeframeVisibilityConfig::all);
@@ -1546,9 +1514,7 @@ impl ChartApp {
                     }
                     data.timeframe_visibility = Some(tf_config);
                     if let Some(pid) = active_pid_prim {
-                        if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                            panel.drawing_manager.set_data_at(idx, &data);
-                        }
+                        self.core.drawings_mut().entry_or_default(pid).set_data_at(idx, &data);
                     }
                     self.sync_drawing_back_to_group();
                     eprintln!("[ChartApp] prim_settings tf_{}_toggle toggled", tf_idx);
@@ -1568,8 +1534,7 @@ impl ChartApp {
                 .and_then(|s| s.parse::<usize>().ok())
             {
                 active_pid_prim
-                    .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                    .and_then(|panel| panel.drawing_manager.get_data_at(idx))
+                    .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
                     .map(|data| {
                         let tf = data.timeframe_visibility.unwrap_or_else(TimeframeVisibilityConfig::all);
                         let range = match tf_idx {
@@ -1621,8 +1586,7 @@ impl ChartApp {
                     .and_then(|s| s.parse::<usize>().ok())
                 {
                     active_pid_prim
-                        .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                        .and_then(|panel| panel.drawing_manager.get_data_at(idx))
+                        .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
                         .and_then(|data| {
                             let tf_config = data.timeframe_visibility
                                 .unwrap_or_else(TimeframeVisibilityConfig::all);
@@ -1665,16 +1629,15 @@ impl ChartApp {
             if parts.len() >= 3 {
                 if let Ok(level_idx) = parts[1].parse::<usize>() {
                     if let Some(pid) = active_pid_prim {
-                        if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                            let prims = panel.drawing_manager.primitives_mut();
-                            if idx < prims.len() {
-                                if let Some(mut configs) = prims[idx].level_configs() {
-                                    if level_idx < configs.len() {
-                                        configs[level_idx].visible = !configs[level_idx].visible;
-                                        let new_vis = configs[level_idx].visible;
-                                        prims[idx].set_level_configs(configs);
-                                        eprintln!("[ChartApp] prim_settings level_{}_visible = {}", level_idx, new_vis);
-                                    }
+                        let mut guard = self.core.drawings_mut();
+                        let prims = guard.entry_or_default(pid).primitives_mut();
+                        if idx < prims.len() {
+                            if let Some(mut configs) = prims[idx].level_configs() {
+                                if level_idx < configs.len() {
+                                    configs[level_idx].visible = !configs[level_idx].visible;
+                                    let new_vis = configs[level_idx].visible;
+                                    prims[idx].set_level_configs(configs);
+                                    eprintln!("[ChartApp] prim_settings level_{}_visible = {}", level_idx, new_vis);
                                 }
                             }
                         }
@@ -1690,16 +1653,15 @@ impl ChartApp {
             if parts.len() >= 3 {
                 if let Ok(level_idx) = parts[1].parse::<usize>() {
                     if let Some(pid) = active_pid_prim {
-                        if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                            let prims = panel.drawing_manager.primitives_mut();
-                            if idx < prims.len() {
-                                if let Some(mut configs) = prims[idx].level_configs() {
-                                    if level_idx < configs.len() {
-                                        configs[level_idx].fill_enabled = !configs[level_idx].fill_enabled;
-                                        let new_fill = configs[level_idx].fill_enabled;
-                                        prims[idx].set_level_configs(configs);
-                                        eprintln!("[ChartApp] prim_settings level_{}_fill = {}", level_idx, new_fill);
-                                    }
+                        let mut guard = self.core.drawings_mut();
+                        let prims = guard.entry_or_default(pid).primitives_mut();
+                        if idx < prims.len() {
+                            if let Some(mut configs) = prims[idx].level_configs() {
+                                if level_idx < configs.len() {
+                                    configs[level_idx].fill_enabled = !configs[level_idx].fill_enabled;
+                                    let new_fill = configs[level_idx].fill_enabled;
+                                    prims[idx].set_level_configs(configs);
+                                    eprintln!("[ChartApp] prim_settings level_{}_fill = {}", level_idx, new_fill);
                                 }
                             }
                         }
@@ -1715,18 +1677,20 @@ impl ChartApp {
             if parts.len() >= 3 {
                 if let Ok(level_idx) = parts[1].parse::<usize>() {
                     let current_color: Option<String> = active_pid_prim
-                        .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                        .and_then(|panel| {
-                            let prims = panel.drawing_manager.primitives();
-                            if idx < prims.len() {
-                                if let Some(configs) = prims[idx].level_configs() {
-                                    if level_idx < configs.len() {
-                                        return configs[level_idx].color.clone()
-                                            .or_else(|| Some(prims[idx].data().color.stroke.clone()));
+                        .and_then(|pid| {
+                            let guard = self.core.drawings();
+                            guard.get(pid).and_then(|dm| {
+                                let prims = dm.primitives();
+                                if idx < prims.len() {
+                                    if let Some(configs) = prims[idx].level_configs() {
+                                        if level_idx < configs.len() {
+                                            return configs[level_idx].color.clone()
+                                                .or_else(|| Some(prims[idx].data().color.stroke.clone()));
+                                        }
                                     }
                                 }
-                            }
-                            None
+                                None
+                            })
                         });
                     let widget_id_str = format!("prim_settings:item:{}", item_id);
                     let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId::from(widget_id_str));
@@ -1747,17 +1711,19 @@ impl ChartApp {
             let current_val: String = if parts.len() >= 3 {
                 if let Ok(level_idx) = parts[1].parse::<usize>() {
                     active_pid_prim
-                        .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                        .and_then(|panel| {
-                            let prims = panel.drawing_manager.primitives();
-                            if idx < prims.len() {
-                                if let Some(configs) = prims[idx].level_configs() {
-                                    if level_idx < configs.len() {
-                                        return Some(format!("{:.4}", configs[level_idx].level));
+                        .and_then(|pid| {
+                            let guard = self.core.drawings();
+                            guard.get(pid).and_then(|dm| {
+                                let prims = dm.primitives();
+                                if idx < prims.len() {
+                                    if let Some(configs) = prims[idx].level_configs() {
+                                        if level_idx < configs.len() {
+                                            return Some(format!("{:.4}", configs[level_idx].level));
+                                        }
                                     }
                                 }
-                            }
-                            None
+                                None
+                            })
                         })
                         .unwrap_or_default()
                 } else {
@@ -1787,20 +1753,22 @@ impl ChartApp {
                 .and_then(|s| s.parse::<usize>().ok())
             {
                 active_pid_prim
-                    .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                    .and_then(|panel| {
-                        let prims = panel.drawing_manager.primitives();
-                        if idx < prims.len() {
-                            let pts = prims[idx].points();
-                            if pt_idx < pts.len() {
-                                if is_price {
-                                    return Some(format!("{:.4}", pts[pt_idx].1));
-                                } else {
-                                    return Some(format!("{:.0}", pts[pt_idx].0));
+                    .and_then(|pid| {
+                        let guard = self.core.drawings();
+                        guard.get(pid).and_then(|dm| {
+                            let prims = dm.primitives();
+                            if idx < prims.len() {
+                                let pts = prims[idx].points();
+                                if pt_idx < pts.len() {
+                                    if is_price {
+                                        return Some(format!("{:.4}", pts[pt_idx].1));
+                                    } else {
+                                        return Some(format!("{:.0}", pts[pt_idx].0));
+                                    }
                                 }
                             }
-                        }
-                        None
+                            None
+                        })
                     })
                     .unwrap_or_default()
             } else {
@@ -1822,16 +1790,18 @@ impl ChartApp {
         if let Some(prop_id) = item_id.strip_prefix("style_prop:") {
             // Collect property info under immutable borrow
             let prop_info: Option<(PropertyType, PropertyValue)> = active_pid_prim
-                .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                .and_then(|panel| {
-                    let prims = panel.drawing_manager.primitives();
-                    if idx < prims.len() {
-                        let style_props = prims[idx].style_properties();
-                        style_props.iter().find(|p| p.id == prop_id)
-                            .map(|p| (p.prop_type.clone(), p.value.clone()))
-                    } else {
-                        None
-                    }
+                .and_then(|pid| {
+                    let guard = self.core.drawings();
+                    guard.get(pid).and_then(|dm| {
+                        let prims = dm.primitives();
+                        if idx < prims.len() {
+                            let style_props = prims[idx].style_properties();
+                            style_props.iter().find(|p| p.id == prop_id)
+                                .map(|p| (p.prop_type.clone(), p.value.clone()))
+                        } else {
+                            None
+                        }
+                    })
                 });
 
             if let Some((prop_type, prop_value)) = prop_info {
@@ -1840,9 +1810,7 @@ impl ChartApp {
                         let current = prop_value.as_bool().unwrap_or(false);
                         let new_val = PropertyValue::Boolean(!current);
                         if let Some(pid) = active_pid_prim {
-                            if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                panel.drawing_manager.apply_style_property(idx, prop_id, new_val);
-                            }
+                            self.core.drawings_mut().entry_or_default(pid).apply_style_property(idx, prop_id, new_val);
                         }
                         self.sync_drawing_back_to_group();
                         self.autosave_snapshot();
@@ -1856,9 +1824,7 @@ impl ChartApp {
                             let new_val = PropertyValue::String(next_opt.value.clone());
                             let next_value = next_opt.value.clone();
                             if let Some(pid) = active_pid_prim {
-                                if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                    panel.drawing_manager.apply_style_property(idx, prop_id, new_val);
-                                }
+                                self.core.drawings_mut().entry_or_default(pid).apply_style_property(idx, prop_id, new_val);
                             }
                             self.sync_drawing_back_to_group();
                             self.autosave_snapshot();
@@ -1905,16 +1871,18 @@ impl ChartApp {
         // ── Level properties: level_prop:{id} ────────────────────────────────
         if let Some(prop_id) = item_id.strip_prefix("level_prop:") {
             let prop_info: Option<(PropertyType, PropertyValue)> = active_pid_prim
-                .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                .and_then(|panel| {
-                    let prims = panel.drawing_manager.primitives();
-                    if idx < prims.len() {
-                        let level_props = prims[idx].level_properties();
-                        level_props.iter().find(|p| p.id == prop_id)
-                            .map(|p| (p.prop_type.clone(), p.value.clone()))
-                    } else {
-                        None
-                    }
+                .and_then(|pid| {
+                    let guard = self.core.drawings();
+                    guard.get(pid).and_then(|dm| {
+                        let prims = dm.primitives();
+                        if idx < prims.len() {
+                            let level_props = prims[idx].level_properties();
+                            level_props.iter().find(|p| p.id == prop_id)
+                                .map(|p| (p.prop_type.clone(), p.value.clone()))
+                        } else {
+                            None
+                        }
+                    })
                 });
 
             if let Some((prop_type, prop_value)) = prop_info {
@@ -1923,9 +1891,7 @@ impl ChartApp {
                         let current = prop_value.as_bool().unwrap_or(false);
                         let new_val = PropertyValue::Boolean(!current);
                         if let Some(pid) = active_pid_prim {
-                            if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                panel.drawing_manager.apply_level_property(idx, prop_id, new_val);
-                            }
+                            self.core.drawings_mut().entry_or_default(pid).apply_level_property(idx, prop_id, new_val);
                         }
                         eprintln!("[ChartApp] prim_settings level_prop '{}' toggled: {} -> {}", prop_id, current, !current);
                     }
@@ -1937,9 +1903,7 @@ impl ChartApp {
                             let new_val = PropertyValue::String(next_opt.value.clone());
                             let next_value = next_opt.value.clone();
                             if let Some(pid) = active_pid_prim {
-                                if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                    panel.drawing_manager.apply_level_property(idx, prop_id, new_val);
-                                }
+                                self.core.drawings_mut().entry_or_default(pid).apply_level_property(idx, prop_id, new_val);
                             }
                             eprintln!("[ChartApp] prim_settings level_prop '{}' cycled: {} -> {}", prop_id, current, next_value);
                         }
@@ -1967,17 +1931,19 @@ impl ChartApp {
         // ── Text properties: text_prop:{id} ───────────────────────────────────
         if let Some(prop_id) = item_id.strip_prefix("text_prop:") {
             let prop_info: Option<(PropertyType, PropertyValue)> = active_pid_prim
-                .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                .and_then(|panel| {
-                    let prims = panel.drawing_manager.primitives();
-                    if idx < prims.len() {
-                        prims[idx].text_properties().and_then(|text_props| {
-                            text_props.iter().find(|p| p.id == prop_id)
-                                .map(|p| (p.prop_type.clone(), p.value.clone()))
-                        })
-                    } else {
-                        None
-                    }
+                .and_then(|pid| {
+                    let guard = self.core.drawings();
+                    guard.get(pid).and_then(|dm| {
+                        let prims = dm.primitives();
+                        if idx < prims.len() {
+                            prims[idx].text_properties().and_then(|text_props| {
+                                text_props.iter().find(|p| p.id == prop_id)
+                                    .map(|p| (p.prop_type.clone(), p.value.clone()))
+                            })
+                        } else {
+                            None
+                        }
+                    })
                 });
 
             if let Some((prop_type, prop_value)) = prop_info {
@@ -1986,9 +1952,7 @@ impl ChartApp {
                         let current = prop_value.as_bool().unwrap_or(false);
                         let new_val = PropertyValue::Boolean(!current);
                         if let Some(pid) = active_pid_prim {
-                            if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                panel.drawing_manager.apply_text_property(idx, prop_id, new_val);
-                            }
+                            self.core.drawings_mut().entry_or_default(pid).apply_text_property(idx, prop_id, new_val);
                         }
                         eprintln!("[ChartApp] prim_settings text_prop '{}' toggled: {} -> {}", prop_id, current, !current);
                     }
@@ -2000,9 +1964,7 @@ impl ChartApp {
                             let new_val = PropertyValue::String(next_opt.value.clone());
                             let next_value = next_opt.value.clone();
                             if let Some(pid) = active_pid_prim {
-                                if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                    panel.drawing_manager.apply_text_property(idx, prop_id, new_val);
-                                }
+                                self.core.drawings_mut().entry_or_default(pid).apply_text_property(idx, prop_id, new_val);
                             }
                             eprintln!("[ChartApp] prim_settings text_prop '{}' cycled: {} -> {}", prop_id, current, next_value);
                         }
@@ -2076,11 +2038,9 @@ impl ChartApp {
                 self.panel_app.primitive_settings_state.template_dropdown_open = false;
                 // Apply the template to the primitive
                 if let Some(pid) = active_pid_prim {
-                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                        if let Some(mut data) = panel.drawing_manager.get_data_at(idx) {
-                            tmpl.apply_to_primitive_data(&mut data);
-                            panel.drawing_manager.set_data_at(idx, &data);
-                        }
+                    if let Some(mut data) = self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)) {
+                        tmpl.apply_to_primitive_data(&mut data);
+                        self.core.drawings_mut().entry_or_default(pid).set_data_at(idx, &data);
                     }
                 }
                 self.sync_drawing_back_to_group();
@@ -2123,14 +2083,12 @@ impl ChartApp {
             self.panel_app.primitive_settings_state.applied_template_id = None;
             // Reset primitive to factory defaults
             if let Some(pid) = active_pid_prim {
-                if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                    if let Some(data) = panel.drawing_manager.get_data_at(idx) {
-                        let type_id = data.type_id.clone();
-                        let default_tmpl = mlc_core::templates::PrimitiveTemplate::new_with_defaults(&type_id, "__default__");
-                        let mut data_copy = data;
-                        default_tmpl.apply_to_primitive_data(&mut data_copy);
-                        panel.drawing_manager.set_data_at(idx, &data_copy);
-                    }
+                if let Some(data) = self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)) {
+                    let type_id = data.type_id.clone();
+                    let default_tmpl = mlc_core::templates::PrimitiveTemplate::new_with_defaults(&type_id, "__default__");
+                    let mut data_copy = data;
+                    default_tmpl.apply_to_primitive_data(&mut data_copy);
+                    self.core.drawings_mut().entry_or_default(pid).set_data_at(idx, &data_copy);
                 }
             }
             self.sync_drawing_back_to_group();
@@ -2172,8 +2130,7 @@ impl ChartApp {
                 let active_pid_tmpl = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                 if !name.is_empty() {
                     if let Some(data) = active_pid_tmpl
-                        .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                        .and_then(|panel| panel.drawing_manager.get_data_at(idx))
+                        .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
                     {
                         let tmpl = mlc_core::templates::PrimitiveTemplate::from_primitive_data(&data, &name);
                         eprintln!("[ChartApp] prim_tmpl saved: {}", name);

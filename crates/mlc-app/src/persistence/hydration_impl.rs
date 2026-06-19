@@ -153,20 +153,25 @@ impl ChartApp {
                                         panel_state.show_columns = snap.show_columns;
                                         panel_state.show_baseline = snap.show_baseline;
                                         panel_state.chart_type = static_ct;
-                                        // S2.8: restore drawings into panel_state.drawing_manager
-                                        panel_state.drawing_manager.set_current_symbol_key(
-                                            &snap.symbol, &snap.exchange, &snap.account_type,
-                                        );
-                                        panel_state.drawing_manager.clear_all_primitives();
-                                        if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
-                                            for prim_snap in &snap.drawings.primitives {
-                                                if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
-                                                    panel_state.drawing_manager.add_external_primitive(prim);
+                                        self.panels_store.chart_panel.insert(window.chart_panel_id, panel_state);
+                                        // S2.8: restore drawings into DrawingRegistry
+                                        {
+                                            let pid = window.chart_panel_id;
+                                            let mut guard = self.core.drawings_mut();
+                                            let dm = guard.entry_or_default(pid);
+                                            dm.set_current_symbol_key(
+                                                &snap.symbol, &snap.exchange, &snap.account_type,
+                                            );
+                                            dm.clear_all_primitives();
+                                            if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
+                                                for prim_snap in &snap.drawings.primitives {
+                                                    if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
+                                                        dm.add_external_primitive(prim);
+                                                    }
                                                 }
                                             }
+                                            dm.migrate_all_legacy_timestamps();
                                         }
-                                        panel_state.drawing_manager.migrate_all_legacy_timestamps();
-                                        self.panels_store.chart_panel.insert(window.chart_panel_id, panel_state);
                                     }
 
                                     // Restore command history
@@ -448,20 +453,25 @@ impl ChartApp {
                                     ps.show_columns = snap.show_columns;
                                     ps.show_baseline = snap.show_baseline;
                                     ps.chart_type = static_ct;
-                                    // S2.8: restore drawings into ps.drawing_manager
-                                    ps.drawing_manager.set_current_symbol_key(
-                                        &snap.symbol, &snap.exchange, &snap.account_type,
-                                    );
-                                    ps.drawing_manager.clear_all_primitives();
-                                    if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
-                                        for prim_snap in &snap.drawings.primitives {
-                                            if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
-                                                ps.drawing_manager.add_external_primitive(prim);
+                                    panel_patches.push((window.chart_panel_id, ps));
+                                    // S2.8: restore drawings into DrawingRegistry
+                                    {
+                                        let pid = window.chart_panel_id;
+                                        let mut guard = self.core.drawings_mut();
+                                        let dm = guard.entry_or_default(pid);
+                                        dm.set_current_symbol_key(
+                                            &snap.symbol, &snap.exchange, &snap.account_type,
+                                        );
+                                        dm.clear_all_primitives();
+                                        if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
+                                            for prim_snap in &snap.drawings.primitives {
+                                                if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
+                                                    dm.add_external_primitive(prim);
+                                                }
                                             }
                                         }
+                                        dm.migrate_all_legacy_timestamps();
                                     }
-                                    ps.drawing_manager.migrate_all_legacy_timestamps();
-                                    panel_patches.push((window.chart_panel_id, ps));
 
                                     eprintln!("[ChartApp] patched window {}  ->  {}/{} ({} drawings)",
                                         snap.window_id, snap.symbol, snap.timeframe.name,
@@ -555,9 +565,7 @@ impl ChartApp {
                                     .get(&chart_id)
                                 {
                                     let pid = window.chart_panel_id;
-                                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                        panel.drawing_manager.bind_style_store(style_arc);
-                                    }
+                                    self.core.drawings_mut().entry_or_default(pid).bind_style_store(style_arc);
                                 }
                             }
                         }
@@ -574,16 +582,23 @@ impl ChartApp {
                     // Seed the global primitive ID counter so future allocations
                     // never collide with any ID loaded from disk.
                     {
-                        let max_id = self.panel_app.panel_grid.containers().values()
-                            .flat_map(|w| self.panels_store.chart_panel.get(&w.chart_panel_id)
-                                .map(|panel| panel.drawing_manager.primitives().iter()
-                                    .collect::<Vec<_>>())
-                                .unwrap_or_default())
+                        let panel_prim_ids: Vec<u64> = {
+                            let dreg = self.core.drawings();
+                            self.panel_app.panel_grid.containers().values()
+                                .flat_map(|w| {
+                                    let pid = w.chart_panel_id;
+                                    dreg.get(pid)
+                                        .map(|dm| dm.primitives().iter().map(|p| p.data().id).collect::<Vec<_>>())
+                                        .unwrap_or_default()
+                                })
+                                .collect()
+                        };
+                        let max_id = panel_prim_ids.into_iter()
                             .chain(
                                 self.core.bubble().bubble.bubbles()
                                     .flat_map(|g| g.primitives.iter())
+                                    .map(|p| p.data().id)
                             )
-                            .map(|p| p.data().id)
                             .max()
                             .unwrap_or(0);
                         mlc_core::drawing::seed_primitive_id_counter(max_id);
@@ -695,9 +710,7 @@ impl ChartApp {
                             }
                             if let Some(pid) = self.panel_app.panel_grid.container_for_leaf(leaf_id).map(|w| w.chart_panel_id) {
                                 if let Some(ref arc) = style_arc {
-                                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                        panel.drawing_manager.bind_style_store(arc.clone());
-                                    }
+                                    self.core.drawings_mut().entry_or_default(pid).bind_style_store(arc.clone());
                                 }
                             }
                         }
@@ -749,11 +762,11 @@ impl ChartApp {
                                 window.current_bubble_id = group_id;
                             }
                             if let Some(pid) = self.panel_app.panel_grid.container_for_leaf(leaf_id).map(|w| w.chart_panel_id) {
-                                let panel = crate::chart_panel_bridge::ensure_chart_panel_state(
+                                let _panel = crate::chart_panel_bridge::ensure_chart_panel_state(
                                     &mut self.panels_store,
                                     pid,
                                 );
-                                panel.drawing_manager.set_current_symbol_key(&sym, &exch, "S");
+                                self.core.drawings_mut().entry_or_default(pid).set_current_symbol_key(&sym, &exch, "S");
                             }
                             eprintln!(
                                 "[ChartApp] Step 5c: re-membered orphaned window {:?} into auto group {:?} ({})",

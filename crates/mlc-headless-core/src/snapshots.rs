@@ -108,15 +108,18 @@ pub fn update_terminal_snapshot<H: AgentHost>(host: &H, agent_state: &AgentState
                     })
                     .collect();
 
-                let primitives: Vec<PrimitiveSummary> = chart.panels_store
-                    .chart_panel.get(&cw.chart_panel_id)
-                    .map(|panel| panel.drawing_manager.primitives().iter()
-                        .map(|p| {
-                            let d = p.data();
-                            PrimitiveSummary { id: d.id, type_id: d.type_id.clone() }
-                        })
-                        .collect())
-                    .unwrap_or_default();
+                let pid_snap = cw.chart_panel_id;
+                let primitives: Vec<PrimitiveSummary> = {
+                    let dreg_snap = chart.core.drawings();
+                    dreg_snap.get(pid_snap)
+                        .map(|dm| dm.primitives().iter()
+                            .map(|p| {
+                                let d = p.data();
+                                PrimitiveSummary { id: d.id, type_id: d.type_id.clone() }
+                            })
+                            .collect())
+                        .unwrap_or_default()
+                };
 
                 let (bar_count, derived) = chart.with_bubble(cw.current_bubble_id, |b| (b.bars.len(), DerivedSeriesCounts {
                     footprint_bars:      b.footprint_bars.as_ref().map(|v| v.len()).unwrap_or(0),

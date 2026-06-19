@@ -84,6 +84,7 @@ pub fn execute_chart_action(
     action: &ChartAction,
     window: &mut ChartContainer,
     panel: &mut ChartPanelState,
+    drawing_manager: &mut DrawingManager,
     bars: &[crate::Bar],
 ) -> Vec<ChartExternalEvent> {
     match action {
@@ -294,7 +295,7 @@ pub fn execute_chart_action(
         // Drawing Tools
         // =====================================================================
         ChartAction::SelectTool(tool) => {
-            panel.drawing_manager.set_tool(Some(tool));
+            drawing_manager.set_tool(Some(tool));
             let is_cursor_tool = matches!(*tool, "crosshair" | "hand" | "cursor" | "none");
             if is_cursor_tool {
                 eprintln!("[Chart] Switched to cursor mode: {}", tool);
@@ -304,32 +305,32 @@ pub fn execute_chart_action(
             vec![]
         }
         ChartAction::ToggleLockDrawings => {
-            panel.drawing_manager.toggle_lock();
+            drawing_manager.toggle_lock();
             eprintln!("[Chart] DrawingManager lock toggled");
             vec![]
         }
         ChartAction::ToggleLockSelected => {
             // Lock/unlock the currently selected primitive (if any)
-            if let Some(idx) = panel.drawing_manager.selected() {
-                panel.drawing_manager.toggle_lock_primitive(idx);
+            if let Some(idx) = drawing_manager.selected() {
+                drawing_manager.toggle_lock_primitive(idx);
                 eprintln!("[Chart] DrawingManager toggled lock for selected primitive at {}", idx);
             }
             vec![]
         }
         ChartAction::ToggleDrawingsVisible => {
-            panel.drawing_manager.set_visible(!panel.drawing_manager.is_visible());
+            drawing_manager.set_visible(!drawing_manager.is_visible());
             eprintln!("[Chart] DrawingManager visibility toggled");
             vec![]
         }
         ChartAction::DeleteSelected => {
-            if let Some(idx) = panel.drawing_manager.selected() {
-                panel.drawing_manager.delete_at(idx);
+            if let Some(idx) = drawing_manager.selected() {
+                drawing_manager.delete_at(idx);
                 eprintln!("[Chart] DrawingManager deleted primitive at {}", idx);
             }
             vec![]
         }
         ChartAction::DeleteAll => {
-            panel.drawing_manager.clear();
+            drawing_manager.clear();
             eprintln!("[Chart] DrawingManager cleared all primitives");
             vec![]
         }
