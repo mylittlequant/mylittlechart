@@ -728,7 +728,7 @@ impl ChartApp {
                         }
                     }
                 }
-                LiveUpdate::BarUpdate { exchange_id: bar_exch, account_type: bar_account_type, symbol: bar_symbol, bar } => {
+                LiveUpdate::BarUpdate { exchange_id: _bar_exch, account_type: bar_account_type, symbol: bar_symbol, bar } => {
                     // Derived bar modes (Range/Tick/Volume/Footprint) receive bars
                     // exclusively via BarUpdate from dig3. TimeBased windows still
                     // aggregate from TradeUpdate; this handler is a no-op for them.
@@ -1176,7 +1176,8 @@ impl ChartApp {
 
                     // Subscribe mini-tickers for watchlist symbols on this exchange.
                     let exchange_str = exchange_id.as_str();
-                    if let Some(wl) = self.sidebar_state.watchlist_manager.active_list() {
+                    let wl_guard = self.core.watchlist();
+                    if let Some(wl) = wl_guard.active_list() {
                         for ws in wl.all_symbols() {
                             if ws.exchange == exchange_str {
                                 let ws_at = account_type_from_label(&ws.account_type);
@@ -1777,7 +1778,7 @@ impl ChartApp {
                 }
                 // Open Interest Δ bar — append to all oi_show windows for the
                 // matching symbol + account. Mirrors the CVD/TLB two-pass pattern.
-                LiveUpdate::OpenInterestUpdate { exchange_id, account_type: at, symbol: sym, point } => {
+                LiveUpdate::OpenInterestUpdate { exchange_id: _, account_type: at, symbol: sym, point } => {
                     let at_label = at.short_label();
                     let target_cids: std::collections::HashSet<mlc_core::state::ChartId> =
                         self.panel_app.panel_grid.containers().iter()
@@ -1803,7 +1804,7 @@ impl ChartApp {
                 }
                 // Funding Rate cell — append to all funding_show windows for the
                 // matching symbol + account. Same two-pass pattern as OI above.
-                LiveUpdate::FundingRateUpdate { exchange_id, account_type: at, symbol: sym, point } => {
+                LiveUpdate::FundingRateUpdate { exchange_id: _, account_type: at, symbol: sym, point } => {
                     let at_label = at.short_label();
                     let target_cids: std::collections::HashSet<mlc_core::state::ChartId> =
                         self.panel_app.panel_grid.containers().iter()
@@ -1873,7 +1874,7 @@ impl ChartApp {
                     }
                 }
                 // DOM heatmap trade dot (C12) — append to dom_trade_dots ring.
-                LiveUpdate::DomTradeDot { exchange_id, account_type: at, symbol: sym, dot } => {
+                LiveUpdate::DomTradeDot { exchange_id: _, account_type: at, symbol: sym, dot } => {
                     let at_label = at.short_label();
                     let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
                         let panels_store = &self.panels_store;
@@ -2370,7 +2371,7 @@ impl ChartApp {
                 // Read oldest_ts from the window's bars directly.
                 let oldest_ts = self.panel_app.panel_grid.containers()
                     .get(&cid_req)
-                    .and_then(|w| None::<&mlc_core::Bar>.map(|b| b.timestamp))
+                    .and_then(|_w| None::<&mlc_core::Bar>.map(|b| b.timestamp))
                     .unwrap_or(0);
 
                 if oldest_ts == 0 { continue; }
@@ -2503,7 +2504,7 @@ impl ChartApp {
                 .panel_app
                 .panel_grid
                 .iter_containers()
-                .filter(|(_, w)| !true)
+                .filter(|(_, _w)| !true)
                 .map(|(_, w)| (w.id.0, Vec::<mlc_core::Bar>::new()))
                 .collect();
             for (wid, bars) in window_bars {

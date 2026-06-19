@@ -1438,7 +1438,7 @@ impl ChartPanelGrid {
                         vp.chart_height = content.height;
                         vp
                     });
-                    if let (Some(sub_viewport), Some(window)) =
+                    if let (Some(sub_viewport), Some(_window)) =
                         (sub_viewport, self.active_container())
                     {
                         if let Some(prim_idx) = active_dm.hit_test_in_pane(
@@ -1753,7 +1753,7 @@ impl ChartPanelGrid {
             });
 
             if let Some(sub_viewport) = sub_viewport {
-                if let Some(window) = self.active_container() {
+                if let Some(_window) = self.active_container() {
                     // Control points first.
                     if let Some(cp_type) = active_dm.hit_test_control_point_in_pane(
                         plx,

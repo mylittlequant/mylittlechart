@@ -21,7 +21,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use mlc_app::ChartApp;
-use mlc_core::Bar;
 use mlc_core::state::ChartId;
 use mlc_core::tag_manager::BubbleId;
 use mlc_live_data::DataBridge;
@@ -131,7 +130,7 @@ impl HeadlessChartApp {
     /// `(bubble_id, exchange, account_type, symbol, tf, bars.len, attached_charts)`
     /// for every bubble in the store.
     pub fn dump_all_bubbles(&self) -> Vec<BubbleSummary> {
-        let store = (&self.app.core.bubble().bubble);
+        let store = &self.app.core.bubble().bubble;
         store.bubbles().map(|b| BubbleSummary {
             id: b.id,
             exchange: b.exchange.clone(),

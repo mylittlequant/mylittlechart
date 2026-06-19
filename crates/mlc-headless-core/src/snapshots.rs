@@ -53,7 +53,8 @@ pub fn update_terminal_snapshot<H: AgentHost>(host: &H, agent_state: &AgentState
     for w in host.windows() {
         let chart = w.chart;
 
-        let preset_name: StdHashMap<&str, &str> = chart.panel_app.presets
+        let presets_guard = chart.core.presets();
+        let preset_name: StdHashMap<&str, &str> = presets_guard
             .iter()
             .map(|(id, p)| (id.as_str(), p.name.as_str()))
             .collect();
@@ -273,10 +274,10 @@ pub fn update_watchlist_snapshot<H: AgentHost>(host: &H, agent_state: &AgentStat
         return;
     };
 
-    let wm = &first.chart.sidebar_state.watchlist_manager;
-    let active_id = wm.active_list_id;
+    let wm_guard = first.chart.core.watchlist();
+    let active_id = wm_guard.active_list_id;
 
-    let watchlists: Vec<WatchlistEntry> = wm.lists.iter().map(|list| {
+    let watchlists: Vec<WatchlistEntry> = wm_guard.lists.iter().map(|list| {
         let items: Vec<WatchlistItemEntry> = list.all_symbols().into_iter().map(|ws| {
             WatchlistItemEntry {
                 symbol: ws.symbol.clone(),

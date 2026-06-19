@@ -185,7 +185,7 @@ impl ChartApp {
                     .map(String::from)
                     .unwrap_or_default();
                 let inline_alert_price_fallback = self.panel_app.panel_grid.active_container()
-                    .and_then(|w| None::<&mlc_core::Bar>)
+                    .and_then(|_w| None::<&mlc_core::Bar>)
                     .map(|b| b.close)
                     .unwrap_or(0.0);
                 if let Some(pid) = active_pid_inline {
@@ -354,7 +354,7 @@ impl ChartApp {
                             )
                         } else {
                             // Only one colon — treat as "SYMBOL:exchange", look up account_type.
-                            let at = self.sidebar_state.watchlist_manager.active_list()
+                            let at = self.core.watchlist().active_list()
                                 .and_then(|list| {
                                     list.all_symbols().iter()
                                         .find(|ws| ws.symbol == remainder && ws.exchange == at_part)
@@ -463,17 +463,17 @@ impl ChartApp {
                             )
                         } else {
                             // Only one colon — "SYMBOL:exchange", look up account_type.
-                            let at = self.sidebar_state.watchlist_manager.active_list()
+                            let at = self.core.watchlist().active_list()
                                 .and_then(|l| l.all_symbols().iter().find(|ws| ws.symbol == remainder && ws.exchange == at_part).map(|ws| ws.account_type.clone()))
                                 .unwrap_or_default();
                             (remainder, at_part.to_string(), at)
                         }
                     } else {
                         // No colon — plain symbol, look up exchange + account_type.
-                        let ex = self.sidebar_state.watchlist_manager.active_list()
+                        let ex = self.core.watchlist().active_list()
                             .and_then(|l| l.all_symbols().iter().find(|ws| ws.symbol == key).map(|ws| ws.exchange.clone()))
                             .unwrap_or_else(|| self.active_exchange.as_str().to_string());
-                        let at = self.sidebar_state.watchlist_manager.active_list()
+                        let at = self.core.watchlist().active_list()
                             .and_then(|l| l.all_symbols().iter().find(|ws| ws.symbol == key).map(|ws| ws.account_type.clone()))
                             .unwrap_or_default();
                         (key, ex, at)
@@ -481,12 +481,15 @@ impl ChartApp {
                 let exchange = exchange_owned.as_str();
                 let account_type = account_type_owned.as_str();
                 // Remove symbol from snapshot (if active) before removing from list.
-                if let Some(list) = self.sidebar_state.watchlist_manager.active_list_mut() {
-                    if let Some(ref mut snap) = list.order_snapshot {
-                        snap.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == account_type));
+                {
+                    let mut wl = self.core.watchlist_mut();
+                    if let Some(list) = wl.active_list_mut() {
+                        if let Some(ref mut snap) = list.order_snapshot {
+                            snap.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == account_type));
+                        }
                     }
+                    wl.remove_symbol(symbol, exchange, account_type);
                 }
-                self.sidebar_state.watchlist_manager.remove_symbol(symbol, exchange, account_type);
                 self.watchlist_actions.push(crate::WatchlistAction::Remove { symbol: symbol.to_string(), exchange: exchange.to_string(), account_type: account_type.to_string() });
                 self.watchlists_dirty = true;
                 self.persist_watchlists();
@@ -496,7 +499,7 @@ impl ChartApp {
             _ if rest.starts_with("group:") => {
                 let id_str = &rest["group:".len()..];
                 if let Ok(id) = id_str.parse::<u64>() {
-                    self.sidebar_state.watchlist_manager.active_list_id = id;
+                    self.core.watchlist_mut().active_list_id = id;
                     self.watchlist_actions.push(crate::WatchlistAction::SetActiveList { id });
                     self.watchlists_dirty = true;
                     self.persist_watchlists();
@@ -507,7 +510,7 @@ impl ChartApp {
             _ if rest.starts_with("group_delete:") => {
                 let id_str = &rest["group_delete:".len()..];
                 if let Ok(id) = id_str.parse::<u64>() {
-                    let deleted = self.sidebar_state.watchlist_manager.delete_list(id);
+                    let deleted = self.core.watchlist_mut().delete_list(id);
                     self.watchlist_actions.push(crate::WatchlistAction::DeleteList { id });
                     self.watchlists_dirty = true;
                     self.persist_watchlists();
@@ -516,7 +519,7 @@ impl ChartApp {
             }
             // Create new watchlist — open name input modal with auto-generated name
             "group_add" => {
-                let max_n = self.sidebar_state.watchlist_manager.lists.iter()
+                let max_n = self.core.watchlist().lists.iter()
                     .filter_map(|l| l.name.strip_prefix("Watchlist "))
                     .filter_map(|s| s.parse::<u32>().ok())
                     .max()
@@ -529,7 +532,7 @@ impl ChartApp {
             _ if rest.starts_with("group_rename:") => {
                 let id_str = &rest["group_rename:".len()..];
                 if let Ok(id) = id_str.parse::<u64>() {
-                    if let Some(list) = self.sidebar_state.watchlist_manager.lists.iter().find(|l| l.id == id) {
+                    if let Some(list) = self.core.watchlist().lists.iter().find(|l| l.id == id) {
                         let name = list.name.clone();
                         self.wl_group_name_input.open_rename(id, &name);
                         eprintln!("[WatchlistModal] opening group name input for rename id={}", id);
@@ -557,7 +560,7 @@ impl ChartApp {
             }
             "set_create" => {
                 // Compute next available name: "My Indicator Set 1", "My Indicator Set 2", etc.
-                let max_n = self.panel_app.template_manager.indicator_sets
+                let max_n = self.core.template_manager().indicator_sets
                     .iter()
                     .filter_map(|s| s.name.strip_prefix("My Indicator Set "))
                     .filter_map(|s| s.parse::<u32>().ok())
@@ -593,7 +596,7 @@ impl ChartApp {
     /// Deploy an indicator set by its ID: replace all current indicators with
     /// the set's indicators (exclusive — like a preset, only one set active).
     pub(super) fn deploy_indicator_set(&mut self, set_id: &str) {
-        let set = self.panel_app.template_manager.indicator_sets
+        let set = self.core.template_manager().indicator_sets
             .iter()
             .find(|s| s.id == set_id)
             .cloned();
@@ -684,7 +687,7 @@ impl ChartApp {
 
         let (active_window_id, bars) = self.panel_app.panel_grid.docking().active_leaf()
             .and_then(|leaf| self.panel_app.panel_grid.container_id_for_leaf(leaf).map(|cid| (cid.0, leaf)))
-            .and_then(|(cid, leaf)| self.panel_app.panel_grid.container_for_leaf(leaf).map(|w| (cid, Vec::<mlc_core::Bar>::new())))
+            .and_then(|(cid, leaf)| self.panel_app.panel_grid.container_for_leaf(leaf).map(|_w| (cid, Vec::<mlc_core::Bar>::new())))
             .unwrap_or_default();
         let _ = symbol; // legacy, no longer needed for indicator calc
         self.core.indicators_mut().calculate_all_for_window(active_window_id, &bars);
@@ -1083,7 +1086,7 @@ impl ChartApp {
                             // Recalculate the new indicator with current bars.
                             if let (Some(cid), Some(bars)) = (
                                 active_container_id,
-                                active_leaf.and_then(|leaf| self.panel_app.panel_grid.container_for_leaf(leaf)).map(|w| Vec::<mlc_core::Bar>::new()),
+                                active_leaf.and_then(|leaf| self.panel_app.panel_grid.container_for_leaf(leaf)).map(|_w| Vec::<mlc_core::Bar>::new()),
                             ) {
                                 self.core.indicators_mut().calculate_all_for_window(cid.0, &bars);
                             }
@@ -1427,7 +1430,7 @@ impl ChartApp {
                             .map(String::from)
                             .unwrap_or_default();
                         let price_fallback = self.panel_app.panel_grid.active_container()
-                            .and_then(|w| None::<&mlc_core::Bar>)
+                            .and_then(|_w| None::<&mlc_core::Bar>)
                             .map(|b| b.close)
                             .unwrap_or(0.0);
                         let label = self.core.indicators()
@@ -2321,7 +2324,7 @@ impl ChartApp {
                     "symbol_search" => {
                         self.modal_state.open(OpenModal::SymbolSearch);
                         self.modal_state.symbol_search_results =
-                            crate::ChartApp::build_demo_symbol_results("", &self.sidebar_state.watchlist_manager, &self.core.exchange_symbols_read());
+                            crate::ChartApp::build_demo_symbol_results("", &self.core.watchlist(), &self.core.exchange_symbols_read());
                         self.modal_state.start_editing(0);
                         eprintln!("[ChartApp] symbol search opened from context menu");
                     }

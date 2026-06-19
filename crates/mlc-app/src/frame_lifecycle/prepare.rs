@@ -680,8 +680,8 @@ impl ChartApp {
 
                 self.sidebar_state.watchlist_items.clear();
                 let watchlist_entries: Vec<(String, String, String)> = self
-                    .sidebar_state
-                    .watchlist_manager
+                    .core
+                    .watchlist()
                     .active_list()
                     .map(|list| {
                         list.all_symbols()
@@ -701,7 +701,7 @@ impl ChartApp {
                             && self.account_type_for_chart(**cid)
                                 .map_or(false, |a| &a == sym_account_type)
                         })
-                        .and_then(|(_, w)| None::<&mlc_core::Bar>)
+                        .and_then(|(_, _w)| None::<&mlc_core::Bar>)
                         .map(|bar| (bar.close, bar.open, bar.high, bar.low, bar.volume));
 
                     if let Some((price, open, high, low, volume)) = price_data {
@@ -908,7 +908,7 @@ impl ChartApp {
         {
             let query = self.modal_state.search_query.clone();
             self.modal_state.symbol_search_results =
-                Self::build_demo_symbol_results(&query, &self.sidebar_state.watchlist_manager, &self.core.exchange_symbols_read());
+                Self::build_demo_symbol_results(&query, &self.core.watchlist(), &self.core.exchange_symbols_read());
         }
 
         // --- Split-pane layout and viewport sync ---

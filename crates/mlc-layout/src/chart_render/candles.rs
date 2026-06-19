@@ -579,7 +579,7 @@ mod tests {
 
     #[test]
     fn test_chart_bounds() {
-        use super::ChartRect;
+        use mlc_core::chart::render_data::ChartRect;
 
         let rect = ChartRect::new(10.0, 20.0, 100.0, 80.0);
         let bounds = rect.bounds();

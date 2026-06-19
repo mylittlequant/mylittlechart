@@ -1172,7 +1172,7 @@ impl ChartApp {
                 .and_then(|h| h.strip_prefix("watchlist_sep_").and_then(|s| s.parse::<usize>().ok()))
                 .map(|one_based| one_based.saturating_sub(1));
             // Skip separator drag when columns are in equal-width (aligned) mode.
-            let align_cols = self.sidebar_state.watchlist_manager
+            let align_cols = self.core.watchlist()
                 .active_list()
                 .map(|l| l.column_config.align_columns)
                 .unwrap_or(true);
@@ -1186,9 +1186,8 @@ impl ChartApp {
 
                 // Determine current separator offset from area_left.
                 let sep_offset_at_start = {
-                    let col_cfg = self.sidebar_state.watchlist_manager
-                        .active_list()
-                        .map(|l| &l.column_config);
+                    let wl_r = self.core.watchlist();
+                    let col_cfg = wl_r.active_list().map(|l| &l.column_config);
                     let n_seps = col_cfg.map(|c| {
                         let mut n = 0usize; // symbol always present
                         if c.show_exchange     { n += 1; }
@@ -2847,7 +2846,7 @@ impl ChartApp {
         // Watchlist column-separator drag: update absolute separator offset (clip curtain model).
         if let Some((sep_idx, start_x, sep_offset_at_start)) = self.sidebar_state.watchlist_sep_drag {
             // Skip drag when columns are aligned (equal-width mode).
-            let align = self.sidebar_state.watchlist_manager
+            let align = self.core.watchlist()
                 .active_list()
                 .map(|l| l.column_config.align_columns)
                 .unwrap_or(true);
@@ -2863,9 +2862,8 @@ impl ChartApp {
 
             // Count separators (= visible data columns).
             let n_seps = {
-                let cfg = self.sidebar_state.watchlist_manager
-                    .active_list()
-                    .map(|l| &l.column_config);
+                let wl_r = self.core.watchlist();
+                let cfg = wl_r.active_list().map(|l| &l.column_config);
                 let mut n = 0usize;
                 if let Some(c) = cfg {
                     if c.show_exchange     { n += 1; }
@@ -2886,7 +2884,7 @@ impl ChartApp {
 
                 // Clamp against left neighbor (or area edge).
                 let prev_limit = if sep_idx == 0 { MIN_GAP } else {
-                    self.sidebar_state.watchlist_manager
+                    self.core.watchlist()
                         .active_list()
                         .and_then(|l| l.column_config.separator_offsets.as_ref())
                         .and_then(|o| o.get(sep_idx - 1).copied())
@@ -2895,7 +2893,7 @@ impl ChartApp {
                 let clamped = new_offset.max(prev_limit).min(usable_w - MIN_GAP);
 
                 // Initialise separator_offsets from defaults when not yet set or wrong length.
-                if let Some(list) = self.sidebar_state.watchlist_manager.active_list_mut() {
+                if let Some(list) = self.core.watchlist_mut().active_list_mut() {
                     let needs_init = list.column_config.separator_offsets
                         .as_ref()
                         .map(|o| o.len() != n_seps)
@@ -3827,7 +3825,7 @@ impl ChartApp {
         // End watchlist column-separator drag: push the final offsets once to sync
         // app_state for persistence, then clear the drag handle.
         if self.sidebar_state.watchlist_sep_drag.is_some() {
-            if let Some(list) = self.sidebar_state.watchlist_manager.active_list() {
+            if let Some(list) = self.core.watchlist().active_list() {
                 if let Some(offsets) = &list.column_config.separator_offsets {
                     self.watchlist_actions.push(crate::WatchlistAction::SetSeparatorOffsets { offsets: offsets.clone() });
                 }
@@ -3847,13 +3845,13 @@ impl ChartApp {
             let to_idx = self.watchlist_modal.drop_index.take().unwrap_or(from_idx);
             if from_idx != to_idx {
                 // Clamp to the ungrouped length to avoid panics.
-                let list_len = self.sidebar_state.watchlist_manager
+                let list_len = self.core.watchlist()
                     .active_list()
                     .map(|l| l.ungrouped.len())
                     .unwrap_or(0);
                 let clamped_to = to_idx.min(list_len.saturating_sub(1));
                 if from_idx != clamped_to {
-                    self.sidebar_state.watchlist_manager.reorder_symbol(from_idx, clamped_to);
+                    self.core.watchlist_mut().reorder_symbol(from_idx, clamped_to);
                     self.watchlist_actions.push(crate::WatchlistAction::Reorder { from_idx, to_idx: clamped_to });
                     self.watchlist_actions.push(crate::WatchlistAction::ClearOrderSnapshot);
                     self.watchlist_actions.push(crate::WatchlistAction::ResetSort);
@@ -3863,7 +3861,7 @@ impl ChartApp {
                     eprintln!("[WatchlistModal] reorder: {} -> {}", from_idx, clamped_to);
                     // Manual reorder invalidates any saved sort snapshot — the new
                     // order becomes the "original" and sort mode resets to unsorted.
-                    if let Some(list) = self.sidebar_state.watchlist_manager.active_list_mut() {
+                    if let Some(list) = self.core.watchlist_mut().active_list_mut() {
                         list.order_snapshot = None;
                     }
                 }
@@ -3877,14 +3875,14 @@ impl ChartApp {
             self.sidebar_state.watchlist_drag_y = 0.0;
 
             // Clamp drop_idx to the ungrouped length to avoid panics.
-            let list_len = self.sidebar_state.watchlist_manager
+            let list_len = self.core.watchlist()
                 .active_list()
                 .map(|l| l.ungrouped.len())
                 .unwrap_or(0);
             let clamped_drop = drop_idx.min(list_len.saturating_sub(1));
 
             if drag_idx != clamped_drop {
-                self.sidebar_state.watchlist_manager.reorder_symbol(drag_idx, clamped_drop);
+                self.core.watchlist_mut().reorder_symbol(drag_idx, clamped_drop);
                 self.watchlist_actions.push(crate::WatchlistAction::Reorder { from_idx: drag_idx, to_idx: clamped_drop });
                 self.watchlist_actions.push(crate::WatchlistAction::ClearOrderSnapshot);
                 self.watchlist_actions.push(crate::WatchlistAction::ResetSort);
@@ -3894,7 +3892,7 @@ impl ChartApp {
                 eprintln!("[Sidebar] Watchlist reorder: {} -> {}", drag_idx, clamped_drop);
                 // Manual reorder invalidates any saved sort snapshot — the new
                 // order becomes the "original" and sort mode resets to unsorted.
-                if let Some(list) = self.sidebar_state.watchlist_manager.active_list_mut() {
+                if let Some(list) = self.core.watchlist_mut().active_list_mut() {
                     list.order_snapshot = None;
                 }
             }
@@ -6838,16 +6836,24 @@ impl ChartApp {
                         use mlc_layout::ui::modal_settings::WatchlistGroupNameMode;
                         match self.wl_group_name_input.mode.clone() {
                             WatchlistGroupNameMode::CreateNew => {
-                                let new_id = self.sidebar_state.watchlist_manager.create_list(name.clone());
-                                self.sidebar_state.watchlist_manager.active_list_id = new_id;
+                                let new_id = self.core.watchlist_mut().create_list(name.clone());
+                                self.core.watchlist_mut().active_list_id = new_id;
                                 self.watchlist_actions.push(crate::WatchlistAction::CreateList { name: name.clone() });
                                 self.watchlists_dirty = true;
                                 self.persist_watchlists();
                                 eprintln!("[WatchlistGroupName] created new list '{}' id={}", name, new_id);
                             }
                             WatchlistGroupNameMode::Rename(id) => {
-                                if let Some(list) = self.sidebar_state.watchlist_manager.lists.iter_mut().find(|l| l.id == id) {
-                                    list.name = name.clone();
+                                let found = {
+                                    let mut wl = self.core.watchlist_mut();
+                                    if let Some(list) = wl.lists.iter_mut().find(|l| l.id == id) {
+                                        list.name = name.clone();
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                };
+                                if found {
                                     self.watchlist_actions.push(crate::WatchlistAction::RenameList { id, new_name: name.clone() });
                                     self.watchlists_dirty = true;
                                     self.persist_watchlists();
@@ -7148,7 +7154,7 @@ impl ChartApp {
                             let active_cid = self.panel_app.panel_grid.docking().active_leaf()
                                 .and_then(|leaf| self.panel_app.panel_grid.container_id_for_leaf(leaf))
                                 .map(|c| c.0);
-                            let bars_opt = self.panel_app.panel_grid.active_container().map(|w| Vec::<mlc_core::Bar>::new());
+                            let bars_opt = self.panel_app.panel_grid.active_container().map(|_w| Vec::<mlc_core::Bar>::new());
                             if let (Some(cid), Some(bars)) = (active_cid, bars_opt) {
                                 self.core.indicators_mut().calculate_all_for_window(cid, &bars);
                             }
@@ -7351,7 +7357,7 @@ impl ChartApp {
                     {
                         let q = self.modal_state.search_query.clone();
                         self.modal_state.symbol_search_results =
-                            crate::ChartApp::build_demo_symbol_results(&q, &self.sidebar_state.watchlist_manager, &self.core.exchange_symbols_read());
+                            crate::ChartApp::build_demo_symbol_results(&q, &self.core.watchlist(), &self.core.exchange_symbols_read());
                     }
                 }
                 c if !c.is_control() => {
@@ -7363,7 +7369,7 @@ impl ChartApp {
                     {
                         let q = self.modal_state.search_query.clone();
                         self.modal_state.symbol_search_results =
-                            crate::ChartApp::build_demo_symbol_results(&q, &self.sidebar_state.watchlist_manager, &self.core.exchange_symbols_read());
+                            crate::ChartApp::build_demo_symbol_results(&q, &self.core.watchlist(), &self.core.exchange_symbols_read());
                     }
                 }
                 _ => {}
@@ -7833,7 +7839,7 @@ impl ChartApp {
             {
                 let q = self.modal_state.search_query.clone();
                 self.modal_state.symbol_search_results =
-                    crate::ChartApp::build_demo_symbol_results(&q, &self.sidebar_state.watchlist_manager, &self.core.exchange_symbols_read());
+                    crate::ChartApp::build_demo_symbol_results(&q, &self.core.watchlist(), &self.core.exchange_symbols_read());
             }
             return;
         }
@@ -8900,7 +8906,7 @@ impl ChartApp {
         let id = target_id;
         if id.is_empty() { return; }
 
-        let name = if let Some(preset) = self.panel_app.presets.get(&id) {
+        let name = if let Some(preset) = self.core.presets().get(&id) {
             preset.name.clone()
         } else if id == "__default__" {
             "Default".to_string()
@@ -8911,7 +8917,7 @@ impl ChartApp {
 
         let _t0 = std::time::Instant::now();
         self.collect_state_into_preset(&id, &name);
-        if let Some(preset) = self.panel_app.presets.get(&id).cloned() {
+        if let Some(preset) = self.core.presets().get(&id).cloned() {
             self.preset_actions.push(crate::PresetAction::Upsert(preset));
         }
         eprintln!(
@@ -9028,7 +9034,7 @@ impl ChartApp {
         if !self.panel_app.open_tabs.contains(&new_id) {
             self.panel_app.open_tabs.push(new_id.clone());
         }
-        if let Some(preset) = self.panel_app.presets.get(&new_id).cloned() {
+        if let Some(preset) = self.core.presets().get(&new_id).cloned() {
             self.preset_actions.push(crate::PresetAction::Upsert(preset));
         }
         self.persist_profile();
@@ -9051,7 +9057,7 @@ impl ChartApp {
 
         // Hard guard against the `7a9d1d2` failure mode. Whoever calls this
         // mid cold-hydrate would otherwise snapshot a placeholder grid into
-        // `panel_app.presets` (and from there the next autosave / Upsert
+        // `core.presets_mut()` (and from there the next autosave / Upsert
         // drains it to disk). Nothing legitimate calls this during a cold
         // hydrate — refuse and bail.
         if self.load_state.is_loading() {
@@ -9064,7 +9070,7 @@ impl ChartApp {
 
         // Reuse existing metadata if updating an existing slot.
         let (preset_id, preset_name, created_at) =
-            if let Some(existing) = self.panel_app.presets.get(id) {
+            if let Some(existing) = self.core.presets().get(id) {
                 (existing.id.clone(), existing.name.clone(), existing.created_at)
             } else {
                 (id.to_string(), name.to_string(), mlc_core::preset::preset::unix_now_secs())
@@ -9352,7 +9358,7 @@ impl ChartApp {
             preset.slot_leaves[i] = leaves_desc;
         }
 
-        self.panel_app.presets.insert(id.to_string(), preset);
+        self.core.presets_mut().insert(id.to_string(), preset);
     }
 
     // =========================================================================

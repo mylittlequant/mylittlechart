@@ -63,10 +63,11 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
     {
         let open_tabs = &pw.chart.panel_app.open_tabs;
         let active_id = &pw.chart.panel_app.active_preset_id;
+        let presets_guard_sb = pw.chart.core.presets();
         let mut tabs: Vec<chrome::Tab> = open_tabs
             .iter()
             .filter_map(|tab_id| {
-                pw.chart.panel_app.presets.get(tab_id).map(|p| chrome::Tab {
+                presets_guard_sb.get(tab_id).map(|p| chrome::Tab {
                     id: p.id.clone(),
                     name: p.name.clone(),
                     active: &p.id == active_id,

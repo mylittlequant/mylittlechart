@@ -31,8 +31,11 @@ use dashmap::DashMap;
 
 use digdigdig3::ExchangeId;
 use mlc_core::managers::Managers;
+use mlc_core::preset::preset::ChartPreset;
+use mlc_core::templates::manager::TemplateManager;
 use mlc_indicators::IndicatorManager;
 use mlc_live_data::{DataBridge, SymbolInfo};
+use mlc_sidebar_content::watchlist::WatchlistManager;
 use mlc_trading_manager::TradingManager;
 
 /// Cached 24-hour ticker statistics from the WebSocket mini-ticker stream.
@@ -91,6 +94,27 @@ pub struct BackendCore {
     /// (`on_connector_ready`, `tick`, `refresh_balances`, etc) and is mutated
     /// from the tick loop. Single-threaded contention in embedded mode = 0.
     pub trading: Option<std::sync::Mutex<TradingManager>>,
+
+    /// Chart presets — in-memory store keyed by preset id.
+    ///
+    /// Previously lived on `ChartPanelApp.presets`. Moved here so that the
+    /// persist layer, input handlers, and render path all share one authoritative
+    /// copy without per-window duplication (single-`BackendCore` hosts).
+    pub presets: std::sync::RwLock<HashMap<String, ChartPreset>>,
+
+    /// In-memory template manager — drawing primitive / indicator / compare /
+    /// chart templates and indicator sets.
+    ///
+    /// Previously on `ChartPanelApp.template_manager`. Moved here for the same
+    /// reason as `presets`.
+    pub template_manager: std::sync::RwLock<TemplateManager>,
+
+    /// Watchlist manager — all named watchlists with their symbol rows.
+    ///
+    /// Previously on `SidebarState.watchlist_manager`. Moved here so that the
+    /// sidebar render, input handlers, and agent snapshot builder all read from
+    /// one place.
+    pub watchlist_manager: std::sync::RwLock<WatchlistManager>,
 }
 
 impl BackendCore {
@@ -103,6 +127,9 @@ impl BackendCore {
             mini_ticker: DashMap::new(),
             exchange_symbols: std::sync::RwLock::new(HashMap::new()),
             trading: trading.map(std::sync::Mutex::new),
+            presets: std::sync::RwLock::new(HashMap::new()),
+            template_manager: std::sync::RwLock::new(TemplateManager::new()),
+            watchlist_manager: std::sync::RwLock::new(WatchlistManager::default()),
         })
     }
 
@@ -148,5 +175,41 @@ impl BackendCore {
     #[inline]
     pub fn exchange_symbols_mut(&self) -> std::sync::RwLockWriteGuard<'_, HashMap<ExchangeId, Vec<SymbolInfo>>> {
         self.exchange_symbols.write().expect("BackendCore.exchange_symbols poisoned (write)")
+    }
+
+    /// Read guard for the presets map.
+    #[inline]
+    pub fn presets(&self) -> std::sync::RwLockReadGuard<'_, HashMap<String, ChartPreset>> {
+        self.presets.read().expect("BackendCore.presets poisoned (read)")
+    }
+
+    /// Write guard for the presets map.
+    #[inline]
+    pub fn presets_mut(&self) -> std::sync::RwLockWriteGuard<'_, HashMap<String, ChartPreset>> {
+        self.presets.write().expect("BackendCore.presets poisoned (write)")
+    }
+
+    /// Read guard for the template manager.
+    #[inline]
+    pub fn template_manager(&self) -> std::sync::RwLockReadGuard<'_, TemplateManager> {
+        self.template_manager.read().expect("BackendCore.template_manager poisoned (read)")
+    }
+
+    /// Write guard for the template manager.
+    #[inline]
+    pub fn template_manager_mut(&self) -> std::sync::RwLockWriteGuard<'_, TemplateManager> {
+        self.template_manager.write().expect("BackendCore.template_manager poisoned (write)")
+    }
+
+    /// Read guard for the watchlist manager.
+    #[inline]
+    pub fn watchlist(&self) -> std::sync::RwLockReadGuard<'_, WatchlistManager> {
+        self.watchlist_manager.read().expect("BackendCore.watchlist_manager poisoned (read)")
+    }
+
+    /// Write guard for the watchlist manager.
+    #[inline]
+    pub fn watchlist_mut(&self) -> std::sync::RwLockWriteGuard<'_, WatchlistManager> {
+        self.watchlist_manager.write().expect("BackendCore.watchlist_manager poisoned (write)")
     }
 }

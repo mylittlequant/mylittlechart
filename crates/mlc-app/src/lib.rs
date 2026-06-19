@@ -87,7 +87,6 @@ use mlc_core::state::modal_state::{ModalState, IndicatorCatalogItem};
 use mlc_layout::ui::modal_settings::{ChartScreenArea, WatchlistModalState, WatchlistGroupNameInputState};
 use mlc_layout::layout::modals::watchlist_modal::{render_watchlist_modal, WatchlistEntry, WatchlistGroupInfo, render_wl_group_name_input, WlGroupNameInputResult};
 use mlc_layout::layout::modals::clock_popup::render_clock_popup;
-use mlc_indicators::IndicatorManager;
 use mlc_live_data::{DataBridge, LiveUpdate, LiveDataProvider};
 
 use mlc_layout::panel_app::ChartPanelApp;
@@ -1252,7 +1251,11 @@ impl ChartApp {
         // Load persisted user state (templates, presets, profile) from disk.
         // Must happen before toolbar_config override so that the active_preset_id
         // from the profile is respected during the first render.
-        app.panel_app.load_user_state();
+        {
+            let (loaded_presets, loaded_tm) = app.panel_app.load_user_state();
+            *app.core.presets_mut() = loaded_presets;
+            *app.core.template_manager_mut() = loaded_tm;
+        }
 
         // Restore user profile (sidebar state) and watchlist from disk.
         app.load_user_profile();
@@ -1264,7 +1267,7 @@ impl ChartApp {
         );
 
         // Check if a saved preset exists for the active_preset_id.
-        let has_saved_preset = app.panel_app.presets.contains_key(&app.panel_app.active_preset_id);
+        let has_saved_preset = app.core.presets().contains_key(&app.panel_app.active_preset_id);
 
         if has_saved_preset {
             // ── Restore from saved preset ───────────────────────────────
@@ -1408,16 +1411,21 @@ impl ChartApp {
 
         // Subscribe to mini ticker updates for each symbol in the active watchlist,
         // using each symbol's own exchange.
-        if let Some(wl) = app.sidebar_state.watchlist_manager.active_list() {
-            for ws in wl.all_symbols() {
-                let ws_exchange = digdigdig3::ExchangeId::from_str(&ws.exchange)
+        {
+            let wl_guard = app.core.watchlist();
+            let wl_syms: Vec<_> = wl_guard.active_list()
+                .map(|wl| wl.all_symbols().into_iter().map(|ws| (ws.exchange.clone(), ws.symbol.clone(), ws.account_type.clone())).collect())
+                .unwrap_or_default();
+            drop(wl_guard);
+            for (ws_exchange_str, ws_symbol, ws_account_type) in wl_syms {
+                let ws_exchange = digdigdig3::ExchangeId::from_str(&ws_exchange_str)
                     .unwrap_or(exchange_id);
                 if !app.sidebar_state.connector_enabled.get(ws_exchange.as_str()).copied().unwrap_or(true) {
                     continue;
                 }
-                let ws_at = account_type_from_label(&ws.account_type);
+                let ws_at = account_type_from_label(&ws_account_type);
                 bridge.ensure_connector(ws_exchange);
-                bridge.subscribe_mini_ticker(ws_exchange, &ws.symbol, ws_at);
+                bridge.subscribe_mini_ticker(ws_exchange, &ws_symbol, ws_at);
             }
         }
 
@@ -1595,7 +1603,7 @@ impl ChartApp {
             frame_layouts: std::collections::HashMap::new(),
         };
 
-        app.sidebar_state.watchlist_manager = mlc_sidebar_content::watchlist::WatchlistManager::new(
+        *app.core.watchlist_mut() = mlc_sidebar_content::watchlist::WatchlistManager::new(
             vec![
                 mlc_sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "binance".to_string()),
                 mlc_sidebar_content::watchlist::WatchlistSymbol::new("ETHUSDT".to_string(), "binance".to_string()),
@@ -1658,7 +1666,7 @@ impl ChartApp {
         // Create a single "Untitled" preset tab.
         let untitled_preset = mlc_core::preset::preset::ChartPreset::new("Untitled".to_string());
         let untitled_id = untitled_preset.id.clone();
-        app.panel_app.presets.insert(untitled_id.clone(), untitled_preset);
+        app.core.presets_mut().insert(untitled_id.clone(), untitled_preset);
         app.panel_app.open_tabs = vec![untitled_id.clone()];
         app.panel_app.active_preset_id = untitled_id;
 
@@ -1847,8 +1855,8 @@ impl ChartApp {
             frame_layouts: std::collections::HashMap::new(),
         };
 
-        // Initialize watchlist with a minimal default — overwritten by load_user_state below.
-        app.sidebar_state.watchlist_manager = mlc_sidebar_content::watchlist::WatchlistManager::new(
+        // Initialize watchlist with a minimal default — overwritten by load_watchlists below.
+        *app.core.watchlist_mut() = mlc_sidebar_content::watchlist::WatchlistManager::new(
             vec![
                 mlc_sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "binance".to_string()),
                 mlc_sidebar_content::watchlist::WatchlistSymbol::new("ETHUSDT".to_string(), "binance".to_string()),
@@ -1862,13 +1870,13 @@ impl ChartApp {
         // Phase 4: use app-level UserManager (loaded once in main.rs) instead of
         // calling load_user_state() per-window.  Eliminates redundant disk reads
         // when multiple windows are opened.
-        app.panel_app.template_manager = user_manager.template_manager.clone();
-        app.panel_app.presets = user_manager.presets.clone();
+        *app.core.template_manager_mut() = user_manager.template_manager.clone();
+        *app.core.presets_mut() = user_manager.presets.clone();
 
         // Always restore active_preset_id from profile (not just on restore).
         // This prevents skeleton launches from creating spurious new Untitled presets.
         if !user_manager.profile.active_preset_id.is_empty()
-            && app.panel_app.presets.contains_key(&user_manager.profile.active_preset_id)
+            && app.core.presets().contains_key(&user_manager.profile.active_preset_id)
         {
             app.panel_app.active_preset_id = user_manager.profile.active_preset_id.clone();
         }
@@ -1878,20 +1886,23 @@ impl ChartApp {
         // causing the phantom "__default__" Chart tab to appear.
         {
             app.panel_app.open_tabs = user_manager.profile.open_tabs.clone();
-            app.panel_app.open_tabs.retain(|id| app.panel_app.presets.contains_key(id));
+            {
+                let presets_guard = app.core.presets();
+                app.panel_app.open_tabs.retain(|id| presets_guard.contains_key(id));
 
-            // Migration: old data has no open_tabs — open only the active preset.
-            if app.panel_app.open_tabs.is_empty() && !app.panel_app.presets.is_empty() {
-                if !app.panel_app.active_preset_id.is_empty()
-                    && app.panel_app.presets.contains_key(&app.panel_app.active_preset_id)
-                {
-                    app.panel_app.open_tabs = vec![app.panel_app.active_preset_id.clone()];
-                } else {
-                    // No active preset known — open the newest one.
-                    let mut all: Vec<_> = app.panel_app.presets.values().collect();
-                    all.sort_by_key(|p| std::cmp::Reverse(p.created_at));
-                    if let Some(newest) = all.first() {
-                        app.panel_app.open_tabs = vec![newest.id.clone()];
+                // Migration: old data has no open_tabs — open only the active preset.
+                if app.panel_app.open_tabs.is_empty() && !presets_guard.is_empty() {
+                    if !app.panel_app.active_preset_id.is_empty()
+                        && presets_guard.contains_key(&app.panel_app.active_preset_id)
+                    {
+                        app.panel_app.open_tabs = vec![app.panel_app.active_preset_id.clone()];
+                    } else {
+                        // No active preset known — open the newest one.
+                        let mut all: Vec<_> = presets_guard.values().collect();
+                        all.sort_by_key(|p| std::cmp::Reverse(p.created_at));
+                        if let Some(newest) = all.first() {
+                            app.panel_app.open_tabs = vec![newest.id.clone()];
+                        }
                     }
                 }
             }
@@ -1901,12 +1912,16 @@ impl ChartApp {
         app.panel_app.user_manager.profile = user_manager.profile.clone();
         app.panel_app.user_manager.snapshots = user_manager.snapshots.clone();
 
-        dlog!(
-            "[ChartApp] new_window: using {} presets, {} prim-templates, {} ind-templates",
-            app.panel_app.presets.len(),
-            app.panel_app.template_manager.primitive_templates.len(),
-            app.panel_app.template_manager.indicator_templates.len(),
-        );
+        {
+            let presets_guard = app.core.presets();
+            let tm_guard = app.core.template_manager();
+            dlog!(
+                "[ChartApp] new_window: using {} presets, {} prim-templates, {} ind-templates",
+                presets_guard.len(),
+                tm_guard.primitive_templates.len(),
+                tm_guard.indicator_templates.len(),
+            );
+        }
 
         // Load watchlists from disk (profile.json is NOT re-read here — it was already
         // loaded once at startup and is passed in via `profile`).
@@ -1919,15 +1934,18 @@ impl ChartApp {
 
         // If restoring a saved window, apply its tab/preset state.
         if let Some(ws) = restore {
-            let valid_tabs: Vec<String> = ws.open_tabs.iter()
-                .filter(|id| app.panel_app.presets.contains_key(*id))
-                .cloned()
-                .collect();
+            let valid_tabs: Vec<String> = {
+                let presets_guard = app.core.presets();
+                ws.open_tabs.iter()
+                    .filter(|id| presets_guard.contains_key(*id))
+                    .cloned()
+                    .collect()
+            };
             if !valid_tabs.is_empty() {
                 app.panel_app.open_tabs = valid_tabs;
             }
             if !ws.active_preset_id.is_empty()
-                && app.panel_app.presets.contains_key(&ws.active_preset_id)
+                && app.core.presets().contains_key(&ws.active_preset_id)
             {
                 app.panel_app.active_preset_id = ws.active_preset_id.clone();
             }
@@ -1949,7 +1967,7 @@ impl ChartApp {
             }
             app.panel_app.toolbar_config = ToolbarConfig::standalone();
         } else {
-            let has_saved_preset = app.panel_app.presets.contains_key(&app.panel_app.active_preset_id);
+            let has_saved_preset = app.core.presets().contains_key(&app.panel_app.active_preset_id);
 
             if has_saved_preset {
                 // ── new_window COLD PATH timer anchor ─────────────────────
@@ -2104,17 +2122,26 @@ impl ChartApp {
                 // Create "Untitled 1" preset for genuinely fresh windows
                 // (no presets at all — brand new profile).  Uses same numbering
                 // logic as OpenPresetNewChart (input.rs) for consistency.
-                if app.panel_app.presets.is_empty() {
-                    let max_n = app.panel_app.presets.values()
-                        .filter_map(|p| p.name.strip_prefix("Untitled "))
-                        .filter_map(|s| s.parse::<u32>().ok())
-                        .max()
-                        .unwrap_or(0);
-                    let untitled_preset = mlc_core::preset::preset::ChartPreset::new(format!("Untitled {}", max_n + 1));
-                    let untitled_id = untitled_preset.id.clone();
-                    app.panel_app.presets.insert(untitled_id.clone(), untitled_preset);
-                    app.panel_app.open_tabs = vec![untitled_id.clone()];
-                    app.panel_app.active_preset_id = untitled_id;
+                {
+                    let max_n_opt: Option<u32> = {
+                        let pg = app.core.presets();
+                        if pg.is_empty() {
+                            Some(pg.values()
+                                .filter_map(|p| p.name.strip_prefix("Untitled "))
+                                .filter_map(|s| s.parse::<u32>().ok())
+                                .max()
+                                .unwrap_or(0))
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(max_n) = max_n_opt {
+                        let untitled_preset = mlc_core::preset::preset::ChartPreset::new(format!("Untitled {}", max_n + 1));
+                        let untitled_id = untitled_preset.id.clone();
+                        app.core.presets_mut().insert(untitled_id.clone(), untitled_preset);
+                        app.panel_app.open_tabs = vec![untitled_id.clone()];
+                        app.panel_app.active_preset_id = untitled_id;
+                    }
                 }
 
                 // Add the builtin volume histogram overlay to the fresh window.
@@ -2152,17 +2179,18 @@ impl ChartApp {
 
         // Subscribe mini tickers for active watchlist.
         if !skeleton {
-            if let Some(wl) = app.sidebar_state.watchlist_manager.active_list() {
-                for ws in wl.all_symbols() {
-                    let ws_exchange = digdigdig3::ExchangeId::from_str(&ws.exchange)
-                        .unwrap_or(exchange_id);
-                    if !app.sidebar_state.connector_enabled.get(ws_exchange.as_str()).copied().unwrap_or(true) {
-                        continue;
-                    }
-                    let ws_at = account_type_from_label(&ws.account_type);
-                    bridge.ensure_connector(ws_exchange);
-                    bridge.subscribe_mini_ticker(ws_exchange, &ws.symbol, ws_at);
+            let wl_syms: Vec<_> = app.core.watchlist().active_list()
+                .map(|wl| wl.all_symbols().into_iter().map(|ws| (ws.exchange.clone(), ws.symbol.clone(), ws.account_type.clone())).collect())
+                .unwrap_or_default();
+            for (ws_exchange_str, ws_symbol, ws_account_type) in wl_syms {
+                let ws_exchange = digdigdig3::ExchangeId::from_str(&ws_exchange_str)
+                    .unwrap_or(exchange_id);
+                if !app.sidebar_state.connector_enabled.get(ws_exchange.as_str()).copied().unwrap_or(true) {
+                    continue;
                 }
+                let ws_at = account_type_from_label(&ws_account_type);
+                bridge.ensure_connector(ws_exchange);
+                bridge.subscribe_mini_ticker(ws_exchange, &ws_symbol, ws_at);
             }
         }
 
@@ -4315,6 +4343,8 @@ impl ChartApp {
                 let gid = cid.and_then(|c| self.bubble_for_chart(c));
                 (sym, tf, gid)
             };
+            let bubble_guard_tb = self.core.bubble();
+            let presets_guard_tb = self.core.presets();
             let toolbar_result = self.panel_app.render_toolbars_with_theme(
                 ctx,
                 &panel_layout,
@@ -4325,8 +4355,11 @@ impl ChartApp {
                 Some(active_tf_str.as_str()),
                 sidebar_w,
                 active_gid,
-                &self.core.bubble().bubble,
+                &bubble_guard_tb.bubble,
+                &*presets_guard_tb,
             );
+            drop(bubble_guard_tb);
+            drop(presets_guard_tb);
             Some(toolbar_result)
         } else {
             // Preserve the cached toolbar result from the previous frame.
@@ -4714,6 +4747,7 @@ impl ChartApp {
                         _ => None,
                     }
                 },
+                &*self.core.watchlist(),
             );
 
             Some(sidebar_result)
@@ -5009,6 +5043,8 @@ impl ChartApp {
             (sym, tf, gid)
         };
 
+        let bubble_guard_tb2 = self.core.bubble();
+        let presets_guard_tb2 = self.core.presets();
         let toolbar_result = self.panel_app.render_toolbars_with_theme(
             ctx,
             &panel_layout,
@@ -5019,8 +5055,11 @@ impl ChartApp {
             Some(active_tf_str.as_str()),
             sidebar_w,
             active_gid,
-            &self.core.bubble().bubble,
+            &bubble_guard_tb2.bubble,
+            &*presets_guard_tb2,
         );
+        drop(bubble_guard_tb2);
+        drop(presets_guard_tb2);
 
         self.last_toolbar_result = Some(toolbar_result);
     }
@@ -5251,6 +5290,7 @@ impl ChartApp {
                     _ => None,
                 }
             },
+            &*self.core.watchlist(),
         );
 
         // Persist agent terminal rect for hover-focus.
@@ -5465,6 +5505,9 @@ impl ChartApp {
             &self.panel_app.theme_manager as *const _;
         let indicator_guard_modals = self.core.indicators();
 
+        let bubble_guard_modals = self.core.bubble();
+        let tm_guard_modals = self.core.template_manager();
+        let presets_guard_modals = self.core.presets();
         let modal_result = self.panel_app.render_modals(
             ctx,
             &modal_layout,
@@ -5479,8 +5522,13 @@ impl ChartApp {
             &toolbar_state,
             current_time_ms,
             &mut self.input_coordinator.borrow_mut(),
-            &self.core.bubble().bubble,
+            &bubble_guard_modals.bubble,
+            &*tm_guard_modals,
+            &*presets_guard_modals,
         );
+        drop(bubble_guard_modals);
+        drop(tm_guard_modals);
+        drop(presets_guard_modals);
         let mut frame_result: Option<ChartModalRenderResult> = Some(modal_result);
 
         // 5b. Search overlay (indicator / symbol / compare)
@@ -5490,7 +5538,8 @@ impl ChartApp {
                 let indicator_catalog = self.build_indicator_catalog();
                 let hovered = self.modal_state.hovered_item_id.as_deref();
                 let toolbar_theme_search = self.panel_app.toolbar_theme_for_render();
-                let indicator_sets = &self.panel_app.template_manager.indicator_sets;
+                let tm_guard_search = self.core.template_manager();
+                let indicator_sets = &tm_guard_search.indicator_sets;
                 Some(render_search_overlay(
                     ctx,
                     screen,
@@ -5566,9 +5615,10 @@ impl ChartApp {
         // 8b. Watchlist modal
         let last_watchlist_modal_result: Option<mlc_layout::layout::modals::watchlist_modal::WatchlistModalResult> =
             if self.watchlist_modal.is_open() {
+                let wl_guard = self.core.watchlist();
                 let color_flags: Vec<String> = self.sidebar_state.watchlist_items.iter()
                     .map(|item| {
-                        self.sidebar_state.watchlist_manager.active_list()
+                        wl_guard.active_list()
                             .and_then(|l| l.get_color_flag(&item.symbol, &item.exchange, &item.account_type))
                             .unwrap_or_default()
                             .to_string()
@@ -5589,7 +5639,7 @@ impl ChartApp {
                         account_type: item.account_type.clone(),
                     })
                     .collect();
-                let groups_info: Vec<WatchlistGroupInfo> = self.sidebar_state.watchlist_manager.lists.iter()
+                let groups_info: Vec<WatchlistGroupInfo> = wl_guard.lists.iter()
                     .map(|list| WatchlistGroupInfo {
                         id: list.id,
                         name: list.name.clone(),
@@ -5599,9 +5649,10 @@ impl ChartApp {
                             list.groups[0].color.clone()
                         },
                         symbol_count: list.all_symbols().len(),
-                        is_active: list.id == self.sidebar_state.watchlist_manager.active_list_id,
+                        is_active: list.id == wl_guard.active_list_id,
                     })
                     .collect();
+                drop(wl_guard);
                 Some(render_watchlist_modal(
                     ctx,
                     modal_right_edge,
@@ -6043,12 +6094,13 @@ impl ChartApp {
     pub fn warm_background_tabs(&mut self) {
         let active_id = self.panel_app.active_preset_id.clone();
         let bar_count = self.panel_app.user_manager.profile.bar_count as usize;
+        let presets_guard = self.core.presets();
         let warm_targets: Vec<(String, String, mlc_core::state::Timeframe, String)> = self
             .panel_app
             .open_tabs
             .iter()
             .filter(|tab| **tab != active_id)
-            .filter_map(|tab| self.panel_app.presets.get(tab))
+            .filter_map(|tab| presets_guard.get(tab))
             .flat_map(|preset| {
                 preset.windows.iter().map(move |w| {
                     // Prefer the owning group's identity so the warm-up
@@ -6073,6 +6125,7 @@ impl ChartApp {
             })
             .filter(|(sym, _, _, _)| !sym.is_empty())
             .collect();
+        drop(presets_guard);
         let mut warmed = 0usize;
         for (sym, exch, tf, at_label) in warm_targets {
             let eid = digdigdig3::ExchangeId::from_str(&exch)
@@ -6091,11 +6144,12 @@ impl ChartApp {
     /// thread for the whole batch (~120 ms per series measured).
     pub fn warm_background_tab_targets(&self) -> Vec<(String, String, mlc_core::state::Timeframe, String)> {
         let active_id = self.panel_app.active_preset_id.clone();
+        let presets_guard = self.core.presets();
         self.panel_app
             .open_tabs
             .iter()
             .filter(|tab| **tab != active_id)
-            .filter_map(|tab| self.panel_app.presets.get(tab))
+            .filter_map(|tab| presets_guard.get(tab))
             .flat_map(|preset| {
                 preset.windows.iter().map(move |w| {
                     if let Some(bid) = w.bubble_id {
@@ -6949,7 +7003,7 @@ impl ChartApp {
                         });
                     self.drag_start_points = pre_drag;
 
-                    if let Some(window) = self.panel_app.panel_grid.active_container() {
+                    if let Some(_window) = self.panel_app.panel_grid.active_container() {
                         if let Some(pid) = active_pid_pd {
                             if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
                                 if let Some(idx) = panel.drawing_manager.find_index_by_id(id) {
@@ -7011,7 +7065,7 @@ impl ChartApp {
                     self.drag_start_points = pre_drag;
 
                     // Use start_control_point_drag (not start_drag) so DragType is ControlPoint.
-                    if let Some(window) = self.panel_app.panel_grid.active_container() {
+                    if let Some(_window) = self.panel_app.panel_grid.active_container() {
                         if let Some(pid) = active_pid_cpd {
                             if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
                                 if let Some(idx) = panel.drawing_manager.find_index_by_id(primitive_id) {
@@ -7067,7 +7121,7 @@ impl ChartApp {
                         .and_then(|pid| self.panels_store.chart_panel.get(&pid))
                         .and_then(|panel| panel.drawing_manager.dragging_primitive_id());
 
-                    if let Some(window) = self.panel_app.panel_grid.active_container() {
+                    if let Some(_window) = self.panel_app.panel_grid.active_container() {
                         if let Some(pid) = active_pid_ud {
                             if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
                                 let drag_ts_ms = mlc_core::bar_f64_to_timestamp_ms(&active_bars[..], data_bar);

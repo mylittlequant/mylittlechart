@@ -1093,16 +1093,16 @@ impl App<'_> {
         }
         // Initialise the new window directly from AppState so it has current data
         // without waiting for the next dirty-flag sync pass.
-        chart.sidebar_state.watchlist_manager = self.app_state.watchlist_manager.clone();
+        *chart.core.watchlist_mut() = self.app_state.watchlist_manager.clone();
         chart.sidebar_state.connector_enabled = self.app_state.connector_enabled.clone();
         // Merge AppState presets into window — don't replace, to keep
         // any Untitled preset that new_window() just created.
         for (k, v) in self.app_state.presets.iter() {
-            chart.panel_app.presets.entry(k.clone()).or_insert_with(|| v.clone());
+            chart.core.presets_mut().entry(k.clone()).or_insert_with(|| v.clone());
         }
         // Sync back: if new_window() created an Untitled preset for a fresh profile,
         // propagate it to app_state so chrome tabs and preset list can see it.
-        for (k, v) in chart.panel_app.presets.iter() {
+        for (k, v) in chart.core.presets().iter() {
             self.app_state.presets.entry(k.clone()).or_insert_with(|| v.clone());
         }
         // Also sync open_tabs and active_preset_id back to profile_manager
@@ -1121,7 +1121,7 @@ impl App<'_> {
         for panel in chart.panels_store.chart_panel.values_mut() {
             panel.drawing_manager.load_last_styles(drawing_styles);
         }
-        chart.panel_app.template_manager = self.app_state.template_manager.clone();
+        *chart.core.template_manager_mut() = self.app_state.template_manager.clone();
         // Sync server settings so the User Settings modal shows current state.
         chart.panel_app.user_settings_state.server_enabled = self.app_state.server_enabled;
         chart.panel_app.user_settings_state.server_port = self.app_state.server_port;
@@ -1530,10 +1530,10 @@ impl App<'_> {
                     chart.panel_app.theme_manager.set_preset(&theme_preset);
                 }
                 // Sync AppState into the new live window (read-only from captured clones).
-                chart.sidebar_state.watchlist_manager = watchlist_manager.clone();
+                *chart.core.watchlist_mut() = watchlist_manager.clone();
                 chart.sidebar_state.connector_enabled = connector_enabled.clone();
                 for (k, v) in app_presets.iter() {
-                    chart.panel_app.presets.entry(k.clone()).or_insert_with(|| v.clone());
+                    chart.core.presets_mut().entry(k.clone()).or_insert_with(|| v.clone());
                 }
                 chart.panel_app.user_manager.snapshots = snapshots.clone();
                 {
@@ -1542,7 +1542,7 @@ impl App<'_> {
                         panel.drawing_manager.load_last_styles(drawing_styles);
                     }
                 }
-                chart.panel_app.template_manager = template_manager.clone();
+                *chart.core.template_manager_mut() = template_manager.clone();
                 chart.panel_app.user_settings_state.server_enabled = server_enabled;
                 chart.panel_app.user_settings_state.server_port = server_port;
                 chart.panel_app.user_settings_state.server_status = if server_enabled {
@@ -1590,8 +1590,8 @@ impl App<'_> {
                 // Collect presets that new_window created and that were absent
                 // from app_presets — these must be merged back on the main thread.
                 let new_presets: Vec<(String, mlc_core::preset::preset::ChartPreset)> = chart
-                    .panel_app
-                    .presets
+                    .core
+                    .presets()
                     .iter()
                     .filter(|(k, _)| !app_presets.contains_key(*k))
                     .map(|(k, v)| (k.clone(), v.clone()))
@@ -3842,7 +3842,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             // when nothing has changed.
             if self.app_state.watchlists_dirty {
                 for pw in self.windows.values_mut() {
-                    pw.chart.sidebar_state.watchlist_manager =
+                    *pw.chart.core.watchlist_mut() =
                         self.app_state.watchlist_manager.clone();
                 }
                 self.app_state.watchlists_dirty = false;
@@ -3856,7 +3856,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
             if self.app_state.presets_dirty {
                 for pw in self.windows.values_mut() {
-                    pw.chart.panel_app.presets = self.app_state.presets.clone();
+                    *pw.chart.core.presets_mut() = self.app_state.presets.clone();
                 }
                 self.app_state.presets_dirty = false;
             }
@@ -3875,7 +3875,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
             if self.app_state.templates_dirty {
                 for pw in self.windows.values_mut() {
-                    pw.chart.panel_app.template_manager =
+                    *pw.chart.core.template_manager_mut() =
                         self.app_state.template_manager.clone();
                 }
                 self.app_state.templates_dirty = false;

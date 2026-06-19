@@ -103,7 +103,7 @@ impl ChartApp {
                         self.panel_app.chart_settings_state.template_dropdown_open = false;
                         self.panel_app.chart_settings_state.save_template_mode = true;
                         let prefix = "Мой шаблон ";
-                        let max_n = self.panel_app.template_manager.chart_templates
+                        let max_n = self.core.template_manager().chart_templates
                             .iter()
                             .filter_map(|t| t.name.strip_prefix(prefix))
                             .filter_map(|s| s.parse::<u32>().ok())
@@ -143,7 +143,8 @@ impl ChartApp {
                     }
                     _ if btn_id.starts_with("template_option:") => {
                         let tmpl_id = &btn_id["template_option:".len()..];
-                        if let Some(tmpl) = self.panel_app.template_manager.get_chart_template(tmpl_id).cloned() {
+                        let tmpl_opt = self.core.template_manager().get_chart_template(tmpl_id).cloned();
+                        if let Some(tmpl) = tmpl_opt {
                             self.panel_app.chart_settings_state.applied_template_id = Some(tmpl.id.clone());
                             self.panel_app.chart_settings_state.template_dropdown_open = false;
                             self.apply_chart_template(&tmpl);
@@ -2069,7 +2070,8 @@ impl ChartApp {
 
         // ── Template option selected ──────────────────────────────────────────
         if let Some(tmpl_id) = item_id.strip_prefix("template_option:") {
-            if let Some(tmpl) = self.panel_app.template_manager.get_primitive_template(tmpl_id).cloned() {
+            let tmpl_opt = self.core.template_manager().get_primitive_template(tmpl_id).cloned();
+            if let Some(tmpl) = tmpl_opt {
                 self.panel_app.primitive_settings_state.applied_template_id = Some(tmpl.id.clone());
                 self.panel_app.primitive_settings_state.template_dropdown_open = false;
                 // Apply the template to the primitive
@@ -2094,7 +2096,7 @@ impl ChartApp {
             self.panel_app.primitive_settings_state.template_dropdown_open = false;
             self.panel_app.primitive_settings_state.save_template_mode = true;
             let prefix = "Мой шаблон ";
-            let max_n = self.panel_app.template_manager.primitive_templates
+            let max_n = self.core.template_manager().primitive_templates
                 .iter()
                 .filter_map(|t| t.name.strip_prefix(prefix))
                 .filter_map(|s| s.parse::<u32>().ok())
@@ -2699,7 +2701,7 @@ impl ChartApp {
                         self.panel_app.indicator_settings_state.template_dropdown_open = false;
                         self.panel_app.indicator_settings_state.save_template_mode = true;
                         let prefix = "Мой шаблон ";
-                        let max_n = self.panel_app.template_manager.indicator_templates
+                        let max_n = self.core.template_manager().indicator_templates
                             .iter()
                             .filter_map(|t| t.name.strip_prefix(prefix))
                             .filter_map(|s| s.parse::<u32>().ok())
@@ -2727,7 +2729,7 @@ impl ChartApp {
                                 inst.outputs.clear();  // Reset output styles to defaults
                             }
                             // Recalculate
-                            let bars_opt = self.panel_app.panel_grid.active_container().map(|w| Vec::<mlc_core::Bar>::new());
+                            let bars_opt = self.panel_app.panel_grid.active_container().map(|_w| Vec::<mlc_core::Bar>::new());
                             let active_cid = self.panel_app.panel_grid.active_container_id().map(|c| c.0).unwrap_or(0);
                             if let Some(bars) = bars_opt {
                                 self.core.indicators_mut().calculate_all_for_window(active_cid, &bars);
@@ -2749,7 +2751,8 @@ impl ChartApp {
                     }
                     _ if btn_id.starts_with("template_option:") => {
                         let tmpl_id = &btn_id["template_option:".len()..];
-                        if let Some(tmpl) = self.panel_app.template_manager.get_indicator_template(tmpl_id).cloned() {
+                        let tmpl_opt = self.core.template_manager().get_indicator_template(tmpl_id).cloned();
+                        if let Some(tmpl) = tmpl_opt {
                             self.panel_app.indicator_settings_state.applied_template_id = Some(tmpl.id.clone());
                             self.panel_app.indicator_settings_state.template_dropdown_open = false;
                             // Apply params from template to the indicator instance
@@ -2767,7 +2770,7 @@ impl ChartApp {
                                         inst.set_param(k, pv);
                                     }
                                 }
-                                let bars_opt = self.panel_app.panel_grid.active_container().map(|w| Vec::<mlc_core::Bar>::new());
+                                let bars_opt = self.panel_app.panel_grid.active_container().map(|_w| Vec::<mlc_core::Bar>::new());
                                 let active_cid = self.panel_app.panel_grid.active_container_id().map(|c| c.0).unwrap_or(0);
                                 if let Some(bars) = bars_opt {
                                     self.core.indicators_mut().calculate_all_for_window(active_cid, &bars);
@@ -2791,7 +2794,7 @@ impl ChartApp {
                         if let Some(inst) = self.core.indicators_mut().get_instance_mut(ind_id) {
                             inst.signals_enabled = enabled;
                         }
-                        let bars_opt = self.panel_app.panel_grid.active_container().map(|w| Vec::<mlc_core::Bar>::new());
+                        let bars_opt = self.panel_app.panel_grid.active_container().map(|_w| Vec::<mlc_core::Bar>::new());
                         let active_cid = self.panel_app.panel_grid.active_container_id().map(|c| c.0).unwrap_or(0);
                         if let Some(bars) = bars_opt {
                             self.core.indicators_mut().calculate_all_for_window(active_cid, &bars);
@@ -2828,7 +2831,7 @@ impl ChartApp {
                     };
                     inst.set_param(param_name, value);
                 }
-                let bars_opt = self.panel_app.panel_grid.active_container().map(|w| Vec::<mlc_core::Bar>::new());
+                let bars_opt = self.panel_app.panel_grid.active_container().map(|_w| Vec::<mlc_core::Bar>::new());
                 let active_cid = self.panel_app.panel_grid.active_container_id().map(|c| c.0).unwrap_or(0);
                 if let Some(bars) = bars_opt {
                     self.core.indicators_mut().calculate_all_for_window(active_cid, &bars);
@@ -2939,7 +2942,7 @@ impl ChartApp {
                         inst.set_param(param_name, IndValue::String(next_val.clone()));
                     }
                     // Recalculate.
-                    let bars_opt = self.panel_app.panel_grid.active_container().map(|w| Vec::<mlc_core::Bar>::new());
+                    let bars_opt = self.panel_app.panel_grid.active_container().map(|_w| Vec::<mlc_core::Bar>::new());
                     let active_cid = self.panel_app.panel_grid.active_container_id().map(|c| c.0).unwrap_or(0);
                     if let Some(bars) = bars_opt {
                         self.core.indicators_mut().calculate_all_for_window(active_cid, &bars);
@@ -2966,7 +2969,7 @@ impl ChartApp {
                 if let Some(inst) = self.core.indicators_mut().get_instance_mut(ind_id) {
                     inst.set_param(&param_name, IndValue::String(value.clone()));
                 }
-                let bars_opt = self.panel_app.panel_grid.active_container().map(|w| Vec::<mlc_core::Bar>::new());
+                let bars_opt = self.panel_app.panel_grid.active_container().map(|_w| Vec::<mlc_core::Bar>::new());
                 let active_cid = self.panel_app.panel_grid.active_container_id().map(|c| c.0).unwrap_or(0);
                 if let Some(bars) = bars_opt {
                     self.core.indicators_mut().calculate_all_for_window(active_cid, &bars);
@@ -2990,7 +2993,7 @@ impl ChartApp {
                     if let Some(inst) = self.core.indicators_mut().get_instance_mut(ind_id) {
                         inst.set_param(param_name, IndValue::Bool(!cur));
                     }
-                    let bars_opt = self.panel_app.panel_grid.active_container().map(|w| Vec::<mlc_core::Bar>::new());
+                    let bars_opt = self.panel_app.panel_grid.active_container().map(|_w| Vec::<mlc_core::Bar>::new());
                     let active_cid = self.panel_app.panel_grid.active_container_id().map(|c| c.0).unwrap_or(0);
                     if let Some(bars) = bars_opt {
                         self.core.indicators_mut().calculate_all_for_window(active_cid, &bars);

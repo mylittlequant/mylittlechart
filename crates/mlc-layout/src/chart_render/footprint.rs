@@ -570,13 +570,13 @@ mod tests {
     fn mk_bar(levels: Vec<(f64, f64, f64)>) -> FootprintBar {
         let lvs: Vec<FootprintLevel> = levels
             .into_iter()
-            .map(|(p, b, s)| FootprintLevel { price: p, buy_vol: b, sell_vol: s })
+            .map(|(p, b, s)| FootprintLevel { price: p, buy_vol: b, sell_vol: s, is_single_print: false, is_unfinished: false })
             .collect();
         let total: f64 = lvs.iter().map(|l| l.total_vol()).sum();
         let (open, close) = (lvs.first().map(|l| l.price).unwrap_or(0.0), lvs.last().map(|l| l.price).unwrap_or(0.0));
         let high = lvs.iter().map(|l| l.price).fold(f64::NEG_INFINITY, f64::max);
         let low  = lvs.iter().map(|l| l.price).fold(f64::INFINITY, f64::min);
-        FootprintBar { open_time: 0, open, high, low, close, volume: total, levels: lvs }
+        FootprintBar { open_time: 0, open, high, low, close, volume: total, levels: lvs, cumulative_delta: 0.0, stacked_ask_start: None, stacked_ask_len: None, stacked_bid_start: None, stacked_bid_len: None, is_absorption: false }
     }
 
     #[test]

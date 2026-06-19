@@ -291,7 +291,7 @@ impl ChartApp {
 
     /// Persist templates to disk.
     pub fn persist_templates(&self) {
-        if let Err(e) = self.panel_app.template_manager.save_to_default_dir(None) {
+        if let Err(e) = self.core.template_manager().save_to_default_dir(None) {
             eprintln!("[persist] templates: {:?}", e);
         }
     }
@@ -354,7 +354,7 @@ impl ChartApp {
         if watchlists_path.exists() {
             match mlc_core::load_json::<mlc_sidebar_content::watchlist::WatchlistManager>(&watchlists_path, None) {
                 Ok(manager) => {
-                    self.sidebar_state.watchlist_manager = manager;
+                    *self.core.watchlist_mut() = manager;
                 }
                 Err(e) => {
                     eprintln!("[UserProfile] Failed to load watchlists: {}", e);
@@ -373,7 +373,7 @@ impl ChartApp {
         if watchlists_path.exists() {
             match mlc_core::load_json::<mlc_sidebar_content::watchlist::WatchlistManager>(&watchlists_path, None) {
                 Ok(manager) => {
-                    self.sidebar_state.watchlist_manager = manager;
+                    *self.core.watchlist_mut() = manager;
                 }
                 Err(e) => {
                     eprintln!("[UserProfile] Failed to load watchlists: {}", e);

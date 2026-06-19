@@ -53,7 +53,7 @@ impl ChartApp {
             if tab_id == active { continue; }
             if tab_id == "__default__" { continue; }
             if self.live_preset_cache.contains_key(&tab_id) { continue; }
-            if !self.panel_app.presets.contains_key(&tab_id) { continue; }
+            if !self.core.presets().contains_key(&tab_id) { continue; }
             self.pending_background_warm.push_back(tab_id);
         }
         self.background_warm_seeded = true;
@@ -83,7 +83,7 @@ impl ChartApp {
         if self.live_preset_cache.contains_key(&target_id) {
             return true; // counted as drained, just nothing to do
         }
-        let Some(preset) = self.panel_app.presets.get(&target_id).cloned() else {
+        let Some(preset) = self.core.presets().get(&target_id).cloned() else {
             return true; // gone — silently drop
         };
         let active = self.panel_app.active_preset_id.clone();
@@ -666,7 +666,7 @@ impl ChartApp {
             ChartOutEvent::OpenSymbolSearch => {
                 self.modal_state.open(OpenModal::SymbolSearch);
                 self.modal_state.symbol_search_results =
-                    crate::ChartApp::build_demo_symbol_results("", &self.sidebar_state.watchlist_manager, &self.core.exchange_symbols_read());
+                    crate::ChartApp::build_demo_symbol_results("", &self.core.watchlist(), &self.core.exchange_symbols_read());
                 self.modal_state.start_editing(0);
                 eprintln!("[ChartApp] symbol search modal opened");
             }
@@ -770,7 +770,7 @@ impl ChartApp {
             ChartOutEvent::OpenCompareSearch => {
                 self.modal_state.open(OpenModal::CompareSearch);
                 self.modal_state.symbol_search_results =
-                    crate::ChartApp::build_demo_symbol_results("", &self.sidebar_state.watchlist_manager, &self.core.exchange_symbols_read());
+                    crate::ChartApp::build_demo_symbol_results("", &self.core.watchlist(), &self.core.exchange_symbols_read());
                 self.modal_state.start_editing(0);
                 eprintln!("[ChartApp] compare search modal opened");
             }
@@ -1216,11 +1216,11 @@ impl ChartApp {
                 if !self.panel_app.open_tabs.contains(&id) {
                     self.panel_app.open_tabs.push(id.clone());
                 }
-                if let Some(preset) = self.panel_app.presets.get(&id).cloned() {
+                if let Some(preset) = self.core.presets().get(&id).cloned() {
                     self.preset_actions.push(crate::PresetAction::Upsert(preset));
                 }
                 self.persist_profile();
-                if let Some(p) = self.panel_app.presets.get(&id) {
+                if let Some(p) = self.core.presets().get(&id) {
                     eprintln!(
                         "[ChartApp] preset '{}' saved ({} windows, {} groups, {} indicators)",
                         id, p.windows.len(), p.bubbles.len(), p.indicators.len()
@@ -1267,14 +1267,14 @@ impl ChartApp {
                 // RIGHT NOW with the still-materialised outgoing panel_grid.
                 let _lp_t_autosave = std::time::Instant::now();
                 if !prev_id.is_empty() && prev_id != "__default__" && already_materialized {
-                    let prev_name = self.panel_app.presets.get(&prev_id)
+                    let prev_name = self.core.presets().get(&prev_id)
                         .map(|p| p.name.clone())
                         .unwrap_or_else(|| prev_id.clone());
                     // Drop any earlier pending request — we're handling
                     // outgoing-state persistence here synchronously.
                     self.pending_autosave = None;
                     self.collect_state_into_preset(&prev_id, &prev_name);
-                    if let Some(preset) = self.panel_app.presets.get(&prev_id).cloned() {
+                    if let Some(preset) = self.core.presets().get(&prev_id).cloned() {
                         self.preset_actions.push(crate::PresetAction::Upsert(preset));
                     }
                     eprintln!(
@@ -1367,7 +1367,7 @@ impl ChartApp {
                     state_mutated = true;
                 } else {
                     let _lp_t_clone = std::time::Instant::now();
-                    let preset_opt = self.panel_app.presets.get(&id).cloned();
+                    let preset_opt = self.core.presets().get(&id).cloned();
                     let lp_clone_us = _lp_t_clone.elapsed().as_micros();
                     if let Some(preset) = preset_opt {
                         // Defer the 1.3-1.8s `apply_preset_cold` body by ONE
@@ -1419,7 +1419,7 @@ impl ChartApp {
                 eprintln!("[ChartApp] delete preset: {}", id);
                 // Also remove from open_tabs when deleting.
                 self.panel_app.open_tabs.retain(|t| t != &id);
-                if self.panel_app.presets.remove(&id).is_some() {
+                if self.core.presets_mut().remove(&id).is_some() {
                     self.preset_actions.push(crate::PresetAction::Delete { id: id.clone() });
                     self.persist_profile();
                     eprintln!("[ChartApp] preset '{}' removed from memory", id);
@@ -1475,7 +1475,7 @@ impl ChartApp {
                 } else {
                     // Generate a name if none was supplied by the caller.
                     let final_name = if new_name.is_empty() {
-                        if let Some(preset) = self.panel_app.presets.get(&target_id) {
+                        if let Some(preset) = self.core.presets().get(&target_id) {
                             format!("{} (renamed)", preset.name)
                         } else {
                             eprintln!("[ChartApp] preset '{}' not found for rename", target_id);
@@ -1485,7 +1485,7 @@ impl ChartApp {
                         new_name
                     };
 
-                    if let Some(preset) = self.panel_app.presets.get_mut(&target_id) {
+                    if let Some(preset) = self.core.presets_mut().get_mut(&target_id) {
                         eprintln!(
                             "[ChartApp] renamed preset '{}' -> '{}'",
                             preset.name, final_name
@@ -1504,7 +1504,7 @@ impl ChartApp {
             ChartOutEvent::OpenPresetSaveAs => {
                 // Open the preset name input modal in "Save As" mode.
                 // Find the next free "Untitled N" number.
-                let max_n = self.panel_app.presets.values()
+                let max_n = self.core.presets().values()
                     .filter_map(|p| p.name.strip_prefix("Untitled "))
                     .filter_map(|s| s.parse::<u32>().ok())
                     .max()
@@ -1520,7 +1520,7 @@ impl ChartApp {
                 let target_id = self.panel_app.active_preset_id.clone();
                 if target_id == "__default__" || target_id.is_empty() {
                     eprintln!("[ChartApp] no active named preset to rename");
-                } else if let Some(preset) = self.panel_app.presets.get(&target_id) {
+                } else if let Some(preset) = self.core.presets().get(&target_id) {
                     let current_name = preset.name.clone();
                     self.panel_app.preset_name_input.open_rename(&target_id, &current_name, 0);
                     self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::PresetNameInput;
@@ -1534,10 +1534,10 @@ impl ChartApp {
                 // Re-save snapshot into the currently active preset
                 let id = self.panel_app.active_preset_id.clone();
                 if id != "__default__" && !id.is_empty() {
-                    if let Some(preset) = self.panel_app.presets.get(&id) {
-                        let name = preset.name.clone();
+                    let name_opt = self.core.presets().get(&id).map(|p| p.name.clone());
+                    if let Some(name) = name_opt {
                         self.collect_state_into_preset(&id, &name);
-                        if let Some(preset) = self.panel_app.presets.get(&id).cloned() {
+                        if let Some(preset) = self.core.presets().get(&id).cloned() {
                             self.preset_actions.push(crate::PresetAction::Upsert(preset));
                         }
                         eprintln!("[ChartApp] saved snapshot into preset '{}' (id={})", name, id);
@@ -1576,7 +1576,7 @@ impl ChartApp {
                 // counter sees it and avoids collisions.
                 if self.panel_app.active_preset_id == "__default__" {
                     use mlc_core::preset::preset::unix_timestamp_parts;
-                    let max_n = self.panel_app.presets.values()
+                    let max_n = self.core.presets().values()
                         .filter_map(|p| p.name.strip_prefix("Untitled "))
                         .filter_map(|s| s.parse::<u32>().ok())
                         .max()
@@ -1590,7 +1590,7 @@ impl ChartApp {
                 }
 
                 // Now compute the next "Untitled N"  -  the auto-saved one is already counted.
-                let max_n = self.panel_app.presets.values()
+                let max_n = self.core.presets().values()
                     .filter_map(|p| p.name.strip_prefix("Untitled "))
                     .filter_map(|s| s.parse::<u32>().ok())
                     .max()

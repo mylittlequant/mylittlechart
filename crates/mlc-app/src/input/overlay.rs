@@ -90,7 +90,7 @@ impl ChartApp {
             _ if action.starts_with("alert:") => {
                 if let Ok(idx) = action["alert:".len()..].parse::<usize>() {
                     let price = self.panel_app.panel_grid.active_container()
-                        .and_then(|w| None::<&mlc_core::Bar>)
+                        .and_then(|_w| None::<&mlc_core::Bar>)
                         .map(|b| b.close)
                         .unwrap_or(0.0);
                     let symbol = self.panel_app.panel_grid.active_container_id()
@@ -169,7 +169,7 @@ impl ChartApp {
             _ if action.starts_with("alert:") => {
                 if let Ok(idx) = action["alert:".len()..].parse::<usize>() {
                     let price = self.panel_app.panel_grid.active_container()
-                        .and_then(|w| None::<&mlc_core::Bar>)
+                        .and_then(|_w| None::<&mlc_core::Bar>)
                         .map(|b| b.close)
                         .unwrap_or(0.0);
                     let symbol = self.panel_app.panel_grid.active_container_id()
@@ -419,7 +419,7 @@ impl ChartApp {
                 self.panel_app.compare_settings_state.template_dropdown_open = false;
                 self.panel_app.compare_settings_state.save_template_mode = true;
                 let prefix = "Мой шаблон ";
-                let max_n = self.panel_app.template_manager.compare_templates
+                let max_n = self.core.template_manager().compare_templates
                     .iter()
                     .filter_map(|t| t.name.strip_prefix(prefix))
                     .filter_map(|s| s.parse::<u32>().ok())
@@ -468,7 +468,8 @@ impl ChartApp {
             }
             id if id.starts_with("template_option:") => {
                 let tmpl_id = &id["template_option:".len()..];
-                if let Some(tmpl) = self.panel_app.template_manager.get_compare_template(tmpl_id).cloned() {
+                let tmpl_opt = self.core.template_manager().get_compare_template(tmpl_id).cloned();
+                if let Some(tmpl) = tmpl_opt {
                     let idx = self.panel_app.compare_settings_state.series_index;
                     self.panel_app.compare_settings_state.applied_template_id = Some(tmpl.id.clone());
                     self.panel_app.compare_settings_state.template_dropdown_open = false;
@@ -665,7 +666,7 @@ impl ChartApp {
                 if let Some(id_str) = action.strip_prefix("alert:") {
                     if let Ok(id) = id_str.parse::<u64>() {
                         let price = self.panel_app.panel_grid.active_container()
-                            .and_then(|w| None::<&mlc_core::Bar>)
+                            .and_then(|_w| None::<&mlc_core::Bar>)
                             .map(|b| b.close)
                             .unwrap_or(0.0);
                         let label = self.core.indicators().get_instance(id)
@@ -730,7 +731,7 @@ impl ChartApp {
                 if let Some(id_str) = action.strip_prefix("alert:") {
                     if let Ok(id) = id_str.parse::<u64>() {
                         let price = self.panel_app.panel_grid.active_container()
-                            .and_then(|w| None::<&mlc_core::Bar>)
+                            .and_then(|_w| None::<&mlc_core::Bar>)
                             .map(|b| b.close)
                             .unwrap_or(0.0);
                         let label = self.core.indicators().get_instance(id)

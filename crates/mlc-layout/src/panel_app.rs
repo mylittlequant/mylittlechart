@@ -4,17 +4,15 @@
 //! and handles its own drawing tool state.
 
 use uzor::panel_api::{
-    PanelApp, PanelToolbarDef, PanelRect, PanelInput, PanelTheme,
-    HitZone, ToolbarPosition, DropdownItemDef, ToolbarItemDef, SectionAlign,
+    PanelToolbarDef, DropdownItemDef, ToolbarItemDef, SectionAlign,
     ToolbarIconId,
 };
 use uzor::render::{RenderContext, draw_svg_icon};
 use crate::layout::LayoutRect;
-use crate::layout::{ChartAreaLayout, ChartRenderConfig, ScaleCornerState, render_chart_window, ExtendedFrameLayout, FrameTheme};
-use crate::chart_render::{ScaleTheme, ChartRenderState, ChartTheme, ChartRect};
-use mlc_core::state::{ChartPanelGrid, ChartContainer, ChartPanelState, Timeframe};
+use crate::layout::{ExtendedFrameLayout, FrameTheme};
+use crate::chart_render::{ScaleTheme, ChartTheme};
+use mlc_core::state::{ChartPanelGrid, ChartContainer, Timeframe};
 use mlc_core::scale_settings::ScaleSettings;
-use mlc_core::toolbar;
 use crate::ui::toolbar_render::{
     ToolbarRect, ToolbarRenderResult,
 };
@@ -1478,13 +1476,11 @@ pub struct ChartPanelApp {
     /// Draw result from the last rendered sync color grid frame (used for hit testing).
     pub sync_color_grid_draw: crate::ui::sync_color_grid::SyncColorGridDrawResult,
 
-    // Chart presets — in-memory store. Persist layer binds to this later.
-    pub presets: std::collections::HashMap<String, mlc_core::preset::preset::ChartPreset>,
     /// ID of the currently active preset. Defaults to `"__default__"`.
     /// Updated when a preset is loaded or saved-as.
     pub active_preset_id: String,
     /// Ordered list of preset IDs that are currently open as tabs.
-    /// A preset can exist in `self.presets` without being open.
+    /// A preset can exist in core.presets() without being open.
     pub open_tabs: Vec<String>,
     /// Preset name input modal state (Save As / Rename).
     pub preset_name_input: PresetNameInputState,
@@ -1492,9 +1488,6 @@ pub struct ChartPanelApp {
     pub chart_browser: ChartBrowserState,
     /// Whether autosave is enabled for presets.
     pub autosave_enabled: bool,
-
-    /// In-memory template manager (drawing primitive / indicator / compare templates).
-    pub template_manager: TemplateManager,
 
     /// Unified user state manager — owns profile and settings snapshots.
     ///
@@ -1531,46 +1524,49 @@ impl ChartPanelApp {
             leaf_color_tags: std::collections::HashMap::new(),
             sync_color_grid: crate::ui::sync_color_grid::SyncColorGridState::new(),
             sync_color_grid_draw: crate::ui::sync_color_grid::SyncColorGridDrawResult::default(),
-            presets: std::collections::HashMap::new(),
             active_preset_id: "__default__".to_string(),
             open_tabs: Vec::new(),
             preset_name_input: PresetNameInputState::default(),
             chart_browser: ChartBrowserState::default(),
             autosave_enabled: true,
-            template_manager: TemplateManager::new(),
             user_manager: UserManager::new(),
         }
     }
 
-    /// Load all user state from disk and populate the in-memory fields.
+    /// Load all user state from disk.
     ///
-    /// Call once at startup after construction. On success, `template_manager`,
-    /// `presets`, and `active_preset_id` are populated from disk. The
-    /// `user_manager` field retains the profile and settings snapshots.
+    /// Call once at startup after construction. Populates `active_preset_id`,
+    /// `open_tabs`, and `user_manager` on self. Returns the loaded presets and
+    /// template manager so the caller can write them into `BackendCore`.
     ///
     /// All errors are logged but non-fatal: missing files produce defaults.
-    pub fn load_user_state(&mut self) {
+    pub fn load_user_state(
+        &mut self,
+    ) -> (
+        std::collections::HashMap<String, mlc_core::preset::preset::ChartPreset>,
+        TemplateManager,
+    ) {
         let um = UserManager::load();
 
-        // Move templates and presets into the canonical in-memory fields.
-        self.template_manager = um.template_manager;
-        self.presets = um.presets;
+        let presets = um.presets;
+        let template_manager = um.template_manager;
+
         if !um.profile.active_preset_id.is_empty() {
             self.active_preset_id = um.profile.active_preset_id.clone();
         }
 
         // Restore open_tabs and filter out any stale IDs (presets no longer on disk).
         self.open_tabs = um.profile.open_tabs.clone();
-        self.open_tabs.retain(|id| self.presets.contains_key(id));
+        self.open_tabs.retain(|id| presets.contains_key(id));
 
         // Migration: old data has no open_tabs — open only the active preset.
-        if self.open_tabs.is_empty() && !self.presets.is_empty() {
+        if self.open_tabs.is_empty() && !presets.is_empty() {
             if !self.active_preset_id.is_empty()
-                && self.presets.contains_key(&self.active_preset_id)
+                && presets.contains_key(&self.active_preset_id)
             {
                 self.open_tabs = vec![self.active_preset_id.clone()];
             } else {
-                let mut all: Vec<_> = self.presets.values().collect();
+                let mut all: Vec<_> = presets.values().collect();
                 all.sort_by_key(|p| std::cmp::Reverse(p.created_at));
                 if let Some(newest) = all.first() {
                     self.open_tabs = vec![newest.id.clone()];
@@ -1590,10 +1586,12 @@ impl ChartPanelApp {
 
         eprintln!(
             "[ChartPanelApp] user state loaded: {} presets, {} prim-templates, {} ind-templates",
-            self.presets.len(),
-            self.template_manager.primitive_templates.len(),
-            self.template_manager.indicator_templates.len(),
+            presets.len(),
+            template_manager.primitive_templates.len(),
+            template_manager.indicator_templates.len(),
         );
+
+        (presets, template_manager)
     }
 
     /// Sync the current in-memory state into `user_manager` and persist everything to disk.
@@ -1787,6 +1785,7 @@ impl ChartPanelApp {
         sidebar_w: f64,
         active_group_id: Option<mlc_core::tag_manager::BubbleId>,
         bubble_store: &mlc_core::tag_manager::BubbleStore,
+        presets: &std::collections::HashMap<String, mlc_core::preset::preset::ChartPreset>,
     ) -> ChartToolbarRenderResult {
         let toolbar_theme = self.toolbar_theme_for_render();
         let dropdown_theme = self.dropdown_theme_for_render();
@@ -1795,7 +1794,7 @@ impl ChartPanelApp {
         let sync_flags = active_gid.and_then(|gid| bubble_store.bubble(gid)).map(|g| &g.sync_flags);
         let is_mono_group = active_gid.and_then(|gid| bubble_store.bubble(gid)).map(|g| g.members.len() <= 1).unwrap_or(true);
         let is_expanded = self.panel_grid.is_expanded();
-        chart_toolbar_render_toolbars(&self.toolbar_state, ctx, layout, &self.toolbar_config, selected_primitive, Some(&toolbar_theme), Some(&dropdown_theme), clock_time, &self.presets, &self.active_preset_id, self.autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, active_symbol, active_timeframe, sidebar_w)
+        chart_toolbar_render_toolbars(&self.toolbar_state, ctx, layout, &self.toolbar_config, selected_primitive, Some(&toolbar_theme), Some(&dropdown_theme), clock_time, presets, &self.active_preset_id, self.autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, active_symbol, active_timeframe, sidebar_w)
     }
 
     /// Render all chart-owned modals in a single call.
@@ -1836,6 +1835,8 @@ impl ChartPanelApp {
         current_time_ms: u64,
         input_coordinator: &mut uzor::input::InputCoordinator,
         bubble_store: &mlc_core::tag_manager::BubbleStore,
+        template_manager: &TemplateManager,
+        presets: &std::collections::HashMap<String, mlc_core::preset::preset::ChartPreset>,
     ) -> ChartModalRenderResult {
         let mut result = ChartModalRenderResult::default();
 
@@ -1854,7 +1855,7 @@ impl ChartPanelApp {
                     toolbar_state,
                     current_time_ms,
                     input_coordinator,
-                    &self.template_manager.primitive_templates,
+                    &template_manager.primitive_templates,
                 ));
             }
         }
@@ -1869,7 +1870,7 @@ impl ChartPanelApp {
                 frame_theme,
                 toolbar_theme,
                 input_coordinator,
-                &self.template_manager.compare_templates,
+                &template_manager.compare_templates,
             ));
         }
 
@@ -1909,7 +1910,7 @@ impl ChartPanelApp {
                             frame_theme,
                             toolbar_theme,
                             input_coordinator,
-                            &self.template_manager.indicator_templates,
+                            &template_manager.indicator_templates,
                         ));
                     }
                 }
@@ -1932,7 +1933,7 @@ impl ChartPanelApp {
                     toolbar_theme,
                     current_time_ms,
                     input_coordinator,
-                    &self.template_manager.chart_templates,
+                    &template_manager.chart_templates,
                 ));
             }
         }
@@ -2075,7 +2076,7 @@ impl ChartPanelApp {
                 modal_layout.prim_screen_w,
                 modal_layout.prim_screen_h,
                 &self.chart_browser,
-                &self.presets,
+                presets,
                 &self.active_preset_id,
                 frame_theme,
                 toolbar_theme,
@@ -2436,130 +2437,4 @@ impl ChartPanelApp {
     }
 
 
-    fn type_id(&self) -> &'static str {
-        "chart"
-    }
-
-    fn min_size(&self) -> (f64, f64) {
-        (400.0, 300.0)
-    }
-
-    fn toolbar_def(&self) -> Option<PanelToolbarDef> {
-        Some(toolbar::left_toolbar())
-    }
-
-    fn toolbar_position(&self) -> ToolbarPosition {
-        ToolbarPosition::Left
-    }
-
-    fn render_toolbar(
-        &self,
-        ctx: &mut dyn RenderContext,
-        rect: PanelRect,
-        theme: &PanelTheme,
-        input: &PanelInput,
-    ) -> Vec<HitZone> {
-        // For now, return empty — rendering will be wired in Phase 2
-        // when the terminal orchestrator calls this method
-        let _ = (ctx, rect, theme, input);
-        Vec::new()
-    }
-
-    // render_content is intentionally left as the default no-op.
-    //
-    // Chart rendering requires the chart-crate's extended RenderContext
-    // (mlc_core::render::RenderContext) which adds coordinate-conversion methods
-    // (bar_to_x, price_to_y, etc.) not present on uzor::render::RenderContext.
-    //
-    // Callers that need to render the chart must downcast via as_any_mut:
-    //   panel.as_any_mut().downcast_mut::<ChartPanelApp>()
-    //       .map(|c| c.render_chart_content(ctx, area));
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-
-    fn handle_toolbar_click(&mut self, item_id: &str) -> Option<String> {
-        match item_id {
-            // Toggle buttons (lock and eye flip boolean state directly)
-            "lock" | "eye" => {
-                self.toolbar_state.toggle(item_id);
-                None
-            }
-            // Magnet: single-click toggle / double-click dropdown.
-            // The full logic (with crosshair mutation) is in handle_toolbar_click_with_chart.
-            // This PanelApp shim only handles the boolean toggle side (no crosshair access here).
-            "magnet" => None,
-            // Quick-select dropdowns
-            "cursor_tools" | "line_tools" | "fib_tools" | "pattern_tools"
-            | "brush_tools" | "annotation_tools" | "projection_tools"
-            | "delete_tools" => {
-                if self.toolbar_state.handle_quick_select_click(item_id) {
-                    // Tool activated via quick-select
-                    // Return the tool id so the terminal can route to DrawingManager
-                    self.toolbar_state.active_tool_id.clone()
-                } else {
-                    // Need to open dropdown — terminal handles popup rendering
-                    Some(format!("open_dropdown:{}", item_id))
-                }
-            }
-            // Icon tools dropdown (not quick-select)
-            "icon_tools" => {
-                Some(format!("open_dropdown:{}", item_id))
-            }
-            // Undo/redo — terminal-level action
-            "undo" => Some("undo".to_string()),
-            "redo" => Some("redo".to_string()),
-            // Settings — terminal opens modal
-            "settings_menu" | "chart_settings" => Some("open_modal:chart_settings".to_string()),
-            "indicators" => Some("open_modal:indicator_search".to_string()),
-            "expand_chart" => Some("toggle_expand".to_string()),
-            // Layout / workspace menus
-            "layout_menu" => Some("open_modal:layout_menu".to_string()),
-            "workspace_menu" => Some("open_modal:workspace_menu".to_string()),
-            // Symbol/timeframe — terminal opens modal
-            "symbol_selector" => Some("open_modal:symbol_search".to_string()),
-            "compare" => Some("open_modal:symbol_search_compare".to_string()),
-            _ => None,
-        }
-    }
-
-    fn handle_dropdown_select(&mut self, dropdown_id: &str, item_id: &str) -> Option<String> {
-        match dropdown_id {
-            // Drawing tool dropdowns — select tool and remember for quick-select
-            "cursor_tools" | "line_tools" | "fib_tools" | "pattern_tools"
-            | "brush_tools" | "annotation_tools" | "projection_tools" => {
-                // Use the item_id as both the tool_id and icon lookup
-                // The icon name is typically PascalCase of the tool id
-                self.toolbar_state.select_tool(dropdown_id, item_id, item_id);
-                self.toolbar_state.active_tool_id.clone()
-            }
-            // Delete actions
-            "delete_tools" => {
-                match item_id {
-                    "delete_selected" => Some("delete_selected".to_string()),
-                    "delete_all" => Some("delete_all".to_string()),
-                    _ => None,
-                }
-            }
-            // Icon/emoji tools
-            "icon_tools" | "emoji_submenu" => {
-                self.toolbar_state.active_tool_id = Some(item_id.to_string());
-                self.toolbar_state.active_tool_id.clone()
-            }
-            // Chart type selector
-            "chart_type_selector" => {
-                Some(format!("set_chart_type:{}", item_id))
-            }
-            // Timeframe selector
-            "timeframe_selector" => {
-                Some(format!("set_timeframe:{}", item_id))
-            }
-            _ => None,
-        }
-    }
-
-    fn supports_toolbar_grouping(&self) -> bool {
-        true // Charts can share drawing tools in a branch group
-    }
 }

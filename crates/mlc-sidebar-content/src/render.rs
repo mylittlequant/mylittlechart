@@ -21,6 +21,7 @@ use uzor::panels::DockPanel;
 use uzor::types::Rect as WidgetRect;
 
 use crate::state::{SidebarState, RightSidebarPanel};
+use crate::watchlist::WatchlistManager;
 use crate::types::ObjectItemState;
 
 
@@ -260,6 +261,7 @@ pub fn render_right_sidebar(
     panel_sync_flags_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<PanelSyncFlagsSnapshot>,
     panel_overlay_info_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<(String, String, String)>,
     panel_col_visibility_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<Vec<bool>>,
+    watchlist_manager: &WatchlistManager,
 ) -> RightSidebarResult {
     let panel = sidebar_state.right_panel;
 
@@ -520,6 +522,7 @@ pub fn render_right_sidebar(
             toolbar_theme,
             &mut result,
             input_coordinator,
+            watchlist_manager,
         );
     }
 
@@ -580,6 +583,7 @@ pub fn render_right_sidebar(
                 toolbar_theme,
                 &mut result,
                 input_coordinator,
+                watchlist_manager,
             );
         }
 
@@ -730,6 +734,7 @@ pub fn render_right_sidebar(
             toolbar_theme,
             &mut result,
             input_coordinator,
+            watchlist_manager,
         );
     }
 
@@ -767,18 +772,18 @@ fn render_watchlist_config_dropdown(
     ctx: &mut dyn RenderContext,
     rect: &LayoutRect,
     header_height: f64,
-    state: &SidebarState,
+    _state: &SidebarState,
     theme: &ToolbarTheme,
     result: &mut RightSidebarResult,
     input_coordinator: &mut InputCoordinator,
+    watchlist_manager: &WatchlistManager,
 ) {
     let row_h = 28.0;
     let pad = 10.0;
     let checkbox_size = 10.0;
     let gap = 8.0; // gap between checkbox and label
 
-    let col_cfg = state
-        .watchlist_manager
+    let col_cfg = watchlist_manager
         .active_list()
         .map(|l| l.column_config.clone())
         .unwrap_or_default();
@@ -1007,13 +1012,13 @@ fn render_watchlist_column_header(
     theme: &ToolbarTheme,
     result: &mut RightSidebarResult,
     input_coordinator: &mut InputCoordinator,
+    watchlist_manager: &WatchlistManager,
 ) {
     let item_padding = 8.0;
     let header_row_h = 22.0;
 
     // Read column config from WatchlistManager; fall back to defaults when no list is active.
-    let col_cfg = state
-        .watchlist_manager
+    let col_cfg = watchlist_manager
         .active_list()
         .map(|l| l.column_config.clone())
         .unwrap_or_default();
@@ -1186,6 +1191,7 @@ fn render_watchlist_items(
     theme: &ToolbarTheme,
     result: &mut RightSidebarResult,
     input_coordinator: &mut InputCoordinator,
+    watchlist_manager: &WatchlistManager,
 ) -> f64 {
     let _ = scrollbar_width;
 
@@ -1233,8 +1239,7 @@ fn render_watchlist_items(
     let viewport_bottom = viewport_top + viewport_height;
 
     // Read column config from WatchlistManager; fall back to defaults when no list is active.
-    let col_cfg = state
-        .watchlist_manager
+    let col_cfg = watchlist_manager
         .active_list()
         .map(|l| l.column_config.clone())
         .unwrap_or_default();
@@ -1439,7 +1444,7 @@ fn render_watchlist_items(
         }
 
         // Color flag — 10px wide rect at the left edge, full row height.
-        let color_flag = state.watchlist_manager.active_list()
+        let color_flag = watchlist_manager.active_list()
             .and_then(|l| l.get_color_flag(&item.symbol, &item.exchange, &item.account_type))
             .unwrap_or("");
         // Flag click zone (first 10 px of row) — register BEFORE drawing so

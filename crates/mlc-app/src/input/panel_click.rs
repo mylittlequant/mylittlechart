@@ -132,7 +132,7 @@ impl ChartApp {
                 (self.sidebar_state.watchlist_sort_mode + 1) % 3;
             let mode = self.sidebar_state.watchlist_sort_mode;
             eprintln!("[Sidebar] watchlist_sort_mode -> {}", mode);
-            if let Some(list) = self.sidebar_state.watchlist_manager.active_list_mut() {
+            if let Some(list) = self.core.watchlist_mut().active_list_mut() {
                 match mode {
                     0 => {
                         // Reset to original order from snapshot.
@@ -241,10 +241,18 @@ impl ChartApp {
                             let symbol = item.symbol.clone();
                             let exchange = item.exchange.clone();
                             let account_type = item.account_type.clone();
-                            if let Some(list) = self.sidebar_state.watchlist_manager.active_list_mut() {
-                                let color = colors.get(color_idx).copied().unwrap_or_default();
-                                list.set_color_flag(&symbol, &exchange, &account_type, color);
-                                let color_opt = if color.is_empty() { None } else { Some(color.to_string()) };
+                            let color_set: Option<String> = {
+                                let mut wl = self.core.watchlist_mut();
+                                if let Some(list) = wl.active_list_mut() {
+                                    let color = colors.get(color_idx).copied().unwrap_or_default();
+                                    list.set_color_flag(&symbol, &exchange, &account_type, color);
+                                    Some(color.to_string())
+                                } else {
+                                    None
+                                }
+                            };
+                            if let Some(color) = color_set {
+                                let color_opt = if color.is_empty() { None } else { Some(color.clone()) };
                                 self.watchlist_actions.push(crate::WatchlistAction::SetColorFlag { symbol: symbol.clone(), exchange: exchange.clone(), account_type: account_type.clone(), color: color_opt });
                                 self.watchlists_dirty = true;
                                 self.persist_watchlists();
@@ -268,12 +276,15 @@ impl ChartApp {
                     let exchange = item.exchange.clone();
                     let account_type = item.account_type.clone();
                     // Remove symbol from snapshot (if active) before removing from list.
-                    if let Some(list) = self.sidebar_state.watchlist_manager.active_list_mut() {
-                        if let Some(ref mut snap) = list.order_snapshot {
-                            snap.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == account_type));
+                    {
+                        let mut wl = self.core.watchlist_mut();
+                        if let Some(list) = wl.active_list_mut() {
+                            if let Some(ref mut snap) = list.order_snapshot {
+                                snap.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == account_type));
+                            }
                         }
+                        wl.remove_symbol(&symbol, &exchange, &account_type);
                     }
-                    self.sidebar_state.watchlist_manager.remove_symbol(&symbol, &exchange, &account_type);
                     self.watchlist_actions.push(crate::WatchlistAction::Remove { symbol: symbol.clone(), exchange: exchange.clone(), account_type: account_type.clone() });
                     self.watchlist_actions.push(crate::WatchlistAction::ClearOrderSnapshot);
                     self.watchlists_dirty = true;
@@ -2590,7 +2601,7 @@ impl ChartApp {
         // Pattern: "alert_add_button" — open alert settings modal for new alert
         if widget_id == "alert_add_button" {
             let price = self.panel_app.panel_grid.active_container()
-                .and_then(|w| None::<&mlc_core::Bar>)
+                .and_then(|_w| None::<&mlc_core::Bar>)
                 .map(|b| b.close)
                 .unwrap_or(0.0);
             // S2.7.1e: read symbol via branch_meta (B1).
@@ -2875,7 +2886,7 @@ impl ChartApp {
         if widget_id.contains("_drw_alert_") || widget_id.starts_with("drw_alert_") {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 let mut price = self.panel_app.panel_grid.active_container()
-                    .and_then(|w| None::<&mlc_core::Bar>)
+                    .and_then(|_w| None::<&mlc_core::Bar>)
                     .map(|b| b.close)
                     .unwrap_or(0.0);
                 let mut source_name = format!("Drawing {}", id);
@@ -2910,7 +2921,7 @@ impl ChartApp {
         if widget_id.contains("_ind_alert_") || widget_id.starts_with("ind_alert_") {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 let price = self.panel_app.panel_grid.active_container()
-                    .and_then(|w| None::<&mlc_core::Bar>)
+                    .and_then(|_w| None::<&mlc_core::Bar>)
                     .map(|b| b.close)
                     .unwrap_or(0.0);
                 let source_name = self.core.indicators().get_instance(id)
@@ -3623,16 +3634,24 @@ impl ChartApp {
                         use mlc_layout::ui::modal_settings::WatchlistGroupNameMode;
                         match self.wl_group_name_input.mode.clone() {
                             WatchlistGroupNameMode::CreateNew => {
-                                let new_id = self.sidebar_state.watchlist_manager.create_list(name.clone());
-                                self.sidebar_state.watchlist_manager.active_list_id = new_id;
+                                let new_id = self.core.watchlist_mut().create_list(name.clone());
+                                self.core.watchlist_mut().active_list_id = new_id;
                                 self.watchlist_actions.push(crate::WatchlistAction::CreateList { name: name.clone() });
                                 self.watchlists_dirty = true;
                                 self.persist_watchlists();
                                 eprintln!("[WatchlistGroupName] created new list '{}' id={}", name, new_id);
                             }
                             WatchlistGroupNameMode::Rename(id) => {
-                                if let Some(list) = self.sidebar_state.watchlist_manager.lists.iter_mut().find(|l| l.id == id) {
-                                    list.name = name.clone();
+                                let found = {
+                                    let mut wl = self.core.watchlist_mut();
+                                    if let Some(list) = wl.lists.iter_mut().find(|l| l.id == id) {
+                                        list.name = name.clone();
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                };
+                                if found {
                                     self.watchlist_actions.push(crate::WatchlistAction::RenameList { id, new_name: name.clone() });
                                     self.watchlists_dirty = true;
                                     self.persist_watchlists();
@@ -3832,7 +3851,7 @@ impl ChartApp {
             } else if let Some(preset_id) = action.strip_prefix("rename:") {
                 // Click rename icon — close browser, open rename modal for this preset.
                 let preset_id = preset_id.to_string();
-                let name_opt = self.panel_app.presets.get(&preset_id).map(|p| p.name.clone());
+                let name_opt = self.core.presets().get(&preset_id).map(|p| p.name.clone());
                 self.panel_app.chart_browser.close();
                 self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::None;
                 if let Some(name) = name_opt {

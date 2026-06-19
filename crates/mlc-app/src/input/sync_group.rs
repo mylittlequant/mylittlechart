@@ -1789,7 +1789,7 @@ impl ChartApp {
             // Calculate indicators with this window's bars.
             let bars: Option<Vec<mlc_core::Bar>> = self.panel_app.panel_grid
                 .container_for_leaf(leaf_id)
-                .map(|w| Vec::<mlc_core::Bar>::new());
+                .map(|_w| Vec::<mlc_core::Bar>::new());
             if let Some(bars) = bars {
                 self.core.indicators_mut().calculate_all_for_window(chart_id.0, &bars);
             }
@@ -1834,7 +1834,7 @@ impl ChartApp {
                 // Calculate with peer's bars.
                 let bars: Option<Vec<mlc_core::Bar>> = self.panel_app.panel_grid
                     .containers().get(&peer_cid)
-                    .map(|w| Vec::<mlc_core::Bar>::new());
+                    .map(|_w| Vec::<mlc_core::Bar>::new());
                 if let Some(bars) = bars {
                     self.core.indicators_mut().calculate_all_for_window(peer_cid.0, &bars);
                 }

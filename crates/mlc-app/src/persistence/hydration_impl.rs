@@ -828,7 +828,7 @@ impl ChartApp {
                         .panel_app
                         .panel_grid
                         .iter_containers()
-                        .filter(|(_, w)| !true)
+                        .filter(|(_, _w)| !true)
                         .map(|(_, w)| (w.id.0, Vec::<mlc_core::Bar>::new()))
                         .collect();
 
