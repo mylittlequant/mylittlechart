@@ -35,7 +35,18 @@ use mlc_indicators::IndicatorManager;
 use mlc_live_data::{DataBridge, SymbolInfo};
 use mlc_trading_manager::TradingManager;
 
-use crate::MiniTickerData;
+/// Cached 24-hour ticker statistics from the WebSocket mini-ticker stream.
+///
+/// One entry per `(symbol, exchange, account_type)`, updated every second from
+/// `LiveUpdate::MiniTickerUpdate`. Used as a fallback price source in the
+/// watchlist sidebar for symbols that do not have a chart window open.
+pub struct MiniTickerData {
+    pub last_price: f64,
+    pub price_change_percent: f64,
+    pub high_price: f64,
+    pub low_price: f64,
+    pub volume: f64,
+}
 
 /// Shared data plane owned by every chart-app process. Mode-1 hosts (vello,
 /// future tessera-shell, wasm) own one `Arc<BackendCore>` and pass `Arc::clone`

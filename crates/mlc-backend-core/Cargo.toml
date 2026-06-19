@@ -1,0 +1,16 @@
+[package]
+name = "mylittlechart-backend-core"
+version.workspace = true
+edition.workspace = true
+description = "Shared data plane (bridge + bubble + indicators + trading + presets) for every mylittlechart consumer — embedded apps and the headless backend daemon."
+
+[lib]
+name = "mlc_backend_core"
+
+[dependencies]
+mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
+mlc-indicators = { path = "../mlc-indicators", package = "mylittlechart-indicators" }
+mlc-live-data = { path = "../mlc-live-data", package = "mylittlechart-live-data" }
+mlc-trading-manager = { path = "../mlc-trading-manager", package = "mylittlechart-trading-manager" }
+digdigdig3 = "=0.3.23"
+dashmap = "6"

@@ -15,7 +15,6 @@
 //! ```
 
 pub mod agent;
-pub mod backend_core;
 pub mod chart_panel_bridge;
 pub mod chart_panel_state;
 pub mod chart_state;
@@ -170,22 +169,10 @@ fn parse_timeframe_name(name: &str) -> Option<mlc_core::state::Timeframe> {
 
 /// Draw the ghost rect + compass drop-zone indicator for an active cross-drag.
 ///
-// =============================================================================
-// MiniTickerData
-// =============================================================================
-
-/// Cached 24-hour ticker statistics from the WebSocket mini-ticker stream.
-///
-/// One entry per symbol, updated every second from `LiveUpdate::MiniTickerUpdate`.
-/// Used as a fallback price source in the watchlist sidebar for symbols that
-/// do not have a chart window open.
-pub struct MiniTickerData {
-    pub last_price: f64,
-    pub price_change_percent: f64,
-    pub high_price: f64,
-    pub low_price: f64,
-    pub volume: f64,
-}
+// MiniTickerData lives in mlc-backend-core (see `mlc_backend_core::MiniTickerData`).
+// It's re-exported below as `crate::MiniTickerData` so existing references in
+// this crate continue to work without rewriting every call site.
+pub use mlc_backend_core::MiniTickerData;
 
 // =============================================================================
 // ChartApp
@@ -394,7 +381,7 @@ pub struct ChartApp {
     /// catalogue, trading manager. One per process; every `ChartApp` instance
     /// holds an `Arc::clone`. See `backend_core.rs` for the migration plan
     /// (more fields move here in subsequent passes).
-    pub core: std::sync::Arc<crate::backend_core::BackendCore>,
+    pub core: std::sync::Arc<mlc_backend_core::BackendCore>,
 
     /// Receiver for async live data updates (bars loaded, errors, etc.).
     live_update_rx: tokio::sync::broadcast::Receiver<LiveUpdate>,
@@ -1128,7 +1115,7 @@ impl ChartApp {
             bridge.clone(),
             std::path::PathBuf::from("."),
         ).ok();
-        let core = crate::backend_core::BackendCore::new(bridge.clone(), trading);
+        let core = mlc_backend_core::BackendCore::new(bridge.clone(), trading);
 
         let mut app = Self {
             panel_app: ChartPanelApp::new(symbol),
@@ -1469,7 +1456,7 @@ impl ChartApp {
     pub fn new_empty(bridge: std::sync::Arc<DataBridge>) -> Self {
         let live_update_rx = bridge.add_listener();
         let exchange_symbols_seed = bridge.symbols_snapshot();
-        let core = crate::backend_core::BackendCore::new(bridge.clone(), None);
+        let core = mlc_backend_core::BackendCore::new(bridge.clone(), None);
         // Seed exchange_symbols cache from the bridge's session-long catalogue
         // so windows created after the connect wave start populated.
         {
@@ -1730,7 +1717,7 @@ impl ChartApp {
         skeleton: bool,
     ) -> Self {
         let exchange_symbols_seed = bridge.symbols_snapshot();
-        let core = crate::backend_core::BackendCore::new(bridge.clone(), None);
+        let core = mlc_backend_core::BackendCore::new(bridge.clone(), None);
         {
             let mut es = core.exchange_symbols_mut();
             *es = exchange_symbols_seed;
