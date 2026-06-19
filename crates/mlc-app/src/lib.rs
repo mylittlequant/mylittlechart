@@ -57,6 +57,7 @@ macro_rules! dlog {
 pub(crate) use dlog;
 
 use std::cell::RefCell;
+use std::sync::atomic::Ordering as AtomicOrdering;
 
 use mlc_core::{
     ToolbarConfig,
@@ -3243,7 +3244,7 @@ impl ChartApp {
                 // Scope indicator queries to this window so each split pane only
                 // renders the indicators that belong to it.
                 if let Some(chart_id) = leaf_chart_id {
-                    self.core.indicators().current_render_window_id.set(Some(chart_id.0));
+                    self.core.indicators().current_render_window_id.store(chart_id.0 + 1, AtomicOrdering::Relaxed);
                 }
 
                 let alert_current_bar = 0usize.saturating_sub(1) as f64;
@@ -3425,7 +3426,7 @@ impl ChartApp {
                 }
 
                 // Reset render scope after this leaf is done.
-                self.core.indicators().current_render_window_id.set(None);
+                self.core.indicators().current_render_window_id.store(0, AtomicOrdering::Relaxed);
 
                 // Render overlay tab header at the top-left of this leaf.
                 let is_active_leaf = self.panel_app.panel_grid.docking()
@@ -3744,7 +3745,7 @@ impl ChartApp {
 
             // Scope indicator queries to the active window for single-window mode.
             if let Some(chart_id) = self.panel_app.panel_grid.active_container_id() {
-                self.core.indicators().current_render_window_id.set(Some(chart_id.0));
+                self.core.indicators().current_render_window_id.store(chart_id.0 + 1, AtomicOrdering::Relaxed);
             }
 
             // Hold the indicator manager read guard for the duration of the
@@ -4051,7 +4052,7 @@ impl ChartApp {
             }
 
             // Reset render scope after single-window render is complete.
-            self.core.indicators().current_render_window_id.set(None);
+            self.core.indicators().current_render_window_id.store(0, AtomicOrdering::Relaxed);
 
             // Render overlay tab header (single mode) — skipped while a
             // maximized sub-pane covers the container.
