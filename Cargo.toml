@@ -23,6 +23,7 @@ members = [
     "crates/mlc-backend-core",
     "crates/mlc-backend-daemon",
     "crates/mlc-backend-test-harness",
+    "crates/mlc-cli",
     "crates/mlc-headless-core",
     "crates/mlc-headless",
 ]

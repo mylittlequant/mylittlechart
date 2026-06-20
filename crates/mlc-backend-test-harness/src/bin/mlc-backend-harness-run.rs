@@ -76,6 +76,30 @@ fn main() {
         }
     }
 
+    // Extended daemon endpoints (bubble CRUD, presets, templates, etc).
+    match http_rt.block_on(scenarios::daemon_extended_e2e()) {
+        Ok(()) => {
+            println!("PASS  daemon_extended_e2e");
+            passes += 1;
+        }
+        Err(e) => {
+            println!("FAIL  daemon_extended_e2e  >>  {}", e.message);
+            fails.push(("daemon_extended_e2e".to_string(), e.message.clone()));
+        }
+    }
+
+    // mlc CLI binary smoke (spawns daemon, runs subcommands).
+    match http_rt.block_on(scenarios::cli_binary_smoke()) {
+        Ok(()) => {
+            println!("PASS  cli_binary_smoke");
+            passes += 1;
+        }
+        Err(e) => {
+            println!("FAIL  cli_binary_smoke  >>  {}", e.message);
+            fails.push(("cli_binary_smoke".to_string(), e.message.clone()));
+        }
+    }
+
     println!();
     println!("== summary: {passes} pass, {} fail ==", fails.len());
     if !fails.is_empty() {

@@ -627,6 +627,215 @@ pub async fn daemon_e2e() -> HarnessResult<()> {
 }
 
 // ==========================================================================
+// 13. Daemon extended endpoints e2e — exercises the wider control plane
+// (bubbles CRUD, presets, templates, watchlists, drawings, indicators,
+// mini_ticker, exchanges, /v1/apps/_reap, /v1/bridge/request-bars)
+// ==========================================================================
+
+pub async fn daemon_extended_e2e() -> HarnessResult<()> {
+    let port = pick_free_port()?;
+    let _guard = DaemonGuard::spawn_with_port(port).await?;
+    let base = format!("http://127.0.0.1:{port}");
+    let client = reqwest::Client::new();
+
+    // Each non-2xx is a failure.
+    let must_200 = |path: &'static str| {
+        let url = format!("{base}{path}");
+        let client = client.clone();
+        async move {
+            let r = client.get(&url).send().await.map_err(|e| err("daemon-ext", format!("GET {path}: {e}")))?;
+            if !r.status().is_success() {
+                return Err(err("daemon-ext", format!("GET {path}: HTTP {}", r.status())));
+            }
+            r.json::<serde_json::Value>().await.map_err(|e| err("daemon-ext", format!("decode {path}: {e}")))
+        }
+    };
+
+    // 1. Empty-state reads must all return 200.
+    for path in [
+        "/v1/bubbles", "/v1/presets", "/v1/templates/summary",
+        "/v1/watchlists", "/v1/drawings", "/v1/indicators",
+        "/v1/mini-ticker", "/v1/exchanges", "/v1/trading/connectors",
+    ] {
+        let _ = must_200(path).await?;
+    }
+
+    // 2. Bubble CRUD: create → get → bars(empty) → delete → 404
+    let r = client.post(format!("{base}/v1/bubbles"))
+        .json(&serde_json::json!({
+            "symbol": "BTCUSDT", "exchange": "binance",
+            "account_type": "S", "timeframe": "1m"
+        }))
+        .send().await.map_err(|e| err("daemon-ext", format!("create: {e}")))?;
+    if r.status().as_u16() != 201 {
+        return Err(err("daemon-ext", format!("create bubble: HTTP {}", r.status())));
+    }
+    let body: serde_json::Value = r.json().await.map_err(|e| err("daemon-ext", format!("create json: {e}")))?;
+    let bid = body.get("bid").and_then(|v| v.as_u64())
+        .ok_or_else(|| err("daemon-ext", format!("no bid in create response: {body:?}")))?;
+
+    let info_path: &'static str = Box::leak(format!("/v1/bubbles/{bid}").into_boxed_str());
+    let info = must_200(info_path).await?;
+    let info_sym = info.get("symbol").and_then(|v| v.as_str()).unwrap_or("");
+    if info_sym != "BTCUSDT" {
+        return Err(err("daemon-ext", format!("bubble info symbol={info_sym}")));
+    }
+    let info_exch = info.get("exchange").and_then(|v| v.as_str()).unwrap_or("");
+    if info_exch != "binance" {
+        return Err(err("daemon-ext", format!("bubble info exchange={info_exch}")));
+    }
+
+    let bars_url = format!("{base}/v1/bubbles/{bid}/bars?limit=5");
+    let r = client.get(&bars_url).send().await.map_err(|e| err("daemon-ext", format!("bars: {e}")))?;
+    if !r.status().is_success() {
+        return Err(err("daemon-ext", format!("/bubbles/{bid}/bars: HTTP {}", r.status())));
+    }
+
+    let r = client.delete(format!("{base}/v1/bubbles/{bid}"))
+        .send().await.map_err(|e| err("daemon-ext", format!("delete: {e}")))?;
+    if r.status().as_u16() != 204 {
+        return Err(err("daemon-ext", format!("delete bubble: HTTP {}", r.status())));
+    }
+
+    let r = client.get(format!("{base}/v1/bubbles/{bid}"))
+        .send().await.map_err(|e| err("daemon-ext", format!("post-delete: {e}")))?;
+    if r.status().as_u16() != 404 {
+        return Err(err("daemon-ext", format!("post-delete: expected 404, got {}", r.status())));
+    }
+
+    // 3. /v1/apps/_reap
+    let id_a = client.post(format!("{base}/v1/apps"))
+        .json(&serde_json::json!({"label":"reap-test"}))
+        .send().await.map_err(|e| err("daemon-ext", format!("reg: {e}")))?
+        .json::<serde_json::Value>().await
+        .ok().and_then(|v| v.get("app_id").and_then(|x| x.as_str()).map(str::to_string))
+        .ok_or_else(|| err("daemon-ext", "no app_id"))?;
+
+    let r = client.post(format!("{base}/v1/apps/_reap"))
+        .json(&serde_json::json!({"idle_secs": 0}))
+        .send().await.map_err(|e| err("daemon-ext", format!("reap: {e}")))?;
+    if !r.status().is_success() {
+        return Err(err("daemon-ext", format!("reap: HTTP {}", r.status())));
+    }
+    let body: serde_json::Value = r.json().await.map_err(|e| err("daemon-ext", format!("reap json: {e}")))?;
+    let reaped = body.get("reaped").and_then(|v| v.as_u64()).unwrap_or(0);
+    if reaped < 1 {
+        return Err(err("daemon-ext", format!("expected reaped>=1, got {reaped}")));
+    }
+    // Idempotency: the now-gone session can no longer be heartbeated.
+    let r = client.post(format!("{base}/v1/apps/{id_a}/heartbeat"))
+        .send().await.map_err(|e| err("daemon-ext", format!("post-reap hb: {e}")))?;
+    if r.status().as_u16() != 404 {
+        return Err(err("daemon-ext", format!("post-reap hb: expected 404, got {}", r.status())));
+    }
+
+    // 4. /v1/bridge/request-bars accepts the call (does NOT verify data arrives —
+    // that's a network-dependent test; the binance fetch is exercised in the
+    // manual e2e). We just verify the endpoint round-trips.
+    let r = client.post(format!("{base}/v1/bridge/request-bars"))
+        .json(&serde_json::json!({
+            "symbol":"BTCUSDT","exchange":"binance",
+            "account_type":"S","timeframe":"1m"
+        }))
+        .send().await.map_err(|e| err("daemon-ext", format!("req-bars: {e}")))?;
+    if !r.status().is_success() {
+        return Err(err("daemon-ext", format!("req-bars: HTTP {}", r.status())));
+    }
+
+    Ok(())
+}
+
+// ==========================================================================
+// 14. CLI binary smoke — spawn daemon, run several `mlc` subcommands against
+// it, verify exit codes + output shape
+// ==========================================================================
+
+pub async fn cli_binary_smoke() -> HarnessResult<()> {
+    let port = pick_free_port()?;
+    let _guard = DaemonGuard::spawn_with_port(port).await?;
+    let remote = format!("http://127.0.0.1:{port}");
+
+    let exe = locate_cli_binary()?;
+
+    let run = |args: Vec<&'static str>| {
+        let exe = exe.clone();
+        let remote = remote.clone();
+        async move {
+            let mut full_args: Vec<String> = vec![
+                "--remote".to_string(), remote.clone(),
+                "--json".to_string(),
+            ];
+            for a in args { full_args.push(a.to_string()); }
+            let out = tokio::process::Command::new(&exe)
+                .args(&full_args)
+                .output()
+                .await
+                .map_err(|e| err("cli-smoke", format!("spawn mlc {full_args:?}: {e}")))?;
+            if !out.status.success() {
+                return Err(err("cli-smoke", format!(
+                    "mlc {full_args:?} exit={} stderr={}",
+                    out.status.code().unwrap_or(-1),
+                    String::from_utf8_lossy(&out.stderr),
+                )));
+            }
+            Ok(String::from_utf8_lossy(&out.stdout).to_string())
+        }
+    };
+
+    // mlc health — JSON must have ok=true
+    let out = run(vec!["health"]).await?;
+    let v: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| err("cli-smoke", format!("health decode: {e}\n{out}")))?;
+    if v.get("ok").and_then(|x| x.as_bool()) != Some(true) {
+        return Err(err("cli-smoke", format!("health ok != true: {v}")));
+    }
+
+    // mlc session register --label cli-smoke → returns app_id
+    let out = run(vec!["session", "register", "--label", "cli-smoke"]).await?;
+    let v: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| err("cli-smoke", format!("session register decode: {e}\n{out}")))?;
+    let app_id = v.get("app_id").and_then(|x| x.as_str()).map(str::to_string)
+        .ok_or_else(|| err("cli-smoke", format!("no app_id in: {v}")))?;
+
+    // mlc session ls — must contain our app_id
+    let out = run(vec!["session", "ls"]).await?;
+    if !out.contains(&app_id) {
+        return Err(err("cli-smoke", format!("session ls missing {app_id}: {out}")));
+    }
+
+    // mlc bubble create BTCUSDT
+    let out = run(vec!["bubble", "create", "BTCUSDT", "--tf", "1m"]).await?;
+    let v: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| err("cli-smoke", format!("bubble create decode: {e}\n{out}")))?;
+    let bid = v.get("bid").and_then(|x| x.as_u64()).ok_or_else(|| err("cli-smoke", format!("no bid: {v}")))?;
+
+    // mlc bubble ls — at least 1 entry
+    let out = run(vec!["bubble", "ls"]).await?;
+    let v: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| err("cli-smoke", format!("bubble ls decode: {e}\n{out}")))?;
+    let count = v.get("bubble_ids").and_then(|x| x.as_array()).map(|a| a.len()).unwrap_or(0);
+    if count < 1 {
+        return Err(err("cli-smoke", format!("bubble ls empty after create: {v}")));
+    }
+
+    // Read existence path: this verifies /v1/bubbles/:bid wiring
+    let bid_str: &'static str = Box::leak(bid.to_string().into_boxed_str());
+    let _ = run(vec!["bubble", "info", bid_str]).await?;
+
+    Ok(())
+}
+
+fn locate_cli_binary() -> HarnessResult<std::path::PathBuf> {
+    let exe_name = if cfg!(windows) { "mlc.exe" } else { "mlc" };
+    let cwd = std::env::current_dir().map_err(|e| err("cli-smoke", format!("cwd: {e}")))?;
+    let debug = cwd.join("target/debug").join(exe_name);
+    let release = cwd.join("target/release").join(exe_name);
+    if debug.exists() { Ok(debug) }
+    else if release.exists() { Ok(release) }
+    else {
+        Err(err("cli-smoke", format!(
+            "mlc CLI binary not found at {debug:?} or {release:?} — run cargo build -p mylittlechart-cli first"
+        )))
+    }
+}
+
+// ==========================================================================
 // Master list — runner iterates this. The async ones live in a parallel list.
 // ==========================================================================
 
