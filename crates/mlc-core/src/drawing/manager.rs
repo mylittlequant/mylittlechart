@@ -1167,6 +1167,27 @@ impl DrawingManager {
         self.selected = Some(self.primitives.len() - 1);
     }
 
+    /// Create a primitive from a registry `type_id` and a list of (timestamp_ms, price) points.
+    ///
+    /// Exposed as `pub` for the daemon CRUD layer (`POST /v1/drawings/:panel_id`) so
+    /// the HTTP handler can programmatically add primitives without going through the
+    /// interactive click state-machine.
+    ///
+    /// Returns the index of the newly created primitive, or `None` if `type_id` is
+    /// not registered in the global `PrimitiveRegistry`.
+    pub fn add_primitive_from(&mut self, type_id: &str, points: Vec<(i64, f64)>) -> Option<usize> {
+        let registry = PrimitiveRegistry::global().read().unwrap();
+        let mut prim = registry.create(type_id, &points, None)?;
+        drop(registry);
+        prim.data_mut().id = crate::drawing::alloc_primitive_id();
+        prim.data_mut().pane_id = self.current_pane_id;
+        prim.data_mut().window_id = self.current_window_id;
+        prim.data_mut().symbol = self.current_symbol.clone();
+        let idx = self.primitives.len();
+        self.primitives.push(prim);
+        Some(idx)
+    }
+
     /// Get primitives sorted by z_order for rendering (lowest z_order first)
     /// Returns indices sorted by z_order
     pub fn primitives_sorted_by_z_order(&self) -> Vec<usize> {

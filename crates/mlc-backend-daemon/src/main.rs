@@ -43,11 +43,25 @@
 //! ### Watchlists
 //! - `GET  /v1/watchlists`
 //!
-//! ### Drawings
-//! - `GET  /v1/drawings`
+//! ### Drawings (full CRUD)
+//! - `GET    /v1/drawings`
+//! - `GET    /v1/catalog/primitives`
+//! - `POST   /v1/drawings/:panel_id`
+//! - `PATCH  /v1/drawings/:panel_id/:primitive_id`
+//! - `DELETE /v1/drawings/:panel_id/:primitive_id`
 //!
-//! ### Indicators
-//! - `GET  /v1/indicators`
+//! ### Indicators (full CRUD)
+//! - `GET    /v1/indicators`
+//! - `GET    /v1/catalog/indicators`
+//! - `POST   /v1/indicators`
+//! - `PATCH  /v1/indicators/:id`
+//! - `DELETE /v1/indicators/:id`
+//!
+//! ### Alerts (full CRUD)
+//! - `GET    /v1/alerts`
+//! - `POST   /v1/alerts`
+//! - `PATCH  /v1/alerts/:id`
+//! - `DELETE /v1/alerts/:id`
 //!
 //! ### Bridge
 //! - `POST /v1/bridge/request-bars`
@@ -158,6 +172,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(routes::watchlists::routes())
         .merge(routes::drawings::routes())
         .merge(routes::indicators::routes())
+        .merge(routes::alerts::routes())
         .merge(routes::bridge::routes())
         .merge(routes::trading::routes())
         .merge(routes::events::routes())
