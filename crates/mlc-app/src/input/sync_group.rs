@@ -1753,7 +1753,7 @@ impl ChartApp {
             return;
         }
 
-        for &(leaf_id, chart_id) in new_leaf_chart_ids {
+        for &(_leaf_id, chart_id) in new_leaf_chart_ids {
             for (type_id, name) in &configs {
                 // Check if this window already has this indicator type.
                 let already_has = self.core.indicators().instances_iter()
@@ -1772,12 +1772,8 @@ impl ChartApp {
             }
 
             // Calculate indicators with this window's bars.
-            let bars: Option<Vec<mlc_core::Bar>> = self.panel_app.panel_grid
-                .container_for_leaf(leaf_id)
-                .map(|_w| Vec::<mlc_core::Bar>::new());
-            if let Some(bars) = bars {
-                self.core.indicators_mut().calculate_all_for_window(chart_id.0, &bars);
-            }
+            let bars = self.bars_for_chart(chart_id);
+            self.core.indicators_mut().calculate_all_for_window(chart_id.0, &bars);
         }
         self.sync_sub_panes_from_manager();
         eprintln!(
@@ -1794,12 +1790,15 @@ impl ChartApp {
         type_id: &str,
         source_leaf: mlc_core::LeafId,
     ) {
+        eprintln!("[sync-peers S0] entering, group_id={:?} type_id={}", group_id, type_id);
         // Respect the sync_indicators flag — if disabled, skip peer sync.
         if let Some(group) = self.core.bubble().bubble.bubble(group_id) {
             if !group.sync_flags.sync_indicators {
+                eprintln!("[sync-peers S1] sync_indicators=off, returning");
                 return;
             }
         }
+        eprintln!("[sync-peers S2] sync_indicators=on, collecting peers");
 
         // Collect peer chart_ids (excluding source). Symbol no longer matters
         // — each peer recalculates indicators against its own bars.
@@ -1809,26 +1808,55 @@ impl ChartApp {
             .into_iter()
             .filter(|&cid| Some(cid) != source_chart_id)
             .collect();
+        eprintln!("[sync-peers S3] peer_cids.len={} source={:?}", peer_cids.len(), source_chart_id);
 
-        for peer_cid in peer_cids {
-            if let Some(new_id) = self.core.indicators_mut().create_instance(type_id) {
-                self.core.indicators_mut().assign_window(new_id, Some(peer_cid.0));
-                if let Some(inst) = self.core.indicators_mut().get_instance_mut(new_id) {
-                    inst.origin_id = None; // It's a group-managed indicator, not a clone.
+        for peer_cid in &peer_cids {
+            let peer_cid = *peer_cid;
+            eprintln!("[sync-peers S4] peer iteration start cid={:?}", peer_cid);
+            // Single write guard per peer — covers create_instance, assign_window,
+            // origin_id reset, and the recalc all in one short scope. Pre-cutover
+            // this used a 3x-repeated `self.indicator_manager.*` chain (no RwLock);
+            // re-grabbing `indicators_mut()` per call after the BackendCore lift
+            // is what wedged the UI on 2026-06-20 (each create_instance fired its
+            // own implicit drop before the next take, so technically not a hard
+            // deadlock — but the repeated lock/unlock churn combined with the
+            // implicit `calculate_all_for_window` rayon pool put the main thread
+            // in a state where DWM marked the window Not Responding).
+            eprintln!("[sync-peers S5] about to take indicators_mut() write guard");
+            let new_id_opt = {
+                let mut im = self.core.indicators_mut();
+                eprintln!("[sync-peers S6] write guard acquired, create_instance");
+                let nid = im.create_instance(type_id);
+                eprintln!("[sync-peers S7] create_instance done nid={:?}", nid);
+                if let Some(new_id) = nid {
+                    im.assign_window(new_id, Some(peer_cid.0));
+                    if let Some(inst) = im.get_instance_mut(new_id) {
+                        inst.origin_id = None;
+                    }
                 }
-                // Calculate with peer's bars.
+                nid
+            };
+            eprintln!("[sync-peers S8] guard dropped, new_id_opt={:?}", new_id_opt);
+            if let Some(new_id) = new_id_opt {
+                // Real bars from the peer chart's bubble (cutover sweep stub'd this empty).
                 let bars: Option<Vec<mlc_core::Bar>> = self.panel_app.panel_grid
                     .containers().get(&peer_cid)
-                    .map(|_w| Vec::<mlc_core::Bar>::new());
+                    .map(|w| w.current_bubble_id)
+                    .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()));
                 if let Some(bars) = bars {
+                    eprintln!("[sync-peers S9] BEFORE calculate_all_for_window cid={:?} bars.len={}", peer_cid, bars.len());
                     self.core.indicators_mut().calculate_all_for_window(peer_cid.0, &bars);
+                    eprintln!("[sync-peers S10] AFTER calculate_all_for_window");
                 }
                 eprintln!(
                     "[BubbleStore] Synced indicator '{}' (id={}) to peer chart {:?}",
                     type_id, new_id, peer_cid
                 );
             }
+            eprintln!("[sync-peers S11] peer iteration end cid={:?}", peer_cid);
         }
+        eprintln!("[sync-peers S12] all peers done, sync_sub_panes_from_manager");
         self.sync_sub_panes_from_manager();
+        eprintln!("[sync-peers S13] DONE");
     }
 }

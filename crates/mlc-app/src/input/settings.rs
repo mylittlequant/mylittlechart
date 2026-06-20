@@ -2686,9 +2686,8 @@ impl ChartApp {
                                 inst.outputs.clear();  // Reset output styles to defaults
                             }
                             // Recalculate
-                            let bars_opt = self.panel_app.panel_grid.active_container().map(|_w| Vec::<mlc_core::Bar>::new());
-                            let active_cid = self.panel_app.panel_grid.active_container_id().map(|c| c.0).unwrap_or(0);
-                            if let Some(bars) = bars_opt {
+                            if let Some(active_cid) = self.panel_app.panel_grid.active_container_id().map(|c| c.0) {
+                                let bars = self.active_chart_bars();
                                 self.core.indicators_mut().calculate_all_for_window(active_cid, &bars);
                             }
                         }
@@ -2727,9 +2726,8 @@ impl ChartApp {
                                         inst.set_param(k, pv);
                                     }
                                 }
-                                let bars_opt = self.panel_app.panel_grid.active_container().map(|_w| Vec::<mlc_core::Bar>::new());
-                                let active_cid = self.panel_app.panel_grid.active_container_id().map(|c| c.0).unwrap_or(0);
-                                if let Some(bars) = bars_opt {
+                                if let Some(active_cid) = self.panel_app.panel_grid.active_container_id().map(|c| c.0) {
+                                    let bars = self.active_chart_bars();
                                     self.core.indicators_mut().calculate_all_for_window(active_cid, &bars);
                                 }
                             }
@@ -2751,9 +2749,8 @@ impl ChartApp {
                         if let Some(inst) = self.core.indicators_mut().get_instance_mut(ind_id) {
                             inst.signals_enabled = enabled;
                         }
-                        let bars_opt = self.panel_app.panel_grid.active_container().map(|_w| Vec::<mlc_core::Bar>::new());
-                        let active_cid = self.panel_app.panel_grid.active_container_id().map(|c| c.0).unwrap_or(0);
-                        if let Some(bars) = bars_opt {
+                        if let Some(active_cid) = self.panel_app.panel_grid.active_container_id().map(|c| c.0) {
+                            let bars = self.active_chart_bars();
                             self.core.indicators_mut().calculate_all_for_window(active_cid, &bars);
                         }
                         eprintln!("[ChartApp] Signals toggle: {}", enabled);
@@ -2788,9 +2785,8 @@ impl ChartApp {
                     };
                     inst.set_param(param_name, value);
                 }
-                let bars_opt = self.panel_app.panel_grid.active_container().map(|_w| Vec::<mlc_core::Bar>::new());
-                let active_cid = self.panel_app.panel_grid.active_container_id().map(|c| c.0).unwrap_or(0);
-                if let Some(bars) = bars_opt {
+                if let Some(active_cid) = self.panel_app.panel_grid.active_container_id().map(|c| c.0) {
+                    let bars = self.active_chart_bars();
                     self.core.indicators_mut().calculate_all_for_window(active_cid, &bars);
                 }
             }
@@ -2899,9 +2895,8 @@ impl ChartApp {
                         inst.set_param(param_name, IndValue::String(next_val.clone()));
                     }
                     // Recalculate.
-                    let bars_opt = self.panel_app.panel_grid.active_container().map(|_w| Vec::<mlc_core::Bar>::new());
-                    let active_cid = self.panel_app.panel_grid.active_container_id().map(|c| c.0).unwrap_or(0);
-                    if let Some(bars) = bars_opt {
+                    if let Some(active_cid) = self.panel_app.panel_grid.active_container_id().map(|c| c.0) {
+                        let bars = self.active_chart_bars();
                         self.core.indicators_mut().calculate_all_for_window(active_cid, &bars);
                     }
                     self.autosave_snapshot();
@@ -2926,9 +2921,8 @@ impl ChartApp {
                 if let Some(inst) = self.core.indicators_mut().get_instance_mut(ind_id) {
                     inst.set_param(&param_name, IndValue::String(value.clone()));
                 }
-                let bars_opt = self.panel_app.panel_grid.active_container().map(|_w| Vec::<mlc_core::Bar>::new());
-                let active_cid = self.panel_app.panel_grid.active_container_id().map(|c| c.0).unwrap_or(0);
-                if let Some(bars) = bars_opt {
+                if let Some(active_cid) = self.panel_app.panel_grid.active_container_id().map(|c| c.0) {
+                    let bars = self.active_chart_bars();
                     self.core.indicators_mut().calculate_all_for_window(active_cid, &bars);
                 }
                 self.autosave_snapshot();
@@ -2950,9 +2944,8 @@ impl ChartApp {
                     if let Some(inst) = self.core.indicators_mut().get_instance_mut(ind_id) {
                         inst.set_param(param_name, IndValue::Bool(!cur));
                     }
-                    let bars_opt = self.panel_app.panel_grid.active_container().map(|_w| Vec::<mlc_core::Bar>::new());
-                    let active_cid = self.panel_app.panel_grid.active_container_id().map(|c| c.0).unwrap_or(0);
-                    if let Some(bars) = bars_opt {
+                    if let Some(active_cid) = self.panel_app.panel_grid.active_container_id().map(|c| c.0) {
+                        let bars = self.active_chart_bars();
                         self.core.indicators_mut().calculate_all_for_window(active_cid, &bars);
                     }
                     self.autosave_snapshot();

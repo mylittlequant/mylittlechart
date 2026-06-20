@@ -7139,8 +7139,8 @@ impl ChartApp {
                             let active_cid = self.panel_app.panel_grid.docking().active_leaf()
                                 .and_then(|leaf| self.panel_app.panel_grid.container_id_for_leaf(leaf))
                                 .map(|c| c.0);
-                            let bars_opt = self.panel_app.panel_grid.active_container().map(|_w| Vec::<mlc_core::Bar>::new());
-                            if let (Some(cid), Some(bars)) = (active_cid, bars_opt) {
+                            if let Some(cid) = active_cid {
+                                let bars = self.active_chart_bars();
                                 self.core.indicators_mut().calculate_all_for_window(cid, &bars);
                             }
                         }
@@ -8285,12 +8285,13 @@ impl ChartApp {
                 }
             }
             Command::AddIndicator { instance_id, type_id, .. } => {
-                let (bars_snapshot, chart_id_val) = match self.panel_app.panel_grid.active_container() {
-                    Some(w) => (Vec::<mlc_core::Bar>::new(), w.id),
+                let chart_id_val = match self.panel_app.panel_grid.active_container() {
+                    Some(w) => w.id,
                     None => return,
                 };
                 if self.core.indicators_mut().create_instance_with_id(*instance_id, type_id) {
                     self.core.indicators_mut().assign_window(*instance_id, Some(chart_id_val.0));
+                    let bars_snapshot = self.bars_for_chart(chart_id_val);
                     self.core.indicators_mut().calculate(*instance_id, &bars_snapshot);
                     // Re-add to auto_bubble.pre_tag_indicator_ids for Object Tree visibility.
                     let auto_bid = self.panel_app.panel_grid.containers()

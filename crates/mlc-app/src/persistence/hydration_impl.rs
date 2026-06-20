@@ -837,16 +837,16 @@ impl ChartApp {
                     // `self` (panel_grid vs indicator_manager both live on `self`).
                     // ----------------------------------------------------------------
                     let _t_recalc = std::time::Instant::now();
-                    let window_bar_data: Vec<(u64, Vec<mlc_core::Bar>)> = self
+                    let window_bar_data: Vec<(u64, mlc_core::state::ChartId)> = self
                         .panel_app
                         .panel_grid
                         .iter_containers()
-                        .filter(|(_, _w)| !true)
-                        .map(|(_, w)| (w.id.0, Vec::<mlc_core::Bar>::new()))
+                        .map(|(_, w)| (w.id.0, w.id))
                         .collect();
 
                     let recalc_n = window_bar_data.len();
-                    for (window_id, bars) in window_bar_data {
+                    for (window_id, cid) in window_bar_data {
+                        let bars = self.bars_for_chart(cid);
                         self.core.indicators_mut().calculate_for_window(window_id, &bars);
                     }
                     eprintln!("[ChartApp] recalculated indicators for all windows with bars");

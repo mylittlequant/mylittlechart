@@ -63,6 +63,13 @@ impl ChartApp {
         // mini-ticker, exchange-symbols). It returns one BubbleEvent per write
         // so per-app reactors can run viewport/indicator/panel side-effects.
         let mut had_trade_update = false;
+        // had_ticker_update — same idea but for MiniTickerUpdated. Watchlist /
+        // sidebar prices come straight out of `core.mini_ticker` (DashMap) at
+        // render time; without this flag the sidebar render is skipped until
+        // some other input triggers a redraw (a click, an alert, an agent
+        // command). Owner regression 2026-06-20: "watchlist values don't
+        // refresh unless I click the chart".
+        let mut had_ticker_update = false;
         let mut _drain_count = 0u32;
         // Per-tick drain census by event type — printed only when this tick
         // explodes (see the spike log at the end of tick), so we can see WHAT
@@ -146,6 +153,7 @@ impl ChartApp {
                         (symbol.clone(), exchange_id.as_str().to_string(), account_type.clone()),
                         *last_price,
                     );
+                    had_ticker_update = true;
                 }
                 BubbleEvent::OrderbookSnapshotRest { exchange_id, symbol, account_type } => {
                     self.last_ob_event_count += 1;
@@ -276,6 +284,30 @@ impl ChartApp {
             }
             for state in self.panels_store.trade_log.values_mut() {
                 state.sync_from_snapshot();
+            }
+        }
+
+        // ── Watchlist refresh trigger ─────────────────────────────────────────
+        // mini_ticker writes are passthrough at the BackendCore layer (DashMap,
+        // lock-free) — the sidebar render path reads them on demand. But render
+        // only rebuilds when sidebar_data_dirty=true, so without an explicit
+        // flip here the watchlist freezes between user clicks. Pre-cutover the
+        // tick.rs MiniTickerUpdate arm did the equivalent.
+        //
+        // Rate-limit because the tick can carry 20+ MiniTicker events per
+        // frame (one per watchlist symbol at 1Hz, fanned in 16ms windows by
+        // the broadcast channel). Mark once per ~250ms wall-clock so we still
+        // get ~4 sidebar refreshes per second without rebuilding 20× per tick.
+        if had_ticker_update {
+            const MARK_INTERVAL_MS: u128 = 250;
+            let now = std::time::Instant::now();
+            let bump = match self.sidebar_ticker_mark {
+                Some(prev) => now.duration_since(prev).as_millis() >= MARK_INTERVAL_MS,
+                None => true,
+            };
+            if bump {
+                self.sidebar_data_dirty = true;
+                self.sidebar_ticker_mark = Some(now);
             }
         }
 
@@ -628,27 +660,26 @@ impl ChartApp {
             let attempted = &self.indicator_heal_attempted;
             let im = self.core.indicators();
             self.panel_app.panel_grid.iter_containers().any(|(_, w)| {
-                !true
-                    && im.get_instances_for_window(w.id.0)
-                        .iter()
-                        .any(|i| i.values.is_empty() && !attempted.contains(&i.id))
+                im.get_instances_for_window(w.id.0)
+                    .iter()
+                    .any(|i| i.values.is_empty() && !attempted.contains(&i.id))
             })
         };
         if any_unhealed {
-            let window_bars: Vec<(u64, Vec<mlc_core::Bar>)> = self
+            let window_ids: Vec<(u64, mlc_core::state::ChartId)> = self
                 .panel_app
                 .panel_grid
                 .iter_containers()
-                .filter(|(_, _w)| !true)
-                .map(|(_, w)| (w.id.0, Vec::<mlc_core::Bar>::new()))
+                .map(|(_, w)| (w.id.0, w.id))
                 .collect();
-            for (wid, bars) in window_bars {
+            for (wid, cid) in window_ids {
                 let needs_heal: Vec<u64> = self.core.indicators().get_instances_for_window(wid)
                     .iter()
                     .filter(|i| i.values.is_empty() && !self.indicator_heal_attempted.contains(&i.id))
                     .map(|i| i.id)
                     .collect();
                 if !needs_heal.is_empty() {
+                    let bars = self.bars_for_chart(cid);
                     for id in &needs_heal {
                         self.indicator_heal_attempted.insert(*id);
                     }
