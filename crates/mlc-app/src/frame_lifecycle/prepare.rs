@@ -929,15 +929,24 @@ impl ChartApp {
             r
         };
 
-        if self.panel_app.panel_grid.is_split() {
-            let split_rect = mlc_core::PanelRect {
-                x: 0.0,
-                y: 0.0,
-                width: content_rect_pf.width as f32,
-                height: content_rect_pf.height as f32,
-            };
-            self.panel_app.panel_grid.layout(split_rect);
+        // Always recompute panel_grid layout — even for single-leaf charts.
+        // panel_rects is the source of truth for leaf rectangles used by
+        // get_leaf_absolute_rect, build_extended_layout_for_leaf, the drag
+        // separator handler, and several hit-testers. Pre-cutover the
+        // single-leaf renderer used a separate fast path that didn't need
+        // panel_rects, so the layout call was guarded behind is_split().
+        // After backend cutover any code that asks panel_rects for a leaf
+        // rect (e.g. sub-pane separator drag) gets None in single-leaf mode
+        // and silently breaks. Call layout() unconditionally.
+        let single_or_split_rect = mlc_core::PanelRect {
+            x: 0.0,
+            y: 0.0,
+            width: content_rect_pf.width as f32,
+            height: content_rect_pf.height as f32,
+        };
+        self.panel_app.panel_grid.layout(single_or_split_rect);
 
+        if self.panel_app.panel_grid.is_split() {
             let leaf_rects: Vec<_> = self.panel_app.panel_grid.panel_rects()
                 .iter()
                 .map(|(&leaf_id, &sub_rect)| (leaf_id, sub_rect))

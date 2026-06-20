@@ -1660,8 +1660,16 @@ impl IndicatorManager {
         // Iterate through all output values
         for output in &definition.outputs {
             if let Some(values) = instance.values.get(&output.name) {
+                if values.is_empty() {
+                    continue;
+                }
                 let start = visible_start.min(values.len().saturating_sub(1));
-                let end = visible_end.min(values.len());
+                // Clamp `end` to the slice length AND make sure it is not below
+                // `start` — without the lower clamp a sub-pane separator drag
+                // can call this with visible_end=0 (the legacy `.min(0usize)`
+                // bug in sync_sub_panes), and `&values[start..0]` panics with
+                // "slice index starts at N but ends at 0".
+                let end = visible_end.min(values.len()).max(start);
 
                 for &v in &values[start..end] {
                     if !v.is_nan() && !v.is_infinite() {

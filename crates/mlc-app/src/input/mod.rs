@@ -2585,12 +2585,17 @@ impl ChartApp {
             }
             ChartDragStartHit::SubPaneSeparator { instance_id } => {
                 eprintln!("[ChartApp] sub-pane sep drag START instance_id={}", instance_id);
-                // Ensure window.sub_panes is in sync with indicator_manager before
-                // the drag starts: the layout (used by hit-test) reads sub-pane ids
-                // straight from indicator_manager, but drag_pane_separator mutates
-                // window.sub_panes — they can drift if sync hasn't happened since
-                // the last indicator add/remove.
-                self.sync_sub_panes_from_manager();
+                // Pre-cutover this called sync_sub_panes_from_manager() — that
+                // function walks every container, takes the indicators read
+                // guard once, then for each pane id takes a write guard via
+                // calculate_pane_range. The total RwLock work + per-frame
+                // overhead was enough on a 4-indicator chart to delay
+                // on_drag_move enough that winit CursorMoved events arrived
+                // AFTER the user already released the button — so MOVE/END
+                // never fired and the separator visually never moved. The
+                // sync invariant is maintained by the indicator add/remove
+                // path; nothing has changed sub-pane ids since the last add.
+                // Removing the per-drag call restores the per-frame drag.
                 // Mirror slot_sep_drag pattern: dedicated Option field on
                 // ChartApp consumed at the TOP of on_drag_move, before any
                 // other drag-handling branches that could swallow the event.
@@ -2655,18 +2660,23 @@ impl ChartApp {
         // visually 1:1 with cursor.
         if let Some((instance_id, _start_y, _content_w, _content_h, _, _)) = self.sub_pane_sep_drag {
             let _ = y;
-            // Pull a fresh content_h from the renderer's frame_layouts cache
-            // (last rendered total chart height) instead of the stale value
-            // snapshotted at drag-start. content_h = main + all sub-panes +
-            // separators -- the slice the inner stack actually owns.
+            // 2026-06-20: this used to read content_h from `self.frame_layouts`
+            // (the per-frame layout cache). During drag the cache turned out to
+            // be empty on every move (`frame_layouts.keys=[]`) — winit pauses
+            // redraw / prepare_frame under some drag conditions, so the cache
+            // was never refreshed and content_h came out 0 → uzor refused the
+            // drag (`ok=false`). Build the layout directly from the leaf rect:
+            // it's the same call the cache writer makes, just inline, and
+            // doesn't depend on prepare_frame having run this frame.
             let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
             let (content_h, content_w): (f64, f64) = active_leaf
-                .and_then(|leaf| self.frame_layouts.get(&leaf))
-                .map(|ext| {
+                .and_then(|leaf| {
+                    let leaf_rect = self.get_leaf_absolute_rect(leaf)?;
+                    let ext = self.build_extended_layout_for_leaf(leaf, &leaf_rect)?;
                     let h = ext.main_chart.chart.height
                         + ext.sub_panes.iter().map(|p| p.content.height + p.separator.height).sum::<f64>();
                     let w = ext.main_chart.chart.width;
-                    (h, w)
+                    Some((h, w))
                 })
                 .unwrap_or((0.0, 0.0));
             if let Some(window) = self.panel_app.panel_grid.active_container_mut() {

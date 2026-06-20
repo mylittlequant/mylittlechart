@@ -573,6 +573,11 @@ pub struct ChartApp {
     /// per-window `sidebar_dirty_scene` flag for scene caching.
     pub sidebar_data_dirty: bool,
 
+    /// Wall-clock of the last `sidebar_data_dirty = true` bump triggered by
+    /// a MiniTickerUpdated event. Used by the rate-limit in tick.rs so the
+    /// watchlist refreshes ~4 Hz instead of once per per-symbol tick.
+    pub sidebar_ticker_mark: Option<std::time::Instant>,
+
     /// Tracks the last active leaf so we can detect leaf switches and
     /// mark sidebar_data_dirty automatically.
     last_active_leaf: Option<mlc_core::LeafId>,
@@ -1182,6 +1187,7 @@ impl ChartApp {
             trade_count: 0,
             diagnostics_enabled: false,
             sidebar_data_dirty: true,
+            sidebar_ticker_mark: None,
             last_active_leaf: None,
             render_timing_us: (0, 0, 0, 0),
             pending_sub_pane_ratios: std::collections::HashMap::new(),
@@ -1536,6 +1542,7 @@ impl ChartApp {
             trade_count: 0,
             diagnostics_enabled: false,
             sidebar_data_dirty: true,
+            sidebar_ticker_mark: None,
             last_active_leaf: None,
             render_timing_us: (0, 0, 0, 0),
             pending_sub_pane_ratios: std::collections::HashMap::new(),
@@ -1783,6 +1790,7 @@ impl ChartApp {
             trade_count: 0,
             diagnostics_enabled: false,
             sidebar_data_dirty: true,
+            sidebar_ticker_mark: None,
             last_active_leaf: None,
             render_timing_us: (0, 0, 0, 0),
             pending_sub_pane_ratios: std::collections::HashMap::new(),
@@ -6169,24 +6177,40 @@ impl ChartApp {
                     .and_then(|cid| self.symbol_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_default();
+                // `ve.min(0usize)` here was a cutover-sweep bug that pinned ve=0
+                // on every call — `calculate_pane_range(id, vs, 0)` then sliced
+                // `&values[vs..0]` and panicked the moment a sub-pane separator
+                // was dragged (owner repro 2026-06-20, hit at indicator drag).
                 let (vs, ve) = window.viewport.visible_range();
-                let ve = ve.min(0usize);
                 (leaf_id, chart_id_val, symbol, vs, ve)
             })
             .collect();
 
         // Step 2: for each window, collect desired instance_ids from indicator_manager.
         for (leaf_id, chart_id_val, symbol, visible_start, visible_end) in &window_data {
-            let sub_pane_data: Vec<(u64, Option<(f64, f64)>)> = self.core.indicators().get_instances_for_symbol_in_window(symbol, *chart_id_val)
+            // Pre-cutover this was a single chain that took `indicators()` then
+            // `indicators_mut()` from inside the map. After lifting IndicatorManager
+            // behind `RwLock` that chain self-deadlocks: the read guard held by
+            // the iterator survives through the map body, and `indicators_mut()`
+            // tries to upgrade it in the SAME thread — std::sync::RwLock isn't
+            // reentrant, so the write wait never resolves. Pull the instance ids
+            // out under a short read guard first, drop it, then run the range
+            // calc under separate write guards.
+            let pane_ids: Vec<u64> = self.core.indicators()
+                .get_instances_for_symbol_in_window(symbol, *chart_id_val)
                 .into_iter()
                 .filter(|i| i.pane > 0)
-                .map(|i| {
+                .map(|i| i.id)
+                .collect();
+            let sub_pane_data: Vec<(u64, Option<(f64, f64)>)> = pane_ids
+                .into_iter()
+                .map(|iid| {
                     let range = self.core.indicators_mut().calculate_pane_range(
-                        i.id,
+                        iid,
                         *visible_start,
                         *visible_end,
                     );
-                    (i.id, range)
+                    (iid, range)
                 })
                 .collect();
 

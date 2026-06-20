@@ -665,9 +665,16 @@ impl ChartApp {
             }
         }
 
+        // Pull real bars from the chart's bubble — the cutover sweep had stubbed
+        // this to `Vec::new()` which made the recalc a no-op.
         let (active_window_id, bars) = self.panel_app.panel_grid.docking().active_leaf()
             .and_then(|leaf| self.panel_app.panel_grid.container_id_for_leaf(leaf).map(|cid| (cid.0, leaf)))
-            .and_then(|(cid, leaf)| self.panel_app.panel_grid.container_for_leaf(leaf).map(|_w| (cid, Vec::<mlc_core::Bar>::new())))
+            .and_then(|(cid, leaf)| {
+                self.panel_app.panel_grid.container_for_leaf(leaf)
+                    .map(|w| w.current_bubble_id)
+                    .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()))
+                    .map(|bars| (cid, bars))
+            })
             .unwrap_or_default();
         let _ = symbol; // legacy, no longer needed for indicator calc
         self.core.indicators_mut().calculate_all_for_window(active_window_id, &bars);
@@ -1063,10 +1070,16 @@ impl ChartApp {
                             });
                             eprintln!("[ChartApp] Recorded AddIndicator {} id={}", type_id_str, new_id);
                             // Recalculate the new indicator with current bars.
-                            if let (Some(cid), Some(bars)) = (
-                                active_container_id,
-                                active_leaf.and_then(|leaf| self.panel_app.panel_grid.container_for_leaf(leaf)).map(|_w| Vec::<mlc_core::Bar>::new()),
-                            ) {
+                            // Bars live on the chart's DataBubble — the cutover sweep
+                            // stubbed this to `Vec::new()` (empty) so the recalc was
+                            // a no-op and the new indicator stayed blank until the
+                            // next live bar tick. Pull the actual bars out of the
+                            // chart's bubble via `with_bubble`.
+                            let bars_opt: Option<Vec<mlc_core::Bar>> = active_leaf
+                                .and_then(|leaf| self.panel_app.panel_grid.container_for_leaf(leaf))
+                                .map(|w| w.current_bubble_id)
+                                .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()));
+                            if let (Some(cid), Some(bars)) = (active_container_id, bars_opt) {
                                 self.core.indicators_mut().calculate_all_for_window(cid.0, &bars);
                             }
                             self.sync_sub_panes_from_manager();

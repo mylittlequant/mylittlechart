@@ -1,4 +1,4 @@
-//! `mlc-headless` — mylittlechart backend daemon, no GPU.
+//! `mlc-headless` — mylittlechart full ChartApp without a GPU.
 //!
 //! Owns one `ChartApp` (a single window), an `AgentState`, and the same
 //! axum HTTP server the desktop binary spawns. Ticks the chart at ~60 Hz
@@ -6,8 +6,28 @@
 //! clients drive everything via HTTP — switch symbol, change chart type,
 //! query bar counts, fetch snapshots.
 //!
-//! Out of scope for now: multi-window (only one ChartApp instance is held),
-//! screenshot (the host returns "not supported"), GPU-rendered scenes.
+//! ## Status — kept as the e2e harness (2026-06-20)
+//!
+//! After the backend-cutover (`Arc<BackendCore>` lifted bubbles / indicators
+//! / drawings / presets / templates / watchlists / mini-ticker / exchanges
+//! / trading / sessions into a shared data plane), the natural Mode-2 build
+//! is `mlc-backend-daemon` — a real *no-ChartApp* HTTP server that owns
+//! only `BackendCore` and exposes its CRUD over `/v1/...`. That is the
+//! right shape for "1 backend = N apps".
+//!
+//! This binary keeps ChartApp around without a GPU. After the cutover
+//! that is technically redundant for production use cases — daemon is a
+//! cleaner shape for any external agent talking to backend. But the
+//! ChartApp orchestration layer (writer-arm split, per-app reactor in
+//! `frame_lifecycle/react.rs`, preset park/unpark, sync_group, undo
+//! commands, autosave, sidebar dirty flags) still needs a regression
+//! harness that exercises *the real ChartApp*, not just BackendCore.
+//! `mlc-headless` is that harness — it loads a real profile, ticks at
+//! 60 Hz against the live bridge, and accepts HTTP commands so
+//! regression tests can drive end-to-end flows without a GPU.
+//!
+//! Out of scope: multi-window (only one ChartApp), screenshot (returns
+//! "not supported"), GPU-rendered scenes.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

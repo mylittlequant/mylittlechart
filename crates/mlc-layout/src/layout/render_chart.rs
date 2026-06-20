@@ -3096,11 +3096,6 @@ pub fn render_full_chart_panel(
         height: main_chart.chart.height,
     };
 
-    eprintln!(
-        "[corrected-state] BUILD: data.state.footprint_bars.is_some={} fp_bars.len={}",
-        data.state.footprint_bars.is_some(),
-        data.state.footprint_bars.as_ref().map(|v| v.len()).unwrap_or(0),
-    );
     // Assemble a corrected render state referencing the local corrected values.
     let corrected_state = crate::chart_render::ChartRenderState {
         viewport: &corrected_viewport,
@@ -3523,11 +3518,6 @@ pub fn render_chart_overlay(
         height: main_chart.chart.height,
     };
 
-    eprintln!(
-        "[overlay-corrected-state] BUILD: state.footprint_bars.is_some={} fp_bars.len={}",
-        state.footprint_bars.is_some(),
-        state.footprint_bars.as_ref().map(|v| v.len()).unwrap_or(0),
-    );
     let corrected_state = ChartRenderState {
         viewport: &corrected_viewport,
         chart_rect: corrected_chart_rect,

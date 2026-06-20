@@ -1333,7 +1333,11 @@ impl ChartApp {
                             let tf = self.timeframe_for_chart(cid).unwrap_or_else(mlc_core::state::Timeframe::h1);
                             let at = self.account_type_for_chart(cid)
                                 .map(String::from).unwrap_or_default();
-                            let has_bars = !true;
+                            // Was `let has_bars = !true;` — cutover sweep stub that
+                            // pinned `force=true` on the cure path always (every
+                            // preset switch re-issued Phase A even on warm cache).
+                            // Real check: any bars on the chart's bubble?
+                            let has_bars = !self.bars_for_chart(cid).is_empty();
                             (sym, exch, tf, at, has_bars)
                         })
                         .collect();
