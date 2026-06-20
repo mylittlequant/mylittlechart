@@ -16,3 +16,5 @@ mlc-sidebar-content = { path = "../mlc-sidebar-content", package = "mylittlechar
 digdigdig3 = "=0.3.23"
 dashmap = "6"
 tokio = { version = "1", features = ["sync"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -2,72 +2,90 @@
 //!
 //! Owns one `Arc<BackendCore>`, no embedded `ChartApp`. Drives a 60Hz tick
 //! loop that drains the live-data broadcast and writes into the shared
-//! bubble store via `BackendCore::tick_bridge_only`. Serves a minimal HTTP
-//! API for external apps to attach as `AppSession`, query bubbles, and
-//! observe events.
+//! bubble store via `BackendCore::tick_writers`. Serves a full HTTP control
+//! plane for external apps to attach, query, and observe events.
 //!
-//! Co-exists with `mlc-headless` (Mode-1-without-GPU, owns a ChartApp). The
-//! daemon is the "no ChartApp anywhere" entry point — N external apps
-//! attach over HTTP.
+//! ## Endpoints
 //!
-//! ## Endpoints (this binary)
+//! ### Health
+//! - `GET  /health`
 //!
-//! - `GET  /health`                    — alive probe + tick count + session count
-//! - `GET  /v1/bubbles`                — list of bubble ids the backend owns
-//! - `GET  /v1/bubble/:bid/bars/:kind` — `Vec<Bar>` for a bubble's kind slot
-//! - `POST /v1/apps`                   — register an AppSession, returns `app_id`
-//! - `GET  /v1/apps`                   — list active AppSession ids
-//! - `DELETE /v1/apps/:app_id`         — deregister a session
-//! - `POST /v1/apps/:app_id/heartbeat` — keep-alive
-//! - `GET  /v1/exchanges`              — list of `ExchangeId` snapshots present
+//! ### Apps / sessions
+//! - `POST   /v1/apps`                      — register AppSession
+//! - `GET    /v1/apps`                      — list sessions
+//! - `DELETE /v1/apps/:app_id`              — deregister
+//! - `POST   /v1/apps/:app_id/heartbeat`    — keep-alive
+//! - `POST   /v1/apps/_reap`                — force reap idle sessions
 //!
-//! Streaming events (`BubbleEvent`) to attached apps will use a long-poll
-//! or WS upgrade in a follow-up. The HTTP surface here is the minimum
-//! viable lifecycle so Mode-2 stops being a paper plan.
+//! ### Bubbles
+//! - `GET    /v1/bubbles`                   — list ids
+//! - `POST   /v1/bubbles`                   — create bubble
+//! - `GET    /v1/bubbles/:bid`              — snapshot DTO
+//! - `DELETE /v1/bubbles/:bid`              — remove
+//! - `GET    /v1/bubbles/:bid/bars`         — OHLCV bars (?limit=N)
+//! - `GET    /v1/bubble/:bid/bars/:kind`    — legacy count
+//!
+//! ### Exchanges
+//! - `GET  /v1/exchanges`
+//!
+//! ### Mini-ticker
+//! - `GET  /v1/mini-ticker`
+//! - `GET  /v1/mini-ticker/:key`
+//!
+//! ### Presets
+//! - `GET    /v1/presets`
+//! - `GET    /v1/presets/:preset_id`
+//! - `DELETE /v1/presets/:preset_id`
+//!
+//! ### Templates
+//! - `GET  /v1/templates/summary`
+//!
+//! ### Watchlists
+//! - `GET  /v1/watchlists`
+//!
+//! ### Drawings
+//! - `GET  /v1/drawings`
+//!
+//! ### Indicators
+//! - `GET  /v1/indicators`
+//!
+//! ### Bridge
+//! - `POST /v1/bridge/request-bars`
+//!
+//! ### Trading
+//! - `GET  /v1/trading/connectors`
+//!
+//! ### Events (SSE)
+//! - `GET  /v1/events`
+
+mod routes;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
-    extract::{Path, State},
-    http::StatusCode,
+    extract::State,
     response::IntoResponse,
-    routing::{delete, get, post},
+    routing::get,
     Json, Router,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+use tokio::sync::broadcast;
 
-use mlc_backend_core::{AppSession, BackendCore};
+use mlc_backend_core::{BackendCore, BubbleEvent};
 use mlc_live_data::DataBridge;
 
 const DEFAULT_PORT: u16 = 19470;
 const TICK_PERIOD: Duration = Duration::from_millis(16);
 const SESSION_IDLE_TIMEOUT_SECS: u64 = 60;
+const EVENTS_CHANNEL_CAP: usize = 4096;
 
 #[derive(Clone)]
-struct AppState {
-    core: Arc<BackendCore>,
-    tick_count: Arc<std::sync::atomic::AtomicU64>,
-}
-
-#[derive(Serialize)]
-struct AppSessionOut {
-    app_id: String,
-    label: Option<String>,
-    created_at_secs: u64,
-    last_heartbeat_secs: u64,
-}
-
-impl From<AppSession> for AppSessionOut {
-    fn from(s: AppSession) -> Self {
-        Self {
-            app_id: s.app_id,
-            label: s.label,
-            created_at_secs: s.created_at_secs,
-            last_heartbeat_secs: s.last_heartbeat_secs,
-        }
-    }
+pub struct AppState {
+    pub core: Arc<BackendCore>,
+    pub tick_count: Arc<std::sync::atomic::AtomicU64>,
+    pub events_tx: broadcast::Sender<BubbleEvent>,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -83,20 +101,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(DEFAULT_PORT);
 
-    // CRITICAL: construct DataBridge synchronously FIRST. It owns its own
-    // tokio runtime, built via block_on internally. Calling that from inside
-    // a `#[tokio::main]` async fn panics ("Cannot start a runtime from
-    // within a runtime"). The daemon's HTTP runtime is a separate Tokio
-    // instance, spun up below after the bridge already exists.
+    // CRITICAL: construct DataBridge synchronously FIRST (owns its own tokio
+    // runtime; calling it from inside a #[tokio::main] async fn panics).
     let (bridge, _live_rx, _connector_ready_rx) = DataBridge::new();
     let bridge = Arc::new(bridge);
     let core = BackendCore::new(bridge.clone(), None);
 
     tracing::info!(target: "mlc-backend-daemon", "backend constructed, tick loop starting");
 
+    let (events_tx, _) = broadcast::channel::<BubbleEvent>(EVENTS_CHANNEL_CAP);
+
     let state = AppState {
         core: core.clone(),
         tick_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        events_tx: events_tx.clone(),
     };
 
     // HTTP runtime — separate from the bridge runtime.
@@ -113,12 +131,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         loop {
             interval.tick().await;
             let now_ms = wall_clock_ms();
-            tick_state.core.tick_bridge_only(now_ms);
+            let events = tick_state.core.tick_writers(now_ms);
+            for e in events {
+                let _ = tick_state.events_tx.send(e);
+            }
             tick_state
                 .tick_count
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-            // Drop idle sessions whose heartbeat lapsed.
+            // Reap idle sessions.
             let now_secs = now_ms / 1000;
             tick_state
                 .core
@@ -128,12 +149,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = Router::new()
         .route("/health", get(health))
-        .route("/v1/bubbles", get(list_bubbles))
-        .route("/v1/bubble/:bid/bars/:kind", get(bubble_bars))
-        .route("/v1/exchanges", get(list_exchanges))
-        .route("/v1/apps", get(list_apps).post(register_app))
-        .route("/v1/apps/:app_id", delete(deregister_app))
-        .route("/v1/apps/:app_id/heartbeat", post(heartbeat_app))
+        .merge(routes::apps::routes())
+        .merge(routes::bubbles::routes())
+        .merge(routes::exchanges::routes())
+        .merge(routes::mini_ticker::routes())
+        .merge(routes::presets::routes())
+        .merge(routes::templates::routes())
+        .merge(routes::watchlists::routes())
+        .merge(routes::drawings::routes())
+        .merge(routes::indicators::routes())
+        .merge(routes::bridge::routes())
+        .merge(routes::trading::routes())
+        .merge(routes::events::routes())
         .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
@@ -173,106 +200,4 @@ async fn health(State(s): State<AppState>) -> impl IntoResponse {
         tick_count: s.tick_count.load(std::sync::atomic::Ordering::Relaxed),
         sessions: s.core.sessions_snapshot().len(),
     })
-}
-
-#[derive(Serialize)]
-struct BubbleListOut {
-    bubble_ids: Vec<u64>,
-}
-
-async fn list_bubbles(State(s): State<AppState>) -> impl IntoResponse {
-    let guard = s.core.bubble();
-    let bubble_ids: Vec<u64> = guard.bubble.bubbles().map(|b| b.id.0).collect();
-    Json(BubbleListOut { bubble_ids })
-}
-
-#[derive(Serialize)]
-struct BarsOut {
-    bid: u64,
-    kind: String,
-    count: usize,
-}
-
-async fn bubble_bars(
-    Path((bid, kind)): Path<(u64, String)>,
-    State(s): State<AppState>,
-) -> impl IntoResponse {
-    use mlc_core::tag_manager::BubbleId;
-    let bid_typed = BubbleId(bid);
-    let guard = s.core.bubble();
-    let count = guard
-        .bubble
-        .bubbles()
-        .find(|b| b.id == bid_typed)
-        .map(|b| b.bars.len())
-        .unwrap_or(0);
-    Json(BarsOut { bid, kind, count })
-}
-
-#[derive(Serialize)]
-struct ExchangeListOut {
-    exchanges: Vec<String>,
-}
-
-async fn list_exchanges(State(s): State<AppState>) -> impl IntoResponse {
-    let guard = s.core.exchange_symbols_read();
-    let exchanges: Vec<String> = guard.keys().map(|e| format!("{:?}", e)).collect();
-    Json(ExchangeListOut { exchanges })
-}
-
-#[derive(Deserialize)]
-struct RegisterIn {
-    label: Option<String>,
-}
-
-#[derive(Serialize)]
-struct RegisterOut {
-    app_id: String,
-}
-
-async fn register_app(
-    State(s): State<AppState>,
-    Json(body): Json<RegisterIn>,
-) -> impl IntoResponse {
-    let now = wall_clock_ms() / 1000;
-    let app_id = s.core.register_session(body.label, now);
-    (StatusCode::CREATED, Json(RegisterOut { app_id }))
-}
-
-#[derive(Serialize)]
-struct AppsListOut {
-    apps: Vec<AppSessionOut>,
-}
-
-async fn list_apps(State(s): State<AppState>) -> impl IntoResponse {
-    let apps: Vec<AppSessionOut> = s
-        .core
-        .sessions_snapshot()
-        .into_iter()
-        .map(AppSessionOut::from)
-        .collect();
-    Json(AppsListOut { apps })
-}
-
-async fn deregister_app(
-    Path(app_id): Path<String>,
-    State(s): State<AppState>,
-) -> impl IntoResponse {
-    if s.core.deregister_session(&app_id) {
-        StatusCode::NO_CONTENT
-    } else {
-        StatusCode::NOT_FOUND
-    }
-}
-
-async fn heartbeat_app(
-    Path(app_id): Path<String>,
-    State(s): State<AppState>,
-) -> impl IntoResponse {
-    let now = wall_clock_ms() / 1000;
-    if s.core.heartbeat_session(&app_id, now) {
-        StatusCode::OK
-    } else {
-        StatusCode::NOT_FOUND
-    }
 }

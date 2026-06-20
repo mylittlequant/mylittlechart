@@ -28,6 +28,7 @@ use std::sync::Arc;
 use std::collections::HashMap;
 
 use dashmap::DashMap;
+use serde::{Serialize, Serializer};
 
 use digdigdig3::ExchangeId;
 use mlc_core::managers::Managers;
@@ -132,6 +133,7 @@ impl DrawingRegistry {
 /// One entry per `(symbol, exchange, account_type)`, updated every second from
 /// `LiveUpdate::MiniTickerUpdate`. Used as a fallback price source in the
 /// watchlist sidebar for symbols that do not have a chart window open.
+#[derive(Serialize)]
 pub struct MiniTickerData {
     pub last_price: f64,
     pub price_change_percent: f64,
@@ -359,6 +361,275 @@ pub enum BubbleEvent {
         long_liq_usd: f64,
         short_liq_usd: f64,
     },
+}
+
+// ---------------------------------------------------------------------------
+// Custom Serialize for BubbleEvent
+//
+// Manual impl because:
+//  - `ExchangeId` does not derive Serialize (use `.as_str()`)
+//  - `LiveUpdate` does not derive Serialize (TradingUpdate emits minimal placeholder)
+//  - `DomTradeDot` does not derive Serialize (inline fields manually)
+// ---------------------------------------------------------------------------
+impl Serialize for BubbleEvent {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap as _;
+        macro_rules! ex {
+            ($e:expr) => { $e.as_str() };
+        }
+        match self {
+            Self::BarsLoaded { bid, exchange_id, symbol, account_type, timeframe, bars } => {
+                let mut m = s.serialize_map(Some(7))?;
+                m.serialize_entry("type", "BarsLoaded")?;
+                m.serialize_entry("bid", &bid.0)?;
+                m.serialize_entry("exchange_id", ex!(exchange_id))?;
+                m.serialize_entry("symbol", symbol)?;
+                m.serialize_entry("account_type", account_type)?;
+                m.serialize_entry("timeframe", timeframe)?;
+                m.serialize_entry("bars_count", &bars.len())?;
+                m.end()
+            }
+            Self::BackfillCompleted { bid, exchange_id, symbol, account_type, timeframe, bars } => {
+                let mut m = s.serialize_map(Some(7))?;
+                m.serialize_entry("type", "BackfillCompleted")?;
+                m.serialize_entry("bid", &bid.0)?;
+                m.serialize_entry("exchange_id", ex!(exchange_id))?;
+                m.serialize_entry("symbol", symbol)?;
+                m.serialize_entry("account_type", account_type)?;
+                m.serialize_entry("timeframe", timeframe)?;
+                m.serialize_entry("bars_count", &bars.len())?;
+                m.end()
+            }
+            Self::ScrollBarsAppended { bid, exchange_id, symbol, account_type, timeframe, bars, prepend_count } => {
+                let mut m = s.serialize_map(Some(8))?;
+                m.serialize_entry("type", "ScrollBarsAppended")?;
+                m.serialize_entry("bid", &bid.0)?;
+                m.serialize_entry("exchange_id", ex!(exchange_id))?;
+                m.serialize_entry("symbol", symbol)?;
+                m.serialize_entry("account_type", account_type)?;
+                m.serialize_entry("timeframe", timeframe)?;
+                m.serialize_entry("bars_count", &bars.len())?;
+                m.serialize_entry("prepend_count", prepend_count)?;
+                m.end()
+            }
+            Self::BarUpdatePassthrough { exchange_id, account_type, symbol, bar } => {
+                let mut m = s.serialize_map(Some(5))?;
+                m.serialize_entry("type", "BarUpdatePassthrough")?;
+                m.serialize_entry("exchange_id", ex!(exchange_id))?;
+                m.serialize_entry("account_type", account_type)?;
+                m.serialize_entry("symbol", symbol)?;
+                m.serialize_entry("bar", bar)?;
+                m.end()
+            }
+            Self::TradeUpdatePassthrough { exchange_id, account_type, symbol, price, quantity, timestamp, is_buyer_maker } => {
+                let mut m = s.serialize_map(Some(8))?;
+                m.serialize_entry("type", "TradeUpdatePassthrough")?;
+                m.serialize_entry("exchange_id", ex!(exchange_id))?;
+                m.serialize_entry("account_type", account_type)?;
+                m.serialize_entry("symbol", symbol)?;
+                m.serialize_entry("price", price)?;
+                m.serialize_entry("quantity", quantity)?;
+                m.serialize_entry("timestamp", timestamp)?;
+                m.serialize_entry("is_buyer_maker", is_buyer_maker)?;
+                m.end()
+            }
+            Self::MiniTickerUpdated { exchange_id, symbol, account_type, last_price } => {
+                let mut m = s.serialize_map(Some(5))?;
+                m.serialize_entry("type", "MiniTickerUpdated")?;
+                m.serialize_entry("exchange_id", ex!(exchange_id))?;
+                m.serialize_entry("symbol", symbol)?;
+                m.serialize_entry("account_type", account_type)?;
+                m.serialize_entry("last_price", last_price)?;
+                m.end()
+            }
+            Self::ConnectorReady { exchange_id } => {
+                let mut m = s.serialize_map(Some(2))?;
+                m.serialize_entry("type", "ConnectorReady")?;
+                m.serialize_entry("exchange_id", ex!(exchange_id))?;
+                m.end()
+            }
+            Self::SymbolsLoaded { exchange_id, count } => {
+                let mut m = s.serialize_map(Some(3))?;
+                m.serialize_entry("type", "SymbolsLoaded")?;
+                m.serialize_entry("exchange_id", ex!(exchange_id))?;
+                m.serialize_entry("count", count)?;
+                m.end()
+            }
+            Self::ErrorReported { exchange_id, symbol, account_type, timeframe, message } => {
+                let mut m = s.serialize_map(Some(6))?;
+                m.serialize_entry("type", "ErrorReported")?;
+                m.serialize_entry("exchange_id", ex!(exchange_id))?;
+                m.serialize_entry("symbol", symbol)?;
+                m.serialize_entry("account_type", account_type)?;
+                m.serialize_entry("timeframe", timeframe)?;
+                m.serialize_entry("message", message)?;
+                m.end()
+            }
+            Self::OrderbookSnapshotRest { exchange_id, symbol, account_type } => {
+                let mut m = s.serialize_map(Some(4))?;
+                m.serialize_entry("type", "OrderbookSnapshotRest")?;
+                m.serialize_entry("exchange_id", ex!(exchange_id))?;
+                m.serialize_entry("symbol", symbol)?;
+                m.serialize_entry("account_type", account_type)?;
+                m.end()
+            }
+            Self::OrderbookDelta { exchange_id, symbol, account_type, bids, asks, ts_ms } => {
+                let mut m = s.serialize_map(Some(7))?;
+                m.serialize_entry("type", "OrderbookDelta")?;
+                m.serialize_entry("exchange_id", ex!(exchange_id))?;
+                m.serialize_entry("symbol", symbol)?;
+                m.serialize_entry("account_type", account_type)?;
+                m.serialize_entry("bids", bids)?;
+                m.serialize_entry("asks", asks)?;
+                m.serialize_entry("ts_ms", ts_ms)?;
+                m.end()
+            }
+            Self::OrderbookDeltaForMultiDom { exchange_id, symbol, account_type, bids, asks } => {
+                let mut m = s.serialize_map(Some(6))?;
+                m.serialize_entry("type", "OrderbookDeltaForMultiDom")?;
+                m.serialize_entry("exchange_id", ex!(exchange_id))?;
+                m.serialize_entry("symbol", symbol)?;
+                m.serialize_entry("account_type", account_type)?;
+                m.serialize_entry("bids", bids)?;
+                m.serialize_entry("asks", asks)?;
+                m.end()
+            }
+            Self::TradingUpdate { .. } => {
+                // LiveUpdate is not Serialize; emit minimal placeholder.
+                let mut m = s.serialize_map(Some(1))?;
+                m.serialize_entry("type", "TradingUpdate")?;
+                m.end()
+            }
+            Self::FootprintBarAppended { bid, exchange_id, symbol, account_type } => {
+                let mut m = s.serialize_map(Some(5))?;
+                m.serialize_entry("type", "FootprintBarAppended")?;
+                m.serialize_entry("bid", &bid.0)?;
+                m.serialize_entry("exchange_id", ex!(exchange_id))?;
+                m.serialize_entry("symbol", symbol)?;
+                m.serialize_entry("account_type", account_type)?;
+                m.end()
+            }
+            Self::RenkoBarAppended { bid, exchange_id, symbol, account_type } => {
+                let mut m = s.serialize_map(Some(5))?;
+                m.serialize_entry("type", "RenkoBarAppended")?;
+                m.serialize_entry("bid", &bid.0)?;
+                m.serialize_entry("exchange_id", ex!(exchange_id))?;
+                m.serialize_entry("symbol", symbol)?;
+                m.serialize_entry("account_type", account_type)?;
+                m.end()
+            }
+            Self::PnfBarAppended { bid, exchange_id, symbol, account_type } => {
+                let mut m = s.serialize_map(Some(5))?;
+                m.serialize_entry("type", "PnfBarAppended")?;
+                m.serialize_entry("bid", &bid.0)?;
+                m.serialize_entry("exchange_id", ex!(exchange_id))?;
+                m.serialize_entry("symbol", symbol)?;
+                m.serialize_entry("account_type", account_type)?;
+                m.end()
+            }
+            Self::KagiBarAppended { bid, exchange_id, symbol, account_type } => {
+                let mut m = s.serialize_map(Some(5))?;
+                m.serialize_entry("type", "KagiBarAppended")?;
+                m.serialize_entry("bid", &bid.0)?;
+                m.serialize_entry("exchange_id", ex!(exchange_id))?;
+                m.serialize_entry("symbol", symbol)?;
+                m.serialize_entry("account_type", account_type)?;
+                m.end()
+            }
+            Self::CvdSampleAppended { bid, exchange_id, symbol, account_type } => {
+                let mut m = s.serialize_map(Some(5))?;
+                m.serialize_entry("type", "CvdSampleAppended")?;
+                m.serialize_entry("bid", &bid.0)?;
+                m.serialize_entry("exchange_id", ex!(exchange_id))?;
+                m.serialize_entry("symbol", symbol)?;
+                m.serialize_entry("account_type", account_type)?;
+                m.end()
+            }
+            Self::TpoSessionUpdated { bid, exchange_id, symbol, account_type } => {
+                let mut m = s.serialize_map(Some(5))?;
+                m.serialize_entry("type", "TpoSessionUpdated")?;
+                m.serialize_entry("bid", &bid.0)?;
+                m.serialize_entry("exchange_id", ex!(exchange_id))?;
+                m.serialize_entry("symbol", symbol)?;
+                m.serialize_entry("account_type", account_type)?;
+                m.end()
+            }
+            Self::TlbLineAppended { bid, exchange_id, symbol, account_type } => {
+                let mut m = s.serialize_map(Some(5))?;
+                m.serialize_entry("type", "TlbLineAppended")?;
+                m.serialize_entry("bid", &bid.0)?;
+                m.serialize_entry("exchange_id", ex!(exchange_id))?;
+                m.serialize_entry("symbol", symbol)?;
+                m.serialize_entry("account_type", account_type)?;
+                m.end()
+            }
+            Self::OiUpdatePassthrough { exchange_id, account_type, symbol, point } => {
+                let mut m = s.serialize_map(Some(5))?;
+                m.serialize_entry("type", "OiUpdatePassthrough")?;
+                m.serialize_entry("exchange_id", ex!(exchange_id))?;
+                m.serialize_entry("account_type", account_type)?;
+                m.serialize_entry("symbol", symbol)?;
+                m.serialize_entry("point", point)?;
+                m.end()
+            }
+            Self::FundingRatePassthrough { exchange_id, account_type, symbol, point } => {
+                let mut m = s.serialize_map(Some(5))?;
+                m.serialize_entry("type", "FundingRatePassthrough")?;
+                m.serialize_entry("exchange_id", ex!(exchange_id))?;
+                m.serialize_entry("account_type", account_type)?;
+                m.serialize_entry("symbol", symbol)?;
+                m.serialize_entry("point", point)?;
+                m.end()
+            }
+            Self::DomHeatmapSnapshotPassthrough { exchange_id, account_type, symbol, ts_ms, bids, asks } => {
+                let mut m = s.serialize_map(Some(7))?;
+                m.serialize_entry("type", "DomHeatmapSnapshotPassthrough")?;
+                m.serialize_entry("exchange_id", ex!(exchange_id))?;
+                m.serialize_entry("account_type", account_type)?;
+                m.serialize_entry("symbol", symbol)?;
+                m.serialize_entry("ts_ms", ts_ms)?;
+                m.serialize_entry("bids", bids)?;
+                m.serialize_entry("asks", asks)?;
+                m.end()
+            }
+            Self::DomTradeDotPassthrough { exchange_id, account_type, symbol, dot } => {
+                let mut m = s.serialize_map(Some(8))?;
+                m.serialize_entry("type", "DomTradeDotPassthrough")?;
+                m.serialize_entry("exchange_id", ex!(exchange_id))?;
+                m.serialize_entry("account_type", account_type)?;
+                m.serialize_entry("symbol", symbol)?;
+                // DomTradeDot does not impl Serialize — inline fields.
+                m.serialize_entry("ts_ms", &dot.ts_ms)?;
+                m.serialize_entry("price", &dot.price)?;
+                m.serialize_entry("quantity", &dot.quantity)?;
+                m.serialize_entry("side", &dot.side)?;
+                m.end()
+            }
+            Self::LiquidationEventPassthrough { exchange_id, account_type, symbol, ts_ms, price, value_usd, side } => {
+                let mut m = s.serialize_map(Some(8))?;
+                m.serialize_entry("type", "LiquidationEventPassthrough")?;
+                m.serialize_entry("exchange_id", ex!(exchange_id))?;
+                m.serialize_entry("account_type", account_type)?;
+                m.serialize_entry("symbol", symbol)?;
+                m.serialize_entry("ts_ms", ts_ms)?;
+                m.serialize_entry("price", price)?;
+                m.serialize_entry("value_usd", value_usd)?;
+                m.serialize_entry("side", side)?;
+                m.end()
+            }
+            Self::LiquidationBucketPassthrough { exchange_id, account_type, symbol, ts_ms, long_liq_usd, short_liq_usd } => {
+                let mut m = s.serialize_map(Some(7))?;
+                m.serialize_entry("type", "LiquidationBucketPassthrough")?;
+                m.serialize_entry("exchange_id", ex!(exchange_id))?;
+                m.serialize_entry("account_type", account_type)?;
+                m.serialize_entry("symbol", symbol)?;
+                m.serialize_entry("ts_ms", ts_ms)?;
+                m.serialize_entry("long_liq_usd", long_liq_usd)?;
+                m.serialize_entry("short_liq_usd", short_liq_usd)?;
+                m.end()
+            }
+        }
+    }
 }
 
 /// Shared data plane owned by every chart-app process. Mode-1 hosts (vello,
