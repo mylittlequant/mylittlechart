@@ -63,10 +63,11 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
     {
         let open_tabs = &pw.chart.panel_app.open_tabs;
         let active_id = &pw.chart.panel_app.active_preset_id;
+        let presets_guard_sb = pw.chart.core.presets();
         let mut tabs: Vec<chrome::Tab> = open_tabs
             .iter()
             .filter_map(|tab_id| {
-                pw.chart.panel_app.presets.get(tab_id).map(|p| chrome::Tab {
+                presets_guard_sb.get(tab_id).map(|p| chrome::Tab {
                     id: p.id.clone(),
                     name: p.name.clone(),
                     active: &p.id == active_id,
@@ -151,7 +152,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                     .panel_grid
                     .iter_containers()
                     .any(|(_, w)| {
-                        pw.chart.managers.bubble.bubble(w.current_bubble_id)
+                        pw.chart.core.bubble().bubble.bubble(w.current_bubble_id)
                             .map(|b| !b.bars.is_empty())
                             .unwrap_or(false)
                     });
@@ -715,7 +716,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 .panel_grid
                 .iter_containers()
                 .any(|(_, w)| {
-                    pw.chart.managers.bubble.bubble(w.current_bubble_id)
+                    pw.chart.core.bubble().bubble.bubble(w.current_bubble_id)
                         .map(|b| !b.bars.is_empty())
                         .unwrap_or(false)
                 });

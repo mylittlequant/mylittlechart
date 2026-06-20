@@ -535,29 +535,26 @@ impl ChartApp {
                     } else if let Some(panel_id) = self.panel_app.sync_color_grid.target_panel {
                         use mlc_core::tag_manager::SyncMemberId;
                         let member = SyncMemberId::Panel(panel_id);
-                        let old_color = self.managers.bubble
-                            .group_for_member(member)
-                            .and_then(|gid| self.managers.bubble.bubble(gid))
-                            .filter(|g| !g.auto_created)
-                            .map(|g| g.color);
+                        let old_color = self.group_for_member(member)
+                            .and_then(|gid| self.with_bubble(gid, |g| if g.auto_created { None } else { Some(g.color) }).flatten());
                         let same_color = old_color.is_some_and(|oc|
                             (oc[0] - new_color[0]).abs() < 0.01
                             && (oc[1] - new_color[1]).abs() < 0.01
                             && (oc[2] - new_color[2]).abs() < 0.01
                         );
                         if !same_color {
-                            self.managers.bubble.disconnect(member);
-                            let target_gid = self.managers.bubble
+                            self.core.bubble_mut().bubble.disconnect(member);
+                            let target_gid = self.core.bubble().bubble
                                 .find_group_by_color(new_color)
                                 .unwrap_or_else(|| {
-                                    self.managers.bubble.create_group(
+                                    self.core.bubble_mut().bubble.create_group(
                                         new_color,
                                         String::new(),
                                         mlc_core::state::Timeframe::m1(),
                                     )
                                 });
-                            let _ = self.managers.bubble.connect(member, target_gid);
-                            self.managers.bubble.synced_panels_remove(member);
+                            let _ = self.core.bubble_mut().bubble.connect(member, target_gid);
+                            self.core.bubble_mut().bubble.synced_panels_remove(member);
                             eprintln!(
                                 "[ChartApp] Panel {} → color group [{:.2},{:.2},{:.2}]",
                                 panel_id, new_color[0], new_color[1], new_color[2]
@@ -588,33 +585,38 @@ impl ChartApp {
         };
         let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
         if let Some(pid) = active_pid {
-            if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                if let Some(mut data) = panel.drawing_manager.get_data_at(idx) {
-                    match field.as_str() {
-                        "stroke_color" => {
-                            data.color.stroke = color.to_string();
-                        }
-                        "fill_color" => {
-                            data.color.fill = Some(color.to_string());
-                        }
-                        "text_color" => {
-                            if let Some(ref mut text) = data.text {
-                                text.color = Some(color.to_string());
-                            }
-                        }
-                        _ if field.starts_with("level_") && field.ends_with("_color") => {
-                            eprintln!("[ChartApp] level color change: {} = {}", field, color);
-                        }
-                        _ if field.starts_with("style_prop:") => {
-                            // Style property color — apply via primitive's apply_style_property
-                            let prop_id = &field["style_prop:".len()..];
-                            let value = mlc_core::drawing::primitives_v2::config::PropertyValue::Color(color.to_string());
-                            panel.drawing_manager.apply_style_property(idx, prop_id, value);
-                        }
-                        _ => {}
+            let data_opt = self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx));
+            if let Some(mut data) = data_opt {
+                let style_prop_change = if field.starts_with("style_prop:") {
+                    let prop_id = field["style_prop:".len()..].to_string();
+                    let value = mlc_core::drawing::primitives_v2::config::PropertyValue::Color(color.to_string());
+                    Some((prop_id, value))
+                } else {
+                    None
+                };
+                match field.as_str() {
+                    "stroke_color" => {
+                        data.color.stroke = color.to_string();
                     }
-                    panel.drawing_manager.set_data_at(idx, &data);
+                    "fill_color" => {
+                        data.color.fill = Some(color.to_string());
+                    }
+                    "text_color" => {
+                        if let Some(ref mut text) = data.text {
+                            text.color = Some(color.to_string());
+                        }
+                    }
+                    _ if field.starts_with("level_") && field.ends_with("_color") => {
+                        eprintln!("[ChartApp] level color change: {} = {}", field, color);
+                    }
+                    _ => {}
                 }
+                let mut guard = self.core.drawings_mut();
+                let dm = guard.entry_or_default(pid);
+                if let Some((prop_id, value)) = style_prop_change {
+                    dm.apply_style_property(idx, &prop_id, value);
+                }
+                dm.set_data_at(idx, &data);
             }
         }
         self.sync_drawing_back_to_group();
@@ -628,7 +630,7 @@ impl ChartApp {
     /// Apply the color picker color to the active indicator output.
     pub(super) fn apply_indicator_color(&mut self, output_name: &str, color: &str) {
         if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
-            if let Some(inst) = self.indicator_manager.get_instance_mut(ind_id) {
+            if let Some(inst) = self.core.indicators_mut().get_instance_mut(ind_id) {
                 match output_name {
                     "signal_bullish_color" => {
                         inst.signal_display.bullish_color = color.to_string();

@@ -90,11 +90,11 @@ impl ChartApp {
             _ if action.starts_with("alert:") => {
                 if let Ok(idx) = action["alert:".len()..].parse::<usize>() {
                     let price = self.panel_app.panel_grid.active_container()
-                        .and_then(|w| None::<&mlc_core::Bar>)
+                        .and_then(|_w| None::<&mlc_core::Bar>)
                         .map(|b| b.close)
                         .unwrap_or(0.0);
                     let symbol = self.panel_app.panel_grid.active_container_id()
-                        .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                        .and_then(|cid| self.symbol_for_chart(cid))
                         .map(String::from)
                         .unwrap_or_else(|| "BTCUSD".to_string());
                     let source_name = self.panel_app.panel_grid.active_container()
@@ -169,11 +169,11 @@ impl ChartApp {
             _ if action.starts_with("alert:") => {
                 if let Ok(idx) = action["alert:".len()..].parse::<usize>() {
                     let price = self.panel_app.panel_grid.active_container()
-                        .and_then(|w| None::<&mlc_core::Bar>)
+                        .and_then(|_w| None::<&mlc_core::Bar>)
                         .map(|b| b.close)
                         .unwrap_or(0.0);
                     let symbol = self.panel_app.panel_grid.active_container_id()
-                        .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                        .and_then(|cid| self.symbol_for_chart(cid))
                         .map(String::from)
                         .unwrap_or_else(|| "BTCUSD".to_string());
                     let source_name = self.panel_app.panel_grid.active_container()
@@ -419,7 +419,7 @@ impl ChartApp {
                 self.panel_app.compare_settings_state.template_dropdown_open = false;
                 self.panel_app.compare_settings_state.save_template_mode = true;
                 let prefix = "Мой шаблон ";
-                let max_n = self.panel_app.template_manager.compare_templates
+                let max_n = self.core.template_manager().compare_templates
                     .iter()
                     .filter_map(|t| t.name.strip_prefix(prefix))
                     .filter_map(|s| s.parse::<u32>().ok())
@@ -468,7 +468,8 @@ impl ChartApp {
             }
             id if id.starts_with("template_option:") => {
                 let tmpl_id = &id["template_option:".len()..];
-                if let Some(tmpl) = self.panel_app.template_manager.get_compare_template(tmpl_id).cloned() {
+                let tmpl_opt = self.core.template_manager().get_compare_template(tmpl_id).cloned();
+                if let Some(tmpl) = tmpl_opt {
                     let idx = self.panel_app.compare_settings_state.series_index;
                     self.panel_app.compare_settings_state.applied_template_id = Some(tmpl.id.clone());
                     self.panel_app.compare_settings_state.template_dropdown_open = false;
@@ -646,7 +647,7 @@ impl ChartApp {
             }
             _ if action.starts_with("vis:") => {
                 if let Ok(id) = action["vis:".len()..].parse::<u64>() {
-                    self.indicator_manager.toggle_visibility(id);
+                    self.core.indicators_mut().toggle_visibility(id);
                     eprintln!("[ChartApp] indicator {} visibility toggled", id);
                 }
             }
@@ -665,14 +666,14 @@ impl ChartApp {
                 if let Some(id_str) = action.strip_prefix("alert:") {
                     if let Ok(id) = id_str.parse::<u64>() {
                         let price = self.panel_app.panel_grid.active_container()
-                            .and_then(|w| None::<&mlc_core::Bar>)
+                            .and_then(|_w| None::<&mlc_core::Bar>)
                             .map(|b| b.close)
                             .unwrap_or(0.0);
-                        let label = self.indicator_manager.get_instance(id)
+                        let label = self.core.indicators().get_instance(id)
                             .map(|inst| inst.name.clone())
                             .unwrap_or_else(|| format!("Indicator {}", id));
                         let symbol = self.panel_app.panel_grid.active_container_id()
-                            .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                            .and_then(|cid| self.symbol_for_chart(cid))
                             .map(String::from)
                             .unwrap_or_else(|| "BTCUSD".to_string());
                         let source = mlc_alerts::AlertSource::Signal {
@@ -711,7 +712,7 @@ impl ChartApp {
             }
             _ if action.starts_with("vis:") => {
                 if let Ok(id) = action["vis:".len()..].parse::<u64>() {
-                    self.indicator_manager.toggle_visibility(id);
+                    self.core.indicators_mut().toggle_visibility(id);
                     eprintln!("[ChartApp] indicator {} visibility toggled (leaf {})", id, leaf_id.0);
                 }
             }
@@ -730,14 +731,14 @@ impl ChartApp {
                 if let Some(id_str) = action.strip_prefix("alert:") {
                     if let Ok(id) = id_str.parse::<u64>() {
                         let price = self.panel_app.panel_grid.active_container()
-                            .and_then(|w| None::<&mlc_core::Bar>)
+                            .and_then(|_w| None::<&mlc_core::Bar>)
                             .map(|b| b.close)
                             .unwrap_or(0.0);
-                        let label = self.indicator_manager.get_instance(id)
+                        let label = self.core.indicators().get_instance(id)
                             .map(|inst| inst.name.clone())
                             .unwrap_or_else(|| format!("Indicator {}", id));
                         let symbol = self.panel_app.panel_grid.active_container_id()
-                            .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                            .and_then(|cid| self.symbol_for_chart(cid))
                             .map(String::from)
                             .unwrap_or_else(|| "BTCUSD".to_string());
                         let source = mlc_alerts::AlertSource::Signal {
@@ -770,7 +771,7 @@ impl ChartApp {
     /// of the same `type_id` across ALL group member windows are removed so that
     /// peer windows do not keep stale renders alive.
     pub(super) fn delete_indicator_instance(&mut self, id: u64) {
-        let type_id = match self.indicator_manager.get_instance(id) {
+        let type_id = match self.core.indicators().get_instance(id) {
             Some(inst) => inst.type_id.clone(),
             None => return,
         };
@@ -786,9 +787,8 @@ impl ChartApp {
         let group_members: Vec<u64> = self.panel_app.panel_grid.docking()
             .active_leaf()
             .and_then(|leaf| self.panel_app.panel_grid.container_id_for_leaf(leaf))
-            .and_then(|cid| self.managers.bubble.bubble_for_chart(cid))
-            .and_then(|gid| self.managers.bubble.bubble(gid))
-            .map(|g| g.members.iter().filter_map(|m| m.as_chart()).collect())
+            .and_then(|cid| self.bubble_for_chart(cid))
+            .map(|gid| self.with_bubble(gid, |g| g.members.iter().filter_map(|m| m.as_chart()).collect::<Vec<u64>>()).unwrap_or_default())
             .unwrap_or_default();
 
         // Remove at most ONE indicator_config with this type_id from the group.
@@ -796,8 +796,8 @@ impl ChartApp {
         // of the same type (e.g. two "ac" indicators on the same window).
         if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
             if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(active_leaf) {
-                if let Some(group_id) = self.managers.bubble.bubble_for_chart(chart_id) {
-                    if let Some(group) = self.managers.bubble.bubble_mut(group_id) {
+                if let Some(group_id) = self.bubble_for_chart(chart_id) {
+                    if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(group_id) {
                         if let Some(pos) = group.indicator_configs.iter().position(|c| c.type_id == type_id) {
                             group.indicator_configs.remove(pos);
                             eprintln!(
@@ -812,14 +812,14 @@ impl ChartApp {
         }
 
         // Find the window that owns the specific instance being deleted.
-        let origin_window_id = self.indicator_manager.instances_iter()
+        let origin_window_id = self.core.indicators().instances_iter()
             .find(|inst| inst.id == id)
             .and_then(|inst| inst.window_id);
 
         // Sweep only PEER windows (same type_id, same group, but NOT the originating window).
         // This prevents deleting a second "ac" indicator on the same window when only one
         // was requested to be removed.
-        let peer_instances: Vec<u64> = self.indicator_manager.instances_iter()
+        let peer_instances: Vec<u64> = self.core.indicators().instances_iter()
             .filter(|inst| {
                 inst.type_id == type_id
                     && inst.id != id
@@ -834,8 +834,8 @@ impl ChartApp {
         all_to_remove.extend(peer_instances);
 
         for inst_id in &all_to_remove {
-            self.indicator_manager.remove_instance(*inst_id);
-            self.managers.alert.remove_alerts_for_indicator(*inst_id);
+            self.core.indicators_mut().remove_instance(*inst_id);
+            self.core.bubble_mut().alert.remove_alerts_for_indicator(*inst_id);
         }
 
         // Remove stale entries from auto_bubble.pre_tag_indicator_ids for every window
@@ -848,7 +848,7 @@ impl ChartApp {
                 .filter(|&bid| bid != mlc_core::tag_manager::BubbleId(0))
                 .collect();
             for bid in auto_bids {
-                if let Some(auto_bub) = self.managers.bubble.bubble_mut(bid) {
+                if let Some(auto_bub) = self.core.bubble_mut().bubble.bubble_mut(bid) {
                     auto_bub.pre_tag_indicator_ids.retain(|iid| !all_to_remove.contains(iid));
                 }
             }

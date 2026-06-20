@@ -53,7 +53,8 @@ pub fn update_terminal_snapshot<H: AgentHost>(host: &H, agent_state: &AgentState
     for w in host.windows() {
         let chart = w.chart;
 
-        let preset_name: StdHashMap<&str, &str> = chart.panel_app.presets
+        let presets_guard = chart.core.presets();
+        let preset_name: StdHashMap<&str, &str> = presets_guard
             .iter()
             .map(|(id, p)| (id.as_str(), p.name.as_str()))
             .collect();
@@ -90,14 +91,14 @@ pub fn update_terminal_snapshot<H: AgentHost>(host: &H, agent_state: &AgentState
                     0
                 };
 
-                let symbol = chart.managers.bubble.symbol_for_chart(*chart_id)
+                let symbol = chart.symbol_for_chart(*chart_id)
                     .map(String::from).unwrap_or_default();
-                let exchange = chart.managers.bubble.exchange_for_chart(*chart_id)
+                let exchange = chart.exchange_for_chart(*chart_id)
                     .map(String::from).unwrap_or_default();
-                let tf_name = chart.managers.bubble.timeframe_for_chart(*chart_id)
+                let tf_name = chart.timeframe_for_chart(*chart_id)
                     .map(|tf| tf.name.clone()).unwrap_or_default();
 
-                let indicators: Vec<IndicatorSummary> = chart.indicator_manager
+                let indicators: Vec<IndicatorSummary> = chart.core.indicators()
                     .instances_iter()
                     .filter(|inst| inst.window_id == Some(cw.id.0))
                     .map(|inst| IndicatorSummary {
@@ -107,19 +108,20 @@ pub fn update_terminal_snapshot<H: AgentHost>(host: &H, agent_state: &AgentState
                     })
                     .collect();
 
-                let primitives: Vec<PrimitiveSummary> = chart.panels_store
-                    .chart_panel.get(&cw.chart_panel_id)
-                    .map(|panel| panel.drawing_manager.primitives().iter()
-                        .map(|p| {
-                            let d = p.data();
-                            PrimitiveSummary { id: d.id, type_id: d.type_id.clone() }
-                        })
-                        .collect())
-                    .unwrap_or_default();
+                let pid_snap = cw.chart_panel_id;
+                let primitives: Vec<PrimitiveSummary> = {
+                    let dreg_snap = chart.core.drawings();
+                    dreg_snap.get(pid_snap)
+                        .map(|dm| dm.primitives().iter()
+                            .map(|p| {
+                                let d = p.data();
+                                PrimitiveSummary { id: d.id, type_id: d.type_id.clone() }
+                            })
+                            .collect())
+                        .unwrap_or_default()
+                };
 
-                let bubble = chart.managers.bubble.bubble(cw.current_bubble_id);
-                let bar_count = bubble.map(|b| b.bars.len()).unwrap_or(0);
-                let derived = bubble.map(|b| DerivedSeriesCounts {
+                let (bar_count, derived) = chart.with_bubble(cw.current_bubble_id, |b| (b.bars.len(), DerivedSeriesCounts {
                     footprint_bars:      b.footprint_bars.as_ref().map(|v| v.len()).unwrap_or(0),
                     renko_bars:          b.renko_bars.as_ref().map(|v| v.len()).unwrap_or(0),
                     three_line_break:    b.three_line_break.as_ref().map(|v| v.len()).unwrap_or(0),
@@ -133,7 +135,7 @@ pub fn update_terminal_snapshot<H: AgentHost>(host: &H, agent_state: &AgentState
                     dom_trade_dots:      b.dom_trade_dots.as_ref().map(|v| v.len()).unwrap_or(0),
                     liq_heatmap_columns: b.liq_heatmap.as_ref().map(|h| h.bucket_count()).unwrap_or(0),
                     liq_dots:            b.liq_dots.as_ref().map(|v| v.len()).unwrap_or(0),
-                }).unwrap_or_default();
+                })).unwrap_or_default();
 
                 Some(ChartSnapshot {
                     chart_id: cw.id.0,
@@ -199,13 +201,14 @@ pub fn update_indicator_snapshot<H: AgentHost>(host: &H, agent_state: &AgentStat
             .containers()
             .keys()
             .map(|cid| {
-                let sym = chart.managers.bubble.symbol_for_chart(*cid)
+                let sym = chart.symbol_for_chart(*cid)
                     .map(String::from).unwrap_or_default();
                 (cid.0, sym)
             })
             .collect();
 
-        for inst in chart.indicator_manager.instances_iter() {
+        let im = chart.core.indicators();
+        for inst in im.instances_iter() {
             let params: std::collections::HashMap<String, serde_json::Value> = inst
                 .params
                 .iter()
@@ -274,10 +277,10 @@ pub fn update_watchlist_snapshot<H: AgentHost>(host: &H, agent_state: &AgentStat
         return;
     };
 
-    let wm = &first.chart.sidebar_state.watchlist_manager;
-    let active_id = wm.active_list_id;
+    let wm_guard = first.chart.core.watchlist();
+    let active_id = wm_guard.active_list_id;
 
-    let watchlists: Vec<WatchlistEntry> = wm.lists.iter().map(|list| {
+    let watchlists: Vec<WatchlistEntry> = wm_guard.lists.iter().map(|list| {
         let items: Vec<WatchlistItemEntry> = list.all_symbols().into_iter().map(|ws| {
             WatchlistItemEntry {
                 symbol: ws.symbol.clone(),

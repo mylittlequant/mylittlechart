@@ -46,6 +46,7 @@ pub fn start_server(
 ) -> tokio::task::JoinHandle<()> {
     let app: Router = Router::new()
         .merge(routes::health::routes())
+        .merge(routes::apps::routes())
         .merge(routes::bars::routes())
         .merge(routes::indicators::routes())
         .merge(routes::windows::routes())

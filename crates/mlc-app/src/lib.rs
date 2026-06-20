@@ -57,6 +57,7 @@ macro_rules! dlog {
 pub(crate) use dlog;
 
 use std::cell::RefCell;
+use std::sync::atomic::Ordering as AtomicOrdering;
 
 use mlc_core::{
     ToolbarConfig,
@@ -87,8 +88,7 @@ use mlc_core::state::modal_state::{ModalState, IndicatorCatalogItem};
 use mlc_layout::ui::modal_settings::{ChartScreenArea, WatchlistModalState, WatchlistGroupNameInputState};
 use mlc_layout::layout::modals::watchlist_modal::{render_watchlist_modal, WatchlistEntry, WatchlistGroupInfo, render_wl_group_name_input, WlGroupNameInputResult};
 use mlc_layout::layout::modals::clock_popup::render_clock_popup;
-use mlc_indicators::IndicatorManager;
-use mlc_live_data::{DataBridge, LiveUpdate, LiveDataProvider};
+use mlc_live_data::{DataBridge, LiveDataProvider};
 
 use mlc_layout::panel_app::ChartPanelApp;
 use uzor::input::{InputCoordinator, InputState};
@@ -169,22 +169,10 @@ fn parse_timeframe_name(name: &str) -> Option<mlc_core::state::Timeframe> {
 
 /// Draw the ghost rect + compass drop-zone indicator for an active cross-drag.
 ///
-// =============================================================================
-// MiniTickerData
-// =============================================================================
-
-/// Cached 24-hour ticker statistics from the WebSocket mini-ticker stream.
-///
-/// One entry per symbol, updated every second from `LiveUpdate::MiniTickerUpdate`.
-/// Used as a fallback price source in the watchlist sidebar for symbols that
-/// do not have a chart window open.
-struct MiniTickerData {
-    last_price: f64,
-    price_change_percent: f64,
-    high_price: f64,
-    low_price: f64,
-    volume: f64,
-}
+// MiniTickerData lives in mlc-backend-core (see `mlc_backend_core::MiniTickerData`).
+// It's re-exported below as `crate::MiniTickerData` so existing references in
+// this crate continue to work without rewriting every call site.
+pub use mlc_backend_core::MiniTickerData;
 
 // =============================================================================
 // ChartApp
@@ -271,9 +259,6 @@ pub struct ChartApp {
     /// Inline floating bar rect from last render — used for drag hit-testing.
     pub(crate) last_inline_bar_rect: Option<LayoutRect>,
 
-    /// Indicator manager — owns all indicator instances and definitions.
-    pub indicator_manager: IndicatorManager,
-
     /// Modal state for search overlays (indicator search, symbol search).
     modal_state: ModalState,
 
@@ -335,9 +320,6 @@ pub struct ChartApp {
     /// Applied to windows on initial bar load.
     pub default_scale_mode: ScaleMode,
 
-    /// Top-level manager container (K2.7 — alert moved here from ChartApp direct field).
-    pub managers: mlc_core::managers::Managers,
-
     /// Triggered alert events waiting for delivery (Telegram, toast, etc.)
     pub pending_delivery_events: Vec<mlc_alert_delivery::DeliveryEvent>,
 
@@ -395,28 +377,14 @@ pub struct ChartApp {
     /// of right margin.
     needs_initial_viewport_fit: bool,
 
-    /// Live data bridge — owns the tokio runtime and connector pool.
-    bridge: std::sync::Arc<DataBridge>,
-
-    /// Receiver for async live data updates (bars loaded, errors, etc.).
-    live_update_rx: tokio::sync::broadcast::Receiver<LiveUpdate>,
-
-    /// Cached mini ticker prices from WebSocket (symbol → 24h stats).
-    ///
-    /// Updated every second from `LiveUpdate::MiniTickerUpdate`. Used as a
-    /// fallback price source for watchlist items whose symbol is not open in
-    /// any chart window.
-    mini_ticker_cache: std::collections::HashMap<String, MiniTickerData>,
+    /// Shared backend data plane — bridge, mini-ticker cache, exchange symbol
+    /// catalogue, trading manager. One per process; every `ChartApp` instance
+    /// holds an `Arc::clone`. See `backend_core.rs` for the migration plan
+    /// (more fields move here in subsequent passes).
+    pub core: std::sync::Arc<mlc_backend_core::BackendCore>,
 
     /// Currently active exchange.
     pub active_exchange: digdigdig3::ExchangeId,
-
-    /// Real exchange symbols loaded from the exchange info endpoint.
-    ///
-    /// Populated asynchronously via `LiveUpdate::SymbolsLoaded`. Keyed by
-    /// `ExchangeId` so that symbols from multiple exchanges are stored
-    /// simultaneously. Used by the symbol search overlay.
-    exchange_symbols: std::collections::HashMap<digdigdig3::ExchangeId, Vec<mlc_live_data::SymbolInfo>>,
 
     /// Unique identifier for this OS window (e.g. "win_1728503941").
     ///
@@ -578,12 +546,6 @@ pub struct ChartApp {
     /// on every subsequent frame.
     pub background_warm_seeded: bool,
 
-    /// Timestamp of the last backfill triggered after a broadcast lag event.
-    ///
-    /// Used to debounce rapid successive `Lagged` errors — backfill is only
-    /// triggered when at least 1 second has elapsed since the last one.
-    last_backfill_time: std::time::Instant,
-
     /// Count of broadcast lag events since startup (for performance monitoring).
     pub lag_event_count: u64,
 
@@ -614,16 +576,6 @@ pub struct ChartApp {
     /// Tracks the last active leaf so we can detect leaf switches and
     /// mark sidebar_data_dirty automatically.
     last_active_leaf: Option<mlc_core::LeafId>,
-
-    /// Rate-limit gate for the per-live-event sidebar dirty mark (Watchlist /
-    /// Connectors panels). Live data (ticks, connector-ready) arrives in bursts
-    /// — at startup all ~21 connectors flood it in one frame, forcing a full
-    /// sidebar rebuild (~30ms) per frame. We collapse that: a live-data event
-    /// only re-marks the sidebar dirty at most once per this interval. The
-    /// per-second prepare-timer guarantees the panel still refreshes even if no
-    /// event slips through. Input-driven marks (clicks, settings) are NOT gated
-    /// — they set sidebar_data_dirty directly for instant feedback.
-    last_sidebar_data_mark: Option<std::time::Instant>,
 
     /// Last render timing breakdown in microseconds (for PERF diagnostics).
     /// Tuple: (chart_us, toolbar_us, sidebar_us, setup_us)
@@ -782,9 +734,6 @@ pub struct ChartApp {
     ///
     /// `(panel_id, last_x, last_y)`.
     pub(crate) slot_tradetape_drag: Option<(mlc_core::state::PanelId, f64, f64)>,
-
-    /// Trading manager — order routing, position tracking, paper engine.
-    pub mlc_trading_manager: Option<mlc_trading_manager::TradingManager>,
 
     /// Active-leaf (or single-window) chart geometry for the current frame.
     ///
@@ -1017,12 +966,94 @@ pub struct RenderOutput {
 }
 
 impl ChartApp {
+    // -------------------------------------------------------------------------
+    // BackendCore-backed accessor helpers (Session 2 of the cutover).
+    //
+    // These return owned values (`String` / `Option<BubbleId>` etc) instead of
+    // `&str` references into the `RwLock` guard. That avoids the "guard
+    // dropped while borrowed" class of errors (E0515/E0716) at call sites,
+    // and keeps the lock held only for the duration of the helper call.
+    //
+    // The lock is reader-preferring and is taken once per call. In the
+    // single-threaded embedded path lock contention is zero — these are RAII
+    // guard acquisitions, not waits.
+    // -------------------------------------------------------------------------
+
+    /// Resolve the `BubbleId` attached to this chart, if any.
+    #[inline]
+    pub fn bubble_for_chart(&self, chart_id: mlc_core::state::ChartId) -> Option<mlc_core::tag_manager::BubbleId> {
+        self.core.bubble().bubble.bubble_for_chart(chart_id)
+    }
+
+    /// Symbol of the bubble attached to this chart (cloned).
+    #[inline]
+    pub fn symbol_for_chart(&self, chart_id: mlc_core::state::ChartId) -> Option<String> {
+        self.core.bubble().bubble.symbol_for_chart(chart_id).map(String::from)
+    }
+
+    /// Exchange identifier of the bubble attached to this chart (cloned).
+    #[inline]
+    pub fn exchange_for_chart(&self, chart_id: mlc_core::state::ChartId) -> Option<String> {
+        self.core.bubble().bubble.exchange_for_chart(chart_id).map(String::from)
+    }
+
+    /// Account-type label (`"S"`, `"FC"`, ...) of the bubble attached to this chart (cloned).
+    #[inline]
+    pub fn account_type_for_chart(&self, chart_id: mlc_core::state::ChartId) -> Option<String> {
+        self.core.bubble().bubble.account_type_for_chart(chart_id).map(String::from)
+    }
+
+    /// Timeframe of the bubble attached to this chart (cloned).
+    #[inline]
+    pub fn timeframe_for_chart(&self, chart_id: mlc_core::state::ChartId) -> Option<mlc_core::state::Timeframe> {
+        self.core.bubble().bubble.timeframe_for_chart(chart_id).cloned()
+    }
+
+    /// Resolve the group/bubble id for any sync member id.
+    #[inline]
+    pub fn group_for_member(&self, member: mlc_core::tag_manager::SyncMemberId) -> Option<mlc_core::tag_manager::BubbleId> {
+        self.core.bubble().bubble.group_for_member(member)
+    }
+
+    /// Run a closure with read access to a specific bubble, returning whatever
+    /// the closure produces (owned). The lock is held only for the duration
+    /// of `f`. Returns `None` if the bubble id is invalid.
+    ///
+    /// Use this when a chained read pattern would escape the RwLock guard.
+    /// Example:
+    /// ```ignore
+    /// // Bad — guard drops before .map can deref &DataBubble:
+    /// let v: u32 = self.core.bubble().bubble.bubble(bid).map(|b| b.field).unwrap_or(0);
+    /// // Good:
+    /// let v: u32 = self.with_bubble(bid, |b| b.field).unwrap_or(0);
+    /// ```
+    #[inline]
+    pub fn with_bubble<R>(
+        &self,
+        bid: mlc_core::tag_manager::BubbleId,
+        f: impl FnOnce(&mlc_core::tag_manager::DataBubble) -> R,
+    ) -> Option<R> {
+        self.core.bubble().bubble.bubble(bid).map(f)
+    }
+
+    /// Same as `with_bubble` but resolves the bubble by chart id.
+    #[inline]
+    pub fn with_chart_bubble<R>(
+        &self,
+        cid: mlc_core::state::ChartId,
+        f: impl FnOnce(&mlc_core::tag_manager::DataBubble) -> R,
+    ) -> Option<R> {
+        let m = self.core.bubble();
+        m.bubble.bubble_for_chart(cid).and_then(|bid| m.bubble.bubble(bid)).map(f)
+    }
+
     /// Phase X0 / C5c helper: resolve the bubble's bars for a chart window.
     /// Returns an owned Vec (cloned) to avoid borrow conflicts with
     /// `panel_app.panel_grid.containers_mut()`.
     pub fn bars_for_chart(&self, chart_id: mlc_core::state::ChartId) -> Vec<mlc_core::Bar> {
-        self.managers.bubble.bubble_for_chart(chart_id)
-            .and_then(|bid| self.managers.bubble.bubble(bid))
+        let m = self.core.bubble();
+        m.bubble.bubble_for_chart(chart_id)
+            .and_then(|bid| m.bubble.bubble(bid))
             .map(|b| b.bars.clone())
             .unwrap_or_default()
     }
@@ -1045,7 +1076,7 @@ impl ChartApp {
     /// to inject synthetic LiveUpdates via `debug_broadcast_tx`.
     #[doc(hidden)]
     pub fn bridge_arc(&self) -> std::sync::Arc<DataBridge> {
-        self.bridge.clone()
+        self.core.bridge.clone()
     }
 
     /// Create a new chart application for the given symbol.
@@ -1057,10 +1088,15 @@ impl ChartApp {
         // The third value is a ConnectorReady mpsc receiver used by the
         // chart-app-vello App struct; here it is dropped since ChartApp::tick()
         // receives ConnectorReady via the broadcast channel directly.
-        let (bridge, live_update_rx, _connector_ready_rx) = DataBridge::new();
+        let (bridge, _first_rx, _connector_ready_rx) = DataBridge::new();
         let bridge = std::sync::Arc::new(bridge);
-        // live_update_rx is a broadcast::Receiver — see DataBridge::add_listener()
-        // for spawning additional windows that share this bridge.
+        // _first_rx is the broadcast::Receiver from DataBridge::new(). BackendCore::new
+        // calls bridge.add_listener() internally, so _first_rx is dropped here.
+        let trading = mlc_trading_manager::TradingManager::new(
+            bridge.clone(),
+            std::path::PathBuf::from("."),
+        ).ok();
+        let core = mlc_backend_core::BackendCore::new(bridge.clone(), trading);
 
         let mut app = Self {
             panel_app: ChartPanelApp::new(symbol),
@@ -1077,7 +1113,6 @@ impl ChartApp {
             last_mouse_pos: (0.0, 0.0),
             content_rect: LayoutRect::new(0.0, 0.0, 1280.0, 800.0),
             last_inline_bar_rect: None,
-            indicator_manager: IndicatorManager::new(),
             modal_state: ModalState::new(),
             pending_screenshot: false,
             pending_reset_cache: false,
@@ -1093,7 +1128,6 @@ impl ChartApp {
             leaf_tab_hovered_leaf: None,
             last_toolbar_result: None,
             default_scale_mode: ScaleMode::Auto,
-            managers: mlc_core::managers::Managers::new(),
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
             sidebar_state: mlc_sidebar_content::state::SidebarState::new(),
@@ -1107,11 +1141,8 @@ impl ChartApp {
             wl_group_name_input: WatchlistGroupNameInputState::new(),
             last_wl_group_name_result: None,
             needs_initial_viewport_fit: false,
-            bridge: bridge.clone(),
-            live_update_rx,
-            mini_ticker_cache: std::collections::HashMap::new(),
+            core,
             active_exchange: digdigdig3::ExchangeId::Binance,
-            exchange_symbols: std::collections::HashMap::new(),
             window_id: format!("win_{}", std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -1145,7 +1176,6 @@ impl ChartApp {
             pending_cold_apply: None,
             pending_background_warm: std::collections::VecDeque::new(),
             background_warm_seeded: false,
-            last_backfill_time: std::time::Instant::now(),
             lag_event_count: 0,
             recalc_count: 0,
             recalc_log_timer: std::time::Instant::now(),
@@ -1153,7 +1183,6 @@ impl ChartApp {
             diagnostics_enabled: false,
             sidebar_data_dirty: true,
             last_active_leaf: None,
-            last_sidebar_data_mark: None,
             render_timing_us: (0, 0, 0, 0),
             pending_sub_pane_ratios: std::collections::HashMap::new(),
             indicator_heal_attempted: std::collections::HashSet::new(),
@@ -1190,22 +1219,22 @@ impl ChartApp {
 
             active_drag_panel: None,
             slot_tradetape_drag: None,
-            mlc_trading_manager: mlc_trading_manager::TradingManager::new(
-                bridge.clone(),
-                std::path::PathBuf::from("."),
-            ).ok(),
             active_frame_layout: None,
             frame_layouts: std::collections::HashMap::new(),
         };
 
-        if let Some(tm) = &app.mlc_trading_manager {
+        if let Some(tm) = app.core.trading_lock() {
             app.panels_store.set_trading_snapshot(tm.snapshot());
         }
 
         // Load persisted user state (templates, presets, profile) from disk.
         // Must happen before toolbar_config override so that the active_preset_id
         // from the profile is respected during the first render.
-        app.panel_app.load_user_state();
+        {
+            let (loaded_presets, loaded_tm) = app.panel_app.load_user_state();
+            *app.core.presets_mut() = loaded_presets;
+            *app.core.template_manager_mut() = loaded_tm;
+        }
 
         // Restore user profile (sidebar state) and watchlist from disk.
         app.load_user_profile();
@@ -1217,7 +1246,7 @@ impl ChartApp {
         );
 
         // Check if a saved preset exists for the active_preset_id.
-        let has_saved_preset = app.panel_app.presets.contains_key(&app.panel_app.active_preset_id);
+        let has_saved_preset = app.core.presets().contains_key(&app.panel_app.active_preset_id);
 
         if has_saved_preset {
             // ── Restore from saved preset ───────────────────────────────
@@ -1240,10 +1269,10 @@ impl ChartApp {
                 let containers = app.panel_app.panel_grid.containers();
                 containers.keys()
                     .filter_map(|cid| {
-                        let sym = app.managers.bubble.symbol_for_chart(*cid).map(String::from).unwrap_or_default();
-                        let exch = app.managers.bubble.exchange_for_chart(*cid).map(String::from).unwrap_or_default();
-                        let tf = app.managers.bubble.timeframe_for_chart(*cid).cloned().unwrap_or_else(mlc_core::state::Timeframe::h1);
-                        let at = app.managers.bubble.account_type_for_chart(*cid).map(String::from).unwrap_or_else(|| "S".to_string());
+                        let sym = app.symbol_for_chart(*cid).unwrap_or_default();
+                        let exch = app.exchange_for_chart(*cid).unwrap_or_default();
+                        let tf = app.timeframe_for_chart(*cid).unwrap_or_else(mlc_core::state::Timeframe::h1);
+                        let at = app.account_type_for_chart(*cid).unwrap_or_else(|| "S".to_string());
                         Some((sym, exch, tf, at))
                     })
                     .collect()
@@ -1253,8 +1282,8 @@ impl ChartApp {
             let provider_seeds: Vec<(mlc_core::state::ChartId, String, String)> = {
                 app.panel_app.panel_grid.containers().keys()
                     .map(|cid| {
-                        let exch = app.managers.bubble.exchange_for_chart(*cid).map(String::from).unwrap_or_default();
-                        let at = app.managers.bubble.account_type_for_chart(*cid).map(String::from).unwrap_or_else(|| "S".to_string());
+                        let exch = app.exchange_for_chart(*cid).unwrap_or_default();
+                        let at = app.account_type_for_chart(*cid).unwrap_or_else(|| "S".to_string());
                         (*cid, exch, at)
                     })
                     .collect()
@@ -1275,15 +1304,15 @@ impl ChartApp {
             // Set active_exchange from the active window's exchange.
             // S2.7.1: read exchange via branch_meta instead of struct field.
             if let Some(cid) = app.panel_app.panel_grid.active_container_id() {
-                let exch = app.managers.bubble.exchange_for_chart(cid)
-                    .unwrap_or("");
-                app.active_exchange = digdigdig3::ExchangeId::from_str(exch)
+                let exch = app.exchange_for_chart(cid)
+                    .unwrap_or_default();
+                app.active_exchange = digdigdig3::ExchangeId::from_str(&exch)
                     .unwrap_or(digdigdig3::ExchangeId::Binance);
             }
 
             // Ensure connectors are ready and request bars for each window's own exchange.
             for (sym, exch, tf, at_label) in &window_data {
-                let eid = digdigdig3::ExchangeId::from_str(exch)
+                let eid = digdigdig3::ExchangeId::from_str(&exch)
                     .unwrap_or(digdigdig3::ExchangeId::Binance);
                 if !app.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
                     continue;
@@ -1306,22 +1335,22 @@ impl ChartApp {
                 window.toolbar_config = ToolbarConfig::standalone();
             }
             if let Some(pid) = active_pid_init {
-                crate::chart_panel_bridge::drawing_manager_for_panel_mut(&mut app.panels_store, pid)
+                app.core.drawings_mut().entry_or_default(pid)
                     .set_current_symbol_key("BTCUSDT", &exchange_name, "S");
             }
             if let Some(chart_id) = active_chart_id {
                 // Create auto-bubble for the initial chart and assign instrument.
-                let auto_bid = app.managers.bubble.create_group_auto(
+                let auto_bid = app.core.bubble_mut().bubble.create_group_auto(
                     [0.0, 0.0, 0.0, 0.0],
                     "BTCUSDT".to_string(),
                     mlc_core::state::Timeframe::new("1H", 60),
                 );
-                let _ = app.managers.bubble.attach_chart_to_bubble(chart_id, auto_bid);
+                let _ = app.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, auto_bid);
                 if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
                     window.auto_bubble_id = auto_bid;
                     window.current_bubble_id = auto_bid;
                 }
-                if let Some(bubble) = app.managers.bubble.bubble_mut(auto_bid) {
+                if let Some(bubble) = app.core.bubble_mut().bubble.bubble_mut(auto_bid) {
                     bubble.symbol = "BTCUSDT".to_string();
                     bubble.timeframe = mlc_core::state::Timeframe::new("1H", 60);
                     bubble.exchange = exchange_name.clone();
@@ -1329,13 +1358,12 @@ impl ChartApp {
                 }
                 // Bind drawing manager style store to auto-bubble's shared Arc.
                 if let Some(pid) = active_pid_init {
-                    if let Some(style_arc) = app.managers.bubble
+                    if let Some(style_arc) = app.core.bubble().bubble
                         .bubble(auto_bid)
                         .map(|g| g.last_used_style.clone())
                     {
-                        if let Some(panel) = app.panels_store.chart_panel.get_mut(&pid) {
-                            panel.drawing_manager.bind_style_store(style_arc);
-                        }
+                        app.core.drawings_mut().entry_or_default(pid)
+                            .bind_style_store(style_arc);
                     }
                 }
             }
@@ -1361,16 +1389,21 @@ impl ChartApp {
 
         // Subscribe to mini ticker updates for each symbol in the active watchlist,
         // using each symbol's own exchange.
-        if let Some(wl) = app.sidebar_state.watchlist_manager.active_list() {
-            for ws in wl.all_symbols() {
-                let ws_exchange = digdigdig3::ExchangeId::from_str(&ws.exchange)
+        {
+            let wl_guard = app.core.watchlist();
+            let wl_syms: Vec<_> = wl_guard.active_list()
+                .map(|wl| wl.all_symbols().into_iter().map(|ws| (ws.exchange.clone(), ws.symbol.clone(), ws.account_type.clone())).collect())
+                .unwrap_or_default();
+            drop(wl_guard);
+            for (ws_exchange_str, ws_symbol, ws_account_type) in wl_syms {
+                let ws_exchange = digdigdig3::ExchangeId::from_str(&ws_exchange_str)
                     .unwrap_or(exchange_id);
                 if !app.sidebar_state.connector_enabled.get(ws_exchange.as_str()).copied().unwrap_or(true) {
                     continue;
                 }
-                let ws_at = account_type_from_label(&ws.account_type);
+                let ws_at = account_type_from_label(&ws_account_type);
                 bridge.ensure_connector(ws_exchange);
-                bridge.subscribe_mini_ticker(ws_exchange, &ws.symbol, ws_at);
+                bridge.subscribe_mini_ticker(ws_exchange, &ws_symbol, ws_at);
             }
         }
 
@@ -1407,7 +1440,14 @@ impl ChartApp {
     /// broadcast receiver is created via [`DataBridge::add_listener`] so that
     /// this window gets its own queue of live updates.
     pub fn new_empty(bridge: std::sync::Arc<DataBridge>) -> Self {
-        let live_update_rx = bridge.add_listener();
+        let exchange_symbols_seed = bridge.symbols_snapshot();
+        let core = mlc_backend_core::BackendCore::new(bridge.clone(), None);
+        // Seed exchange_symbols cache from the bridge's session-long catalogue
+        // so windows created after the connect wave start populated.
+        {
+            let mut es = core.exchange_symbols_mut();
+            *es = exchange_symbols_seed;
+        }
 
         let mut app = Self {
             panel_app: ChartPanelApp::new(""),
@@ -1424,7 +1464,6 @@ impl ChartApp {
             last_mouse_pos: (0.0, 0.0),
             content_rect: LayoutRect::new(0.0, 0.0, 1280.0, 800.0),
             last_inline_bar_rect: None,
-            indicator_manager: IndicatorManager::new(),
             modal_state: ModalState::new(),
             pending_screenshot: false,
             pending_reset_cache: false,
@@ -1440,7 +1479,6 @@ impl ChartApp {
             leaf_tab_hovered_leaf: None,
             last_toolbar_result: None,
             default_scale_mode: ScaleMode::Auto,
-            managers: mlc_core::managers::Managers::new(),
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
             sidebar_state: mlc_sidebar_content::state::SidebarState::new(),
@@ -1454,15 +1492,8 @@ impl ChartApp {
             wl_group_name_input: WatchlistGroupNameInputState::new(),
             last_wl_group_name_result: None,
             needs_initial_viewport_fit: false,
-            bridge: bridge.clone(),
-            live_update_rx,
-            mini_ticker_cache: std::collections::HashMap::new(),
+            core,
             active_exchange: digdigdig3::ExchangeId::Binance,
-            // Seed from the bridge's session-long symbol cache so that windows
-            // created after the connect wave (notably the live window after
-            // skeleton→live promote) start with every venue already loaded
-            // instead of waiting for re-broadcast that never comes.
-            exchange_symbols: bridge.symbols_snapshot(),
             window_id: format!(
                 "win_{}",
                 std::time::SystemTime::now()
@@ -1499,7 +1530,6 @@ impl ChartApp {
             pending_cold_apply: None,
             pending_background_warm: std::collections::VecDeque::new(),
             background_warm_seeded: false,
-            last_backfill_time: std::time::Instant::now(),
             lag_event_count: 0,
             recalc_count: 0,
             recalc_log_timer: std::time::Instant::now(),
@@ -1507,7 +1537,6 @@ impl ChartApp {
             diagnostics_enabled: false,
             sidebar_data_dirty: true,
             last_active_leaf: None,
-            last_sidebar_data_mark: None,
             render_timing_us: (0, 0, 0, 0),
             pending_sub_pane_ratios: std::collections::HashMap::new(),
             indicator_heal_attempted: std::collections::HashSet::new(),
@@ -1544,12 +1573,11 @@ impl ChartApp {
 
             active_drag_panel: None,
             slot_tradetape_drag: None,
-            mlc_trading_manager: None,
             active_frame_layout: None,
             frame_layouts: std::collections::HashMap::new(),
         };
 
-        app.sidebar_state.watchlist_manager = mlc_sidebar_content::watchlist::WatchlistManager::new(
+        *app.core.watchlist_mut() = mlc_sidebar_content::watchlist::WatchlistManager::new(
             vec![
                 mlc_sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "binance".to_string()),
                 mlc_sidebar_content::watchlist::WatchlistSymbol::new("ETHUSDT".to_string(), "binance".to_string()),
@@ -1575,35 +1603,34 @@ impl ChartApp {
             window.toolbar_config = ToolbarConfig::standalone();
         }
         if let Some(pid) = active_pid_init2 {
-            crate::chart_panel_bridge::drawing_manager_for_panel_mut(&mut app.panels_store, pid)
+            app.core.drawings_mut().entry_or_default(pid)
                 .set_current_symbol_key("BTCUSDT", &exchange_name, "S");
         }
         // Create auto-bubble for the initial chart and assign instrument.
         if let Some(chart_id) = active_chart_id {
-            let auto_bid = app.managers.bubble.create_group_auto(
+            let auto_bid = app.core.bubble_mut().bubble.create_group_auto(
                 [0.0, 0.0, 0.0, 0.0],
                 "BTCUSDT".to_string(),
                 mlc_core::state::Timeframe::new("1H", 60),
             );
-            let _ = app.managers.bubble.attach_chart_to_bubble(chart_id, auto_bid);
+            let _ = app.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, auto_bid);
             if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
                 window.auto_bubble_id = auto_bid;
                 window.current_bubble_id = auto_bid;
             }
-            if let Some(bubble) = app.managers.bubble.bubble_mut(auto_bid) {
+            if let Some(bubble) = app.core.bubble_mut().bubble.bubble_mut(auto_bid) {
                 bubble.symbol = "BTCUSDT".to_string();
                 bubble.timeframe = mlc_core::state::Timeframe::new("1H", 60);
                 bubble.exchange = exchange_name.clone();
                 bubble.account_type = "S".to_string();
             }
             if let Some(pid) = active_pid_init2 {
-                if let Some(style_arc) = app.managers.bubble
+                if let Some(style_arc) = app.core.bubble().bubble
                     .bubble(auto_bid)
                     .map(|g| g.last_used_style.clone())
                 {
-                    if let Some(panel) = app.panels_store.chart_panel.get_mut(&pid) {
-                        panel.drawing_manager.bind_style_store(style_arc);
-                    }
+                    app.core.drawings_mut().entry_or_default(pid)
+                        .bind_style_store(style_arc);
                 }
             }
         }
@@ -1612,7 +1639,7 @@ impl ChartApp {
         // Create a single "Untitled" preset tab.
         let untitled_preset = mlc_core::preset::preset::ChartPreset::new("Untitled".to_string());
         let untitled_id = untitled_preset.id.clone();
-        app.panel_app.presets.insert(untitled_id.clone(), untitled_preset);
+        app.core.presets_mut().insert(untitled_id.clone(), untitled_preset);
         app.panel_app.open_tabs = vec![untitled_id.clone()];
         app.panel_app.active_preset_id = untitled_id;
 
@@ -1663,13 +1690,18 @@ impl ChartApp {
     /// for each window.
     pub fn new_window(
         bridge: std::sync::Arc<DataBridge>,
-        live_update_rx: tokio::sync::broadcast::Receiver<LiveUpdate>,
         window_id: String,
         restore: Option<&mlc_core::WindowState>,
         profile: &mlc_core::UserProfile,
         user_manager: &mlc_core::ProfileManager,
         skeleton: bool,
     ) -> Self {
+        let exchange_symbols_seed = bridge.symbols_snapshot();
+        let core = mlc_backend_core::BackendCore::new(bridge.clone(), None);
+        {
+            let mut es = core.exchange_symbols_mut();
+            *es = exchange_symbols_seed;
+        }
         let mut app = Self {
             panel_app: ChartPanelApp::new(""),
             input_coordinator: RefCell::new(InputCoordinator::new()),
@@ -1685,7 +1717,6 @@ impl ChartApp {
             last_mouse_pos: (0.0, 0.0),
             content_rect: LayoutRect::new(0.0, 0.0, 1280.0, 800.0),
             last_inline_bar_rect: None,
-            indicator_manager: IndicatorManager::new(),
             modal_state: ModalState::new(),
             pending_screenshot: false,
             pending_reset_cache: false,
@@ -1701,7 +1732,6 @@ impl ChartApp {
             leaf_tab_hovered_leaf: None,
             last_toolbar_result: None,
             default_scale_mode: ScaleMode::Auto,
-            managers: mlc_core::managers::Managers::new(),
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
             sidebar_state: mlc_sidebar_content::state::SidebarState::new(),
@@ -1715,12 +1745,8 @@ impl ChartApp {
             wl_group_name_input: WatchlistGroupNameInputState::new(),
             last_wl_group_name_result: None,
             needs_initial_viewport_fit: false,
-            bridge: bridge.clone(),
-            live_update_rx,
-            mini_ticker_cache: std::collections::HashMap::new(),
+            core,
             active_exchange: digdigdig3::ExchangeId::Binance,
-            // Seed from the bridge's session-long symbol cache (see new_empty).
-            exchange_symbols: bridge.symbols_snapshot(),
             window_id,
             window_x: None,
             window_y: None,
@@ -1751,7 +1777,6 @@ impl ChartApp {
             pending_cold_apply: None,
             pending_background_warm: std::collections::VecDeque::new(),
             background_warm_seeded: false,
-            last_backfill_time: std::time::Instant::now(),
             lag_event_count: 0,
             recalc_count: 0,
             recalc_log_timer: std::time::Instant::now(),
@@ -1759,7 +1784,6 @@ impl ChartApp {
             diagnostics_enabled: false,
             sidebar_data_dirty: true,
             last_active_leaf: None,
-            last_sidebar_data_mark: None,
             render_timing_us: (0, 0, 0, 0),
             pending_sub_pane_ratios: std::collections::HashMap::new(),
             indicator_heal_attempted: std::collections::HashSet::new(),
@@ -1796,13 +1820,12 @@ impl ChartApp {
 
             active_drag_panel: None,
             slot_tradetape_drag: None,
-            mlc_trading_manager: None,
             active_frame_layout: None,
             frame_layouts: std::collections::HashMap::new(),
         };
 
-        // Initialize watchlist with a minimal default — overwritten by load_user_state below.
-        app.sidebar_state.watchlist_manager = mlc_sidebar_content::watchlist::WatchlistManager::new(
+        // Initialize watchlist with a minimal default — overwritten by load_watchlists below.
+        *app.core.watchlist_mut() = mlc_sidebar_content::watchlist::WatchlistManager::new(
             vec![
                 mlc_sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "binance".to_string()),
                 mlc_sidebar_content::watchlist::WatchlistSymbol::new("ETHUSDT".to_string(), "binance".to_string()),
@@ -1816,13 +1839,13 @@ impl ChartApp {
         // Phase 4: use app-level UserManager (loaded once in main.rs) instead of
         // calling load_user_state() per-window.  Eliminates redundant disk reads
         // when multiple windows are opened.
-        app.panel_app.template_manager = user_manager.template_manager.clone();
-        app.panel_app.presets = user_manager.presets.clone();
+        *app.core.template_manager_mut() = user_manager.template_manager.clone();
+        *app.core.presets_mut() = user_manager.presets.clone();
 
         // Always restore active_preset_id from profile (not just on restore).
         // This prevents skeleton launches from creating spurious new Untitled presets.
         if !user_manager.profile.active_preset_id.is_empty()
-            && app.panel_app.presets.contains_key(&user_manager.profile.active_preset_id)
+            && app.core.presets().contains_key(&user_manager.profile.active_preset_id)
         {
             app.panel_app.active_preset_id = user_manager.profile.active_preset_id.clone();
         }
@@ -1832,20 +1855,23 @@ impl ChartApp {
         // causing the phantom "__default__" Chart tab to appear.
         {
             app.panel_app.open_tabs = user_manager.profile.open_tabs.clone();
-            app.panel_app.open_tabs.retain(|id| app.panel_app.presets.contains_key(id));
+            {
+                let presets_guard = app.core.presets();
+                app.panel_app.open_tabs.retain(|id| presets_guard.contains_key(id));
 
-            // Migration: old data has no open_tabs — open only the active preset.
-            if app.panel_app.open_tabs.is_empty() && !app.panel_app.presets.is_empty() {
-                if !app.panel_app.active_preset_id.is_empty()
-                    && app.panel_app.presets.contains_key(&app.panel_app.active_preset_id)
-                {
-                    app.panel_app.open_tabs = vec![app.panel_app.active_preset_id.clone()];
-                } else {
-                    // No active preset known — open the newest one.
-                    let mut all: Vec<_> = app.panel_app.presets.values().collect();
-                    all.sort_by_key(|p| std::cmp::Reverse(p.created_at));
-                    if let Some(newest) = all.first() {
-                        app.panel_app.open_tabs = vec![newest.id.clone()];
+                // Migration: old data has no open_tabs — open only the active preset.
+                if app.panel_app.open_tabs.is_empty() && !presets_guard.is_empty() {
+                    if !app.panel_app.active_preset_id.is_empty()
+                        && presets_guard.contains_key(&app.panel_app.active_preset_id)
+                    {
+                        app.panel_app.open_tabs = vec![app.panel_app.active_preset_id.clone()];
+                    } else {
+                        // No active preset known — open the newest one.
+                        let mut all: Vec<_> = presets_guard.values().collect();
+                        all.sort_by_key(|p| std::cmp::Reverse(p.created_at));
+                        if let Some(newest) = all.first() {
+                            app.panel_app.open_tabs = vec![newest.id.clone()];
+                        }
                     }
                 }
             }
@@ -1855,12 +1881,16 @@ impl ChartApp {
         app.panel_app.user_manager.profile = user_manager.profile.clone();
         app.panel_app.user_manager.snapshots = user_manager.snapshots.clone();
 
-        dlog!(
-            "[ChartApp] new_window: using {} presets, {} prim-templates, {} ind-templates",
-            app.panel_app.presets.len(),
-            app.panel_app.template_manager.primitive_templates.len(),
-            app.panel_app.template_manager.indicator_templates.len(),
-        );
+        {
+            let presets_guard = app.core.presets();
+            let tm_guard = app.core.template_manager();
+            dlog!(
+                "[ChartApp] new_window: using {} presets, {} prim-templates, {} ind-templates",
+                presets_guard.len(),
+                tm_guard.primitive_templates.len(),
+                tm_guard.indicator_templates.len(),
+            );
+        }
 
         // Load watchlists from disk (profile.json is NOT re-read here — it was already
         // loaded once at startup and is passed in via `profile`).
@@ -1873,15 +1903,18 @@ impl ChartApp {
 
         // If restoring a saved window, apply its tab/preset state.
         if let Some(ws) = restore {
-            let valid_tabs: Vec<String> = ws.open_tabs.iter()
-                .filter(|id| app.panel_app.presets.contains_key(*id))
-                .cloned()
-                .collect();
+            let valid_tabs: Vec<String> = {
+                let presets_guard = app.core.presets();
+                ws.open_tabs.iter()
+                    .filter(|id| presets_guard.contains_key(*id))
+                    .cloned()
+                    .collect()
+            };
             if !valid_tabs.is_empty() {
                 app.panel_app.open_tabs = valid_tabs;
             }
             if !ws.active_preset_id.is_empty()
-                && app.panel_app.presets.contains_key(&ws.active_preset_id)
+                && app.core.presets().contains_key(&ws.active_preset_id)
             {
                 app.panel_app.active_preset_id = ws.active_preset_id.clone();
             }
@@ -1903,7 +1936,7 @@ impl ChartApp {
             }
             app.panel_app.toolbar_config = ToolbarConfig::standalone();
         } else {
-            let has_saved_preset = app.panel_app.presets.contains_key(&app.panel_app.active_preset_id);
+            let has_saved_preset = app.core.presets().contains_key(&app.panel_app.active_preset_id);
 
             if has_saved_preset {
                 // ── new_window COLD PATH timer anchor ─────────────────────
@@ -1939,10 +1972,10 @@ impl ChartApp {
                     let containers = app.panel_app.panel_grid.containers();
                     containers.keys()
                         .filter_map(|cid| {
-                            let sym = app.managers.bubble.symbol_for_chart(*cid).map(String::from).unwrap_or_default();
-                            let exch = app.managers.bubble.exchange_for_chart(*cid).map(String::from).unwrap_or_default();
-                            let tf = app.managers.bubble.timeframe_for_chart(*cid).cloned().unwrap_or_else(mlc_core::state::Timeframe::h1);
-                            let at = app.managers.bubble.account_type_for_chart(*cid).map(String::from).unwrap_or_else(|| "S".to_string());
+                            let sym = app.symbol_for_chart(*cid).unwrap_or_default();
+                            let exch = app.exchange_for_chart(*cid).unwrap_or_default();
+                            let tf = app.timeframe_for_chart(*cid).unwrap_or_else(mlc_core::state::Timeframe::h1);
+                            let at = app.account_type_for_chart(*cid).unwrap_or_else(|| "S".to_string());
                             Some((sym, exch, tf, at))
                         })
                         .collect()
@@ -1951,8 +1984,8 @@ impl ChartApp {
                 let provider_seeds_win: Vec<(mlc_core::state::ChartId, String, String)> = {
                     app.panel_app.panel_grid.containers().keys()
                         .map(|cid| {
-                            let exch = app.managers.bubble.exchange_for_chart(*cid).map(String::from).unwrap_or_default();
-                            let at = app.managers.bubble.account_type_for_chart(*cid).map(String::from).unwrap_or_else(|| "S".to_string());
+                            let exch = app.exchange_for_chart(*cid).unwrap_or_default();
+                            let at = app.account_type_for_chart(*cid).unwrap_or_else(|| "S".to_string());
                             (*cid, exch, at)
                         })
                         .collect()
@@ -1972,16 +2005,16 @@ impl ChartApp {
 
                 // S2.7.1: read exchange via branch_meta instead of struct field.
                 if let Some(cid) = app.panel_app.panel_grid.active_container_id() {
-                    let exch = app.managers.bubble.exchange_for_chart(cid)
-                        .unwrap_or("");
-                    app.active_exchange = digdigdig3::ExchangeId::from_str(exch)
+                    let exch = app.exchange_for_chart(cid)
+                        .unwrap_or_default();
+                    app.active_exchange = digdigdig3::ExchangeId::from_str(&exch)
                         .unwrap_or(digdigdig3::ExchangeId::Binance);
                 }
 
                 let _t_nw_reqbars = std::time::Instant::now();
                 let mut nw_reqbars_n: usize = 0;
                 for (sym, exch, tf, at_label) in &window_data {
-                    let eid = digdigdig3::ExchangeId::from_str(exch)
+                    let eid = digdigdig3::ExchangeId::from_str(&exch)
                         .unwrap_or(digdigdig3::ExchangeId::Binance);
                     if !app.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
                         continue;
@@ -2021,35 +2054,34 @@ impl ChartApp {
                     window.toolbar_config = ToolbarConfig::standalone();
                 }
                 if let Some(pid) = active_pid_init3 {
-                    crate::chart_panel_bridge::drawing_manager_for_panel_mut(&mut app.panels_store, pid)
+                    app.core.drawings_mut().entry_or_default(pid)
                         .set_current_symbol_key("BTCUSDT", &exchange_name, "S");
                 }
                 // Create auto-bubble for the initial chart and assign instrument.
                 if let Some(chart_id) = active_chart_id {
-                    let auto_bid = app.managers.bubble.create_group_auto(
+                    let auto_bid = app.core.bubble_mut().bubble.create_group_auto(
                         [0.0, 0.0, 0.0, 0.0],
                         "BTCUSDT".to_string(),
                         mlc_core::state::Timeframe::new("1H", 60),
                     );
-                    let _ = app.managers.bubble.attach_chart_to_bubble(chart_id, auto_bid);
+                    let _ = app.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, auto_bid);
                     if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
                         window.auto_bubble_id = auto_bid;
                         window.current_bubble_id = auto_bid;
                     }
-                    if let Some(bubble) = app.managers.bubble.bubble_mut(auto_bid) {
+                    if let Some(bubble) = app.core.bubble_mut().bubble.bubble_mut(auto_bid) {
                         bubble.symbol = "BTCUSDT".to_string();
                         bubble.timeframe = mlc_core::state::Timeframe::new("1H", 60);
                         bubble.exchange = exchange_name.clone();
                         bubble.account_type = "S".to_string();
                     }
                     if let Some(pid) = active_pid_init3 {
-                        if let Some(style_arc) = app.managers.bubble
+                        if let Some(style_arc) = app.core.bubble().bubble
                             .bubble(auto_bid)
                             .map(|g| g.last_used_style.clone())
                         {
-                            if let Some(panel) = app.panels_store.chart_panel.get_mut(&pid) {
-                                panel.drawing_manager.bind_style_store(style_arc);
-                            }
+                            app.core.drawings_mut().entry_or_default(pid)
+                                .bind_style_store(style_arc);
                         }
                     }
                 }
@@ -2058,24 +2090,33 @@ impl ChartApp {
                 // Create "Untitled 1" preset for genuinely fresh windows
                 // (no presets at all — brand new profile).  Uses same numbering
                 // logic as OpenPresetNewChart (input.rs) for consistency.
-                if app.panel_app.presets.is_empty() {
-                    let max_n = app.panel_app.presets.values()
-                        .filter_map(|p| p.name.strip_prefix("Untitled "))
-                        .filter_map(|s| s.parse::<u32>().ok())
-                        .max()
-                        .unwrap_or(0);
-                    let untitled_preset = mlc_core::preset::preset::ChartPreset::new(format!("Untitled {}", max_n + 1));
-                    let untitled_id = untitled_preset.id.clone();
-                    app.panel_app.presets.insert(untitled_id.clone(), untitled_preset);
-                    app.panel_app.open_tabs = vec![untitled_id.clone()];
-                    app.panel_app.active_preset_id = untitled_id;
+                {
+                    let max_n_opt: Option<u32> = {
+                        let pg = app.core.presets();
+                        if pg.is_empty() {
+                            Some(pg.values()
+                                .filter_map(|p| p.name.strip_prefix("Untitled "))
+                                .filter_map(|s| s.parse::<u32>().ok())
+                                .max()
+                                .unwrap_or(0))
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(max_n) = max_n_opt {
+                        let untitled_preset = mlc_core::preset::preset::ChartPreset::new(format!("Untitled {}", max_n + 1));
+                        let untitled_id = untitled_preset.id.clone();
+                        app.core.presets_mut().insert(untitled_id.clone(), untitled_preset);
+                        app.panel_app.open_tabs = vec![untitled_id.clone()];
+                        app.panel_app.active_preset_id = untitled_id;
+                    }
                 }
 
                 // Add the builtin volume histogram overlay to the fresh window.
                 // This is the default-on state for brand-new charts that have no saved preset.
                 if let Some(chart_id) = active_chart_id {
-                    if let Some(new_vol_id) = app.indicator_manager.create_instance("builtin_volume") {
-                        app.indicator_manager.assign_window(new_vol_id, Some(chart_id.0));
+                    if let Some(new_vol_id) = app.core.indicators_mut().create_instance("builtin_volume") {
+                        app.core.indicators_mut().assign_window(new_vol_id, Some(chart_id.0));
                     }
                 }
 
@@ -2106,17 +2147,18 @@ impl ChartApp {
 
         // Subscribe mini tickers for active watchlist.
         if !skeleton {
-            if let Some(wl) = app.sidebar_state.watchlist_manager.active_list() {
-                for ws in wl.all_symbols() {
-                    let ws_exchange = digdigdig3::ExchangeId::from_str(&ws.exchange)
-                        .unwrap_or(exchange_id);
-                    if !app.sidebar_state.connector_enabled.get(ws_exchange.as_str()).copied().unwrap_or(true) {
-                        continue;
-                    }
-                    let ws_at = account_type_from_label(&ws.account_type);
-                    bridge.ensure_connector(ws_exchange);
-                    bridge.subscribe_mini_ticker(ws_exchange, &ws.symbol, ws_at);
+            let wl_syms: Vec<_> = app.core.watchlist().active_list()
+                .map(|wl| wl.all_symbols().into_iter().map(|ws| (ws.exchange.clone(), ws.symbol.clone(), ws.account_type.clone())).collect())
+                .unwrap_or_default();
+            for (ws_exchange_str, ws_symbol, ws_account_type) in wl_syms {
+                let ws_exchange = digdigdig3::ExchangeId::from_str(&ws_exchange_str)
+                    .unwrap_or(exchange_id);
+                if !app.sidebar_state.connector_enabled.get(ws_exchange.as_str()).copied().unwrap_or(true) {
+                    continue;
                 }
+                let ws_at = account_type_from_label(&ws_account_type);
+                bridge.ensure_connector(ws_exchange);
+                bridge.subscribe_mini_ticker(ws_exchange, &ws_symbol, ws_at);
             }
         }
 
@@ -2333,7 +2375,7 @@ impl ChartApp {
     /// Return a clone of the `Arc<DataBridge>` so it can be shared with other
     /// windows created via [`new_empty`].
     pub fn bridge(&self) -> std::sync::Arc<DataBridge> {
-        self.bridge.clone()
+        self.core.bridge.clone()
     }
 
     // -------------------------------------------------------------------------
@@ -2368,15 +2410,15 @@ impl ChartApp {
         // S2.7.1: read symbol/account_type via branch_meta instead of struct field.
         let old_chart_id = self.panel_app.panel_grid.active_container_id();
         let old_trade_symbol = old_chart_id
-            .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+            .and_then(|cid| self.symbol_for_chart(cid))
             .map(String::from)
             .unwrap_or_default();
         let old_trade_at = old_chart_id
-            .and_then(|cid| self.managers.bubble.account_type_for_chart(cid))
-            .map(|at_str| account_type_from_label(at_str))
+            .and_then(|cid| self.account_type_for_chart(cid))
+            .map(|at_str| account_type_from_label(&at_str))
             .unwrap_or(digdigdig3::AccountType::Spot);
 
-        let bridge = self.bridge.clone();
+        let bridge = self.core.bridge.clone();
         self.active_exchange = exchange_id;
 
         // Start the connector (no-op if already running).
@@ -2388,8 +2430,8 @@ impl ChartApp {
         // Use the active window's account_type for the new provider.
         // S2.7.1: read account_type via branch_meta.
         let switch_at = self.panel_app.panel_grid.active_container_id()
-            .and_then(|cid| self.managers.bubble.account_type_for_chart(cid))
-            .map(account_type_from_label)
+            .and_then(|cid| self.account_type_for_chart(cid))
+            .map(|at| account_type_from_label(&at))
             .unwrap_or(digdigdig3::AccountType::Spot);
 
         // Build a LiveDataProvider backed by this bridge.
@@ -2413,15 +2455,14 @@ impl ChartApp {
         // Phase 4 B: read symbol/timeframe/account_type from branch_meta.
         let active_cid_exc = self.panel_app.panel_grid.active_container_id();
         let cur_sym_exc = active_cid_exc
-            .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+            .and_then(|cid| self.symbol_for_chart(cid))
             .map(String::from)
             .unwrap_or_default();
         let cur_tf_exc = active_cid_exc
-            .and_then(|cid| self.managers.bubble.timeframe_for_chart(cid))
-            .cloned()
+            .and_then(|cid| self.timeframe_for_chart(cid))
             .unwrap_or_else(mlc_core::state::Timeframe::h1);
         let cur_at_label_exc = active_cid_exc
-            .and_then(|cid| self.managers.bubble.account_type_for_chart(cid))
+            .and_then(|cid| self.account_type_for_chart(cid))
             .map(String::from)
             .unwrap_or_else(|| "S".to_string());
         let mut mirror_args: Option<(String, mlc_core::state::Timeframe, String, String)> = None;
@@ -2432,8 +2473,8 @@ impl ChartApp {
             bridge.request_bars(exchange_id, &cur_sym_exc, &cur_tf_exc, at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), false);
         }
         if let (Some(chart_id), Some((_, _, exch, _))) = (active_chart_id, mirror_args) {
-            if let Some(bid) = self.managers.bubble.bubble_for_chart(chart_id) {
-                if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+            if let Some(bid) = self.bubble_for_chart(chart_id) {
+                if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(bid) {
                     bubble.exchange = exch;
                 }
             }
@@ -2593,7 +2634,7 @@ impl ChartApp {
             let bars_by_chart: std::collections::HashMap<mlc_core::state::ChartId, Vec<mlc_core::Bar>> =
                 self.panel_app.panel_grid.containers().iter()
                     .map(|(cid, w)| {
-                        let bars = self.managers.bubble.bubble(w.current_bubble_id)
+                        let bars = self.core.bubble().bubble.bubble(w.current_bubble_id)
                             .map(|b| b.bars.clone())
                             .unwrap_or_default();
                         (*cid, bars)
@@ -2676,32 +2717,6 @@ impl ChartApp {
     /// `last_cached_ts`), this call is cheap — it downloads the gap, not the
     /// full history.
     ///
-    /// Call sites must check the debounce guard (`last_backfill_time`) before
-    /// invoking this method.
-    fn trigger_backfill_after_lag(&self) {
-        // S2.7.1: iterate .iter() to get chart_id, then read via branch_meta.
-        for (chart_id, _window) in self.panel_app.panel_grid.containers().iter() {
-            let sym = match self.managers.bubble.symbol_for_chart(*chart_id) {
-                Some(s) if !s.is_empty() => s,
-                _ => continue,
-            };
-            let exch = self.managers.bubble.exchange_for_chart(*chart_id)
-                .unwrap_or("");
-            let eid = digdigdig3::ExchangeId::from_str(exch)
-                .unwrap_or(digdigdig3::ExchangeId::Binance);
-            let at_str = self.managers.bubble.account_type_for_chart(*chart_id)
-                .unwrap_or("");
-            let at = account_type_from_label(at_str);
-            let tf = match self.managers.bubble.timeframe_for_chart(*chart_id) {
-                Some(t) => t.clone(),
-                None => continue,
-            };
-            // Passing `None` for both limit and total_bars lets the bridge
-            // pick up incremental mode from its bar cache.
-            self.bridge.request_bars(eid, sym, &tf, at, None, None, false);
-        }
-    }
-
     // -------------------------------------------------------------------------
     // Indicator recalculation helpers
     // -------------------------------------------------------------------------
@@ -2723,7 +2738,7 @@ impl ChartApp {
             .containers()
             .iter()
             .filter(|(id, _w)| {
-                self.managers.bubble.symbol_for_chart(**id)
+                self.symbol_for_chart(**id)
                     .map_or(false, |s| s == symbol)
             })
             .map(|(id, _w)| id.0)
@@ -2735,7 +2750,7 @@ impl ChartApp {
             let chart_id = ChartId(window_id);
             let bars = self.bars_for_chart(chart_id);
             if self.panel_app.panel_grid.containers().get(&chart_id).is_some() {
-                self.indicator_manager.calculate_for_window(window_id, &bars[..]);
+                self.core.indicators_mut().calculate_for_window(window_id, &bars[..]);
             }
         }
         let _ = symbol; // legacy — recalc filters by window_id, not symbol
@@ -2791,12 +2806,11 @@ impl ChartApp {
                 // S2.7.1: read instrument fields via branch_meta.
                 let chart_id = self.panel_app.panel_grid.container_id_for_leaf(leaf_id);
                 let overlay_tf = chart_id
-                    .and_then(|cid| self.managers.bubble.timeframe_for_chart(cid))
-                    .cloned();
+                    .and_then(|cid| self.timeframe_for_chart(cid));
                 let overlay_tf_name: String = overlay_tf.as_ref().map(|tf| tf.name.clone()).unwrap_or_default();
                 let overlay_tf_interval_ms: Option<i64> = overlay_tf.map(|tf| tf.interval_ms);
                 let overlay_symbol: String = chart_id
-                    .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                    .and_then(|cid| self.symbol_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_default();
 
@@ -2813,7 +2827,7 @@ impl ChartApp {
                 let overlay_panel = self.panels_store.chart_panel
                     .get(&overlay_panel_id)
                     .unwrap_or(&overlay_default_panel);
-                if let Some(overlay_bubble) = self.managers.bubble.bubble(window.current_bubble_id) {
+                if let Some(overlay_bubble) = self.core.bubble().bubble.bubble(window.current_bubble_id) {
                     let render_state = window.to_render_state(
                         overlay_bubble,
                         chart_rect,
@@ -2832,13 +2846,15 @@ impl ChartApp {
                         ..ChartRenderConfig::default()
                     };
 
+                    let overlay_drawings_guard = self.core.drawings();
+                    let overlay_dm = overlay_drawings_guard.get(overlay_panel_id);
                     render_chart_overlay(
                         ctx,
                         &render_state,
                         layout,
                         &render_config,
                         None, // sub_pane_ranges not cached here; callers needing accurate labels cache from RenderOutput
-                        Some(&overlay_panel.drawing_manager),
+                        overlay_dm,
                         Some(&overlay_panel.tooltip),
                         Some(overlay_symbol.as_str()),
                         &overlay_tf_name,
@@ -2866,12 +2882,11 @@ impl ChartApp {
             // S2.7.1: read instrument fields via branch_meta for overlay.
             let single_overlay_cid = self.panel_app.panel_grid.active_container_id();
             let single_overlay_tf = single_overlay_cid
-                .and_then(|cid| self.managers.bubble.timeframe_for_chart(cid))
-                .cloned();
+                .and_then(|cid| self.timeframe_for_chart(cid));
             let single_overlay_tf_name: String = single_overlay_tf.as_ref().map(|tf| tf.name.clone()).unwrap_or_default();
             let single_overlay_tf_interval_ms: Option<i64> = single_overlay_tf.map(|tf| tf.interval_ms);
             let single_overlay_symbol: String = single_overlay_cid
-                .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                .and_then(|cid| self.symbol_for_chart(cid))
                 .map(String::from)
                 .unwrap_or_default();
 
@@ -2887,7 +2902,7 @@ impl ChartApp {
             let single_panel = self.panels_store.chart_panel
                 .get(&single_pid)
                 .unwrap_or(&single_default_panel);
-            if let Some(single_overlay_bubble) = self.managers.bubble.bubble(window.current_bubble_id) {
+            if let Some(single_overlay_bubble) = self.core.bubble().bubble.bubble(window.current_bubble_id) {
                 let render_state = window.to_render_state(
                     single_overlay_bubble,
                     chart_rect,
@@ -2906,13 +2921,15 @@ impl ChartApp {
                     ..ChartRenderConfig::default()
                 };
 
+                let single_drawings_guard = self.core.drawings();
+                let single_dm = single_drawings_guard.get(single_pid);
                 render_chart_overlay(
                     ctx,
                     &render_state,
                     layout,
                     &render_config,
                     None,
-                    Some(&single_panel.drawing_manager),
+                    single_dm,
                     Some(&single_panel.tooltip),
                     Some(single_overlay_symbol.as_str()),
                     &single_overlay_tf_name,
@@ -3052,8 +3069,8 @@ impl ChartApp {
             // window-independent (only depend on alert_manager + indicator_manager)
             // and can be reused across all split-pane leaves.
             let alert_indicator_values_cache = Self::build_indicator_values_for_alerts(
-                &self.managers.alert,
-                &self.indicator_manager,
+                &self.core.bubble().alert,
+                &self.core.indicators(),
             );
 
             // Pre-build drawing points per chart window. In split-pane mode the
@@ -3062,36 +3079,43 @@ impl ChartApp {
             let drawing_points_cache: std::collections::HashMap<
                 mlc_core::ChartId,
                 Vec<(u64, Vec<(f64, f64)>, mlc_alerts::DrawingExtendMode)>,
-            > = self.panel_app.panel_grid.containers()
-                .iter()
-                .map(|(&chart_id, w)| {
-                    let bars_vec: Vec<mlc_core::Bar> = self.managers.bubble.bubble(w.current_bubble_id)
-                        .map(|b| b.bars.clone())
-                        .unwrap_or_default();
-                    let bars = &bars_vec[..];
-                    let empty_prims: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> = Vec::new();
-                    let prims_iter = self.panels_store.chart_panel.get(&w.chart_panel_id)
-                        .map(|panel| panel.drawing_manager.primitives())
-                        .unwrap_or(&empty_prims);
-                    let pts: Vec<(u64, Vec<(f64, f64)>, mlc_alerts::DrawingExtendMode)> = prims_iter
-                        .iter()
-                        .map(|p| {
-                            let pts_bar: Vec<(f64, f64)> = p.points()
-                                .into_iter()
-                                .map(|(ts_ms, price)| (mlc_core::timestamp_ms_to_bar_f64(bars, ts_ms), price))
-                                .collect();
-                            (p.data().id, pts_bar, mlc_alerts::DrawingExtendMode::from_u8(p.extend_mode_raw()))
-                        })
-                        .collect();
-                    (chart_id, pts)
-                })
-                .collect();
+            > = {
+                let drawings_guard = self.core.drawings();
+                self.panel_app.panel_grid.containers()
+                    .iter()
+                    .map(|(&chart_id, w)| {
+                        let bars_vec: Vec<mlc_core::Bar> = self.core.bubble().bubble.bubble(w.current_bubble_id)
+                            .map(|b| b.bars.clone())
+                            .unwrap_or_default();
+                        let bars = &bars_vec[..];
+                        let empty_prims: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> = Vec::new();
+                        let prims_iter = drawings_guard.get(w.chart_panel_id)
+                            .map(|dm| dm.primitives())
+                            .unwrap_or(&empty_prims);
+                        let pts: Vec<(u64, Vec<(f64, f64)>, mlc_alerts::DrawingExtendMode)> = prims_iter
+                            .iter()
+                            .map(|p| {
+                                let pts_bar: Vec<(f64, f64)> = p.points()
+                                    .into_iter()
+                                    .map(|(ts_ms, price)| (mlc_core::timestamp_ms_to_bar_f64(bars, ts_ms), price))
+                                    .collect();
+                                (p.data().id, pts_bar, mlc_alerts::DrawingExtendMode::from_u8(p.extend_mode_raw()))
+                            })
+                            .collect();
+                        (chart_id, pts)
+                    })
+                    .collect()
+            };
 
             let mut sub_pane_writebacks: Vec<(mlc_core::LeafId, Vec<(usize, f64, f64)>)> = Vec::new();
             let mut overlay_writebacks: Vec<(mlc_core::LeafId, Vec<mlc_core::SubPaneOverlayResult>)> = Vec::new();
             // Collect rendered scale-corner zones per leaf so handle_canvas_click
             // can hit-test them in split mode (avoids the empty-default bug).
             let mut split_corner_zones: Vec<(mlc_core::LeafId, ScaleCornerHitZones)> = Vec::new();
+
+            // Hold the indicator manager read guard for the duration of the
+            // split-render loop so `&self.indicator_manager` borrows stay alive.
+            let indicator_guard_split = self.core.indicators();
 
             for (leaf_id, sub_rect) in leaf_rects {
                 let window = match self.panel_app.panel_grid.container_for_leaf(leaf_id) {
@@ -3102,20 +3126,19 @@ impl ChartApp {
                 // branch_meta and panel_app.panel_grid are disjoint fields — split borrow OK.
                 let leaf_chart_id = self.panel_app.panel_grid.container_id_for_leaf(leaf_id);
                 let split_symbol: String = leaf_chart_id
-                    .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                    .and_then(|cid| self.symbol_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_default();
                 let split_exchange: String = leaf_chart_id
-                    .and_then(|cid| self.managers.bubble.exchange_for_chart(cid))
+                    .and_then(|cid| self.exchange_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_default();
                 let split_account_type: String = leaf_chart_id
-                    .and_then(|cid| self.managers.bubble.account_type_for_chart(cid))
+                    .and_then(|cid| self.account_type_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_default();
                 let split_tf = leaf_chart_id
-                    .and_then(|cid| self.managers.bubble.timeframe_for_chart(cid))
-                    .cloned();
+                    .and_then(|cid| self.timeframe_for_chart(cid));
                 let split_tf_name: String = split_tf.as_ref().map(|tf| tf.name.clone()).unwrap_or_default();
                 let split_tf_interval_ms: Option<i64> = split_tf.map(|tf| tf.interval_ms);
 
@@ -3139,7 +3162,8 @@ impl ChartApp {
                     .get(&split_pid)
                     .unwrap_or(&split_default_panel);
                 let scale_corner_state = window.to_corner_state();
-                let split_bubble = match self.managers.bubble.bubble(window.current_bubble_id) {
+                let split_bubble_mgr = self.core.bubble();
+                let split_bubble = match split_bubble_mgr.bubble.bubble(window.current_bubble_id) {
                     Some(b) => b,
                     None => continue,  // window not yet attached to a bubble
                 };
@@ -3168,7 +3192,7 @@ impl ChartApp {
                 // Scope indicator queries to this window so each split pane only
                 // renders the indicators that belong to it.
                 if let Some(chart_id) = leaf_chart_id {
-                    self.indicator_manager.current_render_window_id.set(Some(chart_id.0));
+                    self.core.indicators().current_render_window_id.store(chart_id.0 + 1, AtomicOrdering::Relaxed);
                 }
 
                 let alert_current_bar = 0usize.saturating_sub(1) as f64;
@@ -3182,7 +3206,7 @@ impl ChartApp {
                         .unwrap_or(&empty_pts);
                 // Reuse the indicator values computed once before this loop.
                 let alert_indicator_values = &alert_indicator_values_cache;
-                let alert_render_data: Vec<AlertRenderData> = self.managers.alert.items()
+                let alert_render_data: Vec<AlertRenderData> = self.core.bubble().alert.items()
                     .iter()
                     .filter(|a| a.status == mlc_alerts::AlertStatus::Active)
                     .filter(|a| matches!(a.source, mlc_alerts::AlertSource::Price { .. }))
@@ -3203,12 +3227,14 @@ impl ChartApp {
 
                 let inner_proportions_vec = mlc_core::state::chart_container::collect_inner_proportions(&window.inner_docking);
                 let inner_sub_ids_vec = mlc_core::state::chart_container::collect_inner_instance_ids(&window.inner_docking);
+                let split_drawings_guard = self.core.drawings();
+                let split_dm = split_drawings_guard.get(split_pid);
                 let panel_data = ChartPanelRenderData {
                     state: &render_state,
                     config: &render_config,
                     corner_state: &scale_corner_state,
-                    drawing_manager: Some(&split_panel.drawing_manager),
-                    indicator_source: Some(&self.indicator_manager),
+                    drawing_manager: split_dm,
+                    indicator_source: Some(&*indicator_guard_split),
                     symbol: Some(split_symbol.as_str()),
                     sub_pane_y_state: Some(&window.sub_pane_y_state),
                     compare_overlay: Some(&window.compare_overlay),
@@ -3252,15 +3278,15 @@ impl ChartApp {
                     // indicator_manager visibility is a filter applied on top.
                     // S2.7.1: use split_symbol (from branch_meta) for indicator lookup.
                     let visible_set: std::collections::HashSet<u64> = if let Some(chart_id) = leaf_chart_id {
-                        self.indicator_manager
-                            .get_instances_for_symbol_in_window(&split_symbol, chart_id.0)
+                        self.core.indicators()
+                                .get_instances_for_symbol_in_window(&split_symbol, chart_id.0)
                             .into_iter()
                             .filter(|i| i.visible && i.pane > 0)
                             .map(|i| i.id)
                             .collect()
                     } else {
-                        self.indicator_manager
-                            .get_instances_for_symbol(&split_symbol)
+                        self.core.indicators()
+                                .get_instances_for_symbol(&split_symbol)
                             .into_iter()
                             .filter(|i| i.visible && i.pane > 0)
                             .map(|i| i.id)
@@ -3312,9 +3338,11 @@ impl ChartApp {
                     // Skip chart-anchored bells when the main chart is collapsed
                     // (maximized sub-pane covers the container).
                     if chart_area.height >= 1.0 {
-                        let split_bars_vec: Vec<mlc_core::Bar> = self.managers.bubble.bubble(window.current_bubble_id)
+                        let split_bars_vec: Vec<mlc_core::Bar> = self.core.bubble().bubble.bubble(window.current_bubble_id)
                             .map(|b| b.bars.clone())
                             .unwrap_or_default();
+                        let default_dm = mlc_core::DrawingManager::new();
+                        let split_bell_dm = split_dm.unwrap_or(&default_dm);
                         let bells = Self::draw_alert_bell_icons(
                             ctx,
                             chart_area,
@@ -3322,9 +3350,9 @@ impl ChartApp {
                             window.price_scale.price_min,
                             window.price_scale.price_max,
                             &split_bars_vec[..],
-                            &split_panel.drawing_manager,
-                            &self.indicator_manager,
-                            &self.managers.alert,
+                            split_bell_dm,
+                            &self.core.indicators(),
+                            &self.core.bubble().alert,
                             window_id,
                             &split_symbol,
                             &split_exchange,
@@ -3350,7 +3378,7 @@ impl ChartApp {
                 }
 
                 // Reset render scope after this leaf is done.
-                self.indicator_manager.current_render_window_id.set(None);
+                self.core.indicators().current_render_window_id.store(0, AtomicOrdering::Relaxed);
 
                 // Render overlay tab header at the top-left of this leaf.
                 let is_active_leaf = self.panel_app.panel_grid.docking()
@@ -3429,12 +3457,12 @@ impl ChartApp {
                         .iter()
                         .map(|s| (s.symbol.clone(), s.visible, s.color.clone()))
                         .collect();
-                    let instances = if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
-                        self.indicator_manager.get_instances_for_symbol_in_window(&symbol, chart_id.0)
+                    let instances_empty = if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
+                        self.core.indicators().get_instances_for_symbol_in_window(&symbol, chart_id.0).is_empty()
                     } else {
-                        self.indicator_manager.get_instances_for_symbol(&symbol)
+                        self.core.indicators().get_instances_for_symbol(&symbol).is_empty()
                     };
-                    let _has_indicators = !instances.is_empty();
+                    let _has_indicators = !instances_empty;
                     let _has_compare = !compare_series_info.is_empty();
 
                     // overlay visibility was set in prepare_frame; read the state here.
@@ -3447,22 +3475,30 @@ impl ChartApp {
                     // leaf_tab_visible: hidden while a maximized sub-pane covers
                     // the container (chevron belongs to the chart layer).
                     if leaf_tab_visible && (overlay_state.visible || overlay_state.is_open) {
-                        let mut indicators: Vec<IndicatorOverlayInfo> = instances
-                            .iter()
-                            .map(|inst| {
-                                let display_name = Self::format_indicator_display_name(
-                                    &self.indicator_manager, inst,
-                                );
-                                IndicatorOverlayInfo {
-                                    id: inst.id,
-                                    display_name,
-                                    visible: inst.visible,
-                                    is_compare: false,
-                                    symbol: None,
-                                    color: None,
-                                }
-                            })
-                            .collect();
+                        let mut indicators: Vec<IndicatorOverlayInfo> = {
+                            let im = self.core.indicators();
+                            let instances = if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
+                                im.get_instances_for_symbol_in_window(&symbol, chart_id.0)
+                            } else {
+                                im.get_instances_for_symbol(&symbol)
+                            };
+                            instances
+                                .iter()
+                                .map(|inst| {
+                                    let display_name = Self::format_indicator_display_name(
+                                        &*im, inst,
+                                    );
+                                    IndicatorOverlayInfo {
+                                        id: inst.id,
+                                        display_name,
+                                        visible: inst.visible,
+                                        is_compare: false,
+                                        symbol: None,
+                                        color: None,
+                                    }
+                                })
+                                .collect()
+                        };
 
                         for (sym, vis, col) in &compare_series_info {
                             indicators.push(IndicatorOverlayInfo {
@@ -3643,40 +3679,45 @@ impl ChartApp {
             let single_window_info: Option<(String, String, String, String)> = {
                 let cid = self.panel_app.panel_grid.active_container_id();
                 cid.map(|chart_id| {
-                    let sym = self.managers.bubble.symbol_for_chart(chart_id)
+                    let sym = self.symbol_for_chart(chart_id)
                         .map(String::from).unwrap_or_default();
-                    let tf_name = self.managers.bubble.timeframe_for_chart(chart_id)
+                    let tf_name = self.timeframe_for_chart(chart_id)
                         .map(|tf| tf.name.clone())
                         .unwrap_or_default();
-                    let exch = self.managers.bubble.exchange_for_chart(chart_id)
+                    let exch = self.exchange_for_chart(chart_id)
                         .map(String::from).unwrap_or_default();
-                    let at = self.managers.bubble.account_type_for_chart(chart_id)
+                    let at = self.account_type_for_chart(chart_id)
                         .map(String::from).unwrap_or_default();
                     (sym, tf_name, exch, at)
                 })
             };
             let single_tf_interval_ms: Option<i64> = self.panel_app.panel_grid.active_container_id()
-                .and_then(|cid| self.managers.bubble.timeframe_for_chart(cid))
+                .and_then(|cid| self.timeframe_for_chart(cid))
                 .map(|tf| tf.interval_ms);
 
             // Scope indicator queries to the active window for single-window mode.
             if let Some(chart_id) = self.panel_app.panel_grid.active_container_id() {
-                self.indicator_manager.current_render_window_id.set(Some(chart_id.0));
+                self.core.indicators().current_render_window_id.store(chart_id.0 + 1, AtomicOrdering::Relaxed);
             }
+
+            // Hold the indicator manager read guard for the duration of the
+            // single-window render path so `&self.indicator_manager` borrows stay alive.
+            let indicator_guard_single = self.core.indicators();
 
             // Group primitive sync was done in prepare_frame; use the already-synced drawing_manager here.
 
             let single_active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
             let (single_alert_current_bar, single_alert_drawing_points) = if let Some(window) = self.panel_app.panel_grid.active_container() {
-                let single_bars_vec: Vec<mlc_core::Bar> = self.managers.bubble.bubble(window.current_bubble_id)
+                let single_bars_vec: Vec<mlc_core::Bar> = self.core.bubble().bubble.bubble(window.current_bubble_id)
                     .map(|b| b.bars.clone())
                     .unwrap_or_default();
                 let cb = single_bars_vec.len().saturating_sub(1) as f64;
                 let bars = &single_bars_vec[..];
                 let empty_prims2: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> = Vec::new();
+                let single_drawings_alert_guard = self.core.drawings();
                 let prims2_iter = single_active_pid
-                    .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                    .map(|panel| panel.drawing_manager.primitives())
+                    .and_then(|pid| single_drawings_alert_guard.get(pid))
+                    .map(|dm| dm.primitives())
                     .unwrap_or(&empty_prims2);
                 let pts: Vec<(u64, Vec<(f64, f64)>, mlc_alerts::DrawingExtendMode)> = prims2_iter
                     .iter()
@@ -3693,8 +3734,8 @@ impl ChartApp {
                 (0.0, Vec::new())
             };
             let single_alert_indicator_values = Self::build_indicator_values_for_alerts(
-                &self.managers.alert,
-                &self.indicator_manager,
+                &self.core.bubble().alert,
+                &self.core.indicators(),
             );
             let single_alert_render_data: Vec<AlertRenderData> = {
                 // single_window_info = (symbol, timeframe, exchange, account_type) captured above.
@@ -3702,7 +3743,7 @@ impl ChartApp {
                     .as_ref()
                     .map(|(s, tf, e, at)| (s.as_str(), tf.as_str(), e.as_str(), at.as_str()))
                     .unwrap_or(("", "", "", ""));
-                self.managers.alert.items()
+                self.core.bubble().alert.items()
                     .iter()
                     .filter(|a| a.status == mlc_alerts::AlertStatus::Active)
                     .filter(|a| matches!(a.source, mlc_alerts::AlertSource::Price { .. }))
@@ -3742,7 +3783,7 @@ impl ChartApp {
                 .unwrap_or(&single_fallback_panel);
             let window_opt = self.panel_app.panel_grid.active_container();
             let corner_zones_single = if let Some(window) = window_opt
-                .filter(|w| self.managers.bubble.bubble(w.current_bubble_id).is_some())
+                .filter(|w| self.core.bubble().bubble.bubble(w.current_bubble_id).is_some())
             {
                 use mlc_core::chart::ChartRect;
                 let chart_rect = ChartRect::new(
@@ -3751,7 +3792,8 @@ impl ChartApp {
                     content_rect.width,
                     content_rect.height,
                 );
-                let single_window_bubble = self.managers.bubble.bubble(window.current_bubble_id)
+                let single_window_bubble_mgr = self.core.bubble();
+                let single_window_bubble = single_window_bubble_mgr.bubble.bubble(window.current_bubble_id)
                     .expect("checked by filter above");
                 let render_state = window.to_render_state(
                     single_window_bubble,
@@ -3766,12 +3808,14 @@ impl ChartApp {
 
                 let inner_proportions_vec = mlc_core::state::chart_container::collect_inner_proportions(&window.inner_docking);
                 let inner_sub_ids_vec = mlc_core::state::chart_container::collect_inner_instance_ids(&window.inner_docking);
+                let single_window_drawings_guard = self.core.drawings();
+                let single_window_dm = single_window_pid.and_then(|pid| single_window_drawings_guard.get(pid));
                 let panel_data = ChartPanelRenderData {
                     state: &render_state,
                     config: &render_config,
                     corner_state: &scale_corner_state,
-                    drawing_manager: Some(&single_window_panel.drawing_manager),
-                    indicator_source: Some(&self.indicator_manager),
+                    drawing_manager: single_window_dm,
+                    indicator_source: Some(&*indicator_guard_single),
                     symbol: Some(single_sym),
                     sub_pane_y_state: Some(&window.sub_pane_y_state),
                     compare_overlay: Some(&window.compare_overlay),
@@ -3816,15 +3860,15 @@ impl ChartApp {
                     // render_full_chart_panel's internal ExtendedFrameLayout).
                     // S2.7.1: use single_sym from branch_meta for indicator lookup.
                     let visible_set: std::collections::HashSet<u64> = if let Some(chart_id) = self.panel_app.panel_grid.active_container_id() {
-                        self.indicator_manager
-                            .get_instances_for_symbol_in_window(single_sym, chart_id.0)
+                        self.core.indicators()
+                                .get_instances_for_symbol_in_window(single_sym, chart_id.0)
                             .into_iter()
                             .filter(|i| i.visible && i.pane > 0)
                             .map(|i| i.id)
                             .collect()
                     } else {
-                        self.indicator_manager
-                            .get_instances_for_symbol(single_sym)
+                        self.core.indicators()
+                                .get_instances_for_symbol(single_sym)
                             .into_iter()
                             .filter(|i| i.visible && i.pane > 0)
                             .map(|i| i.id)
@@ -3878,9 +3922,11 @@ impl ChartApp {
                     // Skip chart-anchored bells when the main chart is collapsed
                     // (maximized sub-pane covers the container).
                     if chart_area.height >= 1.0 {
-                        let single_bars_vec2: Vec<mlc_core::Bar> = self.managers.bubble.bubble(window.current_bubble_id)
+                        let single_bars_vec2: Vec<mlc_core::Bar> = self.core.bubble().bubble.bubble(window.current_bubble_id)
                             .map(|b| b.bars.clone())
                             .unwrap_or_default();
+                        let default_dm2 = mlc_core::DrawingManager::new();
+                        let single_bell_dm2 = single_window_dm.unwrap_or(&default_dm2);
                         let bells = Self::draw_alert_bell_icons(
                             ctx,
                             chart_area,
@@ -3888,9 +3934,9 @@ impl ChartApp {
                             window.price_scale.price_min,
                             window.price_scale.price_max,
                             &single_bars_vec2[..],
-                            &single_window_panel.drawing_manager,
-                            &self.indicator_manager,
-                            &self.managers.alert,
+                            single_bell_dm2,
+                            &self.core.indicators(),
+                            &self.core.bubble().alert,
                             window_id,
                             single_sym,
                             single_exch,
@@ -3963,7 +4009,7 @@ impl ChartApp {
             }
 
             // Reset render scope after single-window render is complete.
-            self.indicator_manager.current_render_window_id.set(None);
+            self.core.indicators().current_render_window_id.store(0, AtomicOrdering::Relaxed);
 
             // Render overlay tab header (single mode) — skipped while a
             // maximized sub-pane covers the container.
@@ -4051,8 +4097,9 @@ impl ChartApp {
         // is selected.  The result is a cheap owned value so no borrow escapes.
         let selected_config: Option<mlc_core::state::selected_config::SelectedPrimitiveConfig> = {
             let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-            pid.and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                .and_then(|panel| panel.drawing_manager.get_selected_config())
+            let drawings_guard = self.core.drawings();
+            pid.and_then(|pid| drawings_guard.get(pid))
+                .and_then(|dm| dm.get_selected_config())
         };
 
         // Generate clock time from active window's timezone settings
@@ -4092,7 +4139,7 @@ impl ChartApp {
                 // S2.7.1: read symbol from branch_meta; compare_series still needs window borrow.
                 let ind_overlay_chart_id = self.panel_app.panel_grid.active_container_id();
                 let symbol: String = ind_overlay_chart_id
-                    .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                    .and_then(|cid| self.symbol_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_default();
                 let compare_series: Vec<(String, bool, String)> =
@@ -4102,27 +4149,30 @@ impl ChartApp {
                             .collect())
                         .unwrap_or_default();
 
-                let instances = if let Some(chart_id) = ind_overlay_chart_id {
-                    self.indicator_manager.get_instances_for_symbol_in_window(&symbol, chart_id.0)
-                } else {
-                    self.indicator_manager.get_instances_for_symbol(&symbol)
+                let mut indicators: Vec<IndicatorOverlayInfo> = {
+                    let im = self.core.indicators();
+                    let instances = if let Some(chart_id) = ind_overlay_chart_id {
+                        im.get_instances_for_symbol_in_window(&symbol, chart_id.0)
+                    } else {
+                        im.get_instances_for_symbol(&symbol)
+                    };
+                    instances
+                        .iter()
+                        .map(|inst| {
+                            let display_name = Self::format_indicator_display_name(
+                                &*im, inst,
+                            );
+                            IndicatorOverlayInfo {
+                                id: inst.id,
+                                display_name,
+                                visible: inst.visible,
+                                is_compare: false,
+                                symbol: None,
+                                color: None,
+                            }
+                        })
+                        .collect()
                 };
-                let mut indicators: Vec<IndicatorOverlayInfo> = instances
-                    .iter()
-                    .map(|inst| {
-                        let display_name = Self::format_indicator_display_name(
-                            &self.indicator_manager, inst,
-                        );
-                        IndicatorOverlayInfo {
-                            id: inst.id,
-                            display_name,
-                            visible: inst.visible,
-                            is_compare: false,
-                            symbol: None,
-                            color: None,
-                        }
-                    })
-                    .collect();
 
                 for (sym, vis, col) in compare_series {
                     indicators.push(IndicatorOverlayInfo {
@@ -4244,14 +4294,16 @@ impl ChartApp {
             // S2.7.1: read active symbol/timeframe from branch_meta.
             let (active_sym_str, active_tf_str, active_gid) = {
                 let cid = self.panel_app.panel_grid.active_container_id();
-                let sym = cid.and_then(|c| self.managers.bubble.symbol_for_chart(c))
+                let sym = cid.and_then(|c| self.symbol_for_chart(c))
                     .map(String::from).unwrap_or_default();
-                let tf = cid.and_then(|c| self.managers.bubble.timeframe_for_chart(c))
+                let tf = cid.and_then(|c| self.timeframe_for_chart(c))
                     .map(|tf| tf.name.clone())
                     .unwrap_or_default();
-                let gid = cid.and_then(|c| self.managers.bubble.bubble_for_chart(c));
+                let gid = cid.and_then(|c| self.bubble_for_chart(c));
                 (sym, tf, gid)
             };
+            let bubble_guard_tb = self.core.bubble();
+            let presets_guard_tb = self.core.presets();
             let toolbar_result = self.panel_app.render_toolbars_with_theme(
                 ctx,
                 &panel_layout,
@@ -4262,8 +4314,11 @@ impl ChartApp {
                 Some(active_tf_str.as_str()),
                 sidebar_w,
                 active_gid,
-                &self.managers.bubble,
+                &bubble_guard_tb.bubble,
+                &*presets_guard_tb,
             );
+            drop(bubble_guard_tb);
+            drop(presets_guard_tb);
             Some(toolbar_result)
         } else {
             // Preserve the cached toolbar result from the previous frame.
@@ -4485,6 +4540,33 @@ impl ChartApp {
             let sidebar_toolbar_theme = self.panel_app.toolbar_theme_for_render();
             let panel_theme = panels_render::panel_theme_from_runtime(self.panel_app.theme_manager.current());
 
+            // Pre-compute per-panel color + sync-flags maps before render_right_sidebar
+            // mutably borrows self.sidebar_state. This avoids E0502 between the &mut
+            // borrow of sidebar_state and the closures' immutable reads of self.core.bubble.
+            let (sidebar_panel_color_map, sidebar_panel_sync_flags_map): (
+                std::collections::HashMap<u64, [f32; 4]>,
+                std::collections::HashMap<u64, mlc_sidebar_content::render::PanelSyncFlagsSnapshot>,
+            ) = {
+                use mlc_core::tag_manager::SyncMemberId;
+                let mgr = self.core.bubble();
+                let mut colors = std::collections::HashMap::new();
+                let mut flags = std::collections::HashMap::new();
+                for bubble in mgr.bubble.bubbles() {
+                    for member in bubble.members.iter() {
+                        if let SyncMemberId::Panel(pid) = member {
+                            if !bubble.auto_created {
+                                colors.insert(*pid, bubble.color);
+                            }
+                            flags.insert(*pid, mlc_sidebar_content::render::PanelSyncFlagsSnapshot {
+                                sync_symbol: bubble.effective_sync_symbol(*member),
+                                sync_crosshair: bubble.effective_sync_crosshair(*member),
+                            });
+                        }
+                    }
+                }
+                (colors, flags)
+            };
+
             // Draw sidebar and register hit zones every frame.
             // When the cached sidebar_scene is composited on top these pixels
             // are overwritten, but the widget registrations survive until end_frame().
@@ -4555,23 +4637,10 @@ impl ChartApp {
                     }
                 },
                 &|item: &mlc_core::state::Panel| -> Option<[f32; 4]> {
-                    use mlc_core::tag_manager::SyncMemberId;
-                    let panel_id = item.panel_id().0;
-                    let member = SyncMemberId::Panel(panel_id);
-                    let gid = self.managers.bubble.group_for_member(member)?;
-                    let group = self.managers.bubble.bubble(gid)?;
-                    if group.auto_created { None } else { Some(group.color) }
+                    sidebar_panel_color_map.get(&item.panel_id().0).copied()
                 },
                 &|item: &mlc_core::state::Panel| -> Option<mlc_sidebar_content::render::PanelSyncFlagsSnapshot> {
-                    use mlc_core::tag_manager::SyncMemberId;
-                    let panel_id = item.panel_id().0;
-                    let member = SyncMemberId::Panel(panel_id);
-                    let gid = self.managers.bubble.group_for_member(member)?;
-                    let group = self.managers.bubble.bubble(gid)?;
-                    Some(mlc_sidebar_content::render::PanelSyncFlagsSnapshot {
-                        sync_symbol: group.effective_sync_symbol(member),
-                        sync_crosshair: group.effective_sync_crosshair(member),
-                    })
+                    sidebar_panel_sync_flags_map.get(&item.panel_id().0).cloned()
                 },
                 &|item: &mlc_core::state::Panel| -> Option<(String, String, String)> {
                     use mlc_core::state::Panel;
@@ -4637,6 +4706,7 @@ impl ChartApp {
                         _ => None,
                     }
                 },
+                &*self.core.watchlist(),
             );
 
             Some(sidebar_result)
@@ -4727,7 +4797,7 @@ impl ChartApp {
                     if desc.mode == gate4agent::InstanceMode::Pty {
                         let cols = ((rect.width / 7.0) as u16).max(1);
                         let rows = ((rect.height / 19.0) as u16).max(1);
-                        self.bridge.runtime().block_on(self.agent.resize_instance(desc.instance_id, cols, rows));
+                        self.core.bridge.runtime().block_on(self.agent.resize_instance(desc.instance_id, cols, rows));
                     }
                 }
             }
@@ -4893,8 +4963,9 @@ impl ChartApp {
 
         let selected_config: Option<mlc_core::state::selected_config::SelectedPrimitiveConfig> = {
             let pid2 = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-            pid2.and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                .and_then(|panel| panel.drawing_manager.get_selected_config())
+            let drawings_guard2 = self.core.drawings();
+            pid2.and_then(|pid| drawings_guard2.get(pid))
+                .and_then(|dm| dm.get_selected_config())
         };
 
         let clock_time = {
@@ -4923,15 +4994,17 @@ impl ChartApp {
         // S2.7.1: read active symbol/timeframe from branch_meta.
         let (active_sym_str, active_tf_str, active_gid) = {
             let cid = self.panel_app.panel_grid.active_container_id();
-            let sym = cid.and_then(|c| self.managers.bubble.symbol_for_chart(c))
+            let sym = cid.and_then(|c| self.symbol_for_chart(c))
                 .map(String::from).unwrap_or_default();
-            let tf = cid.and_then(|c| self.managers.bubble.timeframe_for_chart(c))
+            let tf = cid.and_then(|c| self.timeframe_for_chart(c))
                 .map(|tf| tf.name.clone())
                 .unwrap_or_default();
-            let gid = cid.and_then(|c| self.managers.bubble.bubble_for_chart(c));
+            let gid = cid.and_then(|c| self.bubble_for_chart(c));
             (sym, tf, gid)
         };
 
+        let bubble_guard_tb2 = self.core.bubble();
+        let presets_guard_tb2 = self.core.presets();
         let toolbar_result = self.panel_app.render_toolbars_with_theme(
             ctx,
             &panel_layout,
@@ -4942,8 +5015,11 @@ impl ChartApp {
             Some(active_tf_str.as_str()),
             sidebar_w,
             active_gid,
-            &self.managers.bubble,
+            &bubble_guard_tb2.bubble,
+            &*presets_guard_tb2,
         );
+        drop(bubble_guard_tb2);
+        drop(presets_guard_tb2);
 
         self.last_toolbar_result = Some(toolbar_result);
     }
@@ -5015,6 +5091,31 @@ impl ChartApp {
             }
         }
 
+        // Pre-compute per-panel maps before render_right_sidebar mut-borrows sidebar_state.
+        let (panel_color_map_main, panel_sync_flags_map_main): (
+            std::collections::HashMap<u64, [f32; 4]>,
+            std::collections::HashMap<u64, mlc_sidebar_content::render::PanelSyncFlagsSnapshot>,
+        ) = {
+            use mlc_core::tag_manager::SyncMemberId;
+            let mgr = self.core.bubble();
+            let mut colors = std::collections::HashMap::new();
+            let mut flags = std::collections::HashMap::new();
+            for bubble in mgr.bubble.bubbles() {
+                for member in bubble.members.iter() {
+                    if let SyncMemberId::Panel(pid) = member {
+                        if !bubble.auto_created {
+                            colors.insert(*pid, bubble.color);
+                        }
+                        flags.insert(*pid, mlc_sidebar_content::render::PanelSyncFlagsSnapshot {
+                            sync_symbol: bubble.effective_sync_symbol(*member),
+                            sync_crosshair: bubble.effective_sync_crosshair(*member),
+                        });
+                    }
+                }
+            }
+            (colors, flags)
+        };
+
         let panels_store = &self.panels_store;
         let sidebar_result = mlc_sidebar_content::render::render_right_sidebar(
             ctx,
@@ -5081,23 +5182,10 @@ impl ChartApp {
                 }
             },
             &|item: &mlc_core::state::Panel| -> Option<[f32; 4]> {
-                use mlc_core::tag_manager::SyncMemberId;
-                let panel_id = item.panel_id().0;
-                let member = SyncMemberId::Panel(panel_id);
-                let gid = self.managers.bubble.group_for_member(member)?;
-                let group = self.managers.bubble.bubble(gid)?;
-                if group.auto_created { None } else { Some(group.color) }
+                panel_color_map_main.get(&item.panel_id().0).copied()
             },
             &|item: &mlc_core::state::Panel| -> Option<mlc_sidebar_content::render::PanelSyncFlagsSnapshot> {
-                use mlc_core::tag_manager::SyncMemberId;
-                let panel_id = item.panel_id().0;
-                let member = SyncMemberId::Panel(panel_id);
-                let gid = self.managers.bubble.group_for_member(member)?;
-                let group = self.managers.bubble.bubble(gid)?;
-                Some(mlc_sidebar_content::render::PanelSyncFlagsSnapshot {
-                    sync_symbol: group.effective_sync_symbol(member),
-                    sync_crosshair: group.effective_sync_crosshair(member),
-                })
+                panel_sync_flags_map_main.get(&item.panel_id().0).cloned()
             },
             &|item: &mlc_core::state::Panel| -> Option<(String, String, String)> {
                 use mlc_core::state::Panel;
@@ -5162,6 +5250,7 @@ impl ChartApp {
                     _ => None,
                 }
             },
+            &*self.core.watchlist(),
         );
 
         // Persist agent terminal rect for hover-focus.
@@ -5187,7 +5276,7 @@ impl ChartApp {
                     if desc.mode == gate4agent::InstanceMode::Pty {
                         let cols = ((rect.width / 7.0) as u16).max(1);
                         let rows = ((rect.height / 19.0) as u16).max(1);
-                        self.bridge.runtime().block_on(self.agent.resize_instance(desc.instance_id, cols, rows));
+                        self.core.bridge.runtime().block_on(self.agent.resize_instance(desc.instance_id, cols, rows));
                     }
                 }
             }
@@ -5272,7 +5361,7 @@ impl ChartApp {
                 &modal_layout,
                 &toolbar_theme,
                 &mut self.input_coordinator.borrow_mut(),
-                &self.managers.bubble,
+                &self.core.bubble().bubble,
             );
         }
 
@@ -5298,7 +5387,7 @@ impl ChartApp {
                     .unwrap_or(true)
             })
             .collect();
-        self.bridge.warmup_all_connectors(&enabled);
+        self.core.bridge.warmup_all_connectors(&enabled);
     }
 
     // -------------------------------------------------------------------------
@@ -5368,18 +5457,22 @@ impl ChartApp {
         let active_dm_pid = self.panel_app.panel_grid
             .active_container()
             .map(|w| w.chart_panel_id);
+        let drawings_guard_modals = self.core.drawings();
         let dm_ref: Option<&mlc_core::drawing::DrawingManager> = active_dm_pid
-            .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-            .map(|panel| &panel.drawing_manager);
+            .and_then(|pid| drawings_guard_modals.get(pid));
         let chart_settings_data = self.build_chart_settings_data();
         let theme_manager_ptr: *const mlc_core::theme::ThemeManager =
             &self.panel_app.theme_manager as *const _;
+        let indicator_guard_modals = self.core.indicators();
 
+        let bubble_guard_modals = self.core.bubble();
+        let tm_guard_modals = self.core.template_manager();
+        let presets_guard_modals = self.core.presets();
         let modal_result = self.panel_app.render_modals(
             ctx,
             &modal_layout,
             dm_ref,
-            Some(&self.indicator_manager as &dyn IndicatorSource),
+            Some(&*indicator_guard_modals as &dyn IndicatorSource),
             Some(&chart_settings_data),
             // SAFETY: theme_manager lives inside panel_app which render_modals
             // does not mutate (it only reads modal state fields).
@@ -5389,8 +5482,13 @@ impl ChartApp {
             &toolbar_state,
             current_time_ms,
             &mut self.input_coordinator.borrow_mut(),
-            &self.managers.bubble,
+            &bubble_guard_modals.bubble,
+            &*tm_guard_modals,
+            &*presets_guard_modals,
         );
+        drop(bubble_guard_modals);
+        drop(tm_guard_modals);
+        drop(presets_guard_modals);
         let mut frame_result: Option<ChartModalRenderResult> = Some(modal_result);
 
         // 5b. Search overlay (indicator / symbol / compare)
@@ -5400,7 +5498,8 @@ impl ChartApp {
                 let indicator_catalog = self.build_indicator_catalog();
                 let hovered = self.modal_state.hovered_item_id.as_deref();
                 let toolbar_theme_search = self.panel_app.toolbar_theme_for_render();
-                let indicator_sets = &self.panel_app.template_manager.indicator_sets;
+                let tm_guard_search = self.core.template_manager();
+                let indicator_sets = &tm_guard_search.indicator_sets;
                 Some(render_search_overlay(
                     ctx,
                     screen,
@@ -5461,7 +5560,7 @@ impl ChartApp {
                 &modal_layout,
                 &toolbar_theme,
                 &mut self.input_coordinator.borrow_mut(),
-                &self.managers.bubble,
+                &self.core.bubble().bubble,
             );
             if let Some(ref mut fr) = frame_result {
                 if cp_result.color_picker.is_some() {
@@ -5476,11 +5575,12 @@ impl ChartApp {
         // 8b. Watchlist modal
         let last_watchlist_modal_result: Option<mlc_layout::layout::modals::watchlist_modal::WatchlistModalResult> =
             if self.watchlist_modal.is_open() {
+                let wl_guard = self.core.watchlist();
                 let color_flags: Vec<String> = self.sidebar_state.watchlist_items.iter()
                     .map(|item| {
-                        self.sidebar_state.watchlist_manager.active_list()
+                        wl_guard.active_list()
                             .and_then(|l| l.get_color_flag(&item.symbol, &item.exchange, &item.account_type))
-                            .unwrap_or("")
+                            .unwrap_or_default()
                             .to_string()
                     })
                     .collect();
@@ -5499,7 +5599,7 @@ impl ChartApp {
                         account_type: item.account_type.clone(),
                     })
                     .collect();
-                let groups_info: Vec<WatchlistGroupInfo> = self.sidebar_state.watchlist_manager.lists.iter()
+                let groups_info: Vec<WatchlistGroupInfo> = wl_guard.lists.iter()
                     .map(|list| WatchlistGroupInfo {
                         id: list.id,
                         name: list.name.clone(),
@@ -5509,9 +5609,10 @@ impl ChartApp {
                             list.groups[0].color.clone()
                         },
                         symbol_count: list.all_symbols().len(),
-                        is_active: list.id == self.sidebar_state.watchlist_manager.active_list_id,
+                        is_active: list.id == wl_guard.active_list_id,
                     })
                     .collect();
+                drop(wl_guard);
                 Some(render_watchlist_modal(
                     ctx,
                     modal_right_edge,
@@ -5611,7 +5712,8 @@ impl ChartApp {
         group_id: mlc_core::tag_manager::BubbleId,
     ) {
         let (symbol, exchange, account_type, panel_ids) = {
-            let group = match self.managers.bubble.bubble(group_id) {
+            let mgr = self.core.bubble();
+            let group = match mgr.bubble.bubble(group_id) {
                 Some(g) => g,
                 None => return,
             };
@@ -5619,7 +5721,7 @@ impl ChartApp {
                 group.symbol.clone(),
                 group.exchange.clone(),
                 group.account_type.clone(),
-                self.managers.bubble.panel_members(group_id),
+                mgr.bubble.panel_members(group_id),
             )
         };
 
@@ -5648,16 +5750,16 @@ impl ChartApp {
                 if !old_sym.is_empty() {
                     if let Some(eid) = digdigdig3::ExchangeId::from_str(&old_exch) {
                         let old_at = account_type_from_label(&old_at_label);
-                        self.bridge.unsubscribe_orderbook(eid, &old_sym, old_at);
-                        self.bridge.unsubscribe_trades(eid, &old_sym, old_at);
+                        self.core.bridge.unsubscribe_orderbook(eid, &old_sym, old_at);
+                        self.core.bridge.unsubscribe_trades(eid, &old_sym, old_at);
                     }
                 }
                 // Subscribe new orderbook and trades.
                 let (new_ob_handle, new_trade_handle) = if !symbol.is_empty() {
                     if let Some(eid) = digdigdig3::ExchangeId::from_str(&exchange) {
                         let new_at = account_type_from_label(&account_type);
-                        let ob = self.bridge.subscribe_orderbook(eid, &symbol, new_at);
-                        let tr = self.bridge.subscribe_trades(eid, &symbol, new_at);
+                        let ob = self.core.bridge.subscribe_orderbook(eid, &symbol, new_at);
+                        let tr = self.core.bridge.subscribe_trades(eid, &symbol, new_at);
                         (ob, tr)
                     } else {
                         (None, None)
@@ -5719,14 +5821,14 @@ impl ChartApp {
                 if !old_sym.is_empty() {
                     if let Some(eid) = digdigdig3::ExchangeId::from_str(&old_exch) {
                         let old_at = account_type_from_label(&old_at_label);
-                        self.bridge.unsubscribe_trades(eid, &old_sym, old_at);
+                        self.core.bridge.unsubscribe_trades(eid, &old_sym, old_at);
                     }
                 }
                 // Subscribe new.
                 let new_handle = if !symbol.is_empty() {
                     digdigdig3::ExchangeId::from_str(&exchange).and_then(|eid| {
                         let new_at = account_type_from_label(&account_type);
-                        self.bridge.subscribe_trades(eid, &symbol, new_at)
+                        self.core.bridge.subscribe_trades(eid, &symbol, new_at)
                     })
                 } else {
                     None
@@ -5753,13 +5855,13 @@ impl ChartApp {
                 if !old_sym.is_empty() {
                     if let Some(eid) = digdigdig3::ExchangeId::from_str(&old_exch) {
                         let old_at = account_type_from_label(&old_at_label);
-                        self.bridge.unsubscribe_trades(eid, &old_sym, old_at);
+                        self.core.bridge.unsubscribe_trades(eid, &old_sym, old_at);
                     }
                 }
                 let new_handle = if !symbol.is_empty() {
                     digdigdig3::ExchangeId::from_str(&exchange).and_then(|eid| {
                         let new_at = account_type_from_label(&account_type);
-                        self.bridge.subscribe_trades(eid, &symbol, new_at)
+                        self.core.bridge.subscribe_trades(eid, &symbol, new_at)
                     })
                 } else {
                     None
@@ -5789,13 +5891,13 @@ impl ChartApp {
                 if !old_sym.is_empty() {
                     if let Some(eid) = digdigdig3::ExchangeId::from_str(&old_exch) {
                         let old_at = account_type_from_label(&old_at_label);
-                        self.bridge.unsubscribe_trades(eid, &old_sym, old_at);
+                        self.core.bridge.unsubscribe_trades(eid, &old_sym, old_at);
                     }
                 }
                 let new_handle = if !symbol.is_empty() {
                     digdigdig3::ExchangeId::from_str(&exchange).and_then(|eid| {
                         let new_at = account_type_from_label(&account_type);
-                        self.bridge.subscribe_trades(eid, &symbol, new_at)
+                        self.core.bridge.subscribe_trades(eid, &symbol, new_at)
                     })
                 } else {
                     None
@@ -5823,13 +5925,13 @@ impl ChartApp {
                 if !old_sym.is_empty() {
                     if let Some(eid) = digdigdig3::ExchangeId::from_str(&old_exch) {
                         let old_at = account_type_from_label(&old_at_label);
-                        self.bridge.unsubscribe_trades(eid, &old_sym, old_at);
+                        self.core.bridge.unsubscribe_trades(eid, &old_sym, old_at);
                     }
                 }
                 let new_handle = if !symbol.is_empty() {
                     digdigdig3::ExchangeId::from_str(&exchange).and_then(|eid| {
                         let new_at = account_type_from_label(&account_type);
-                        self.bridge.subscribe_trades(eid, &symbol, new_at)
+                        self.core.bridge.subscribe_trades(eid, &symbol, new_at)
                     })
                 } else {
                     None
@@ -5883,10 +5985,10 @@ impl ChartApp {
                 for ex_label in &exchanges {
                     if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
                         if !old_sym.is_empty() {
-                            self.bridge.unsubscribe_orderbook(eid, &old_sym, new_at);
+                            self.core.bridge.unsubscribe_orderbook(eid, &old_sym, new_at);
                         }
                         if !symbol.is_empty() {
-                            let _ = self.bridge.subscribe_orderbook(eid, &symbol, new_at);
+                            let _ = self.core.bridge.subscribe_orderbook(eid, &symbol, new_at);
                         }
                     }
                 }
@@ -5912,13 +6014,13 @@ impl ChartApp {
             if old_sym == &symbol && old_exch == &exchange && old_at_label == &account_type {
                 continue;
             }
-            let old_eid = self.exchange_symbols
+            let old_eid = self.core.exchange_symbols_read()
                 .keys()
                 .find(|e| e.as_str() == old_exch.as_str())
                 .copied()
                 .unwrap_or(self.active_exchange);
             let old_at = crate::account_type_from_label(old_at_label);
-            self.bridge.unsubscribe_depth(old_eid, old_sym, old_at);
+            self.core.bridge.unsubscribe_depth(old_eid, old_sym, old_at);
             dlog!(
                 "[BubbleStore] unsubscribed depth for panel group {} ← {} @ {} ({})",
                 group_id.0, old_sym, old_exch, old_at_label
@@ -5928,13 +6030,13 @@ impl ChartApp {
         // If any panel needs orderbook data for the new symbol, subscribe the depth
         // WebSocket stream so live updates start arriving for it.
         if needs_depth_sub && !symbol.is_empty() {
-            let eid = self.exchange_symbols
+            let eid = self.core.exchange_symbols_read()
                 .keys()
                 .find(|e| e.as_str() == exchange)
                 .copied()
                 .unwrap_or(self.active_exchange);
             let at = crate::account_type_from_label(&account_type);
-            self.bridge.subscribe_depth(eid, &symbol, at);
+            self.core.bridge.subscribe_depth(eid, &symbol, at);
             dlog!(
                 "[BubbleStore] subscribed depth for panel group {} → {} @ {} ({})",
                 group_id.0, symbol, exchange, account_type
@@ -5952,12 +6054,13 @@ impl ChartApp {
     pub fn warm_background_tabs(&mut self) {
         let active_id = self.panel_app.active_preset_id.clone();
         let bar_count = self.panel_app.user_manager.profile.bar_count as usize;
+        let presets_guard = self.core.presets();
         let warm_targets: Vec<(String, String, mlc_core::state::Timeframe, String)> = self
             .panel_app
             .open_tabs
             .iter()
             .filter(|tab| **tab != active_id)
-            .filter_map(|tab| self.panel_app.presets.get(tab))
+            .filter_map(|tab| presets_guard.get(tab))
             .flat_map(|preset| {
                 preset.windows.iter().map(move |w| {
                     // Prefer the owning group's identity so the warm-up
@@ -5982,13 +6085,14 @@ impl ChartApp {
             })
             .filter(|(sym, _, _, _)| !sym.is_empty())
             .collect();
+        drop(presets_guard);
         let mut warmed = 0usize;
         for (sym, exch, tf, at_label) in warm_targets {
             let eid = digdigdig3::ExchangeId::from_str(&exch)
                 .unwrap_or(digdigdig3::ExchangeId::Binance);
             let at = account_type_from_label(&at_label);
-            self.bridge.ensure_connector(eid);
-            self.bridge.request_bars(eid, &sym, &tf, at, None, Some(bar_count), false);
+            self.core.bridge.ensure_connector(eid);
+            self.core.bridge.request_bars(eid, &sym, &tf, at, None, Some(bar_count), false);
             warmed += 1;
         }
         eprintln!("[ChartApp] startup: warmed {} background tab series", warmed);
@@ -6000,11 +6104,12 @@ impl ChartApp {
     /// thread for the whole batch (~120 ms per series measured).
     pub fn warm_background_tab_targets(&self) -> Vec<(String, String, mlc_core::state::Timeframe, String)> {
         let active_id = self.panel_app.active_preset_id.clone();
+        let presets_guard = self.core.presets();
         self.panel_app
             .open_tabs
             .iter()
             .filter(|tab| **tab != active_id)
-            .filter_map(|tab| self.panel_app.presets.get(tab))
+            .filter_map(|tab| presets_guard.get(tab))
             .flat_map(|preset| {
                 preset.windows.iter().map(move |w| {
                     if let Some(bid) = w.bubble_id {
@@ -6031,11 +6136,11 @@ impl ChartApp {
     pub fn warm_one_background_tab(&mut self, target: &(String, String, mlc_core::state::Timeframe, String)) {
         let (sym, exch, tf, at_label) = target;
         let bar_count = self.panel_app.user_manager.profile.bar_count as usize;
-        let eid = digdigdig3::ExchangeId::from_str(exch)
+        let eid = digdigdig3::ExchangeId::from_str(&exch)
             .unwrap_or(digdigdig3::ExchangeId::Binance);
         let at = account_type_from_label(at_label);
-        self.bridge.ensure_connector(eid);
-        self.bridge.request_bars(eid, sym, tf, at, None, Some(bar_count), false);
+        self.core.bridge.ensure_connector(eid);
+        self.core.bridge.request_bars(eid, sym, tf, at, None, Some(bar_count), false);
     }
 
     /// Synchronise `window.inner_docking` with the external `IndicatorManager`.
@@ -6061,7 +6166,7 @@ impl ChartApp {
                 let chart_id = self.panel_app.panel_grid.container_id_for_leaf(leaf_id);
                 let chart_id_val = chart_id.map(|cid| cid.0).unwrap_or(0);
                 let symbol = chart_id
-                    .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                    .and_then(|cid| self.symbol_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_default();
                 let (vs, ve) = window.viewport.visible_range();
@@ -6072,13 +6177,11 @@ impl ChartApp {
 
         // Step 2: for each window, collect desired instance_ids from indicator_manager.
         for (leaf_id, chart_id_val, symbol, visible_start, visible_end) in &window_data {
-            let sub_pane_data: Vec<(u64, Option<(f64, f64)>)> = self
-                .indicator_manager
-                .get_instances_for_symbol_in_window(symbol, *chart_id_val)
+            let sub_pane_data: Vec<(u64, Option<(f64, f64)>)> = self.core.indicators().get_instances_for_symbol_in_window(symbol, *chart_id_val)
                 .into_iter()
                 .filter(|i| i.pane > 0)
                 .map(|i| {
-                    let range = self.indicator_manager.calculate_pane_range(
+                    let range = self.core.indicators_mut().calculate_pane_range(
                         i.id,
                         *visible_start,
                         *visible_end,
@@ -6327,7 +6430,7 @@ impl ChartApp {
 
     /// Build indicator catalog items from the IndicatorManager definitions.
     fn build_indicator_catalog(&self) -> Vec<IndicatorCatalogItem> {
-        let mut items: Vec<IndicatorCatalogItem> = self.indicator_manager.get_definitions().iter().map(|def| {
+        let mut items: Vec<IndicatorCatalogItem> = self.core.indicators().get_definitions().iter().map(|def| {
             IndicatorCatalogItem::new(&def.type_id, &def.name, &def.short_name, def.category)
                 .with_description(&def.description)
                 .with_overlay(def.overlay)
@@ -6354,7 +6457,7 @@ impl ChartApp {
         // Part 1 filters exchanges (full slug, slug prefix, or a short alias),
         // part 2 filters account type ("s"/"f", also "spot"/"fut"/"futures"/"perp").
         let mut q_parts = q_full.splitn(3, ':');
-        let q = q_parts.next().unwrap_or("").to_string();
+        let q = q_parts.next().unwrap_or_default().to_string();
         let q_exchange = q_parts.next().map(str::trim).filter(|p| !p.is_empty());
         let q_at = q_parts.next().map(str::trim).filter(|p| !p.is_empty());
 
@@ -6644,9 +6747,9 @@ impl ChartApp {
                         if let Some(active_leaf) = active_leaf_opt {
                             let viewport_sync_on = self.panel_app.panel_grid
                                 .container_id_for_leaf(active_leaf)
-                                .and_then(|cid| self.managers.bubble.bubble_for_chart(cid))
+                                .and_then(|cid| self.bubble_for_chart(cid))
                                 .and_then(|gid| {
-                                    self.managers.bubble.bubble_mut(gid).map(|g| {
+                                    self.core.bubble_mut().bubble.bubble_mut(gid).map(|g| {
                                         g.scale_mode = ScaleMode::Manual;
                                         g.sync_flags.sync_viewport
                                     })
@@ -6764,14 +6867,17 @@ impl ChartApp {
                             // For creation we need full primitive data from the drawing manager.
                             // Extract it before mutably borrowing the window.
                             let active_pid_oa = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-                            let snapshot = active_pid_oa
-                                .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                                .and_then(|panel| {
-                                    let type_id = panel.drawing_manager.get_type_id_at(index)?;
-                                    let points = panel.drawing_manager.get_points_at(index)?;
-                                    let data = panel.drawing_manager.get_data_at(index)?;
-                                    Some((type_id, points, data))
-                                });
+                            let snapshot = {
+                                let drawings_oa = self.core.drawings();
+                                active_pid_oa
+                                    .and_then(|pid| drawings_oa.get(pid))
+                                    .and_then(|dm| {
+                                        let type_id = dm.get_type_id_at(index)?;
+                                        let points = dm.get_points_at(index)?;
+                                        let data = dm.get_data_at(index)?;
+                                        Some((type_id, points, data))
+                                    })
+                            };
                             if let Some((type_id, points, data)) = snapshot {
                                 self.autosave_snapshot();
                                 Some(Command::CreatePrimitive { index, type_id, points, data })
@@ -6796,16 +6902,16 @@ impl ChartApp {
                 ChartOutputAction::SelectPrimitive { id } => {
                     let active_pid_sp = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                     if let Some(pid) = active_pid_sp {
-                        if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                            match id {
-                                Some(primitive_id) => {
-                                    if let Some(idx) = panel.drawing_manager.find_index_by_id(primitive_id) {
-                                        panel.drawing_manager.select_by_index(idx);
-                                    }
+                        let mut drawings_sp = self.core.drawings_mut();
+                        let dm = drawings_sp.entry_or_default(pid);
+                        match id {
+                            Some(primitive_id) => {
+                                if let Some(idx) = dm.find_index_by_id(primitive_id) {
+                                    dm.select_by_index(idx);
                                 }
-                                None => {
-                                    panel.drawing_manager.deselect();
-                                }
+                            }
+                            None => {
+                                dm.deselect();
                             }
                         }
                     }
@@ -6815,11 +6921,11 @@ impl ChartApp {
                     // `bar` and `price` from DefaultChartInputHandler are raw screen (x, y).
                     // Look up the primitive's pane_id to choose the right coordinate system.
                     let primitive_pane_id = active_pid_pd
-                        .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                        .and_then(|panel| {
-                            let idx = panel.drawing_manager.find_index_by_id(id)?;
-                            panel.drawing_manager.get_data_at(idx).map(|d| d.pane_id)
-                        })
+                        .and_then(|pid| self.core.drawings().get(pid)
+                            .and_then(|dm| {
+                                let idx = dm.find_index_by_id(id)?;
+                                dm.get_data_at(idx).map(|d| d.pane_id)
+                            }))
                         .flatten();
 
                     let (data_bar, data_price) = self.screen_to_data_coords(
@@ -6852,22 +6958,22 @@ impl ChartApp {
 
                     // Capture the primitive's points BEFORE drag.
                     let pre_drag = active_pid_pd
-                        .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                        .and_then(|panel| {
-                            let idx = panel.drawing_manager.find_index_by_id(id)?;
-                            let pts = panel.drawing_manager.get_points_at(idx)?;
-                            Some((idx, pts))
+                        .and_then(|pid| {
+                            let guard = self.core.drawings();
+                            guard.get(pid).and_then(|dm| {
+                                let idx = dm.find_index_by_id(id)?;
+                                let pts = dm.get_points_at(idx)?;
+                                Some((idx, pts))
+                            })
                         });
                     self.drag_start_points = pre_drag;
 
-                    if let Some(window) = self.panel_app.panel_grid.active_container() {
-                        if let Some(pid) = active_pid_pd {
-                            if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                if let Some(idx) = panel.drawing_manager.find_index_by_id(id) {
-                                    let drag_ts_ms = mlc_core::bar_f64_to_timestamp_ms(&active_bars[..], data_bar);
-                                    panel.drawing_manager.start_drag(idx, drag_ts_ms, data_price);
-                                }
-                            }
+                    if let Some(pid) = active_pid_pd {
+                        let drag_ts_ms = mlc_core::bar_f64_to_timestamp_ms(&active_bars[..], data_bar);
+                        let mut drawings_pd = self.core.drawings_mut();
+                        let dm = drawings_pd.entry_or_default(pid);
+                        if let Some(idx) = dm.find_index_by_id(id) {
+                            dm.start_drag(idx, drag_ts_ms, data_price);
                         }
                     }
                 }
@@ -6875,10 +6981,12 @@ impl ChartApp {
                     let active_pid_cpd = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                     // Look up the primitive's pane_id to choose the right coordinate system.
                     let primitive_pane_id = active_pid_cpd
-                        .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                        .and_then(|panel| {
-                            let idx = panel.drawing_manager.find_index_by_id(primitive_id)?;
-                            panel.drawing_manager.get_data_at(idx).map(|d| d.pane_id)
+                        .and_then(|pid| {
+                            let guard = self.core.drawings();
+                            guard.get(pid).and_then(|dm| {
+                                let idx = dm.find_index_by_id(primitive_id)?;
+                                dm.get_data_at(idx).map(|d| d.pane_id)
+                            })
                         })
                         .flatten();
 
@@ -6913,23 +7021,23 @@ impl ChartApp {
 
                     // Capture points before control-point reshape too.
                     let pre_drag = active_pid_cpd
-                        .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                        .and_then(|panel| {
-                            let idx = panel.drawing_manager.find_index_by_id(primitive_id)?;
-                            let pts = panel.drawing_manager.get_points_at(idx)?;
-                            Some((idx, pts))
+                        .and_then(|pid| {
+                            let guard = self.core.drawings();
+                            guard.get(pid).and_then(|dm| {
+                                let idx = dm.find_index_by_id(primitive_id)?;
+                                let pts = dm.get_points_at(idx)?;
+                                Some((idx, pts))
+                            })
                         });
                     self.drag_start_points = pre_drag;
 
                     // Use start_control_point_drag (not start_drag) so DragType is ControlPoint.
-                    if let Some(window) = self.panel_app.panel_grid.active_container() {
-                        if let Some(pid) = active_pid_cpd {
-                            if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                if let Some(idx) = panel.drawing_manager.find_index_by_id(primitive_id) {
-                                    let cp_ts_ms = mlc_core::bar_f64_to_timestamp_ms(&active_bars[..], data_bar);
-                                    panel.drawing_manager.start_control_point_drag(idx, control_point, cp_ts_ms, data_price);
-                                }
-                            }
+                    if let Some(pid) = active_pid_cpd {
+                        let cp_ts_ms = mlc_core::bar_f64_to_timestamp_ms(&active_bars[..], data_bar);
+                        let mut drawings_cpd = self.core.drawings_mut();
+                        let dm = drawings_cpd.entry_or_default(pid);
+                        if let Some(idx) = dm.find_index_by_id(primitive_id) {
+                            dm.start_control_point_drag(idx, control_point, cp_ts_ms, data_price);
                         }
                     }
                 }
@@ -6937,10 +7045,12 @@ impl ChartApp {
                     let active_pid_ud = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                     // Use the dragging primitive's pane_id for coordinate conversion.
                     let primitive_pane_id = active_pid_ud
-                        .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                        .and_then(|panel| {
-                            let idx = panel.drawing_manager.dragging()?;
-                            panel.drawing_manager.get_data_at(idx).map(|d| d.pane_id)
+                        .and_then(|pid| {
+                            let guard = self.core.drawings();
+                            guard.get(pid).and_then(|dm| {
+                                let idx = dm.dragging()?;
+                                dm.get_data_at(idx).map(|d| d.pane_id)
+                            })
                         })
                         .flatten();
 
@@ -6975,16 +7085,14 @@ impl ChartApp {
 
                     // Get the dragged primitive id BEFORE update_drag (id doesn't change).
                     let dragged_id = active_pid_ud
-                        .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                        .and_then(|panel| panel.drawing_manager.dragging_primitive_id());
+                        .and_then(|pid| {
+                            let guard = self.core.drawings();
+                            guard.get(pid).and_then(|dm| dm.dragging_primitive_id())
+                        });
 
-                    if let Some(window) = self.panel_app.panel_grid.active_container() {
-                        if let Some(pid) = active_pid_ud {
-                            if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                let drag_ts_ms = mlc_core::bar_f64_to_timestamp_ms(&active_bars[..], data_bar);
-                                panel.drawing_manager.update_drag(drag_ts_ms, data_price);
-                            }
-                        }
+                    if let Some(pid) = active_pid_ud {
+                        let drag_ts_ms = mlc_core::bar_f64_to_timestamp_ms(&active_bars[..], data_bar);
+                        self.core.drawings_mut().entry_or_default(pid).update_drag(drag_ts_ms, data_price);
                     }
                     // Propagate live drag position to sync-group peer leaves.
                     if let Some(prim_id) = dragged_id {
@@ -7001,14 +7109,18 @@ impl ChartApp {
                     let active_pid_ed = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                     // Snapshot the dragged primitive's id BEFORE end_drag() clears it.
                     let dragged_prim_id = active_pid_ed
-                        .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                        .and_then(|panel| panel.drawing_manager.dragging_primitive_id());
+                        .and_then(|pid| {
+                            let guard = self.core.drawings();
+                            guard.get(pid).and_then(|dm| dm.dragging_primitive_id())
+                        });
 
                     // Collect move data BEFORE ending the drag.
                     let move_cmd = if let Some((idx, ref previous_points)) = self.drag_start_points {
                         active_pid_ed
-                            .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                            .and_then(|panel| panel.drawing_manager.get_points_at(idx))
+                            .and_then(|pid| {
+                                let guard = self.core.drawings();
+                                guard.get(pid).and_then(|dm| dm.get_points_at(idx))
+                            })
                             .and_then(|new_points| {
                                 if new_points != *previous_points {
                                     Some(Command::MovePrimitive {
@@ -7026,9 +7138,7 @@ impl ChartApp {
                     self.drag_start_points = None;
 
                     if let Some(pid) = active_pid_ed {
-                        if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                            panel.drawing_manager.end_drag();
-                        }
+                        self.core.drawings_mut().entry_or_default(pid).end_drag();
                     }
                     if let Some(cmd) = move_cmd {
                         self.push_undo_command(cmd);
@@ -7050,30 +7160,28 @@ impl ChartApp {
                     let active_pid_fm = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                     // Record CreatePrimitive if finish_multipoint creates a new primitive.
                     let prev_count = active_pid_fm
-                        .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                        .map(|panel| panel.drawing_manager.count())
+                        .and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.count()))
                         .unwrap_or(0);
 
                     if let Some(pid) = active_pid_fm {
-                        if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                            panel.drawing_manager.finish_multipoint();
-                        }
+                        self.core.drawings_mut().entry_or_default(pid).finish_multipoint();
                     }
 
                     let new_count = active_pid_fm
-                        .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                        .map(|panel| panel.drawing_manager.count())
+                        .and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.count()))
                         .unwrap_or(0);
 
                     if new_count > prev_count {
                         let snapshot = active_pid_fm
-                            .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                            .and_then(|panel| {
-                                let idx = panel.drawing_manager.last_index()?;
-                                let type_id = panel.drawing_manager.get_type_id_at(idx)?;
-                                let points = panel.drawing_manager.get_points_at(idx)?;
-                                let data = panel.drawing_manager.get_data_at(idx)?;
-                                Some((idx, type_id, points, data))
+                            .and_then(|pid| {
+                                let guard = self.core.drawings();
+                                guard.get(pid).and_then(|dm| {
+                                    let idx = dm.last_index()?;
+                                    let type_id = dm.get_type_id_at(idx)?;
+                                    let points = dm.get_points_at(idx)?;
+                                    let data = dm.get_data_at(idx)?;
+                                    Some((idx, type_id, points, data))
+                                })
                             });
                         if let Some((idx, type_id, points, data)) = snapshot {
                             self.push_undo_command(Command::CreatePrimitive {
@@ -7090,33 +7198,31 @@ impl ChartApp {
                     let active_pid_dc = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                     // Record CreatePrimitive if the click completes a new primitive.
                     let prev_count = active_pid_dc
-                        .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                        .map(|panel| panel.drawing_manager.count())
+                        .and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.count()))
                         .unwrap_or(0);
 
                     let click_ts_ms = self.panel_app.panel_grid.active_container()
                         .map(|_w| mlc_core::bar_f64_to_timestamp_ms(&active_bars[..], bar))
                         .unwrap_or(0);
                     if let Some(pid) = active_pid_dc {
-                        if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                            panel.drawing_manager.on_click(click_ts_ms, price);
-                        }
+                        self.core.drawings_mut().entry_or_default(pid).on_click(click_ts_ms, price);
                     }
 
                     let new_count = active_pid_dc
-                        .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                        .map(|panel| panel.drawing_manager.count())
+                        .and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.count()))
                         .unwrap_or(0);
 
                     if new_count > prev_count {
                         let snapshot = active_pid_dc
-                            .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                            .and_then(|panel| {
-                                let idx = panel.drawing_manager.last_index()?;
-                                let type_id = panel.drawing_manager.get_type_id_at(idx)?;
-                                let points = panel.drawing_manager.get_points_at(idx)?;
-                                let data = panel.drawing_manager.get_data_at(idx)?;
-                                Some((idx, type_id, points, data))
+                            .and_then(|pid| {
+                                let guard = self.core.drawings();
+                                guard.get(pid).and_then(|dm| {
+                                    let idx = dm.last_index()?;
+                                    let type_id = dm.get_type_id_at(idx)?;
+                                    let points = dm.get_points_at(idx)?;
+                                    let data = dm.get_data_at(idx)?;
+                                    Some((idx, type_id, points, data))
+                                })
                             });
                         if let Some((idx, type_id, points, data)) = snapshot {
                             self.push_undo_command(Command::CreatePrimitive {
@@ -7201,14 +7307,14 @@ impl ChartApp {
     ) -> bool {
         let group_id = self.panel_app.panel_grid
             .container_id_for_leaf(source_leaf)
-            .and_then(|cid| self.managers.bubble.bubble_for_chart(cid));
+            .and_then(|cid| self.bubble_for_chart(cid));
         let group_id = match group_id {
             Some(gid) => gid,
             None => return false,
         };
 
         // Respect the sync_drawings flag — if disabled, do not write drag result back to group.
-        if let Some(group) = self.managers.bubble.bubble(group_id) {
+        if let Some(group) = self.core.bubble().bubble.bubble(group_id) {
             if !group.sync_flags.sync_drawings {
                 return false;
             }
@@ -7222,11 +7328,13 @@ impl ChartApp {
         let updated_prim = self.panel_app.panel_grid
             .containers()
             .get(&chart_id)
-            .and_then(|w| self.panels_store.chart_panel.get(&w.chart_panel_id))
-            .and_then(|panel| {
-                panel.drawing_manager.primitives().iter()
-                    .find(|p| p.data().id == primitive_id)
-                    .map(|p| p.clone_box())
+            .and_then(|w| {
+                let guard = self.core.drawings();
+                guard.get(w.chart_panel_id).and_then(|dm| {
+                    dm.primitives().iter()
+                        .find(|p| p.data().id == primitive_id)
+                        .map(|p| p.clone_box())
+                })
             });
         let updated_prim = match updated_prim {
             Some(p) => p,
@@ -7234,7 +7342,7 @@ impl ChartApp {
         };
 
         // Replace the primitive in the group by id.
-        if let Some(group) = self.managers.bubble.bubble_mut(group_id) {
+        if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(group_id) {
             if let Some(pos) = group.primitives.iter().position(|p| p.data().id == primitive_id) {
                 group.primitives[pos] = updated_prim;
                 return true;
@@ -7274,8 +7382,10 @@ impl ChartApp {
         };
         let src_pid_pp = self.panel_app.panel_grid.containers().get(&source_chart_id).map(|w| w.chart_panel_id);
         let new_points: Vec<(i64, f64)> = match src_pid_pp
-            .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-            .and_then(|panel| panel.drawing_manager.get_points_by_id(primitive_id))
+            .and_then(|pid| {
+                let guard = self.core.drawings();
+                guard.get(pid).and_then(|dm| dm.get_points_by_id(primitive_id))
+            })
         {
             Some(pts) => pts,
             None => return,
@@ -7288,9 +7398,8 @@ impl ChartApp {
                 None => continue,
             };
             if let Some(peer_pid) = self.panel_app.panel_grid.containers().get(&peer_chart_id).map(|w| w.chart_panel_id) {
-                if let Some(peer_panel) = self.panels_store.chart_panel.get_mut(&peer_pid) {
-                    peer_panel.drawing_manager.update_synced_primitive_points(primitive_id, &new_points);
-                }
+                self.core.drawings_mut().entry_or_default(peer_pid)
+                    .update_synced_primitive_points(primitive_id, &new_points);
             }
         }
     }
@@ -7311,9 +7420,8 @@ impl ChartApp {
         scale_mode: Option<mlc_core::ScaleMode>,
     ) {
         let should_sync = self.panel_app.panel_grid.container_id_for_leaf(source_leaf)
-            .and_then(|cid| self.managers.bubble.bubble_for_chart(cid))
-            .and_then(|gid| self.managers.bubble.bubble(gid))
-            .map(|g| g.sync_flags.sync_viewport)
+            .and_then(|cid| self.bubble_for_chart(cid))
+            .and_then(|gid| self.with_bubble(gid, |g| g.sync_flags.sync_viewport))
             .unwrap_or(true);
         if !should_sync { return; }
 
@@ -7348,9 +7456,9 @@ impl ChartApp {
         // Enumerate peers via TagManager group membership so untagged groups propagate too.
         let source_chart_id_vp = self.panel_app.panel_grid.container_id_for_leaf(source_leaf);
         let group_id_vp = source_chart_id_vp
-            .and_then(|cid| self.managers.bubble.bubble_for_chart(cid));
+            .and_then(|cid| self.bubble_for_chart(cid));
         let sync_leaves: Vec<mlc_core::LeafId> = if let Some(gid) = group_id_vp {
-            self.managers.bubble
+            self.core.bubble().bubble
                 .chart_member_ids(gid)
                 .into_iter()
                 .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
@@ -7643,10 +7751,12 @@ impl ChartApp {
     /// `idx` is the index of the primitive in the active window's drawing manager.
     pub fn snapshot_primitive_settings_to_user_manager(&mut self, idx: usize) {
         let active_pid_snap = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-        if let Some(data) = active_pid_snap
-            .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-            .and_then(|panel| panel.drawing_manager.get_data_at(idx))
-        {
+        let data_opt = active_pid_snap
+            .and_then(|pid| {
+                let guard = self.core.drawings();
+                guard.get(pid).and_then(|dm| dm.get_data_at(idx))
+            });
+        if let Some(data) = data_opt {
             let type_id = data.type_id.clone();
             if let Ok(val) = serde_json::to_value(&data) {
                 self.snapshot_actions.push(SnapshotAction::PrimitiveSettings {
@@ -7657,16 +7767,16 @@ impl ChartApp {
             // Remember this style (including extended style_properties) so the next
             // primitive of the same type is pre-populated with these settings.
             if let Some(pid) = active_pid_snap {
-                if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                    panel.drawing_manager.save_last_style_at_index(idx);
-                    // Persist the last-used style globally so it survives app restarts.
-                    if let Some(style) = panel.drawing_manager.last_style_for(&type_id) {
-                        if let Ok(style_val) = serde_json::to_value(&style) {
-                            self.snapshot_actions.push(SnapshotAction::DrawingStyle {
-                                type_id,
-                                data: style_val,
-                            });
-                        }
+                let mut drawings_snap = self.core.drawings_mut();
+                let dm = drawings_snap.entry_or_default(pid);
+                dm.save_last_style_at_index(idx);
+                // Persist the last-used style globally so it survives app restarts.
+                if let Some(style) = dm.last_style_for(&type_id) {
+                    if let Ok(style_val) = serde_json::to_value(&style) {
+                        self.snapshot_actions.push(SnapshotAction::DrawingStyle {
+                            type_id,
+                            data: style_val,
+                        });
                     }
                 }
             }
@@ -7677,7 +7787,7 @@ impl ChartApp {
     /// app-level snapshot store, keyed by the indicator's `type_id`.
     pub fn snapshot_indicator_settings_to_user_manager(&mut self) {
         if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
-            if let Some(inst) = self.indicator_manager.get_instance(ind_id) {
+            if let Some(inst) = self.core.indicators().get_instance(ind_id) {
                 let type_id = inst.type_id.to_string();
                 if let Ok(val) = serde_json::to_value(inst) {
                     self.snapshot_actions.push(SnapshotAction::IndicatorSettings { type_id, data: val });

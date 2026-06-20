@@ -17,3 +17,4 @@ socket2 = "0.5"
 
 # Workspace path dependencies
 mlc-live-data = { path = "../mlc-live-data", package = "mylittlechart-live-data" }
+mlc-backend-core = { path = "../mlc-backend-core", package = "mylittlechart-backend-core" }

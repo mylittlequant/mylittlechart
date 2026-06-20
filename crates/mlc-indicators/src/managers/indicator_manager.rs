@@ -6,8 +6,8 @@
 //! - Visibility/lock/timeframe integration
 //! - Full indicator catalog (480+ indicators from zengeld-chart-indicators)
 
-use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use serde::{Serialize, Deserialize};
 use super::indicator_bridge::IndicatorBridge;
@@ -544,9 +544,10 @@ pub struct IndicatorManager {
     /// only return instances where window_id == Some(x).
     /// When None, all instances are returned (legacy single-window behavior).
     ///
-    /// Uses `Cell` so that `render_to_scene(&self)` can set/clear this field
-    /// via interior mutability without requiring `&mut self`.
-    pub current_render_window_id: Cell<Option<u64>>,
+    /// Encoded as `AtomicU64` using the `0 = None, n+1 = Some(n)` convention so
+    /// that `IndicatorManager` is naturally `Sync` and can live inside
+    /// `Arc<RwLock<IndicatorManager>>` on `BackendCore`.
+    pub current_render_window_id: AtomicU64,
 
     // ── Recalculation scheduling ──────────────────────────────────────────────
 
@@ -584,7 +585,7 @@ impl IndicatorManager {
             instances: HashMap::new(),
             by_window_id: HashMap::new(),
             next_id: 1,
-            current_render_window_id: Cell::new(None),
+            current_render_window_id: AtomicU64::new(0),
             recalc_mode: RecalcMode::default(),
             dirty_symbols: HashSet::new(),
             new_bar_symbols: HashSet::new(),
@@ -606,7 +607,7 @@ impl IndicatorManager {
         self.instances.clear();
         self.by_window_id.clear();
         self.next_id = 1;
-        self.current_render_window_id.set(None);
+        self.current_render_window_id.store(0, Ordering::Relaxed);
         self.dirty_symbols.clear();
         self.new_bar_symbols.clear();
         self.compute_caches.clear();
@@ -863,13 +864,21 @@ impl IndicatorManager {
         self.instances.get_mut(&id)
     }
 
+    /// Decode the `current_render_window_id` atomic using the `0 = None, n+1 = Some(n)` convention.
+    fn current_render_window_id_get(&self) -> Option<u64> {
+        match self.current_render_window_id.load(Ordering::Relaxed) {
+            0 => None,
+            n => Some(n - 1),
+        }
+    }
+
     /// Get all instances scoped to the current render window
     /// (`current_render_window_id`). The `symbol` parameter is ignored — indicators
     /// are bound to a *window*, not an instrument, and follow whatever the
     /// window happens to display at any moment. In legacy mode
     /// (`current_render_window_id = None`) all instances are returned.
     pub fn get_instances_for_symbol(&self, _symbol: &str) -> Vec<&IndicatorInstance> {
-        match self.current_render_window_id.get() {
+        match self.current_render_window_id_get() {
             Some(wid) => self.get_instances_for_window(wid),
             None => self.instances.values().collect(),
         }

@@ -15,7 +15,13 @@
 //! run them after dropping any `panel_grid.containers_mut()` borrow — or can
 //! capture `window.chart_panel_id` inside the mutating block before the borrow
 //! ends and pass it here (split-block pattern matching S2.2..S2.5).
+//!
+//! After the backend-cutover, `DrawingManager` lives in
+//! `BackendCore::DrawingRegistry` (keyed by `ChartPanelId`).  The drawing
+//! helpers below take `&BackendCore` so callers do not need to worry about
+//! lock acquisition.
 
+use mlc_backend_core::BackendCore;
 use mlc_core::state::ChartPanelId;
 use mlc_core::{DrawingManager, ChartPanelState};
 
@@ -54,36 +60,39 @@ pub fn mirror_chart_type(
 }
 
 // =============================================================================
-// S2.8 drawing_manager helpers
+// Drawing registry helpers (backend-cutover)
 // =============================================================================
 
-/// Get an immutable reference to the `DrawingManager` for the given panel id.
+/// Get an immutable reference to the `DrawingManager` for `chart_panel_id`
+/// from `BackendCore::DrawingRegistry`.
 ///
-/// Returns `None` if the `ChartPanelState` entry is missing from the store
-/// (e.g. the canvas leaf was not yet seeded — treat as no primitives).
-pub fn drawing_manager_for_panel(
-    panels_store: &TradingPanelsStore,
+/// Returns `None` when no entry has been registered yet.
+pub fn with_drawing_manager<R, F>(
+    core: &BackendCore,
     chart_panel_id: ChartPanelId,
-) -> Option<&DrawingManager> {
-    panels_store
-        .chart_panel
-        .get(&chart_panel_id)
-        .map(|panel| &panel.drawing_manager)
+    f: F,
+) -> Option<R>
+where
+    F: FnOnce(&DrawingManager) -> R,
+{
+    let guard = core.drawings();
+    guard.get(chart_panel_id).map(f)
 }
 
-/// Get a mutable reference to the `DrawingManager` for the given panel id.
-///
-/// Lazy-inserts a default `ChartPanelState` entry when missing (same policy as
-/// `ensure_chart_panel_state`) so callers do not need to pre-seed.
-pub fn drawing_manager_for_panel_mut(
-    panels_store: &mut TradingPanelsStore,
+/// Get a mutable reference to the `DrawingManager` for `chart_panel_id`
+/// from `BackendCore::DrawingRegistry`, lazy-inserting a default entry when
+/// missing.
+pub fn with_drawing_manager_mut<R, F>(
+    core: &BackendCore,
     chart_panel_id: ChartPanelId,
-) -> &mut DrawingManager {
-    let entry = panels_store
-        .chart_panel
-        .entry(chart_panel_id)
-        .or_insert_with(|| ChartPanelState::new(chart_panel_id));
-    &mut entry.drawing_manager
+    f: F,
+) -> R
+where
+    F: FnOnce(&mut DrawingManager) -> R,
+{
+    let mut guard = core.drawings_mut();
+    let dm = guard.entry_or_default(chart_panel_id);
+    f(dm)
 }
 
 // =============================================================================
@@ -131,5 +140,4 @@ mod tests {
         // Other defaults preserved on lazy insert.
         assert!(entry.show_candles);
     }
-
 }

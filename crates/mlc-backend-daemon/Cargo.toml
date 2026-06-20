@@ -1,0 +1,23 @@
+[package]
+name = "mylittlechart-backend-daemon"
+version.workspace = true
+edition.workspace = true
+description = "Mode-2 backend daemon — Arc<BackendCore> + HTTP server, no embedded ChartApp. N external apps attach over HTTP/WS."
+
+[[bin]]
+name = "mlc-backend-daemon"
+path = "src/main.rs"
+
+[dependencies]
+mlc-backend-core = { path = "../mlc-backend-core", package = "mylittlechart-backend-core" }
+mlc-live-data = { path = "../mlc-live-data", package = "mylittlechart-live-data" }
+mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "sync"] }
+axum = { version = "0.7", features = ["http1", "json"] }
+tower = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+futures-util = "0.3"
+tokio-stream = { version = "0.1", features = ["sync"] }

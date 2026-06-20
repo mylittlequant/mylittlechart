@@ -55,3 +55,6 @@ secrets.toml
 credentials.json
 
 perf_*.log
+
+# harness runtime logs
+/.harness-logs/

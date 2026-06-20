@@ -21,7 +21,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use mlc_app::ChartApp;
-use mlc_core::Bar;
 use mlc_core::state::ChartId;
 use mlc_core::tag_manager::BubbleId;
 use mlc_live_data::DataBridge;
@@ -115,8 +114,7 @@ impl HeadlessChartApp {
     /// Number of bars in the renderer-read bubble for this chart.
     pub fn chart_bar_count(&self, cid: ChartId) -> usize {
         self.chart_bubble(cid)
-            .and_then(|bid| (&self.app.managers.bubble).bubble(bid))
-            .map(|b| b.bars.len())
+            .and_then(|bid| self.app.with_bubble(bid, |b| b.bars.len()))
             .unwrap_or(0)
     }
 
@@ -132,7 +130,7 @@ impl HeadlessChartApp {
     /// `(bubble_id, exchange, account_type, symbol, tf, bars.len, attached_charts)`
     /// for every bubble in the store.
     pub fn dump_all_bubbles(&self) -> Vec<BubbleSummary> {
-        let store = (&self.app.managers.bubble);
+        let store = &self.app.core.bubble().bubble;
         store.bubbles().map(|b| BubbleSummary {
             id: b.id,
             exchange: b.exchange.clone(),
@@ -146,7 +144,7 @@ impl HeadlessChartApp {
 
     /// Resolve the bubble `bubble_for_instrument` would pick for this triplet.
     pub fn bubble_for_instrument(&self, exchange: &str, account_type: &str, symbol: &str) -> Option<BubbleId> {
-        (&self.app.managers.bubble)
+        (&self.app.core.bubble().bubble)
             .bubble_for_instrument(exchange, account_type, symbol)
     }
 
@@ -161,8 +159,7 @@ impl HeadlessChartApp {
     /// HeadlessChartApp asserts and the agent-server HTTP snapshot agree.
     pub fn derived_counts(&self, cid: ChartId) -> DerivedCounts {
         let Some(bid) = self.chart_bubble(cid) else { return DerivedCounts::default(); };
-        let Some(b) = (&self.app.managers.bubble).bubble(bid) else { return DerivedCounts::default(); };
-        DerivedCounts {
+        self.app.with_bubble(bid, |b| DerivedCounts {
             bars:                b.bars.len(),
             footprint_bars:      b.footprint_bars.as_ref().map(|v| v.len()).unwrap_or(0),
             renko_bars:          b.renko_bars.as_ref().map(|v| v.len()).unwrap_or(0),
@@ -177,7 +174,7 @@ impl HeadlessChartApp {
             dom_trade_dots:      b.dom_trade_dots.as_ref().map(|v| v.len()).unwrap_or(0),
             liq_heatmap_columns: b.liq_heatmap.as_ref().map(|h| h.bucket_count()).unwrap_or(0),
             liq_dots:            b.liq_dots.as_ref().map(|v| v.len()).unwrap_or(0),
-        }
+        }).unwrap_or_default()
     }
 }
 

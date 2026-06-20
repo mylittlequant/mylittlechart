@@ -29,8 +29,7 @@ impl ChartApp {
         // modal yet.
         let active_pid_inline = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
         let selected_idx = active_pid_inline
-            .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-            .and_then(|panel| panel.drawing_manager.selected());
+            .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.selected()));
 
         let idx = match selected_idx {
             Some(i) => i,
@@ -60,8 +59,7 @@ impl ChartApp {
             // ── Stroke color ─────────────────────────────────────────────────
             "inline:color" => {
                 let current_color = active_pid_inline
-                    .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                    .and_then(|panel| panel.drawing_manager.get_data_at(idx))
+                    .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
                     .map(|d| d.color.stroke.clone());
 
                 // Look up the button rect from the input coordinator so the
@@ -84,8 +82,7 @@ impl ChartApp {
             // ── Text color ───────────────────────────────────────────────────
             "inline:text_color" => {
                 let current_color = active_pid_inline
-                    .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                    .and_then(|panel| panel.drawing_manager.get_data_at(idx))
+                    .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
                     .and_then(|d| d.text.and_then(|t| t.color));
 
                 let widget_id_str = "ilb:inline:text_color".to_string();
@@ -107,18 +104,15 @@ impl ChartApp {
             "inline:delete" => {
                 // Capture the primitive ID before deletion so alerts can be cleaned up.
                 let prim_id = active_pid_inline
-                    .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                    .and_then(|panel| panel.drawing_manager.get_data_at(idx))
+                    .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
                     .map(|d| d.id);
                 if let Some(pid) = active_pid_inline {
-                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                        panel.drawing_manager.delete_selected();
-                        eprintln!("[ChartApp] inline: deleted selected primitive");
-                    }
+                    self.core.drawings_mut().entry_or_default(pid).delete_selected();
+                    eprintln!("[ChartApp] inline: deleted selected primitive");
                 }
                 self.sync_drawing_back_to_group();
                 if let Some(pid) = prim_id {
-                    self.managers.alert.remove_alerts_for_drawing(pid);
+                    self.core.bubble_mut().alert.remove_alerts_for_drawing(pid);
                 }
                 self.autosave_snapshot();
             }
@@ -126,10 +120,8 @@ impl ChartApp {
             // ── Lock toggle ──────────────────────────────────────────────────
             "inline:lock" => {
                 if let Some(pid) = active_pid_inline {
-                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                        panel.drawing_manager.toggle_selected_lock();
-                        eprintln!("[ChartApp] inline: toggled lock on selected primitive");
-                    }
+                    self.core.drawings_mut().entry_or_default(pid).toggle_selected_lock();
+                    eprintln!("[ChartApp] inline: toggled lock on selected primitive");
                 }
                 self.sync_drawing_back_to_group();
             }
@@ -137,8 +129,7 @@ impl ChartApp {
             // ── Line style cycle ─────────────────────────────────────────────
             "inline:style" => {
                 let data_opt = active_pid_inline
-                    .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                    .and_then(|panel| panel.drawing_manager.get_data_at(idx));
+                    .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)));
 
                 if let Some(mut data) = data_opt {
                     data.style = match data.style {
@@ -150,9 +141,7 @@ impl ChartApp {
                     };
                     let style_str = data.style.as_str().to_string();
                     if let Some(pid) = active_pid_inline {
-                        if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                            panel.drawing_manager.set_data_at(idx, &data);
-                        }
+                        self.core.drawings_mut().entry_or_default(pid).set_data_at(idx, &data);
                     }
                     self.sync_drawing_back_to_group();
                     eprintln!("[ChartApp] inline: cycled line style to {}", style_str);
@@ -163,10 +152,8 @@ impl ChartApp {
             // ── Width cycle ──────────────────────────────────────────────────
             "inline:width" => {
                 if let Some(pid) = active_pid_inline {
-                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                        panel.drawing_manager.increase_selected_width();
-                        eprintln!("[ChartApp] inline: increased line width");
-                    }
+                    self.core.drawings_mut().entry_or_default(pid).increase_selected_width();
+                    eprintln!("[ChartApp] inline: increased line width");
                 }
                 self.sync_drawing_back_to_group();
                 self.snapshot_primitive_settings_to_user_manager(idx);
@@ -181,16 +168,16 @@ impl ChartApp {
             "inline:alert" => {
                 // S2.7.1e: read symbol via branch_meta (B1).
                 let inline_alert_symbol: String = self.panel_app.panel_grid.active_container_id()
-                    .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                    .and_then(|cid| self.symbol_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_default();
                 let inline_alert_price_fallback = self.panel_app.panel_grid.active_container()
-                    .and_then(|w| None::<&mlc_core::Bar>)
+                    .and_then(|_w| None::<&mlc_core::Bar>)
                     .map(|b| b.close)
                     .unwrap_or(0.0);
                 if let Some(pid) = active_pid_inline {
-                    if let Some(panel) = self.panels_store.chart_panel.get(&pid) {
-                    if let Some(prim) = panel.drawing_manager.selected_primitive() {
+                    let guard = self.core.drawings();
+                    if let Some(prim) = guard.get(pid).and_then(|dm| dm.selected_primitive()) {
                         let prim_id = prim.data().id;
                         let label = localize_primitive_name(prim.type_id(), prim.display_name());
                         let pts = prim.points();
@@ -200,12 +187,12 @@ impl ChartApp {
                             inline_alert_price_fallback
                         };
                         let source = mlc_alerts::AlertSource::Drawing { primitive_id: prim_id, label };
+                        drop(guard);
                         self.panel_app.alert_settings_state.open_new(source, &inline_alert_symbol, price);
                         self.panel_app.alert_settings_state.pin_initial_position(
                             self.content_rect.width, self.content_rect.height,
                         );
                         eprintln!("[ChartApp] inline alert: opened modal for primitive {}", prim_id);
-                    }
                     }
                 }
             }
@@ -246,7 +233,7 @@ impl ChartApp {
             _ if action.starts_with("inline:style_option:") => {
                 // ── Style option selected ────────────────────────────────────
                 use mlc_core::drawing::primitives_v2::LineStyle;
-                let value = action.strip_prefix("inline:style_option:").unwrap_or("");
+                let value = action.strip_prefix("inline:style_option:").unwrap_or_default();
                 let new_style = match value {
                     "solid"        => Some(LineStyle::Solid),
                     "dashed"       => Some(LineStyle::Dashed),
@@ -257,15 +244,12 @@ impl ChartApp {
                 };
                 if let Some(style) = new_style {
                     if let Some(mut data) = active_pid_inline
-                        .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                        .and_then(|panel| panel.drawing_manager.get_data_at(idx))
+                        .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
                     {
                         data.style = style;
                         let style_str = data.style.as_str().to_string();
                         if let Some(pid) = active_pid_inline {
-                            if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                panel.drawing_manager.set_data_at(idx, &data);
-                            }
+                            self.core.drawings_mut().entry_or_default(pid).set_data_at(idx, &data);
                         }
                         self.sync_drawing_back_to_group();
                         eprintln!("[ChartApp] inline: set line style to {}", style_str);
@@ -278,17 +262,14 @@ impl ChartApp {
 
             _ if action.starts_with("inline:width_option:") => {
                 // ── Width option selected ────────────────────────────────────
-                let value = action.strip_prefix("inline:width_option:").unwrap_or("");
+                let value = action.strip_prefix("inline:width_option:").unwrap_or_default();
                 if let Ok(new_width) = value.parse::<f64>() {
                     if let Some(mut data) = active_pid_inline
-                        .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                        .and_then(|panel| panel.drawing_manager.get_data_at(idx))
+                        .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
                     {
                         data.width = new_width;
                         if let Some(pid) = active_pid_inline {
-                            if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                panel.drawing_manager.set_data_at(idx, &data);
-                            }
+                            self.core.drawings_mut().entry_or_default(pid).set_data_at(idx, &data);
                         }
                         self.sync_drawing_back_to_group();
                         eprintln!("[ChartApp] inline: set line width to {}", new_width);
@@ -354,7 +335,7 @@ impl ChartApp {
                             )
                         } else {
                             // Only one colon — treat as "SYMBOL:exchange", look up account_type.
-                            let at = self.sidebar_state.watchlist_manager.active_list()
+                            let at = self.core.watchlist().active_list()
                                 .and_then(|list| {
                                     list.all_symbols().iter()
                                         .find(|ws| ws.symbol == remainder && ws.exchange == at_part)
@@ -367,7 +348,7 @@ impl ChartApp {
                         (composite, self.active_exchange.as_str(), "S".to_string())
                     };
                 // Resolve ExchangeId from string.
-                let resolved_exchange = self.exchange_symbols
+                let resolved_exchange = self.core.exchange_symbols_read()
                     .keys()
                     .find(|eid| eid.as_str() == exchange_part)
                     .copied()
@@ -378,46 +359,44 @@ impl ChartApp {
                 let old_trade_exchange = self.active_exchange;
                 let active_chart_id = self.panel_app.panel_grid.active_container_id();
                 let old_trade_symbol: String = active_chart_id
-                    .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                    .and_then(|cid| self.symbol_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_default();
                 let old_trade_at = active_chart_id
-                    .and_then(|cid| self.managers.bubble.account_type_for_chart(cid))
-                    .map(|at| crate::account_type_from_label(at))
+                    .and_then(|cid| self.account_type_for_chart(cid))
+                    .map(|at| crate::account_type_from_label(&at))
                     .unwrap_or(digdigdig3::AccountType::Spot);
                 let timeframe = active_chart_id
-                    .and_then(|cid| self.managers.bubble.timeframe_for_chart(cid))
-                    .cloned()
+                    .and_then(|cid| self.timeframe_for_chart(cid))
                     .unwrap_or_default();
                 let old_sym = active_chart_id
-                    .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                    .and_then(|cid| self.symbol_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_default();
                 let old_exchange = active_chart_id
-                    .and_then(|cid| self.managers.bubble.exchange_for_chart(cid))
+                    .and_then(|cid| self.exchange_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_default();
                 let old_account_type = active_chart_id
-                    .and_then(|cid| self.managers.bubble.account_type_for_chart(cid))
+                    .and_then(|cid| self.account_type_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_else(|| "S".to_string());
                 let active_pid_wl = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     if let Some(pid) = active_pid_wl {
-                        if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                            window.snapshot_drawings_for_symbol(&old_sym, &old_exchange, &old_account_type, &panel.drawing_manager);
-                            panel.drawing_manager.set_current_symbol_key(sym_part, exchange_part, &wl_at_label);
-                            panel.drawing_manager.clear_all_primitives();
-                            window.restore_drawings_for_symbol(sym_part, exchange_part, &wl_at_label, &mut panel.drawing_manager);
-                        }
+                        let mut guard = self.core.drawings_mut();
+                        let dm = guard.entry_or_default(pid);
+                        window.snapshot_drawings_for_symbol(&old_sym, &old_exchange, &old_account_type, dm);
+                        dm.set_current_symbol_key(sym_part, exchange_part, &wl_at_label);
+                        dm.clear_all_primitives();
+                        window.restore_drawings_for_symbol(sym_part, exchange_part, &wl_at_label, dm);
                     }
-                    {};
                     window.viewport.bar_count = 0;
                     window.pending_symbol_load = true;
                 }
                 if let Some(chart_id) = active_chart_id {
-                    if let Some(bid) = self.managers.bubble.bubble_for_chart(chart_id) {
-                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                    if let Some(bid) = self.bubble_for_chart(chart_id) {
+                        if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(bid) {
                             bubble.symbol = sym_part.to_string();
                             bubble.timeframe = timeframe.clone();
                             bubble.exchange = exchange_part.to_string();
@@ -434,15 +413,15 @@ impl ChartApp {
                 // Unsubscribe only the old symbol's trade stream, leaving other
                 // windows' streams intact.
                 if !old_trade_symbol.is_empty() {
-                    self.bridge.unsubscribe_trades(old_trade_exchange, &old_trade_symbol, old_trade_at);
+                    self.core.bridge.unsubscribe_trades(old_trade_exchange, &old_trade_symbol, old_trade_at);
                 }
                 let eid_str = resolved_exchange.as_str();
                 if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
                     eprintln!("[ChartApp] Exchange {} is disabled, skipping connector call (watchlist modal item click)", eid_str);
                 } else {
                     let wl_at = crate::account_type_from_label(&wl_at_label);
-                    self.bridge.ensure_connector(resolved_exchange);
-                    self.bridge.request_bars(resolved_exchange, sym_part, &timeframe, wl_at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), false);
+                    self.core.bridge.ensure_connector(resolved_exchange);
+                    self.core.bridge.request_bars(resolved_exchange, sym_part, &timeframe, wl_at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), false);
                 }
                 self.autosave_snapshot();
                 eprintln!("[WatchlistModal] symbol selected: {} @ {}", sym_part, exchange_part);
@@ -464,17 +443,17 @@ impl ChartApp {
                             )
                         } else {
                             // Only one colon — "SYMBOL:exchange", look up account_type.
-                            let at = self.sidebar_state.watchlist_manager.active_list()
+                            let at = self.core.watchlist().active_list()
                                 .and_then(|l| l.all_symbols().iter().find(|ws| ws.symbol == remainder && ws.exchange == at_part).map(|ws| ws.account_type.clone()))
                                 .unwrap_or_default();
                             (remainder, at_part.to_string(), at)
                         }
                     } else {
                         // No colon — plain symbol, look up exchange + account_type.
-                        let ex = self.sidebar_state.watchlist_manager.active_list()
+                        let ex = self.core.watchlist().active_list()
                             .and_then(|l| l.all_symbols().iter().find(|ws| ws.symbol == key).map(|ws| ws.exchange.clone()))
                             .unwrap_or_else(|| self.active_exchange.as_str().to_string());
-                        let at = self.sidebar_state.watchlist_manager.active_list()
+                        let at = self.core.watchlist().active_list()
                             .and_then(|l| l.all_symbols().iter().find(|ws| ws.symbol == key).map(|ws| ws.account_type.clone()))
                             .unwrap_or_default();
                         (key, ex, at)
@@ -482,12 +461,15 @@ impl ChartApp {
                 let exchange = exchange_owned.as_str();
                 let account_type = account_type_owned.as_str();
                 // Remove symbol from snapshot (if active) before removing from list.
-                if let Some(list) = self.sidebar_state.watchlist_manager.active_list_mut() {
-                    if let Some(ref mut snap) = list.order_snapshot {
-                        snap.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == account_type));
+                {
+                    let mut wl = self.core.watchlist_mut();
+                    if let Some(list) = wl.active_list_mut() {
+                        if let Some(ref mut snap) = list.order_snapshot {
+                            snap.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == account_type));
+                        }
                     }
+                    wl.remove_symbol(symbol, exchange, account_type);
                 }
-                self.sidebar_state.watchlist_manager.remove_symbol(symbol, exchange, account_type);
                 self.watchlist_actions.push(crate::WatchlistAction::Remove { symbol: symbol.to_string(), exchange: exchange.to_string(), account_type: account_type.to_string() });
                 self.watchlists_dirty = true;
                 self.persist_watchlists();
@@ -497,7 +479,7 @@ impl ChartApp {
             _ if rest.starts_with("group:") => {
                 let id_str = &rest["group:".len()..];
                 if let Ok(id) = id_str.parse::<u64>() {
-                    self.sidebar_state.watchlist_manager.active_list_id = id;
+                    self.core.watchlist_mut().active_list_id = id;
                     self.watchlist_actions.push(crate::WatchlistAction::SetActiveList { id });
                     self.watchlists_dirty = true;
                     self.persist_watchlists();
@@ -508,7 +490,7 @@ impl ChartApp {
             _ if rest.starts_with("group_delete:") => {
                 let id_str = &rest["group_delete:".len()..];
                 if let Ok(id) = id_str.parse::<u64>() {
-                    let deleted = self.sidebar_state.watchlist_manager.delete_list(id);
+                    let deleted = self.core.watchlist_mut().delete_list(id);
                     self.watchlist_actions.push(crate::WatchlistAction::DeleteList { id });
                     self.watchlists_dirty = true;
                     self.persist_watchlists();
@@ -517,7 +499,7 @@ impl ChartApp {
             }
             // Create new watchlist — open name input modal with auto-generated name
             "group_add" => {
-                let max_n = self.sidebar_state.watchlist_manager.lists.iter()
+                let max_n = self.core.watchlist().lists.iter()
                     .filter_map(|l| l.name.strip_prefix("Watchlist "))
                     .filter_map(|s| s.parse::<u32>().ok())
                     .max()
@@ -530,7 +512,7 @@ impl ChartApp {
             _ if rest.starts_with("group_rename:") => {
                 let id_str = &rest["group_rename:".len()..];
                 if let Ok(id) = id_str.parse::<u64>() {
-                    if let Some(list) = self.sidebar_state.watchlist_manager.lists.iter().find(|l| l.id == id) {
+                    if let Some(list) = self.core.watchlist().lists.iter().find(|l| l.id == id) {
                         let name = list.name.clone();
                         self.wl_group_name_input.open_rename(id, &name);
                         eprintln!("[WatchlistModal] opening group name input for rename id={}", id);
@@ -558,7 +540,7 @@ impl ChartApp {
             }
             "set_create" => {
                 // Compute next available name: "My Indicator Set 1", "My Indicator Set 2", etc.
-                let max_n = self.panel_app.template_manager.indicator_sets
+                let max_n = self.core.template_manager().indicator_sets
                     .iter()
                     .filter_map(|s| s.name.strip_prefix("My Indicator Set "))
                     .filter_map(|s| s.parse::<u32>().ok())
@@ -594,7 +576,7 @@ impl ChartApp {
     /// Deploy an indicator set by its ID: replace all current indicators with
     /// the set's indicators (exclusive — like a preset, only one set active).
     pub(super) fn deploy_indicator_set(&mut self, set_id: &str) {
-        let set = self.panel_app.template_manager.indicator_sets
+        let set = self.core.template_manager().indicator_sets
             .iter()
             .find(|s| s.id == set_id)
             .cloned();
@@ -606,18 +588,18 @@ impl ChartApp {
 
         // S2.7.1e: read symbol via branch_meta (B1).
         let symbol: String = self.panel_app.panel_grid.active_container_id()
-            .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+            .and_then(|cid| self.symbol_for_chart(cid))
             .map(String::from)
             .unwrap_or_default();
 
         // Remove all existing indicators (exclusive deployment, like preset)
-        let existing_ids: Vec<u64> = self.indicator_manager
-            .get_instances_for_symbol(&symbol)
+        let existing_ids: Vec<u64> = self.core.indicators()
+                                .get_instances_for_symbol(&symbol)
             .iter()
             .map(|inst| inst.id)
             .collect();
         for id in &existing_ids {
-            self.indicator_manager.remove_instance(*id);
+            self.core.indicators_mut().remove_instance(*id);
         }
         // Clear orphan pre_tag_indicator_ids from auto_bubble for every window so the
         // Object Tree does not show phantom items after a bulk indicator replace.
@@ -629,7 +611,7 @@ impl ChartApp {
                 .filter(|&bid| bid != mlc_core::tag_manager::BubbleId(0))
                 .collect();
             for bid in auto_bids {
-                if let Some(auto_bub) = self.managers.bubble.bubble_mut(bid) {
+                if let Some(auto_bub) = self.core.bubble_mut().bubble.bubble_mut(bid) {
                     auto_bub.pre_tag_indicator_ids.retain(|iid| !existing_ids.contains(iid));
                 }
             }
@@ -640,34 +622,38 @@ impl ChartApp {
 
         // Create new indicators from the set with full params/outputs
         for tmpl in &set.indicators {
-            if let Some(new_id) = self.indicator_manager.create_instance(&tmpl.type_id) {
+            let new_id_opt = self.core.indicators_mut().create_instance(&tmpl.type_id);
+            if let Some(new_id) = new_id_opt {
                 if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
                     if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(active_leaf) {
-                        self.indicator_manager.assign_window(new_id, Some(chart_id.0));
+                        self.core.indicators_mut().assign_window(new_id, Some(chart_id.0));
                     }
                 }
                 // Apply saved params, output styles, and visibility from the template
-                if let Some(inst) = self.indicator_manager.get_instance_mut(new_id) {
-                    // Restore instance-level visibility
-                    inst.visible = tmpl.visible;
-                    // Restore params
-                    for (k, v) in &tmpl.params {
-                        if let Ok(iv) = serde_json::from_value(v.clone()) {
-                            inst.params.insert(k.clone(), iv);
+                {
+                    let mut im = self.core.indicators_mut();
+                    if let Some(inst) = im.get_instance_mut(new_id) {
+                        // Restore instance-level visibility
+                        inst.visible = tmpl.visible;
+                        // Restore params
+                        for (k, v) in &tmpl.params {
+                            if let Ok(iv) = serde_json::from_value(v.clone()) {
+                                inst.params.insert(k.clone(), iv);
+                            }
                         }
-                    }
-                    // Restore output styles
-                    for (key, out_style) in &tmpl.outputs {
-                        let entry = inst.outputs.entry(key.clone())
-                            .or_insert_with(Default::default);
-                        if let Some(ref c) = out_style.color {
-                            entry.color = Some(c.clone());
-                        }
-                        if let Some(lw) = out_style.line_width {
-                            entry.line_width = Some(lw);
-                        }
-                        if let Some(vis) = out_style.visible {
-                            entry.visible = vis;
+                        // Restore output styles
+                        for (key, out_style) in &tmpl.outputs {
+                            let entry = inst.outputs.entry(key.clone())
+                                .or_insert_with(Default::default);
+                            if let Some(ref c) = out_style.color {
+                                entry.color = Some(c.clone());
+                            }
+                            if let Some(lw) = out_style.line_width {
+                                entry.line_width = Some(lw);
+                            }
+                            if let Some(vis) = out_style.visible {
+                                entry.visible = vis;
+                            }
                         }
                     }
                 }
@@ -681,10 +667,10 @@ impl ChartApp {
 
         let (active_window_id, bars) = self.panel_app.panel_grid.docking().active_leaf()
             .and_then(|leaf| self.panel_app.panel_grid.container_id_for_leaf(leaf).map(|cid| (cid.0, leaf)))
-            .and_then(|(cid, leaf)| self.panel_app.panel_grid.container_for_leaf(leaf).map(|w| (cid, Vec::<mlc_core::Bar>::new())))
+            .and_then(|(cid, leaf)| self.panel_app.panel_grid.container_for_leaf(leaf).map(|_w| (cid, Vec::<mlc_core::Bar>::new())))
             .unwrap_or_default();
         let _ = symbol; // legacy, no longer needed for indicator calc
-        self.indicator_manager.calculate_all_for_window(active_window_id, &bars);
+        self.core.indicators_mut().calculate_all_for_window(active_window_id, &bars);
         self.sync_sub_panes_from_manager();
         self.autosave_snapshot();
         self.sidebar_data_dirty = true;
@@ -701,43 +687,47 @@ impl ChartApp {
 
         // S2.7.1e: read symbol via branch_meta (B1).
         let symbol: String = self.panel_app.panel_grid.active_container_id()
-            .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+            .and_then(|cid| self.symbol_for_chart(cid))
             .map(String::from)
             .unwrap_or_default();
 
-        let instances = self.indicator_manager.get_instances_for_symbol(&symbol);
-        let templates: Vec<IndicatorTemplate> = instances
-            .iter()
-            .map(|inst| {
-                // Snapshot params: convert IndicatorValue → serde_json::Value
-                let params: std::collections::HashMap<String, serde_json::Value> = inst.params
-                    .iter()
-                    .filter_map(|(k, v)| {
-                        serde_json::to_value(v).ok().map(|jv| (k.clone(), jv))
-                    })
-                    .collect();
-
-                // Snapshot output styles (color, line_width, visible)
-                let outputs: std::collections::HashMap<String, OutputStyleConfig> = inst.outputs
-                    .iter()
-                    .map(|(k, out)| {
-                        (k.clone(), OutputStyleConfig {
-                            color: out.color.clone(),
-                            line_width: out.line_width,
-                            visible: Some(out.visible),
+        let templates: Vec<IndicatorTemplate> = {
+            let im = self.core.indicators();
+            let instances = im.get_instances_for_symbol(&symbol);
+            instances
+                .iter()
+                .map(|inst| {
+                    // Snapshot params: convert IndicatorValue → serde_json::Value
+                    let params: std::collections::HashMap<String, serde_json::Value> = inst.params
+                        .iter()
+                        .filter_map(|(k, v)| {
+                            serde_json::to_value(v).ok().map(|jv| (k.clone(), jv))
                         })
-                    })
-                    .collect();
+                        .collect();
 
-                IndicatorTemplate::new(&inst.type_id, &inst.name, inst.visible, params, outputs)
-            })
-            .collect();
+                    // Snapshot output styles (color, line_width, visible)
+                    let outputs: std::collections::HashMap<String, OutputStyleConfig> = inst.outputs
+                        .iter()
+                        .map(|(k, out)| {
+                            (k.clone(), OutputStyleConfig {
+                                color: out.color.clone(),
+                                line_width: out.line_width,
+                                visible: Some(out.visible),
+                            })
+                        })
+                        .collect();
 
+                    IndicatorTemplate::new(&inst.type_id, &inst.name, inst.visible, params, outputs)
+                })
+                .collect()
+        };
+
+        let templates_count = templates.len();
         let set = mlc_core::templates::indicator_set::IndicatorSet::from_templates(
             &name,
             templates,
         );
-        eprintln!("[ChartApp] created indicator set '{}' from {} active indicators", name, instances.len());
+        eprintln!("[ChartApp] created indicator set '{}' from {} active indicators", name, templates_count);
         self.template_actions.push(crate::TemplateAction::AddIndicatorSet(set));
     }
 
@@ -829,7 +819,7 @@ impl ChartApp {
                 let resolved_exchange = if exchange_id_part.is_empty() {
                     self.active_exchange
                 } else {
-                    self.exchange_symbols
+                    self.core.exchange_symbols_read()
                         .keys()
                         .find(|eid| eid.as_str() == exchange_id_part)
                         .copied()
@@ -842,54 +832,52 @@ impl ChartApp {
                         // S2.7.1e: read via branch_meta (B1).
                         let active_chart_id = self.panel_app.panel_grid.active_container_id();
                         let previous_symbol: String = active_chart_id
-                            .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                            .and_then(|cid| self.symbol_for_chart(cid))
                             .map(String::from)
                             .unwrap_or_default();
                         let old_trade_exchange = self.active_exchange;
                         let old_trade_at = active_chart_id
-                            .and_then(|cid| self.managers.bubble.account_type_for_chart(cid))
-                            .map(|at| crate::account_type_from_label(at))
+                            .and_then(|cid| self.account_type_for_chart(cid))
+                            .map(|at| crate::account_type_from_label(&at))
                             .unwrap_or(digdigdig3::AccountType::Spot);
                         let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
                         let new_symbol_str = symbol_part.to_string();
                         // Set symbol, clear bars, and request data asynchronously.
                         let timeframe = active_chart_id
-                            .and_then(|cid| self.managers.bubble.timeframe_for_chart(cid))
-                            .cloned()
+                            .and_then(|cid| self.timeframe_for_chart(cid))
                             .unwrap_or_default();
                         // account_type is embedded in the item key — use it directly.
                         let search_at_label = item_at_label.clone();
                         let old_sym_search = active_chart_id
-                            .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                            .and_then(|cid| self.symbol_for_chart(cid))
                             .map(String::from)
                             .unwrap_or_default();
                         let old_exch_search = active_chart_id
-                            .and_then(|cid| self.managers.bubble.exchange_for_chart(cid))
+                            .and_then(|cid| self.exchange_for_chart(cid))
                             .map(String::from)
                             .unwrap_or_default();
                         let old_at_search = active_chart_id
-                            .and_then(|cid| self.managers.bubble.account_type_for_chart(cid))
+                            .and_then(|cid| self.account_type_for_chart(cid))
                             .map(String::from)
                             .unwrap_or_else(|| "S".to_string());
                         let active_pid_srch = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                             if let Some(pid) = active_pid_srch {
-                                if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                    window.snapshot_drawings_for_symbol(&old_sym_search, &old_exch_search, &old_at_search, &panel.drawing_manager);
-                                    panel.drawing_manager.set_current_symbol_key(symbol_part, resolved_exchange.as_str(), &search_at_label);
-                                    panel.drawing_manager.clear_all_primitives();
-                                    window.restore_drawings_for_symbol(symbol_part, resolved_exchange.as_str(), &search_at_label, &mut panel.drawing_manager);
-                                }
+                                let mut guard = self.core.drawings_mut();
+                                let dm = guard.entry_or_default(pid);
+                                window.snapshot_drawings_for_symbol(&old_sym_search, &old_exch_search, &old_at_search, dm);
+                                dm.set_current_symbol_key(symbol_part, resolved_exchange.as_str(), &search_at_label);
+                                dm.clear_all_primitives();
+                                window.restore_drawings_for_symbol(symbol_part, resolved_exchange.as_str(), &search_at_label, dm);
                             }
-                            {};
                             window.viewport.bar_count = 0;
                             window.viewport.view_start = 0.0;
                             window.pending_symbol_load = true;
                         }
                         // Phase 1.2: dual-write instrument into branch_meta + bubble.
                         if let Some(chart_id) = active_chart_id {
-                            if let Some(bid) = self.managers.bubble.bubble_for_chart(chart_id) {
-                                if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                            if let Some(bid) = self.bubble_for_chart(chart_id) {
+                                if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(bid) {
                                     bubble.symbol = symbol_part.to_string();
                                     bubble.timeframe = timeframe.clone();
                                     bubble.exchange = resolved_exchange.as_str().to_string();
@@ -902,15 +890,15 @@ impl ChartApp {
                         // Unsubscribe only the old symbol's trade stream, leaving other
                         // windows' streams intact.
                         if !previous_symbol.is_empty() {
-                            self.bridge.unsubscribe_trades(old_trade_exchange, &previous_symbol, old_trade_at);
+                            self.core.bridge.unsubscribe_trades(old_trade_exchange, &previous_symbol, old_trade_at);
                         }
                         let eid_str = resolved_exchange.as_str();
                         if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
                             eprintln!("[ChartApp] Exchange {} is disabled, skipping connector call (search symbol select)", eid_str);
                         } else {
                             let search_at = crate::account_type_from_label(&search_at_label);
-                            self.bridge.ensure_connector(resolved_exchange);
-                            self.bridge.request_bars(resolved_exchange, symbol_part, &timeframe, search_at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), false);
+                            self.core.bridge.ensure_connector(resolved_exchange);
+                            self.core.bridge.request_bars(resolved_exchange, symbol_part, &timeframe, search_at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), false);
                         }
                         // Record ChangeSymbol if it actually changed.
                         if previous_symbol != new_symbol_str {
@@ -928,14 +916,13 @@ impl ChartApp {
                         let (active_cid, bars) = self.panel_app.panel_grid.docking().active_leaf()
                             .and_then(|leaf| {
                                 let cid = self.panel_app.panel_grid.container_id_for_leaf(leaf)?;
-                                let bars = self.managers.bubble.bubble_for_chart(cid)
-                                    .and_then(|bid| self.managers.bubble.bubble(bid))
-                                    .map(|b| b.bars.clone())
+                                let bars = self.bubble_for_chart(cid)
+                                    .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()))
                                     .unwrap_or_default();
                                 Some((cid.0, bars))
                             })
                             .unwrap_or((0u64, Vec::new()));
-                        self.indicator_manager.calculate_all_for_window(active_cid, &bars);
+                        self.core.indicators_mut().calculate_all_for_window(active_cid, &bars);
                         self.sync_sub_panes_from_manager();
                         self.sidebar_data_dirty = true;
                         self.autosave_snapshot();
@@ -948,12 +935,11 @@ impl ChartApp {
                         // adds a CompareSeries with percentage normalization already handled.
                         let active_cmp_cid = self.panel_app.panel_grid.active_container_id();
                         let main_sym_for_cmp = active_cmp_cid
-                            .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                            .and_then(|cid| self.symbol_for_chart(cid))
                             .map(String::from)
                             .unwrap_or_default();
                         let main_tf_for_cmp = active_cmp_cid
-                            .and_then(|cid| self.managers.bubble.timeframe_for_chart(cid))
-                            .cloned()
+                            .and_then(|cid| self.timeframe_for_chart(cid))
                             .unwrap_or_else(mlc_core::state::Timeframe::h1);
                         let main_bars_for_cmp = self.active_chart_bars();
                         let added_series = if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
@@ -992,11 +978,13 @@ impl ChartApp {
                         // Determine auto-color for overlay duplicates BEFORE create_instance
                         // (borrowck: create_instance needs &mut, query needs &).
                         let auto_color: Option<String> = active_container_id
-                            .and_then(|cid| self.indicator_manager.pick_overlay_color(item_id, cid.0));
-                        if let Some(new_id) = self.indicator_manager.create_instance(item_id) {
+                            .and_then(|cid| self.core.indicators_mut().pick_overlay_color(item_id, cid.0));
+                        let new_id_opt = self.core.indicators_mut().create_instance(item_id);
+                        if let Some(new_id) = new_id_opt {
                             // Apply auto-color when this is a duplicate overlay indicator.
                             if let Some(ref color) = auto_color {
-                                if let Some(inst) = self.indicator_manager.get_instance_mut(new_id) {
+                                let mut im = self.core.indicators_mut();
+                                if let Some(inst) = im.get_instance_mut(new_id) {
                                     for oc in inst.outputs.values_mut() {
                                         oc.color = Some(color.clone());
                                     }
@@ -1004,26 +992,26 @@ impl ChartApp {
                             }
                             // Bind to the active window so it is scoped correctly.
                             if let (Some(active_leaf), Some(chart_id)) = (active_leaf, active_container_id) {
-                                self.indicator_manager.assign_window(new_id, Some(chart_id.0));
+                                self.core.indicators_mut().assign_window(new_id, Some(chart_id.0));
                                 // If this window is in a sync group and indicators are synced,
                                 // track the config in the group and push to peers.
                                 if let Some(group_id) = self.panel_app.panel_grid
                                     .container_id_for_leaf(active_leaf)
-                                    .and_then(|cid| self.managers.bubble.bubble_for_chart(cid))
+                                    .and_then(|cid| self.bubble_for_chart(cid))
                                 {
-                                    let sync_on = self.managers.bubble.bubble(group_id)
-                                        .map(|g| g.sync_flags.sync_indicators)
-                                        .unwrap_or(true);
+                                    let sync_on = self.with_bubble(group_id, |g| g.sync_flags.sync_indicators).unwrap_or(true);
                                     if sync_on {
-                                        let inst_pane = self.indicator_manager
-                                            .get_instance(new_id)
-                                            .map(|i| i.pane as u32)
-                                            .unwrap_or(0);
-                                        let inst_name = self.indicator_manager
-                                            .get_instance(new_id)
-                                            .map(|i| i.name.clone())
-                                            .unwrap_or_else(|| item_id.to_string());
-                                        if let Some(group) = self.managers.bubble.bubble_mut(group_id) {
+                                        let (inst_pane, inst_name) = {
+                                            let im = self.core.indicators();
+                                            let inst_pane = im.get_instance(new_id)
+                                                .map(|i| i.pane as u32)
+                                                .unwrap_or(0);
+                                            let inst_name = im.get_instance(new_id)
+                                                .map(|i| i.name.clone())
+                                                .unwrap_or_else(|| item_id.to_string());
+                                            (inst_pane, inst_name)
+                                        };
+                                        if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(group_id) {
                                             group.indicator_configs.push(
                                                 mlc_core::tag_manager::IndicatorGroupConfig {
                                                     id: new_id,
@@ -1055,7 +1043,7 @@ impl ChartApp {
                                                 .get(&cid)
                                                 .map(|w| w.auto_bubble_id);
                                             if let Some(bid) = auto_bid {
-                                                if let Some(auto_bub) = self.managers.bubble.bubble_mut(bid) {
+                                                if let Some(auto_bub) = self.core.bubble_mut().bubble.bubble_mut(bid) {
                                                     auto_bub.pre_tag_indicator_ids.push(new_id);
                                                 }
                                             }
@@ -1077,9 +1065,9 @@ impl ChartApp {
                             // Recalculate the new indicator with current bars.
                             if let (Some(cid), Some(bars)) = (
                                 active_container_id,
-                                active_leaf.and_then(|leaf| self.panel_app.panel_grid.container_for_leaf(leaf)).map(|w| Vec::<mlc_core::Bar>::new()),
+                                active_leaf.and_then(|leaf| self.panel_app.panel_grid.container_for_leaf(leaf)).map(|_w| Vec::<mlc_core::Bar>::new()),
                             ) {
-                                self.indicator_manager.calculate_all_for_window(cid.0, &bars);
+                                self.core.indicators_mut().calculate_all_for_window(cid.0, &bars);
                             }
                             self.sync_sub_panes_from_manager();
                             self.autosave_snapshot();
@@ -1149,9 +1137,9 @@ impl ChartApp {
                     // remembers the mode for new joiners.
                     let viewport_sync_on = self.panel_app.panel_grid
                         .container_id_for_leaf(hit_leaf_id)
-                        .and_then(|cid| self.managers.bubble.bubble_for_chart(cid))
+                        .and_then(|cid| self.bubble_for_chart(cid))
                         .and_then(|gid| {
-                            self.managers.bubble.bubble_mut(gid).map(|g| {
+                            self.core.bubble_mut().bubble.bubble_mut(gid).map(|g| {
                                 g.scale_mode = next_mode;
                                 g.sync_flags.sync_viewport
                             })
@@ -1218,7 +1206,7 @@ impl ChartApp {
                         // Single source of truth: instance.visible controls
                         // both overlay and sub-pane indicator visibility.
                         // sub_pane.hidden is not used — render filters by instance.visible.
-                        self.indicator_manager.toggle_visibility(instance_id);
+                        self.core.indicators_mut().toggle_visibility(instance_id);
                         self.sidebar_data_dirty = true;
                         self.autosave_snapshot();
                     }
@@ -1259,7 +1247,7 @@ impl ChartApp {
                                         window.inner_docking.tree_mut().reorder_children(root_id, from, to);
                                     }
                                     if let (Some(nbr_id), Some(cid)) = (neighbor_id, self.panel_app.panel_grid.active_container_id()) {
-                                        self.indicator_manager.swap_pane_order(cid.0, instance_id, nbr_id);
+                                        self.core.indicators_mut().swap_pane_order(cid.0, instance_id, nbr_id);
                                     }
                                 }
                             } else {
@@ -1295,7 +1283,7 @@ impl ChartApp {
                                             window.inner_docking.tree_mut().reorder_children(root_id, from, to);
                                         }
                                         if let (Some(nbr_id), Some(cid)) = (neighbor_id, self.panel_app.panel_grid.active_container_id()) {
-                                            self.indicator_manager.swap_pane_order(cid.0, instance_id, nbr_id);
+                                            self.core.indicators_mut().swap_pane_order(cid.0, instance_id, nbr_id);
                                         }
                                     }
                                 }
@@ -1349,7 +1337,7 @@ impl ChartApp {
                                             window.inner_docking.tree_mut().reorder_children(root_id, from, to);
                                         }
                                         if let (Some(nbr_id), Some(cid)) = (neighbor_id, self.panel_app.panel_grid.active_container_id()) {
-                                            self.indicator_manager.swap_pane_order(cid.0, instance_id, nbr_id);
+                                            self.core.indicators_mut().swap_pane_order(cid.0, instance_id, nbr_id);
                                         }
                                     }
                                 }
@@ -1370,7 +1358,7 @@ impl ChartApp {
                                         window.inner_docking.tree_mut().reorder_children(root_id, from, to);
                                     }
                                     if let (Some(nbr_id), Some(cid)) = (neighbor_id, self.panel_app.panel_grid.active_container_id()) {
-                                        self.indicator_manager.swap_pane_order(cid.0, instance_id, nbr_id);
+                                        self.core.indicators_mut().swap_pane_order(cid.0, instance_id, nbr_id);
                                     }
                                 }
                             }
@@ -1408,7 +1396,7 @@ impl ChartApp {
                         self.autosave_snapshot();
                     }
                     SubPaneButton::IndicatorEye => {
-                        self.indicator_manager.toggle_visibility(instance_id);
+                        self.core.indicators_mut().toggle_visibility(instance_id);
                         self.sidebar_data_dirty = true;
                         self.autosave_snapshot();
                     }
@@ -1417,15 +1405,15 @@ impl ChartApp {
                         // Uses AlertSource::Indicator with output_index=0 (first output line).
                         // The indicator's display name is used as the alert label.
                         let alert_symbol: String = self.panel_app.panel_grid.active_container_id()
-                            .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                            .and_then(|cid| self.symbol_for_chart(cid))
                             .map(String::from)
                             .unwrap_or_default();
                         let price_fallback = self.panel_app.panel_grid.active_container()
-                            .and_then(|w| None::<&mlc_core::Bar>)
+                            .and_then(|_w| None::<&mlc_core::Bar>)
                             .map(|b| b.close)
                             .unwrap_or(0.0);
-                        let label = self.indicator_manager
-                            .get_instance(instance_id)
+                        let label = self.core.indicators()
+                                .get_instance(instance_id)
                             .map(|inst| inst.name.clone())
                             .unwrap_or_else(|| format!("Indicator #{}", instance_id));
                         let source = mlc_alerts::AlertSource::Indicator {
@@ -1470,8 +1458,7 @@ impl ChartApp {
 
             let active_pid_tool = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
             let is_freehand = active_pid_tool
-                .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                .map(|panel| panel.drawing_manager.is_freehand_tool())
+                .and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.is_freehand_tool()))
                 .unwrap_or(false);
 
             // Freehand tools (brush/highlighter) only work on drag — skip click.
@@ -1546,11 +1533,11 @@ impl ChartApp {
 
                 // Reset pane context to main chart.
                 if let Some(pid) = active_pid_tool {
-                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                        panel.drawing_manager.set_current_pane(None);
-                        if panel.drawing_manager.current_tool().map(|t| t != _tool_id).unwrap_or(true) {
-                            panel.drawing_manager.set_tool(Some(_tool_id));
-                        }
+                    let mut guard = self.core.drawings_mut();
+                    let dm = guard.entry_or_default(pid);
+                    dm.set_current_pane(None);
+                    if dm.current_tool().map(|t| t != _tool_id).unwrap_or(true) {
+                        dm.set_tool(Some(_tool_id));
                     }
                 }
 
@@ -1561,14 +1548,12 @@ impl ChartApp {
                     .map(|_w| mlc_core::bar_f64_to_timestamp_ms(&click_bars_main[..], bar))
                     .unwrap_or(0);
                 let primitive_created = active_pid_tool
-                    .and_then(|pid| self.panels_store.chart_panel.get_mut(&pid))
-                    .map(|panel| panel.drawing_manager.on_click(ts_ms, price))
+                    .map(|pid| self.core.drawings_mut().entry_or_default(pid).on_click(ts_ms, price))
                     .unwrap_or(false);
 
                 if primitive_created {
                     let prim_count = active_pid_tool
-                        .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                        .map(|panel| panel.drawing_manager.primitives().len()).unwrap_or(0);
+                        .and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.primitives().len())).unwrap_or(0);
                     eprintln!("[ChartApp] Primitive created (main) at bar={:.2}, price={:.12e}, total_primitives={}", bar, price, prim_count);
                     // For grouped windows: move the completed primitive to TagManager so
                     // all group members see it via the per-frame render-cache sync.
@@ -1577,13 +1562,15 @@ impl ChartApp {
                         // Standalone path — record undo and propagate to color-tag peers.
                         // Extract snapshot before mutable borrow for push_undo_command.
                         let create_snapshot = active_pid_tool
-                            .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                            .and_then(|panel| {
-                                let idx = panel.drawing_manager.last_index()?;
-                                let type_id = panel.drawing_manager.get_type_id_at(idx)?;
-                                let points = panel.drawing_manager.get_points_at(idx)?;
-                                let data = panel.drawing_manager.get_data_at(idx)?;
-                                Some((idx, type_id, points, data))
+                            .and_then(|pid| {
+                                let guard = self.core.drawings();
+                                guard.get(pid).and_then(|dm| {
+                                    let idx = dm.last_index()?;
+                                    let type_id = dm.get_type_id_at(idx)?;
+                                    let points = dm.get_points_at(idx)?;
+                                    let data = dm.get_data_at(idx)?;
+                                    Some((idx, type_id, points, data))
+                                })
                             });
                         if let Some((idx, type_id, points, data)) = create_snapshot {
                             self.push_undo_command(mlc_core::Command::CreatePrimitive {
@@ -1604,9 +1591,8 @@ impl ChartApp {
                         // Grouped path — record undo for the primitive placed into the group,
                         // then clear the in-progress preview on peers.
                         let group_create_cmd = self.panel_app.panel_grid.active_container_id()
-                            .and_then(|cid| self.managers.bubble.bubble_for_chart(cid))
-                            .and_then(|gid| {
-                                let group = self.managers.bubble.bubble(gid)?;
+                            .and_then(|cid| self.bubble_for_chart(cid))
+                            .and_then(|gid| self.with_bubble(gid, |group| {
                                 let idx = group.primitives.len().saturating_sub(1);
                                 let prim = group.primitives.get(idx)?;
                                 Some(mlc_core::Command::CreatePrimitive {
@@ -1615,7 +1601,7 @@ impl ChartApp {
                                     points: prim.points().to_vec(),
                                     data: prim.data().clone(),
                                 })
-                            });
+                            }).flatten());
                         if let Some(cmd) = group_create_cmd {
                             self.push_undo_command(cmd);
                             eprintln!("[ChartApp] Recorded CreatePrimitive (main, grouped) via group.primitives");
@@ -1629,8 +1615,7 @@ impl ChartApp {
                     self.sidebar_data_dirty = true;
                     self.autosave_snapshot();
                 } else if active_pid_tool
-                    .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                    .map(|panel| panel.drawing_manager.is_drawing())
+                    .and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.is_drawing()))
                     .unwrap_or(false)
                 {
                     eprintln!("[ChartApp] Drawing point added (main) at bar={:.2}, price={:.2}", bar, price);
@@ -1642,8 +1627,7 @@ impl ChartApp {
 
                 // Re-check if tool was completed (primed tools deactivate after creation).
                 let tool_cleared = active_pid_tool
-                    .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                    .map(|panel| panel.drawing_manager.current_tool().is_none())
+                    .and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.current_tool().is_none()))
                     .unwrap_or(false);
                 if tool_cleared {
                     self.panel_app.toolbar_state.active_tool_id = None;
@@ -1685,11 +1669,11 @@ impl ChartApp {
 
                 // Set pane context so the new primitive is tagged to this sub-pane.
                 if let Some(pid) = active_pid_tool {
-                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                        panel.drawing_manager.set_current_pane(Some(instance_id));
-                        if panel.drawing_manager.current_tool().map(|t| t != _tool_id).unwrap_or(true) {
-                            panel.drawing_manager.set_tool(Some(_tool_id));
-                        }
+                    let mut guard = self.core.drawings_mut();
+                    let dm = guard.entry_or_default(pid);
+                    dm.set_current_pane(Some(instance_id));
+                    if dm.current_tool().map(|t| t != _tool_id).unwrap_or(true) {
+                        dm.set_tool(Some(_tool_id));
                     }
                 }
 
@@ -1699,8 +1683,7 @@ impl ChartApp {
                     .map(|_w| mlc_core::bar_f64_to_timestamp_ms(&click_bars_sub[..], bar))
                     .unwrap_or(0);
                 let primitive_created = active_pid_tool
-                    .and_then(|pid| self.panels_store.chart_panel.get_mut(&pid))
-                    .map(|panel| panel.drawing_manager.on_click(sub_ts_ms, price))
+                    .map(|pid| self.core.drawings_mut().entry_or_default(pid).on_click(sub_ts_ms, price))
                     .unwrap_or(false);
 
                 if primitive_created {
@@ -1710,13 +1693,15 @@ impl ChartApp {
                     if !self.intercept_completed_primitive_to_group() {
                         // Standalone path — extract snapshot then push undo command.
                         let create_snapshot = active_pid_tool
-                            .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                            .and_then(|panel| {
-                                let idx = panel.drawing_manager.last_index()?;
-                                let type_id = panel.drawing_manager.get_type_id_at(idx)?;
-                                let points = panel.drawing_manager.get_points_at(idx)?;
-                                let data = panel.drawing_manager.get_data_at(idx)?;
-                                Some((idx, type_id, points, data))
+                            .and_then(|pid| {
+                                let guard = self.core.drawings();
+                                guard.get(pid).and_then(|dm| {
+                                    let idx = dm.last_index()?;
+                                    let type_id = dm.get_type_id_at(idx)?;
+                                    let points = dm.get_points_at(idx)?;
+                                    let data = dm.get_data_at(idx)?;
+                                    Some((idx, type_id, points, data))
+                                })
                             });
                         if let Some((idx, type_id, points, data)) = create_snapshot {
                             self.push_undo_command(mlc_core::Command::CreatePrimitive {
@@ -1737,9 +1722,8 @@ impl ChartApp {
                         // Grouped path — record undo for the primitive placed into the group,
                         // then clear the in-progress preview on peers.
                         let group_create_cmd = self.panel_app.panel_grid.active_container_id()
-                            .and_then(|cid| self.managers.bubble.bubble_for_chart(cid))
-                            .and_then(|gid| {
-                                let group = self.managers.bubble.bubble(gid)?;
+                            .and_then(|cid| self.bubble_for_chart(cid))
+                            .and_then(|gid| self.with_bubble(gid, |group| {
                                 let idx = group.primitives.len().saturating_sub(1);
                                 let prim = group.primitives.get(idx)?;
                                 Some(mlc_core::Command::CreatePrimitive {
@@ -1748,7 +1732,7 @@ impl ChartApp {
                                     points: prim.points().to_vec(),
                                     data: prim.data().clone(),
                                 })
-                            });
+                            }).flatten());
                         if let Some(cmd) = group_create_cmd {
                             self.push_undo_command(cmd);
                             eprintln!("[ChartApp] Recorded CreatePrimitive (sub-pane #{}, grouped) via group.primitives", pane_idx);
@@ -1762,8 +1746,7 @@ impl ChartApp {
                     self.sidebar_data_dirty = true;
                     self.autosave_snapshot();
                 } else if active_pid_tool
-                    .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                    .map(|panel| panel.drawing_manager.is_drawing())
+                    .and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.is_drawing()))
                     .unwrap_or(false)
                 {
                     eprintln!("[ChartApp] Drawing point added (sub-pane #{}) at bar={:.2}, price={:.2}", pane_idx, bar, price);
@@ -1775,8 +1758,7 @@ impl ChartApp {
 
                 // Sync toolbar if tool completed.
                 let tool_cleared = active_pid_tool
-                    .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                    .map(|panel| panel.drawing_manager.current_tool().is_none())
+                    .and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.current_tool().is_none()))
                     .unwrap_or(false);
                 if tool_cleared {
                     self.panel_app.toolbar_state.active_tool_id = None;
@@ -1817,31 +1799,27 @@ impl ChartApp {
                     corrected_vp.chart_width = chart_rect.width;
                     corrected_vp.chart_height = chart_rect.height;
                     let prim_idx = active_pid_hit
-                        .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                        .and_then(|panel| panel.drawing_manager.hit_test(
-                            local_x, local_y, &hit_bars_main[..], &corrected_vp, &window.price_scale,
-                        ));
+                        .and_then(|pid| self.core.drawings().get(pid)
+                            .and_then(|dm| dm.hit_test(local_x, local_y, &hit_bars_main[..], &corrected_vp, &window.price_scale)));
                     if let Some(prim_idx) = prim_idx {
                         // Select the primitive, clear indicator selection, and return.
                         self.selected_indicator_id = None;
                         // Deselect all other windows first so control points don't accumulate.
                         let active_cid = self.panel_app.panel_grid.active_container_id();
-                        for (cid, _) in self.panel_app.panel_grid.containers().iter() {
-                            if Some(*cid) != active_cid {
-                                let pid = self.panel_app.panel_grid.containers().get(cid).map(|w| w.chart_panel_id);
-                                if let Some(pid) = pid {
-                                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                        panel.drawing_manager.deselect();
-                                    }
+                        let all_cids: Vec<_> = self.panel_app.panel_grid.containers().keys().copied().collect();
+                        for cid in all_cids {
+                            if Some(cid) != active_cid {
+                                if let Some(pid) = self.panel_app.panel_grid.containers().get(&cid).map(|w| w.chart_panel_id) {
+                                    self.core.drawings_mut().entry_or_default(pid).deselect();
                                 }
                             }
                         }
                         if let Some(pid) = active_pid_hit {
-                            if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                panel.drawing_manager.set_current_pane(None);
-                                panel.drawing_manager.select_by_index(prim_idx);
-                                eprintln!("[ChartApp] Primitive selected (main): index={}", prim_idx);
-                            }
+                            let mut guard = self.core.drawings_mut();
+                            let dm = guard.entry_or_default(pid);
+                            dm.set_current_pane(None);
+                            dm.select_by_index(prim_idx);
+                            eprintln!("[ChartApp] Primitive selected (main): index={}", prim_idx);
                         }
                         return;
                     }
@@ -1876,31 +1854,27 @@ impl ChartApp {
                 let hit_bars_sub: Vec<mlc_core::Bar> = self.active_chart_bars();
                 if let (Some(sub_viewport), Some(_window)) = (sub_viewport, self.panel_app.panel_grid.active_container()) {
                     let sub_prim_idx = active_pid_hit
-                        .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                        .and_then(|panel| panel.drawing_manager.hit_test_in_pane(
-                            plx, ply, instance_id, &hit_bars_sub[..], &sub_viewport, &sub_price_scale,
-                        ));
+                        .and_then(|pid| self.core.drawings().get(pid)
+                            .and_then(|dm| dm.hit_test_in_pane(plx, ply, instance_id, &hit_bars_sub[..], &sub_viewport, &sub_price_scale)));
                     if let Some(prim_idx) = sub_prim_idx {
                         // Select the primitive, clear indicator selection, and return.
                         self.selected_indicator_id = None;
                         // Deselect all other panels.
                         let active_cid = self.panel_app.panel_grid.active_container_id();
-                        let all_cids: Vec<_> = self.panel_app.panel_grid.containers().keys().copied().collect();
-                        for cid in all_cids {
+                        let all_cids2: Vec<_> = self.panel_app.panel_grid.containers().keys().copied().collect();
+                        for cid in all_cids2 {
                             if Some(cid) != active_cid {
                                 if let Some(pid) = self.panel_app.panel_grid.containers().get(&cid).map(|w| w.chart_panel_id) {
-                                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                        panel.drawing_manager.deselect();
-                                    }
+                                    self.core.drawings_mut().entry_or_default(pid).deselect();
                                 }
                             }
                         }
                         if let Some(pid) = active_pid_hit {
-                            if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                panel.drawing_manager.set_current_pane(Some(instance_id));
-                                panel.drawing_manager.select_by_index(prim_idx);
-                                eprintln!("[ChartApp] Primitive selected (sub-pane #{}): index={}", pane_idx, prim_idx);
-                            }
+                            let mut guard = self.core.drawings_mut();
+                            let dm = guard.entry_or_default(pid);
+                            dm.set_current_pane(Some(instance_id));
+                            dm.select_by_index(prim_idx);
+                            eprintln!("[ChartApp] Primitive selected (sub-pane #{}): index={}", pane_idx, prim_idx);
                         }
                         return;
                     }
@@ -1925,7 +1899,7 @@ impl ChartApp {
                     .unwrap_or((0.0, 100.0));
                 let hit = self.panel_app.panel_grid.active_container()
                     .map(|window| {
-                        self.indicator_manager.hit_test_sub_pane(
+                        self.core.indicators().hit_test_sub_pane(
                             instance_id,
                             plx, ply,
                             &window.viewport,
@@ -1940,8 +1914,9 @@ impl ChartApp {
                         self.selected_indicator_id = None;
                     } else {
                         self.selected_indicator_id = Some(instance_id);
-                        for panel in self.panels_store.chart_panel.values_mut() {
-                            panel.drawing_manager.deselect();
+                        let all_pids: Vec<_> = self.panels_store.chart_panel.keys().copied().collect();
+                        for pid in all_pids {
+                            self.core.drawings_mut().entry_or_default(pid).deselect();
                         }
                     }
                     eprintln!("[ChartApp] Sub-pane indicator hit: id={}", instance_id);
@@ -1955,12 +1930,12 @@ impl ChartApp {
             {
                 // S2.7.1e: read symbol via branch_meta before the closure (B1).
                 let overlay_symbol: String = self.panel_app.panel_grid.active_container_id()
-                    .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                    .and_then(|cid| self.symbol_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_default();
                 let ind_hit = self.panel_app.panel_grid.active_container()
                     .and_then(|window| {
-                        self.indicator_manager.hit_test_overlay(
+                        self.core.indicators().hit_test_overlay(
                             local_x,
                             local_y,
                             &overlay_symbol,
@@ -1973,8 +1948,9 @@ impl ChartApp {
                 if let Some(ind_id) = ind_hit {
                     self.selected_indicator_id = Some(ind_id);
                     // Deselect any drawing primitive across ALL panels when an indicator is selected.
-                    for panel in self.panels_store.chart_panel.values_mut() {
-                        panel.drawing_manager.deselect();
+                    let all_pids: Vec<_> = self.panels_store.chart_panel.keys().copied().collect();
+                    for pid in all_pids {
+                        self.core.drawings_mut().entry_or_default(pid).deselect();
                     }
                     eprintln!("[ChartApp] Indicator selected: id={}", ind_id);
                     return;
@@ -1984,8 +1960,9 @@ impl ChartApp {
 
         // No primitive or indicator hit — deselect everything across ALL panels.
         self.selected_indicator_id = None;
-        for panel in self.panels_store.chart_panel.values_mut() {
-            panel.drawing_manager.deselect();
+        let all_pids2: Vec<_> = self.panels_store.chart_panel.keys().copied().collect();
+        for pid in all_pids2 {
+            self.core.drawings_mut().entry_or_default(pid).deselect();
         }
 
         let _fallback_cc3;
@@ -2157,13 +2134,12 @@ impl ChartApp {
                     "delete" => {
                         // Capture state BEFORE deletion so undo can recreate.
                         let snapshot = active_pid_ctx
-                            .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                            .and_then(|panel| {
-                                let type_id = panel.drawing_manager.get_type_id_at(idx)?;
-                                let points = panel.drawing_manager.get_points_at(idx)?;
-                                let data = panel.drawing_manager.get_data_at(idx)?;
+                            .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| {
+                                let type_id = dm.get_type_id_at(idx)?;
+                                let points = dm.get_points_at(idx)?;
+                                let data = dm.get_data_at(idx)?;
                                 Some((type_id, points, data))
-                            });
+                            }));
                         if let Some((type_id, points, data)) = snapshot {
                             let prim_id = data.id;
                             self.push_undo_command(mlc_core::Command::DeletePrimitive {
@@ -2174,28 +2150,23 @@ impl ChartApp {
                             });
                             eprintln!("[ChartApp] Recorded DeletePrimitive at index {}", idx);
                             if let Some(pid) = active_pid_ctx {
-                                if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                    panel.drawing_manager.remove(idx);
-                                    eprintln!("[ChartApp] Deleted primitive #{}", idx);
-                                }
+                                self.core.drawings_mut().entry_or_default(pid).remove(idx);
+                                eprintln!("[ChartApp] Deleted primitive #{}", idx);
                             }
-                            self.managers.alert.remove_alerts_for_drawing(prim_id);
+                            self.core.bubble_mut().alert.remove_alerts_for_drawing(prim_id);
                             self.sync_drawing_back_to_group();
                             self.autosave_snapshot();
                         } else {
                             // No undo snapshot — still get the ID for alert cleanup before removing.
                             let prim_id = active_pid_ctx
-                                .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                                .and_then(|panel| panel.drawing_manager.get_data_at(idx))
+                                .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
                                 .map(|d| d.id);
                             if let Some(pid) = active_pid_ctx {
-                                if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                    panel.drawing_manager.remove(idx);
-                                    eprintln!("[ChartApp] Deleted primitive #{} (no undo snapshot)", idx);
-                                }
+                                self.core.drawings_mut().entry_or_default(pid).remove(idx);
+                                eprintln!("[ChartApp] Deleted primitive #{} (no undo snapshot)", idx);
                             }
                             if let Some(pid) = prim_id {
-                                self.managers.alert.remove_alerts_for_drawing(pid);
+                                self.core.bubble_mut().alert.remove_alerts_for_drawing(pid);
                             }
                             self.sync_drawing_back_to_group();
                             self.autosave_snapshot();
@@ -2204,8 +2175,7 @@ impl ChartApp {
                     "clone" => {
                         // clone_primitive returns Option<usize> (new index).
                         let cloned_idx = active_pid_ctx
-                            .and_then(|pid| self.panels_store.chart_panel.get_mut(&pid))
-                            .and_then(|panel| panel.drawing_manager.clone_primitive(idx));
+                            .and_then(|pid| self.core.drawings_mut().entry_or_default(pid).clone_primitive(idx));
                         if let Some(new_idx) = cloned_idx {
                             // Apply +20px right, -20px up offset to the cloned primitive.
                             // Convert screen pixels to bar/price coordinates using the viewport.
@@ -2225,21 +2195,20 @@ impl ChartApp {
                                     0.0
                                 };
                                 if let Some(pid) = active_pid_ctx {
-                                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                        panel.drawing_manager.translate_at(new_idx, ts_delta_ms, price_delta);
-                                        panel.drawing_manager.select_by_index(new_idx);
-                                    }
+                                    let mut guard = self.core.drawings_mut();
+                                    let dm = guard.entry_or_default(pid);
+                                    dm.translate_at(new_idx, ts_delta_ms, price_delta);
+                                    dm.select_by_index(new_idx);
                                 }
                             }
                             // Capture the NEW primitive's data for undo.
                             let snapshot = active_pid_ctx
-                                .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                                .and_then(|panel| {
-                                    let type_id = panel.drawing_manager.get_type_id_at(new_idx)?;
-                                    let points = panel.drawing_manager.get_points_at(new_idx)?;
-                                    let data = panel.drawing_manager.get_data_at(new_idx)?;
+                                .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| {
+                                    let type_id = dm.get_type_id_at(new_idx)?;
+                                    let points = dm.get_points_at(new_idx)?;
+                                    let data = dm.get_data_at(new_idx)?;
                                     Some((type_id, points, data))
-                                });
+                                }));
                             if let Some((type_id, points, data)) = snapshot {
                                 self.push_undo_command(mlc_core::Command::CreatePrimitive {
                                     index: new_idx,
@@ -2259,8 +2228,7 @@ impl ChartApp {
                     "toggle_lock" => {
                         // Read current state BEFORE mutating.
                         let previous = active_pid_ctx
-                            .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                            .and_then(|panel| panel.drawing_manager.get_data_at(idx))
+                            .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
                             .map(|d| d.locked)
                             .unwrap_or(false);
                         self.push_undo_command(mlc_core::Command::SetPrimitiveLock {
@@ -2270,17 +2238,14 @@ impl ChartApp {
                         });
                         eprintln!("[ChartApp] Recorded SetPrimitiveLock at index {} locked={}", idx, !previous);
                         if let Some(pid) = active_pid_ctx {
-                            if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                panel.drawing_manager.toggle_lock_primitive(idx);
-                            }
+                            self.core.drawings_mut().entry_or_default(pid).toggle_lock_primitive(idx);
                         }
                         self.sidebar_data_dirty = true;
                     }
                     "toggle_visibility" => {
                         // Read current state BEFORE mutating.
                         let previous = active_pid_ctx
-                            .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                            .and_then(|panel| panel.drawing_manager.get_data_at(idx))
+                            .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
                             .map(|d| d.visible)
                             .unwrap_or(true);
                         self.push_undo_command(mlc_core::Command::SetPrimitiveVisibility {
@@ -2290,9 +2255,7 @@ impl ChartApp {
                         });
                         eprintln!("[ChartApp] Recorded SetPrimitiveVisibility at index {} visible={}", idx, !previous);
                         if let Some(pid) = active_pid_ctx {
-                            if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                panel.drawing_manager.toggle_visibility(idx);
-                            }
+                            self.core.drawings_mut().entry_or_default(pid).toggle_visibility(idx);
                         }
                         self.sidebar_data_dirty = true;
                     }
@@ -2317,7 +2280,7 @@ impl ChartApp {
                     "symbol_search" => {
                         self.modal_state.open(OpenModal::SymbolSearch);
                         self.modal_state.symbol_search_results =
-                            crate::ChartApp::build_demo_symbol_results("", &self.sidebar_state.watchlist_manager, &self.exchange_symbols);
+                            crate::ChartApp::build_demo_symbol_results("", &self.core.watchlist(), &self.core.exchange_symbols_read());
                         self.modal_state.start_editing(0);
                         eprintln!("[ChartApp] symbol search opened from context menu");
                     }

@@ -69,10 +69,10 @@ impl ChartApp {
                         .iter_containers()
                         .filter_map(|(_, w)| {
                             let cid = w.id;
-                            let exch = self.managers.bubble.exchange_for_chart(cid)?;
-                            let sym = self.managers.bubble.symbol_for_chart(cid)
+                            let exch = self.exchange_for_chart(cid)?;
+                            let sym = self.symbol_for_chart(cid)
                                 .map(String::from).unwrap_or_default();
-                            digdigdig3::ExchangeId::from_str(exch).map(|eid| (eid, sym))
+                            digdigdig3::ExchangeId::from_str(&exch).map(|eid| (eid, sym))
                         })
                         .collect();
                     let old_subs_us = _t_old_subs.elapsed().as_micros();
@@ -109,7 +109,7 @@ impl ChartApp {
                                             snap_exchange_id,
                                             snap_exchange_id.as_str().to_string(),
                                             snap_at,
-                                            std::sync::Arc::clone(&self.bridge),
+                                            std::sync::Arc::clone(&self.core.bridge),
                                         ),
                                     );
 
@@ -153,20 +153,25 @@ impl ChartApp {
                                         panel_state.show_columns = snap.show_columns;
                                         panel_state.show_baseline = snap.show_baseline;
                                         panel_state.chart_type = static_ct;
-                                        // S2.8: restore drawings into panel_state.drawing_manager
-                                        panel_state.drawing_manager.set_current_symbol_key(
-                                            &snap.symbol, &snap.exchange, &snap.account_type,
-                                        );
-                                        panel_state.drawing_manager.clear_all_primitives();
-                                        if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
-                                            for prim_snap in &snap.drawings.primitives {
-                                                if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
-                                                    panel_state.drawing_manager.add_external_primitive(prim);
+                                        self.panels_store.chart_panel.insert(window.chart_panel_id, panel_state);
+                                        // S2.8: restore drawings into DrawingRegistry
+                                        {
+                                            let pid = window.chart_panel_id;
+                                            let mut guard = self.core.drawings_mut();
+                                            let dm = guard.entry_or_default(pid);
+                                            dm.set_current_symbol_key(
+                                                &snap.symbol, &snap.exchange, &snap.account_type,
+                                            );
+                                            dm.clear_all_primitives();
+                                            if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
+                                                for prim_snap in &snap.drawings.primitives {
+                                                    if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
+                                                        dm.add_external_primitive(prim);
+                                                    }
                                                 }
                                             }
+                                            dm.migrate_all_legacy_timestamps();
                                         }
-                                        panel_state.drawing_manager.migrate_all_legacy_timestamps();
-                                        self.panels_store.chart_panel.insert(window.chart_panel_id, panel_state);
                                     }
 
                                     // Restore command history
@@ -177,7 +182,7 @@ impl ChartApp {
                                     // Create a fresh auto-bubble for this chart and restore
                                     // stashed state (pre-tag primitives, pre_tag_indicator_ids,
                                     // stashed command_history) into it.
-                                    let auto_bid = self.managers.bubble.create_group_auto(
+                                    let auto_bid = self.core.bubble_mut().bubble.create_group_auto(
                                         [0.0, 0.0, 0.0, 0.0],
                                         snap.symbol.clone(),
                                         snap.timeframe.clone(),
@@ -186,10 +191,10 @@ impl ChartApp {
                                     // current_bubble_id is set later when we attach to the
                                     // color-bubble (Step 5); default to auto_bid for now.
                                     window.current_bubble_id = auto_bid;
-                                    let _ = self.managers.bubble.attach_chart_to_bubble(chart_id, auto_bid);
+                                    let _ = self.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, auto_bid);
 
                                     // Restore stashed primitives into auto_bubble.primitives.
-                                    if let Some(auto_bub) = self.managers.bubble.bubble_mut(auto_bid) {
+                                    if let Some(auto_bub) = self.core.bubble_mut().bubble.bubble_mut(auto_bid) {
                                         auto_bub.primitives.clear();
                                         if !snap.stashed_primitives.is_empty() {
                                             if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
@@ -239,8 +244,8 @@ impl ChartApp {
                                         snap.drawings.primitives.len()
                                     );
 
-                                    if let Some(bid) = self.managers.bubble.bubble_for_chart(chart_id) {
-                                        if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                                    if let Some(bid) = self.bubble_for_chart(chart_id) {
+                                        if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(bid) {
                                             bubble.symbol = snap.symbol.clone();
                                             bubble.timeframe = snap.timeframe.clone();
                                             bubble.exchange = snap.exchange.clone();
@@ -350,7 +355,7 @@ impl ChartApp {
                                             patch_exchange_id,
                                             patch_exchange_id.as_str().to_string(),
                                             patch_at,
-                                            std::sync::Arc::clone(&self.bridge),
+                                            std::sync::Arc::clone(&self.core.bridge),
                                         ),
                                     );
                                     window.viewport = snap.viewport.clone();
@@ -366,19 +371,19 @@ impl ChartApp {
                                     // mint one now so stashed primitives have a home.
                                     let existing_auto_bid = window.auto_bubble_id;
                                     let auto_bid_for_window = if existing_auto_bid == mlc_core::tag_manager::BubbleId(0) {
-                                        let fresh = self.managers.bubble.create_group_auto(
+                                        let fresh = self.core.bubble_mut().bubble.create_group_auto(
                                             [0.0, 0.0, 0.0, 0.0],
                                             snap.symbol.clone(),
                                             snap.timeframe.clone(),
                                         );
                                         window.auto_bubble_id = fresh;
                                         window.current_bubble_id = fresh;
-                                        let _ = self.managers.bubble.attach_chart_to_bubble(chart_id, fresh);
+                                        let _ = self.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, fresh);
                                         fresh
                                     } else {
                                         existing_auto_bid
                                     };
-                                    if let Some(auto_bub) = self.managers.bubble.bubble_mut(auto_bid_for_window) {
+                                    if let Some(auto_bub) = self.core.bubble_mut().bubble.bubble_mut(auto_bid_for_window) {
                                         auto_bub.primitives.clear();
                                         if !snap.stashed_primitives.is_empty() {
                                             if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
@@ -448,20 +453,25 @@ impl ChartApp {
                                     ps.show_columns = snap.show_columns;
                                     ps.show_baseline = snap.show_baseline;
                                     ps.chart_type = static_ct;
-                                    // S2.8: restore drawings into ps.drawing_manager
-                                    ps.drawing_manager.set_current_symbol_key(
-                                        &snap.symbol, &snap.exchange, &snap.account_type,
-                                    );
-                                    ps.drawing_manager.clear_all_primitives();
-                                    if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
-                                        for prim_snap in &snap.drawings.primitives {
-                                            if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
-                                                ps.drawing_manager.add_external_primitive(prim);
+                                    panel_patches.push((window.chart_panel_id, ps));
+                                    // S2.8: restore drawings into DrawingRegistry
+                                    {
+                                        let pid = window.chart_panel_id;
+                                        let mut guard = self.core.drawings_mut();
+                                        let dm = guard.entry_or_default(pid);
+                                        dm.set_current_symbol_key(
+                                            &snap.symbol, &snap.exchange, &snap.account_type,
+                                        );
+                                        dm.clear_all_primitives();
+                                        if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
+                                            for prim_snap in &snap.drawings.primitives {
+                                                if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
+                                                    dm.add_external_primitive(prim);
+                                                }
                                             }
                                         }
+                                        dm.migrate_all_legacy_timestamps();
                                     }
-                                    ps.drawing_manager.migrate_all_legacy_timestamps();
-                                    panel_patches.push((window.chart_panel_id, ps));
 
                                     eprintln!("[ChartApp] patched window {}  ->  {}/{} ({} drawings)",
                                         snap.window_id, snap.symbol, snap.timeframe.name,
@@ -472,8 +482,8 @@ impl ChartApp {
                         // Restore instrument fields into the bubble for each window.
                         for snap in &preset.windows {
                             let chart_id = mlc_core::state::chart_container::ChartId(snap.window_id);
-                            if let Some(bid) = self.managers.bubble.bubble_for_chart(chart_id) {
-                                if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                            if let Some(bid) = self.bubble_for_chart(chart_id) {
+                                if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(bid) {
                                     bubble.symbol = snap.symbol.clone();
                                     bubble.timeframe = snap.timeframe.clone();
                                     bubble.exchange = snap.exchange.clone();
@@ -494,7 +504,7 @@ impl ChartApp {
                     // Step 5: Restore TagManager (sync groups)
                     // ----------------------------------------------------------------
                     let _t_bubbles = std::time::Instant::now();
-                    self.managers.bubble.clear();
+                    self.core.bubble_mut().bubble.clear();
                     for sg_snap in &preset.bubbles {
                         let mut group = mlc_core::tag_manager::BubbleStore::group_from_snapshot(sg_snap);
                         if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
@@ -517,7 +527,7 @@ impl ChartApp {
                                 }
                             }
                         }
-                        self.managers.bubble.insert_group_raw(group);
+                        self.core.bubble_mut().bubble.insert_group_raw(group);
                         // Restore per-group synced_panels list. Each panel id stored
                         // in synced_panel_ids was Synced (= follows active chart) at
                         // save time; re-register via set_synced so that next active
@@ -525,7 +535,7 @@ impl ChartApp {
                         let gid = mlc_core::tag_manager::BubbleId(sg_snap.id);
                         for &pid in &sg_snap.synced_panel_ids {
                             let member = mlc_core::tag_manager::SyncMemberId::Panel(pid);
-                            self.managers.bubble.set_synced(member, gid);
+                            self.core.bubble_mut().bubble.set_synced(member, gid);
                         }
                     }
                     eprintln!("[ChartApp] restored {} sync groups", preset.bubbles.len());
@@ -542,12 +552,12 @@ impl ChartApp {
                             self.panel_app.panel_grid.containers().keys()
                                 .copied()
                                 .filter_map(|cid| {
-                                    self.managers.bubble.bubble_for_chart(cid)
+                                    self.bubble_for_chart(cid)
                                         .map(|gid| (cid, gid))
                                 })
                                 .collect();
                         for (chart_id, group_id) in rebind_info {
-                            if let Some(style_arc) = self.managers.bubble
+                            if let Some(style_arc) = self.core.bubble().bubble
                                 .bubble(group_id)
                                 .map(|g| g.last_used_style.clone())
                             {
@@ -555,9 +565,7 @@ impl ChartApp {
                                     .get(&chart_id)
                                 {
                                     let pid = window.chart_panel_id;
-                                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                        panel.drawing_manager.bind_style_store(style_arc);
-                                    }
+                                    self.core.drawings_mut().entry_or_default(pid).bind_style_store(style_arc);
                                 }
                             }
                         }
@@ -574,16 +582,23 @@ impl ChartApp {
                     // Seed the global primitive ID counter so future allocations
                     // never collide with any ID loaded from disk.
                     {
-                        let max_id = self.panel_app.panel_grid.containers().values()
-                            .flat_map(|w| self.panels_store.chart_panel.get(&w.chart_panel_id)
-                                .map(|panel| panel.drawing_manager.primitives().iter()
-                                    .collect::<Vec<_>>())
-                                .unwrap_or_default())
+                        let panel_prim_ids: Vec<u64> = {
+                            let dreg = self.core.drawings();
+                            self.panel_app.panel_grid.containers().values()
+                                .flat_map(|w| {
+                                    let pid = w.chart_panel_id;
+                                    dreg.get(pid)
+                                        .map(|dm| dm.primitives().iter().map(|p| p.data().id).collect::<Vec<_>>())
+                                        .unwrap_or_default()
+                                })
+                                .collect()
+                        };
+                        let max_id = panel_prim_ids.into_iter()
                             .chain(
-                                self.managers.bubble.bubbles()
+                                self.core.bubble().bubble.bubbles()
                                     .flat_map(|g| g.primitives.iter())
+                                    .map(|p| p.data().id)
                             )
-                            .map(|p| p.data().id)
                             .max()
                             .unwrap_or(0);
                         mlc_core::drawing::seed_primitive_id_counter(max_id);
@@ -602,9 +617,9 @@ impl ChartApp {
                         let collision_info: Vec<(mlc_core::ChartId, mlc_core::tag_manager::BubbleId, std::collections::HashSet<u64>)> =
                             container_ids.into_iter()
                                 .filter_map(|cid| {
-                                    let gid = self.managers.bubble.bubble_for_chart(cid)?;
+                                    let gid = self.bubble_for_chart(cid)?;
                                     let group_ids: std::collections::HashSet<u64> =
-                                        self.managers.bubble.bubble(gid)
+                                        self.core.bubble().bubble.bubble(gid)
                                             .map(|g| g.primitives.iter().map(|p| p.data().id).collect())
                                             .unwrap_or_default();
                                     Some((cid, gid, group_ids))
@@ -618,7 +633,7 @@ impl ChartApp {
                                 .get(chart_id)
                                 .map(|w| w.auto_bubble_id);
                             if let Some(bid) = auto_bid {
-                                if let Some(auto_bub) = self.managers.bubble.bubble_mut(bid) {
+                                if let Some(auto_bub) = self.core.bubble_mut().bubble.bubble_mut(bid) {
                                     for p in auto_bub.primitives.iter_mut() {
                                         if group_ids.contains(&p.data().id) {
                                             p.data_mut().id = mlc_core::drawing::alloc_primitive_id();
@@ -639,7 +654,7 @@ impl ChartApp {
                     // Deduplicate IDs within each group.primitives collection.
                     // Old presets may have group primitives with identical IDs
                     // (from historical clone paths that didn't re-ID).
-                    for group in self.managers.bubble.bubbles_mut() {
+                    for group in self.core.bubble_mut().bubble.bubbles_mut() {
                         let mut seen_ids = std::collections::HashSet::new();
                         let mut reid_count = 0u32;
                         for p in &mut group.primitives {
@@ -669,20 +684,19 @@ impl ChartApp {
                         };
                         // Phase 4 S2.7.1c: read via branch_meta (B6 capture flip).
                         let first_cid = first_win.id;
-                        let symbol = self.managers.bubble.symbol_for_chart(first_cid)
+                        let symbol = self.symbol_for_chart(first_cid)
                             .map(String::from).unwrap_or_default();
-                        let timeframe = self.managers.bubble.timeframe_for_chart(first_cid)
-                            .cloned().unwrap_or_else(mlc_core::state::Timeframe::h1);
-                        let group_id = self.managers.bubble.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
+                        let timeframe = self.timeframe_for_chart(first_cid).unwrap_or_else(mlc_core::state::Timeframe::h1);
+                        let group_id = self.core.bubble_mut().bubble.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
                         let leaf_chart_ids: Vec<(mlc_core::LeafId, mlc_core::ChartId)> =
                             self.panel_app.panel_grid.iter_containers()
                                 .map(|(leaf_id, w)| (leaf_id, w.id))
                                 .collect();
-                        let style_arc = self.managers.bubble
+                        let style_arc = self.core.bubble().bubble
                             .bubble(group_id)
                             .map(|g| g.last_used_style.clone());
                         for &(leaf_id, chart_id) in &leaf_chart_ids {
-                            let _ = self.managers.bubble.attach_chart_to_bubble(chart_id, group_id);
+                            let _ = self.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, group_id);
                             // Sync the window-side bubble pointer so the renderer's
                             // `window.current_bubble_id` lookup matches the writer's
                             // `bubble_for_chart` lookup. Without this, the BubbleStore
@@ -696,9 +710,7 @@ impl ChartApp {
                             }
                             if let Some(pid) = self.panel_app.panel_grid.container_for_leaf(leaf_id).map(|w| w.chart_panel_id) {
                                 if let Some(ref arc) = style_arc {
-                                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                        panel.drawing_manager.bind_style_store(arc.clone());
-                                    }
+                                    self.core.drawings_mut().entry_or_default(pid).bind_style_store(arc.clone());
                                 }
                             }
                         }
@@ -716,7 +728,7 @@ impl ChartApp {
                     {
                         let orphan_windows: Vec<(mlc_core::LeafId, mlc_core::ChartId)> =
                             self.panel_app.panel_grid.iter_containers()
-                                .filter(|(_, w)| self.managers.bubble.bubble_for_chart(w.id).is_none())
+                                .filter(|(_, w)| self.bubble_for_chart(w.id).is_none())
                                 .map(|(leaf_id, w)| (leaf_id, w.id))
                                 .collect();
                         for &(leaf_id, chart_id) in &orphan_windows {
@@ -734,27 +746,27 @@ impl ChartApp {
                                     "S".to_string(),
                                     mlc_core::state::Timeframe::h1(),
                                 ));
-                            let group_id = self.managers.bubble.create_group_auto(
+                            let group_id = self.core.bubble_mut().bubble.create_group_auto(
                                 [0.0, 0.0, 0.0, 0.0],
                                 sym.clone(),
                                 tf,
                             );
-                            if let Some(bubble) = self.managers.bubble.bubble_mut(group_id) {
+                            if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(group_id) {
                                 bubble.exchange = exch.clone();
                                 bubble.account_type = if at.is_empty() { "S".to_string() } else { at };
                             }
-                            let _ = self.managers.bubble.attach_chart_to_bubble(chart_id, group_id);
+                            let _ = self.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, group_id);
                             // Sync window-side bubble pointer (see Step 5b for rationale).
                             if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&chart_id) {
                                 window.auto_bubble_id = group_id;
                                 window.current_bubble_id = group_id;
                             }
                             if let Some(pid) = self.panel_app.panel_grid.container_for_leaf(leaf_id).map(|w| w.chart_panel_id) {
-                                let panel = crate::chart_panel_bridge::ensure_chart_panel_state(
+                                let _panel = crate::chart_panel_bridge::ensure_chart_panel_state(
                                     &mut self.panels_store,
                                     pid,
                                 );
-                                panel.drawing_manager.set_current_symbol_key(&sym, &exch, "S");
+                                self.core.drawings_mut().entry_or_default(pid).set_current_symbol_key(&sym, &exch, "S");
                             }
                             eprintln!(
                                 "[ChartApp] Step 5c: re-membered orphaned window {:?} into auto group {:?} ({})",
@@ -768,20 +780,20 @@ impl ChartApp {
                     // Step 6: Restore indicators
                     // ----------------------------------------------------------------
                     let _t_indicators = std::time::Instant::now();
-                    self.indicator_manager.clear_all();
+                    self.core.indicators_mut().clear_all();
                     // Re-arm the one-shot indicator heal (tick.rs): restored
                     // instances reuse ids from the previous preset.
                     self.indicator_heal_attempted.clear();
                     for ind_snap in &preset.indicators {
-                        if self.indicator_manager.create_instance_with_id(
+                        if self.core.indicators_mut().create_instance_with_id(
                             ind_snap.id,
                             &ind_snap.type_id,
                         ) {
                             // Bind to the persisted window_id via the index  -  direct
                             // field assignment would leak the instance into the
                             // wrong by_window_id bucket.
-                            self.indicator_manager.assign_window(ind_snap.id, ind_snap.window_id);
-                            if let Some(inst) = self.indicator_manager.get_instance_mut(ind_snap.id) {
+                            self.core.indicators_mut().assign_window(ind_snap.id, ind_snap.window_id);
+                            if let Some(inst) = self.core.indicators_mut().get_instance_mut(ind_snap.id) {
                                 inst.name = ind_snap.name.clone();
                                 inst.pane = ind_snap.pane;
                                 inst.order = ind_snap.order;
@@ -829,13 +841,13 @@ impl ChartApp {
                         .panel_app
                         .panel_grid
                         .iter_containers()
-                        .filter(|(_, w)| !true)
+                        .filter(|(_, _w)| !true)
                         .map(|(_, w)| (w.id.0, Vec::<mlc_core::Bar>::new()))
                         .collect();
 
                     let recalc_n = window_bar_data.len();
                     for (window_id, bars) in window_bar_data {
-                        self.indicator_manager.calculate_for_window(window_id, &bars);
+                        self.core.indicators_mut().calculate_for_window(window_id, &bars);
                     }
                     eprintln!("[ChartApp] recalculated indicators for all windows with bars");
                     let recalc_us = _t_recalc.elapsed().as_micros();
@@ -898,8 +910,8 @@ impl ChartApp {
                     // Step 8: Restore alerts
                     // ----------------------------------------------------------------
                     let _t_alerts = std::time::Instant::now();
-                    self.managers.alert.restore(preset.alerts.clone());
-                    eprintln!("[ChartApp] restored {} alerts", self.managers.alert.len());
+                    self.core.bubble_mut().alert.restore(preset.alerts.clone());
+                    eprintln!("[ChartApp] restored {} alerts", self.core.bubble().alert.len());
                     let alerts_us = _t_alerts.elapsed().as_micros();
 
                     // Step 8b: Restore per-slot Panel docking layouts.
@@ -965,8 +977,8 @@ impl ChartApp {
                                         if !s.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
-                                                s.shared_orderbook = self.bridge.subscribe_orderbook(eid, &s.symbol, at);
-                                                let trade_handle = self.bridge.subscribe_trades(eid, &s.symbol, at);
+                                                s.shared_orderbook = self.core.bridge.subscribe_orderbook(eid, &s.symbol, at);
+                                                let trade_handle = self.core.bridge.subscribe_trades(eid, &s.symbol, at);
                                                 s.shared_trades = trade_handle;
                                             }
                                         }
@@ -988,7 +1000,7 @@ impl ChartApp {
                                         if !s.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
-                                                let handle = self.bridge.subscribe_trades(eid, &s.symbol, at);
+                                                let handle = self.core.bridge.subscribe_trades(eid, &s.symbol, at);
                                                 s.shared_trades = handle;
                                             }
                                         }
@@ -1010,7 +1022,7 @@ impl ChartApp {
                                         if !s.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
-                                                let handle = self.bridge.subscribe_trades(eid, &s.symbol, at);
+                                                let handle = self.core.bridge.subscribe_trades(eid, &s.symbol, at);
                                                 s.shared_trades = handle;
                                             }
                                         }
@@ -1032,7 +1044,7 @@ impl ChartApp {
                                         if !s.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
-                                                s.shared_orderbook = self.bridge.subscribe_orderbook(eid, &s.symbol, at);
+                                                s.shared_orderbook = self.core.bridge.subscribe_orderbook(eid, &s.symbol, at);
                                             }
                                         }
                                         self.panels_store.liquidity_heatmap.insert(pid, s);
@@ -1054,7 +1066,7 @@ impl ChartApp {
                                         if !s.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
-                                                let handle = self.bridge.subscribe_trades(eid, &s.symbol, at);
+                                                let handle = self.core.bridge.subscribe_trades(eid, &s.symbol, at);
                                                 s.shared_trades = handle;
                                             }
                                         }
@@ -1077,7 +1089,7 @@ impl ChartApp {
                                         if !s.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
-                                                s.shared_orderbook = self.bridge.subscribe_orderbook(eid, &s.symbol, at);
+                                                s.shared_orderbook = self.core.bridge.subscribe_orderbook(eid, &s.symbol, at);
                                             }
                                         }
                                         self.panels_store.l2_tape.insert(pid, s);
@@ -1099,7 +1111,7 @@ impl ChartApp {
                                         if !s.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
-                                                let handle = self.bridge.subscribe_trades(eid, &s.symbol, at);
+                                                let handle = self.core.bridge.subscribe_trades(eid, &s.symbol, at);
                                                 s.shared_trades = handle;
                                             }
                                         }
@@ -1183,7 +1195,7 @@ impl ChartApp {
                                             for ex_label in exchanges {
                                                 if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
                                                     let at = digdigdig3::AccountType::Spot;
-                                                    let _ = self.bridge.subscribe_orderbook(eid, symbol, at);
+                                                    let _ = self.core.bridge.subscribe_orderbook(eid, symbol, at);
                                                 }
                                             }
                                         }
@@ -1263,7 +1275,7 @@ impl ChartApp {
                         let mut depth_subs: Vec<(digdigdig3::ExchangeId, String, digdigdig3::AccountType)> = Vec::new();
 
                         let resolve_eid = |exchange_str: &str| -> digdigdig3::ExchangeId {
-                            self.exchange_symbols
+                            self.core.exchange_symbols_read()
                                 .keys()
                                 .find(|e| e.as_str() == exchange_str)
                                 .copied()
@@ -1308,7 +1320,7 @@ impl ChartApp {
                         let mut seen: std::collections::HashSet<(digdigdig3::ExchangeId, String, digdigdig3::AccountType)> = std::collections::HashSet::new();
                         for (eid, sym, at) in depth_subs {
                             if seen.insert((eid, sym.clone(), at)) {
-                                self.bridge.subscribe_depth(eid, &sym, at);
+                                self.core.bridge.subscribe_depth(eid, &sym, at);
                             }
                         }
                     }
@@ -1330,16 +1342,16 @@ impl ChartApp {
                         .iter_containers()
                         .filter_map(|(_, w)| {
                             let cid = w.id;
-                            let exch = self.managers.bubble.exchange_for_chart(cid)?;
-                            let sym = self.managers.bubble.symbol_for_chart(cid)
+                            let exch = self.exchange_for_chart(cid)?;
+                            let sym = self.symbol_for_chart(cid)
                                 .map(String::from).unwrap_or_default();
-                            digdigdig3::ExchangeId::from_str(exch).map(|eid| (eid, sym))
+                            digdigdig3::ExchangeId::from_str(&exch).map(|eid| (eid, sym))
                         })
                         .collect();
 
                     for (eid, symbol) in &old_subscriptions {
                         if !new_subscriptions.contains(&(*eid, symbol.clone())) {
-                            self.bridge.unsubscribe_trades(*eid, symbol, digdigdig3::AccountType::default());
+                            self.core.bridge.unsubscribe_trades(*eid, symbol, digdigdig3::AccountType::default());
                             eprintln!("[ChartApp] unsubscribed trades: {}/{}", eid.as_str(), symbol);
                         }
                     }
@@ -1361,26 +1373,25 @@ impl ChartApp {
                         .iter_containers()
                         .map(|(_, w)| {
                             let cid = w.id;
-                            let sym = self.managers.bubble.symbol_for_chart(cid)
+                            let sym = self.symbol_for_chart(cid)
                                 .map(String::from).unwrap_or_default();
-                            let exch = self.managers.bubble.exchange_for_chart(cid)
+                            let exch = self.exchange_for_chart(cid)
                                 .map(String::from).unwrap_or_default();
-                            let tf = self.managers.bubble.timeframe_for_chart(cid)
-                                .cloned().unwrap_or_else(mlc_core::state::Timeframe::h1);
-                            let at = self.managers.bubble.account_type_for_chart(cid)
+                            let tf = self.timeframe_for_chart(cid).unwrap_or_else(mlc_core::state::Timeframe::h1);
+                            let at = self.account_type_for_chart(cid)
                                 .map(String::from).unwrap_or_default();
                             (sym, exch, tf, at)
                         })
                         .collect();
                     for (sym, exch, tf, at_label) in &window_bar_data {
-                        let eid = digdigdig3::ExchangeId::from_str(exch)
+                        let eid = digdigdig3::ExchangeId::from_str(&exch)
                             .unwrap_or(digdigdig3::ExchangeId::Binance);
                         if !self.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
                             continue;
                         }
                         let at = crate::account_type_from_label(at_label);
-                        self.bridge.ensure_connector(eid);
-                        self.bridge.request_bars(eid, sym, tf, at, None, Some(bar_count), true);
+                        self.core.bridge.ensure_connector(eid);
+                        self.core.bridge.request_bars(eid, sym, tf, at, None, Some(bar_count), true);
                         bars_requested += 1;
                     }
                     eprintln!("[ChartApp] LoadPreset: requesting bars for {} windows", bars_requested);
@@ -1416,7 +1427,7 @@ impl ChartApp {
                         };
                         // Collect orphans (Panel members in any group with no live state).
                         let mut orphans: Vec<SyncMemberId> = Vec::new();
-                        for group in self.managers.bubble.bubbles() {
+                        for group in self.core.bubble().bubble.bubbles() {
                             for member in group.members.iter() {
                                 if let SyncMemberId::Panel(pid) = member {
                                     if !live_panel_ids.contains(pid) {
@@ -1427,8 +1438,8 @@ impl ChartApp {
                         }
                         let pruned = orphans.len();
                         for member in orphans {
-                            self.managers.bubble.disconnect(member);
-                            self.managers.bubble.synced_panels_remove(member);
+                            self.core.bubble_mut().bubble.disconnect(member);
+                            self.core.bubble_mut().bubble.synced_panels_remove(member);
                         }
                         if pruned > 0 {
                             eprintln!("[ChartApp] preset restore: pruned {} orphan panel members from sync groups", pruned);
@@ -1452,7 +1463,7 @@ impl ChartApp {
         {
             let bid_by_chart: std::collections::HashMap<mlc_core::ChartId, mlc_core::tag_manager::BubbleId> =
                 self.panel_app.panel_grid.containers().keys()
-                    .filter_map(|cid| self.managers.bubble.bubble_for_chart(*cid).map(|bid| (*cid, bid)))
+                    .filter_map(|cid| self.bubble_for_chart(*cid).map(|bid| (*cid, bid)))
                     .collect();
             for (cid, bid) in &bid_by_chart {
                 if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(cid) {
@@ -1478,7 +1489,7 @@ impl ChartApp {
         // Layout above lists steps in the order they execute. Look for the
         // biggest bucket — that's where Stage 4 (Send carve-out + worker
         // dispatch) buys you the most off-main-thread time. Steps that
-        // touch `self.bridge.*` (`depth_subs`, `unsubs`, `request_bars`,
+        // touch `self.core.bridge.*` (`depth_subs`, `unsubs`, `request_bars`,
         // and parts of `slots`) cannot move off main today; everything
         // else is pure CPU and is the target of the worker thread.
         eprintln!(

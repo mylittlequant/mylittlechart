@@ -62,6 +62,7 @@ fn main() {
     let mut chart = ChartApp::new(&symbol);
     chart.resize(VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
     let bridge = chart.bridge_arc();
+    let core = chart.core.clone();
 
     let mut host = HeadlessHost {
         windows: vec![HostWindow {
@@ -71,6 +72,7 @@ fn main() {
     };
 
     let agent_state = Arc::new(AgentState::new(bridge, env!("CARGO_PKG_VERSION")));
+    agent_state.attach_core(core);
 
     // Server runtime: dedicated multi-thread runtime for axum + the snapshot
     // freshness check. The ChartApp drives its own bridge / connectors

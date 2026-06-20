@@ -132,7 +132,7 @@ impl ChartApp {
                 (self.sidebar_state.watchlist_sort_mode + 1) % 3;
             let mode = self.sidebar_state.watchlist_sort_mode;
             eprintln!("[Sidebar] watchlist_sort_mode -> {}", mode);
-            if let Some(list) = self.sidebar_state.watchlist_manager.active_list_mut() {
+            if let Some(list) = self.core.watchlist_mut().active_list_mut() {
                 match mode {
                     0 => {
                         // Reset to original order from snapshot.
@@ -241,10 +241,18 @@ impl ChartApp {
                             let symbol = item.symbol.clone();
                             let exchange = item.exchange.clone();
                             let account_type = item.account_type.clone();
-                            if let Some(list) = self.sidebar_state.watchlist_manager.active_list_mut() {
-                                let color = colors.get(color_idx).copied().unwrap_or("");
-                                list.set_color_flag(&symbol, &exchange, &account_type, color);
-                                let color_opt = if color.is_empty() { None } else { Some(color.to_string()) };
+                            let color_set: Option<String> = {
+                                let mut wl = self.core.watchlist_mut();
+                                if let Some(list) = wl.active_list_mut() {
+                                    let color = colors.get(color_idx).copied().unwrap_or_default();
+                                    list.set_color_flag(&symbol, &exchange, &account_type, color);
+                                    Some(color.to_string())
+                                } else {
+                                    None
+                                }
+                            };
+                            if let Some(color) = color_set {
+                                let color_opt = if color.is_empty() { None } else { Some(color.clone()) };
                                 self.watchlist_actions.push(crate::WatchlistAction::SetColorFlag { symbol: symbol.clone(), exchange: exchange.clone(), account_type: account_type.clone(), color: color_opt });
                                 self.watchlists_dirty = true;
                                 self.persist_watchlists();
@@ -268,12 +276,15 @@ impl ChartApp {
                     let exchange = item.exchange.clone();
                     let account_type = item.account_type.clone();
                     // Remove symbol from snapshot (if active) before removing from list.
-                    if let Some(list) = self.sidebar_state.watchlist_manager.active_list_mut() {
-                        if let Some(ref mut snap) = list.order_snapshot {
-                            snap.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == account_type));
+                    {
+                        let mut wl = self.core.watchlist_mut();
+                        if let Some(list) = wl.active_list_mut() {
+                            if let Some(ref mut snap) = list.order_snapshot {
+                                snap.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == account_type));
+                            }
                         }
+                        wl.remove_symbol(&symbol, &exchange, &account_type);
                     }
-                    self.sidebar_state.watchlist_manager.remove_symbol(&symbol, &exchange, &account_type);
                     self.watchlist_actions.push(crate::WatchlistAction::Remove { symbol: symbol.clone(), exchange: exchange.clone(), account_type: account_type.clone() });
                     self.watchlist_actions.push(crate::WatchlistAction::ClearOrderSnapshot);
                     self.watchlists_dirty = true;
@@ -294,7 +305,7 @@ impl ChartApp {
                     eprintln!("[Sidebar] Watchlist click: {} @ {} ({})", symbol, item_exchange, idx);
 
                     // Resolve ExchangeId from the item's exchange string.
-                    let resolved_exchange = self.exchange_symbols
+                    let resolved_exchange = self.core.exchange_symbols_read()
                         .keys()
                         .find(|eid| eid.as_str() == item_exchange)
                         .copied()
@@ -303,52 +314,59 @@ impl ChartApp {
                     // S2.7.1e: read prev instrument fields via branch_meta (B1).
                     let wl_active_cid = self.panel_app.panel_grid.active_container_id();
                     let prev_symbol: Option<String> = wl_active_cid
-                        .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                        .and_then(|cid| self.symbol_for_chart(cid))
                         .map(String::from);
                     let prev_exchange: Option<String> = wl_active_cid
-                        .and_then(|cid| self.managers.bubble.exchange_for_chart(cid))
+                        .and_then(|cid| self.exchange_for_chart(cid))
                         .map(String::from);
                     let prev_account_type: Option<String> = wl_active_cid
-                        .and_then(|cid| self.managers.bubble.account_type_for_chart(cid))
+                        .and_then(|cid| self.account_type_for_chart(cid))
                         .map(String::from);
                     if prev_symbol.as_deref() != Some(&symbol) || prev_exchange.as_deref() != Some(&item_exchange) || prev_account_type.as_deref() != Some(&item_account_type) {
                         // Capture old trade-stream identity BEFORE mutating window state.
                         let old_trade_exchange = self.active_exchange;
                         let old_trade_symbol: String = wl_active_cid
-                            .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                            .and_then(|cid| self.symbol_for_chart(cid))
                             .map(String::from)
                             .unwrap_or_default();
                         let old_trade_at = wl_active_cid
-                            .and_then(|cid| self.managers.bubble.account_type_for_chart(cid))
-                            .map(|at| crate::account_type_from_label(at))
+                            .and_then(|cid| self.account_type_for_chart(cid))
+                            .map(|at| crate::account_type_from_label(&at))
                             .unwrap_or(digdigdig3::AccountType::Spot);
                         let timeframe = wl_active_cid
-                            .and_then(|cid| self.managers.bubble.timeframe_for_chart(cid))
-                            .cloned()
+                            .and_then(|cid| self.timeframe_for_chart(cid))
                             .unwrap_or_default();
                         let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
                         // Phase 4 B: capture chart_id BEFORE the mutating block.
                         let active_chart_id = self.panel_app.panel_grid.active_container_id();
                         let old_sym_pc = active_chart_id
-                            .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                            .and_then(|cid| self.symbol_for_chart(cid))
                             .map(String::from)
                             .unwrap_or_default();
                         let old_exch_pc = active_chart_id
-                            .and_then(|cid| self.managers.bubble.exchange_for_chart(cid))
+                            .and_then(|cid| self.exchange_for_chart(cid))
                             .map(String::from)
                             .unwrap_or_default();
                         let old_at_pc = active_chart_id
-                            .and_then(|cid| self.managers.bubble.account_type_for_chart(cid))
+                            .and_then(|cid| self.account_type_for_chart(cid))
                             .map(String::from)
                             .unwrap_or_else(|| "S".to_string());
                         let active_pid_pc = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                             if let Some(pid) = active_pid_pc {
-                                if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                                    window.snapshot_drawings_for_symbol(&old_sym_pc, &old_exch_pc, &old_at_pc, &panel.drawing_manager);
-                                    panel.drawing_manager.set_current_symbol_key(&symbol, &item_exchange, &item_account_type);
-                                    panel.drawing_manager.clear_all_primitives();
-                                    window.restore_drawings_for_symbol(&symbol, &item_exchange, &item_account_type, &mut panel.drawing_manager);
+                                // snapshot then clear+restore via registry
+                                {
+                                    let guard = self.core.drawings();
+                                    if let Some(dm) = guard.get(pid) {
+                                        window.snapshot_drawings_for_symbol(&old_sym_pc, &old_exch_pc, &old_at_pc, dm);
+                                    }
+                                }
+                                {
+                                    let mut guard = self.core.drawings_mut();
+                                    let dm = guard.entry_or_default(pid);
+                                    dm.set_current_symbol_key(&symbol, &item_exchange, &item_account_type);
+                                    dm.clear_all_primitives();
+                                    window.restore_drawings_for_symbol(&symbol, &item_exchange, &item_account_type, dm);
                                 }
                             }
                             {};
@@ -357,8 +375,8 @@ impl ChartApp {
                             window.pending_symbol_load = true;
                         }
                         if let Some(chart_id) = active_chart_id {
-                            if let Some(bid) = self.managers.bubble.bubble_for_chart(chart_id) {
-                                if let Some(bubble) = self.managers.bubble.bubble_mut(bid) {
+                            if let Some(bid) = self.bubble_for_chart(chart_id) {
+                                if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(bid) {
                                     bubble.symbol = symbol.clone();
                                     bubble.timeframe = timeframe.clone();
                                     bubble.exchange = item_exchange.clone();
@@ -370,15 +388,15 @@ impl ChartApp {
                         // Unsubscribe only the old symbol's trade stream, leaving other
                         // windows' streams intact.
                         if !old_trade_symbol.is_empty() {
-                            self.bridge.unsubscribe_trades(old_trade_exchange, &old_trade_symbol, old_trade_at);
+                            self.core.bridge.unsubscribe_trades(old_trade_exchange, &old_trade_symbol, old_trade_at);
                         }
                         let eid_str = resolved_exchange.as_str();
                         if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
                             eprintln!("[ChartApp] Exchange {} is disabled, skipping connector call (watchlist sidebar click)", eid_str);
                         } else {
                             let item_at = crate::account_type_from_label(&item_account_type);
-                            self.bridge.ensure_connector(resolved_exchange);
-                            self.bridge.request_bars(resolved_exchange, &symbol, &timeframe, item_at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), false);
+                            self.core.bridge.ensure_connector(resolved_exchange);
+                            self.core.bridge.request_bars(resolved_exchange, &symbol, &timeframe, item_at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), false);
                         }
                         // Propagate the new symbol+exchange+account_type to all other windows
                         // in the same sync group so the full instrument key is consistent.
@@ -415,10 +433,10 @@ impl ChartApp {
 
                 if let Some(eid) = digdigdig3::ExchangeId::from_str(exchange_id_str) {
                     if now_enabled {
-                        self.bridge.enable_connector(eid);
+                        self.core.bridge.enable_connector(eid);
                         eprintln!("[Sidebar] Connector enabled: {}", exchange_id_str);
                     } else {
-                        self.bridge.disable_connector(eid);
+                        self.core.bridge.disable_connector(eid);
                         eprintln!("[Sidebar] Connector disabled: {}", exchange_id_str);
                     }
                 } else {
@@ -755,7 +773,7 @@ impl ChartApp {
             if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
                 if let Some(desc) = self.sidebar_state.agent_leaves.remove(&leaf_id) {
                     let id = desc.instance_id;
-                    let _ = self.bridge.runtime().block_on(self.agent.stop_instance(id));
+                    let _ = self.core.bridge.runtime().block_on(self.agent.stop_instance(id));
                 }
                 self.sidebar_state.agent_docking.inner_mut().tree_mut().remove_leaf(leaf_id);
                 self.sidebar_state.agent_pty_selections.remove(&leaf_id);
@@ -776,7 +794,7 @@ impl ChartApp {
                         .unwrap_or(false)
                     {
                         let buf = self.sidebar_state.agent_input_buffers
-                            .get(&next_id).map(|s| s.as_str()).unwrap_or("");
+                            .get(&next_id).map(|s| s.as_str()).unwrap_or_default();
                         let chat_id = WidgetId::from(crate::text_input::AGENT_CHAT);
                         self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, buf);
                     }
@@ -801,7 +819,7 @@ impl ChartApp {
                         .unwrap_or(false)
                     {
                         let buf = self.sidebar_state.agent_input_buffers
-                            .get(&leaf_id).map(|s| s.as_str()).unwrap_or("");
+                            .get(&leaf_id).map(|s| s.as_str()).unwrap_or_default();
                         let chat_id = WidgetId::from(crate::text_input::AGENT_CHAT);
                         self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, buf);
                     }
@@ -831,7 +849,7 @@ impl ChartApp {
                         }
                         Some(gate4agent::InstanceMode::Chat) => {
                             let buf = self.sidebar_state.agent_input_buffers
-                                .get(&leaf_id).map(|s| s.as_str()).unwrap_or("");
+                                .get(&leaf_id).map(|s| s.as_str()).unwrap_or_default();
                             let chat_id = WidgetId::from(crate::text_input::AGENT_CHAT);
                             self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, buf);
                             self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::AGENT_CHAT);
@@ -849,7 +867,7 @@ impl ChartApp {
                     let leaf_id = uzor::panels::LeafId(raw);
                     if let Some(desc) = self.sidebar_state.agent_leaves.remove(&leaf_id) {
                         let id = desc.instance_id;
-                        let _ = self.bridge.runtime().block_on(self.agent.stop_instance(id));
+                        let _ = self.core.bridge.runtime().block_on(self.agent.stop_instance(id));
                     }
                     self.sidebar_state.agent_docking.inner_mut().tree_mut().remove_leaf(leaf_id);
                     self.sidebar_state.agent_pty_selections.remove(&leaf_id);
@@ -870,7 +888,7 @@ impl ChartApp {
                                 .unwrap_or(false)
                             {
                                 let buf = self.sidebar_state.agent_input_buffers
-                                    .get(&next_id).map(|s| s.as_str()).unwrap_or("");
+                                    .get(&next_id).map(|s| s.as_str()).unwrap_or_default();
                                 let chat_id = WidgetId::from(crate::text_input::AGENT_CHAT);
                                 self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, buf);
                             }
@@ -1060,7 +1078,7 @@ impl ChartApp {
                                     working_dir: desc.workdir.clone(),
                                     ..SessionConfig::default()
                                 };
-                                match self.bridge.runtime().block_on(self.agent.start_pty_instance(id, config)) {
+                                match self.core.bridge.runtime().block_on(self.agent.start_pty_instance(id, config)) {
                                     Ok(()) => {
                                         eprintln!("[ChartApp] agent:leaf:{:?}:start PTY started", leaf_id);
                                         self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::AGENT_PTY);
@@ -1073,7 +1091,7 @@ impl ChartApp {
                                 // Chat starts lazily on first send — focus input field.
                                 // Sync buffer first to avoid leaking previous leaf's text.
                                 let buf = self.sidebar_state.agent_input_buffers
-                                    .get(&leaf_id).map(|s| s.as_str()).unwrap_or("");
+                                    .get(&leaf_id).map(|s| s.as_str()).unwrap_or_default();
                                 let chat_id = WidgetId::from(crate::text_input::AGENT_CHAT);
                                 self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, buf);
                                 self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&chat_id);
@@ -1116,7 +1134,7 @@ impl ChartApp {
                         eprintln!("[gate4agent::chat] send button leaf={:?} len={}", leaf_id, text.len());
                         if !text.is_empty() {
                             let id = desc.instance_id;
-                            match self.bridge.runtime().block_on(self.agent.send_chat_instance(id, &text)) {
+                            match self.core.bridge.runtime().block_on(self.agent.send_chat_instance(id, &text)) {
                                 Ok(()) => {
                                     self.sidebar_state.agent_input_buffers.remove(&leaf_id);
                                     self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, "");
@@ -1182,15 +1200,15 @@ impl ChartApp {
                             SlotSourceMode::Untagged => {
                                 // Frozen snapshot of active chart key at spawn time.
                                 let sym: String = spawn_active_cid
-                                    .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                                    .and_then(|cid| self.symbol_for_chart(cid))
                                     .map(String::from)
                                     .unwrap_or_default();
                                 let exch: String = spawn_active_cid
-                                    .and_then(|cid| self.managers.bubble.exchange_for_chart(cid))
+                                    .and_then(|cid| self.exchange_for_chart(cid))
                                     .map(String::from)
                                     .unwrap_or_else(|| self.active_exchange.as_str().to_string());
                                 let at: String = spawn_active_cid
-                                    .and_then(|cid| self.managers.bubble.account_type_for_chart(cid))
+                                    .and_then(|cid| self.account_type_for_chart(cid))
                                     .map(String::from)
                                     .unwrap_or_else(|| digdigdig3::AccountType::Spot.short_label().to_string());
                                 SymbolSource::Fixed { symbol: sym, exchange: exch, account_type: at }
@@ -1201,11 +1219,11 @@ impl ChartApp {
                         // S2.7.1e: read instrument fields via branch_meta (B1).
                         let active_resolved = spawn_active_cid.map(|cid| {
                             mlc_panels::trading::ResolvedSymbol {
-                                symbol: self.managers.bubble.symbol_for_chart(cid)
+                                symbol: self.symbol_for_chart(cid)
                                     .map(String::from).unwrap_or_default(),
-                                exchange: self.managers.bubble.exchange_for_chart(cid)
+                                exchange: self.exchange_for_chart(cid)
                                     .map(String::from).unwrap_or_default(),
-                                account_type: self.managers.bubble.account_type_for_chart(cid)
+                                account_type: self.account_type_for_chart(cid)
                                     .map(String::from).unwrap_or_default(),
                             }
                         });
@@ -1213,11 +1231,11 @@ impl ChartApp {
                             let leaf = mlc_core::LeafId(lid);
                             let leaf_cid = self.panel_app.panel_grid.container_id_for_leaf(leaf)?;
                             Some(mlc_panels::trading::ResolvedSymbol {
-                                symbol: self.managers.bubble.symbol_for_chart(leaf_cid)
+                                symbol: self.symbol_for_chart(leaf_cid)
                                     .map(String::from).unwrap_or_default(),
-                                exchange: self.managers.bubble.exchange_for_chart(leaf_cid)
+                                exchange: self.exchange_for_chart(leaf_cid)
                                     .map(String::from).unwrap_or_default(),
-                                account_type: self.managers.bubble.account_type_for_chart(leaf_cid)
+                                account_type: self.account_type_for_chart(leaf_cid)
                                     .map(String::from).unwrap_or_default(),
                             })
                         };
@@ -1232,7 +1250,7 @@ impl ChartApp {
                         let account_type_str = resolved.as_ref().map(|r| r.account_type.clone())
                             .unwrap_or_else(|| digdigdig3::AccountType::Spot.short_label().to_string());
 
-                        let resolved_tick_size = self.exchange_symbols
+                        let resolved_tick_size = self.core.exchange_symbols_read()
                             .iter()
                             .find(|(eid, _)| eid.as_str() == exchange_str)
                             .and_then(|(_, syms)| {
@@ -1248,11 +1266,11 @@ impl ChartApp {
                                     let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
                                         .unwrap_or(self.active_exchange);
                                     let at = crate::account_type_from_label(&account_type_str);
-                                    let trade_handle = self.bridge.subscribe_trades(eid, &symbol, at);
+                                    let trade_handle = self.core.bridge.subscribe_trades(eid, &symbol, at);
                                     if let Some(state) = self.panels_store.dom.get_mut(&pid) {
                                         state.exchange = exchange_str.clone();
                                         state.account_type = account_type_str.clone();
-                                        state.shared_orderbook = self.bridge.subscribe_orderbook(eid, &symbol, at);
+                                        state.shared_orderbook = self.core.bridge.subscribe_orderbook(eid, &symbol, at);
                                         state.last_seen_update_id = None;
                                         state.level_qty_bid.clear();
                                         state.level_qty_ask.clear();
@@ -1283,7 +1301,7 @@ impl ChartApp {
                                     let at = digdigdig3::AccountType::Spot;
                                     for ex_label in &default_exchanges {
                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
-                                            let _ = self.bridge.subscribe_orderbook(eid, &symbol, at);
+                                            let _ = self.core.bridge.subscribe_orderbook(eid, &symbol, at);
                                         }
                                     }
                                 }
@@ -1295,7 +1313,7 @@ impl ChartApp {
                                     let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
                                         .unwrap_or(self.active_exchange);
                                     let at = crate::account_type_from_label(&account_type_str);
-                                    let handle = self.bridge.subscribe_trades(eid, &symbol, at);
+                                    let handle = self.core.bridge.subscribe_trades(eid, &symbol, at);
                                     if let Some(state) = self.panels_store.footprint.get_mut(&pid) {
                                         state.exchange = exchange_str.clone();
                                         state.account_type = account_type_str.clone();
@@ -1314,7 +1332,7 @@ impl ChartApp {
                                     let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
                                         .unwrap_or(self.active_exchange);
                                     let at = crate::account_type_from_label(&account_type_str);
-                                    let handle = self.bridge.subscribe_trades(eid, &symbol, at);
+                                    let handle = self.core.bridge.subscribe_trades(eid, &symbol, at);
                                     if let Some(state) = self.panels_store.volume_profile.get_mut(&pid) {
                                         state.exchange = exchange_str.clone();
                                         state.account_type = account_type_str.clone();
@@ -1336,7 +1354,7 @@ impl ChartApp {
                                     if let Some(state) = self.panels_store.liquidity_heatmap.get_mut(&pid) {
                                         state.exchange = exchange_str.clone();
                                         state.account_type = account_type_str.clone();
-                                        state.shared_orderbook = self.bridge.subscribe_orderbook(eid, &symbol, at);
+                                        state.shared_orderbook = self.core.bridge.subscribe_orderbook(eid, &symbol, at);
                                         state.last_seen_update_id = None;
                                     }
                                 } else if let Some(state) = self.panels_store.liquidity_heatmap.get_mut(&pid) {
@@ -1353,7 +1371,7 @@ impl ChartApp {
                                     let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
                                         .unwrap_or(self.active_exchange);
                                     let at = crate::account_type_from_label(&account_type_str);
-                                    let handle = self.bridge.subscribe_trades(eid, &symbol, at);
+                                    let handle = self.core.bridge.subscribe_trades(eid, &symbol, at);
                                     if let Some(state) = self.panels_store.big_trades.get_mut(&pid) {
                                         state.symbol = symbol.clone();
                                         state.exchange = exchange_str.clone();
@@ -1378,7 +1396,7 @@ impl ChartApp {
                                         state.symbol = symbol.clone();
                                         state.exchange = exchange_str.clone();
                                         state.account_type = account_type_str.clone();
-                                        state.shared_orderbook = self.bridge.subscribe_orderbook(eid, &symbol, at);
+                                        state.shared_orderbook = self.core.bridge.subscribe_orderbook(eid, &symbol, at);
                                         state.last_seen_update_id = None;
                                         state.previous_book.clear();
                                     }
@@ -1395,7 +1413,7 @@ impl ChartApp {
                                     let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
                                         .unwrap_or(self.active_exchange);
                                     let at = crate::account_type_from_label(&account_type_str);
-                                    let handle = self.bridge.subscribe_trades(eid, &symbol, at);
+                                    let handle = self.core.bridge.subscribe_trades(eid, &symbol, at);
                                     if let Some(state) = self.panels_store.trade_tape.get_mut(&pid) {
                                         state.symbol = symbol.clone();
                                         state.exchange = exchange_str.clone();
@@ -1458,13 +1476,13 @@ impl ChartApp {
                         // above, which internally calls subscribe_depth().
                         let needs_depth = matches!(kind_str, "l2_tape" | "liquidity_heatmap");
                         if needs_depth {
-                            let eid = self.exchange_symbols
+                            let eid = self.core.exchange_symbols_read()
                                 .keys()
                                 .find(|e| e.as_str() == exchange_str)
                                 .copied()
                                 .unwrap_or(self.active_exchange);
                             let at = crate::account_type_from_label(&account_type_str);
-                            self.bridge.subscribe_depth(eid, &symbol, at);
+                            self.core.bridge.subscribe_depth(eid, &symbol, at);
                         }
 
                         // Register market-data panels in TagManager as Synced members.
@@ -1486,24 +1504,24 @@ impl ChartApp {
                                         // visible color tag so the panel-chart pair shows a
                                         // shared color marker — this is the moment a 1-member
                                         // untagged group becomes a 2+-member tagged one.
-                                        let group_id = self.managers.bubble.active_chart_bubble
+                                        let group_id = self.core.bubble().bubble.active_chart_bubble
                                             .or_else(|| {
                                                 self.panel_app.panel_grid
                                                     .active_container_id()
-                                                    .and_then(|cid| self.managers.bubble.bubble_for_chart(cid))
+                                                    .and_then(|cid| self.bubble_for_chart(cid))
                                             });
                                         if let Some(gid) = group_id {
                                             // Promote if currently auto-created.
-                                            let was_auto = self.managers.bubble.bubble(gid)
+                                            let was_auto = self.core.bubble().bubble.bubble(gid)
                                                 .map(|g| g.auto_created)
                                                 .unwrap_or(false);
                                             if was_auto {
-                                                if let Some(new_color) = self.managers.bubble.promote_to_tagged(gid) {
+                                                if let Some(new_color) = self.core.bubble_mut().bubble.promote_to_tagged(gid) {
                                                     // Mirror color into leaf_color_tags for every
                                                     // chart member of this group so chart leaf
                                                     // headers also show the new color marker.
                                                     let chart_member_ids: Vec<mlc_core::ChartId> =
-                                                        self.managers.bubble.chart_member_ids(gid)
+                                                        self.core.bubble().bubble.chart_member_ids(gid)
                                                             .into_iter()
                                                             .collect();
                                                     for cid in chart_member_ids {
@@ -1513,25 +1531,24 @@ impl ChartApp {
                                                     }
                                                 }
                                             }
-                                            self.managers.bubble.set_synced(member, gid);
+                                            self.core.bubble_mut().bubble.set_synced(member, gid);
                                         }
                                     }
                                     mlc_sidebar_content::state::SlotSourceMode::Untagged => {
                                         // Spawn panel into its own 1-member auto-created group.
                                         // S2.7.1e: read timeframe via branch_meta (B1).
                                         let tf = spawn_active_cid
-                                            .and_then(|cid| self.managers.bubble.timeframe_for_chart(cid))
-                                            .cloned()
+                                            .and_then(|cid| self.timeframe_for_chart(cid))
                                             .unwrap_or_else(mlc_core::state::Timeframe::h1);
-                                        let solo_gid = self.managers.bubble.create_group_auto(
+                                        let solo_gid = self.core.bubble_mut().bubble.create_group_auto(
                                             [0.0, 0.0, 0.0, 0.0],
                                             symbol.clone(),
                                             tf,
                                         );
-                                        self.managers.bubble.set_auto_group(member, solo_gid);
+                                        self.core.bubble_mut().bubble.set_auto_group(member, solo_gid);
                                         // Seed exchange/account_type on the new group so apply_key
                                         // picks them up next frame.
-                                        if let Some(g) = self.managers.bubble.bubble_mut(solo_gid) {
+                                        if let Some(g) = self.core.bubble_mut().bubble.bubble_mut(solo_gid) {
                                             g.exchange = exchange_str.clone();
                                             g.account_type = account_type_str.clone();
                                         }
@@ -1680,15 +1697,15 @@ impl ChartApp {
                                             // S2.7.1e: read instrument fields via branch_meta (B1).
                                             let toggle_u_cid = self.panel_app.panel_grid.active_container_id();
                                             let symbol: String = toggle_u_cid
-                                                .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                                                .and_then(|cid| self.symbol_for_chart(cid))
                                                 .map(String::from)
                                                 .unwrap_or_default();
                                             let exchange: String = toggle_u_cid
-                                                .and_then(|cid| self.managers.bubble.exchange_for_chart(cid))
+                                                .and_then(|cid| self.exchange_for_chart(cid))
                                                 .map(String::from)
                                                 .unwrap_or_default();
                                             let account_type: String = toggle_u_cid
-                                                .and_then(|cid| self.managers.bubble.account_type_for_chart(cid))
+                                                .and_then(|cid| self.account_type_for_chart(cid))
                                                 .map(String::from)
                                                 .unwrap_or_default();
                                             let src = SymbolSource::Fixed { symbol, exchange, account_type };
@@ -1772,8 +1789,8 @@ impl ChartApp {
                                         if let Some(item) = item_opt {
                                             // Deregister from TagManager before removing state.
                                             let member = mlc_core::tag_manager::SyncMemberId::Panel(item.panel_id().0);
-                                            self.managers.bubble.disconnect(member);
-                                            self.managers.bubble.synced_panels_remove(member);
+                                            self.core.bubble_mut().bubble.disconnect(member);
+                                            self.core.bubble_mut().bubble.synced_panels_remove(member);
                                             // Unsubscribe panels from shared data streams
                                             // before dropping their state.
                                             if let mlc_core::state::Panel::Dom(pid) = &item {
@@ -1781,8 +1798,8 @@ impl ChartApp {
                                                     if !state.symbol.is_empty() {
                                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                             let at = crate::account_type_from_label(&state.account_type);
-                                                            self.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
-                                                            self.bridge.unsubscribe_trades(eid, &state.symbol, at);
+                                                            self.core.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
+                                                            self.core.bridge.unsubscribe_trades(eid, &state.symbol, at);
                                                         }
                                                     }
                                                 }
@@ -1792,7 +1809,7 @@ impl ChartApp {
                                                     if !state.symbol.is_empty() {
                                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                             let at = crate::account_type_from_label(&state.account_type);
-                                                            self.bridge.unsubscribe_trades(eid, &state.symbol, at);
+                                                            self.core.bridge.unsubscribe_trades(eid, &state.symbol, at);
                                                         }
                                                     }
                                                 }
@@ -1802,7 +1819,7 @@ impl ChartApp {
                                                     if !state.symbol.is_empty() {
                                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                             let at = crate::account_type_from_label(&state.account_type);
-                                                            self.bridge.unsubscribe_trades(eid, &state.symbol, at);
+                                                            self.core.bridge.unsubscribe_trades(eid, &state.symbol, at);
                                                         }
                                                     }
                                                 }
@@ -1812,7 +1829,7 @@ impl ChartApp {
                                                     if !state.symbol.is_empty() {
                                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                             let at = crate::account_type_from_label(&state.account_type);
-                                                            self.bridge.unsubscribe_trades(eid, &state.symbol, at);
+                                                            self.core.bridge.unsubscribe_trades(eid, &state.symbol, at);
                                                         }
                                                     }
                                                 }
@@ -1822,7 +1839,7 @@ impl ChartApp {
                                                     if !state.symbol.is_empty() {
                                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                             let at = crate::account_type_from_label(&state.account_type);
-                                                            self.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
+                                                            self.core.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
                                                         }
                                                     }
                                                 }
@@ -1832,7 +1849,7 @@ impl ChartApp {
                                                     if !state.symbol.is_empty() {
                                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                             let at = crate::account_type_from_label(&state.account_type);
-                                                            self.bridge.unsubscribe_trades(eid, &state.symbol, at);
+                                                            self.core.bridge.unsubscribe_trades(eid, &state.symbol, at);
                                                         }
                                                     }
                                                 }
@@ -1842,7 +1859,7 @@ impl ChartApp {
                                                     if !state.symbol.is_empty() {
                                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                             let at = crate::account_type_from_label(&state.account_type);
-                                                            self.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
+                                                            self.core.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
                                                         }
                                                     }
                                                 }
@@ -1853,7 +1870,7 @@ impl ChartApp {
                                                         let at = digdigdig3::AccountType::Spot;
                                                         for ex_label in &state.config.exchanges {
                                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
-                                                                self.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
+                                                                self.core.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
                                                             }
                                                         }
                                                     }
@@ -1911,10 +1928,9 @@ impl ChartApp {
                                 );
                                 if is_market_data {
                                     let member = SyncMemberId::Panel(item.panel_id().0);
-                                    let is_untagged = self.managers.bubble
+                                    let is_untagged = self.core.bubble().bubble
                                         .group_for_member(member)
-                                        .and_then(|gid| self.managers.bubble.bubble(gid))
-                                        .map(|g| g.auto_created)
+                                        .and_then(|gid| self.with_bubble(gid, |g| g.auto_created))
                                         .unwrap_or(true);
                                     self.sidebar_state.slot_source_mode = if is_untagged {
                                         SlotSourceMode::Untagged
@@ -1955,8 +1971,8 @@ impl ChartApp {
                             if let Some(item) = item_opt {
                                 // Deregister from TagManager before removing state.
                                 let member = mlc_core::tag_manager::SyncMemberId::Panel(item.panel_id().0);
-                                self.managers.bubble.disconnect(member);
-                                self.managers.bubble.synced_panels_remove(member);
+                                self.core.bubble_mut().bubble.disconnect(member);
+                                self.core.bubble_mut().bubble.synced_panels_remove(member);
                                 // Unsubscribe panels from shared data streams before
                                 // dropping their state.
                                 if let mlc_core::state::Panel::Dom(pid) = &item {
@@ -1964,8 +1980,8 @@ impl ChartApp {
                                         if !state.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                 let at = crate::account_type_from_label(&state.account_type);
-                                                self.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
-                                                self.bridge.unsubscribe_trades(eid, &state.symbol, at);
+                                                self.core.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
+                                                self.core.bridge.unsubscribe_trades(eid, &state.symbol, at);
                                             }
                                         }
                                     }
@@ -1975,7 +1991,7 @@ impl ChartApp {
                                         if !state.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                 let at = crate::account_type_from_label(&state.account_type);
-                                                self.bridge.unsubscribe_trades(eid, &state.symbol, at);
+                                                self.core.bridge.unsubscribe_trades(eid, &state.symbol, at);
                                             }
                                         }
                                     }
@@ -1985,7 +2001,7 @@ impl ChartApp {
                                         if !state.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                 let at = crate::account_type_from_label(&state.account_type);
-                                                self.bridge.unsubscribe_trades(eid, &state.symbol, at);
+                                                self.core.bridge.unsubscribe_trades(eid, &state.symbol, at);
                                             }
                                         }
                                     }
@@ -1995,7 +2011,7 @@ impl ChartApp {
                                         if !state.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                 let at = crate::account_type_from_label(&state.account_type);
-                                                self.bridge.unsubscribe_trades(eid, &state.symbol, at);
+                                                self.core.bridge.unsubscribe_trades(eid, &state.symbol, at);
                                             }
                                         }
                                     }
@@ -2005,7 +2021,7 @@ impl ChartApp {
                                         if !state.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                 let at = crate::account_type_from_label(&state.account_type);
-                                                self.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
+                                                self.core.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
                                             }
                                         }
                                     }
@@ -2015,7 +2031,7 @@ impl ChartApp {
                                         if !state.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                 let at = crate::account_type_from_label(&state.account_type);
-                                                self.bridge.unsubscribe_trades(eid, &state.symbol, at);
+                                                self.core.bridge.unsubscribe_trades(eid, &state.symbol, at);
                                             }
                                         }
                                     }
@@ -2025,7 +2041,7 @@ impl ChartApp {
                                         if !state.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                 let at = crate::account_type_from_label(&state.account_type);
-                                                self.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
+                                                self.core.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
                                             }
                                         }
                                     }
@@ -2036,7 +2052,7 @@ impl ChartApp {
                                             let at = digdigdig3::AccountType::Spot;
                                             for ex_label in &state.config.exchanges {
                                                 if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
-                                                    self.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
+                                                    self.core.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
                                                 }
                                             }
                                         }
@@ -2082,13 +2098,13 @@ impl ChartApp {
                                 if let Some(src_item) = source_item.as_ref() {
                                     let src_member = mlc_core::tag_manager::SyncMemberId::Panel(src_item.panel_id().0);
                                     let new_member = mlc_core::tag_manager::SyncMemberId::Panel(new_item.panel_id().0);
-                                    let src_gid = self.managers.bubble.group_for_member(src_member);
-                                    let src_was_synced = self.managers.bubble.is_synced(src_member);
+                                    let src_gid = self.group_for_member(src_member);
+                                    let src_was_synced = self.core.bubble().bubble.is_synced(src_member);
                                     if let Some(gid) = src_gid {
                                         if src_was_synced {
-                                            self.managers.bubble.set_synced(new_member, gid);
+                                            self.core.bubble_mut().bubble.set_synced(new_member, gid);
                                         } else {
-                                            self.managers.bubble.set_auto_group(new_member, gid);
+                                            self.core.bubble_mut().bubble.set_auto_group(new_member, gid);
                                         }
                                     }
                                 }
@@ -2346,15 +2362,15 @@ impl ChartApp {
                                         Some(SymbolSource::HyperFocus) => {
                                             // Pin to current active chart symbol/exchange/account_type.
                                             let symbol: String = source_cycle_cid
-                                                .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                                                .and_then(|cid| self.symbol_for_chart(cid))
                                                 .map(String::from)
                                                 .unwrap_or_default();
                                             let exchange: String = source_cycle_cid
-                                                .and_then(|cid| self.managers.bubble.exchange_for_chart(cid))
+                                                .and_then(|cid| self.exchange_for_chart(cid))
                                                 .map(String::from)
                                                 .unwrap_or_default();
                                             let account_type: String = source_cycle_cid
-                                                .and_then(|cid| self.managers.bubble.account_type_for_chart(cid))
+                                                .and_then(|cid| self.account_type_for_chart(cid))
                                                 .map(String::from)
                                                 .unwrap_or_default();
                                             Some(SymbolSource::Fixed { symbol, exchange, account_type })
@@ -2498,7 +2514,7 @@ impl ChartApp {
                                                 if !new_exchanges.iter().any(|e| e == ex) {
                                                     if !sym.is_empty() {
                                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(ex) {
-                                                            self.bridge.unsubscribe_orderbook(eid, &sym, at);
+                                                            self.core.bridge.unsubscribe_orderbook(eid, &sym, at);
                                                         }
                                                     }
                                                 }
@@ -2508,7 +2524,7 @@ impl ChartApp {
                                                 if !old_exchanges.iter().any(|e| e == ex) {
                                                     if !sym.is_empty() {
                                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(ex) {
-                                                            let _ = self.bridge.subscribe_orderbook(eid, &sym, at);
+                                                            let _ = self.core.bridge.subscribe_orderbook(eid, &sym, at);
                                                         }
                                                     }
                                                 }
@@ -2546,10 +2562,9 @@ impl ChartApp {
                                     );
                                     if is_market_data {
                                         let member = SyncMemberId::Panel(item.panel_id().0);
-                                        let is_untagged = self.managers.bubble
+                                        let is_untagged = self.core.bubble().bubble
                                             .group_for_member(member)
-                                            .and_then(|gid| self.managers.bubble.bubble(gid))
-                                            .map(|g| g.auto_created)
+                                            .and_then(|gid| self.with_bubble(gid, |g| g.auto_created))
                                             .unwrap_or(true);
                                         self.sidebar_state.slot_source_mode = if is_untagged {
                                             SlotSourceMode::Untagged
@@ -2584,7 +2599,7 @@ impl ChartApp {
         // Pattern: "alert_delete_{id}"
         if widget_id.starts_with("alert_delete_") {
             if let Some(id) = widget_id.strip_prefix("alert_delete_").and_then(|s| s.parse::<u64>().ok()) {
-                self.managers.alert.remove(id);
+                self.core.bubble_mut().alert.remove(id);
                 eprintln!("[Sidebar] Alert deleted: {}", id);
                 self.sidebar_data_dirty = true;
                 self.autosave_snapshot();
@@ -2594,12 +2609,12 @@ impl ChartApp {
         // Pattern: "alert_add_button" — open alert settings modal for new alert
         if widget_id == "alert_add_button" {
             let price = self.panel_app.panel_grid.active_container()
-                .and_then(|w| None::<&mlc_core::Bar>)
+                .and_then(|_w| None::<&mlc_core::Bar>)
                 .map(|b| b.close)
                 .unwrap_or(0.0);
             // S2.7.1e: read symbol via branch_meta (B1).
             let symbol: String = self.panel_app.panel_grid.active_container_id()
-                .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                .and_then(|cid| self.symbol_for_chart(cid))
                 .map(String::from)
                 .unwrap_or_else(|| "BTCUSD".to_string());
             let source = mlc_alerts::AlertSource::Price { symbol: symbol.clone() };
@@ -2613,7 +2628,7 @@ impl ChartApp {
         // Pattern: "alert_{id}" (row click — navigate to alert's window, then open edit modal)
         if let Some(id) = widget_id.strip_prefix("alert_").and_then(|s| s.parse::<u64>().ok()) {
             // Clone alert data we need before taking any mutable borrows.
-            let alert_nav = self.managers.alert.get(id).map(|a| (a.window_id_hint, id));
+            let alert_nav = self.core.bubble().alert.get(id).map(|a| (a.window_id_hint, id));
             if let Some((window_id_hint, alert_id)) = alert_nav {
                 // Navigate to the window that created this alert, if known.
                 if let Some(wid) = window_id_hint {
@@ -2624,7 +2639,7 @@ impl ChartApp {
                     }
                 }
                 // Open the edit modal.
-                if let Some(alert) = self.managers.alert.get(alert_id) {
+                if let Some(alert) = self.core.bubble().alert.get(alert_id) {
                     self.panel_app.alert_settings_state.open_edit(alert);
                     self.panel_app.alert_settings_state.pin_initial_position(
                         self.content_rect.width, self.content_rect.height,
@@ -2653,10 +2668,11 @@ impl ChartApp {
                 // 1. Try active drawing_manager first (handles Active + WindowOtherKey).
                 let active_pid_del = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                 let removed_from_dm = active_pid_del
-                    .and_then(|pid| self.panels_store.chart_panel.get_mut(&pid))
-                    .and_then(|panel| {
-                        panel.drawing_manager.find_index_by_id(id).map(|idx| {
-                            panel.drawing_manager.remove(idx);
+                    .and_then(|pid| {
+                        let mut guard = self.core.drawings_mut();
+                        let dm = guard.entry_or_default(pid);
+                        dm.find_index_by_id(id).map(|idx| {
+                            dm.remove(idx);
                             true
                         })
                     })
@@ -2677,7 +2693,7 @@ impl ChartApp {
                         .get(&cid)
                         .map(|w| w.auto_bubble_id);
                     if let Some(bid) = auto_bid {
-                        if let Some(auto_bub) = self.managers.bubble.bubble_mut(bid) {
+                        if let Some(auto_bub) = self.core.bubble_mut().bubble.bubble_mut(bid) {
                             let before = auto_bub.primitives.len();
                             auto_bub.primitives.retain(|p| p.data().id != id);
                             auto_bub.primitives.len() < before
@@ -2701,17 +2717,23 @@ impl ChartApp {
                 // 3. Try group.primitives (GroupOtherKey).
                 let group_id = self.panel_app.panel_grid
                     .active_container_id()
-                    .and_then(|cid| self.managers.bubble.bubble_for_chart(cid));
+                    .and_then(|cid| self.bubble_for_chart(cid));
                 if let Some(gid) = group_id {
-                    if let Some(group) = self.managers.bubble.bubble_mut(gid) {
-                        let before = group.primitives.len();
-                        group.primitives.retain(|p| p.data().id != id);
-                        if group.primitives.len() < before {
-                            self.autosave_snapshot();
-                            self.sidebar_data_dirty = true;
-                            eprintln!("[Sidebar] Drawing deleted from group.primitives: {}", id);
-                            return;
+                    let deleted = {
+                        let mut mgr = self.core.bubble_mut();
+                        if let Some(group) = mgr.bubble.bubble_mut(gid) {
+                            let before = group.primitives.len();
+                            group.primitives.retain(|p| p.data().id != id);
+                            group.primitives.len() < before
+                        } else {
+                            false
                         }
+                    };
+                    if deleted {
+                        self.autosave_snapshot();
+                        self.sidebar_data_dirty = true;
+                        eprintln!("[Sidebar] Drawing deleted from group.primitives: {}", id);
+                        return;
                     }
                 }
 
@@ -2723,7 +2745,7 @@ impl ChartApp {
         if widget_id.contains("_ind_delete_") || widget_id.starts_with("ind_delete_") {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 // Try live indicator_manager first (Active + WindowOtherKey).
-                if self.indicator_manager.get_instance(id).is_some() {
+                if self.core.indicators().get_instance(id).is_some() {
                     self.delete_indicator_instance(id);
                     return;
                 }
@@ -2731,16 +2753,22 @@ impl ChartApp {
                 // Fall through: try group.indicator_configs (GroupIndicatorOtherKey).
                 let group_id = self.panel_app.panel_grid
                     .active_container_id()
-                    .and_then(|cid| self.managers.bubble.bubble_for_chart(cid));
+                    .and_then(|cid| self.bubble_for_chart(cid));
                 if let Some(gid) = group_id {
-                    if let Some(group) = self.managers.bubble.bubble_mut(gid) {
-                        let before = group.indicator_configs.len();
-                        group.indicator_configs.retain(|cfg| cfg.id != id);
-                        if group.indicator_configs.len() < before {
-                            self.autosave_snapshot();
-                            self.sidebar_data_dirty = true;
-                            eprintln!("[Sidebar] Group indicator config deleted: {}", id);
+                    let deleted = {
+                        let mut mgr = self.core.bubble_mut();
+                        if let Some(group) = mgr.bubble.bubble_mut(gid) {
+                            let before = group.indicator_configs.len();
+                            group.indicator_configs.retain(|cfg| cfg.id != id);
+                            group.indicator_configs.len() < before
+                        } else {
+                            false
                         }
+                    };
+                    if deleted {
+                        self.autosave_snapshot();
+                        self.sidebar_data_dirty = true;
+                        eprintln!("[Sidebar] Group indicator config deleted: {}", id);
                     }
                 }
             }
@@ -2751,11 +2779,10 @@ impl ChartApp {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 let active_pid_settings = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                 if let Some(pid) = active_pid_settings {
-                    if let Some(panel) = self.panels_store.chart_panel.get(&pid) {
-                        if let Some(idx) = panel.drawing_manager.find_index_by_id(id) {
-                            self.panel_app.primitive_settings_state.open(idx);
-                            eprintln!("[Sidebar] Primitive settings opened: {} (idx={})", id, idx);
-                        }
+                    let guard = self.core.drawings();
+                    if let Some(idx) = guard.get(pid).and_then(|dm| dm.find_index_by_id(id)) {
+                        self.panel_app.primitive_settings_state.open(idx);
+                        eprintln!("[Sidebar] Primitive settings opened: {} (idx={})", id, idx);
                     }
                 }
             }
@@ -2774,11 +2801,11 @@ impl ChartApp {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 let active_pid_vis = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                 if let Some(pid) = active_pid_vis {
-                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                        if let Some(idx) = panel.drawing_manager.find_index_by_id(id) {
-                            let v = panel.drawing_manager.primitives_mut()[idx].data().visible;
-                            panel.drawing_manager.primitives_mut()[idx].data_mut().visible = !v;
-                        }
+                    let mut guard = self.core.drawings_mut();
+                    let dm = guard.entry_or_default(pid);
+                    if let Some(idx) = dm.find_index_by_id(id) {
+                        let v = dm.primitives_mut()[idx].data().visible;
+                        dm.primitives_mut()[idx].data_mut().visible = !v;
                     }
                 }
                 self.sidebar_data_dirty = true;
@@ -2789,7 +2816,7 @@ impl ChartApp {
         // --- Indicator visibility ---
         if widget_id.contains("_ind_vis_") || widget_id.starts_with("ind_vis_") {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
-                self.indicator_manager.toggle_visibility(id);
+                self.core.indicators_mut().toggle_visibility(id);
                 self.sidebar_data_dirty = true;
                 eprintln!("[Sidebar] Indicator visibility toggled: {}", id);
             }
@@ -2800,11 +2827,11 @@ impl ChartApp {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 let active_pid_lock = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                 if let Some(pid) = active_pid_lock {
-                    if let Some(panel) = self.panels_store.chart_panel.get_mut(&pid) {
-                        if let Some(idx) = panel.drawing_manager.find_index_by_id(id) {
-                            let l = panel.drawing_manager.primitives_mut()[idx].data().locked;
-                            panel.drawing_manager.primitives_mut()[idx].data_mut().locked = !l;
-                        }
+                    let mut guard = self.core.drawings_mut();
+                    let dm = guard.entry_or_default(pid);
+                    if let Some(idx) = dm.find_index_by_id(id) {
+                        let l = dm.primitives_mut()[idx].data().locked;
+                        dm.primitives_mut()[idx].data_mut().locked = !l;
                     }
                 }
                 self.sidebar_data_dirty = true;
@@ -2867,15 +2894,16 @@ impl ChartApp {
         if widget_id.contains("_drw_alert_") || widget_id.starts_with("drw_alert_") {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 let mut price = self.panel_app.panel_grid.active_container()
-                    .and_then(|w| None::<&mlc_core::Bar>)
+                    .and_then(|_w| None::<&mlc_core::Bar>)
                     .map(|b| b.close)
                     .unwrap_or(0.0);
                 let mut source_name = format!("Drawing {}", id);
                 let active_pid_alert = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                 if let Some(pid) = active_pid_alert {
-                    if let Some(panel) = self.panels_store.chart_panel.get(&pid) {
-                        if let Some(idx) = panel.drawing_manager.find_index_by_id(id) {
-                            let prim = &panel.drawing_manager.primitives()[idx];
+                    let guard = self.core.drawings();
+                    if let Some(dm) = guard.get(pid) {
+                        if let Some(idx) = dm.find_index_by_id(id) {
+                            let prim = &dm.primitives()[idx];
                             source_name = localize_primitive_name(prim.type_id(), prim.display_name());
                             let pts = prim.points();
                             if !pts.is_empty() {
@@ -2886,7 +2914,7 @@ impl ChartApp {
                 }
                 // S2.7.1e: read symbol via branch_meta (B1).
                 let symbol: String = self.panel_app.panel_grid.active_container_id()
-                    .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                    .and_then(|cid| self.symbol_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_else(|| "BTCUSD".to_string());
                 let source = mlc_alerts::AlertSource::Drawing { primitive_id: id, label: source_name.clone() };
@@ -2902,15 +2930,15 @@ impl ChartApp {
         if widget_id.contains("_ind_alert_") || widget_id.starts_with("ind_alert_") {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 let price = self.panel_app.panel_grid.active_container()
-                    .and_then(|w| None::<&mlc_core::Bar>)
+                    .and_then(|_w| None::<&mlc_core::Bar>)
                     .map(|b| b.close)
                     .unwrap_or(0.0);
-                let source_name = self.indicator_manager.get_instance(id)
+                let source_name = self.core.indicators().get_instance(id)
                     .map(|inst| inst.name.clone())
                     .unwrap_or_else(|| format!("Indicator {}", id));
                 // S2.7.1e: read symbol via branch_meta (B1).
                 let symbol: String = self.panel_app.panel_grid.active_container_id()
-                    .and_then(|cid| self.managers.bubble.symbol_for_chart(cid))
+                    .and_then(|cid| self.symbol_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_else(|| "BTCUSD".to_string());
                 let source = mlc_alerts::AlertSource::Signal {
@@ -2933,7 +2961,7 @@ impl ChartApp {
         if widget_id.starts_with("alert_bell_drw_") {
             if let Some(prim_id) = widget_id.strip_prefix("alert_bell_drw_").and_then(|s| s.parse::<u64>().ok()) {
                 // Find the first Active alert bound to this primitive.
-                let alert = self.managers.alert.items()
+                let alert = self.core.bubble().alert.items()
                     .iter()
                     .find(|a| matches!(
                         &a.source,
@@ -2954,7 +2982,7 @@ impl ChartApp {
         // Widget ID: "alert_bell_ind_{indicator_id}"
         if widget_id.starts_with("alert_bell_ind_") {
             if let Some(ind_id) = widget_id.strip_prefix("alert_bell_ind_").and_then(|s| s.parse::<u64>().ok()) {
-                let alert = self.managers.alert.items()
+                let alert = self.core.bubble().alert.items()
                     .iter()
                     .find(|a| matches!(
                         &a.source,
@@ -3010,18 +3038,22 @@ impl ChartApp {
                         // anchors (the `.1`) are no longer used for framing — Auto
                         // handles Y — so sentinel (0.0) prices are irrelevant here.
                         let mid_bar = active_pid_center
-                            .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                            .and_then(|panel| panel.drawing_manager.primitives().iter()
-                                .find(|p| p.data().id == id)
-                                .and_then(|prim| {
-                                    let pts = prim.points();
-                                    if pts.is_empty() {
-                                        return None;
-                                    }
-                                    let avg_ts = pts.iter().map(|p| p.0).sum::<i64>() / pts.len() as i64;
-                                    self.panel_app.panel_grid.active_container()
-                                        .map(|_w| mlc_core::timestamp_ms_to_bar_f64(&center_bars[..], avg_ts))
-                                }));
+                            .and_then(|pid| {
+                                let guard = self.core.drawings();
+                                guard.get(pid).and_then(|dm| {
+                                    dm.primitives().iter()
+                                        .find(|p| p.data().id == id)
+                                        .and_then(|prim| {
+                                            let pts = prim.points();
+                                            if pts.is_empty() {
+                                                return None;
+                                            }
+                                            let avg_ts = pts.iter().map(|p| p.0).sum::<i64>() / pts.len() as i64;
+                                            self.panel_app.panel_grid.active_container()
+                                                .map(|_w| mlc_core::timestamp_ms_to_bar_f64(&center_bars[..], avg_ts))
+                                        })
+                                })
+                            });
                         if let Some(mid_bar) = mid_bar {
                             use mlc_core::chart::types::price_scale::ScaleMode;
                             // Center the active leaf on X and switch it to Auto-Y.
@@ -3054,9 +3086,9 @@ impl ChartApp {
                                 // "center switches to M not A" report.
                                 if let Some(gid) = self.panel_app.panel_grid
                                     .container_id_for_leaf(active_leaf)
-                                    .and_then(|cid| self.managers.bubble.bubble_for_chart(cid))
+                                    .and_then(|cid| self.bubble_for_chart(cid))
                                 {
-                                    if let Some(g) = self.managers.bubble.bubble_mut(gid) {
+                                    if let Some(g) = self.core.bubble_mut().bubble.bubble_mut(gid) {
                                         g.scale_mode = ScaleMode::Auto;
                                     }
                                 }
@@ -3071,7 +3103,7 @@ impl ChartApp {
         // === Signal panel clicks ===
         // Pattern: "signal_{instance_id}_{bar_index}" (individual signal row — must come before signal_group_)
         if widget_id.starts_with("signal_") && !widget_id.starts_with("signal_group_") {
-            let parts: Vec<&str> = widget_id.strip_prefix("signal_").unwrap_or("").splitn(2, '_').collect();
+            let parts: Vec<&str> = widget_id.strip_prefix("signal_").unwrap_or_default().splitn(2, '_').collect();
             if parts.len() == 2 {
                 if let Ok(bar_index) = parts[1].parse::<i64>() {
                     let signal_bars: Vec<mlc_core::Bar> = self.active_chart_bars();
@@ -3209,15 +3241,15 @@ impl ChartApp {
             if !window_ptr.is_null() {
                 // SAFETY: toolbar_state does not access panel_grid.
                 let window = unsafe { &mut *window_ptr };
-                let dm_ref: Option<&mut mlc_core::DrawingManager> = active_pid_tb
-                    .and_then(|pid| self.panels_store.chart_panel.get_mut(&pid))
-                    .map(|p| &mut p.drawing_manager);
-                if let Some(dm) = dm_ref {
+                if let Some(pid) = active_pid_tb {
+                    let mut guard = self.core.drawings_mut();
+                    let dm = guard.entry_or_default(pid);
                     let events = self.panel_app.toolbar_state.handle_toolbar_click_with_chart(
                         &item_id,
                         &mut window.crosshair,
                         dm,
                     );
+                    drop(guard);
                     for event in events {
                         self.process_chart_out_event(event);
                     }
@@ -3262,10 +3294,9 @@ impl ChartApp {
                 if !window_ptr.is_null() {
                     // SAFETY: toolbar_state does not access panel_grid.
                     let window = unsafe { &mut *window_ptr };
-                    let dm_ref: Option<&mut mlc_core::DrawingManager> = active_pid_dd
-                        .and_then(|pid| self.panels_store.chart_panel.get_mut(&pid))
-                        .map(|p| &mut p.drawing_manager);
-                    if let Some(dm) = dm_ref {
+                    if let Some(pid) = active_pid_dd {
+                        let mut guard = self.core.drawings_mut();
+                        let dm = guard.entry_or_default(pid);
                         let autosave = self.panel_app.autosave_enabled;
                         let events = self.panel_app.toolbar_state.handle_dropdown_select_with_chart(
                             &dropdown_id,
@@ -3274,6 +3305,7 @@ impl ChartApp {
                             dm,
                             autosave,
                         );
+                        drop(guard);
                         for event in events {
                             self.process_chart_out_event(event);
                         }
@@ -3469,7 +3501,7 @@ impl ChartApp {
                 id if id.starts_with("tags:delete_group:") => {
                     if let Ok(gid_val) = id["tags:delete_group:".len()..].parse::<u64>() {
                         let gid = BubbleId(gid_val);
-                        self.managers.bubble.remove_group(gid);
+                        self.core.bubble_mut().bubble.remove_group(gid);
                         // Clear selection if we deleted the selected group.
                         if self.panel_app.tags_tabs_state.selected_group_id == Some(gid) {
                             self.panel_app.tags_tabs_state.selected_group_id = None;
@@ -3486,7 +3518,7 @@ impl ChartApp {
                         let flag_str = &suffix[colon_pos + 1..];
                         if let Ok(gid_val) = gid_str.parse::<u64>() {
                             let gid = BubbleId(gid_val);
-                            if let Some(group) = self.managers.bubble.bubble_mut(gid) {
+                            if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(gid) {
                                 match flag_str {
                                     "sync_crosshair"  => group.sync_flags.sync_crosshair  = !group.sync_flags.sync_crosshair,
                                     "sync_viewport"   => group.sync_flags.sync_viewport   = !group.sync_flags.sync_viewport,
@@ -3615,16 +3647,24 @@ impl ChartApp {
                         use mlc_layout::ui::modal_settings::WatchlistGroupNameMode;
                         match self.wl_group_name_input.mode.clone() {
                             WatchlistGroupNameMode::CreateNew => {
-                                let new_id = self.sidebar_state.watchlist_manager.create_list(name.clone());
-                                self.sidebar_state.watchlist_manager.active_list_id = new_id;
+                                let new_id = self.core.watchlist_mut().create_list(name.clone());
+                                self.core.watchlist_mut().active_list_id = new_id;
                                 self.watchlist_actions.push(crate::WatchlistAction::CreateList { name: name.clone() });
                                 self.watchlists_dirty = true;
                                 self.persist_watchlists();
                                 eprintln!("[WatchlistGroupName] created new list '{}' id={}", name, new_id);
                             }
                             WatchlistGroupNameMode::Rename(id) => {
-                                if let Some(list) = self.sidebar_state.watchlist_manager.lists.iter_mut().find(|l| l.id == id) {
-                                    list.name = name.clone();
+                                let found = {
+                                    let mut wl = self.core.watchlist_mut();
+                                    if let Some(list) = wl.lists.iter_mut().find(|l| l.id == id) {
+                                        list.name = name.clone();
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                };
+                                if found {
                                     self.watchlist_actions.push(crate::WatchlistAction::RenameList { id, new_name: name.clone() });
                                     self.watchlists_dirty = true;
                                     self.persist_watchlists();
@@ -3824,7 +3864,7 @@ impl ChartApp {
             } else if let Some(preset_id) = action.strip_prefix("rename:") {
                 // Click rename icon — close browser, open rename modal for this preset.
                 let preset_id = preset_id.to_string();
-                let name_opt = self.panel_app.presets.get(&preset_id).map(|p| p.name.clone());
+                let name_opt = self.core.presets().get(&preset_id).map(|p| p.name.clone());
                 self.panel_app.chart_browser.close();
                 self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::None;
                 if let Some(name) = name_opt {
@@ -3892,7 +3932,7 @@ impl ChartApp {
                         _ => { eprintln!("[ChartApp] user_settings unknown recalc mode: {}", mode_str); return; }
                     };
                     self.panel_app.user_settings_state.recalc_mode_label = label.to_string();
-                    self.indicator_manager.recalc_mode = match mode_str {
+                    self.core.indicators_mut().recalc_mode = match mode_str {
                         "PerTick" => RecalcMode::PerTick,
                         "PerBar"  => RecalcMode::PerBar,
                         _         => RecalcMode::PerFrame,
@@ -3902,7 +3942,7 @@ impl ChartApp {
                     self.recalc_count = 0;
                     self.trade_count = 0;
                     self.recalc_log_timer = std::time::Instant::now();
-                    self.indicator_manager.clear_pending();
+                    self.core.indicators_mut().clear_pending();
                     eprintln!("[ChartApp] user_settings recalc_mode set to: {}", mode_str);
                 }
                 // Language radio option selected — hit id: "language:{code}"

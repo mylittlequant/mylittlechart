@@ -1077,32 +1077,36 @@ impl App<'_> {
         };
 
         // All windows are equal — all use the shared bridge and profile.
-        let live_update_rx = self.bridge.add_listener();
         let mut chart = mlc_app::ChartApp::new_window(
             self.bridge.clone(),
-            live_update_rx,
             window_id.clone(),
             restore,
             &self.profile,
             &self.profile_manager,
             skeleton,
         );
+        // Attach this chart's backend to the AgentState so /api/v1/apps
+        // routes resolve. Every ChartApp in this process shares one
+        // Arc<BackendCore>, so the last writer wins safely.
+        if let Some(ref agent_state) = self.agent_state {
+            agent_state.attach_core(chart.core.clone());
+        }
         // Apply the app-level theme so new windows start with the correct preset.
         if !self.app_state.theme_preset.is_empty() {
             chart.panel_app.theme_manager.set_preset(&self.app_state.theme_preset);
         }
         // Initialise the new window directly from AppState so it has current data
         // without waiting for the next dirty-flag sync pass.
-        chart.sidebar_state.watchlist_manager = self.app_state.watchlist_manager.clone();
+        *chart.core.watchlist_mut() = self.app_state.watchlist_manager.clone();
         chart.sidebar_state.connector_enabled = self.app_state.connector_enabled.clone();
         // Merge AppState presets into window — don't replace, to keep
         // any Untitled preset that new_window() just created.
         for (k, v) in self.app_state.presets.iter() {
-            chart.panel_app.presets.entry(k.clone()).or_insert_with(|| v.clone());
+            chart.core.presets_mut().entry(k.clone()).or_insert_with(|| v.clone());
         }
         // Sync back: if new_window() created an Untitled preset for a fresh profile,
         // propagate it to app_state so chrome tabs and preset list can see it.
-        for (k, v) in chart.panel_app.presets.iter() {
+        for (k, v) in chart.core.presets().iter() {
             self.app_state.presets.entry(k.clone()).or_insert_with(|| v.clone());
         }
         // Also sync open_tabs and active_preset_id back to profile_manager
@@ -1117,11 +1121,12 @@ impl App<'_> {
         }
         chart.panel_app.user_manager.snapshots = self.app_state.snapshots.clone();
         // Apply persisted last-used drawing styles to all DrawingManagers in this new window.
-        let drawing_styles = &self.app_state.snapshots.last_used_drawing_styles;
-        for panel in chart.panels_store.chart_panel.values_mut() {
-            panel.drawing_manager.load_last_styles(drawing_styles);
+        let drawing_styles = self.app_state.snapshots.last_used_drawing_styles.clone();
+        let all_pids_styles: Vec<_> = chart.panels_store.chart_panel.keys().copied().collect();
+        for pid in all_pids_styles {
+            chart.core.drawings_mut().entry_or_default(pid).load_last_styles(&drawing_styles);
         }
-        chart.panel_app.template_manager = self.app_state.template_manager.clone();
+        *chart.core.template_manager_mut() = self.app_state.template_manager.clone();
         // Sync server settings so the User Settings modal shows current state.
         chart.panel_app.user_settings_state.server_enabled = self.app_state.server_enabled;
         chart.panel_app.user_settings_state.server_port = self.app_state.server_port;
@@ -1514,10 +1519,8 @@ impl App<'_> {
                     });
 
                 // Build the live ChartApp (the heavy ~1.7s part).
-                let live_update_rx = bridge.add_listener();
                 let mut chart = mlc_app::ChartApp::new_window(
                     bridge.clone(),
-                    live_update_rx,
                     window_id.clone(),
                     restore,
                     &profile,
@@ -1530,19 +1533,20 @@ impl App<'_> {
                     chart.panel_app.theme_manager.set_preset(&theme_preset);
                 }
                 // Sync AppState into the new live window (read-only from captured clones).
-                chart.sidebar_state.watchlist_manager = watchlist_manager.clone();
+                *chart.core.watchlist_mut() = watchlist_manager.clone();
                 chart.sidebar_state.connector_enabled = connector_enabled.clone();
                 for (k, v) in app_presets.iter() {
-                    chart.panel_app.presets.entry(k.clone()).or_insert_with(|| v.clone());
+                    chart.core.presets_mut().entry(k.clone()).or_insert_with(|| v.clone());
                 }
                 chart.panel_app.user_manager.snapshots = snapshots.clone();
                 {
-                    let drawing_styles = &snapshots.last_used_drawing_styles;
-                    for panel in chart.panels_store.chart_panel.values_mut() {
-                        panel.drawing_manager.load_last_styles(drawing_styles);
+                    let drawing_styles = snapshots.last_used_drawing_styles.clone();
+                    let all_pids_ls: Vec<_> = chart.panels_store.chart_panel.keys().copied().collect();
+                    for pid in all_pids_ls {
+                        chart.core.drawings_mut().entry_or_default(pid).load_last_styles(&drawing_styles);
                     }
                 }
-                chart.panel_app.template_manager = template_manager.clone();
+                *chart.core.template_manager_mut() = template_manager.clone();
                 chart.panel_app.user_settings_state.server_enabled = server_enabled;
                 chart.panel_app.user_settings_state.server_port = server_port;
                 chart.panel_app.user_settings_state.server_status = if server_enabled {
@@ -1590,8 +1594,8 @@ impl App<'_> {
                 // Collect presets that new_window created and that were absent
                 // from app_presets — these must be merged back on the main thread.
                 let new_presets: Vec<(String, mlc_core::preset::preset::ChartPreset)> = chart
-                    .panel_app
-                    .presets
+                    .core
+                    .presets()
                     .iter()
                     .filter(|(k, _)| !app_presets.contains_key(*k))
                     .map(|(k, v)| (k.clone(), v.clone()))
@@ -2893,7 +2897,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 };
                 let recalc_mode = self.app_state.recalc_mode;
                 for pw in self.windows.values_mut() {
-                    pw.chart.indicator_manager.recalc_mode = recalc_mode;
+                    pw.chart.core.indicators_mut().recalc_mode = recalc_mode;
                 }
                 // Persist to DeviceSettings so the choice survives restarts.
                 let mut ds = mlc_core::user_profile::DeviceSettings::load();
@@ -3842,7 +3846,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             // when nothing has changed.
             if self.app_state.watchlists_dirty {
                 for pw in self.windows.values_mut() {
-                    pw.chart.sidebar_state.watchlist_manager =
+                    *pw.chart.core.watchlist_mut() =
                         self.app_state.watchlist_manager.clone();
                 }
                 self.app_state.watchlists_dirty = false;
@@ -3856,26 +3860,27 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
             if self.app_state.presets_dirty {
                 for pw in self.windows.values_mut() {
-                    pw.chart.panel_app.presets = self.app_state.presets.clone();
+                    *pw.chart.core.presets_mut() = self.app_state.presets.clone();
                 }
                 self.app_state.presets_dirty = false;
             }
             if self.app_state.snapshots_dirty {
-                let drawing_styles = &self.app_state.snapshots.last_used_drawing_styles;
+                let drawing_styles = self.app_state.snapshots.last_used_drawing_styles.clone();
                 for pw in self.windows.values_mut() {
                     pw.chart.panel_app.user_manager.snapshots =
                         self.app_state.snapshots.clone();
                     // Apply persisted last-used drawing styles to every DrawingManager
                     // so new primitives of each type inherit the user's last-used style.
-                    for panel in pw.chart.panels_store.chart_panel.values_mut() {
-                        panel.drawing_manager.load_last_styles(drawing_styles);
+                    let all_pids_sd: Vec<_> = pw.chart.panels_store.chart_panel.keys().copied().collect();
+                    for pid in all_pids_sd {
+                        pw.chart.core.drawings_mut().entry_or_default(pid).load_last_styles(&drawing_styles);
                     }
                 }
                 self.app_state.snapshots_dirty = false;
             }
             if self.app_state.templates_dirty {
                 for pw in self.windows.values_mut() {
-                    pw.chart.panel_app.template_manager =
+                    *pw.chart.core.template_manager_mut() =
                         self.app_state.template_manager.clone();
                 }
                 self.app_state.templates_dirty = false;
@@ -3886,7 +3891,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             let recalc_mode = self.app_state.recalc_mode;
             let scale_mode = self.app_state.scale_mode;
             for pw in self.windows.values_mut() {
-                pw.chart.indicator_manager.recalc_mode = recalc_mode;
+                pw.chart.core.indicators_mut().recalc_mode = recalc_mode;
                 pw.chart.default_scale_mode = scale_mode;
             }
 
@@ -3912,17 +3917,16 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 let active_cid_rc = pw.chart.panel_app.panel_grid.active_container_id();
                 let (symbol, exchange, account_type, timeframe, bar_count) = {
                     let sym = active_cid_rc
-                        .and_then(|cid| pw.chart.managers.bubble.symbol_for_chart(cid))
+                        .and_then(|cid| pw.chart.symbol_for_chart(cid))
                         .map(String::from).unwrap_or_default();
                     let exch = active_cid_rc
-                        .and_then(|cid| pw.chart.managers.bubble.exchange_for_chart(cid))
+                        .and_then(|cid| pw.chart.exchange_for_chart(cid))
                         .map(String::from).unwrap_or_default();
                     let at = active_cid_rc
-                        .and_then(|cid| pw.chart.managers.bubble.account_type_for_chart(cid))
+                        .and_then(|cid| pw.chart.account_type_for_chart(cid))
                         .map(String::from).unwrap_or_else(|| "S".to_string());
                     let tf = active_cid_rc
-                        .and_then(|cid| pw.chart.managers.bubble.timeframe_for_chart(cid))
-                        .cloned()
+                        .and_then(|cid| pw.chart.timeframe_for_chart(cid))
                         .unwrap_or_else(mlc_core::state::Timeframe::h1);
                     if sym.is_empty() && active_cid_rc.is_none() {
                         continue;
@@ -3945,16 +3949,13 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 // the same symbol key, when sync_symbol is enabled.
                 let group_info = active_cid_rc
                     .and_then(|cid| {
-                        let gid = pw.chart.managers.bubble.bubble_for_chart(cid)?;
+                        let gid = pw.chart.bubble_for_chart(cid)?;
                         Some((cid, gid))
                     });
                 if let Some((active_cid, group_id)) = group_info {
-                    let sync_symbol_on = pw.chart.managers.bubble
-                        .bubble(group_id)
-                        .map(|g| g.sync_flags.sync_symbol)
-                        .unwrap_or(false);
+                    let sync_symbol_on = pw.chart.with_bubble(group_id, |g| g.sync_flags.sync_symbol).unwrap_or(false);
                     if sync_symbol_on {
-                        let peer_ids: Vec<mlc_core::ChartId> = pw.chart.managers.bubble
+                        let peer_ids: Vec<mlc_core::ChartId> = pw.chart.core.bubble().bubble
                             .chart_member_ids(group_id)
                             .into_iter()
                             .filter(|&m| m != active_cid)
@@ -3962,9 +3963,9 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         let peers_matching: Vec<mlc_core::ChartId> = {
                             peer_ids.iter()
                                 .filter(|&&pid| {
-                                    pw.chart.managers.bubble.symbol_for_chart(pid).map_or(false, |s| s == symbol)
-                                    && pw.chart.managers.bubble.exchange_for_chart(pid).map_or(false, |e| e == exchange)
-                                    && pw.chart.managers.bubble.account_type_for_chart(pid).map_or(false, |a| a == account_type)
+                                    pw.chart.symbol_for_chart(pid).map_or(false, |s| s == symbol.as_str())
+                                    && pw.chart.exchange_for_chart(pid).map_or(false, |e| e == exchange.as_str())
+                                    && pw.chart.account_type_for_chart(pid).map_or(false, |a| a == account_type.as_str())
                                 })
                                 .copied()
                                 .collect()
@@ -4061,7 +4062,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             for pw in self.windows.values_mut() {
                 let total_bars: usize = pw.chart.panel_app.panel_grid.containers()
                     .values()
-                    .map(|w| pw.chart.managers.bubble.bubble(w.current_bubble_id)
+                    .map(|w| pw.chart.core.bubble().bubble.bubble(w.current_bubble_id)
                         .map(|b| b.bars.len())
                         .unwrap_or(0))
                     .sum();
@@ -4094,9 +4095,9 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 // Internal CPU profiling fields — read directly from ChartApp.
                 perf.tick_us = pw.chart.last_tick_us;
                 perf.indicator_recalc_us = pw.chart.last_indicator_recalc_us;
-                perf.indicator_recalc_count = pw.chart.indicator_manager.instances_count() as u32;
-                perf.indicator_incremental_count = pw.chart.indicator_manager.last_incremental_count;
-                perf.indicator_full_count = pw.chart.indicator_manager.last_full_count;
+                perf.indicator_recalc_count = pw.chart.core.indicators().instances_count() as u32;
+                perf.indicator_incremental_count = pw.chart.core.indicators().last_incremental_count;
+                perf.indicator_full_count = pw.chart.core.indicators().last_full_count;
                 perf.event_process_us = pw.chart.last_event_process_us;
                 perf.auto_scale_us = pw.chart.last_auto_scale_us;
 

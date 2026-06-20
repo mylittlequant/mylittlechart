@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 
+use mlc_backend_core::BackendCore;
 use mlc_live_data::DataBridge;
 
 // ===========================================================================
@@ -57,6 +58,16 @@ pub struct AgentState {
 
     /// Application version string (e.g. `"0.1.0"`).
     pub version: String,
+
+    /// Optional handle to the per-process `BackendCore`. When present, the
+    /// `/v1/apps` routes resolve through this — register, list, deregister,
+    /// heartbeat AppSessions. When absent, those routes 503 (service has no
+    /// backend to register against — Mode-1 hosts that opted out).
+    ///
+    /// `Mutex<Option<...>>` because `AgentState` is wrapped in `Arc` before
+    /// any consumer attaches a backend, and we want a single shared state
+    /// instance to hold the backend after `attach_core` is called once.
+    pub core: Mutex<Option<Arc<BackendCore>>>,
 }
 
 impl AgentState {
@@ -74,7 +85,23 @@ impl AgentState {
             start_time: std::time::Instant::now(),
             last_agent_access_ms: AtomicU64::new(0),
             version: version.into(),
+            core: Mutex::new(None),
         }
+    }
+
+    /// Attach a `BackendCore` so the `/v1/apps` routes can resolve. Call
+    /// from the host once after the backend is constructed; safe to call
+    /// before or after `Arc::new(state)`.
+    pub fn attach_core(&self, core: Arc<BackendCore>) {
+        if let Ok(mut g) = self.core.lock() {
+            *g = Some(core);
+        }
+    }
+
+    /// Snapshot the attached backend handle if there is one. Cheap (clones
+    /// an `Arc`).
+    pub fn core(&self) -> Option<Arc<BackendCore>> {
+        self.core.lock().ok().and_then(|g| g.as_ref().cloned())
     }
 
     /// Record that an Agent API request was just served (called by middleware).

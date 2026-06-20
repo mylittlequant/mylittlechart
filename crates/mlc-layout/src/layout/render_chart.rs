@@ -50,7 +50,6 @@ use crate::ui::icons::Icon;
 use crate::ui::modal_settings::SubPaneOverlayState;
 use super::rects::{ChartAreaLayout, FrameLayout, LayoutRect, SubPaneLayout};
 use mlc_core::state::sub_pane_overlay::SubPaneOverlayResult;
-use uzor::panels::SeparatorOrientation;
 
 // =============================================================================
 // Render Pass Control

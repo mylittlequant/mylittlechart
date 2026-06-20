@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use crate::{Bar, Viewport, PriceScale, TimeScale};
 use crate::{Crosshair, CrosshairOptions, KineticState, DragMode};
 use crate::{GridOptions, Legend, Watermark, Tooltip, PriceLine, MarkerManager};
-use crate::drawing::DrawingManager;
 use super::SubPane;
 
 /// Base chart structure - contains all core chart functionality
@@ -90,8 +89,6 @@ pub struct Chart {
     // Drawing Primitives
     // =========================================================================
 
-    /// Drawing primitives manager (trend lines, shapes, etc.)
-    pub drawing_manager: DrawingManager,
     /// Marker manager
     pub marker_manager: MarkerManager,
     /// Price lines (horizontal levels)
@@ -169,7 +166,6 @@ impl Chart {
             tooltip: Tooltip::default(),
 
             // Primitives
-            drawing_manager: DrawingManager::new(),
             marker_manager: MarkerManager::new(),
             price_lines: HashMap::new(),
 

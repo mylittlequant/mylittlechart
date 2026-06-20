@@ -33,8 +33,7 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     .values().find(|cw| cw.id.0 == chart_id)
                     .map(|cw| cw.current_bubble_id);
                 let bar_count = target_bubble_id
-                    .and_then(|bid| chart.managers.bubble.bubble(bid))
-                    .map(|b| b.bars.len())
+                    .and_then(|bid| chart.with_bubble(bid, |b| b.bars.len()))
                     .unwrap_or(0);
                 let Some(cw) = chart.panel_app.panel_grid.containers_mut().values_mut()
                     .find(|cw| cw.id.0 == chart_id) else {
@@ -131,21 +130,71 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
 
             // ── Indicator CRUD ──────────────────────────────────────
             AgentCommand::AddIndicator { window_id, chart_id, type_id, params, agent_id: _ } => {
-                let mut windows = host.windows_mut();
-                let Some(w) = windows.iter_mut().find(|w| w.window_id == window_id) else {
-                    eprintln!("[AgentCommand] AddIndicator: window not found: {}", window_id);
-                    continue;
+                let chart_ptr: *mut mlc_app::ChartApp = {
+                    let mut windows = host.windows_mut();
+                    let Some(w) = windows.iter_mut().find(|w| w.window_id == window_id) else {
+                        eprintln!("[AgentCommand] AddIndicator: window not found: {}", window_id);
+                        continue;
+                    };
+                    w.chart as *mut _
                 };
-                let chart = &mut *w.chart;
+                // SAFETY: the host owns the ChartApp; we held a &mut to it just above
+                // and the only reason we need a raw pointer is to break the lifetime tie
+                // between `windows` (the Vec<WindowRefMut>) and `chart`.
+                let chart: &mut mlc_app::ChartApp = unsafe { &mut *chart_ptr };
+
                 let bars: Vec<mlc_core::Bar> = chart.panel_app.panel_grid.containers()
                     .values().find(|cw| cw.id.0 == chart_id)
-                    .and_then(|cw| chart.managers.bubble.bubble(cw.current_bubble_id))
-                    .map(|b| b.bars.clone())
+                    .map(|cw| cw.current_bubble_id)
+                    .and_then(|bid| chart.with_bubble(bid, |b| b.bars.clone()))
                     .unwrap_or_default();
 
-                if let Some(new_id) = chart.indicator_manager.create_instance(&type_id) {
-                    chart.indicator_manager.assign_window(new_id, Some(chart_id));
-                    if let Some(inst) = chart.indicator_manager.get_instance_mut(new_id) {
+                let new_id_opt = chart.core.indicators_mut().create_instance(&type_id);
+                if let Some(new_id) = new_id_opt {
+                    chart.core.indicators_mut().assign_window(new_id, Some(chart_id));
+                    {
+                        let mut im = chart.core.indicators_mut();
+                        if let Some(inst) = im.get_instance_mut(new_id) {
+                            for (k, v) in &params {
+                                let iv = match v {
+                                    serde_json::Value::Number(n) => {
+                                        if let Some(i) = n.as_i64() {
+                                            IndicatorParamValue::Int(i as i32)
+                                        } else {
+                                            IndicatorParamValue::Float(n.as_f64().unwrap_or(0.0))
+                                        }
+                                    }
+                                    serde_json::Value::Bool(b) => IndicatorParamValue::Bool(*b),
+                                    serde_json::Value::String(s) => IndicatorParamValue::String(s.clone()),
+                                    _ => continue,
+                                };
+                                inst.set_param(k, iv);
+                            }
+                        }
+                    }
+                    chart.core.indicators_mut().calculate(new_id, &bars);
+                    chart.sync_sub_panes_from_manager();
+                    eprintln!("[AgentCommand] AddIndicator: type={}, id={}, chart={}", type_id, new_id, chart_id);
+                } else {
+                    eprintln!("[AgentCommand] AddIndicator: unknown type_id '{}'", type_id);
+                }
+            }
+
+            AgentCommand::UpdateIndicator { window_id, chart_id: _, indicator_id, params, agent_id: _ } => {
+                let chart_ptr: *mut mlc_app::ChartApp = {
+                    let mut windows = host.windows_mut();
+                    let Some(w) = windows.iter_mut().find(|w| w.window_id == window_id) else {
+                        eprintln!("[AgentCommand] UpdateIndicator: window not found: {}", window_id);
+                        continue;
+                    };
+                    w.chart as *mut _
+                };
+                // SAFETY: see AddIndicator above.
+                let chart: &mut mlc_app::ChartApp = unsafe { &mut *chart_ptr };
+
+                let (found, wid_opt) = {
+                    let mut im = chart.core.indicators_mut();
+                    if let Some(inst) = im.get_instance_mut(indicator_id) {
                         for (k, v) in &params {
                             let iv = match v {
                                 serde_json::Value::Number(n) => {
@@ -161,47 +210,19 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                             };
                             inst.set_param(k, iv);
                         }
+                        (true, inst.window_id)
+                    } else {
+                        (false, None)
                     }
-                    chart.indicator_manager.calculate(new_id, &bars);
-                    chart.sync_sub_panes_from_manager();
-                    eprintln!("[AgentCommand] AddIndicator: type={}, id={}, chart={}", type_id, new_id, chart_id);
-                } else {
-                    eprintln!("[AgentCommand] AddIndicator: unknown type_id '{}'", type_id);
-                }
-            }
-
-            AgentCommand::UpdateIndicator { window_id, chart_id: _, indicator_id, params, agent_id: _ } => {
-                let mut windows = host.windows_mut();
-                let Some(w) = windows.iter_mut().find(|w| w.window_id == window_id) else {
-                    eprintln!("[AgentCommand] UpdateIndicator: window not found: {}", window_id);
-                    continue;
                 };
-                let chart = &mut *w.chart;
-                if let Some(inst) = chart.indicator_manager.get_instance_mut(indicator_id) {
-                    for (k, v) in &params {
-                        let iv = match v {
-                            serde_json::Value::Number(n) => {
-                                if let Some(i) = n.as_i64() {
-                                    IndicatorParamValue::Int(i as i32)
-                                } else {
-                                    IndicatorParamValue::Float(n.as_f64().unwrap_or(0.0))
-                                }
-                            }
-                            serde_json::Value::Bool(b) => IndicatorParamValue::Bool(*b),
-                            serde_json::Value::String(s) => IndicatorParamValue::String(s.clone()),
-                            _ => continue,
-                        };
-                        inst.set_param(k, iv);
-                    }
-                    let wid = inst.window_id;
-                    let bars: Vec<mlc_core::Bar> = wid
+                if found {
+                    let bars: Vec<mlc_core::Bar> = wid_opt
                         .and_then(|win| chart.panel_app.panel_grid.containers()
                             .values().find(|cw| cw.id.0 == win)
                             .map(|cw| cw.current_bubble_id))
-                        .and_then(|bid| chart.managers.bubble.bubble(bid))
-                        .map(|b| b.bars.clone())
+                        .and_then(|bid| chart.with_bubble(bid, |b| b.bars.clone()))
                         .unwrap_or_default();
-                    chart.indicator_manager.calculate(indicator_id, &bars);
+                    chart.core.indicators_mut().calculate(indicator_id, &bars);
                     eprintln!("[AgentCommand] UpdateIndicator: id={}", indicator_id);
                 } else {
                     eprintln!("[AgentCommand] UpdateIndicator: instance not found: {}", indicator_id);
@@ -214,7 +235,7 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     eprintln!("[AgentCommand] RemoveIndicator: window not found: {}", window_id);
                     continue;
                 };
-                if w.chart.indicator_manager.remove_instance(indicator_id).is_some() {
+                if w.chart.core.indicators_mut().remove_instance(indicator_id).is_some() {
                     w.chart.sync_sub_panes_from_manager();
                     eprintln!("[AgentCommand] RemoveIndicator: id={}", indicator_id);
                 } else {
@@ -244,10 +265,8 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                         .find(|cw| cw.id.0 == chart_id)
                         .map(|cw| cw.chart_panel_id);
                     if let Some(pid) = cw_pid {
-                        if let Some(panel) = chart.panels_store.chart_panel.get_mut(&pid) {
-                            panel.drawing_manager.add_external_primitive(prim);
-                            eprintln!("[AgentCommand] AddPrimitive: type={}, chart={}", type_id, chart_id);
-                        }
+                        chart.core.drawings_mut().entry_or_default(pid).add_external_primitive(prim);
+                        eprintln!("[AgentCommand] AddPrimitive: type={}, chart={}", type_id, chart_id);
                     } else {
                         eprintln!("[AgentCommand] AddPrimitive: chart not found: {}", chart_id);
                     }
@@ -268,25 +287,25 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     .find(|cw| cw.id.0 == chart_id)
                     .map(|cw| cw.chart_panel_id);
                 if let Some(pid) = cw_pid {
-                    if let Some(panel) = chart.panels_store.chart_panel.get_mut(&pid) {
-                        let prim = panel.drawing_manager.primitives_mut()
-                            .iter_mut().find(|p| p.data().id == primitive_id);
-                        if let Some(prim) = prim {
-                            if let Some(pts) = points {
-                                let new_pts: Vec<(i64, f64)> = pts.iter().map(|p| (p[0] as i64, p[1])).collect();
-                                prim.set_points(&new_pts);
-                            }
-                            if let Some(s) = style {
-                                prim.data_mut().color = mlc_core::drawing::primitives_v2::PrimitiveColor {
-                                    stroke: s.color,
-                                    fill: s.fill_color,
-                                };
-                                prim.data_mut().width = s.width;
-                            }
-                            eprintln!("[AgentCommand] UpdatePrimitive: id={}", primitive_id);
-                        } else {
-                            eprintln!("[AgentCommand] UpdatePrimitive: primitive not found: {}", primitive_id);
+                    let mut dreg = chart.core.drawings_mut();
+                    let dm = dreg.entry_or_default(pid);
+                    let prim = dm.primitives_mut()
+                        .iter_mut().find(|p| p.data().id == primitive_id);
+                    if let Some(prim) = prim {
+                        if let Some(pts) = points {
+                            let new_pts: Vec<(i64, f64)> = pts.iter().map(|p| (p[0] as i64, p[1])).collect();
+                            prim.set_points(&new_pts);
                         }
+                        if let Some(s) = style {
+                            prim.data_mut().color = mlc_core::drawing::primitives_v2::PrimitiveColor {
+                                stroke: s.color,
+                                fill: s.fill_color,
+                            };
+                            prim.data_mut().width = s.width;
+                        }
+                        eprintln!("[AgentCommand] UpdatePrimitive: id={}", primitive_id);
+                    } else {
+                        eprintln!("[AgentCommand] UpdatePrimitive: primitive not found: {}", primitive_id);
                     }
                 } else {
                     eprintln!("[AgentCommand] UpdatePrimitive: chart not found: {}", chart_id);
@@ -304,13 +323,13 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     .find(|cw| cw.id.0 == chart_id)
                     .map(|cw| cw.chart_panel_id);
                 let removed = if let Some(pid) = cw_pid {
-                    if let Some(panel) = chart.panels_store.chart_panel.get_mut(&pid) {
-                        let idx = panel.drawing_manager.primitives()
-                            .iter().position(|p| p.data().id == primitive_id);
-                        if let Some(idx) = idx {
-                            panel.drawing_manager.remove(idx);
-                            true
-                        } else { false }
+                    let mut dreg = chart.core.drawings_mut();
+                    let dm = dreg.entry_or_default(pid);
+                    let idx = dm.primitives()
+                        .iter().position(|p| p.data().id == primitive_id);
+                    if let Some(idx) = idx {
+                        dm.remove(idx);
+                        true
                     } else { false }
                 } else { false };
                 if removed {

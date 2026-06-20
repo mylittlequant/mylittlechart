@@ -1,0 +1,203 @@
+//! `mlc-backend-daemon` — Mode-2 backend.
+//!
+//! Owns one `Arc<BackendCore>`, no embedded `ChartApp`. Drives a 60Hz tick
+//! loop that drains the live-data broadcast and writes into the shared
+//! bubble store via `BackendCore::tick_writers`. Serves a full HTTP control
+//! plane for external apps to attach, query, and observe events.
+//!
+//! ## Endpoints
+//!
+//! ### Health
+//! - `GET  /health`
+//!
+//! ### Apps / sessions
+//! - `POST   /v1/apps`                      — register AppSession
+//! - `GET    /v1/apps`                      — list sessions
+//! - `DELETE /v1/apps/:app_id`              — deregister
+//! - `POST   /v1/apps/:app_id/heartbeat`    — keep-alive
+//! - `POST   /v1/apps/_reap`                — force reap idle sessions
+//!
+//! ### Bubbles
+//! - `GET    /v1/bubbles`                   — list ids
+//! - `POST   /v1/bubbles`                   — create bubble
+//! - `GET    /v1/bubbles/:bid`              — snapshot DTO
+//! - `DELETE /v1/bubbles/:bid`              — remove
+//! - `GET    /v1/bubbles/:bid/bars`         — OHLCV bars (?limit=N)
+//! - `GET    /v1/bubble/:bid/bars/:kind`    — legacy count
+//!
+//! ### Exchanges
+//! - `GET  /v1/exchanges`
+//!
+//! ### Mini-ticker
+//! - `GET  /v1/mini-ticker`
+//! - `GET  /v1/mini-ticker/:key`
+//!
+//! ### Presets
+//! - `GET    /v1/presets`
+//! - `GET    /v1/presets/:preset_id`
+//! - `DELETE /v1/presets/:preset_id`
+//!
+//! ### Templates
+//! - `GET  /v1/templates/summary`
+//!
+//! ### Watchlists
+//! - `GET  /v1/watchlists`
+//!
+//! ### Drawings
+//! - `GET  /v1/drawings`
+//!
+//! ### Indicators
+//! - `GET  /v1/indicators`
+//!
+//! ### Bridge
+//! - `POST /v1/bridge/request-bars`
+//!
+//! ### Trading
+//! - `GET  /v1/trading/connectors`
+//!
+//! ### Events (SSE)
+//! - `GET  /v1/events`
+
+mod routes;
+
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
+
+use axum::{
+    extract::State,
+    response::IntoResponse,
+    routing::get,
+    Json, Router,
+};
+use serde::Serialize;
+use tokio::sync::broadcast;
+
+use mlc_backend_core::{BackendCore, BubbleEvent};
+use mlc_live_data::DataBridge;
+
+const DEFAULT_PORT: u16 = 19470;
+const TICK_PERIOD: Duration = Duration::from_millis(16);
+const SESSION_IDLE_TIMEOUT_SECS: u64 = 60;
+const EVENTS_CHANNEL_CAP: usize = 4096;
+
+#[derive(Clone)]
+pub struct AppState {
+    pub core: Arc<BackendCore>,
+    pub tick_count: Arc<std::sync::atomic::AtomicU64>,
+    pub events_tx: broadcast::Sender<BubbleEvent>,
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+
+    let port = std::env::var("MLC_BACKEND_DAEMON_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_PORT);
+
+    // CRITICAL: construct DataBridge synchronously FIRST (owns its own tokio
+    // runtime; calling it from inside a #[tokio::main] async fn panics).
+    let (bridge, _live_rx, _connector_ready_rx) = DataBridge::new();
+    let bridge = Arc::new(bridge);
+    let core = BackendCore::new(bridge.clone(), None);
+
+    tracing::info!(target: "mlc-backend-daemon", "backend constructed, tick loop starting");
+
+    let (events_tx, _) = broadcast::channel::<BubbleEvent>(EVENTS_CHANNEL_CAP);
+
+    let state = AppState {
+        core: core.clone(),
+        tick_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        events_tx: events_tx.clone(),
+    };
+
+    // HTTP runtime — separate from the bridge runtime.
+    let http_rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .worker_threads(2)
+        .thread_name("mlc-backend-daemon-http")
+        .build()?;
+
+    let tick_state = state.clone();
+    http_rt.spawn(async move {
+        let mut interval = tokio::time::interval(TICK_PERIOD);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            let now_ms = wall_clock_ms();
+            let events = tick_state.core.tick_writers(now_ms);
+            for e in events {
+                let _ = tick_state.events_tx.send(e);
+            }
+            tick_state
+                .tick_count
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+            // Reap idle sessions.
+            let now_secs = now_ms / 1000;
+            tick_state
+                .core
+                .reap_idle_sessions(now_secs, SESSION_IDLE_TIMEOUT_SECS);
+        }
+    });
+
+    let app = Router::new()
+        .route("/health", get(health))
+        .merge(routes::apps::routes())
+        .merge(routes::bubbles::routes())
+        .merge(routes::exchanges::routes())
+        .merge(routes::mini_ticker::routes())
+        .merge(routes::presets::routes())
+        .merge(routes::templates::routes())
+        .merge(routes::watchlists::routes())
+        .merge(routes::drawings::routes())
+        .merge(routes::indicators::routes())
+        .merge(routes::bridge::routes())
+        .merge(routes::trading::routes())
+        .merge(routes::events::routes())
+        .with_state(state);
+
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    http_rt.block_on(async move {
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        tracing::info!(target: "mlc-backend-daemon", "listening on http://{addr}");
+        tokio::select! {
+            res = axum::serve(listener, app) => res?,
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!(target: "mlc-backend-daemon", "ctrl-c received, shutting down");
+            }
+        }
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })?;
+
+    Ok(())
+}
+
+fn wall_clock_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+#[derive(Serialize)]
+struct HealthOut {
+    ok: bool,
+    tick_count: u64,
+    sessions: usize,
+}
+
+async fn health(State(s): State<AppState>) -> impl IntoResponse {
+    Json(HealthOut {
+        ok: true,
+        tick_count: s.tick_count.load(std::sync::atomic::Ordering::Relaxed),
+        sessions: s.core.sessions_snapshot().len(),
+    })
+}

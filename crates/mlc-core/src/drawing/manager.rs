@@ -2,10 +2,9 @@
 //!
 //! Works with PrimitiveRegistry and Box<dyn Primitive> instead of hardcoded types.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use crate::{PriceScale, Viewport, Bar};
 use super::primitives_v2::{
     Primitive, PrimitiveRegistry, ClickBehavior,
@@ -206,19 +205,19 @@ pub struct DrawingManager {
     style_store: Arc<RwLock<HashMap<String, TemplateStyle>>>,
     /// Cached preview primitive from the last `create_preview` call.
     ///
-    /// `RefCell` lets `create_preview(&self, …)` write to the cache without
+    /// `Mutex` lets `create_preview(&self, …)` write to the cache without
     /// requiring `&mut self` — the render path only has a shared reference to
     /// `DrawingManager`, and changing that would cascade into all render
-    /// function signatures.  Interior mutability is safe here because
-    /// `DrawingManager` is never shared across threads (it lives inside
-    /// `ChartContainer`, not inside an `Arc`).
+    /// function signatures.  After the backend-cutover `DrawingManager` lives
+    /// inside `BackendCore::DrawingRegistry` (behind an `RwLock`) and must be
+    /// `Send + Sync`; hence `RefCell` is replaced with `Mutex`.
     ///
     /// `None` when no preview has been built yet, when the drawing state is
     /// `Idle`, or after an explicit invalidation (tool change, style bind,
     /// state reset).  Rebuilt only when the cache key differs from the
     /// previous call; otherwise `clone_box()` is returned directly — much
     /// cheaper than re-running the factory + style application.
-    preview_cache: RefCell<Option<PreviewCache>>,
+    preview_cache: Mutex<Option<PreviewCache>>,
 }
 
 impl Default for DrawingManager {
@@ -256,7 +255,7 @@ impl Clone for DrawingManager {
             style_store: Arc::clone(&self.style_store),
             // Reset preview cache — will be rebuilt on first create_preview call
             // in the cloned manager (cursor coords are per-window anyway).
-            preview_cache: RefCell::new(None),
+            preview_cache: Mutex::new(None),
         }
     }
 }
@@ -295,7 +294,7 @@ impl DrawingManager {
             current_exchange: String::new(),
             current_account_type: String::new(),
             style_store: Arc::new(RwLock::new(HashMap::new())),
-            preview_cache: RefCell::new(None),
+            preview_cache: Mutex::new(None),
         }
     }
 
@@ -323,7 +322,7 @@ impl DrawingManager {
         self.state.cancel();
         self.tool_variant = None;
         // Tool change → cached preview is for the old tool, must rebuild.
-        *self.preview_cache.borrow_mut() = None;
+        *self.preview_cache.lock().expect("preview_cache mutex poisoned") = None;
 
         self.current_tool = match tool_id {
             None | Some("cursor") | Some("none") | Some("crosshair") | Some("hand") => None,
@@ -373,7 +372,7 @@ impl DrawingManager {
     pub fn bind_style_store(&mut self, store: Arc<RwLock<HashMap<String, TemplateStyle>>>) {
         self.style_store = store;
         // Different store pointer means different style snapshots — drop cached preview.
-        *self.preview_cache.borrow_mut() = None;
+        *self.preview_cache.lock().expect("preview_cache mutex poisoned") = None;
     }
 
     /// Return a clone of the underlying `Arc` so callers can share it with
@@ -548,7 +547,7 @@ impl DrawingManager {
     /// Cancel current drawing operation
     pub fn cancel_drawing(&mut self) {
         self.state.cancel();
-        *self.preview_cache.borrow_mut() = None;
+        *self.preview_cache.lock().expect("preview_cache mutex poisoned") = None;
     }
 
     /// Set drawing state from a sync peer (for preview sync).
@@ -568,7 +567,7 @@ impl DrawingManager {
             None => {
                 if self.state.is_drawing() {
                     self.state = DrawingState::Idle;
-                    *self.preview_cache.borrow_mut() = None;
+                    *self.preview_cache.lock().expect("preview_cache mutex poisoned") = None;
                 }
             }
         }
@@ -725,7 +724,7 @@ impl DrawingManager {
                         // is_drawing() now correctly returns false between strokes.
                         let _ = tool_id_clone;
                         self.state = DrawingState::Idle;
-                        *self.preview_cache.borrow_mut() = None;
+                        *self.preview_cache.lock().expect("preview_cache mutex poisoned") = None;
                         self.current_pane_id = None;
                         return true;
                     }
@@ -736,7 +735,7 @@ impl DrawingManager {
             // current_tool; next press will start a fresh stroke.
             let _ = tool_id_clone;
             self.state = DrawingState::Idle;
-            *self.preview_cache.borrow_mut() = None;
+            *self.preview_cache.lock().expect("preview_cache mutex poisoned") = None;
             return false;
         }
         false
@@ -756,7 +755,7 @@ impl DrawingManager {
     pub fn create_preview(&self, cursor_ts_ms: i64, cursor_price: f64) -> Option<Box<dyn Primitive>> {
         let DrawingState::Creating { tool_id, points } = &self.state else {
             // Not drawing — drop any stale cache entry.
-            *self.preview_cache.borrow_mut() = None;
+            *self.preview_cache.lock().expect("preview_cache mutex poisoned") = None;
             return None;
         };
 
@@ -784,7 +783,7 @@ impl DrawingManager {
 
         // Cache hit: return a clone of the cached primitive.
         {
-            let cache = self.preview_cache.borrow();
+            let cache = self.preview_cache.lock().expect("preview_cache mutex poisoned");
             if let Some(ref c) = *cache {
                 if c.tool_id == cur_key.0
                     && c.points_len == cur_key.1
@@ -849,7 +848,7 @@ impl DrawingManager {
 
         // Store in cache.
         let cloned = prim.clone_box();
-        *self.preview_cache.borrow_mut() = Some(PreviewCache {
+        *self.preview_cache.lock().expect("preview_cache mutex poisoned") = Some(PreviewCache {
             tool_id:    tool_id.clone(),
             points_len: points.len(),
             cursor:     (cursor_ts_ms as u64, cursor_price.to_bits()),
@@ -2430,7 +2429,7 @@ impl DrawingManager {
         self.selected = None;
         self.dragging = None;
         self.drag_start = None;
-        *self.preview_cache.borrow_mut() = None;
+        *self.preview_cache.lock().expect("preview_cache mutex poisoned") = None;
     }
 
     /// DEPRECATED: Legacy single-primitive clone. Used by `propagate_new_primitive_to_sync_group`.

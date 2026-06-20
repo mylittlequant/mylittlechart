@@ -7,7 +7,6 @@ use std::collections::{HashSet, HashMap, VecDeque};
 use std::time::Instant;
 use mlc_core::state::scroll_state::ScrollState;
 use crate::types::{ObjectTreeItem, AlertItem, IndicatorsTabData, WatchlistItem, ConnectorStatusItem};
-use crate::watchlist::WatchlistManager;
 use crate::agents_dock::{AgentLeafDescriptor, AgentDockingManager};
 
 // =============================================================================
@@ -246,12 +245,6 @@ pub struct SidebarState {
     /// Keyed by group label string (e.g. "NO API KEY", "REQUIRES API KEY", "NON-CHART DATA").
     /// When `true`, the group is collapsed (items hidden).
     pub connector_group_collapsed: HashMap<String, bool>,
-
-    /// Watchlist manager — tracks which symbols have been starred by the user.
-    ///
-    /// Used by the symbol search overlay to render filled/empty star icons
-    /// and by the star toggle input handler to add/remove symbols.
-    pub watchlist_manager: WatchlistManager,
 
     /// Whether the watchlist column-config dropdown is open.
     ///
@@ -773,7 +766,6 @@ impl Default for SidebarState {
             signal_group_scroll: HashMap::new(),
             hovered_signal_group_id: None,
             indicator_signals: IndicatorsTabData::default(),
-            watchlist_manager: WatchlistManager::default(),
             watchlist_config_dropdown_open: false,
             panel_col_config_open: None,
             watchlist_drag_index: None,
