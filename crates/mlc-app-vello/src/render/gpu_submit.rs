@@ -156,12 +156,13 @@ pub(crate) fn submit_window_gpu(pw: &mut PerWindowState, render_cx: &RenderConte
     // Present
     let present_t0 = std::time::Instant::now();
     let surface_texture = match pw.surface.surface.get_current_texture() {
-        Ok(t) => t,
-        Err(vello::wgpu::SurfaceError::OutOfMemory) => {
+        vello::wgpu::CurrentSurfaceTexture::Success(t)    => t,
+        vello::wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+        vello::wgpu::CurrentSurfaceTexture::Lost          => {
             *close_all = true;
             return render_tex_us;
         }
-        Err(_) => return render_tex_us,
+        _ => return render_tex_us,
     };
 
     let surface_view = surface_texture
@@ -363,13 +364,14 @@ pub(crate) fn submit_window_gpu_from_gpu_scene(
     // Present
     let present_t0 = std::time::Instant::now();
     let surface_texture = match pw.surface.surface.get_current_texture() {
-        Ok(t) => t,
-        Err(vello::wgpu::SurfaceError::OutOfMemory) => {
+        vello::wgpu::CurrentSurfaceTexture::Success(t)    => t,
+        vello::wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+        vello::wgpu::CurrentSurfaceTexture::Lost          => {
             *close_all = true;
             return (render_tex_us, 0);
         }
-        Err(e) => {
-            eprintln!("[GPU] Surface error: {:?}, reconfiguring", e);
+        other => {
+            eprintln!("[GPU] Surface error: {:?}, reconfiguring", other);
             pw.surface.surface.configure(device, &pw.surface.config);
             // Reconfiguring the surface rebuilds the swapchain, which bumps the
             // resource generation. The cached `target_texture`/`target_view` were
@@ -428,7 +430,7 @@ pub(crate) fn submit_window_gpu_from_gpu_scene(
 
     // ── VelloHybrid backend: render scene onto swapchain ─────────────────────
     if pw.render_backend == RB::VelloHybrid {
-        if let Some(ref hybrid_ctx) = pw.gpu_hybrid_ctx {
+        if let Some(ref mut hybrid_ctx) = pw.gpu_hybrid_ctx {
             // Lazily create the vello_hybrid::Renderer.
             if pw.hybrid_renderer.is_none() {
                 pw.hybrid_renderer = Some(vello_hybrid::Renderer::new(

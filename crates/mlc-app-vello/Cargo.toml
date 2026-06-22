@@ -18,8 +18,8 @@ mlc-vello-context = { path = "../mlc-vello-context", package = "mylittlechart-ve
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 mlc-crypto = { path = "../mlc-crypto", package = "mylittlechart-crypto" }
 mlc-layout = { path = "../mlc-layout", package = "mylittlechart-layout" }
-uzor = "=1.4.13"
-vello = "0.8"
+uzor = "=1.4.15"
+vello = "0.9"
 winit = "0.30"
 pollster = "0.4"
 png = "0.17"
@@ -32,11 +32,11 @@ mlc-headless-core = { path = "../mlc-headless-core", package = "mylittlechart-he
 mlc-indicators = { path = "../mlc-indicators", package = "mylittlechart-indicators" }
 sysinfo = "0.34"
 mlc-instanced-context = { path = "../mlc-instanced-context", package = "mylittlechart-instanced-context" }
-uzor-render-wgpu-instanced = "=1.4.5"
+uzor-render-wgpu-instanced = "=1.4.15"
 mlc-vello-cpu-context = { path = "../mlc-vello-cpu-context", package = "mylittlechart-vello-cpu-context" }
 mlc-vello-hybrid-context = { path = "../mlc-vello-hybrid-context", package = "mylittlechart-vello-hybrid-context" }
-uzor-render-vello-hybrid = "=1.4.5"
-vello_hybrid = { version = "0.0.7", features = ["wgpu"] }
+uzor-render-vello-hybrid = "=1.4.15"
+vello_hybrid = { version = "0.0.9", features = ["wgpu"] }
 mlc-tiny-skia-context = { path = "../mlc-tiny-skia-context", package = "mylittlechart-tiny-skia-context" }
 keyring = "3"
 
