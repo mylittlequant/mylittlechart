@@ -393,7 +393,7 @@ pub fn migrate_legacy_profile_if_needed() -> Result<bool, String> {
 pub fn create_profile(name: &str, avatar: &str) -> Result<ProfileMeta, String> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = web_time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+        .duration_since(web_time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64;
 

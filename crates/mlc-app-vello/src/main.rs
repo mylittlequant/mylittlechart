@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use web_time::SystemTime;
-use std::time::UNIX_EPOCH;
+use web_time::UNIX_EPOCH;
 
 // ── Pipelined GPU rendering ──────────────────────────────────────────────────
 //
@@ -510,7 +510,7 @@ fn render_toasts(
     let start_y = 40.0 + margin; // below chrome strip (32px) + small gap
 
     let now = web_time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+        .duration_since(web_time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
 
@@ -4140,7 +4140,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         }
         // Expire old toasts.
         let now_ms_val = web_time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+            .duration_since(web_time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
         self.active_toasts.retain(|t| !t.is_expired(now_ms_val));

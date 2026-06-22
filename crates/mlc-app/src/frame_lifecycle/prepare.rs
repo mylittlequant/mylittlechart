@@ -43,7 +43,7 @@ impl ChartApp {
             let sel = tf.selection_range(&hex_id);
             drop(coord);
             let now_ms = web_time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
+                .duration_since(web_time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64;
             let cursor_vis = self.input_coordinator.borrow().text_fields().cursor_visible(now_ms);
@@ -74,7 +74,7 @@ impl ChartApp {
             let sel = tf.selection_range(&chat_id);
             drop(coord);
             let now_ms = web_time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
+                .duration_since(web_time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64;
             let cursor_vis = self.input_coordinator.borrow().text_fields().cursor_visible(now_ms);

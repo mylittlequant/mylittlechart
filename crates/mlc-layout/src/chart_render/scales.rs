@@ -100,7 +100,7 @@ pub fn draw_price_scale(
                 if let (Some(scale_settings), Some(tf_interval_ms)) = (state.scale_settings, state.timeframe_interval_ms) {
                     if scale_settings.show_bar_countdown && tf_interval_ms > 0 {
                         let now = web_time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
+                            .duration_since(web_time::UNIX_EPOCH)
                             .map(|d| d.as_secs() as i64)
                             .unwrap_or(0);
                         let bar_interval_secs = (tf_interval_ms / 1000).max(1);

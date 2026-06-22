@@ -66,15 +66,72 @@ use crate::convert::timeframe_to_interval;
 ///
 /// All `DataBridge` background tasks are spawned through this helper so the
 /// bridge itself does not need to own a `tokio::runtime::Runtime`.
+#[cfg(not(target_arch = "wasm32"))]
 #[inline]
 pub(crate) fn spawn_bg<F>(fut: F)
 where
     F: std::future::Future<Output = ()> + Send + 'static,
 {
-    #[cfg(not(target_arch = "wasm32"))]
     tokio::spawn(fut);
-    #[cfg(target_arch = "wasm32")]
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline]
+pub(crate) fn spawn_bg<F>(fut: F)
+where
+    F: std::future::Future<Output = ()> + 'static,
+{
     wasm_bindgen_futures::spawn_local(fut);
+}
+
+/// Cross-platform handle to a spawned background task.
+///
+/// On native it wraps `tokio::task::JoinHandle<()>`; on wasm it wraps a
+/// `futures_util::future::AbortHandle` (paired with the abortable future via
+/// `spawn_local`).
+///
+/// Only `.abort()` is exposed — that is the only operation the bridge uses
+/// (no await-for-completion).
+pub(crate) struct BgJoinHandle {
+    #[cfg(not(target_arch = "wasm32"))]
+    inner: tokio::task::JoinHandle<()>,
+    #[cfg(target_arch = "wasm32")]
+    abort: futures_util::future::AbortHandle,
+}
+
+impl BgJoinHandle {
+    pub(crate) fn abort(&self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.inner.abort();
+        #[cfg(target_arch = "wasm32")]
+        self.abort.abort();
+    }
+}
+
+/// Spawn a background future and return a [`BgJoinHandle`] that can cancel it.
+///
+/// Native: `Send + 'static` future via `tokio::spawn`.
+/// Wasm: `'static` future (no `Send` required) via `wasm_bindgen_futures::spawn_local`,
+/// wrapped in `futures_util::future::Abortable` so the handle can cancel it.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn spawn_bg_join<F>(fut: F) -> BgJoinHandle
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    BgJoinHandle { inner: tokio::spawn(fut) }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn spawn_bg_join<F>(fut: F) -> BgJoinHandle
+where
+    F: std::future::Future<Output = ()> + 'static,
+{
+    let (abort, reg) = futures_util::future::AbortHandle::new_pair();
+    let abortable = futures_util::future::Abortable::new(fut, reg);
+    wasm_bindgen_futures::spawn_local(async move {
+        let _ = abortable.await;
+    });
+    BgJoinHandle { abort }
 }
 
 /// Identifies whether an [`LiveUpdate::OrderbookSnapshot`] originated from the
@@ -507,7 +564,7 @@ pub struct DataBridge {
     /// 100t→1000t must ABORT the previous task (dropping its station handle so
     /// the 30s grace unsubscribe fires) — otherwise stale TickBar forwarders
     /// keep emitting BarUpdate into the same window. Guarded by `std::sync::Mutex`.
-    derived_subs: Arc<Mutex<HashMap<(ExchangeId, String, AccountType), tokio::task::JoinHandle<()>>>>,
+    derived_subs: Arc<Mutex<HashMap<(ExchangeId, String, AccountType), BgJoinHandle>>>,
     /// Tracks which `(ExchangeId, AccountType, symbol, timeframe)` keys already
     /// have a live `Stream::Kline` forwarder spawned by `request_bars`.
     ///
@@ -540,7 +597,7 @@ pub struct DataBridge {
     /// SubscriptionHandle inside the station — that triggers the 30s grace
     /// window and prevents the old `(BTCUSDT, 1h)` forwarder from staying
     /// live after the user switches to `(BTCUSDT, 1m)`.
-    station_kline_handles: Arc<Mutex<HashMap<FetchKey, tokio::task::JoinHandle<()>>>>,
+    station_kline_handles: Arc<Mutex<HashMap<FetchKey, BgJoinHandle>>>,
 }
 
 impl DataBridge {
@@ -1108,7 +1165,7 @@ impl DataBridge {
             let station_symbol_wire = wire_sym.clone();
             let station_interval = interval.clone();
             let station_tf_name = tf_name.clone();
-            let handle = tokio::spawn(async move {
+            let handle = spawn_bg_join(async move {
                 let kline_iv = KlineInterval::new(&station_interval);
                 let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                     exchange_id,
@@ -1252,7 +1309,7 @@ impl DataBridge {
             // raw string the connector can't resolve. The wire_sym is the
             // venue-native string (resolved from canonical by wire_symbol()).
             let now_ms = web_time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
+                .duration_since(web_time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as i64)
                 .unwrap_or(i64::MAX);
             let phase_a_result = digdigdig3_station::backfill::fetch_history(
@@ -1708,7 +1765,7 @@ impl DataBridge {
         let sym_wire_ob = symbol_wire.clone();
         let station_ob = station.clone();
 
-        let handle = tokio::spawn(async move {
+        let handle = spawn_bg_join(async move {
             // Task 1 — OrderBook snapshots → DomHeatmapSnapshot
             let ob_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                 exchange_id, sym_wire_ob.clone(), account_type,
@@ -1728,7 +1785,7 @@ impl DataBridge {
             let sym_tr = sym_ob.clone();
             let sym_wire_tr = sym_wire_ob.clone();
             let station_t = station_ob.clone();
-            let trade_handle = tokio::spawn(async move {
+            let trade_handle = spawn_bg_join(async move {
                 let tr_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                     exchange_id, sym_wire_tr.clone(), account_type,
                     [digdigdig3_station::Stream::Trade],
@@ -1835,7 +1892,7 @@ impl DataBridge {
         let sym_wire_liq = symbol_wire.clone();
         let station_liq = station.clone();
 
-        let handle = tokio::spawn(async move {
+        let handle = spawn_bg_join(async move {
             // Task 1 — per-event liquidation → LiquidationEvent
             let liq_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                 exchange_id, sym_wire_liq.clone(), account_type,
@@ -1855,7 +1912,7 @@ impl DataBridge {
             let sym_bkt = sym_liq.clone();
             let sym_wire_bkt = sym_wire_liq.clone();
             let station_bkt = station_liq.clone();
-            let bucket_handle = tokio::spawn(async move {
+            let bucket_handle = spawn_bg_join(async move {
                 let bkt_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                     exchange_id, sym_wire_bkt.clone(), account_type,
                     [digdigdig3_station::Stream::LiquidationBucket],
@@ -2104,8 +2161,8 @@ impl DataBridge {
         symbol_canonical: String,
         symbol_wire: String,
         stream: digdigdig3_station::Stream,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
+    ) -> BgJoinHandle {
+        spawn_bg_join(async move {
             let stream_label = format!("{:?}", stream);
             // dig3-station 0.3.7+ explicitly disables auto-heal for non-kline
             // streams (their forwarders exit cleanly on disconnect). Our derived
@@ -2203,8 +2260,8 @@ impl DataBridge {
         symbol_canonical: String,
         symbol_wire: String,
         stream: digdigdig3_station::Stream,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
+    ) -> BgJoinHandle {
+        spawn_bg_join(async move {
             let stream_label = format!("{:?}", stream);
             eprintln!(
                 "[Bridge::footprint-fwd subscribing] {:?} {} wire={} stream={}",
@@ -2288,8 +2345,8 @@ impl DataBridge {
         symbol_canonical: String,
         symbol_wire: String,
         stream: digdigdig3_station::Stream,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
+    ) -> BgJoinHandle {
+        spawn_bg_join(async move {
             let stream_label = format!("{:?}", stream);
             let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                 exchange_id, symbol_wire.clone(), account_type, [stream],
@@ -2327,8 +2384,8 @@ impl DataBridge {
         symbol_canonical: String,
         symbol_wire: String,
         stream: digdigdig3_station::Stream,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
+    ) -> BgJoinHandle {
+        spawn_bg_join(async move {
             let stream_label = format!("{:?}", stream);
             let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                 exchange_id, symbol_wire.clone(), account_type, [stream],
@@ -2365,8 +2422,8 @@ impl DataBridge {
         symbol_wire: String,
         stream: digdigdig3_station::Stream,
         box_size: f64,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
+    ) -> BgJoinHandle {
+        spawn_bg_join(async move {
             let stream_label = format!("{:?}", stream);
             let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                 exchange_id, symbol_wire.clone(), account_type, [stream],
@@ -2403,8 +2460,8 @@ impl DataBridge {
         symbol_canonical: String,
         symbol_wire: String,
         stream: digdigdig3_station::Stream,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
+    ) -> BgJoinHandle {
+        spawn_bg_join(async move {
             let stream_label = format!("{:?}", stream);
             let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                 exchange_id, symbol_wire.clone(), account_type, [stream],
@@ -2440,8 +2497,8 @@ impl DataBridge {
         symbol_canonical: String,
         symbol_wire: String,
         stream: digdigdig3_station::Stream,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
+    ) -> BgJoinHandle {
+        spawn_bg_join(async move {
             let stream_label = format!("{:?}", stream);
             let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                 exchange_id, symbol_wire.clone(), account_type, [stream],
@@ -2477,8 +2534,8 @@ impl DataBridge {
         symbol_canonical: String,
         symbol_wire: String,
         stream: digdigdig3_station::Stream,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
+    ) -> BgJoinHandle {
+        spawn_bg_join(async move {
             let stream_label = format!("{:?}", stream);
             let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                 exchange_id, symbol_wire.clone(), account_type, [stream],
@@ -2518,8 +2575,8 @@ impl DataBridge {
         symbol_canonical: String,
         symbol_wire: String,
         stream: digdigdig3_station::Stream,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
+    ) -> BgJoinHandle {
+        spawn_bg_join(async move {
             let stream_label = format!("{:?}", stream);
             let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                 exchange_id, symbol_wire.clone(), account_type, [stream],
@@ -2576,8 +2633,8 @@ impl DataBridge {
         symbol_canonical: String,
         symbol_wire: String,
         stream: digdigdig3_station::Stream,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
+    ) -> BgJoinHandle {
+        spawn_bg_join(async move {
             let stream_label = format!("{:?}", stream);
             let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                 exchange_id, symbol_wire.clone(), account_type, [stream],
@@ -3530,7 +3587,7 @@ impl DataBridge {
             // walks backwards from there.
             let kline_iv = KlineInterval::new(interval.as_str());
             let now_ms = web_time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
+                .duration_since(web_time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as i64)
                 .unwrap_or(i64::MAX);
             let mut end_time_cursor: i64 = now_ms;

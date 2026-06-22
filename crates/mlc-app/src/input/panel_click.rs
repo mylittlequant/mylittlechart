@@ -4153,7 +4153,7 @@ impl ChartApp {
                         self.clipboard_text = Some(key.clone());
                         self.panel_app.user_settings_state.recovery_key_copied_at =
                             web_time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
+                                .duration_since(web_time::UNIX_EPOCH)
                                 .map(|d| d.as_millis() as u64)
                                 .unwrap_or(0);
                         eprintln!("[ChartApp] wizard: recovery key copied to clipboard");

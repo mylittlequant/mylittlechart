@@ -5145,7 +5145,7 @@ fn render_agents_pane(
         result.item_rects.push((scroll_wid, scroll_rect));
 
         let now_ts = web_time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+            .duration_since(web_time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
 
@@ -6390,7 +6390,7 @@ fn render_agents_chat_bubbles(
             // Braille spinner frames — all 10 Unicode braille "loading" glyphs.
             const FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
             let now_ms = web_time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
+                .duration_since(web_time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64;
             let frame_char = FRAMES[((now_ms / 80) as usize) % FRAMES.len()];

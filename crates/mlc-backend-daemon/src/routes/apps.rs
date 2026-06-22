@@ -21,7 +21,7 @@ use crate::AppState;
 
 fn wall_clock_ms() -> u64 {
     use web_time::SystemTime;
-    use std::time::UNIX_EPOCH;
+    use web_time::UNIX_EPOCH;
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)

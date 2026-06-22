@@ -22,5 +22,11 @@ mlc-crypto = { path = "../mlc-crypto", package = "mylittlechart-crypto" }
 uuid = { version = "1", features = ["v4"] }
 rand.workspace = true
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# Browser RNG source so uuid::v4() and getrandom-based crates compile.
+getrandom = { version = "0.2", features = ["js"] }
+# uuid also has its own wasm RNG feature — pulls v4 RNG through web crypto.
+uuid = { version = "1", features = ["v4", "js"] }
+
 [features]
 default = []

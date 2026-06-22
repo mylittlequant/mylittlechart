@@ -207,10 +207,12 @@ impl AlertDelivery {
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let (toast_tx, toast_rx) = mpsc::unbounded_channel();
 
-        let http_client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(15))
-            .build()
-            .unwrap_or_default();
+        // `.timeout()` is native-only on the reqwest builder; on wasm the
+        // browser owns request lifetimes.
+        let builder = reqwest::Client::builder();
+        #[cfg(not(target_arch = "wasm32"))]
+        let builder = builder.timeout(std::time::Duration::from_secs(15));
+        let http_client = builder.build().unwrap_or_default();
 
         let worker = DeliveryWorker {
             cmd_rx,

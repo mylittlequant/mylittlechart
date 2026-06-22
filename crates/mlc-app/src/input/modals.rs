@@ -549,7 +549,7 @@ impl ChartApp {
                 let default_name = format!("My Indicator Set {}", max_n + 1);
 
                 let current_time_ms = web_time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
+                    .duration_since(web_time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_millis() as u64;
                 self.panel_app.preset_name_input.open_create_indicator_set(

@@ -1171,7 +1171,7 @@ impl ChartApp {
             core,
             active_exchange: digdigdig3::ExchangeId::Binance,
             window_id: format!("win_{}", web_time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
+                .duration_since(web_time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis()),
             window_x: None,
@@ -1525,7 +1525,7 @@ impl ChartApp {
             window_id: format!(
                 "win_{}",
                 web_time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
+                    .duration_since(web_time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_millis()
             ),
@@ -4135,7 +4135,7 @@ impl ChartApp {
         // Generate clock time from active window's timezone settings
         let clock_time = {
             let utc_secs = web_time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
+                .duration_since(web_time::UNIX_EPOCH)
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0);
 
@@ -5002,7 +5002,7 @@ impl ChartApp {
 
         let clock_time = {
             let utc_secs = web_time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
+                .duration_since(web_time::UNIX_EPOCH)
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0);
             if let Some(window) = self.panel_app.panel_grid.active_container() {
@@ -5082,7 +5082,7 @@ impl ChartApp {
         let chat_id = WidgetId::from(text_input::AGENT_CHAT);
         if self.input_coordinator.borrow().text_fields().is_focused(&chat_id) {
             let now_ms = web_time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
+                .duration_since(web_time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64;
             self.sidebar_state.agent_input_cursor_visible =
