@@ -12,6 +12,9 @@
 //!   and the resulting `ChartOutputAction` values are applied via `process_output_actions`.
 //! - There are no dependencies on the terminal crate; all types come from
 //!   `zengeld-chart` and `uzor-core`.
+#[cfg(target_arch = "wasm32")]
+use crate::agent as gate4agent;
+
 
 mod sliders;
 mod color_picker;
@@ -177,6 +180,7 @@ impl ChartApp {
             if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id).cloned() {
                 if desc.mode == gate4agent::InstanceMode::Pty {
                     let id = desc.instance_id;
+                    #[cfg(not(target_arch = "wasm32"))]
                     if let Some(rt) = self.core.native_rt() {
                         let _ = rt.block_on(self.agent.write_pty_instance(id, text));
                     }
@@ -6405,6 +6409,7 @@ impl ChartApp {
                         if desc.mode == gate4agent::InstanceMode::Pty {
                             let text = String::from_utf8_lossy(&bytes).to_string();
                             let id = desc.instance_id;
+                            #[cfg(not(target_arch = "wasm32"))]
                             if let Some(rt) = self.core.native_rt() {
                                 let _ = rt.block_on(self.agent.write_pty_instance(id, &text));
                             }
@@ -6428,6 +6433,7 @@ impl ChartApp {
                         eprintln!("[gate4agent::chat] Enter via on_char text_len={}", text.len());
                         if !text.is_empty() {
                             let id = desc.instance_id;
+                            #[cfg(not(target_arch = "wasm32"))]
                             if let Some(rt) = self.core.native_rt() {
                                 match rt.block_on(self.agent.send_chat_instance(id, &text)) {
                                     Ok(()) => {
@@ -7695,6 +7701,7 @@ impl ChartApp {
                             if desc.mode == gate4agent::InstanceMode::Pty {
                                 let text = String::from_utf8_lossy(&bytes).to_string();
                                 let id = desc.instance_id;
+                                #[cfg(not(target_arch = "wasm32"))]
                                 if let Some(rt) = self.core.native_rt() {
                                     let _ = rt.block_on(self.agent.write_pty_instance(id, &text));
                                 }

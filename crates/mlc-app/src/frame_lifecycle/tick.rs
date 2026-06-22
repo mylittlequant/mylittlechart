@@ -1,5 +1,8 @@
 //! Live update tick loop: drives `BackendCore::tick_writers` to drain the
 //! broadcast channel, then runs per-app reactions on the emitted `BubbleEvent`s.
+#[cfg(target_arch = "wasm32")]
+use crate::agent as gate4agent;
+
 
 use crate::ChartApp;
 use crate::{account_type_from_label, parse_timeframe_name};

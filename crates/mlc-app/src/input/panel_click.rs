@@ -1,6 +1,9 @@
 //! Mega-router for click events: dispatches by widget_id to per-area
 //! handlers (sidebar, watchlist, overlay, profile-manager, tags-tabs,
 //! slot panels, agent leaves, etc.).
+#[cfg(target_arch = "wasm32")]
+use crate::agent as gate4agent;
+
 
 use crate::ChartApp;
 use uzor::WidgetId;
@@ -773,6 +776,7 @@ impl ChartApp {
             if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
                 if let Some(desc) = self.sidebar_state.agent_leaves.remove(&leaf_id) {
                     let id = desc.instance_id;
+                    #[cfg(not(target_arch = "wasm32"))]
                     if let Some(rt) = self.core.native_rt() {
                         let _ = rt.block_on(self.agent.stop_instance(id));
                     }
@@ -869,6 +873,7 @@ impl ChartApp {
                     let leaf_id = uzor::panels::LeafId(raw);
                     if let Some(desc) = self.sidebar_state.agent_leaves.remove(&leaf_id) {
                         let id = desc.instance_id;
+                        #[cfg(not(target_arch = "wasm32"))]
                         if let Some(rt) = self.core.native_rt() {
                             let _ = rt.block_on(self.agent.stop_instance(id));
                         }
@@ -1082,6 +1087,7 @@ impl ChartApp {
                                     working_dir: desc.workdir.clone(),
                                     ..SessionConfig::default()
                                 };
+                                #[cfg(not(target_arch = "wasm32"))]
                                 if let Some(rt) = self.core.native_rt() {
                                     match rt.block_on(self.agent.start_pty_instance(id, config)) {
                                         Ok(()) => {
@@ -1140,6 +1146,7 @@ impl ChartApp {
                         eprintln!("[gate4agent::chat] send button leaf={:?} len={}", leaf_id, text.len());
                         if !text.is_empty() {
                             let id = desc.instance_id;
+                            #[cfg(not(target_arch = "wasm32"))]
                             if let Some(rt) = self.core.native_rt() {
                                 match rt.block_on(self.agent.send_chat_instance(id, &text)) {
                                     Ok(()) => {

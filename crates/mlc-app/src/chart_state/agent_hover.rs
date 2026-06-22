@@ -1,6 +1,9 @@
 //! Agent panel hover routing — tracks which agent leaf the cursor is over
 //! and updates per-leaf focus/hover state for chat and PTY modes.
 
+#[cfg(target_arch = "wasm32")]
+use crate::agent as gate4agent;
+
 use crate::{text_input, ChartApp};
 
 impl ChartApp {

@@ -1,4 +1,7 @@
 //! Profile / watchlist / template persistence: read/write user state to disk.
+#[cfg(target_arch = "wasm32")]
+use crate::agent as gate4agent;
+
 
 use crate::ChartApp;
 use crate::persistence::live_cache as preset_cache;

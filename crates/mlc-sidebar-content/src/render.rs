@@ -6,6 +6,11 @@
 //! - does not depend on `FrameTheme` (uses `ToolbarTheme` for all colours)
 //! - no `ThemeManager` argument (theme-settings panel is not present here)
 
+// On wasm32, gate4agent is absent; bring the stub into scope so bare
+// `gate4agent::X` path expressions in this file resolve correctly.
+#[cfg(target_arch = "wasm32")]
+use crate::gate4agent_stub as gate4agent;
+
 use mlc_core::render::{RenderContext, TextAlign, TextBaseline, draw_svg_icon};
 use mlc_core::LayoutRect;
 use mlc_core::state::icons::Icon;

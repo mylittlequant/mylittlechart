@@ -41,6 +41,9 @@ pub struct TradingManager {
     account_caps: HashMap<(ExchangeId, AccountType), AccountCapabilities>,
     snapshot: SharedTradingSnapshot,
     config: TradingConfig,
+    /// Native: tokio runtime handle for spawning trading API calls.
+    /// Wasm: unused — spawns go through `wasm_bindgen_futures::spawn_local`.
+    #[cfg(not(target_arch = "wasm32"))]
     runtime_handle: tokio::runtime::Handle,
     result_tx: std::sync::mpsc::SyncSender<TradingTaskResult>,
     result_rx: std::sync::mpsc::Receiver<TradingTaskResult>,
@@ -57,7 +60,7 @@ impl TradingManager {
     pub fn new(
         bridge: Arc<DataBridge>,
         data_dir: PathBuf,
-        runtime_handle: tokio::runtime::Handle,
+        #[cfg(not(target_arch = "wasm32"))] runtime_handle: tokio::runtime::Handle,
     ) -> TradingResult<Self> {
         let config = TradingConfig::load(&data_dir.join("trading_config.json"))?;
         let snapshot = TradingSnapshot::new_shared();
@@ -74,6 +77,7 @@ impl TradingManager {
             account_caps: HashMap::new(),
             snapshot,
             config,
+            #[cfg(not(target_arch = "wasm32"))]
             runtime_handle,
             result_tx,
             result_rx,
@@ -89,6 +93,26 @@ impl TradingManager {
 
     pub fn snapshot(&self) -> SharedTradingSnapshot {
         Arc::clone(&self.snapshot)
+    }
+
+    /// Spawn a fire-and-forget trading API call.
+    ///
+    /// Native: tokio::Handle::spawn (Send-bound future).
+    /// Wasm: wasm_bindgen_futures::spawn_local (!Send future, no JoinHandle).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn spawn_task<F>(&self, fut: F)
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        self.runtime_handle.spawn(fut);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn spawn_task<F>(&self, fut: F)
+    where
+        F: std::future::Future<Output = ()> + 'static,
+    {
+        wasm_bindgen_futures::spawn_local(fut);
     }
 
     pub fn place_order(
@@ -119,7 +143,7 @@ impl TradingManager {
             .or_insert_with(|| OrderManager::new("live"))
             .next_client_id();
 
-        self.runtime_handle.spawn(async move {
+        self.spawn_task(async move {
             let result = bridge.place_order(exchange_id, req).await
                 .map_err(TradingError::Exchange);
             let _ = tx.send(TradingTaskResult::OrderPlaced { key, result });
@@ -145,7 +169,7 @@ impl TradingManager {
 
         let bridge = Arc::clone(&self.bridge);
         let tx = self.result_tx.clone();
-        self.runtime_handle.spawn(async move {
+        self.spawn_task(async move {
             let result = bridge.cancel_order(exchange_id, req).await
                 .map_err(TradingError::Exchange);
             let _ = tx.send(TradingTaskResult::OrderCancelled { key, result });
@@ -158,7 +182,7 @@ impl TradingManager {
         let bridge = Arc::clone(&self.bridge);
         let tx = self.result_tx.clone();
 
-        self.runtime_handle.spawn(async move {
+        self.spawn_task(async move {
             let query = digdigdig3::core::BalanceQuery { asset: None, account_type };
             let result = bridge.get_balance(exchange_id, query).await
                 .map_err(TradingError::Exchange);
@@ -171,7 +195,7 @@ impl TradingManager {
         let bridge = Arc::clone(&self.bridge);
         let tx = self.result_tx.clone();
 
-        self.runtime_handle.spawn(async move {
+        self.spawn_task(async move {
             let query = PositionQuery { symbol: None, account_type };
             let result = bridge.get_positions(exchange_id, query).await
                 .map_err(TradingError::Exchange);

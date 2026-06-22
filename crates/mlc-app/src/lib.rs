@@ -1095,6 +1095,11 @@ impl ChartApp {
     ///
     /// Connects to Binance as the default exchange. Bars are requested
     /// asynchronously and fed into the chart window once they arrive.
+    ///
+    /// Native only — builds a multi-thread tokio runtime and blocks on
+    /// `DataBridge::new()`. On wasm32 the caller owns the runtime; use the
+    /// async `new_with_bridge` path instead.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn new(symbol: &str) -> Self {
         // Build a dedicated multi-thread runtime that owns all bridge background
         // tasks. Kept alive for the lifetime of the returned ChartApp (via
@@ -4827,6 +4832,7 @@ impl ChartApp {
                     if desc.mode == gate4agent::InstanceMode::Pty {
                         let cols = ((rect.width / 7.0) as u16).max(1);
                         let rows = ((rect.height / 19.0) as u16).max(1);
+                        #[cfg(not(target_arch = "wasm32"))]
                         if let Some(rt) = self.core.native_rt() {
                             rt.block_on(self.agent.resize_instance(desc.instance_id, cols, rows));
                         }
@@ -5308,6 +5314,7 @@ impl ChartApp {
                     if desc.mode == gate4agent::InstanceMode::Pty {
                         let cols = ((rect.width / 7.0) as u16).max(1);
                         let rows = ((rect.height / 19.0) as u16).max(1);
+                        #[cfg(not(target_arch = "wasm32"))]
                         if let Some(rt) = self.core.native_rt() {
                             rt.block_on(self.agent.resize_instance(desc.instance_id, cols, rows));
                         }
@@ -7860,6 +7867,7 @@ impl ChartApp {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Default for ChartApp {
     fn default() -> Self {
         Self::new("Chart")
