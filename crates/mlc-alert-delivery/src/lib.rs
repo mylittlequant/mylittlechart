@@ -312,6 +312,18 @@ impl DeliveryWorker {
                         .await
                         {
                             eprintln!("[alert-delivery] Telegram sendPhoto error ({chat_id}): {e}");
+                            // Fallback: deliver text-only so the subscriber
+                            // always receives the alert.
+                            if let Err(e2) = telegram::send_message(
+                                &self.http_client,
+                                &tg.bot_token,
+                                chat_id,
+                                &text,
+                            )
+                            .await
+                            {
+                                eprintln!("[alert-delivery] Telegram sendMessage fallback error ({chat_id}): {e2}");
+                            }
                         }
                     } else {
                         // No screenshot available; fall back to text message.

@@ -166,17 +166,79 @@ pub async fn send_photo(
     }
 }
 
-/// Wasm stub for [`send_photo`]. Telegram screenshot delivery is a Phase 5
-/// follow-up — needs hand-rolled FormData via web-sys.
+/// Send a PNG photo via hand-rolled FormData + web-sys fetch.
+///
+/// reqwest's wasm backend does not expose multipart; we go directly to the
+/// browser's native FormData + fetch APIs. The browser sets the
+/// `multipart/form-data` boundary automatically — we must NOT set Content-Type.
 #[cfg(target_arch = "wasm32")]
 pub async fn send_photo(
     _client: &reqwest::Client,
-    _bot_token: &str,
-    _chat_id: &str,
-    _png_bytes: Vec<u8>,
-    _caption: &str,
+    bot_token: &str,
+    chat_id: &str,
+    png_bytes: Vec<u8>,
+    caption: &str,
 ) -> Result<(), String> {
-    Err("send_photo not yet supported on wasm".to_string())
+    use js_sys::{Array, Uint8Array};
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_futures::JsFuture;
+    use web_sys::{Blob, BlobPropertyBag, FormData, Request, RequestInit, Response};
+
+    // 1. Wrap PNG bytes in a JS Uint8Array.
+    let uint8 = Uint8Array::from(png_bytes.as_slice());
+    let arr = Array::new();
+    arr.push(&uint8);
+
+    // 2. Build a Blob with MIME type image/png.
+    let opts = BlobPropertyBag::new();
+    opts.set_type("image/png");
+    let blob = Blob::new_with_u8_array_sequence_and_options(&arr, &opts)
+        .map_err(|e| format!("{e:?}"))?;
+
+    // 3. Build FormData.
+    let form = FormData::new().map_err(|e| format!("{e:?}"))?;
+    form.append_with_str("chat_id", chat_id)
+        .map_err(|e| format!("{e:?}"))?;
+    form.append_with_str("caption", caption)
+        .map_err(|e| format!("{e:?}"))?;
+    form.append_with_str("parse_mode", "HTML")
+        .map_err(|e| format!("{e:?}"))?;
+    form.append_with_blob_and_filename("photo", &blob, "chart.png")
+        .map_err(|e| format!("{e:?}"))?;
+
+    // 4. Build fetch Request. Do NOT set Content-Type — the browser injects
+    //    the multipart/form-data boundary header automatically.
+    let url = format!("https://api.telegram.org/bot{bot_token}/sendPhoto");
+    let init = RequestInit::new();
+    init.set_method("POST");
+    init.set_body(&form.into());
+    let request = Request::new_with_str_and_init(&url, &init)
+        .map_err(|e| format!("{e:?}"))?;
+
+    // 5. Dispatch via the window global fetch.
+    let window = web_sys::window().ok_or("no window")?;
+    let resp_val = JsFuture::from(window.fetch_with_request(&request))
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+    let resp: Response = resp_val.dyn_into().map_err(|e| format!("{e:?}"))?;
+
+    // 6. Parse response as text, then deserialise via serde_json.
+    //    Using text() avoids adding serde-wasm-bindgen as a dependency.
+    let text_val = JsFuture::from(resp.text().map_err(|e| format!("{e:?}"))?)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+    let text: String = text_val.as_string().ok_or("response.text() is not a string")?;
+    let body: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| e.to_string())?;
+
+    if body["ok"].as_bool() == Some(true) {
+        Ok(())
+    } else {
+        Err(body["description"]
+            .as_str()
+            .unwrap_or("sendPhoto failed")
+            .to_string())
+    }
 }
 
 /// Send a test message to verify that bot token + chat ID are working.
