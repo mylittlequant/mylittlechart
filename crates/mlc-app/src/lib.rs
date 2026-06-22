@@ -15,6 +15,13 @@
 //! ```
 
 pub mod agent;
+
+// On wasm32, gate4agent is absent from the dep graph. Re-alias our stub
+// module as `gate4agent` so that all `gate4agent::Foo` path references in
+// submodules resolve to the stub without touching every call site.
+#[cfg(target_arch = "wasm32")]
+pub(crate) use agent as gate4agent;
+
 pub mod chart_panel_bridge;
 pub mod chart_panel_state;
 pub mod chart_state;

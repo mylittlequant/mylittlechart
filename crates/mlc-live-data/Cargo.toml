@@ -24,14 +24,18 @@ digdigdig3 = "=0.3.23"
 # (private streams, scroll-left pagination, exchange_info).
 digdigdig3-station = "=0.3.23"
 
-# Async runtime for background tasks
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
-
 # Stream utilities for WebSocket event_stream() consumption
 futures-util = "0.3"
 
-# Raw WebSocket connection for special all-market streams (e.g. !miniTicker@arr)
-tokio-tungstenite = { version = "0.20", features = ["native-tls"] }
-
 # JSON parsing for mini ticker WebSocket messages
 serde_json = "1.0"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Native: full tokio for the runtime that wraps station's async API.
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# Wasm: tokio sync+macros only; no runtime, no rt-multi-thread, no time
+# (timers come from gloo-timers via station's wasm path).
+tokio = { version = "1", default-features = false, features = ["sync", "macros"] }
+wasm-bindgen-futures = "0.4"

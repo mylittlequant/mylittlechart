@@ -122,6 +122,11 @@ pub async fn send_message(
 }
 
 /// Send a PNG photo (chart screenshot) with an HTML caption.
+///
+/// Native only — the reqwest wasm backend (fetch) does not support
+/// `reqwest::multipart::Form`. Wasm screenshot delivery is a Phase 5
+/// follow-up (hand-rolled FormData via web-sys).
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn send_photo(
     client: &reqwest::Client,
     bot_token: &str,
@@ -159,6 +164,19 @@ pub async fn send_photo(
             .unwrap_or("Send photo failed");
         Err(desc.to_string())
     }
+}
+
+/// Wasm stub for [`send_photo`]. Telegram screenshot delivery is a Phase 5
+/// follow-up — needs hand-rolled FormData via web-sys.
+#[cfg(target_arch = "wasm32")]
+pub async fn send_photo(
+    _client: &reqwest::Client,
+    _bot_token: &str,
+    _chat_id: &str,
+    _png_bytes: Vec<u8>,
+    _caption: &str,
+) -> Result<(), String> {
+    Err("send_photo not yet supported on wasm".to_string())
 }
 
 /// Send a test message to verify that bot token + chat ID are working.

@@ -8,7 +8,24 @@ description = "Alert notification delivery for zengeld-terminal"
 name = "mlc_alert_delivery"
 
 [dependencies]
-reqwest = { version = "0.12", features = ["json", "multipart"] }
-tokio = { version = "1", features = ["sync", "time"] }
+# Reqwest with TLS picked per platform: native uses rustls (compiles fine on
+# every platform), wasm uses the fetch-API backend (browser handles TLS).
+# `default-features = false` strips the native-tls/openssl chain that won't
+# compile on wasm32.
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Native: full sync + time + rustls TLS (the workspace default-features=false
+# above disables native-tls/openssl so wasm builds; native still needs a TLS
+# backend for HTTPS to work).
+tokio = { version = "1", features = ["sync", "time"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "multipart"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# Wasm: sync only — background workers spawn via wasm-bindgen-futures, not
+# tokio. send_photo (multipart) is cfg-gated off; the reqwest wasm backend
+# (fetch) does not support reqwest::multipart::Form anyway.
+tokio = { version = "1", default-features = false, features = ["sync"] }
+wasm-bindgen-futures = "0.4"

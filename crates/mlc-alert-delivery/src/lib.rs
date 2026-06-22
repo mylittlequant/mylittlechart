@@ -219,7 +219,10 @@ impl AlertDelivery {
             http_client,
         };
 
+        #[cfg(not(target_arch = "wasm32"))]
         tokio::spawn(worker.run());
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(worker.run());
 
         (Self { tx: cmd_tx }, toast_rx)
     }
