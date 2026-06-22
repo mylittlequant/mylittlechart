@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>mylittlechart — web</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #131722; }
+    #chart {
+      display: block;
+      width: 100%;
+      height: 100%;
+      /* Canvas pixel buffer is set by Rust; CSS dimensions drive logical size */
+    }
+  </style>
+</head>
+<body>
+  <canvas id="chart"></canvas>
+
+  <!--
+    wasm-pack outputs:
+      dist/mlc-app-web/mlc_app_web.js       (ES module glue)
+      dist/mlc-app-web/mlc_app_web_bg.wasm  (binary)
+
+    Adjust the path to wherever you pointed --out-dir.
+  -->
+  <script type="module">
+    import init from './mlc_app_web.js';
+    await init();
+    // The #[wasm_bindgen(start)] fn is called automatically by init().
+  </script>
+</body>
+</html>

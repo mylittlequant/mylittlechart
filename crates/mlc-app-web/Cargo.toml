@@ -1,0 +1,60 @@
+[package]
+name = "mylittlechart-app-web"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "mlc_app_web"
+crate-type = ["cdylib", "rlib"]
+
+# ── Spike: only meaningful on wasm32 ─────────────────────────────────────────
+# The entire crate body is cfg-gated under #[cfg(target_arch = "wasm32")] so
+# `cargo check --workspace` (native) compiles it as an empty lib without error.
+# Use `cargo check -p mylittlechart-app-web --target wasm32-unknown-unknown`
+# for the real gate.
+
+[dependencies]
+# MLC lib graph — all 12 lib crates compile to wasm32 after Phase 0-2
+mlc-app          = { path = "../mlc-app",          package = "mylittlechart-app"          }
+mlc-live-data    = { path = "../mlc-live-data",    package = "mylittlechart-live-data"    }
+mlc-backend-core = { path = "../mlc-backend-core", package = "mylittlechart-backend-core" }
+mlc-core         = { path = "../mlc-core",         package = "mylittlechart-core"         }
+
+# uzor web bindings — wasm32-only at runtime, but the Cargo.toml deps are
+# unconditional so cargo can resolve the graph on native (the cfg-gate in
+# src/lib.rs keeps the code from compiling native-side).
+uzor                  = "=1.4.15"
+uzor-window-web       = "=1.4.15"
+uzor-render-canvas2d  = "=1.4.15"
+
+# Alternative render backends — commented out for the spike to keep the wasm
+# output small.  To switch backends, uncomment the dep, add an optional dep
+# pin, and update the `RenderBackend` arm in `run_render_loop`.
+# uzor-render-vello-cpu    = { version = "=1.4.15", optional = true }
+# uzor-render-vello-hybrid = { version = "=1.4.15", optional = true }
+# uzor-render-vello-gpu    = { version = "=1.4.15", optional = true }
+
+# wasm-bindgen ecosystem
+wasm-bindgen         = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys               = "0.3"
+web-sys              = { version = "0.3", features = [
+    "Window",
+    "Document",
+    "HtmlCanvasElement",
+    "CanvasRenderingContext2d",
+    "Performance",
+    "console",
+] }
+console_error_panic_hook = "0.1"
+
+# Tokio sync primitives — wasm32 uses the `sync + macros` subset; no rt
+tokio    = { version = "1", default-features = false, features = ["sync", "macros"] }
+web-time = "1"
+
+[features]
+default = []
+# Uncomment when ready to wire in alternative backends:
+# render-vello-cpu    = ["dep:uzor-render-vello-cpu"]
+# render-vello-hybrid = ["dep:uzor-render-vello-hybrid"]
+# render-vello-gpu    = ["dep:uzor-render-vello-gpu"]

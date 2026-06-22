@@ -26,6 +26,7 @@ members = [
     "crates/mlc-cli",
     "crates/mlc-headless-core",
     "crates/mlc-headless",
+    "crates/mlc-app-web",
 ]
 resolver = "2"
 
