@@ -1,4 +1,4 @@
-//! File I/O storage layer for [`ChartPreset`] persistence.
+//! Storage layer for [`ChartPreset`] persistence.
 //!
 //! Presets are stored as pretty-printed JSON files in a `presets/` directory
 //! under the OS application data directory for zengeld.  Each file is named
@@ -8,15 +8,20 @@
 //!
 //! [`presets_dir`] delegates to [`crate::user_profile::storage::active_profile_data_dir`]
 //! and appends `presets/`.  The directory is created automatically on first
-//! access.
+//! access (write path only).
+//!
+//! # Storage backend
+//!
+//! All I/O is routed through [`mlc_crypto::global_storage()`] so the same
+//! code runs on native (filesystem) and wasm (localStorage).
 
-use std::fs;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
 use super::preset::ChartPreset;
 use mlc_crypto::vault::{self, VaultKey};
+use mlc_crypto::global_storage;
 
 // =============================================================================
 // PresetMeta
@@ -51,7 +56,7 @@ impl From<&ChartPreset> for PresetMeta {
 /// Errors that can arise from preset storage operations.
 #[derive(Debug)]
 pub enum PresetError {
-    /// An underlying filesystem I/O error.
+    /// An underlying I/O error.
     Io(std::io::Error),
     /// JSON serialization or deserialization failure.
     Json(serde_json::Error),
@@ -92,19 +97,31 @@ impl From<serde_json::Error> for PresetError {
 }
 
 // =============================================================================
-// Directory
+// Path helpers (no I/O — path computation only)
 // =============================================================================
 
-/// Returns the path to the `presets/` directory, creating it if necessary.
+/// Returns the path to the `presets/` directory (no I/O, path-only).
 ///
 /// Located under the active profile's data directory:
 /// `{APP_DATA_DIR}/zengeld/profiles/{active}/presets/`
 pub fn presets_dir() -> PathBuf {
-    let dir = crate::user_profile::storage::active_profile_data_dir().join("presets");
-    // Best-effort creation; callers will receive an Io error on the actual
-    // read/write if the directory cannot be created.
-    let _ = fs::create_dir_all(&dir);
-    dir
+    crate::user_profile::storage::active_profile_data_dir().join("presets")
+}
+
+/// Convert an absolute `PathBuf` to a storage key (forward-slash relative path
+/// relative to app_data_dir, or the full path if outside).
+fn path_key(path: &PathBuf) -> String {
+    let root = crate::user_profile::storage::app_data_dir();
+    if let Ok(rel) = path.strip_prefix(&root) {
+        rel.to_string_lossy().replace('\\', "/")
+    } else {
+        path.to_string_lossy().replace('\\', "/")
+    }
+}
+
+/// Storage key for the presets directory prefix (used for listing).
+fn presets_prefix() -> String {
+    path_key(&presets_dir())
 }
 
 // =============================================================================
@@ -118,7 +135,6 @@ pub fn presets_dir() -> PathBuf {
 /// Any existing `{id}.enc` (from a previous encrypted session) is removed.
 pub fn save_preset(preset: &ChartPreset, _key: Option<&VaultKey>) -> Result<PathBuf, PresetError> {
     let dir = presets_dir();
-    fs::create_dir_all(&dir)?;
     let path = dir.join(format!("{}.json", preset.id));
 
     // Strip viewport-related data before writing to disk.
@@ -143,9 +159,12 @@ pub fn save_preset(preset: &ChartPreset, _key: Option<&VaultKey>) -> Result<Path
     }
 
     let json = serde_json::to_string_pretty(&stripped)?;
-    fs::write(&path, &json)?;
+    global_storage().write(&path_key(&path), json.as_bytes())?;
+
     // Remove any leftover encrypted version from before the plaintext-only policy.
-    let _ = fs::remove_file(dir.join(format!("{}.enc", preset.id)));
+    let enc_path = dir.join(format!("{}.enc", preset.id));
+    let _ = global_storage().delete(&path_key(&enc_path));
+
     Ok(path)
 }
 
@@ -162,15 +181,15 @@ pub fn load_preset(id: &str, key: Option<&VaultKey>) -> Result<ChartPreset, Pres
 
     // Migration path: decrypt the legacy .enc file, persist as plaintext, then
     // fall through to the normal JSON load below.
-    if enc_path.exists() {
+    if global_storage().exists(&path_key(&enc_path)) {
         if let Some(k) = key {
             match vault::load_encrypted::<ChartPreset>(k, &enc_path) {
                 Ok(preset) => {
                     // Re-save as plaintext and delete the .enc file.
                     if let Ok(json) = serde_json::to_string_pretty(&preset) {
-                        let _ = fs::write(&json_path, json);
+                        let _ = global_storage().write(&path_key(&json_path), json.as_bytes());
                     }
-                    let _ = fs::remove_file(&enc_path);
+                    let _ = global_storage().delete(&path_key(&enc_path));
                     return Ok(preset);
                 }
                 Err(e) => {
@@ -182,8 +201,9 @@ pub fn load_preset(id: &str, key: Option<&VaultKey>) -> Result<ChartPreset, Pres
         // No key available — skip the .enc file and try .json.
     }
 
-    if json_path.exists() {
-        let json = fs::read_to_string(&json_path)?;
+    if let Some(bytes) = global_storage().read(&path_key(&json_path))? {
+        let json = String::from_utf8(bytes)
+            .map_err(|e| std::io::Error::other(format!("UTF-8 decode: {e}")))?;
         let preset: ChartPreset = serde_json::from_str(&json)?;
         return Ok(preset);
     }
@@ -197,19 +217,25 @@ pub fn load_preset(id: &str, key: Option<&VaultKey>) -> Result<ChartPreset, Pres
 /// logged and skipped so that one bad file does not prevent listing the rest.
 pub fn list_presets(key: Option<&VaultKey>) -> Result<Vec<PresetMeta>, PresetError> {
     let dir = presets_dir();
-    if !dir.exists() {
-        return Ok(Vec::new());
-    }
+    let prefix = presets_prefix();
+    let storage = global_storage();
+
+    let entries = match storage.list_prefix(&prefix) {
+        Ok(e) => e,
+        Err(_) => return Ok(Vec::new()),
+    };
 
     let mut metas = Vec::new();
-    for entry in fs::read_dir(&dir)? {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        let path = entry.path();
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    for name in entries {
+        let path = dir.join(&name);
+        let ext = std::path::Path::new(&name)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+        let stem = std::path::Path::new(&name)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
 
         if stem.is_empty() {
             continue;
@@ -229,15 +255,21 @@ pub fn list_presets(key: Option<&VaultKey>) -> Result<Vec<PresetMeta>, PresetErr
                 }
             }
             "json" => {
-                match fs::read_to_string(&path) {
-                    Ok(json) => match serde_json::from_str::<ChartPreset>(&json) {
-                        Ok(p) => metas.push(PresetMeta {
-                            id: p.id.clone(),
-                            name: p.name.clone(),
-                            created_at: p.created_at,
-                        }),
-                        Err(e) => eprintln!("[presets] failed to parse {}: {}", path.display(), e),
-                    },
+                match storage.read(&path_key(&path)) {
+                    Ok(Some(bytes)) => {
+                        match String::from_utf8(bytes) {
+                            Ok(json) => match serde_json::from_str::<ChartPreset>(&json) {
+                                Ok(p) => metas.push(PresetMeta {
+                                    id: p.id.clone(),
+                                    name: p.name.clone(),
+                                    created_at: p.created_at,
+                                }),
+                                Err(e) => eprintln!("[presets] failed to parse {}: {}", path.display(), e),
+                            },
+                            Err(e) => eprintln!("[presets] UTF-8 decode error for {}: {}", path.display(), e),
+                        }
+                    }
+                    Ok(None) => {}
                     Err(e) => eprintln!("[presets] failed to read {}: {}", path.display(), e),
                 }
             }
@@ -253,7 +285,8 @@ pub fn list_presets(key: Option<&VaultKey>) -> Result<Vec<PresetMeta>, PresetErr
 /// Delete preset — removes both `.json` and `.enc` variants if present.
 pub fn delete_preset(id: &str) -> Result<(), PresetError> {
     let dir = presets_dir();
-    let _ = fs::remove_file(dir.join(format!("{}.json", id)));
-    let _ = fs::remove_file(dir.join(format!("{}.enc", id)));
+    let storage = global_storage();
+    let _ = storage.delete(&path_key(&dir.join(format!("{}.json", id))));
+    let _ = storage.delete(&path_key(&dir.join(format!("{}.enc", id))));
     Ok(())
 }

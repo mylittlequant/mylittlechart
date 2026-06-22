@@ -1,15 +1,16 @@
 //! Storage layer for the user profile system.
 //!
 //! All user data files live under the OS application data directory:
-//! - Windows: `%APPDATA%\zengeld\`
-//! - macOS:   `~/Library/Application Support/zengeld/`
-//! - Linux:   `$XDG_DATA_HOME/zengeld/` (default `~/.local/share/zengeld/`)
+//! - Windows: `%APPDATA%\mylittlechart\`
+//! - macOS:   `~/Library/Application Support/mylittlechart/`
+//! - Linux:   `$XDG_DATA_HOME/mylittlechart/` (default `~/.local/share/mylittlechart/`)
 //!
-//! The root is created automatically on first use.
+//! All I/O is routed through [`mlc_crypto::global_storage()`] so the same
+//! code runs on native (filesystem) and wasm (localStorage).
 //!
 //! # Public API
 //!
-//! - [`app_data_dir`] — resolve (and create) the OS app-data root.
+//! - [`app_data_dir`] — resolve the OS app-data root (path only, no I/O).
 //! - [`get_user_data_dir`] — backward-compatible alias for [`app_data_dir`].
 //! - [`save_profile`] / [`load_profile`] — write/read `profile.json` (plaintext,
 //!   no credentials) and `vault.enc` (encrypted credentials, when key is available).
@@ -22,7 +23,6 @@
 //! typically log the error and fall back to a default value rather than
 //! propagating it, since missing user data is not fatal.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::de::DeserializeOwned;
@@ -30,6 +30,7 @@ use serde::Serialize;
 
 use super::profile::{ProfileIndex, ProfileMeta, UserProfile, VaultSecrets};
 use mlc_crypto::vault::{self, VaultKey};
+use mlc_crypto::global_storage;
 
 // =============================================================================
 // ProfileError
@@ -38,7 +39,7 @@ use mlc_crypto::vault::{self, VaultKey};
 /// Errors that can arise from user profile I/O.
 #[derive(Debug)]
 pub enum ProfileError {
-    /// An underlying filesystem I/O error.
+    /// An underlying I/O error.
     Io(std::io::Error),
     /// JSON serialization or deserialization failure.
     Json(serde_json::Error),
@@ -75,11 +76,29 @@ impl From<serde_json::Error> for ProfileError {
 }
 
 // =============================================================================
+// Path helpers
+// =============================================================================
+
+/// Convert an absolute `PathBuf` to a storage key relative to `app_data_dir()`.
+fn path_key(path: &PathBuf) -> String {
+    let root = app_data_dir();
+    if let Ok(rel) = path.strip_prefix(&root) {
+        rel.to_string_lossy().replace('\\', "/")
+    } else {
+        path.to_string_lossy().replace('\\', "/")
+    }
+}
+
+fn path_ref_key(path: &Path) -> String {
+    path_key(&path.to_path_buf())
+}
+
+// =============================================================================
 // Directory resolution
 // =============================================================================
 
 /// Resolves the platform-specific base data directory (the parent of the
-/// `zengeld/` subfolder).
+/// `mylittlechart/` subfolder).
 ///
 /// Resolution order:
 /// 1. `%APPDATA%` (Windows)
@@ -130,55 +149,40 @@ fn resolve_platform_data_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// Returns the root application data directory for mylittlechart, creating
-/// it if necessary.
+/// Returns the root application data directory for mylittlechart.
+///
+/// This function only computes the path — it does NOT perform any I/O.
+/// The storage backend creates directories lazily on write.
 ///
 /// Platform-specific paths:
 /// - Windows: `%APPDATA%\mylittlechart\`
 /// - macOS:   `~/Library/Application Support/mylittlechart/`
 /// - Linux:   `$XDG_DATA_HOME/mylittlechart/` (default `~/.local/share/mylittlechart/`)
 pub fn app_data_dir() -> PathBuf {
-    let base = resolve_platform_data_dir();
-    let dir = base.join("mylittlechart");
-    // Best-effort creation; callers receive an Io error on the actual
-    // read/write if the directory cannot be created.
-    let _ = fs::create_dir_all(&dir);
-    // Restrict directory permissions to owner-only on Unix (rwx------).
-    // This prevents other local users from reading stored API keys and
-    // profile data.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700));
-    }
-    // TODO: Windows ACL via icacls or windows-sys
-    dir
+    resolve_platform_data_dir().join("mylittlechart")
 }
 
 /// Returns the root application data directory.
 ///
-/// Backward-compatible alias for [`app_data_dir`].  All existing callers
-/// automatically use the new OS-standard path without any further changes.
+/// Backward-compatible alias for [`app_data_dir`].
 pub fn get_user_data_dir() -> PathBuf {
     app_data_dir()
 }
 
 // =============================================================================
-// profile.json / profile.enc helpers
+// profile.json / vault.enc helpers
 // =============================================================================
 
 /// Save profile using the split model.
 ///
 /// `profile.json` is **always** written as plaintext (no credentials).
-/// Credential fields (`local_agent_keys`, `exchange_keys`, `notification_settings`,
-/// `legacy_single_agent_key`) are extracted into a [`VaultSecrets`] struct and written
+/// Credential fields are extracted into a [`VaultSecrets`] struct and written
 /// to `vault.enc` only when `key` is `Some`.
 ///
 /// When `key` is `None` (vault not yet unlocked), the vault file from the
 /// previous session is left untouched — credentials are not lost.
 pub fn save_profile(profile: &UserProfile, key: Option<&VaultKey>) -> Result<(), ProfileError> {
     let dir = active_profile_data_dir();
-    fs::create_dir_all(&dir)?;
 
     // Clone so we can strip credentials without mutating the caller's value.
     let mut plaintext_profile = profile.clone();
@@ -189,11 +193,9 @@ pub fn save_profile(profile: &UserProfile, key: Option<&VaultKey>) -> Result<(),
     // Always write profile.json (plaintext, no credentials).
     let json_path = dir.join("profile.json");
     let json = serde_json::to_string_pretty(&plaintext_profile)?;
-    fs::write(&json_path, &json)?;
+    global_storage().write(&path_key(&json_path), json.as_bytes())?;
 
     // Write vault.enc only when the key is available.
-    // When key is None (before vault unlock), vault.enc from the previous session
-    // is left untouched — credentials are not lost.
     if let Some(k) = key {
         let vault_path = dir.join("vault.enc");
         vault::save_encrypted(k, &vault_path, &secrets)
@@ -208,24 +210,24 @@ pub fn save_profile(profile: &UserProfile, key: Option<&VaultKey>) -> Result<(),
 /// Always loads `profile.json` (plaintext, no credentials) first.
 /// If `vault.enc` exists and a key is provided, the credentials are
 /// decrypted and merged back into the returned [`UserProfile`].
-///
-/// When no key is available (vault not yet unlocked) the profile is still
-/// returned — just without credentials populated.
 pub fn load_profile(key: Option<&VaultKey>) -> Result<UserProfile, ProfileError> {
     let dir = active_profile_data_dir();
     let json_path = dir.join("profile.json");
     let vault_enc_path = dir.join("vault.enc");
+    let storage = global_storage();
 
     // Load plaintext profile (always readable without key).
-    let mut profile = if json_path.exists() {
-        let json = fs::read_to_string(&json_path)?;
-        serde_json::from_str::<UserProfile>(&json)?
-    } else {
-        UserProfile::new()
+    let mut profile = match storage.read(&path_key(&json_path))? {
+        Some(bytes) => {
+            let json = String::from_utf8(bytes)
+                .map_err(|e| std::io::Error::other(format!("UTF-8: {e}")))?;
+            serde_json::from_str::<UserProfile>(&json)?
+        }
+        None => UserProfile::new(),
     };
 
     // Merge encrypted vault secrets if key is available.
-    if vault_enc_path.exists() {
+    if storage.exists(&path_key(&vault_enc_path)) {
         if let Some(k) = key {
             match vault::load_encrypted::<VaultSecrets>(k, &vault_enc_path) {
                 Ok(secrets) => secrets.merge_into(&mut profile),
@@ -235,7 +237,6 @@ pub fn load_profile(key: Option<&VaultKey>) -> Result<UserProfile, ProfileError>
                 }
             }
         }
-        // No key but vault.enc exists: profile loads fine, secrets stay empty.
     }
 
     Ok(profile)
@@ -247,9 +248,7 @@ pub fn load_profile(key: Option<&VaultKey>) -> Result<UserProfile, ProfileError>
 /// existing plaintext file at `path` is removed.  When `key` is `None` the
 /// value is written as pretty JSON at `path` unchanged.
 pub fn save_json<T: Serialize>(path: &Path, data: &T, key: Option<&VaultKey>) -> Result<(), ProfileError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
+    let storage = global_storage();
     match key {
         Some(k) => {
             // Change extension to `.enc`.
@@ -257,13 +256,11 @@ pub fn save_json<T: Serialize>(path: &Path, data: &T, key: Option<&VaultKey>) ->
             vault::save_encrypted(k, &enc_path, data)
                 .map_err(|e| ProfileError::Io(std::io::Error::other(e.to_string())))?;
             // Remove plaintext if it exists.
-            if path.exists() {
-                let _ = fs::remove_file(path);
-            }
+            let _ = storage.delete(&path_ref_key(path));
         }
         None => {
             let json = serde_json::to_string_pretty(data)?;
-            fs::write(path, json)?;
+            storage.write(&path_ref_key(path), json.as_bytes())?;
         }
     }
     Ok(())
@@ -274,21 +271,21 @@ pub fn save_json<T: Serialize>(path: &Path, data: &T, key: Option<&VaultKey>) ->
 /// If an `.enc` file exists and a key is provided, the file is decrypted,
 /// re-saved as plaintext JSON, and the `.enc` file is deleted (one-time
 /// migration).  If an `.enc` file exists but no key is provided, it is
-/// silently skipped and the plaintext `.json` version is tried instead
-/// (non-sensitive files like watchlists should always be loadable without a key).
+/// silently skipped and the plaintext `.json` version is tried instead.
 pub fn load_json<T: DeserializeOwned + Serialize>(path: &Path, key: Option<&VaultKey>) -> Result<T, ProfileError> {
     let enc_path = path.with_extension("enc");
+    let storage = global_storage();
 
-    if enc_path.exists() {
+    if storage.exists(&path_ref_key(&enc_path)) {
         if let Some(k) = key {
             // Attempt to decrypt and migrate to plaintext.
             match vault::load_encrypted::<T>(k, &enc_path) {
                 Ok(value) => {
                     // Persist as plaintext and remove .enc.
                     if let Ok(json) = serde_json::to_string_pretty(&value) {
-                        let _ = fs::write(path, json);
+                        let _ = storage.write(&path_ref_key(path), json.as_bytes());
                     }
-                    let _ = fs::remove_file(&enc_path);
+                    let _ = storage.delete(&path_ref_key(&enc_path));
                     return Ok(value);
                 }
                 Err(e) => {
@@ -301,7 +298,11 @@ pub fn load_json<T: DeserializeOwned + Serialize>(path: &Path, key: Option<&Vaul
     }
 
     // Load plaintext.
-    let json = fs::read_to_string(path)?;
+    let bytes = storage
+        .read(&path_ref_key(path))?
+        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))?;
+    let json = String::from_utf8(bytes)
+        .map_err(|e| std::io::Error::other(format!("UTF-8: {e}")))?;
     let value: T = serde_json::from_str(&json)?;
     Ok(value)
 }
@@ -319,11 +320,9 @@ pub fn watchlists_path() -> PathBuf {
 // Multi-profile directory helpers
 // =============================================================================
 
-/// Returns `{app_data_dir}/profiles/`, creating it if it does not exist.
+/// Returns `{app_data_dir}/profiles/` (path only, no I/O).
 pub fn profiles_dir() -> PathBuf {
-    let dir = app_data_dir().join("profiles");
-    let _ = fs::create_dir_all(&dir);
-    dir
+    app_data_dir().join("profiles")
 }
 
 /// Load the profile index from `profiles/index.json`.
@@ -331,12 +330,9 @@ pub fn profiles_dir() -> PathBuf {
 /// Returns `None` if the file does not exist or cannot be parsed.
 pub fn load_profile_index() -> Option<ProfileIndex> {
     let path = profiles_dir().join("index.json");
-    if !path.exists() {
-        return None;
-    }
-    let json = fs::read_to_string(&path).ok()?;
+    let bytes = global_storage().read(&path_key(&path)).ok()??;
+    let json = String::from_utf8(bytes).ok()?;
     let index: ProfileIndex = serde_json::from_str(&json).ok()?;
-
     Some(index)
 }
 
@@ -344,22 +340,14 @@ pub fn load_profile_index() -> Option<ProfileIndex> {
 pub fn save_profile_index(index: &ProfileIndex) -> Result<(), String> {
     let path = profiles_dir().join("index.json");
     let json = serde_json::to_string_pretty(index).map_err(|e| e.to_string())?;
-    fs::write(&path, json).map_err(|e| e.to_string())
+    global_storage()
+        .write(&path_key(&path), json.as_bytes())
+        .map_err(|e| e.to_string())
 }
 
 /// Returns the data directory for the currently active profile.
 ///
 /// **Read-only**: this function never creates files or directories.
-///
-/// - If a `profiles/index.json` exists and the active profile is found,
-///   returns `profiles/{dir_name}/`.
-/// - If the index exists but the active id is missing, falls back to the
-///   first profile in the list.
-/// - If no index exists or the index is empty, returns a placeholder path
-///   `profiles/_pending` that does not exist on disk.  Callers that try to
-///   read `profile.json` from this path will get `NotFound` and fall back to
-///   an in-memory default.  The real profile directory is created only when
-///   the welcome wizard completes via `create_profile()`.
 pub fn active_profile_data_dir() -> PathBuf {
     if let Some(index) = load_profile_index() {
         if let Some(meta) = index
@@ -412,7 +400,6 @@ pub fn create_profile(name: &str, avatar: &str) -> Result<ProfileMeta, String> {
     // Use the UUID string as the directory name for uniqueness.
     let dir_name = id.clone();
     let profile_dir = profiles_dir().join(&dir_name);
-    fs::create_dir_all(&profile_dir).map_err(|e| e.to_string())?;
 
     // Build and persist a new profile.
     let mut profile = UserProfile::new();
@@ -422,13 +409,16 @@ pub fn create_profile(name: &str, avatar: &str) -> Result<ProfileMeta, String> {
     profile.profile_created_at = now;
 
     let json = serde_json::to_string_pretty(&profile).map_err(|e| e.to_string())?;
-    fs::write(profile_dir.join("profile.json"), json).map_err(|e| e.to_string())?;
+    global_storage()
+        .write(&path_key(&profile_dir.join("profile.json")), json.as_bytes())
+        .map_err(|e| e.to_string())?;
 
     // Generate and persist a random 16-byte salt for future vault key derivation.
-    // The salt is safe to store in plaintext — it is only useful with the passphrase.
     let salt = mlc_crypto::vault::generate_salt();
     let salt_hex = salt.iter().map(|b| format!("{:02x}", b)).collect::<String>();
-    fs::write(profile_dir.join("salt.hex"), salt_hex).map_err(|e| e.to_string())?;
+    global_storage()
+        .write(&path_key(&profile_dir.join("salt.hex")), salt_hex.as_bytes())
+        .map_err(|e| e.to_string())?;
 
     let meta = ProfileMeta {
         id: id.clone(),
@@ -472,7 +462,6 @@ pub fn delete_profile(id: &str) -> Result<(), String> {
         if let Some(next_id) = fallback {
             index.active_profile_id = next_id;
         }
-        // If no other profiles remain, active_profile_id stays stale but harmless.
     }
 
     // Find the profile metadata so we know its directory name.
@@ -485,10 +474,8 @@ pub fn delete_profile(id: &str) -> Result<(), String> {
     // Remove the profile directory (best effort — ignore missing).
     if let Some(m) = meta {
         let dir = profiles_dir().join(&m.dir_name);
-        if dir.exists() {
-            fs::remove_dir_all(&dir)
-                .map_err(|e| format!("Failed to remove profile directory: {}", e))?;
-        }
+        let prefix = path_key(&dir);
+        let _ = global_storage().delete_prefix(&prefix);
     }
 
     Ok(())

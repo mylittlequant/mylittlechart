@@ -1,4 +1,4 @@
-//! File I/O storage layer for the template system.
+//! Storage layer for the template system.
 //!
 //! Templates are stored as pretty-printed JSON files in subdirectories under
 //! the OS application data directory for zengeld, mirroring the preset storage
@@ -7,27 +7,24 @@
 //! # Directory layout
 //!
 //! ```text
-//! {APP_DATA_DIR}/zengeld/
-//!   templates/
-//!     primitives/       — PrimitiveTemplate  ({id}.json)
-//!     indicators/       — IndicatorTemplate  ({id}.json)
-//!     compare/          — CompareTemplate    ({id}.json)
-//!     indicator_sets/   — IndicatorSet       ({id}.json)
+//! {APP_DATA_DIR}/mylittlechart/
+//!   profiles/{active}/
+//!     templates/
+//!       primitives/       — PrimitiveTemplate  ({id}.json)
+//!       indicators/       — IndicatorTemplate  ({id}.json)
+//!       compare/          — CompareTemplate    ({id}.json)
+//!       indicator_sets/   — IndicatorSet       ({id}.json)
 //! ```
 //!
-//! # Error handling
-//!
-//! All public functions return [`Result<_, TemplateError>`].  Corrupted files
-//! are skipped silently in [`load_all_templates`] so a single bad file does not
-//! prevent loading the rest.
+//! All I/O is routed through [`mlc_crypto::global_storage()`].
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use mlc_crypto::vault::{self, VaultKey};
+use mlc_crypto::global_storage;
 
 // =============================================================================
 // TemplateError
@@ -36,7 +33,7 @@ use mlc_crypto::vault::{self, VaultKey};
 /// Errors that can arise from template storage operations.
 #[derive(Debug)]
 pub enum TemplateError {
-    /// An underlying filesystem I/O error.
+    /// An underlying I/O error.
     Io(std::io::Error),
     /// JSON serialization or deserialization failure.
     Json(serde_json::Error),
@@ -77,27 +74,38 @@ impl From<serde_json::Error> for TemplateError {
 }
 
 // =============================================================================
+// Path helpers
+// =============================================================================
+
+/// Convert an absolute `PathBuf` to a storage key relative to app_data_dir.
+fn path_key(path: &PathBuf) -> String {
+    let root = crate::user_profile::storage::app_data_dir();
+    if let Ok(rel) = path.strip_prefix(&root) {
+        rel.to_string_lossy().replace('\\', "/")
+    } else {
+        path.to_string_lossy().replace('\\', "/")
+    }
+}
+
+fn path_ref_key(path: &Path) -> String {
+    path_key(&path.to_path_buf())
+}
+
+// =============================================================================
 // Directory resolution
 // =============================================================================
 
-/// Returns the root `templates/` directory, creating it if necessary.
-///
-/// Located under the active profile's data directory:
-/// `{APP_DATA_DIR}/zengeld/profiles/{active}/templates/`
+/// Returns the root `templates/` directory path (no I/O).
 pub fn templates_root() -> PathBuf {
-    let dir = crate::user_profile::storage::active_profile_data_dir().join("templates");
-    let _ = fs::create_dir_all(&dir);
-    dir
+    crate::user_profile::storage::active_profile_data_dir().join("templates")
 }
 
-/// Returns the sub-directory for a given category, creating it if necessary.
+/// Returns the sub-directory path for a given category (no I/O).
 ///
 /// `category` should be one of `"primitives"`, `"indicators"`, `"compare"`,
 /// or `"indicator_sets"`.
 pub fn category_dir(category: &str) -> PathBuf {
-    let dir = templates_root().join(category);
-    let _ = fs::create_dir_all(&dir);
-    dir
+    templates_root().join(category)
 }
 
 // =============================================================================
@@ -115,12 +123,12 @@ pub fn save_template<T: Serialize>(
     dir: &Path,
     _key: Option<&VaultKey>,
 ) -> Result<(), TemplateError> {
-    fs::create_dir_all(dir)?;
     let path = dir.join(format!("{}.json", id));
     let json = serde_json::to_string_pretty(template)?;
-    fs::write(&path, &json)?;
+    global_storage().write(&path_ref_key(&path), json.as_bytes())?;
     // Remove any leftover encrypted version from before the plaintext-only policy.
-    let _ = fs::remove_file(dir.join(format!("{}.enc", id)));
+    let enc_path = dir.join(format!("{}.enc", id));
+    let _ = global_storage().delete(&path_ref_key(&enc_path));
     Ok(())
 }
 
@@ -137,17 +145,18 @@ pub fn load_template<T: DeserializeOwned + Serialize>(
 ) -> Result<T, TemplateError> {
     let enc_path = dir.join(format!("{}.enc", id));
     let json_path = dir.join(format!("{}.json", id));
+    let storage = global_storage();
 
     // Migration path: decrypt the legacy .enc file, persist as plaintext, then
     // fall through to the normal JSON load.
-    if enc_path.exists() {
+    if storage.exists(&path_ref_key(&enc_path)) {
         if let Some(k) = key {
             match vault::load_encrypted::<T>(k, &enc_path) {
                 Ok(value) => {
                     if let Ok(json) = serde_json::to_string_pretty(&value) {
-                        let _ = fs::write(&json_path, json);
+                        let _ = storage.write(&path_ref_key(&json_path), json.as_bytes());
                     }
-                    let _ = fs::remove_file(&enc_path);
+                    let _ = storage.delete(&path_ref_key(&enc_path));
                     return Ok(value);
                 }
                 Err(e) => {
@@ -159,12 +168,14 @@ pub fn load_template<T: DeserializeOwned + Serialize>(
         // No key — skip .enc and try .json.
     }
 
-    if !json_path.exists() {
-        return Err(TemplateError::NotFound(id.to_string()));
+    match storage.read(&path_ref_key(&json_path))? {
+        None => Err(TemplateError::NotFound(id.to_string())),
+        Some(bytes) => {
+            let json = String::from_utf8(bytes)
+                .map_err(|e| std::io::Error::other(format!("UTF-8: {e}")))?;
+            Ok(serde_json::from_str(&json)?)
+        }
     }
-
-    let json = fs::read_to_string(&json_path)?;
-    Ok(serde_json::from_str(&json)?)
 }
 
 /// Load all templates of type `T` from `dir`.
@@ -175,13 +186,20 @@ pub fn load_template<T: DeserializeOwned + Serialize>(
 /// files are logged and skipped.
 pub fn load_all_templates<T: DeserializeOwned + Serialize>(dir: &Path, key: Option<&VaultKey>) -> Vec<T> {
     let mut results = Vec::new();
-    let entries = match fs::read_dir(dir) {
+    let storage = global_storage();
+    let prefix = path_ref_key(dir);
+
+    let entries = match storage.list_prefix(&prefix) {
         Ok(e) => e,
         Err(_) => return results,
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+
+    for name in entries {
+        let path = dir.join(&name);
+        let ext = std::path::Path::new(&name)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
         match ext {
             "enc" => {
                 if let Some(k) = key {
@@ -190,9 +208,9 @@ pub fn load_all_templates<T: DeserializeOwned + Serialize>(dir: &Path, key: Opti
                             // Migrate: write plaintext JSON and remove .enc.
                             let json_path = path.with_extension("json");
                             if let Ok(json) = serde_json::to_string_pretty(&t) {
-                                let _ = fs::write(&json_path, json);
+                                let _ = storage.write(&path_ref_key(&json_path), json.as_bytes());
                             }
-                            let _ = fs::remove_file(&path);
+                            let _ = storage.delete(&path_ref_key(&path));
                             results.push(t);
                         }
                         Err(e) => eprintln!("[templates] failed to decrypt legacy {}: {}", path.display(), e),
@@ -201,11 +219,17 @@ pub fn load_all_templates<T: DeserializeOwned + Serialize>(dir: &Path, key: Opti
                 // No key: silently skip .enc files.
             }
             "json" => {
-                match fs::read_to_string(&path) {
-                    Ok(json) => match serde_json::from_str::<T>(&json) {
-                        Ok(t) => results.push(t),
-                        Err(e) => eprintln!("[templates] failed to parse {}: {}", path.display(), e),
-                    },
+                match storage.read(&path_ref_key(&path)) {
+                    Ok(Some(bytes)) => {
+                        match String::from_utf8(bytes) {
+                            Ok(json) => match serde_json::from_str::<T>(&json) {
+                                Ok(t) => results.push(t),
+                                Err(e) => eprintln!("[templates] failed to parse {}: {}", path.display(), e),
+                            },
+                            Err(e) => eprintln!("[templates] UTF-8 error {}: {}", path.display(), e),
+                        }
+                    }
+                    Ok(None) => {}
                     Err(e) => eprintln!("[templates] failed to read {}: {}", path.display(), e),
                 }
             }
@@ -217,7 +241,8 @@ pub fn load_all_templates<T: DeserializeOwned + Serialize>(dir: &Path, key: Opti
 
 /// Delete a template — removes both `.json` and `.enc` variants if present.
 pub fn delete_template(id: &str, dir: &Path) -> Result<(), TemplateError> {
-    let _ = fs::remove_file(dir.join(format!("{}.json", id)));
-    let _ = fs::remove_file(dir.join(format!("{}.enc", id)));
+    let storage = global_storage();
+    let _ = storage.delete(&path_ref_key(&dir.join(format!("{}.json", id))));
+    let _ = storage.delete(&path_ref_key(&dir.join(format!("{}.enc", id))));
     Ok(())
 }

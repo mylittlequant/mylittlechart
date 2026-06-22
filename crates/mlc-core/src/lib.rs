@@ -61,6 +61,15 @@
 // Module Declarations
 // =============================================================================
 
+// Platform-agnostic storage trait + global handle (defined in mlc-crypto to
+// avoid an upward dependency cycle; re-exported here for convenience).
+pub mod storage {
+    pub use mlc_crypto::storage::{
+        Storage, FilesystemStorage, global_storage, set_global_storage,
+    };
+}
+pub use storage::{Storage, global_storage, set_global_storage};
+
 // Core types (remain at root)
 pub mod types;
 

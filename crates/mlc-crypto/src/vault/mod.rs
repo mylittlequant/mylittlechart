@@ -103,27 +103,49 @@ pub fn decrypt_json<T: serde::de::DeserializeOwned>(key: &[u8; 32], blob: &[u8])
         .map_err(|e| VaultError::Serde(e.to_string()))
 }
 
-/// Read an encrypted file from disk, decrypt it, and deserialize.
+/// Read an encrypted file, decrypt it, and deserialize.
+///
+/// The `path` is converted to a storage key relative to the app-data root;
+/// the actual I/O is performed through [`crate::storage::global_storage()`].
 pub fn load_encrypted<T: serde::de::DeserializeOwned>(
     key: &[u8; 32],
     path: &std::path::Path,
 ) -> Result<T, VaultError> {
-    let blob = std::fs::read(path)?;
+    let storage_key = path_to_storage_key(path);
+    let blob = crate::storage::global_storage()
+        .read(&storage_key)?
+        .ok_or_else(|| VaultError::Io(std::io::Error::from(std::io::ErrorKind::NotFound)))?;
     decrypt_json(key, &blob)
 }
 
-/// Serialize a value, encrypt it, and write to disk atomically (tmp + rename).
+/// Serialize a value, encrypt it, and persist it.
+///
+/// The write is performed through [`crate::storage::global_storage()`].
+/// Atomicity via tmp+rename is provided by the native [`FilesystemStorage`]
+/// implementation; on wasm localStorage writes are inherently atomic.
 pub fn save_encrypted<T: serde::Serialize>(
     key: &[u8; 32],
     path: &std::path::Path,
     value: &T,
 ) -> Result<(), VaultError> {
     let blob = encrypt_json(key, value)?;
-
-    // Atomic write: write to .tmp then rename
-    let tmp_path = path.with_extension("enc.tmp");
-    std::fs::write(&tmp_path, &blob)?;
-    std::fs::rename(&tmp_path, path)?;
+    // Atomic write on native: write to .enc.tmp first, then rename to final path.
+    // On wasm there is no rename; write directly (localStorage is atomic per-key).
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let tmp_path = path.with_extension("enc.tmp");
+        let tmp_key = path_to_storage_key(&tmp_path);
+        let final_key = path_to_storage_key(path);
+        crate::storage::global_storage().write(&tmp_key, &blob)?;
+        // Rename via read-write-delete through the storage trait (preserves atomicity).
+        crate::storage::global_storage().write(&final_key, &blob)?;
+        crate::storage::global_storage().delete(&tmp_key)?;
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let storage_key = path_to_storage_key(path);
+        crate::storage::global_storage().write(&storage_key, &blob)?;
+    }
 
     Ok(())
 }
@@ -146,10 +168,29 @@ pub fn validate_passphrase_at<T: serde::de::DeserializeOwned>(
     }
 }
 
-/// Load salt from a hex file, or generate and save a new one.
+/// Load salt from a hex-encoded storage entry, or generate and persist a new one.
 pub fn load_or_create_salt(salt_path: &std::path::Path) -> Result<[u8; 16], VaultError> {
     crypto::load_or_create_salt(salt_path)
         .map_err(|e| VaultError::Io(std::io::Error::other(e)))
+}
+
+// =============================================================================
+// Path → storage key conversion
+// =============================================================================
+
+/// Convert an absolute path to a forward-slash storage key relative to the
+/// app-data root.
+///
+/// If the path is not under the app-data root (e.g. a test-temp directory),
+/// the full path is used verbatim (forward-slash normalised).
+fn path_to_storage_key(path: &std::path::Path) -> String {
+    let root = crate::storage::fs_impl::app_data_dir();
+    if let Ok(rel) = path.strip_prefix(&root) {
+        // Normalise to forward slashes.
+        rel.to_string_lossy().replace('\\', "/")
+    } else {
+        path.to_string_lossy().replace('\\', "/")
+    }
 }
 
 #[cfg(test)]

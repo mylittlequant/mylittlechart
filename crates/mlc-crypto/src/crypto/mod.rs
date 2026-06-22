@@ -47,20 +47,25 @@ pub fn generate_salt() -> [u8; 16] {
     salt
 }
 
-/// Load salt from a hex file, or generate a new one and save it.
+/// Load salt from a hex-encoded storage entry, or generate a new one and persist it.
 ///
-/// The salt file contains a 32-character lowercase hex string (16 bytes).
-/// If the file is missing or malformed, a new salt is generated and written.
+/// The storage entry contains a 32-character lowercase hex string (16 bytes).
+/// If the entry is missing or malformed, a new salt is generated and written
+/// through [`crate::storage::global_storage()`].
 pub fn load_or_create_salt(path: &std::path::Path) -> Result<[u8; 16], String> {
-    if path.exists() {
-        let hex_str = std::fs::read_to_string(path)
-            .map_err(|e| format!("read salt file: {}", e))?;
-        let hex_str = hex_str.trim();
+    let key = path_to_storage_key(path);
+    let storage = crate::storage::global_storage();
+
+    if let Ok(Some(bytes)) = storage.read(&key) {
+        let hex_str = std::str::from_utf8(&bytes)
+            .unwrap_or("")
+            .trim()
+            .to_string();
         if hex_str.len() == 32 {
-            if let Ok(bytes) = hex::decode(hex_str) {
-                if bytes.len() == 16 {
+            if let Ok(decoded) = hex::decode(&hex_str) {
+                if decoded.len() == 16 {
                     let mut salt = [0u8; 16];
-                    salt.copy_from_slice(&bytes);
+                    salt.copy_from_slice(&decoded);
                     return Ok(salt);
                 }
             }
@@ -69,13 +74,21 @@ pub fn load_or_create_salt(path: &std::path::Path) -> Result<[u8; 16], String> {
     }
 
     let salt = generate_salt();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("create salt dir: {}", e))?;
-    }
-    std::fs::write(path, hex::encode(salt))
+    storage
+        .write(&key, hex::encode(salt).as_bytes())
         .map_err(|e| format!("write salt file: {}", e))?;
     Ok(salt)
+}
+
+/// Convert an absolute path to a forward-slash storage key relative to the
+/// app-data root.  Paths outside the root are used verbatim (normalised).
+fn path_to_storage_key(path: &std::path::Path) -> String {
+    let root = crate::storage::fs_impl::app_data_dir();
+    if let Ok(rel) = path.strip_prefix(&root) {
+        rel.to_string_lossy().replace('\\', "/")
+    } else {
+        path.to_string_lossy().replace('\\', "/")
+    }
 }
 
 /// Derive a 32-byte master key from `passphrase` and `salt` via PBKDF2-HMAC-SHA256.

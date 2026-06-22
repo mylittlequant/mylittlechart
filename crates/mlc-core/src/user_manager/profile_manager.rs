@@ -6,18 +6,29 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use mlc_crypto::crypto;
+use mlc_crypto::global_storage;
 use crate::preset::preset::ChartPreset;
 use crate::preset::storage::{list_presets, load_preset};
 use crate::templates::TemplateManager;
 use crate::user_profile::profile::{ProfileIndex, ProfileMeta, UserProfile, VaultSecrets};
 use crate::user_profile::storage::{
-    active_profile_data_dir, create_profile, delete_profile, load_json, load_profile,
-    load_profile_index, profiles_dir, save_profile, save_profile_index,
+    active_profile_data_dir, app_data_dir, create_profile, delete_profile, load_json,
+    load_profile, load_profile_index, profiles_dir, save_profile, save_profile_index,
 };
 use mlc_crypto::vault::{self, VaultKey};
+
+/// Convert an absolute path to a storage key relative to app_data_dir.
+fn path_key(path: &Path) -> String {
+    let root = app_data_dir();
+    if let Ok(rel) = path.strip_prefix(&root) {
+        rel.to_string_lossy().replace('\\', "/")
+    } else {
+        path.to_string_lossy().replace('\\', "/")
+    }
+}
 
 use super::manager::SettingsSnapshots;
 
@@ -286,13 +297,15 @@ impl ProfileManager {
             save_profile(&self.profile, self.vault_key.as_ref())
                 .map_err(|e| e.to_string())?;
         } else {
-            // Non-active profile — patch profile.json on disk directly.
+            // Non-active profile — patch profile.json directly.
             let pj = profiles_dir().join(id).join("profile.json");
-            if pj.exists() {
-                if let Ok(raw) = std::fs::read_to_string(&pj) {
+            let pj_key = path_key(&pj);
+            if let Ok(Some(bytes)) = global_storage().read(&pj_key) {
+                if let Ok(raw) = String::from_utf8(bytes) {
                     if let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&raw) {
                         val["display_name"] = serde_json::Value::String(new_name.to_string());
-                        let _ = std::fs::write(&pj, serde_json::to_string_pretty(&val).unwrap_or(raw));
+                        let updated = serde_json::to_string_pretty(&val).unwrap_or(raw);
+                        let _ = global_storage().write(&pj_key, updated.as_bytes());
                     }
                 }
             }
@@ -363,7 +376,7 @@ impl ProfileManager {
                 Ok(encrypted) => {
                     self.pending_recovery_key = Some(crypto::format_recovery_key(&recovery_key));
                     let recovery_path = profile_dir.join("recovery_key.enc");
-                    if let Err(e) = std::fs::write(&recovery_path, &encrypted) {
+                    if let Err(e) = global_storage().write(&path_key(&recovery_path), &encrypted) {
                         eprintln!("[ProfileManager] failed to write recovery_key.enc: {}", e);
                     }
                     self.encrypted_master_key = Some(encrypted);
@@ -412,7 +425,7 @@ impl ProfileManager {
                 Ok(encrypted) => {
                     self.pending_recovery_key = Some(crypto::format_recovery_key(&recovery_key));
                     let recovery_path = dir.join("recovery_key.enc");
-                    if let Err(e) = std::fs::write(&recovery_path, &encrypted) {
+                    if let Err(e) = global_storage().write(&path_key(&recovery_path), &encrypted) {
                         eprintln!("[ProfileManager] failed to write recovery_key.enc: {}", e);
                     }
                     self.encrypted_master_key = Some(encrypted);
@@ -494,7 +507,8 @@ impl ProfileManager {
         let new_recovery_key = crypto::generate_recovery_key();
         let encrypted_mk = crypto::encrypt_master_key_for_recovery(&new_master_key, &new_recovery_key, &salt)
             .map_err(|e| format!("Failed to encrypt recovery key: {}", e))?;
-        std::fs::write(&recovery_path, &encrypted_mk)
+        global_storage()
+            .write(&path_key(&recovery_path), &encrypted_mk)
             .map_err(|e| format!("Failed to write recovery_key.enc: {}", e))?;
 
         // 6. Update in-memory state.

@@ -1,4 +1,4 @@
-//! Device-level settings persisted at `%APPDATA%\zengeld\device_settings.json`.
+//! Device-level settings persisted at `{app_data_dir}/device_settings.json`.
 //!
 //! Unlike `UserProfile`, these settings are **not tied to any profile** — they
 //! apply to the device as a whole and persist across profile switches.
@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 
 use super::storage::app_data_dir;
+use mlc_crypto::global_storage;
 
 /// Available render backends for the chart application.
 ///
@@ -79,28 +80,32 @@ impl Default for DeviceSettings {
 }
 
 impl DeviceSettings {
-    /// Load `DeviceSettings` from disk, returning `Default` on any error.
+    /// Load `DeviceSettings` from storage, returning `Default` on any error.
     pub fn load() -> Self {
-        let path = Self::file_path();
-        match std::fs::read_to_string(&path) {
-            Ok(json) => serde_json::from_str(&json).unwrap_or_default(),
-            Err(_) => Self::default(),
-        }
+        let key = Self::storage_key();
+        global_storage()
+            .read(&key)
+            .ok()
+            .flatten()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default()
     }
 
-    /// Persist `DeviceSettings` to disk.  Errors are silently ignored.
+    /// Persist `DeviceSettings` to storage.  Errors are silently ignored.
     pub fn save(&self) {
-        let path = Self::file_path();
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
         if let Ok(json) = serde_json::to_string_pretty(self) {
-            let _ = std::fs::write(&path, json);
+            let _ = global_storage().write(&Self::storage_key(), json.as_bytes());
         }
     }
 
-    /// Absolute path to `device_settings.json`.
+    /// Absolute path to `device_settings.json` (for callers that need the path).
     pub fn file_path() -> PathBuf {
         app_data_dir().join("device_settings.json")
+    }
+
+    fn storage_key() -> String {
+        // Key is relative to app_data_dir — just the filename.
+        "device_settings.json".to_string()
     }
 }

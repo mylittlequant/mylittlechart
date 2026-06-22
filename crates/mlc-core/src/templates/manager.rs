@@ -332,17 +332,28 @@ impl TemplateManager {
 // Module-private helpers for IndicatorSetManager single-file I/O
 // =============================================================================
 
+/// Convert a `&Path` to a storage key (relative to app_data_dir).
+fn path_key(path: &Path) -> String {
+    let root = crate::user_profile::storage::app_data_dir();
+    if let Ok(rel) = path.strip_prefix(&root) {
+        rel.to_string_lossy().replace('\\', "/")
+    } else {
+        path.to_string_lossy().replace('\\', "/")
+    }
+}
+
 /// Load an [`IndicatorSetManager`] from `{dir}/indicator_set_manager.json`.
 ///
 /// Returns a default (empty) manager if the file does not exist or cannot be
 /// parsed, so startup always succeeds.
 fn load_indicator_set_manager(dir: &Path) -> IndicatorSetManager {
     let path = dir.join(INDICATOR_SET_MANAGER_FILE);
-    if !path.exists() {
-        return IndicatorSetManager::new();
-    }
-    std::fs::read_to_string(&path)
+    let key = path_key(&path);
+    mlc_crypto::global_storage()
+        .read(&key)
         .ok()
+        .flatten()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default()
 }
@@ -352,9 +363,8 @@ fn save_indicator_set_manager(
     manager: &IndicatorSetManager,
     dir: &Path,
 ) -> Result<(), TemplateError> {
-    std::fs::create_dir_all(dir)?;
     let path = dir.join(INDICATOR_SET_MANAGER_FILE);
     let json = serde_json::to_string_pretty(manager)?;
-    std::fs::write(&path, json)?;
+    mlc_crypto::global_storage().write(&path_key(&path), json.as_bytes())?;
     Ok(())
 }

@@ -33,18 +33,33 @@ impl Default for TradingConfig {
     }
 }
 
+/// Convert a `&Path` to a storage key.
+///
+/// The path is used verbatim (forward-slash normalised) as the key.
+/// `TradingConfig` paths are typically under the app-data directory;
+/// the storage backend maps them to the appropriate underlying store.
+fn path_to_key(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
 impl TradingConfig {
     pub fn load(path: &Path) -> TradingResult<Self> {
-        match std::fs::read_to_string(path) {
-            Ok(s) => Ok(serde_json::from_str(&s)?),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(e) => Err(e.into()),
+        let storage = mlc_core::global_storage();
+        let key = path_to_key(path);
+        match storage.read(&key)? {
+            Some(bytes) => {
+                let s = String::from_utf8(bytes)
+                    .map_err(|e| std::io::Error::other(format!("UTF-8: {e}")))?;
+                Ok(serde_json::from_str(&s)?)
+            }
+            None => Ok(Self::default()),
         }
     }
 
     pub fn save(&self, path: &Path) -> TradingResult<()> {
         let json = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, json)?;
+        let storage = mlc_core::global_storage();
+        storage.write(&path_to_key(path), json.as_bytes())?;
         Ok(())
     }
 
