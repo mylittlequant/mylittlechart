@@ -17,7 +17,7 @@ impl ChartApp {
     /// per-app reactions can run viewport/indicator/panel side-effects.
     pub fn tick(&mut self, current_time_ms: u64) {
         let _ = current_time_ms;
-        let tick_start = std::time::Instant::now();
+        let tick_start = web_time::Instant::now();
 
         // Connector warm-up: dial all enabled connectors once (bridge-guarded).
         // Fires on the first tick of the skeleton/loading window (concurrent, off
@@ -113,7 +113,7 @@ impl ChartApp {
         let mut last_trade_price_by_symbol: std::collections::HashMap<(String, String, String), f64> =
             std::collections::HashMap::new();
 
-        let events_start = std::time::Instant::now();
+        let events_start = web_time::Instant::now();
 
         let events = self.core.tick_writers(current_time_ms);
         _drain_count = events.len() as u32;
@@ -131,7 +131,7 @@ impl ChartApp {
                 BubbleEvent::MiniTickerUpdated { .. } => n_ticker += 1,
                 BubbleEvent::ConnectorReady { .. } => n_connector += 1,
                 BubbleEvent::SymbolsLoaded { count, .. } => {
-                    let t0 = std::time::Instant::now();
+                    let t0 = web_time::Instant::now();
                     n_symbols += 1;
                     n_symbols_total += count;
                     symbols_insert_us += t0.elapsed().as_micros() as u64;
@@ -212,10 +212,10 @@ impl ChartApp {
         // original wire timestamp instead of a single SystemTime::now() for the
         // whole batch.
         if !ob_dirty.is_empty() {
-            let ob_panel_start = std::time::Instant::now();
+            let ob_panel_start = web_time::Instant::now();
             for ((symbol, ex_str, at_str), entry) in &ob_dirty {
                 // ── DOM: incremental or full-rebuild (bulk — level state only) ──
-                let dom_t0 = std::time::Instant::now();
+                let dom_t0 = web_time::Instant::now();
                 let (bulk_bids, bulk_asks): (Vec<(f64, f64)>, Vec<(f64, f64)>) = {
                     let mut b: Vec<(f64, f64)> = Vec::new();
                     let mut a: Vec<(f64, f64)> = Vec::new();
@@ -237,7 +237,7 @@ impl ChartApp {
                 self.last_dom_panel_us += dom_t0.elapsed().as_micros() as u64;
 
                 // ── L2 Tape: per-event calls with original wire ts ─────────────
-                let l2_t0 = std::time::Instant::now();
+                let l2_t0 = web_time::Instant::now();
                 for state in self.panels_store.l2_tape.values_mut() {
                     if &state.symbol == symbol && &state.exchange == ex_str && &state.account_type == at_str {
                         if entry.force_rebuild || entry.events.is_empty() {
@@ -261,7 +261,7 @@ impl ChartApp {
                 self.last_l2_panel_us += l2_t0.elapsed().as_micros() as u64;
 
                 // ── Heatmap: view-based tick (rate-limited, untouched path) ───
-                let heat_t0 = std::time::Instant::now();
+                let heat_t0 = web_time::Instant::now();
                 for state in self.panels_store.liquidity_heatmap.values_mut() {
                     if &state.symbol == symbol && &state.exchange == ex_str && &state.account_type == at_str {
                         state.tick();
@@ -300,7 +300,7 @@ impl ChartApp {
         // get ~4 sidebar refreshes per second without rebuilding 20× per tick.
         if had_ticker_update {
             const MARK_INTERVAL_MS: u128 = 250;
-            let now = std::time::Instant::now();
+            let now = web_time::Instant::now();
             let bump = match self.sidebar_ticker_mark {
                 Some(prev) => now.duration_since(prev).as_millis() >= MARK_INTERVAL_MS,
                 None => true,
@@ -428,7 +428,7 @@ impl ChartApp {
                     .and_then(|cid| self.symbol_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_default();
-                let now = std::time::SystemTime::now()
+                let now = web_time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_millis() as u64)
                     .unwrap_or(0);
@@ -458,7 +458,7 @@ impl ChartApp {
         // For PerTick mode drain_pending_recalc returns an empty Vec — no-op.
         let pending = self.core.indicators_mut().drain_pending_recalc();
         if !pending.is_empty() {
-            let deferred_start = std::time::Instant::now();
+            let deferred_start = web_time::Instant::now();
             for symbol in &pending {
                 let matching_ids: Vec<u64> = self
                     .panel_app
@@ -500,7 +500,7 @@ impl ChartApp {
             );
             self.trade_count = 0;
             self.recalc_count = 0;
-            self.recalc_log_timer = std::time::Instant::now();
+            self.recalc_log_timer = web_time::Instant::now();
         }
 
         // ── Layer 3: trigger scroll-fetch when viewport approaches left edge ───
@@ -557,7 +557,7 @@ impl ChartApp {
                 };
 
                 window.scroll_fetch_in_flight = true;
-                window.scroll_fetch_started = Some(std::time::Instant::now());
+                window.scroll_fetch_started = Some(web_time::Instant::now());
                 scroll_requests.push((
                     *cid_scroll,
                     win_sym_sc.clone(),

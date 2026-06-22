@@ -453,7 +453,7 @@ impl ObjectRegistry {
 
         object.set_id(Some(id.clone()));
 
-        let now = std::time::SystemTime::now()
+        let now = web_time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);

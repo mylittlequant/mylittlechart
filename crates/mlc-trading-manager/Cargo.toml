@@ -7,6 +7,7 @@ edition.workspace = true
 name = "mlc_trading_manager"
 
 [dependencies]
+web-time = "1"
 digdigdig3 = "=0.3.23"
 mlc-live-data = { path = "../mlc-live-data", package = "mylittlechart-live-data" }
 rust_decimal = "1"

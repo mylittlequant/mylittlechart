@@ -44,7 +44,7 @@ pub struct AgentState {
     pub command_queue: Mutex<Vec<AgentCommand>>,
 
     /// Wall-clock time when the server was created (used to compute uptime).
-    pub start_time: std::time::Instant,
+    pub start_time: web_time::Instant,
 
     /// Milliseconds since `start_time` when an Agent API request was last served.
     ///
@@ -82,7 +82,7 @@ impl AgentState {
             watchlist_snapshot: RwLock::new(WatchlistSnapshot::default()),
             connector_snapshot: RwLock::new(ConnectorSnapshot::default()),
             command_queue: Mutex::new(Vec::new()),
-            start_time: std::time::Instant::now(),
+            start_time: web_time::Instant::now(),
             last_agent_access_ms: AtomicU64::new(0),
             version: version.into(),
             core: Mutex::new(None),

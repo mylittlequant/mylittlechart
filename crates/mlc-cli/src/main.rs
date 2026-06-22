@@ -645,7 +645,7 @@ async fn cmd_daemon_spawn(_ctx: &Ctx, args: DaemonSpawnArgs) -> anyhow::Result<(
     // Wait for /health
     let base = format!("http://127.0.0.1:{}", args.port);
     let url = format!("{base}/health");
-    let deadline = std::time::Instant::now() + Duration::from_secs(args.wait);
+    let deadline = web_time::Instant::now() + Duration::from_secs(args.wait);
     let client = reqwest::Client::new();
     loop {
         if let Ok(r) = client.get(&url).send().await {
@@ -657,7 +657,7 @@ async fn cmd_daemon_spawn(_ctx: &Ctx, args: DaemonSpawnArgs) -> anyhow::Result<(
                 return Ok(());
             }
         }
-        if std::time::Instant::now() > deadline {
+        if web_time::Instant::now() > deadline {
             return Err(anyhow!(
                 "daemon spawned (pid={pid}) but /health did not respond within {}s",
                 args.wait

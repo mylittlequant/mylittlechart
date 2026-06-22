@@ -73,12 +73,12 @@ pub(crate) use dlog;
 // connect wave can be lined up against the skeleton→live promote on the main
 // thread (which logs its own wall-clock-relative timestamps). Lazily init'd so
 // it costs nothing when MLC_PERF_LOG is off and the logs never fire.
-static PROCESS_START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+static PROCESS_START: std::sync::OnceLock<web_time::Instant> = std::sync::OnceLock::new();
 
 /// Milliseconds since the first call to this function (≈ process / bridge init).
 pub fn elapsed_ms() -> u128 {
     PROCESS_START
-        .get_or_init(std::time::Instant::now)
+        .get_or_init(web_time::Instant::now)
         .elapsed()
         .as_millis()
 }

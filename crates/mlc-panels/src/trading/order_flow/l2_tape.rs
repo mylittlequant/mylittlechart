@@ -4,7 +4,8 @@
 //! modifications, cancellations, and executions in real-time.
 
 use std::collections::{HashMap, VecDeque};
-use std::time::{SystemTime, UNIX_EPOCH};
+use web_time::SystemTime;
+use std::time::UNIX_EPOCH;
 use serde::{Serialize, Deserialize};
 
 use rust_decimal::prelude::ToPrimitive;
@@ -954,7 +955,7 @@ impl L2TapeState {
 
         // Wall-clock fallback for callers that don't supply a wire ts.
         // Per-event wire ts is preferred — use `apply_ob_update_with_ts` from the drain.
-        let timestamp = std::time::SystemTime::now()
+        let timestamp = web_time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as i64;
@@ -1109,7 +1110,7 @@ impl L2TapeState {
         }
 
         // Time-based retention: drain events older than retention_ms.
-        let now_ms = std::time::SystemTime::now()
+        let now_ms = web_time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;

@@ -21,7 +21,8 @@ use platform::win32::{win32_border, win32_capture};
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use web_time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 // ── Pipelined GPU rendering ──────────────────────────────────────────────────
 //
@@ -163,7 +164,7 @@ struct PerWindowState {
     mouse_pressed: bool,
     drag_start_pos: Option<(f64, f64)>,
     last_drag_pos: Option<(f64, f64)>,
-    last_click: Option<(std::time::Instant, f64, f64)>,
+    last_click: Option<(web_time::Instant, f64, f64)>,
     screenshot_pending: bool,
     /// Pending agent screenshot requests — each entry is `(chart_id, response_tx)`.
     ///
@@ -200,7 +201,7 @@ struct PerWindowState {
     /// draw, so the user never sees an empty chart flash for ~2s while data
     /// loads. A timeout fallback (created_at.elapsed()) shows the window anyway
     /// if data never arrives, so it can't stay invisible forever.
-    created_at: std::time::Instant,
+    created_at: web_time::Instant,
     /// When true this window is a skeleton placeholder (shown while vault unlock
     /// or first-run wizard is pending).  Skeleton windows suppress tab/toolbar
     /// rendering and chart content — only chrome window controls are drawn.
@@ -237,7 +238,7 @@ struct PerWindowState {
     /// is made visible.
     visible_set: bool,
     /// Reference instant used to compute monotonic milliseconds for chrome tooltip timing.
-    chrome_tooltip_start: std::time::Instant,
+    chrome_tooltip_start: web_time::Instant,
     /// Tooltip state for toolbar button hover tooltips (left/top/right/bottom strips).
     toolbar_tooltip: tooltip::TooltipState,
     /// True when the window was minimized (detected via Resized with 0x0 size).
@@ -250,7 +251,7 @@ struct PerWindowState {
     /// content (NOT in finish_promote) — otherwise the spinner vanished a
     /// frame before the chart was built, leaving a blank panel during the
     /// first live tick's event-backlog drain.
-    spinner_start: Option<std::time::Instant>,
+    spinner_start: Option<web_time::Instant>,
     /// True from finish_promote until the first live chart scene is built and
     /// composited. While set, the spinner is held even though `skeleton` is
     /// already false, so the spinner masks the first-frame work instead of
@@ -303,7 +304,7 @@ struct App<'s> {
     /// Shared state for the internal Agent API server.
     agent_state: Option<std::sync::Arc<mlc_agentic_server::AgentState>>,
     /// Wall-clock time of the last per-second maintenance pass (snapshots, sysinfo).
-    last_indicator_snapshot: std::time::Instant,
+    last_indicator_snapshot: web_time::Instant,
     /// Round-robin cursor for agent snapshot rebuilds. The four snapshots
     /// (indicator/terminal/watchlist/connector) each clone large amounts of
     /// state; building all four in one frame stalls it 20-30ms. We build one
@@ -318,7 +319,7 @@ struct App<'s> {
     active_toasts: Vec<mlc_alert_delivery::ToastNotification>,
 
     /// Frame timing — last frame's Instant for FPS calculation.
-    last_frame_instant: std::time::Instant,
+    last_frame_instant: web_time::Instant,
     /// Rolling FPS average (exponential moving average).
     fps_ema: f64,
     /// Last frame time in ms.
@@ -354,7 +355,7 @@ struct App<'s> {
     /// Frame counter for timing reports.
     frame_count: u64,
     /// Last time a timing summary was printed.
-    last_timing_report: std::time::Instant,
+    last_timing_report: web_time::Instant,
     /// Cached connector count from the last `bridge.collect_metrics()` call.
     /// Refreshed once per second in the indicator-snapshot timer block to avoid
     /// calling `collect_metrics()` (which locks and allocates) every frame.
@@ -386,7 +387,7 @@ struct App<'s> {
     /// gap with a tiny atw means the main thread vanished BETWEEN frames — stuck
     /// on a lock, a sync IO, or the promote — not in render. This is the freeze
     /// signature (atw≈0, n=2) the `dt` metric hides. `None` until the first pass.
-    last_atw_end: Option<std::time::Instant>,
+    last_atw_end: Option<web_time::Instant>,
     /// One-shot: elapsed_ms stamp of promote swap completion. Consumed by the
     /// next about_to_wait pass to log the first-live-frame cost.
     promote_end_ms: Option<u128>,
@@ -500,7 +501,7 @@ fn render_toasts(
     let start_x = window_width - toast_width - margin;
     let start_y = 40.0 + margin; // below chrome strip (32px) + small gap
 
-    let now = std::time::SystemTime::now()
+    let now = web_time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
@@ -810,12 +811,12 @@ impl App<'_> {
             app_connector_ready_rx,
             _phantom: std::marker::PhantomData,
             agent_state: Some(agent_state),
-            last_indicator_snapshot: std::time::Instant::now(),
+            last_indicator_snapshot: web_time::Instant::now(),
             agent_snapshot_phase: 0,
             mlc_alert_delivery: Some(alert_delivery_engine),
             toast_rx: Some(toast_rx),
             active_toasts: Vec::new(),
-            last_frame_instant: std::time::Instant::now(),
+            last_frame_instant: web_time::Instant::now(),
             fps_ema: 60.0,
             last_frame_time_ms: 16.0,
             dt_min_ms: f64::INFINITY,
@@ -842,7 +843,7 @@ impl App<'_> {
             gpu_name: String::new(),
             gpu_driver: String::new(),
             frame_count: 0,
-            last_timing_report: std::time::Instant::now(),
+            last_timing_report: web_time::Instant::now(),
             cached_connector_count: 0,
             cached_scene_us: 0,
             cached_gpu_us: 0,
@@ -1256,7 +1257,7 @@ impl App<'_> {
             close_window_requested: false,
             delete_window_requested: false,
             last_sidebar_hover_row: None,
-            created_at: std::time::Instant::now(),
+            created_at: web_time::Instant::now(),
             skeleton,
             render_backend: mlc_sidebar_content::state::RenderBackend::VelloGpu,
             instanced_renderer: None,
@@ -1270,7 +1271,7 @@ impl App<'_> {
             hybrid_ctx: None,
             gpu_hybrid_ctx: None,
             visible_set: false,
-            chrome_tooltip_start: std::time::Instant::now(),
+            chrome_tooltip_start: web_time::Instant::now(),
             toolbar_tooltip: tooltip::TooltipState::with_delay(700.0),
             was_minimized: false,
             spinner_start: None,
@@ -1457,7 +1458,7 @@ impl App<'_> {
         // Owner sees "spinner over still-visible form" which reads as a UI
         // glitch. Force a clean redraw NOW so the user only sees the spinner
         // on the bare background until the live chart appears.
-        let spinner_instant = std::time::Instant::now();
+        let spinner_instant = web_time::Instant::now();
         for pw in self.windows.values_mut() {
             if pw.skeleton {
                 pw.spinner_start = Some(spinner_instant);
@@ -1498,7 +1499,7 @@ impl App<'_> {
         }).collect();
 
         std::thread::spawn(move || {
-            let worker_t0 = std::time::Instant::now();
+            let worker_t0 = web_time::Instant::now();
             let mut results: Vec<PromoteWindowResult> = Vec::with_capacity(window_ids.len());
 
             for (idx, &wid) in window_ids.iter().enumerate() {
@@ -1679,7 +1680,7 @@ impl App<'_> {
                 // itself), so this is safe.
                 let old_chart = std::mem::replace(&mut pw.chart, *r.chart);
                 std::thread::spawn(move || {
-                    let _t = std::time::Instant::now();
+                    let _t = web_time::Instant::now();
                     drop(old_chart);
                     eprintln!(
                         "[App] finish_promote: off-thread drop of skeleton ChartApp took {}us",
@@ -2122,7 +2123,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
         }
 
-        let _t0 = std::time::Instant::now();
+        let _t0 = web_time::Instant::now();
         let _atw_start = _t0; // alias — both measure from same point (after FPS guard return)
 
         // ── Inter-frame GAP detector (startup-freeze diagnostics) ────────────
@@ -2153,7 +2154,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         }
 
         // ── Frame timing ────────────────────────────────────────────────────
-        let now = std::time::Instant::now();
+        let now = web_time::Instant::now();
         let dt = now.duration_since(self.last_frame_instant);
         self.last_frame_instant = now;
         let dt_ms = dt.as_secs_f64() * 1000.0;
@@ -2171,7 +2172,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         // ── App-level tick ────────────────────────────────────────────────
         // Process app-level broadcast messages (ConnectorReady → request_symbols).
         self.tick_app_state();
-        let _t1 = std::time::Instant::now();
+        let _t1 = web_time::Instant::now();
 
         // ── Drain watchlist actions from all windows → AppState ────────────
         // Windows queue WatchlistAction instead of mutating directly.
@@ -2542,7 +2543,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         // The renderer is lazily created with surface_texture.format() so it
         // always matches the swapchain; keeping it alive just costs some GPU memory.
         let _ = reset_instanced_renderer;
-        let _t2 = std::time::Instant::now();
+        let _t2 = web_time::Instant::now();
 
         // ── Flush dirty presets to disk ──────────────────────────────────
         // Presets are plaintext — always safe to save.
@@ -2770,7 +2771,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
         }
 
-        let _t3 = std::time::Instant::now();
+        let _t3 = web_time::Instant::now();
 
         // ── App shutdown ────────────────────────────────────────────────
         // Chrome X button or Alt+F4 on ANY window → close entire app.
@@ -3837,7 +3838,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         // Per-window: tick ALL windows (not just focused) so live data,
         // watchlist updates, and state changes are processed even for
         // background windows that Windows won't deliver WM_PAINT to.
-        let _t4 = std::time::Instant::now();
+        let _t4 = web_time::Instant::now();
         {
             // ── Conditional sync: only clone when data actually changed ────────
             // Each dirty flag is set when the corresponding AppState field is
@@ -4011,7 +4012,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
         }
 
-        let _t5 = std::time::Instant::now();
+        let _t5 = web_time::Instant::now();
 
         // ── Populate performance panel data ─────────────────────────────────
         // Only run when the Performance panel is actually visible — avoids
@@ -4115,7 +4116,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
 
         } // end if perf_visible
-        let _t6 = std::time::Instant::now();
+        let _t6 = web_time::Instant::now();
 
         // NOTE: alert delivery events are drained AFTER render_window() below,
         // so that alert screenshots can be captured and attached first.
@@ -4127,7 +4128,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
         }
         // Expire old toasts.
-        let now_ms_val = std::time::SystemTime::now()
+        let now_ms_val = web_time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
@@ -4178,7 +4179,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         //   • sysinfo (cpu/mem/processes): only when the Performance panel is open.
         //   • collect_metrics + clock/perf dirty: cheap, always.
         if self.last_indicator_snapshot.elapsed() >= std::time::Duration::from_secs(1) {
-            self.last_indicator_snapshot = std::time::Instant::now();
+            self.last_indicator_snapshot = web_time::Instant::now();
 
             // Connector stream count for the perf panel — cheap, keep every second.
             {
@@ -4233,7 +4234,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         // No unconditional per-frame force — avoids ~25 String allocs + 137 register
         // calls every frame when the sidebar is open.
 
-        let _t7 = std::time::Instant::now();
+        let _t7 = web_time::Instant::now();
 
         // ── Pipelined rendering ─────────────────────────────────────────────
         //
@@ -4268,7 +4269,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         // Step 1: wait for the GPU thread to finish the previous frame.
         if self.gpu_frame_pending {
             if let Some(ref done_rx) = self.gpu_done_rx {
-                let wait_t0 = std::time::Instant::now();
+                let wait_t0 = web_time::Instant::now();
                 match done_rx.recv() {
                     Ok(done) => {
                         gpu_wait_us = wait_t0.elapsed().as_micros() as u64;
@@ -4418,7 +4419,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         // The GPU thread only touches pw.gpu_scene/renderer/surface;
         // build_window_scene only touches pw.scene (and non-GPU fields).
         let active_toasts_ref: &[mlc_alert_delivery::ToastNotification] = &active_toasts;
-        let parallel_t0 = std::time::Instant::now();
+        let parallel_t0 = web_time::Instant::now();
         // Single window (the common case): build inline. Spawning an OS thread
         // per frame via thread::scope costs ~0.5-2ms on Windows for the spawn+
         // join alone — pure overhead when there's only one scene to build and
@@ -4476,11 +4477,11 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
         }
 
-        let _t8 = std::time::Instant::now();
+        let _t8 = web_time::Instant::now();
         // Record actual work time for this about_to_wait invocation.
         self.cached_about_to_wait_us = _atw_start.elapsed().as_micros() as u64;
         // Stamp the end of this worked frame for the next pass's GAP detector.
-        self.last_atw_end = Some(std::time::Instant::now());
+        self.last_atw_end = Some(web_time::Instant::now());
 
         // One-shot: time from promote swap completion to the end of the first
         // live frame's scene+submit pass — the unmeasured tail of the spinner
@@ -4514,7 +4515,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 );
             }
         } else if let Some(target) = self.pending_warm_targets.pop() {
-            let t_warm = std::time::Instant::now();
+            let t_warm = web_time::Instant::now();
             if let Some(pw) = self.windows.values_mut().find(|pw| !pw.skeleton) {
                 pw.chart.warm_one_background_tab(&target);
             }
@@ -4586,7 +4587,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     n_ticker,
                 );
             }
-            self.last_timing_report = std::time::Instant::now();
+            self.last_timing_report = web_time::Instant::now();
             self.dt_min_ms = f64::INFINITY;
             self.dt_max_ms = 0.0;
             self.dt_samples = 0;
@@ -4643,12 +4644,12 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             let elapsed = self.last_frame_instant.elapsed();
             if elapsed < target_dt {
                 event_loop.set_control_flow(ControlFlow::WaitUntil(
-                    std::time::Instant::now() + (target_dt - elapsed),
+                    web_time::Instant::now() + (target_dt - elapsed),
                 ));
             } else {
                 // Frame already over budget — don't spin, give the OS a tiny breather.
                 event_loop.set_control_flow(ControlFlow::WaitUntil(
-                    std::time::Instant::now() + std::time::Duration::from_millis(1),
+                    web_time::Instant::now() + std::time::Duration::from_millis(1),
                 ));
             }
         } else {

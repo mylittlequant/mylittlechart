@@ -165,14 +165,14 @@ impl DaemonGuard {
         // Wait for /health to answer (up to 5s).
         let url = format!("http://127.0.0.1:{port}/health");
         let client = reqwest::Client::new();
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let deadline = web_time::Instant::now() + Duration::from_secs(5);
         loop {
             if let Ok(resp) = client.get(&url).send().await {
                 if resp.status().is_success() {
                     break;
                 }
             }
-            if std::time::Instant::now() > deadline {
+            if web_time::Instant::now() > deadline {
                 return Err(HarnessError {
                     scenario: "daemon-spawn",
                     message: format!("daemon did not become healthy on :{port} within 5s"),

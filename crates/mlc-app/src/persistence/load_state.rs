@@ -14,7 +14,7 @@
 //! BEFORE the state flips to `Loading`, so a fast back-click during cold
 //! load still has a warm cache entry to unpark.
 
-use std::time::Instant;
+use web_time::Instant;
 
 #[derive(Debug, Clone)]
 pub enum LoadState {

@@ -454,7 +454,7 @@ impl ChartApp {
                     }
                     window.viewport.bar_count = bu_bubble_bars.len();
                     if window.price_scale.scale_mode.is_auto_y() {
-                        let _as_start = std::time::Instant::now();
+                        let _as_start = web_time::Instant::now();
                         window.calc_auto_scale(&bu_bubble_bars);
                         self.last_auto_scale_us += _as_start.elapsed().as_micros() as u64;
                     }
@@ -477,7 +477,7 @@ impl ChartApp {
                     let recalc_mode = self.core.indicators().recalc_mode;
                     match recalc_mode {
                         RecalcMode::PerTick => {
-                            let _ri_start = std::time::Instant::now();
+                            let _ri_start = web_time::Instant::now();
                             self.recalc_indicators_for_symbol(sym);
                             self.last_indicator_recalc_us += _ri_start.elapsed().as_micros() as u64;
                         }
@@ -500,7 +500,7 @@ impl ChartApp {
                 self.trade_count += 1;
                 self.last_trade_event_count += 1;
 
-                let _bar_apply_start = std::time::Instant::now();
+                let _bar_apply_start = web_time::Instant::now();
 
                 let instrument_by_cid_tu: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::state::Timeframe, String, String)> = {
                     self.panel_app.panel_grid.containers().keys()
@@ -629,7 +629,7 @@ impl ChartApp {
                 }
 
                 // Panel ticks.
-                let _trade_panel_start = std::time::Instant::now();
+                let _trade_panel_start = web_time::Instant::now();
                 for state in self.panels_store.big_trades.values_mut() { state.tick(); }
                 for state in self.panels_store.volume_profile.values_mut() { state.tick(); }
                 for state in self.panels_store.footprint.values_mut() { state.tick(); }
@@ -652,7 +652,7 @@ impl ChartApp {
                 let recalc_mode = self.core.indicators().recalc_mode;
                 match recalc_mode {
                     RecalcMode::PerTick => {
-                        let _ri_start = std::time::Instant::now();
+                        let _ri_start = web_time::Instant::now();
                         self.recalc_indicators_for_symbol(symbol);
                         self.last_indicator_recalc_us += _ri_start.elapsed().as_micros() as u64;
                     }

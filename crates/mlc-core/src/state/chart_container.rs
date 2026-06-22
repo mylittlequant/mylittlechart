@@ -303,7 +303,7 @@ pub struct ChartContainer {
     /// If `ScrollBarsLoaded` is dropped (channel lag), the 10-second timeout
     /// resets `scroll_fetch_in_flight` so the window can fetch again.
     /// Runtime-only state — not persisted to disk.
-    pub scroll_fetch_started: Option<std::time::Instant>,
+    pub scroll_fetch_started: Option<web_time::Instant>,
 
     /// Scale mode to restore after the next `set_bars()` call completes.
     ///

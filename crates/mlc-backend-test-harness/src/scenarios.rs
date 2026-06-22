@@ -551,14 +551,14 @@ fn pick_free_port() -> HarnessResult<u16> {
 async fn wait_for_health(port: u16, path: &str) -> HarnessResult<()> {
     let url = format!("http://127.0.0.1:{port}{path}");
     let client = reqwest::Client::new();
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let deadline = web_time::Instant::now() + Duration::from_secs(5);
     loop {
         if let Ok(r) = client.get(&url).send().await {
             if r.status().is_success() {
                 return Ok(());
             }
         }
-        if std::time::Instant::now() > deadline {
+        if web_time::Instant::now() > deadline {
             return Err(err("wait-health", format!("{url} never returned 2xx within 5s")));
         }
         tokio::time::sleep(Duration::from_millis(50)).await;

@@ -1,7 +1,8 @@
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::fmt;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use web_time::{Instant, SystemTime};
+use std::time::UNIX_EPOCH;
 
 use rust_decimal::prelude::ToPrimitive;
 
@@ -1424,7 +1425,7 @@ impl TradingPanel for DomState {
         }
 
         // === STEP 6: Flash animation for recent fills ===
-        let now = std::time::Instant::now();
+        let now = web_time::Instant::now();
         for (price_tick, (_volume, timestamp)) in &self.recent_fills {
             let elapsed_ms = now.duration_since(*timestamp).as_millis() as u64;
             if elapsed_ms < 300 {

@@ -4,7 +4,7 @@
 //! no left/bottom sidebars, no color picker).
 
 use std::collections::{HashSet, HashMap, VecDeque};
-use std::time::Instant;
+use web_time::Instant;
 use mlc_core::state::scroll_state::ScrollState;
 use crate::types::{ObjectTreeItem, AlertItem, IndicatorsTabData, WatchlistItem, ConnectorStatusItem};
 use crate::agents_dock::{AgentLeafDescriptor, AgentDockingManager};

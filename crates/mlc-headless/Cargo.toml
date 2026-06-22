@@ -9,6 +9,7 @@ name = "mlc-headless"
 path = "src/main.rs"
 
 [dependencies]
+web-time = "1"
 mlc-app = { path = "../mlc-app", package = "mylittlechart-app" }
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 mlc-headless-core = { path = "../mlc-headless-core", package = "mylittlechart-headless-core" }

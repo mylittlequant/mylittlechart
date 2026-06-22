@@ -42,7 +42,7 @@ impl ChartApp {
             let text = tf.text(&hex_id).to_string();
             let sel = tf.selection_range(&hex_id);
             drop(coord);
-            let now_ms = std::time::SystemTime::now()
+            let now_ms = web_time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64;
@@ -73,7 +73,7 @@ impl ChartApp {
             let text = tf.text(&chat_id).to_string();
             let sel = tf.selection_range(&chat_id);
             drop(coord);
-            let now_ms = std::time::SystemTime::now()
+            let now_ms = web_time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64;
@@ -765,7 +765,7 @@ impl ChartApp {
 
                 {
                     use mlc_sidebar_content::MetricsSnapshot;
-                    let now = std::time::Instant::now();
+                    let now = web_time::Instant::now();
                     let should_sample = self.sidebar_state.metrics_last_sample
                         .is_none_or(|last| now.duration_since(last).as_secs_f64() >= 1.0);
                     if should_sample {

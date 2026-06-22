@@ -665,7 +665,7 @@ impl App<'_> {
                                 let dist = ((x - sx).powi(2) + (y - sy).powi(2)).sqrt();
                                 if dist < 5.0 {
                                     // Double-click detection (400 ms, 5 px)
-                                    let now = std::time::Instant::now();
+                                    let now = web_time::Instant::now();
                                     let is_double_click = if let Some((last_time, last_x, last_y)) =
                                         pw.last_click
                                     {

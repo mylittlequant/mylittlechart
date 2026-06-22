@@ -304,7 +304,7 @@ pub struct ToggleIconPair {
 // Chart-toolbar types (moved from panel_app — Phase X.4 back-edge removal)
 // =============================================================================
 
-use std::time::Instant;
+use web_time::Instant;
 
 use crate::state::geometry::LayoutRect;
 use crate::state::toolbar_geometry::ToolbarRenderResult;

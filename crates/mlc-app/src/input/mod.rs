@@ -8893,7 +8893,7 @@ impl ChartApp {
             return;
         };
 
-        let _t0 = std::time::Instant::now();
+        let _t0 = web_time::Instant::now();
         self.collect_state_into_preset(&id, &name);
         if let Some(preset) = self.core.presets().get(&id).cloned() {
             self.preset_actions.push(crate::PresetAction::Upsert(preset));

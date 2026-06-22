@@ -740,7 +740,7 @@ impl DataBridge {
     /// Idempotent — the cache `.insert()` overwrites, but since the input
     /// is the source catalogue itself the value is stable.
     pub fn prewarm_wire_symbol_cache(&self, exchange_id: ExchangeId) {
-        let _t0 = std::time::Instant::now();
+        let _t0 = web_time::Instant::now();
         let symbols = self.station.symbols(exchange_id);
         if symbols.is_empty() {
             return;
@@ -980,12 +980,12 @@ impl DataBridge {
         _total_bars: Option<usize>,
         force: bool,
     ) {
-        let _rb_total = std::time::Instant::now();
+        let _rb_total = web_time::Instant::now();
         // Phase 2B: historical fetch (Phase A + Phase B) runs through the
         // STATION's shared hub so it reuses the same connector pool as live
         // WS subscriptions (one dial-wave, one rate budget). `station.hub()`
         // is an O(1) Arc clone of that pool.
-        let _rb_t_hub = std::time::Instant::now();
+        let _rb_t_hub = web_time::Instant::now();
         let fetch_hub = self.station.hub();
         let rb_hub_us = _rb_t_hub.elapsed().as_micros();
         let tx = self.tx.clone();
@@ -996,7 +996,7 @@ impl DataBridge {
         // Resolved eagerly for the station kline subscriber; the main REST task
         // retries resolution inside the connector-wait loop if the symbol list
         // is still empty at spawn time (Fix 2 — MUUSDC@hyperliquid race).
-        let _rb_t_wire = std::time::Instant::now();
+        let _rb_t_wire = web_time::Instant::now();
         let wire_sym = self.wire_symbol(exchange_id, account_type, symbol);
         let rb_wire_us = _rb_t_wire.elapsed().as_micros();
         // Station handle cloned for the resolution retry inside the main task.
@@ -1244,7 +1244,7 @@ impl DataBridge {
             // left the chart silently stuck on "Loading..." for symbols whose
             // raw string the connector can't resolve. The wire_sym is the
             // venue-native string (resolved from canonical by wire_symbol()).
-            let now_ms = std::time::SystemTime::now()
+            let now_ms = web_time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as i64)
                 .unwrap_or(i64::MAX);
@@ -3573,7 +3573,7 @@ impl DataBridge {
             // page = (now - effective_limit*tf) .. now → fresh tail. Cursor
             // walks backwards from there.
             let kline_iv = KlineInterval::new(interval.as_str());
-            let now_ms = std::time::SystemTime::now()
+            let now_ms = web_time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as i64)
                 .unwrap_or(i64::MAX);

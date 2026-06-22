@@ -7,6 +7,7 @@ edition.workspace = true
 name = "mlc_live_data"
 
 [dependencies]
+web-time = "1"
 # Chart types (Bar, Timeframe, DataProvider trait)
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 

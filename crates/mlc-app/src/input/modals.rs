@@ -548,7 +548,7 @@ impl ChartApp {
                     .unwrap_or(0);
                 let default_name = format!("My Indicator Set {}", max_n + 1);
 
-                let current_time_ms = std::time::SystemTime::now()
+                let current_time_ms = web_time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_millis() as u64;

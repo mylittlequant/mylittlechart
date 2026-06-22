@@ -25,9 +25,9 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
         return 0;
     }
 
-    let t0 = std::time::Instant::now();
+    let t0 = web_time::Instant::now();
 
-    let _reset_start = std::time::Instant::now();
+    let _reset_start = web_time::Instant::now();
     pw.scene.reset();
     let reset_us = _reset_start.elapsed().as_micros() as u64;
 
@@ -162,7 +162,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 }
             }
         }
-        let _composite_start = std::time::Instant::now();
+        let _composite_start = web_time::Instant::now();
         pw.scene.append(&pw.chart_scene, None);
 
         let sidebar_is_open = pw.chart.sidebar_state.is_right_open();
@@ -212,7 +212,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 && !pw.awaiting_first_live_frame
                 && !_skel_active_for_spin
             {
-                let elapsed = std::time::SystemTime::now()
+                let elapsed = web_time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_millis() as u64)
                     .unwrap_or(0);
@@ -396,7 +396,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 && !pw.awaiting_first_live_frame
                 && !_skel_active_for_spin
             {
-                    let elapsed = std::time::SystemTime::now()
+                    let elapsed = web_time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_millis() as u64)
                         .unwrap_or(0);
@@ -514,7 +514,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 && !pw.awaiting_first_live_frame
                 && !_skel_active_for_spin
             {
-                    let elapsed = std::time::SystemTime::now()
+                    let elapsed = web_time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_millis() as u64)
                         .unwrap_or(0);
@@ -594,7 +594,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 && !pw.awaiting_first_live_frame
                 && !_skel_active_for_spin
             {
-                    let elapsed = std::time::SystemTime::now()
+                    let elapsed = web_time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_millis() as u64)
                         .unwrap_or(0);
@@ -664,7 +664,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 && !pw.awaiting_first_live_frame
                 && !_skel_active_for_spin
             {
-                    let elapsed = std::time::SystemTime::now()
+                    let elapsed = web_time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_millis() as u64)
                         .unwrap_or(0);

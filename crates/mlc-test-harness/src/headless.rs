@@ -18,7 +18,8 @@
 //! - Foundation for an eventual backend/CLI binary.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use mlc_app::ChartApp;
 use mlc_core::state::ChartId;

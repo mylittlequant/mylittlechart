@@ -404,7 +404,7 @@ pub fn migrate_legacy_profile_if_needed() -> Result<bool, String> {
 /// Does NOT switch the active profile.
 pub fn create_profile(name: &str, avatar: &str) -> Result<ProfileMeta, String> {
     let id = uuid::Uuid::new_v4().to_string();
-    let now = std::time::SystemTime::now()
+    let now = web_time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64;

@@ -9,6 +9,7 @@ name = "mylittlechart"
 path = "src/main.rs"
 
 [dependencies]
+web-time = "1"
 mlc-diagnostics = { path = "../mlc-diagnostics", package = "mylittlechart-diagnostics" }
 mlc-app = { path = "../mlc-app", package = "mylittlechart-app" }
 mlc-sidebar-content = { path = "../mlc-sidebar-content", package = "mylittlechart-sidebar-content" }

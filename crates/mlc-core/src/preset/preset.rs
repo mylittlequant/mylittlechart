@@ -5,7 +5,7 @@
 //! The [`crate::preset::storage`] module handles reading/writing presets to disk.
 
 use serde::{Deserialize, Serialize};
-use std::time::SystemTime;
+use web_time::SystemTime;
 
 use super::snapshots::{ChartWindowSnapshot, DataBubbleSnapshot, IndicatorSnapshot};
 use mlc_alerts::AlertItem;

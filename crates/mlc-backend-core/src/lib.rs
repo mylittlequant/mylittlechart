@@ -1541,7 +1541,8 @@ impl BackendCore {
 /// in-process. Not a security-grade RNG; never use for crypto.
 fn rand_u64() -> u64 {
     use std::cell::Cell;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use web_time::SystemTime;
+    use std::time::UNIX_EPOCH;
     thread_local! {
         static STATE: Cell<u64> = Cell::new(0);
     }

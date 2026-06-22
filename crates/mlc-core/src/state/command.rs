@@ -160,7 +160,7 @@ pub struct ObjectInfo {
 impl ObjectInfo {
     /// Create a new object info
     pub fn new(id: u64, name: &str, category: ObjectCategory) -> Self {
-        let now = std::time::SystemTime::now()
+        let now = web_time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);

@@ -613,7 +613,7 @@ fn render_page3_recovery(
 
     // Copy Key button — shows "Copied!" feedback for 2 seconds after click
     let is_copy_hovered = hovered == Some("wizard_copy_key");
-    let now_ms = std::time::SystemTime::now()
+    let now_ms = web_time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);

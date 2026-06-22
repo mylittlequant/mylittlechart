@@ -3941,7 +3941,7 @@ impl ChartApp {
                     // Reset counters and clear stale dirty flags when mode changes.
                     self.recalc_count = 0;
                     self.trade_count = 0;
-                    self.recalc_log_timer = std::time::Instant::now();
+                    self.recalc_log_timer = web_time::Instant::now();
                     self.core.indicators_mut().clear_pending();
                     eprintln!("[ChartApp] user_settings recalc_mode set to: {}", mode_str);
                 }
@@ -4144,7 +4144,7 @@ impl ChartApp {
                     if let Some(ref key) = self.panel_app.user_settings_state.recovery_key_display {
                         self.clipboard_text = Some(key.clone());
                         self.panel_app.user_settings_state.recovery_key_copied_at =
-                            std::time::SystemTime::now()
+                            web_time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .map(|d| d.as_millis() as u64)
                                 .unwrap_or(0);

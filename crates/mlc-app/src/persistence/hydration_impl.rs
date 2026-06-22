@@ -25,15 +25,15 @@ impl ChartApp {
     pub(crate) fn apply_preset_cold(
         &mut self,
         mut preset: ChartPreset,
-        _lp_total: std::time::Instant,
+        _lp_total: web_time::Instant,
         lp_materialized_us: u128,
         lp_autosave_us: u128,
         lp_park_us: u128,
         lp_unpark_us: u128,
         lp_clone_us: u128,
     ) {
-                    let lp_cold_start = std::time::Instant::now();
-                    let _t_prep = std::time::Instant::now();
+                    let lp_cold_start = web_time::Instant::now();
+                    let _t_prep = web_time::Instant::now();
                     // Recovery: preset files written by the startup-autosave bug
                     // carry empty symbol/exchange. Resurrect them with the
                     // standard default instead of an eternally-loading empty
@@ -62,7 +62,7 @@ impl ChartApp {
                     // Used after the preset is loaded to unsubscribe stale trade actors.
                     // ----------------------------------------------------------------
                     // Phase 4 S2.7.1c: read via branch_meta (B1 flip).
-                    let _t_old_subs = std::time::Instant::now();
+                    let _t_old_subs = web_time::Instant::now();
                     let old_subscriptions: std::collections::HashSet<(digdigdig3::ExchangeId, String)> = self
                         .panel_app
                         .panel_grid
@@ -82,7 +82,7 @@ impl ChartApp {
                     // Falls back to in-place window patching for old presets without.
                     // ----------------------------------------------------------------
 
-                    let _t_layout = std::time::Instant::now();
+                    let _t_layout = web_time::Instant::now();
                     let layout_restored = if !preset.layout.is_null() {
                         match serde_json::from_value::<uzor::panels::serialize::LayoutSnapshot>(preset.layout.clone()) {
                             Ok(layout_snap) => {
@@ -503,7 +503,7 @@ impl ChartApp {
                     // ----------------------------------------------------------------
                     // Step 5: Restore TagManager (sync groups)
                     // ----------------------------------------------------------------
-                    let _t_bubbles = std::time::Instant::now();
+                    let _t_bubbles = web_time::Instant::now();
                     self.core.bubble_mut().bubble.clear();
                     for sg_snap in &preset.bubbles {
                         let mut group = mlc_core::tag_manager::BubbleStore::group_from_snapshot(sg_snap);
@@ -545,7 +545,7 @@ impl ChartApp {
                     // that all groups are fully reconstructed.  Windows whose group_id
                     // is set but the group has no entry yet keep their own private Arc
                     // (fresh HashMap) as a safe fallback.
-                    let _t_rebind = std::time::Instant::now();
+                    let _t_rebind = web_time::Instant::now();
                     {
                         // Collect (chart_id, group_id) pairs without holding borrow.
                         let rebind_info: Vec<(mlc_core::ChartId, mlc_core::tag_manager::BubbleId)> =
@@ -574,7 +574,7 @@ impl ChartApp {
 
                     // Bump BubbleId counter past any restored bubble IDs so
                     // future create_group / create_group_auto calls never collide.
-                    let _t_seed_ids = std::time::Instant::now();
+                    let _t_seed_ids = web_time::Instant::now();
                     for sg_snap in &preset.bubbles {
                         mlc_core::tag_manager::BubbleId::bump_past(sg_snap.id);
                     }
@@ -675,7 +675,7 @@ impl ChartApp {
 
                     // Step 5b: If no sync groups exist but windows do, auto-create
                     // a default group so primitives always use the grouped path.
-                    let _t_orphans = std::time::Instant::now();
+                    let _t_orphans = web_time::Instant::now();
                     if preset.bubbles.is_empty() && !self.panel_app.panel_grid.containers().is_empty() {
                         // Auto groups get transparent color  -  never occupy palette slots
                         let Some((_, first_win)) = self.panel_app.panel_grid.iter_containers().next() else {
@@ -779,7 +779,7 @@ impl ChartApp {
                     // ----------------------------------------------------------------
                     // Step 6: Restore indicators
                     // ----------------------------------------------------------------
-                    let _t_indicators = std::time::Instant::now();
+                    let _t_indicators = web_time::Instant::now();
                     self.core.indicators_mut().clear_all();
                     // Re-arm the one-shot indicator heal (tick.rs): restored
                     // instances reuse ids from the previous preset.
@@ -836,7 +836,7 @@ impl ChartApp {
                     // Collect (symbol, window_id, bars) first to avoid a split borrow of
                     // `self` (panel_grid vs indicator_manager both live on `self`).
                     // ----------------------------------------------------------------
-                    let _t_recalc = std::time::Instant::now();
+                    let _t_recalc = web_time::Instant::now();
                     let window_bar_data: Vec<(u64, mlc_core::state::ChartId)> = self
                         .panel_app
                         .panel_grid
@@ -857,7 +857,7 @@ impl ChartApp {
                     // ordering for application on the next
                     // sync_sub_panes_from_manager() call.
                     // ----------------------------------------------------------------
-                    let _t_sub_panes = std::time::Instant::now();
+                    let _t_sub_panes = web_time::Instant::now();
                     self.pending_sub_pane_ratios.clear();
                     self.pending_sub_pane_above_main.clear();
                     self.pending_sub_pane_order.clear();
@@ -891,7 +891,7 @@ impl ChartApp {
                     // ----------------------------------------------------------------
                     // Step 7: Clear stale per-leaf UI state
                     // ----------------------------------------------------------------
-                    let _t_leaf_tags = std::time::Instant::now();
+                    let _t_leaf_tags = web_time::Instant::now();
                     self.panel_app.indicator_overlay_states.clear();
                     self.panel_app.leaf_color_tags.clear();
 
@@ -909,7 +909,7 @@ impl ChartApp {
                     // ----------------------------------------------------------------
                     // Step 8: Restore alerts
                     // ----------------------------------------------------------------
-                    let _t_alerts = std::time::Instant::now();
+                    let _t_alerts = web_time::Instant::now();
                     self.core.bubble_mut().alert.restore(preset.alerts.clone());
                     eprintln!("[ChartApp] restored {} alerts", self.core.bubble().alert.len());
                     let alerts_us = _t_alerts.elapsed().as_micros();
@@ -917,7 +917,7 @@ impl ChartApp {
                     // Step 8b: Restore per-slot Panel docking layouts.
                     // Pre-populate the store with panel state so the closure
                     // can construct the matching `Panel` variants.
-                    let _t_slots = std::time::Instant::now();
+                    let _t_slots = web_time::Instant::now();
                     {
                         // Determine max panel_id across ALL slots to update next_id.
                         let max_panel_id: u64 = preset.slot_leaves.iter()
@@ -1268,7 +1268,7 @@ impl ChartApp {
                     // (DOM, L2Tape, LiquidityHeatmap).  For Fixed sources we use the
                     // stored exchange string; for HyperFocus/BoundToChart we fall back
                     // to the active exchange and Spot account type.
-                    let _t_depth_subs = std::time::Instant::now();
+                    let _t_depth_subs = web_time::Instant::now();
                     {
                         // Build a deduplicated list of (exchange_id, symbol, account_type)
                         // tuples that need depth subscriptions.
@@ -1335,7 +1335,7 @@ impl ChartApp {
                     // that appear in both old and new presets are not disrupted.
                     // ----------------------------------------------------------------
                     // Phase 4 S2.7.1c: read via branch_meta (B1 flip).
-                    let _t_unsubs = std::time::Instant::now();
+                    let _t_unsubs = web_time::Instant::now();
                     let new_subscriptions: std::collections::HashSet<(digdigdig3::ExchangeId, String)> = self
                         .panel_app
                         .panel_grid
@@ -1363,7 +1363,7 @@ impl ChartApp {
                     // but at runtime (tab-bar switch) only this handler runs, so we must
                     // trigger the fetches here.
                     // ----------------------------------------------------------------
-                    let _t_request_bars = std::time::Instant::now();
+                    let _t_request_bars = web_time::Instant::now();
                     let bar_count = self.panel_app.user_manager.profile.bar_count as usize;
                     let mut bars_requested: usize = 0;
                     // Phase 4 S2.7.1c: read via branch_meta (B6 tuple-collect flip).
@@ -1403,7 +1403,7 @@ impl ChartApp {
                     // have no entry in panels_store after Step 8b. Leaving them
                     // in group.members + member_to_group leaks zombie references
                     // that mis-route propagate_* / apply_key_to_panels_in_group.
-                    let _t_orphan_prune = std::time::Instant::now();
+                    let _t_orphan_prune = web_time::Instant::now();
                     {
                         use mlc_core::tag_manager::SyncMemberId;
                         use mlc_core::state::PanelId;

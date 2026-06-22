@@ -5,7 +5,7 @@ use vello::wgpu;
 
 /// Get current time as milliseconds since Unix epoch
 pub(crate) fn now_ms() -> u64 {
-    std::time::SystemTime::now()
+    web_time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
@@ -15,7 +15,8 @@ pub(crate) fn now_ms() -> u64 {
 ///
 /// Uses `SystemTime` to avoid pulling in the `chrono` crate.
 pub(crate) fn timestamp_for_filename() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use web_time::SystemTime;
+    use std::time::UNIX_EPOCH;
 
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)

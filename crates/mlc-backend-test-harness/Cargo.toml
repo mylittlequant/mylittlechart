@@ -8,6 +8,7 @@ description = "Test harness for mlc-backend-core + mlc-backend-daemon + mlc-agen
 name = "mlc_backend_test_harness"
 
 [dependencies]
+web-time = "1"
 mlc-backend-core = { path = "../mlc-backend-core", package = "mylittlechart-backend-core" }
 mlc-live-data = { path = "../mlc-live-data", package = "mylittlechart-live-data" }
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }

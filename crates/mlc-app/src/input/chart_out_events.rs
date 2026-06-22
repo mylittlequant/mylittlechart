@@ -15,7 +15,7 @@ impl ChartApp {
         if self.pending_cure_after_preset_load.is_empty() { return; }
         let work = std::mem::take(&mut self.pending_cure_after_preset_load);
         let bar_count = self.panel_app.user_manager.profile.bar_count as usize;
-        let drain_t0 = std::time::Instant::now();
+        let drain_t0 = web_time::Instant::now();
         let n = work.len();
         for (eid, sym, tf, at, force) in work {
             self.core.bridge.ensure_connector(eid);
@@ -93,12 +93,12 @@ impl ChartApp {
             return false;
         }
 
-        let t0 = std::time::Instant::now();
+        let t0 = web_time::Instant::now();
         // 1. Park current active into live_preset_cache.
         self.park_active_preset(&active);
         // 2. Cold-apply the target preset into the now-placeholder slot.
         //    Use synthetic zero timings — these are diagnostic-only logs.
-        let lp_total = std::time::Instant::now();
+        let lp_total = web_time::Instant::now();
         self.panel_app.active_preset_id = target_id.clone();
         self.apply_preset_cold(preset, lp_total, 0, 0, 0, 0, 0);
         // 3. Park target into live_preset_cache.
@@ -1229,7 +1229,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::LoadPreset { id } => {
-                let _lp_total = std::time::Instant::now();
+                let _lp_total = web_time::Instant::now();
                 eprintln!("[ChartApp] load preset: {}", id);
                 let prev_id = self.panel_app.active_preset_id.clone();
 
@@ -1240,7 +1240,7 @@ impl ChartApp {
                 // membership yet. Treating it as a no-op both skipped the real
                 // restore (eternal "Loading...", empty toolbar) and let the
                 // trailing autosave bake the EMPTY state into the preset file.
-                let _lp_t_materialized = std::time::Instant::now();
+                let _lp_t_materialized = web_time::Instant::now();
                 let already_materialized = self
                     .panel_app
                     .panel_grid
@@ -1265,7 +1265,7 @@ impl ChartApp {
                 // target_id != active_id check in flush_pending_autosave will
                 // intentionally skip. We need the outgoing preset persisted
                 // RIGHT NOW with the still-materialised outgoing panel_grid.
-                let _lp_t_autosave = std::time::Instant::now();
+                let _lp_t_autosave = web_time::Instant::now();
                 if !prev_id.is_empty() && prev_id != "__default__" && already_materialized {
                     let prev_name = self.core.presets().get(&prev_id)
                         .map(|p| p.name.clone())
@@ -1288,7 +1288,7 @@ impl ChartApp {
                 // state. Parking the startup placeholder under the SAME id we
                 // are about to load would make unpark return the placeholder
                 // and skip the cold restore entirely.
-                let _lp_t_park = std::time::Instant::now();
+                let _lp_t_park = web_time::Instant::now();
                 if !prev_id.is_empty() && already_materialized {
                     self.park_active_preset(&prev_id);
                 }
@@ -1298,13 +1298,13 @@ impl ChartApp {
                 self.persist_profile();
 
                 // Warm path: live cache hit  -  zero-flicker switch.
-                let _lp_t_unpark = std::time::Instant::now();
+                let _lp_t_unpark = web_time::Instant::now();
                 let unpark_hit = self.unpark_preset(&id);
                 let lp_unpark_us = _lp_t_unpark.elapsed().as_micros();
                 if unpark_hit {
                     eprintln!("[ChartApp] LoadPreset '{}': live cache hit  -  zero-flicker switch (materialized={}us autosave={}us park={}us unpark={}us)",
                         id, lp_materialized_us, lp_autosave_us, lp_park_us, lp_unpark_us);
-                    let _lp_t_cure = std::time::Instant::now();
+                    let _lp_t_cure = web_time::Instant::now();
 
                     // Per-window cure: only force=true when the unparked window
                     // came back EMPTY (bars never reached it before the park, or
@@ -1370,7 +1370,7 @@ impl ChartApp {
                     self.sidebar_data_dirty = true;
                     state_mutated = true;
                 } else {
-                    let _lp_t_clone = std::time::Instant::now();
+                    let _lp_t_clone = web_time::Instant::now();
                     let preset_opt = self.core.presets().get(&id).cloned();
                     let lp_clone_us = _lp_t_clone.elapsed().as_micros();
                     if let Some(preset) = preset_opt {
@@ -1389,11 +1389,11 @@ impl ChartApp {
                         // leak to disk under the new `active_preset_id`.
                         self.load_state = crate::persistence::LoadState::Loading {
                             target_id: id.clone(),
-                            started_at: std::time::Instant::now(),
+                            started_at: web_time::Instant::now(),
                         };
                         self.pending_cold_apply = Some(crate::PendingColdApply {
                             preset,
-                            stashed_at: std::time::Instant::now(),
+                            stashed_at: web_time::Instant::now(),
                             timings: crate::ColdApplyTimings {
                                 lp_total: _lp_total,
                                 lp_materialized_us,

@@ -20,7 +20,8 @@ use mlc_backend_core::AppSession;
 use crate::AppState;
 
 fn wall_clock_ms() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use web_time::SystemTime;
+    use std::time::UNIX_EPOCH;
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)

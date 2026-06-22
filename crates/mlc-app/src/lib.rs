@@ -194,7 +194,7 @@ pub use mlc_backend_core::MiniTickerData;
 /// There is no sync bridge — with only one window the state flows directly.
 pub struct PendingColdApply {
     pub preset: mlc_core::preset::preset::ChartPreset,
-    pub stashed_at: std::time::Instant,
+    pub stashed_at: web_time::Instant,
     /// Timers carried from the synchronous portion of the `LoadPreset`
     /// handler (warm-check / autosave / park / unpark / clone), forwarded
     /// to `apply_preset_cold` so the trailing log line keeps measuring
@@ -204,7 +204,7 @@ pub struct PendingColdApply {
 
 #[derive(Debug, Clone, Copy)]
 pub struct ColdApplyTimings {
-    pub lp_total: std::time::Instant,
+    pub lp_total: web_time::Instant,
     pub lp_materialized_us: u128,
     pub lp_autosave_us: u128,
     pub lp_park_us: u128,
@@ -560,7 +560,7 @@ pub struct ChartApp {
     recalc_count: u32,
 
     /// Timer controlling the periodic RecalcMode diagnostic log (every 5 s).
-    recalc_log_timer: std::time::Instant,
+    recalc_log_timer: web_time::Instant,
 
     /// Number of TradeUpdate events received since the last log flush.
     trade_count: u32,
@@ -583,7 +583,7 @@ pub struct ChartApp {
     /// Wall-clock of the last `sidebar_data_dirty = true` bump triggered by
     /// a MiniTickerUpdated event. Used by the rate-limit in tick.rs so the
     /// watchlist refreshes ~4 Hz instead of once per per-symbol tick.
-    pub sidebar_ticker_mark: Option<std::time::Instant>,
+    pub sidebar_ticker_mark: Option<web_time::Instant>,
 
     /// Tracks the last active leaf so we can detect leaf switches and
     /// mark sidebar_data_dirty automatically.
@@ -1155,7 +1155,7 @@ impl ChartApp {
             needs_initial_viewport_fit: false,
             core,
             active_exchange: digdigdig3::ExchangeId::Binance,
-            window_id: format!("win_{}", std::time::SystemTime::now()
+            window_id: format!("win_{}", web_time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis()),
@@ -1190,7 +1190,7 @@ impl ChartApp {
             background_warm_seeded: false,
             lag_event_count: 0,
             recalc_count: 0,
-            recalc_log_timer: std::time::Instant::now(),
+            recalc_log_timer: web_time::Instant::now(),
             trade_count: 0,
             diagnostics_enabled: false,
             sidebar_data_dirty: true,
@@ -1509,7 +1509,7 @@ impl ChartApp {
             active_exchange: digdigdig3::ExchangeId::Binance,
             window_id: format!(
                 "win_{}",
-                std::time::SystemTime::now()
+                web_time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_millis()
@@ -1545,7 +1545,7 @@ impl ChartApp {
             background_warm_seeded: false,
             lag_event_count: 0,
             recalc_count: 0,
-            recalc_log_timer: std::time::Instant::now(),
+            recalc_log_timer: web_time::Instant::now(),
             trade_count: 0,
             diagnostics_enabled: false,
             sidebar_data_dirty: true,
@@ -1793,7 +1793,7 @@ impl ChartApp {
             background_warm_seeded: false,
             lag_event_count: 0,
             recalc_count: 0,
-            recalc_log_timer: std::time::Instant::now(),
+            recalc_log_timer: web_time::Instant::now(),
             trade_count: 0,
             diagnostics_enabled: false,
             sidebar_data_dirty: true,
@@ -1962,7 +1962,7 @@ impl ChartApp {
                 // The total here is what "first chart shows up after
                 // launch" effectively waits on (modulo the parallel
                 // skeleton render on the main thread).
-                let _t_nw_cold = std::time::Instant::now();
+                let _t_nw_cold = web_time::Instant::now();
                 // Restore from saved preset.
                 if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
                     window.data_provider = data_provider.clone();
@@ -1970,7 +1970,7 @@ impl ChartApp {
                 }
                 app.panel_app.toolbar_config = ToolbarConfig::standalone();
 
-                let _t_nw_load = std::time::Instant::now();
+                let _t_nw_load = web_time::Instant::now();
                 let preset_id = app.panel_app.active_preset_id.clone();
                 // Clear active_preset_id so LoadPreset doesn't skip with
                 // "already active" — the constructor set it above, but the
@@ -2026,7 +2026,7 @@ impl ChartApp {
                         .unwrap_or(digdigdig3::ExchangeId::Binance);
                 }
 
-                let _t_nw_reqbars = std::time::Instant::now();
+                let _t_nw_reqbars = web_time::Instant::now();
                 let mut nw_reqbars_n: usize = 0;
                 for (sym, exch, tf, at_label) in &window_data {
                     let eid = digdigdig3::ExchangeId::from_str(&exch)
@@ -2060,7 +2060,7 @@ impl ChartApp {
                 // the promote-to-chart transition.
             } else {
                 // Fresh state — Binance default.
-                let _t_nw_fresh = std::time::Instant::now();
+                let _t_nw_fresh = web_time::Instant::now();
                 // Phase 4 B: capture chart_id BEFORE the mutating block.
                 let active_chart_id = app.panel_app.panel_grid.active_container_id();
                 let active_pid_init3 = app.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
@@ -2966,7 +2966,7 @@ impl ChartApp {
     /// re-emitted into `ctx`.  Instead, hit zones are re-registered from the
     /// cached `self.last_toolbar_result` so input routing remains correct.
     pub fn render_to_scene(&mut self, ctx: &mut dyn RenderContext, _current_time_ms: u64, skip_toolbar_draw: bool) -> RenderOutput {
-        let _rt0 = std::time::Instant::now();
+        let _rt0 = web_time::Instant::now();
         let w = self.width as f64;
         let h = self.height as f64;
 
@@ -3025,7 +3025,7 @@ impl ChartApp {
         // Loading-spinner geometry per leaf for the host renderer to composite as overlay.
         let mut out_loading_spinners: Vec<(mlc_core::LeafId, (f64, f64, f64))> = Vec::new();
 
-        let _rt1 = std::time::Instant::now(); // checkpoint: before chart render
+        let _rt1 = web_time::Instant::now(); // checkpoint: before chart render
         let frame_theme = self.panel_app.frame_theme_for_render();
         let leaf_tab_toolbar_theme = self.panel_app.toolbar_theme_for_render();
         // main_chart_y is set in the single-window branch below; used by the
@@ -4104,7 +4104,7 @@ impl ChartApp {
             single_map
         };
         let out_scale_corner_zones = corner_zones;
-        let _rt2 = std::time::Instant::now(); // checkpoint: after chart render
+        let _rt2 = web_time::Instant::now(); // checkpoint: after chart render
         // Build selected primitive config for the inline config toolbar.
         //
         // DrawingManager::get_selected_config() reads the primitive registry and
@@ -4119,7 +4119,7 @@ impl ChartApp {
 
         // Generate clock time from active window's timezone settings
         let clock_time = {
-            let utc_secs = std::time::SystemTime::now()
+            let utc_secs = web_time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0);
@@ -4515,7 +4515,7 @@ impl ChartApp {
             }
         }
 
-        let _rt3 = std::time::Instant::now(); // checkpoint: after toolbars
+        let _rt3 = web_time::Instant::now(); // checkpoint: after toolbars
 
         // 5. Modals are NO LONGER drawn here.
         // They are drawn in render_modal_layer(), called by the VelloGpu compositor
@@ -4742,7 +4742,7 @@ impl ChartApp {
         // which eliminates the one-frame lag and does not depend on which layers
         // registered before vs after end_frame. end_frame stays here (baseline
         // cadence: once per render pass) purely for response dispatch.
-        let _rt4 = std::time::Instant::now(); // checkpoint: after sidebar + modals
+        let _rt4 = web_time::Instant::now(); // checkpoint: after sidebar + modals
         let out_render_timing_us = (
             _rt2.duration_since(_rt1).as_micros() as u64, // chart
             _rt3.duration_since(_rt2).as_micros() as u64, // toolbar
@@ -4984,7 +4984,7 @@ impl ChartApp {
         };
 
         let clock_time = {
-            let utc_secs = std::time::SystemTime::now()
+            let utc_secs = web_time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0);
@@ -5064,7 +5064,7 @@ impl ChartApp {
         // but render_sidebar_only() skips prepare_frame so we must do it here.
         let chat_id = WidgetId::from(text_input::AGENT_CHAT);
         if self.input_coordinator.borrow().text_fields().is_focused(&chat_id) {
-            let now_ms = std::time::SystemTime::now()
+            let now_ms = web_time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64;

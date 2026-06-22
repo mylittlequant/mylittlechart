@@ -34,7 +34,7 @@ pub(crate) fn submit_window_gpu(pw: &mut PerWindowState, render_cx: &RenderConte
 
     let base_color = vello::peniko::color::AlphaColor::from_rgba8(0x13, 0x17, 0x22, 0xff);
 
-    let t0 = std::time::Instant::now();
+    let t0 = web_time::Instant::now();
 
     pw.renderer
         .render_to_texture(
@@ -154,7 +154,7 @@ pub(crate) fn submit_window_gpu(pw: &mut PerWindowState, render_cx: &RenderConte
     }
 
     // Present
-    let present_t0 = std::time::Instant::now();
+    let present_t0 = web_time::Instant::now();
     let surface_texture = match pw.surface.surface.get_current_texture() {
         vello::wgpu::CurrentSurfaceTexture::Success(t)    => t,
         vello::wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
@@ -206,7 +206,7 @@ pub(crate) fn submit_window_gpu_from_gpu_scene(
     let device = &render_cx.devices[dev_id].device;
     let queue = &render_cx.devices[dev_id].queue;
 
-    let t0 = std::time::Instant::now();
+    let t0 = web_time::Instant::now();
 
     use mlc_sidebar_content::state::RenderBackend as RB;
     let is_vello_gpu = pw.render_backend == RB::VelloGpu;
@@ -362,7 +362,7 @@ pub(crate) fn submit_window_gpu_from_gpu_scene(
     }
 
     // Present
-    let present_t0 = std::time::Instant::now();
+    let present_t0 = web_time::Instant::now();
     let surface_texture = match pw.surface.surface.get_current_texture() {
         vello::wgpu::CurrentSurfaceTexture::Success(t)    => t,
         vello::wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,

@@ -8,7 +8,8 @@
 //! (i.e. `AgentState::with_core` was never called).
 
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use web_time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 use axum::{
     extract::{Path, State},

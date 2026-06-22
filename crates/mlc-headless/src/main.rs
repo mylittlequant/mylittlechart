@@ -30,7 +30,8 @@
 //! "not supported"), GPU-rendered scenes.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use mlc_app::ChartApp;
 use mlc_agentic_server::AgentState;

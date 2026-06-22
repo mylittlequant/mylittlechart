@@ -7,6 +7,7 @@ edition = "2021"
 name = "mlc_app"
 
 [dependencies]
+web-time = "1"
 mlc-backend-core = { path = "../mlc-backend-core", package = "mylittlechart-backend-core" }
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 mlc-layout = { path = "../mlc-layout", package = "mylittlechart-layout" }
