@@ -22,7 +22,7 @@
 //!
 //! // Create the bridge (one per application). Bars, trades, and orderbooks
 //! // live in dig3-station rings / OrderBookTracker; the bridge manages them.
-//! let (bridge, mut rx, _ready_rx) = DataBridge::new();
+//! let (bridge, mut rx, _ready_rx) = DataBridge::new().await;
 //! let bridge = Arc::new(bridge);
 //!
 //! // Start a connector (non-blocking)

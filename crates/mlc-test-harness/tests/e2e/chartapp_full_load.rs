@@ -84,8 +84,13 @@ fn add_chart_plus_phantom(
 
 #[test]
 fn four_tabs_same_instrument_all_bubbles_get_bars_after_tick() {
-    // 1. Spin up a real DataBridge (real tokio runtime, no network requests).
-    let (bridge, _initial_rx, _connector_ready_rx) = DataBridge::new();
+    // 1. Spin up a real DataBridge. DataBridge::new() is async; use a one-shot
+    //    current-thread runtime to drive the construction.
+    let _bridge_rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio rt");
+    let (bridge, _initial_rx, _connector_ready_rx) = _bridge_rt.block_on(DataBridge::new());
     let bridge = Arc::new(bridge);
     let tx = bridge.debug_broadcast_tx();
 
@@ -134,7 +139,11 @@ fn live_bug_repro_chart_with_phantom_bubble_still_gets_bars() {
     // to one auto-bubble, plus a separate phantom bubble holding the matching
     // instrument identity. The old singular `bubble_for_instrument` path
     // would write into the phantom and leave the renderer's bubble empty.
-    let (bridge, _initial_rx, _connector_ready_rx) = DataBridge::new();
+    let _bridge_rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio rt");
+    let (bridge, _initial_rx, _connector_ready_rx) = _bridge_rt.block_on(DataBridge::new());
     let bridge = Arc::new(bridge);
     let tx = bridge.debug_broadcast_tx();
 
@@ -164,7 +173,11 @@ fn live_bug_repro_chart_with_phantom_bubble_still_gets_bars() {
 
 #[test]
 fn bars_loaded_for_different_instrument_does_not_pollute_eth_tab() {
-    let (bridge, _initial_rx, _connector_ready_rx) = DataBridge::new();
+    let _bridge_rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio rt");
+    let (bridge, _initial_rx, _connector_ready_rx) = _bridge_rt.block_on(DataBridge::new());
     let bridge = Arc::new(bridge);
     let tx = bridge.debug_broadcast_tx();
 

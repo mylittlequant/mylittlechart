@@ -661,7 +661,7 @@ pub struct ChartApp {
     /// Set to `true` after `autostart_all` has been called once.
     ///
     /// The autostart fires on the first frame of the event loop so that a
-    /// Tokio runtime is guaranteed to be available via `bridge.runtime()`.
+    /// Tokio runtime is guaranteed to be available via `core.native_rt()`.
     pub agent_autostarted: bool,
 
     // ── Leak / backpressure diagnostics (snapshotted each tick) ──────────────
@@ -1096,18 +1096,33 @@ impl ChartApp {
     /// Connects to Binance as the default exchange. Bars are requested
     /// asynchronously and fed into the chart window once they arrive.
     pub fn new(symbol: &str) -> Self {
-        // Create DataBridge eagerly — always live, no demo fallback.
-        // The third value is a ConnectorReady mpsc receiver used by the
-        // chart-app-vello App struct; here it is dropped since ChartApp::tick()
-        // receives ConnectorReady via the broadcast channel directly.
-        let (bridge, _first_rx, _connector_ready_rx) = DataBridge::new();
+        // Build a dedicated multi-thread runtime that owns all bridge background
+        // tasks. Kept alive for the lifetime of the returned ChartApp (via
+        // BackendCore::new_with_runtime) so subscriptions continue running.
+        //
+        // DataBridge::new() is async; we block_on it here so ChartApp::new
+        // remains a sync constructor, compatible with winit / immediate-mode callers.
+        let rt = std::sync::Arc::new(
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(4)
+                .thread_name("mlc-chart")
+                .enable_all()
+                .build()
+                .expect("failed to build tokio runtime for ChartApp"),
+        );
+        let rt_handle = rt.handle().clone();
+        let (bridge, _first_rx, _connector_ready_rx) = rt.block_on(DataBridge::new());
         let bridge = std::sync::Arc::new(bridge);
         // _first_rx is the broadcast::Receiver from DataBridge::new(). BackendCore::new
         // calls bridge.add_listener() internally, so _first_rx is dropped here.
         let trading = mlc_trading_manager::TradingManager::new(
             bridge.clone(),
             std::path::PathBuf::from("."),
+            rt_handle,
         ).ok();
+        #[cfg(not(target_arch = "wasm32"))]
+        let core = mlc_backend_core::BackendCore::new_with_runtime(bridge.clone(), trading, rt);
+        #[cfg(target_arch = "wasm32")]
         let core = mlc_backend_core::BackendCore::new(bridge.clone(), trading);
 
         let mut app = Self {
@@ -4812,7 +4827,9 @@ impl ChartApp {
                     if desc.mode == gate4agent::InstanceMode::Pty {
                         let cols = ((rect.width / 7.0) as u16).max(1);
                         let rows = ((rect.height / 19.0) as u16).max(1);
-                        self.core.bridge.runtime().block_on(self.agent.resize_instance(desc.instance_id, cols, rows));
+                        if let Some(rt) = self.core.native_rt() {
+                            rt.block_on(self.agent.resize_instance(desc.instance_id, cols, rows));
+                        }
                     }
                 }
             }
@@ -5291,7 +5308,9 @@ impl ChartApp {
                     if desc.mode == gate4agent::InstanceMode::Pty {
                         let cols = ((rect.width / 7.0) as u16).max(1);
                         let rows = ((rect.height / 19.0) as u16).max(1);
-                        self.core.bridge.runtime().block_on(self.agent.resize_instance(desc.instance_id, cols, rows));
+                        if let Some(rt) = self.core.native_rt() {
+                            rt.block_on(self.agent.resize_instance(desc.instance_id, cols, rows));
+                        }
                     }
                 }
             }

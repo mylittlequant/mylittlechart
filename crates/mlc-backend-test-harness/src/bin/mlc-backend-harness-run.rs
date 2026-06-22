@@ -2,10 +2,10 @@
 //! pass/fail report. Exit code 0 = all green, 1 = at least one failure.
 //!
 //! IMPORTANT: this runner uses a **synchronous** `main` because
-//! `DataBridge::new()` itself spins a private tokio runtime via `block_on`,
-//! and nesting that inside `#[tokio::main]` panics ("Cannot start a runtime
-//! from within a runtime"). The async scenarios drive their own short-lived
-//! runtime, separate from the bridge's.
+//! `BackendHarness::fresh()` builds a one-shot current-thread runtime to
+//! drive `DataBridge::new()`. Nesting that inside `#[tokio::main]` panics
+//! ("Cannot start a runtime from within a runtime"). The async scenarios
+//! drive their own separate short-lived runtime for HTTP work.
 
 use mlc_backend_test_harness::scenarios;
 
@@ -31,11 +31,9 @@ fn main() {
 
     println!();
     println!("-- async scenarios --");
-    // CRITICAL: BackendHarness::fresh() internally constructs DataBridge,
-    // which itself calls `Runtime::new()` via block_on. That panics if it
-    // runs inside another tokio runtime. So: build harnesses HERE (sync
-    // context), then hand them off to a dedicated runtime that only does
-    // HTTP work.
+    // CRITICAL: BackendHarness::fresh() builds a one-shot current-thread
+    // runtime to drive DataBridge::new(). Build harnesses HERE in the sync
+    // context, then hand them off to a dedicated runtime for HTTP work.
     let harness_a = mlc_backend_test_harness::BackendHarness::fresh();
 
     let http_rt = match tokio::runtime::Builder::new_multi_thread()

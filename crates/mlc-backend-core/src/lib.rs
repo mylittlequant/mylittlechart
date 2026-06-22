@@ -728,6 +728,18 @@ pub struct BackendCore {
     /// In single-threaded embedded mode lock contention is zero — guards are
     /// taken and released within each logical frame / input handler arm.
     pub drawings: std::sync::RwLock<DrawingRegistry>,
+
+    /// Optional tokio `Runtime` for native entry points that need to call
+    /// `block_on` from sync input handlers (gate4agent PTY ops).
+    ///
+    /// `None` when the backend is constructed without a pre-built runtime
+    /// (e.g. headless, daemon — those callers never invoke gate4agent).
+    /// `Some` when constructed via [`BackendCore::new_with_runtime`].
+    ///
+    /// Wrapped in `RwLock` so the `Arc<BackendCore>` can be shared while
+    /// a one-time write sets this field at construction time.
+    #[cfg(not(target_arch = "wasm32"))]
+    native_rt: std::sync::RwLock<Option<Arc<tokio::runtime::Runtime>>>,
 }
 
 /// Registry of attached `AppSession`s. Shared across the agent server's
@@ -767,7 +779,33 @@ impl BackendCore {
             watchlist_manager: std::sync::RwLock::new(WatchlistManager::default()),
             sessions: std::sync::RwLock::new(SessionRegistry::default()),
             drawings: std::sync::RwLock::new(DrawingRegistry::new()),
+            #[cfg(not(target_arch = "wasm32"))]
+            native_rt: std::sync::RwLock::new(None),
         })
+    }
+
+    /// Construct a backend and immediately attach a native tokio `Runtime`.
+    ///
+    /// Use this from entry points that own a runtime and need gate4agent's
+    /// sync `block_on` calls to work (i.e. embedded `ChartApp` on native).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn new_with_runtime(
+        bridge: Arc<DataBridge>,
+        trading: Option<TradingManager>,
+        rt: Arc<tokio::runtime::Runtime>,
+    ) -> Arc<Self> {
+        let core = Self::new(bridge, trading);
+        *core.native_rt.write().expect("native_rt poisoned") = Some(rt);
+        core
+    }
+
+    /// Return a reference to the native tokio `Runtime`, if one was attached.
+    ///
+    /// Gate4agent input handlers call
+    /// `self.core.native_rt().unwrap().block_on(...)` on native.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn native_rt(&self) -> Option<Arc<tokio::runtime::Runtime>> {
+        self.native_rt.read().expect("native_rt poisoned").clone()
     }
 
     /// Register a new AppSession. Returns the freshly minted `app_id`.

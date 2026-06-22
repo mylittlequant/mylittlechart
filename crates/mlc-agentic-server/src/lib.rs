@@ -32,7 +32,7 @@ async fn track_access(
     next.run(req).await
 }
 
-/// Start the internal Agent API server on the given tokio runtime.
+/// Start the internal Agent API server on the given tokio runtime handle.
 ///
 /// All routes are merged into a single open Router. The listener is bound
 /// to `127.0.0.1` only, so the server is not reachable from the network.
@@ -41,7 +41,7 @@ async fn track_access(
 /// if needed.
 pub fn start_server(
     state: Arc<AgentState>,
-    runtime: &tokio::runtime::Runtime,
+    handle: &tokio::runtime::Handle,
     port: u16,
 ) -> tokio::task::JoinHandle<()> {
     let app: Router = Router::new()
@@ -64,7 +64,7 @@ pub fn start_server(
         ))
         .with_state(state);
 
-    runtime.spawn(async move {
+    handle.spawn(async move {
         let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
 
         // Prefer SO_REUSEADDR so a zombie socket left by process::exit(0) on

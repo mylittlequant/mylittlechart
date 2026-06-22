@@ -57,8 +57,8 @@ impl TradingManager {
     pub fn new(
         bridge: Arc<DataBridge>,
         data_dir: PathBuf,
+        runtime_handle: tokio::runtime::Handle,
     ) -> TradingResult<Self> {
-        let runtime_handle = bridge.runtime_handle();
         let config = TradingConfig::load(&data_dir.join("trading_config.json"))?;
         let snapshot = TradingSnapshot::new_shared();
         let (result_tx, result_rx) = std::sync::mpsc::sync_channel(256);

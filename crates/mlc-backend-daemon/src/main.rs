@@ -115,11 +115,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(DEFAULT_PORT);
 
-    // CRITICAL: construct DataBridge synchronously FIRST (owns its own tokio
-    // runtime; calling it from inside a #[tokio::main] async fn panics).
-    let (bridge, _live_rx, _connector_ready_rx) = DataBridge::new();
+    // Construct a dedicated multi-thread runtime for the DataBridge background
+    // tasks. DataBridge::new() is now async; we block_on it here before the
+    // HTTP runtime is created, so the two runtimes stay independent.
+    let bridge_rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_name("mlc-bridge")
+        .enable_all()
+        .build()?;
+    let (bridge, _live_rx, _connector_ready_rx) = bridge_rt.block_on(DataBridge::new());
+    // bridge_rt is kept alive by moving it into a local; drop order ensures
+    // bridge tasks outlive core.
     let bridge = Arc::new(bridge);
     let core = BackendCore::new(bridge.clone(), None);
+    // bridge_rt kept in scope until end of main so spawned bridge tasks live.
+    let _bridge_rt = bridge_rt;
 
     tracing::info!(target: "mlc-backend-daemon", "backend constructed, tick loop starting");
 

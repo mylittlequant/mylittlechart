@@ -773,7 +773,9 @@ impl ChartApp {
             if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
                 if let Some(desc) = self.sidebar_state.agent_leaves.remove(&leaf_id) {
                     let id = desc.instance_id;
-                    let _ = self.core.bridge.runtime().block_on(self.agent.stop_instance(id));
+                    if let Some(rt) = self.core.native_rt() {
+                        let _ = rt.block_on(self.agent.stop_instance(id));
+                    }
                 }
                 self.sidebar_state.agent_docking.inner_mut().tree_mut().remove_leaf(leaf_id);
                 self.sidebar_state.agent_pty_selections.remove(&leaf_id);
@@ -867,7 +869,9 @@ impl ChartApp {
                     let leaf_id = uzor::panels::LeafId(raw);
                     if let Some(desc) = self.sidebar_state.agent_leaves.remove(&leaf_id) {
                         let id = desc.instance_id;
-                        let _ = self.core.bridge.runtime().block_on(self.agent.stop_instance(id));
+                        if let Some(rt) = self.core.native_rt() {
+                            let _ = rt.block_on(self.agent.stop_instance(id));
+                        }
                     }
                     self.sidebar_state.agent_docking.inner_mut().tree_mut().remove_leaf(leaf_id);
                     self.sidebar_state.agent_pty_selections.remove(&leaf_id);
@@ -1078,13 +1082,15 @@ impl ChartApp {
                                     working_dir: desc.workdir.clone(),
                                     ..SessionConfig::default()
                                 };
-                                match self.core.bridge.runtime().block_on(self.agent.start_pty_instance(id, config)) {
-                                    Ok(()) => {
-                                        eprintln!("[ChartApp] agent:leaf:{:?}:start PTY started", leaf_id);
-                                        self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::AGENT_PTY);
-                                        self.agent_pty_hover_focused = true;
+                                if let Some(rt) = self.core.native_rt() {
+                                    match rt.block_on(self.agent.start_pty_instance(id, config)) {
+                                        Ok(()) => {
+                                            eprintln!("[ChartApp] agent:leaf:{:?}:start PTY started", leaf_id);
+                                            self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::AGENT_PTY);
+                                            self.agent_pty_hover_focused = true;
+                                        }
+                                        Err(e) => eprintln!("[ChartApp] start PTY error: {}", e),
                                     }
-                                    Err(e) => eprintln!("[ChartApp] start PTY error: {}", e),
                                 }
                             }
                             gate4agent::InstanceMode::Chat => {
@@ -1134,13 +1140,15 @@ impl ChartApp {
                         eprintln!("[gate4agent::chat] send button leaf={:?} len={}", leaf_id, text.len());
                         if !text.is_empty() {
                             let id = desc.instance_id;
-                            match self.core.bridge.runtime().block_on(self.agent.send_chat_instance(id, &text)) {
-                                Ok(()) => {
-                                    self.sidebar_state.agent_input_buffers.remove(&leaf_id);
-                                    self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, "");
-                                    eprintln!("[gate4agent::chat] send button OK");
+                            if let Some(rt) = self.core.native_rt() {
+                                match rt.block_on(self.agent.send_chat_instance(id, &text)) {
+                                    Ok(()) => {
+                                        self.sidebar_state.agent_input_buffers.remove(&leaf_id);
+                                        self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, "");
+                                        eprintln!("[gate4agent::chat] send button OK");
+                                    }
+                                    Err(e) => eprintln!("[gate4agent::chat] send button error: {}", e),
                                 }
-                                Err(e) => eprintln!("[gate4agent::chat] send button error: {}", e),
                             }
                         }
                     }

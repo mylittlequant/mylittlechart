@@ -177,7 +177,9 @@ impl ChartApp {
             if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id).cloned() {
                 if desc.mode == gate4agent::InstanceMode::Pty {
                     let id = desc.instance_id;
-                    let _ = self.core.bridge.runtime().block_on(self.agent.write_pty_instance(id, text));
+                    if let Some(rt) = self.core.native_rt() {
+                        let _ = rt.block_on(self.agent.write_pty_instance(id, text));
+                    }
                 }
             }
         }
@@ -6403,7 +6405,9 @@ impl ChartApp {
                         if desc.mode == gate4agent::InstanceMode::Pty {
                             let text = String::from_utf8_lossy(&bytes).to_string();
                             let id = desc.instance_id;
-                            let _ = self.core.bridge.runtime().block_on(self.agent.write_pty_instance(id, &text));
+                            if let Some(rt) = self.core.native_rt() {
+                                let _ = rt.block_on(self.agent.write_pty_instance(id, &text));
+                            }
                         }
                     }
                 }
@@ -6424,15 +6428,17 @@ impl ChartApp {
                         eprintln!("[gate4agent::chat] Enter via on_char text_len={}", text.len());
                         if !text.is_empty() {
                             let id = desc.instance_id;
-                            match self.core.bridge.runtime().block_on(self.agent.send_chat_instance(id, &text)) {
-                                Ok(()) => {
-                                    let buf = self.sidebar_state.agent_input_buffers
-                                        .entry(leaf_id).or_default();
-                                    buf.clear();
-                                    self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, "");
-                                    eprintln!("[gate4agent::chat] Enter via on_char OK");
+                            if let Some(rt) = self.core.native_rt() {
+                                match rt.block_on(self.agent.send_chat_instance(id, &text)) {
+                                    Ok(()) => {
+                                        let buf = self.sidebar_state.agent_input_buffers
+                                            .entry(leaf_id).or_default();
+                                        buf.clear();
+                                        self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, "");
+                                        eprintln!("[gate4agent::chat] Enter via on_char OK");
+                                    }
+                                    Err(e) => eprintln!("[gate4agent::chat] Enter via on_char error: {}", e),
                                 }
-                                Err(e) => eprintln!("[gate4agent::chat] Enter via on_char error: {}", e),
                             }
                         }
                     }
@@ -7689,7 +7695,9 @@ impl ChartApp {
                             if desc.mode == gate4agent::InstanceMode::Pty {
                                 let text = String::from_utf8_lossy(&bytes).to_string();
                                 let id = desc.instance_id;
-                                let _ = self.core.bridge.runtime().block_on(self.agent.write_pty_instance(id, &text));
+                                if let Some(rt) = self.core.native_rt() {
+                                    let _ = rt.block_on(self.agent.write_pty_instance(id, &text));
+                                }
                             }
                         }
                     }

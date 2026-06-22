@@ -103,7 +103,7 @@ fn main() {
         .thread_name("mlc-headless-srv")
         .build()
         .expect("build server tokio runtime");
-    let _server_handle = mlc_agentic_server::start_server(agent_state.clone(), &server_rt, port);
+    let _server_handle = mlc_agentic_server::start_server(agent_state.clone(), server_rt.handle(), port);
     eprintln!("[mlc-headless] HTTP server spawned on http://127.0.0.1:{}", port);
 
     // Ctrl+C handler — flips an AtomicBool so the tick loop exits cleanly.

@@ -460,7 +460,7 @@ pub async fn agent_state_apps_with_and_without_core(h: BackendHarness) -> Harnes
     let state_no_core = StdArc::new(AgentState::new(h.bridge.clone(), "harness".to_string()));
     let port_a = pick_free_port()?;
     let rt = spawn_server_runtime()?;
-    let _handle_a = mlc_agentic_server::start_server(state_no_core.clone(), rt, port_a);
+    let _handle_a = mlc_agentic_server::start_server(state_no_core.clone(), rt.handle(), port_a);
     wait_for_health(port_a, "/api/v1/health").await?;
 
     let client = reqwest::Client::new();

@@ -67,7 +67,15 @@ pub struct BackendHarness {
 impl BackendHarness {
     /// Spin a real backend with no trading manager and no profile glue.
     pub fn fresh() -> Self {
-        let (bridge, _live_rx, _connector_ready_rx) = DataBridge::new();
+        // DataBridge::new() is async; build a one-shot current-thread runtime
+        // to drive the construction, then drop it — the bridge's own internal
+        // tasks are spawned via spawn_bg and live on the ambient executor when
+        // the harness itself runs inside a tokio test runtime.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("failed to build tokio runtime for BackendHarness::fresh");
+        let (bridge, _live_rx, _connector_ready_rx) = rt.block_on(DataBridge::new());
         let bridge = Arc::new(bridge);
         let inject_tx = bridge.debug_broadcast_tx();
         let core = BackendCore::new(bridge.clone(), None);

@@ -274,7 +274,15 @@ struct App<'s> {
     pending_spawns: Vec<SpawnRequest>,
     /// Set to true when ALL windows should close.
     close_all_requested: bool,
-    /// Shared DataBridge — tokio runtime + connector pool, created once at startup.
+    /// Live-data runtime — owns the tokio thread-pool for bridge background tasks.
+    ///
+    /// Kept alive for the lifetime of `App` so that background tasks spawned by
+    /// the bridge continue running. Dropped when `App` drops (on process exit).
+    live_data_rt: tokio::runtime::Runtime,
+    /// Handle into `live_data_rt` — cheap to clone, used for spawning tasks and
+    /// as an executor context for blocking calls like Telegram get_updates.
+    live_data_handle: tokio::runtime::Handle,
+    /// Shared DataBridge — connector pool, created once at startup.
     bridge: std::sync::Arc<mlc_live_data::DataBridge>,
     /// Saved window states loaded from profile at startup — used in resumed() to restore windows.
     saved_windows: Vec<mlc_core::WindowState>,
@@ -568,6 +576,8 @@ use render::gpu_submit::submit_window_gpu_from_gpu_scene;
 impl App<'_> {
     fn new(
         bridge: std::sync::Arc<mlc_live_data::DataBridge>,
+        live_data_rt: tokio::runtime::Runtime,
+        live_data_handle: tokio::runtime::Handle,
         saved_windows: Vec<mlc_core::WindowState>,
         profile: mlc_core::UserProfile,
         profile_manager: mlc_core::ProfileManager,
@@ -723,7 +733,7 @@ impl App<'_> {
         let _server_handle = if app_state.server_enabled {
             Some(mlc_agentic_server::start_server(
                 agent_state.clone(),
-                bridge.runtime(),
+                &live_data_handle,
                 app_state.server_port,
             ))
         } else {
@@ -732,9 +742,9 @@ impl App<'_> {
         };
 
         // Initialize alert delivery engine. AlertDelivery::new spawns a tokio
-        // task, so we must enter the bridge's runtime context first.
+        // task, so we must enter the live-data runtime context first.
         let (alert_delivery_engine, toast_rx) = {
-            let _guard = bridge.runtime().enter();
+            let _guard = live_data_handle.enter();
             mlc_alert_delivery::AlertDelivery::new(profile.notification_settings.clone())
         };
 
@@ -802,6 +812,8 @@ impl App<'_> {
             windows: HashMap::new(),
             pending_spawns: Vec::new(),
             close_all_requested: false,
+            live_data_rt,
+            live_data_handle,
             bridge,
             saved_windows,
             profile,
@@ -3739,9 +3751,8 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
 
             if let Some((token, chat_ids)) = test_req {
-                let bridge = self.bridge.clone();
-                // Fire-and-forget on the bridge runtime — send to all active subscribers.
-                bridge.runtime().spawn({
+                // Fire-and-forget on the live-data runtime — send to all active subscribers.
+                self.live_data_handle.spawn({
                     let token = token.clone();
                     let chat_ids = chat_ids.clone();
                     async move {
@@ -3774,7 +3785,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
 
             if let Some(token) = detect_req {
                 // Block on the detect call — it's a one-time user action, ~1s latency is fine.
-                let result = self.bridge.runtime().block_on(async {
+                let result = self.live_data_rt.block_on(async {
                     let client = reqwest::Client::builder()
                         .timeout(std::time::Duration::from_secs(10))
                         .build()
@@ -4722,10 +4733,22 @@ fn main() {
         .expect("Failed to create event loop");
     event_loop.set_control_flow(ControlFlow::Poll); // Will be updated per-frame in about_to_wait()
 
-    // Create DataBridge ONCE — tokio runtime + connector pool shared by all windows.
+    // Build the live-data runtime ONCE. The bridge no longer owns a runtime;
+    // the entry point is responsible for creating and keeping it alive.
+    // 4 workers: the startup connector warm-up spawns ~21 connect + ~21
+    // symbol-fetch tasks in a burst; 4 workers halve tail latency vs 2.
+    let live_data_rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .thread_name("live-data")
+        .enable_all()
+        .build()
+        .expect("failed to create tokio runtime for live-data");
+    let live_data_handle = live_data_rt.handle().clone();
+
+    // Create DataBridge ONCE — connector pool shared by all windows.
     // Phase 2B step 3: orderbook now lives in dig3-station OrderBookTracker
     // (ob_trackers DashMap inside the bridge). No more shared_orderbook map.
-    let (bridge, _live_rx, connector_ready_rx) = mlc_live_data::DataBridge::new();
+    let (bridge, _live_rx, connector_ready_rx) = live_data_rt.block_on(mlc_live_data::DataBridge::new());
     let bridge = std::sync::Arc::new(bridge);
 
     // Detect startup mode BEFORE loading the user manager.
@@ -4797,7 +4820,7 @@ fn main() {
     let profile = profile_manager.profile.clone();
     let saved_windows = profile.windows.clone();
 
-    let mut app = App::new(bridge, saved_windows, profile, profile_manager, connector_ready_rx, is_first_run, needs_vault_unlock, needs_migration);
+    let mut app = App::new(bridge, live_data_rt, live_data_handle, saved_windows, profile, profile_manager, connector_ready_rx, is_first_run, needs_vault_unlock, needs_migration);
     // Store the event-loop proxy so the promote worker can send PromoteReady
     // back to the main thread without polling.
     app.promote_proxy = Some(event_loop.create_proxy());
