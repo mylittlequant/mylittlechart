@@ -108,6 +108,25 @@ impl BgJoinHandle {
     }
 }
 
+/// Cross-platform `sleep(Duration)`.
+///
+/// Native: `tokio::time::sleep` (needs the tokio time driver, which only the
+/// native bin's `Runtime` provides). Wasm: `gloo_timers::future::TimeoutFuture`
+/// (uses `setTimeout`, no tokio time driver needed). On wasm `tokio::time::sleep`
+/// would call `tokio::time::Instant::now()` → `std::time::Instant::now()` →
+/// panic at `std/sys/time/unsupported.rs:13` ("time not implemented").
+#[cfg(not(target_arch = "wasm32"))]
+#[inline]
+pub(crate) async fn sleep_ms(ms: u64) {
+    tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline]
+pub(crate) async fn sleep_ms(ms: u64) {
+    gloo_timers::future::TimeoutFuture::new(ms as u32).await;
+}
+
 /// Spawn a background future and return a [`BgJoinHandle`] that can cancel it.
 ///
 /// Native: `Send + 'static` future via `tokio::spawn`.
@@ -1275,7 +1294,7 @@ impl DataBridge {
                         return;
                     }
                     attempts += 1;
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    sleep_ms(100).await;
                 }
             }
 
@@ -2240,7 +2259,7 @@ impl DataBridge {
                     respawn_n, exchange_id, symbol_canonical, stream_label, bar_n_this_cycle, total_bars,
                 );
                 respawn_n = respawn_n.wrapping_add(1);
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                sleep_ms(1000).await;
             }
         })
     }
@@ -3543,7 +3562,7 @@ impl DataBridge {
                         finish_backfill!();
                         return;
                     }
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    sleep_ms(100).await;
                 }
             }
 
@@ -3885,7 +3904,7 @@ impl DataBridge {
                         finish_scroll!();
                         return;
                     }
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    sleep_ms(100).await;
                 }
             }
 

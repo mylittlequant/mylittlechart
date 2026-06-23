@@ -40,3 +40,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
 # (timers come from gloo-timers via station's wasm path).
 tokio = { version = "1", default-features = false, features = ["sync", "macros"] }
 wasm-bindgen-futures = "0.4"
+# Browser timer for the wasm side of `sleep_ms` (setTimeout-backed); the
+# native side uses `tokio::time::sleep` which would panic on wasm because
+# `tokio::time::Instant::now()` calls into `std::time::Instant::now()`.
+gloo-timers = { version = "0.3", features = ["futures"] }
