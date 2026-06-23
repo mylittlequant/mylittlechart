@@ -56,3 +56,12 @@ web-sys = { version = "0.3", features = ["console"] }
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"
 futures-util = "0.3"
+
+# ── native-only dev-deps for the dual-target live e2e tests ───────────────────
+# tests/derived_bars_live.rs runs the SAME body fns on both targets. On native
+# it spins a tokio multi-thread runtime (`#[tokio::test(flavor="multi_thread")]`)
+# so the bridge's spawn_bg tasks have an executor. Without `time` the
+# `tokio::time::sleep` arm of the cross-platform sleep helper would not compile.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+futures-util = "0.3"
