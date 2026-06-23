@@ -407,3 +407,156 @@ async fn derived_live_three_line_break() {
         ).into(),
     );
 }
+
+// ─── DOM heatmap snapshot: orderbook ticks → DomHeatmapSnapshot ────────────
+//
+// Orderbook ticks fire on every book change on Binance BTCUSDT (~10-50/s).
+// First snapshot lands inside ~2s on a healthy network.
+
+#[wasm_bindgen_test]
+async fn derived_live_dom_heatmap_snapshot() {
+    let (bridge, mut probe) = boot().await;
+    bridge.request_dom_heatmap(ExchangeId::Binance, "BTCUSDT", AccountType::Spot);
+    let ev = wait_for(&mut probe, 30, |u| {
+        matches!(u, LiveUpdate::DomHeatmapSnapshot { symbol, .. } if symbol == "BTCUSDT")
+    }).await;
+    let Some(LiveUpdate::DomHeatmapSnapshot { symbol, ts_ms, bids, asks, .. }) = ev else {
+        panic!("no DomHeatmapSnapshot within 30s — DOM heatmap dispatch broken");
+    };
+    assert_eq!(symbol, "BTCUSDT");
+    assert!(!bids.is_empty() || !asks.is_empty(),
+        "DOM heatmap snapshot must carry book levels");
+    web_sys::console::log_1(
+        &format!("[derived-live dom-heatmap] OK ts={} bids={} asks={}",
+            ts_ms, bids.len(), asks.len()).into(),
+    );
+}
+
+// ─── DOM trade dot: trade ticks routed through dom_heatmap subscription ────
+//
+// `request_dom_heatmap` spawns both an OrderBook task → DomHeatmapSnapshot AND
+// a Trade task → DomTradeDot. We assert the Trade side here so a regression
+// in one task doesn't mask the other.
+
+#[wasm_bindgen_test]
+async fn derived_live_dom_trade_dot() {
+    let (bridge, mut probe) = boot().await;
+    bridge.request_dom_heatmap(ExchangeId::Binance, "BTCUSDT", AccountType::Spot);
+    let ev = wait_for(&mut probe, 30, |u| {
+        matches!(u, LiveUpdate::DomTradeDot { symbol, .. } if symbol == "BTCUSDT")
+    }).await;
+    let Some(LiveUpdate::DomTradeDot { symbol, dot, .. }) = ev else {
+        panic!("no DomTradeDot within 30s — DOM trade-dot dispatch broken");
+    };
+    assert_eq!(symbol, "BTCUSDT");
+    assert!(dot.price > 0.0, "trade dot price must be positive");
+    web_sys::console::log_1(
+        &format!("[derived-live dom-trade-dot] OK ts={} price={} qty={}",
+            dot.ts_ms, dot.price, dot.quantity).into(),
+    );
+}
+
+// ─── TPO profile snapshot: 1-minute bucket, sourced from trade ticks ───────
+//
+// TPO with `TpoSource::TradeBucket` + `freq_minutes=1` publishes a snapshot
+// at the close of each 1-minute bucket. From a cold start, the worst case is
+// `60s + small slack` (~70s); marked `#[ignore]` because in the absence of
+// an immediate seed snapshot the test can straddle bucket boundaries and
+// occasionally flake. Re-run explicitly to confirm dispatch works.
+
+#[wasm_bindgen_test]
+async fn derived_live_tpo_profile() {
+    let (bridge, mut probe) = boot().await;
+    // No upstream-Trade pre-warm needed: dig3-station's per-handle relay
+    // now skips `broadcast::recv` Lagged errors instead of treating them
+    // as fatal (station.rs ~ line 686). This unblocks any derived stream
+    // whose producer fills the 512-event broadcast buffer between the
+    // forwarder spawn and the relay-task's first CPU slice on the
+    // single-threaded wasm `spawn_local` executor.
+    bridge.request_tpo(
+        ExchangeId::Binance, "BTCUSDT", AccountType::Spot,
+        1, digdigdig3_station::TpoSource::TradeBucket,
+    );
+    // Count every LiveUpdate variant we see while polling so silent dispatch
+    // becomes visible — derived TpoFromTrade should emit a TpoSessionPoint on
+    // EVERY upstream Trade (`derived.rs:1429 — Some(self.state.build_point())`),
+    // so the first event should land in <2s on a live BTCUSDT trade stream.
+    let mut total_seen: u32 = 0;
+    let mut trade_seen: u32 = 0;
+    let mut tpo_seen: u32 = 0;
+    let mut found: Option<LiveUpdate> = None;
+    let mut last_log = web_time::Instant::now();
+    let deadline = web_time::Instant::now() + Duration::from_secs(30);
+    while web_time::Instant::now() < deadline {
+        use futures_util::{future::Either, pin_mut};
+        let recv_fut = probe.recv();
+        let sleep_fut = gloo_timers::future::sleep(Duration::from_secs(2));
+        pin_mut!(recv_fut, sleep_fut);
+        match futures_util::future::select(recv_fut, sleep_fut).await {
+            Either::Left((Ok(u), _)) => {
+                total_seen += 1;
+                if matches!(&u, LiveUpdate::TradeUpdate { symbol, .. } if symbol == "BTCUSDT") {
+                    trade_seen += 1;
+                }
+                if matches!(&u, LiveUpdate::TpoProfileUpdate { symbol, .. } if symbol == "BTCUSDT") {
+                    tpo_seen += 1;
+                    found = Some(u);
+                    break;
+                }
+            }
+            Either::Left((Err(_), _)) => {}
+            Either::Right(_) => {
+                if last_log.elapsed() >= Duration::from_secs(3) {
+                    web_sys::console::log_1(&format!(
+                        "[tpo-test] waiting... total={} trade={} tpo={}",
+                        total_seen, trade_seen, tpo_seen).into());
+                    last_log = web_time::Instant::now();
+                }
+            }
+        }
+    }
+    web_sys::console::log_1(&format!(
+        "[tpo-test] final total={} trade={} tpo={}",
+        total_seen, trade_seen, tpo_seen).into());
+    let Some(LiveUpdate::TpoProfileUpdate { symbol, point, .. }) = found else {
+        panic!("no TpoProfileUpdate within 30s — TPO dispatch broken \
+               (total={}, trade={} on the bus → upstream Trade flowing? {})",
+               total_seen, trade_seen, trade_seen > 0);
+    };
+    assert_eq!(symbol, "BTCUSDT");
+    assert!(point.session_high >= point.session_low,
+        "TPO session_high must be >= session_low");
+    web_sys::console::log_1(
+        &format!("[derived-live tpo(1m,trade)] OK open_time={} hi={} lo={} poc={} rows={}",
+            point.open_time, point.session_high, point.session_low, point.poc_price, point.rows.len()).into(),
+    );
+}
+
+// ─── Liquidation event: real WS liquidation tick on Bybit ──────────────────
+//
+// Liquidations are sparse. Bybit `allLiquidation.{symbol}` averages ~10/hr
+// on BTCUSDT linear perp (CLAUDE.md: TRUSTED venues with WS liq include
+// Bybit/GateIO/HTX/OKX). 90s window = ~20% hit rate on a single symbol —
+// not reliable for a CI gate, but enough to prove dispatch works when it
+// does fire. Marked #[ignore] so it doesn't flake regular wasm-test runs;
+// run explicitly to confirm the wire works.
+
+#[wasm_bindgen_test]
+#[ignore]
+async fn derived_live_liquidation_event_bybit() {
+    let (bridge, mut probe) = boot_for(ExchangeId::Bybit).await;
+    bridge.request_liquidation_heatmap(ExchangeId::Bybit, "BTCUSDT", AccountType::FuturesCross);
+    let ev = wait_for(&mut probe, 120, |u| {
+        matches!(u, LiveUpdate::LiquidationEvent { symbol, .. } if symbol == "BTCUSDT")
+    }).await;
+    let Some(LiveUpdate::LiquidationEvent { symbol, ts_ms, price, value_usd, side, .. }) = ev else {
+        panic!("no LiquidationEvent within 120s on Bybit — liq dispatch broken \
+               (sparse stream; rerun if you suspect timing not code)");
+    };
+    assert_eq!(symbol, "BTCUSDT");
+    assert!(price > 0.0, "liq event must carry positive price");
+    web_sys::console::log_1(
+        &format!("[derived-live liq-event(bybit)] OK ts={} px={} usd={} side={:?}",
+            ts_ms, price, value_usd, side).into(),
+    );
+}
