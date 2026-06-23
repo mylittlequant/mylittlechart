@@ -51,6 +51,37 @@
     window.addEventListener('unhandledrejection', function(e) {
       captureError('unhandledrejection', e.reason, '', 0, 0, e.reason);
     });
+
+    // ── Network interceptors — count REST + WS traffic for debug ─────────────
+    window.__FETCH_LOG__ = [];
+    window.__WS_LOG__ = [];
+    const _OrigFetch = window.fetch.bind(window);
+    window.fetch = function(input, init) {
+      const url = typeof input === 'string' ? input : (input && input.url) || '<?>';
+      window.__FETCH_LOG__.push({ at: Date.now(), url: String(url).slice(0, 250) });
+      return _OrigFetch(input, init);
+    };
+    const _OrigWS = window.WebSocket;
+    function WrappedWS(url, protocols) {
+      const ws = protocols === undefined ? new _OrigWS(url) : new _OrigWS(url, protocols);
+      window.__WS_LOG__.push({ at: Date.now(), url: String(url).slice(0, 250), event: 'new' });
+      ws.addEventListener('open',  () => window.__WS_LOG__.push({ at: Date.now(), url: String(url).slice(0,80), event: 'open'  }));
+      ws.addEventListener('error', () => window.__WS_LOG__.push({ at: Date.now(), url: String(url).slice(0,80), event: 'error' }));
+      ws.addEventListener('close', (e) => window.__WS_LOG__.push({ at: Date.now(), url: String(url).slice(0,80), event: 'close', code: e.code }));
+      const _send = ws.send.bind(ws);
+      ws.send = function(data) {
+        const preview = typeof data === 'string' ? data.slice(0, 200) : '[bin]';
+        window.__WS_LOG__.push({ at: Date.now(), url: String(url).slice(0,60), send: preview });
+        return _send(data);
+      };
+      return ws;
+    }
+    WrappedWS.prototype = _OrigWS.prototype;
+    WrappedWS.CONNECTING = _OrigWS.CONNECTING;
+    WrappedWS.OPEN = _OrigWS.OPEN;
+    WrappedWS.CLOSING = _OrigWS.CLOSING;
+    WrappedWS.CLOSED = _OrigWS.CLOSED;
+    window.WebSocket = WrappedWS;
   </script>
   <script type="module">
     import init from './mlc_app_web.js';
