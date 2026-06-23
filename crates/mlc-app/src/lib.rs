@@ -398,7 +398,7 @@ pub struct ChartApp {
     /// `resize()`.  On the first resize (when `chart_width` becomes known)
     /// the viewport is repositioned so the last bar sits with 5 empty bars
     /// of right margin.
-    needs_initial_viewport_fit: bool,
+    pub needs_initial_viewport_fit: bool,
 
     /// Shared backend data plane — bridge, mini-ticker cache, exchange symbol
     /// catalogue, trading manager. One per process; every `ChartApp` instance
@@ -1673,6 +1673,13 @@ impl ChartApp {
         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
             window.data_provider = data_provider;
             window.toolbar_config = ToolbarConfig::standalone();
+            // Arm the snap so that when BarsLoaded lands in `react.rs` the
+            // fresh-load branch positions the viewport at the right edge
+            // with the standard padding. Without this, fresh boot leaves
+            // the viewport sitting on the oldest bars (view_start = 0) and
+            // the live tick falls off the right side of the screen.
+            window.needs_snap_after_backfill = true;
+            window.pending_symbol_load = true;
         }
 
         if let Some(pid) = active_pid_init {
@@ -2670,7 +2677,6 @@ impl ChartApp {
         // known. Reposition every window so the last bar has 5 empty bars of
         // right margin (set_bars() couldn't do this because chart_width was 0).
         if self.needs_initial_viewport_fit {
-            self.needs_initial_viewport_fit = false;
             // Snapshot bars per chart up front (immutable borrow), then mutate.
             let bars_by_chart: std::collections::HashMap<mlc_core::state::ChartId, Vec<mlc_core::Bar>> =
                 self.panel_app.panel_grid.containers().iter()
@@ -2681,13 +2687,23 @@ impl ChartApp {
                         (*cid, bars)
                     })
                     .collect();
+            // Only consume the flag if at least one chart actually has bars
+            // ready to be snapped. Otherwise we'd burn the one-shot on the
+            // very first resize that fires before the initial request_bars
+            // round-trip returns, and the viewport would freeze on the
+            // oldest bars forever. Keeping the flag armed lets the next
+            // resize (which usually happens after BarsLoaded triggers a
+            // chart_dirty redraw) actually do the snap.
+            let any_bars = bars_by_chart.values().any(|v| !v.is_empty());
             for (cid, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                 let bars = bars_by_chart.get(cid).map(|v| v.as_slice()).unwrap_or(&[]);
-                // Only snap if chart dimensions are valid and bars are loaded.
                 if window.viewport.chart_width > 0.0 && window.viewport.bar_spacing > 0.0 && !bars.is_empty() {
                     window.snap_to_end(mlc_core::DEFAULT_SNAP_MARGIN);
                 }
                 window.calc_auto_scale(bars);
+            }
+            if any_bars {
+                self.needs_initial_viewport_fit = false;
             }
         }
     }

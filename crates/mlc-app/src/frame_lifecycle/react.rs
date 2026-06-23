@@ -22,7 +22,7 @@ impl ChartApp {
         let _ = now_ms;
         match event {
             // ── BarsLoaded ─────────────────────────────────────────────────────
-            BubbleEvent::BarsLoaded { bid, exchange_id, symbol, account_type, timeframe: tf_name, bars } => {
+            BubbleEvent::BarsLoaded { bid, exchange_id, symbol, account_type, timeframe: tf_name, bars, prev_bars } => {
                 if bid.0 == 0 {
                     // No registered bubble — reactor still needs to handle parked presets
                     // and initial bar delivery to newly-created windows.
@@ -48,14 +48,11 @@ impl ChartApp {
                         .collect()
                 };
 
-                // Capture anchors before reconcile (bubble already written by tick_writers).
-                let prev_bars_for_anchor: Vec<mlc_core::Bar> = {
-                    let m = self.core.bubble();
-                    m.bubble.bubble_for_instrument(exchange_id.as_str(), account_type.as_str(), symbol)
-                        .and_then(|b| m.bubble.bubble(b))
-                        .map(|b| b.bars.clone())
-                        .unwrap_or_default()
-                };
+                // Use the snapshot of the bubble's PRIOR bars taken by
+                // `tick_writers` before it overwrote bubble.bars with the new
+                // payload. Re-reading the bubble here yields `new_bars` (the
+                // same data) and collapses the anchor onto itself.
+                let prev_bars_for_anchor: &[mlc_core::Bar] = prev_bars;
 
                 // Collect matched windows + anchor info.
                 let mut matched_windows: Vec<(mlc_core::state::ChartId, bool, Option<(i64, f64)>)> = Vec::new();
@@ -72,7 +69,7 @@ impl ChartApp {
                         any_matched = true;
                         let is_backfill = !window.pending_symbol_load && !prev_bars_for_anchor.is_empty();
                         let anchor = if is_backfill {
-                            window.capture_view_anchor(&prev_bars_for_anchor)
+                            window.capture_view_anchor(prev_bars_for_anchor)
                         } else {
                             None
                         };
@@ -92,12 +89,33 @@ impl ChartApp {
                     let win_sym = instrument_by_cid.get(chart_id_key).map(|(s, _, _, _)| s.clone()).unwrap_or_default();
                     let win_tf = instrument_by_cid.get(chart_id_key).map(|(_, tf, _, _)| tf.clone()).unwrap_or_else(mlc_core::state::Timeframe::h1);
                     if is_backfill {
+                        // Detect right-edge state BEFORE reconcile: was the user
+                        // viewing the most recent bars when this backfill arrived?
+                        // If yes, the backfill (prepend of older bars) shouldn't
+                        // sneak the viewport off the right edge — re-snap after.
+                        // Use `viewport.bar_count` here (still the pre-reconcile
+                        // value — only `reconcile_view_*` updates it) instead of
+                        // `prev_bars_for_anchor.len()` which already reflects
+                        // the post-tick_writers bubble state.
+                        let was_at_end = {
+                            let bs = window.viewport.bar_spacing.max(1.0);
+                            let visible_f = window.viewport.chart_width / bs;
+                            let prev_count = window.viewport.bar_count as f64;
+                            let right_edge_vs = (prev_count + DEFAULT_SNAP_MARGIN - visible_f).max(0.0);
+                            (window.viewport.view_start - right_edge_vs).abs() < 1.5
+                                && window.viewport.chart_width > 0.0
+                                && prev_count > 0.0
+                        };
                         window.reconcile_view_keep_anchor(new_bars, anchor);
                         if window.needs_snap_after_backfill
                             && !new_bars.is_empty()
                             && window.viewport.chart_width > 0.0
                         {
                             window.consume_cold_snap(new_bars);
+                        } else if was_at_end && !new_bars.is_empty() {
+                            // User was on right edge; backfill prepended older
+                            // bars — re-snap to keep them on the right edge.
+                            window.snap_to_end(DEFAULT_SNAP_MARGIN);
                         }
                         let target = self.panel_app.user_manager.profile.data_load.background_bar_count;
                         if target > 0 && (new_bars.len() as u32) < target {
@@ -225,7 +243,7 @@ impl ChartApp {
             }
 
             // ── BackfillCompleted ───────────────────────────────────────────────
-            BubbleEvent::BackfillCompleted { bid: _, exchange_id, symbol, account_type, timeframe: tf_name, bars } => {
+            BubbleEvent::BackfillCompleted { bid: _, exchange_id, symbol, account_type, timeframe: tf_name, bars, prev_bars } => {
                 let new_bars = bars;
                 let mut prev_close_mirrors: Vec<(mlc_core::state::ChartId, Option<f64>)> = Vec::new();
 
@@ -241,15 +259,13 @@ impl ChartApp {
                         .collect()
                 };
 
-                let prev_bars_for_anchor: Vec<mlc_core::Bar> = {
-                    let mgr = self.core.bubble();
-                    mgr.bubble.bubble_for_instrument(exchange_id.as_str(), account_type.as_str(), symbol)
-                        .and_then(|b| mgr.bubble.bubble(b))
-                        .map(|b| b.bars.clone())
-                        .unwrap_or_default()
-                };
+                // Use the snapshot of bubble's PRIOR bars captured in
+                // tick_writers before bubble.bars was overwritten. Re-reading
+                // bubble here would give back `new_bars` and collapse the
+                // anchor — see BarsLoaded branch for the same fix.
+                let prev_bars_for_anchor: &[mlc_core::Bar] = prev_bars;
 
-                let mut matched_anchors: Vec<(mlc_core::state::ChartId, Option<(i64, f64)>)> = Vec::new();
+                let mut matched_anchors: Vec<(mlc_core::state::ChartId, Option<(i64, f64)>, bool)> = Vec::new();
                 for (chart_id_key, window) in self.panel_app.panel_grid.containers().iter() {
                     let (win_sym, win_tf, win_exch, win_at) = match instrument_by_cid.get(chart_id_key) {
                         Some(t) => t,
@@ -262,14 +278,30 @@ impl ChartApp {
                     {
                         continue;
                     }
-                    matched_anchors.push((*chart_id_key, window.capture_view_anchor(&prev_bars_for_anchor)));
+                    // Right-edge detection BEFORE reconcile — see BarsLoaded
+                    // branch for the rationale. Use the still-pre-reconcile
+                    // `viewport.bar_count` not `prev_bars.len()`.
+                    let was_at_end = {
+                        let bs = window.viewport.bar_spacing.max(1.0);
+                        let visible_f = window.viewport.chart_width / bs;
+                        let prev_count = window.viewport.bar_count as f64;
+                        let right_edge_vs = (prev_count + DEFAULT_SNAP_MARGIN - visible_f).max(0.0);
+                        (window.viewport.view_start - right_edge_vs).abs() < 1.5
+                            && window.viewport.chart_width > 0.0
+                            && prev_count > 0.0
+                    };
+                    matched_anchors.push((*chart_id_key, window.capture_view_anchor(prev_bars_for_anchor), was_at_end));
                 }
 
                 for (chart_id_key, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
-                    let Some((_, anchor)) = matched_anchors.iter().find(|(c, _)| c == chart_id_key).copied() else { continue; };
+                    let Some((_, anchor, was_at_end)) = matched_anchors.iter().find(|(c, _, _)| c == chart_id_key).copied() else { continue; };
                     window.reconcile_view_keep_anchor(new_bars, anchor);
                     if window.needs_snap_after_backfill {
                         window.consume_cold_snap(new_bars);
+                    } else if was_at_end && !new_bars.is_empty() {
+                        // User was at right edge before backfill prepended
+                        // older bars — re-snap so the live tick stays visible.
+                        window.snap_to_end(DEFAULT_SNAP_MARGIN);
                     } else if window.price_scale.scale_mode.is_auto_y() {
                         window.calc_auto_scale(new_bars);
                     }

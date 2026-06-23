@@ -158,6 +158,13 @@ pub struct MiniTickerData {
 #[derive(Debug, Clone)]
 pub enum BubbleEvent {
     /// Historical bars written into one bubble (BarsLoaded arm).
+    ///
+    /// `prev_bars` is the snapshot of `bubble.bars` taken in `tick_writers`
+    /// *before* the new `bars` payload replaced it. The reactor needs this to
+    /// compute a view-anchor (timestamp of the bar that was previously at
+    /// `view_start`) — re-reading the bubble after the replacement gives back
+    /// the new bars, which would collapse the anchor onto itself and leave the
+    /// viewport pointing at older candles every time bars grow underneath it.
     BarsLoaded {
         bid: BubbleId,
         exchange_id: ExchangeId,
@@ -165,6 +172,7 @@ pub enum BubbleEvent {
         account_type: String,
         timeframe: String,
         bars: Vec<Bar>,
+        prev_bars: Vec<Bar>,
     },
     /// Background backfill bars written into one bubble.
     BackfillCompleted {
@@ -174,6 +182,7 @@ pub enum BubbleEvent {
         account_type: String,
         timeframe: String,
         bars: Vec<Bar>,
+        prev_bars: Vec<Bar>,
     },
     /// Scroll-fetch bars (left-extend) written into one bubble.
     ScrollBarsAppended {
@@ -378,7 +387,7 @@ impl Serialize for BubbleEvent {
             ($e:expr) => { $e.as_str() };
         }
         match self {
-            Self::BarsLoaded { bid, exchange_id, symbol, account_type, timeframe, bars } => {
+            Self::BarsLoaded { bid, exchange_id, symbol, account_type, timeframe, bars, prev_bars: _ } => {
                 let mut m = s.serialize_map(Some(7))?;
                 m.serialize_entry("type", "BarsLoaded")?;
                 m.serialize_entry("bid", &bid.0)?;
@@ -389,7 +398,7 @@ impl Serialize for BubbleEvent {
                 m.serialize_entry("bars_count", &bars.len())?;
                 m.end()
             }
-            Self::BackfillCompleted { bid, exchange_id, symbol, account_type, timeframe, bars } => {
+            Self::BackfillCompleted { bid, exchange_id, symbol, account_type, timeframe, bars, prev_bars: _ } => {
                 let mut m = s.serialize_map(Some(7))?;
                 m.serialize_entry("type", "BackfillCompleted")?;
                 m.serialize_entry("bid", &bid.0)?;
@@ -1010,9 +1019,21 @@ impl BackendCore {
                             account_type: account_type.short_label().to_string(),
                             timeframe: tf_name,
                             bars,
+                            prev_bars: Vec::new(),
                         });
                     } else {
                         for bid in bids_for_instrument {
+                            // Snapshot bubble.bars BEFORE replacing so the
+                            // reactor can compute a real view-anchor over the
+                            // OLD bars (otherwise `prev` == `new` and the
+                            // anchor collapses, leaving the viewport pinned to
+                            // the historic index whenever bars grow underneath).
+                            let prev_bars = {
+                                let mgr = self.bubble();
+                                mgr.bubble.bubble(bid)
+                                    .map(|b| b.bars.clone())
+                                    .unwrap_or_default()
+                            };
                             {
                                 let mut mgr = self.bubble_mut();
                                 if let Some(bubble) = mgr.bubble.bubble_mut(bid) {
@@ -1026,6 +1047,7 @@ impl BackendCore {
                                 account_type: account_type.short_label().to_string(),
                                 timeframe: tf_name.clone(),
                                 bars: bars.clone(),
+                                prev_bars,
                             });
                         }
                     }
@@ -1037,6 +1059,15 @@ impl BackendCore {
                         .bubble
                         .bubbles_for_instrument(exchange_id.as_str(), account_type.short_label(), &symbol);
                     for bid in bids {
+                        // Same rationale as BarsLoaded above: snapshot the OLD
+                        // bubble.bars before overwrite so the reactor's
+                        // capture_view_anchor sees real prior state.
+                        let prev_bars = {
+                            let mgr = self.bubble();
+                            mgr.bubble.bubble(bid)
+                                .map(|b| b.bars.clone())
+                                .unwrap_or_default()
+                        };
                         {
                             let mut mgr = self.bubble_mut();
                             if let Some(bubble) = mgr.bubble.bubble_mut(bid) {
@@ -1050,6 +1081,7 @@ impl BackendCore {
                             account_type: account_type.short_label().to_string(),
                             timeframe: tf_name.clone(),
                             bars: bars.clone(),
+                            prev_bars,
                         });
                     }
                 }

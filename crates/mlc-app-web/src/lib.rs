@@ -201,6 +201,47 @@ fn run_render_loop(
             state_clone.borrow_mut().chart.tick(now_ms);
         }
 
+        // ── Diag: expose active bubble's last bar timestamp + bars count + close
+        //     to JS so `dev-attach --eval window.MLC_DEBUG` can see whether the
+        //     live tick actually reaches the bubble (the chart reads from there).
+        if let Some(win) = web_sys::window() {
+            let st = state_clone.borrow();
+            let active_cid = st.chart.panel_app.panel_grid.active_container_id();
+            let active_bid = active_cid.and_then(|cid| st.chart.bubble_for_chart(cid));
+            let mgr = st.chart.core.bubble();
+            let bubble = active_bid.and_then(|bid| mgr.bubble.bubble(bid));
+            let (sym, count, last_ts, last_close) = bubble
+                .map(|b| {
+                    let last = b.bars.last();
+                    (
+                        b.symbol.clone(),
+                        b.bars.len() as f64,
+                        last.map(|x| x.timestamp as f64).unwrap_or(0.0),
+                        last.map(|x| x.close).unwrap_or(0.0),
+                    )
+                })
+                .unwrap_or_else(|| ("<none>".to_string(), 0.0, 0.0, 0.0));
+            let (view_start, bar_spacing, chart_width, bar_count_vp) = active_cid
+                .and_then(|cid| st.chart.panel_app.panel_grid.containers().get(&cid))
+                .map(|w| (
+                    w.viewport.view_start,
+                    w.viewport.bar_spacing,
+                    w.viewport.chart_width,
+                    w.viewport.bar_count as f64,
+                ))
+                .unwrap_or((0.0, 0.0, 0.0, 0.0));
+            let dbg = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&dbg, &"symbol".into(), &sym.into());
+            let _ = js_sys::Reflect::set(&dbg, &"bars".into(), &count.into());
+            let _ = js_sys::Reflect::set(&dbg, &"last_ts".into(), &last_ts.into());
+            let _ = js_sys::Reflect::set(&dbg, &"last_close".into(), &last_close.into());
+            let _ = js_sys::Reflect::set(&dbg, &"view_start".into(), &view_start.into());
+            let _ = js_sys::Reflect::set(&dbg, &"bar_spacing".into(), &bar_spacing.into());
+            let _ = js_sys::Reflect::set(&dbg, &"chart_width".into(), &chart_width.into());
+            let _ = js_sys::Reflect::set(&dbg, &"bar_count_vp".into(), &bar_count_vp.into());
+            let _ = js_sys::Reflect::set(&win, &"MLC_DEBUG".into(), &dbg);
+        }
+
         // ── Render frame ──────────────────────────────────────────────────────
         let render_result = render_frame(state_clone.clone());
         if let Err(e) = render_result {
