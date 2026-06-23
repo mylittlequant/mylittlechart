@@ -2282,74 +2282,98 @@ impl DataBridge {
     ) -> BgJoinHandle {
         spawn_bg_join(async move {
             let stream_label = format!("{:?}", stream);
-            crate::dlog!(
-                "[Bridge::footprint-fwd subscribing] {:?} {} wire={} stream={}",
-                exchange_id, symbol_canonical, symbol_wire, stream_label,
-            );
-            let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
-                exchange_id,
-                symbol_wire.clone(),
-                account_type,
-                [stream],
-            );
-            let mut report = match station.subscribe(sub_set).await {
-                Ok(r) => r,
-                Err(e) => {
-                    crate::dlog!(
-                        "[Bridge::footprint-fwd subscribe FAILED] {:?} {} wire={} stream={}: {:?}",
-                        exchange_id, symbol_canonical, symbol_wire, stream_label, e,
-                    );
-                    return;
-                }
-            };
-            if !report.failed.is_empty() {
+            // Footprint is a non-kline station stream. As of dig3-station
+            // 0.3.7+, station's own auto-heal is kline-only, so the
+            // SubscriptionHandle ends with a clean None after ~grace seconds
+            // (or after the upstream forwarder cycles). The previous
+            // single-subscribe version lost the entire stream for the rest
+            // of the chart's lifetime the moment that happened — visible as
+            // `subscribed OK → exited events_emitted=0` in dlog. Mount a
+            // respawn loop here the same way `spawn_derived_bar_sub` does
+            // for Range/Volume/Tick so consumers see continuous footprint
+            // updates. Abort cancels the loop entirely.
+            let mut total_fp: u64 = 0;
+            let mut respawn_n: u32 = 0;
+            loop {
                 crate::dlog!(
-                    "[Bridge::footprint-fwd subscribe partial-fail] {:?} {} wire={} stream={}: {} failed",
-                    exchange_id, symbol_canonical, symbol_wire, stream_label, report.failed.len(),
+                    "[Bridge::footprint-fwd subscribing] respawn={} {:?} {} wire={} stream={}",
+                    respawn_n, exchange_id, symbol_canonical, symbol_wire, stream_label,
                 );
-            }
-            crate::dlog!(
-                "[Bridge::footprint-fwd subscribed OK] {:?} {} wire={} stream={}",
-                exchange_id, symbol_canonical, symbol_wire, stream_label,
-            );
-            let mut fp_n: u64 = 0;
-            while let Some(ev) = report.handle.recv().await {
-                if let digdigdig3_station::Event::Footprint { point, .. } = ev {
-                    fp_n = fp_n.wrapping_add(1);
-                    if fp_n <= 5 || fp_n % 50 == 0 {
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                    exchange_id,
+                    symbol_wire.clone(),
+                    account_type,
+                    [stream.clone()],
+                );
+                let mut report = match station.subscribe(sub_set).await {
+                    Ok(r) => r,
+                    Err(e) => {
                         crate::dlog!(
-                            "[bridge-fp-fwd] emit n={} {:?} {} open_time={} levels.len={} vol={:.4}",
-                            fp_n, exchange_id, symbol_canonical, point.open_time, point.levels.len(), point.volume,
+                            "[Bridge::footprint-fwd subscribe FAILED] respawn={} {:?} {} wire={} stream={}: {:?}",
+                            respawn_n, exchange_id, symbol_canonical, symbol_wire, stream_label, e,
                         );
+                        // Hard failure (e.g. StreamNotSupported / venue gap)
+                        // — don't busy-loop; give up.
+                        return;
                     }
-                    // Upsert-by-timestamp into the shared Vec BEFORE the
-                    // broadcast — readers triggered by the FootprintUpdate
-                    // event always see the bar already in series.
-                    {
-                        let mut w = series.write().await;
-                        let ts = point.open_time;
-                        if let Some(last) = w.last_mut() {
-                            if last.open_time == ts {
-                                *last = point.clone();
+                };
+                if !report.failed.is_empty() {
+                    crate::dlog!(
+                        "[Bridge::footprint-fwd subscribe partial-fail] respawn={} {:?} {} wire={} stream={}: {} failed (ok={})",
+                        respawn_n, exchange_id, symbol_canonical, symbol_wire, stream_label,
+                        report.failed.len(), report.ok.len(),
+                    );
+                    if report.ok.is_empty() {
+                        return;
+                    }
+                }
+                crate::dlog!(
+                    "[Bridge::footprint-fwd subscribed OK] respawn={} {:?} {} wire={} stream={} ok_streams={}",
+                    respawn_n, exchange_id, symbol_canonical, symbol_wire, stream_label, report.ok.len(),
+                );
+                let mut fp_n_this_cycle: u64 = 0;
+                while let Some(ev) = report.handle.recv().await {
+                    if let digdigdig3_station::Event::Footprint { point, .. } = ev {
+                        fp_n_this_cycle = fp_n_this_cycle.wrapping_add(1);
+                        total_fp = total_fp.wrapping_add(1);
+                        if total_fp <= 5 || total_fp % 50 == 0 {
+                            crate::dlog!(
+                                "[Bridge::footprint-fwd emit FootprintUpdate] total={} cycle={} respawn={} {:?} {} open_time={} levels.len={} vol={:.4}",
+                                total_fp, fp_n_this_cycle, respawn_n,
+                                exchange_id, symbol_canonical, point.open_time, point.levels.len(), point.volume,
+                            );
+                        }
+                        // Upsert-by-timestamp into the shared Vec BEFORE the
+                        // broadcast — readers triggered by the FootprintUpdate
+                        // event always see the bar already in series.
+                        {
+                            let mut w = series.write().await;
+                            let ts = point.open_time;
+                            if let Some(last) = w.last_mut() {
+                                if last.open_time == ts {
+                                    *last = point.clone();
+                                } else {
+                                    w.push(point.clone());
+                                }
                             } else {
                                 w.push(point.clone());
                             }
-                        } else {
-                            w.push(point.clone());
                         }
+                        let _ = tx.send(LiveUpdate::FootprintUpdate {
+                            exchange_id,
+                            account_type,
+                            symbol: symbol_canonical.clone(),
+                            point,
+                        });
                     }
-                    let _ = tx.send(LiveUpdate::FootprintUpdate {
-                        exchange_id,
-                        account_type,
-                        symbol: symbol_canonical.clone(),
-                        point,
-                    });
                 }
+                crate::dlog!(
+                    "[Bridge::footprint-fwd cycle ended] respawn={} {:?} {} stream={} fp_this_cycle={} total={}, respawning in 1s",
+                    respawn_n, exchange_id, symbol_canonical, stream_label, fp_n_this_cycle, total_fp,
+                );
+                respawn_n = respawn_n.wrapping_add(1);
+                sleep_ms(1000).await;
             }
-            crate::dlog!(
-                "[Bridge::footprint-fwd exited] {:?} {} stream={} events_emitted={}",
-                exchange_id, symbol_canonical, stream_label, fp_n,
-            );
         })
     }
 
@@ -2366,29 +2390,39 @@ impl DataBridge {
         stream: digdigdig3_station::Stream,
     ) -> BgJoinHandle {
         spawn_bg_join(async move {
+            // Same respawn-loop rationale as spawn_footprint_sub: station's
+            // auto-heal is kline-only (0.3.7+), so non-kline forwarders end
+            // with a clean `None` on every grace cycle. Without the loop, the
+            // chart silently loses derived bars after the first cycle.
             let stream_label = format!("{:?}", stream);
-            let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
-                exchange_id, symbol_wire.clone(), account_type, [stream],
-            );
-            let mut report = match station.subscribe(sub_set).await {
-                Ok(r) => r,
-                Err(e) => {
-                    crate::dlog!("[Bridge::renko-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
-                        exchange_id, symbol_canonical, symbol_wire, e);
-                    return;
+            let mut respawn_n: u32 = 0;
+            loop {
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                    exchange_id, symbol_wire.clone(), account_type, [stream.clone()],
+                );
+                let mut report = match station.subscribe(sub_set).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        crate::dlog!("[Bridge::renko-fwd subscribe FAILED] respawn={} {:?} {} wire={}: {:?}",
+                            respawn_n, exchange_id, symbol_canonical, symbol_wire, e);
+                        return;
+                    }
+                };
+                if !report.failed.is_empty() && report.ok.is_empty() { return; }
+                while let Some(ev) = report.handle.recv().await {
+                    if let digdigdig3_station::Event::RenkoBar { point, .. } = ev {
+                        let _ = tx.send(LiveUpdate::RenkoBarUpdate {
+                            exchange_id, account_type,
+                            symbol: symbol_canonical.clone(),
+                            point,
+                        });
+                    }
                 }
-            };
-            while let Some(ev) = report.handle.recv().await {
-                if let digdigdig3_station::Event::RenkoBar { point, .. } = ev {
-                    let _ = tx.send(LiveUpdate::RenkoBarUpdate {
-                        exchange_id, account_type,
-                        symbol: symbol_canonical.clone(),
-                        point,
-                    });
-                }
+                crate::dlog!("[Bridge::renko-fwd cycle ended] respawn={} {:?} {} stream={}, respawning in 1s",
+                    respawn_n, exchange_id, symbol_canonical, stream_label);
+                respawn_n = respawn_n.wrapping_add(1);
+                sleep_ms(1000).await;
             }
-            crate::dlog!("[Bridge::renko-fwd exited] {:?} {} stream={}",
-                exchange_id, symbol_canonical, stream_label);
         })
     }
 
@@ -2406,28 +2440,34 @@ impl DataBridge {
     ) -> BgJoinHandle {
         spawn_bg_join(async move {
             let stream_label = format!("{:?}", stream);
-            let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
-                exchange_id, symbol_wire.clone(), account_type, [stream],
-            );
-            let mut report = match station.subscribe(sub_set).await {
-                Ok(r) => r,
-                Err(e) => {
-                    crate::dlog!("[Bridge::tlb-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
-                        exchange_id, symbol_canonical, symbol_wire, e);
-                    return;
+            let mut respawn_n: u32 = 0;
+            loop {
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                    exchange_id, symbol_wire.clone(), account_type, [stream.clone()],
+                );
+                let mut report = match station.subscribe(sub_set).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        crate::dlog!("[Bridge::tlb-fwd subscribe FAILED] respawn={} {:?} {} wire={}: {:?}",
+                            respawn_n, exchange_id, symbol_canonical, symbol_wire, e);
+                        return;
+                    }
+                };
+                if !report.failed.is_empty() && report.ok.is_empty() { return; }
+                while let Some(ev) = report.handle.recv().await {
+                    if let digdigdig3_station::Event::ThreeLineBreakUpdate { point, .. } = ev {
+                        let _ = tx.send(LiveUpdate::ThreeLineBreakUpdate {
+                            exchange_id, account_type,
+                            symbol: symbol_canonical.clone(),
+                            point,
+                        });
+                    }
                 }
-            };
-            while let Some(ev) = report.handle.recv().await {
-                if let digdigdig3_station::Event::ThreeLineBreakUpdate { point, .. } = ev {
-                    let _ = tx.send(LiveUpdate::ThreeLineBreakUpdate {
-                        exchange_id, account_type,
-                        symbol: symbol_canonical.clone(),
-                        point,
-                    });
-                }
+                crate::dlog!("[Bridge::tlb-fwd cycle ended] respawn={} {:?} {} stream={}, respawning in 1s",
+                    respawn_n, exchange_id, symbol_canonical, stream_label);
+                respawn_n = respawn_n.wrapping_add(1);
+                sleep_ms(1000).await;
             }
-            crate::dlog!("[Bridge::tlb-fwd exited] {:?} {} stream={}",
-                exchange_id, symbol_canonical, stream_label);
         })
     }
 
@@ -2444,29 +2484,35 @@ impl DataBridge {
     ) -> BgJoinHandle {
         spawn_bg_join(async move {
             let stream_label = format!("{:?}", stream);
-            let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
-                exchange_id, symbol_wire.clone(), account_type, [stream],
-            );
-            let mut report = match station.subscribe(sub_set).await {
-                Ok(r) => r,
-                Err(e) => {
-                    crate::dlog!("[Bridge::pnf-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
-                        exchange_id, symbol_canonical, symbol_wire, e);
-                    return;
+            let mut respawn_n: u32 = 0;
+            loop {
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                    exchange_id, symbol_wire.clone(), account_type, [stream.clone()],
+                );
+                let mut report = match station.subscribe(sub_set).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        crate::dlog!("[Bridge::pnf-fwd subscribe FAILED] respawn={} {:?} {} wire={}: {:?}",
+                            respawn_n, exchange_id, symbol_canonical, symbol_wire, e);
+                        return;
+                    }
+                };
+                if !report.failed.is_empty() && report.ok.is_empty() { return; }
+                while let Some(ev) = report.handle.recv().await {
+                    if let digdigdig3_station::Event::PnfBar { point, .. } = ev {
+                        let _ = tx.send(LiveUpdate::PnfBarUpdate {
+                            exchange_id, account_type,
+                            symbol: symbol_canonical.clone(),
+                            point,
+                            box_size,
+                        });
+                    }
                 }
-            };
-            while let Some(ev) = report.handle.recv().await {
-                if let digdigdig3_station::Event::PnfBar { point, .. } = ev {
-                    let _ = tx.send(LiveUpdate::PnfBarUpdate {
-                        exchange_id, account_type,
-                        symbol: symbol_canonical.clone(),
-                        point,
-                        box_size,
-                    });
-                }
+                crate::dlog!("[Bridge::pnf-fwd cycle ended] respawn={} {:?} {} stream={}, respawning in 1s",
+                    respawn_n, exchange_id, symbol_canonical, stream_label);
+                respawn_n = respawn_n.wrapping_add(1);
+                sleep_ms(1000).await;
             }
-            crate::dlog!("[Bridge::pnf-fwd exited] {:?} {} stream={}",
-                exchange_id, symbol_canonical, stream_label);
         })
     }
 
@@ -2482,28 +2528,34 @@ impl DataBridge {
     ) -> BgJoinHandle {
         spawn_bg_join(async move {
             let stream_label = format!("{:?}", stream);
-            let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
-                exchange_id, symbol_wire.clone(), account_type, [stream],
-            );
-            let mut report = match station.subscribe(sub_set).await {
-                Ok(r) => r,
-                Err(e) => {
-                    crate::dlog!("[Bridge::kagi-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
-                        exchange_id, symbol_canonical, symbol_wire, e);
-                    return;
+            let mut respawn_n: u32 = 0;
+            loop {
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                    exchange_id, symbol_wire.clone(), account_type, [stream.clone()],
+                );
+                let mut report = match station.subscribe(sub_set).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        crate::dlog!("[Bridge::kagi-fwd subscribe FAILED] respawn={} {:?} {} wire={}: {:?}",
+                            respawn_n, exchange_id, symbol_canonical, symbol_wire, e);
+                        return;
+                    }
+                };
+                if !report.failed.is_empty() && report.ok.is_empty() { return; }
+                while let Some(ev) = report.handle.recv().await {
+                    if let digdigdig3_station::Event::KagiBar { point, .. } = ev {
+                        let _ = tx.send(LiveUpdate::KagiBarUpdate {
+                            exchange_id, account_type,
+                            symbol: symbol_canonical.clone(),
+                            point,
+                        });
+                    }
                 }
-            };
-            while let Some(ev) = report.handle.recv().await {
-                if let digdigdig3_station::Event::KagiBar { point, .. } = ev {
-                    let _ = tx.send(LiveUpdate::KagiBarUpdate {
-                        exchange_id, account_type,
-                        symbol: symbol_canonical.clone(),
-                        point,
-                    });
-                }
+                crate::dlog!("[Bridge::kagi-fwd cycle ended] respawn={} {:?} {} stream={}, respawning in 1s",
+                    respawn_n, exchange_id, symbol_canonical, stream_label);
+                respawn_n = respawn_n.wrapping_add(1);
+                sleep_ms(1000).await;
             }
-            crate::dlog!("[Bridge::kagi-fwd exited] {:?} {} stream={}",
-                exchange_id, symbol_canonical, stream_label);
         })
     }
 
@@ -2519,28 +2571,34 @@ impl DataBridge {
     ) -> BgJoinHandle {
         spawn_bg_join(async move {
             let stream_label = format!("{:?}", stream);
-            let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
-                exchange_id, symbol_wire.clone(), account_type, [stream],
-            );
-            let mut report = match station.subscribe(sub_set).await {
-                Ok(r) => r,
-                Err(e) => {
-                    crate::dlog!("[Bridge::cvd-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
-                        exchange_id, symbol_canonical, symbol_wire, e);
-                    return;
+            let mut respawn_n: u32 = 0;
+            loop {
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                    exchange_id, symbol_wire.clone(), account_type, [stream.clone()],
+                );
+                let mut report = match station.subscribe(sub_set).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        crate::dlog!("[Bridge::cvd-fwd subscribe FAILED] respawn={} {:?} {} wire={}: {:?}",
+                            respawn_n, exchange_id, symbol_canonical, symbol_wire, e);
+                        return;
+                    }
+                };
+                if !report.failed.is_empty() && report.ok.is_empty() { return; }
+                while let Some(ev) = report.handle.recv().await {
+                    if let digdigdig3_station::Event::CvdLine { point, .. } = ev {
+                        let _ = tx.send(LiveUpdate::CvdLineUpdate {
+                            exchange_id, account_type,
+                            symbol: symbol_canonical.clone(),
+                            point,
+                        });
+                    }
                 }
-            };
-            while let Some(ev) = report.handle.recv().await {
-                if let digdigdig3_station::Event::CvdLine { point, .. } = ev {
-                    let _ = tx.send(LiveUpdate::CvdLineUpdate {
-                        exchange_id, account_type,
-                        symbol: symbol_canonical.clone(),
-                        point,
-                    });
-                }
+                crate::dlog!("[Bridge::cvd-fwd cycle ended] respawn={} {:?} {} stream={}, respawning in 1s",
+                    respawn_n, exchange_id, symbol_canonical, stream_label);
+                respawn_n = respawn_n.wrapping_add(1);
+                sleep_ms(1000).await;
             }
-            crate::dlog!("[Bridge::cvd-fwd exited] {:?} {} stream={}",
-                exchange_id, symbol_canonical, stream_label);
         })
     }
 
@@ -2556,28 +2614,34 @@ impl DataBridge {
     ) -> BgJoinHandle {
         spawn_bg_join(async move {
             let stream_label = format!("{:?}", stream);
-            let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
-                exchange_id, symbol_wire.clone(), account_type, [stream],
-            );
-            let mut report = match station.subscribe(sub_set).await {
-                Ok(r) => r,
-                Err(e) => {
-                    crate::dlog!("[Bridge::tpo-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
-                        exchange_id, symbol_canonical, symbol_wire, e);
-                    return;
+            let mut respawn_n: u32 = 0;
+            loop {
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                    exchange_id, symbol_wire.clone(), account_type, [stream.clone()],
+                );
+                let mut report = match station.subscribe(sub_set).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        crate::dlog!("[Bridge::tpo-fwd subscribe FAILED] respawn={} {:?} {} wire={}: {:?}",
+                            respawn_n, exchange_id, symbol_canonical, symbol_wire, e);
+                        return;
+                    }
+                };
+                if !report.failed.is_empty() && report.ok.is_empty() { return; }
+                while let Some(ev) = report.handle.recv().await {
+                    if let digdigdig3_station::Event::TpoProfile { point, .. } = ev {
+                        let _ = tx.send(LiveUpdate::TpoProfileUpdate {
+                            exchange_id, account_type,
+                            symbol: symbol_canonical.clone(),
+                            point,
+                        });
+                    }
                 }
-            };
-            while let Some(ev) = report.handle.recv().await {
-                if let digdigdig3_station::Event::TpoProfile { point, .. } = ev {
-                    let _ = tx.send(LiveUpdate::TpoProfileUpdate {
-                        exchange_id, account_type,
-                        symbol: symbol_canonical.clone(),
-                        point,
-                    });
-                }
+                crate::dlog!("[Bridge::tpo-fwd cycle ended] respawn={} {:?} {} stream={}, respawning in 1s",
+                    respawn_n, exchange_id, symbol_canonical, stream_label);
+                respawn_n = respawn_n.wrapping_add(1);
+                sleep_ms(1000).await;
             }
-            crate::dlog!("[Bridge::tpo-fwd exited] {:?} {} stream={}",
-                exchange_id, symbol_canonical, stream_label);
         })
     }
 
@@ -2596,44 +2660,57 @@ impl DataBridge {
         stream: digdigdig3_station::Stream,
     ) -> BgJoinHandle {
         spawn_bg_join(async move {
+            // Same respawn-loop rationale as the derived bars forwarders:
+            // station's auto-heal is kline-only, so non-kline forwarders end
+            // with a clean `None` per grace cycle. Without the loop OI silently
+            // freezes for the rest of the chart's lifetime.
+            // `last_oi` is carried OUTSIDE the loop so the delta stays
+            // continuous across respawn cycles — re-subscribing should not
+            // make the next event reset the delta to 0.0.
             let stream_label = format!("{:?}", stream);
-            let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
-                exchange_id, symbol_wire.clone(), account_type, [stream],
-            );
-            let mut report = match station.subscribe(sub_set).await {
-                Ok(r) => r,
-                Err(e) => {
-                    crate::dlog!("[Bridge::oi-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
-                        exchange_id, symbol_canonical, symbol_wire, e);
+            let mut last_oi: Option<f64> = None;
+            let mut respawn_n: u32 = 0;
+            loop {
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                    exchange_id, symbol_wire.clone(), account_type, [stream.clone()],
+                );
+                let mut report = match station.subscribe(sub_set).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        crate::dlog!("[Bridge::oi-fwd subscribe Err] respawn={} {:?} {} wire={}: {:?}",
+                            respawn_n, exchange_id, symbol_canonical, symbol_wire, e);
+                        return;
+                    }
+                };
+                // Wire-absent venue (e.g. Binance OI is REST-poll only) → station
+                // reports it in `failed[]`, `ok` is empty. Don't loop forever
+                // re-subscribing to a non-existent WS channel — exit the task.
+                if !report.failed.is_empty() && report.ok.is_empty() {
+                    crate::dlog!("[Bridge::oi-fwd wire-absent] {:?} {} stream={} — exiting (failed={:?})",
+                        exchange_id, symbol_canonical, stream_label, report.failed);
                     return;
                 }
-            };
-            // Running OI level for delta computation.
-            // The first event sets `last_oi` and emits delta = 0.0 (seed).
-            let mut last_oi: Option<f64> = None;
-            while let Some(ev) = report.handle.recv().await {
-                if let digdigdig3_station::Event::OpenInterest { point, .. } = ev {
-                    let oi = point.open_interest;
-                    let delta = match last_oi {
-                        Some(prev) => oi - prev,
-                        // First bar — no previous OI, delta is 0.0 by convention.
-                        None => 0.0,
-                    };
-                    last_oi = Some(oi);
-                    let bar = mlc_core::types::OiDeltaBar {
-                        ts_ms: point.ts_ms,
-                        oi,
-                        delta,
-                    };
-                    let _ = tx.send(LiveUpdate::OpenInterestUpdate {
-                        exchange_id, account_type,
-                        symbol: symbol_canonical.clone(),
-                        point: bar,
-                    });
+                while let Some(ev) = report.handle.recv().await {
+                    if let digdigdig3_station::Event::OpenInterest { point, .. } = ev {
+                        let oi = point.open_interest;
+                        let delta = match last_oi {
+                            Some(prev) => oi - prev,
+                            None => 0.0,
+                        };
+                        last_oi = Some(oi);
+                        let bar = mlc_core::types::OiDeltaBar { ts_ms: point.ts_ms, oi, delta };
+                        let _ = tx.send(LiveUpdate::OpenInterestUpdate {
+                            exchange_id, account_type,
+                            symbol: symbol_canonical.clone(),
+                            point: bar,
+                        });
+                    }
                 }
+                crate::dlog!("[Bridge::oi-fwd cycle ended] respawn={} {:?} {} stream={}, respawning in 1s",
+                    respawn_n, exchange_id, symbol_canonical, stream_label);
+                respawn_n = respawn_n.wrapping_add(1);
+                sleep_ms(1000).await;
             }
-            crate::dlog!("[Bridge::oi-fwd exited] {:?} {} stream={}",
-                exchange_id, symbol_canonical, stream_label);
         })
     }
 
@@ -2655,35 +2732,41 @@ impl DataBridge {
     ) -> BgJoinHandle {
         spawn_bg_join(async move {
             let stream_label = format!("{:?}", stream);
-            let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
-                exchange_id, symbol_wire.clone(), account_type, [stream],
-            );
-            let mut report = match station.subscribe(sub_set).await {
-                Ok(r) => r,
-                Err(e) => {
-                    crate::dlog!("[Bridge::fr-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
-                        exchange_id, symbol_canonical, symbol_wire, e);
-                    return;
+            let mut respawn_n: u32 = 0;
+            loop {
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                    exchange_id, symbol_wire.clone(), account_type, [stream.clone()],
+                );
+                let mut report = match station.subscribe(sub_set).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        crate::dlog!("[Bridge::fr-fwd subscribe FAILED] respawn={} {:?} {} wire={}: {:?}",
+                            respawn_n, exchange_id, symbol_canonical, symbol_wire, e);
+                        return;
+                    }
+                };
+                if !report.failed.is_empty() && report.ok.is_empty() { return; }
+                while let Some(ev) = report.handle.recv().await {
+                    if let digdigdig3_station::Event::FundingRate { point, .. } = ev {
+                        let cell = mlc_core::types::FundingRateCell {
+                            ts_ms: point.ts_ms,
+                            rate: point.rate,
+                            // FundingRatePoint does not carry the interval; default to 8h
+                            // (standard cadence for perpetual swaps on Binance, Bybit, OKX).
+                            interval_hours: 8,
+                        };
+                        let _ = tx.send(LiveUpdate::FundingRateUpdate {
+                            exchange_id, account_type,
+                            symbol: symbol_canonical.clone(),
+                            point: cell,
+                        });
+                    }
                 }
-            };
-            while let Some(ev) = report.handle.recv().await {
-                if let digdigdig3_station::Event::FundingRate { point, .. } = ev {
-                    let cell = mlc_core::types::FundingRateCell {
-                        ts_ms: point.ts_ms,
-                        rate: point.rate,
-                        // FundingRatePoint does not carry the interval; default to 8h
-                        // (standard cadence for perpetual swaps on Binance, Bybit, OKX).
-                        interval_hours: 8,
-                    };
-                    let _ = tx.send(LiveUpdate::FundingRateUpdate {
-                        exchange_id, account_type,
-                        symbol: symbol_canonical.clone(),
-                        point: cell,
-                    });
-                }
+                crate::dlog!("[Bridge::fr-fwd cycle ended] respawn={} {:?} {} stream={}, respawning in 1s",
+                    respawn_n, exchange_id, symbol_canonical, stream_label);
+                respawn_n = respawn_n.wrapping_add(1);
+                sleep_ms(1000).await;
             }
-            crate::dlog!("[Bridge::fr-fwd exited] {:?} {} stream={}",
-                exchange_id, symbol_canonical, stream_label);
         })
     }
 
@@ -3979,10 +4062,13 @@ impl DataBridge {
                         }
                     }
 
-                    // Emit the new page; the station's Series<BarPoint> forwarder
-                    // separately writes incoming WS klines + REST warm-seed to its
-                    // own ring, so this page only needs to reach the chart-side
-                    // consumer for prepend-display.
+                    // Send only the new REST page; the consumer (BackendCore::
+                    // tick_writers) merges this page into the existing bubble.bars
+                    // by timestamp (last-write-wins) so live bars to the right of
+                    // `before_ts` are preserved. `fetch_history` bypasses Station's
+                    // persisted Series, so the page won't appear in the cache path
+                    // above on its own — the bubble in BackendCore is the single
+                    // source of truth for the chart's current bar set.
                     let _ = tx.send(LiveUpdate::ScrollBarsLoaded {
                         exchange_id,
                         account_type,

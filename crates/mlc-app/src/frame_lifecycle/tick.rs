@@ -571,9 +571,15 @@ impl ChartApp {
             }
 
             for (cid_req, symbol, exchange, tf_name, at_label) in scroll_requests {
+                // Read the OLDEST bar's ts from the active bubble for this chart.
+                // The pre-cutover code path stored bars on the window directly;
+                // it now lives on the bubble. The dangling `None::<&Bar>` here
+                // made `oldest_ts` always 0, which made the next `continue` skip
+                // EVERY scroll-fetch — left/scroll backfill silently no-op'd.
                 let oldest_ts = self.panel_app.panel_grid.containers()
                     .get(&cid_req)
-                    .and_then(|_w| None::<&mlc_core::Bar>.map(|b| b.timestamp))
+                    .and_then(|w| self.core.bubble().bubble.bubble(w.current_bubble_id)
+                        .and_then(|b| b.bars.first().map(|bar| bar.timestamp)))
                     .unwrap_or(0);
 
                 if oldest_ts == 0 { continue; }

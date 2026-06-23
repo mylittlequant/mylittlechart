@@ -32,3 +32,18 @@ log = "0.4"
 # On wasm we substitute a no-op stub via cfg-split in src/agent/mod.rs.
 gate4agent = "=0.2.37"
 vt100 = "0.15"
+
+# ── wasm-only dev-deps for the full bridge→bubble smoke test ─────────────────
+# tests/wasm_chart_app_smoke.rs takes the chain one layer beyond the bridge:
+# build ChartApp::new_empty, seed_default_chart, drive chart.tick() in a loop,
+# assert bubble.bars.last().close moves. This isolates the bubble-write path
+# (BackendCore::tick_writers + ChartApp react.rs TradeUpdatePassthrough arm)
+# from the canvas/render path that mlc-app-web exercises.
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+wasm-bindgen-futures = "0.4"
+gloo-timers = { version = "0.3", features = ["futures"] }
+futures-util = "0.3"
+web-sys = { version = "0.3", features = ["console"] }
+mlc-live-data = { path = "../mlc-live-data", package = "mylittlechart-live-data" }
+digdigdig3-station = "=0.3.24"

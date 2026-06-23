@@ -1087,16 +1087,38 @@ impl BackendCore {
                 }
 
                 // ── ScrollBarsLoaded ────────────────────────────────────────────
+                // The bridge's `request_scroll_bars` REST path returns ONLY the
+                // older page (bars older than `before_ts`). Replacing bubble.bars
+                // with that page wholesale would drop every live / right-edge
+                // bar the chart has accumulated since seed. Merge by timestamp
+                // (last-write-wins so the live ring's version of any overlapping
+                // bar takes priority), then sort oldest→newest. Pre-cutover native
+                // worked because the legacy path concatenated server-side; this
+                // branch is the merge that path used to do for us.
                 LiveUpdate::ScrollBarsLoaded { exchange_id, account_type, symbol, timeframe: tf_name, bars, prepend_count } => {
                     let at_label = account_type.short_label().to_string();
                     let bids = self.bubble()
                         .bubble
                         .bubbles_for_instrument(exchange_id.as_str(), &at_label, &symbol);
                     for bid in bids {
+                        let merged: Vec<mlc_core::Bar> = {
+                            let mgr = self.bubble();
+                            let existing = mgr.bubble.bubble(bid)
+                                .map(|b| b.bars.clone())
+                                .unwrap_or_default();
+                            // Build a ts→bar map: insert the older REST page first,
+                            // then overwrite with existing bars so live/right-edge
+                            // versions win on any timestamp collision.
+                            let mut by_ts: std::collections::BTreeMap<i64, mlc_core::Bar> =
+                                std::collections::BTreeMap::new();
+                            for b in &bars { by_ts.insert(b.timestamp, *b); }
+                            for b in &existing { by_ts.insert(b.timestamp, *b); }
+                            by_ts.into_values().collect()
+                        };
                         {
                             let mut mgr = self.bubble_mut();
                             if let Some(bubble) = mgr.bubble.bubble_mut(bid) {
-                                bubble.bars = bars.clone();
+                                bubble.bars = merged.clone();
                             }
                         }
                         events.push(BubbleEvent::ScrollBarsAppended {
@@ -1105,7 +1127,7 @@ impl BackendCore {
                             symbol: symbol.clone(),
                             account_type: at_label.clone(),
                             timeframe: tf_name.clone(),
-                            bars: bars.clone(),
+                            bars: merged,
                             prepend_count,
                         });
                     }

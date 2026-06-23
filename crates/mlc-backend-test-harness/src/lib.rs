@@ -29,6 +29,7 @@
 
 use std::fmt;
 use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
 use mlc_backend_core::BackendCore;
@@ -66,6 +67,11 @@ pub struct BackendHarness {
 
 impl BackendHarness {
     /// Spin a real backend with no trading manager and no profile glue.
+    ///
+    /// Native only — uses a one-shot current-thread runtime to drive
+    /// `DataBridge::new()`. On wasm32 use [`Self::fresh_async`] from an
+    /// `async` test (`#[wasm_bindgen_test] async fn ...`).
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn fresh() -> Self {
         // DataBridge::new() is async; build a one-shot current-thread runtime
         // to drive the construction, then drop it — the bridge's own internal
@@ -76,6 +82,22 @@ impl BackendHarness {
             .build()
             .expect("failed to build tokio runtime for BackendHarness::fresh");
         let (bridge, _live_rx, _connector_ready_rx) = rt.block_on(DataBridge::new());
+        let bridge = Arc::new(bridge);
+        let inject_tx = bridge.debug_broadcast_tx();
+        let core = BackendCore::new(bridge.clone(), None);
+        Self {
+            core,
+            bridge,
+            inject_tx,
+            sim_now_ms: 0,
+        }
+    }
+
+    /// Async constructor, usable on both native and wasm32. Required on
+    /// wasm32 (no `tokio::runtime::Builder` available), and safe to call
+    /// from inside an existing tokio runtime on native.
+    pub async fn fresh_async() -> Self {
+        let (bridge, _live_rx, _connector_ready_rx) = DataBridge::new().await;
         let bridge = Arc::new(bridge);
         let inject_tx = bridge.debug_broadcast_tx();
         let core = BackendCore::new(bridge.clone(), None);
@@ -113,16 +135,19 @@ impl BackendHarness {
 
 /// Spawn the `mlc-backend-daemon` binary in the background. The binary is
 /// expected to have been built (cargo `--bin mlc-backend-daemon`).
+/// Native-only — wasm has no process / filesystem spawn surface.
 ///
 /// Returns a guard that kills the process on drop and the chosen port.
 ///
 /// The default daemon port is `19470`; the harness picks a high port from the
 /// ephemeral range to avoid collisions when run in CI alongside other daemons.
+#[cfg(not(target_arch = "wasm32"))]
 pub struct DaemonGuard {
     pub port: u16,
     child: Option<tokio::process::Child>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl DaemonGuard {
     pub async fn spawn() -> HarnessResult<Self> {
         Self::spawn_with_port(19470).await
@@ -200,6 +225,7 @@ impl DaemonGuard {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Drop for DaemonGuard {
     fn drop(&mut self) {
         if let Some(mut child) = self.child.take() {

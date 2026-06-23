@@ -1,0 +1,10 @@
+# wasm-bindgen test runner for headless browser tests.
+#
+# Mirrors digdigdig3/.cargo/config.toml so `cargo test --target wasm32-unknown-unknown`
+# in the mlc workspace uses the same dig2-wasm-test runner (headless Chrome/Edge,
+# auto-driver). Install: `cargo install dig2browser --bin dig2-wasm-test --force`.
+[target.wasm32-unknown-unknown]
+runner = "dig2-wasm-test"
+
+[env]
+WASM_BINDGEN_TEST_TIMEOUT = { value = "180", force = true }

@@ -47,3 +47,12 @@ gloo-timers = { version = "0.3", features = ["futures"] }
 # console::log_1 for bridge dlog! macro on wasm (eprintln! goes to stderr,
 # invisible in the browser — we route through console.log instead).
 web-sys = { version = "0.3", features = ["console"] }
+
+# ── wasm-only dev-deps for the bridge-daemon smoke test ──────────────────────
+# tests/wasm_bridge_smoke.rs verifies DataBridge::subscribe_trades delivers
+# at least one LiveUpdate::TradeUpdate from Binance through a headless
+# browser. Runs via `cargo test --target wasm32-unknown-unknown` driven by
+# the dig2-wasm-test runner (same one dig3-station tests use).
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+futures-util = "0.3"

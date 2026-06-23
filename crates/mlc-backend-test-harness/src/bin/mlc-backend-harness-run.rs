@@ -7,8 +7,13 @@
 //! ("Cannot start a runtime from within a runtime"). The async scenarios
 //! drive their own separate short-lived runtime for HTTP work.
 
+#[cfg(target_arch = "wasm32")]
+fn main() {}
+
+#[cfg(not(target_arch = "wasm32"))]
 use mlc_backend_test_harness::scenarios;
 
+#[cfg(not(target_arch = "wasm32"))]
 fn main() {
     let mut passes = 0usize;
     let mut fails: Vec<(String, String)> = Vec::new();
