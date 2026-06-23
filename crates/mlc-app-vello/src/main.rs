@@ -43,7 +43,7 @@ use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
-    window::{CursorIcon, Icon, Window, WindowId},
+    window::{Icon, Window, WindowId},
 };
 
 /// User-defined events sent from background threads to the winit event loop.
@@ -64,27 +64,10 @@ struct PromoteWindowResult {
     active_preset_id: String,
     open_tabs: Vec<String>,
 }
-use mlc_core::CursorStyle;
 use sysinfo::{Pid, ProcessesToUpdate, System};
 
 use app_state::AppState;
 
-fn cursor_style_to_winit(style: CursorStyle) -> CursorIcon {
-    match style {
-        CursorStyle::Default => CursorIcon::Default,
-        CursorStyle::Pointer => CursorIcon::Pointer,
-        CursorStyle::Grab => CursorIcon::Grab,
-        CursorStyle::Grabbing => CursorIcon::Grabbing,
-        CursorStyle::Move => CursorIcon::Move,
-        CursorStyle::NsResize => CursorIcon::NsResize,
-        CursorStyle::EwResize => CursorIcon::EwResize,
-        CursorStyle::NeswResize => CursorIcon::NeswResize,
-        CursorStyle::NwseResize => CursorIcon::NwseResize,
-        CursorStyle::Crosshair => CursorIcon::Crosshair,
-        CursorStyle::NotAllowed => CursorIcon::NotAllowed,
-        CursorStyle::None => CursorIcon::Default,
-    }
-}
 
 /// Decode the embedded 32x32 PNG icon and return a winit [`Icon`].
 ///
@@ -257,6 +240,17 @@ struct PerWindowState {
     /// already false, so the spinner masks the first-frame work instead of
     /// blinking out early.
     awaiting_first_live_frame: bool,
+
+    // ── mlc-input-shell integration ───────────────────────────────────────
+    /// Portable input state (mirror of the scattered fields above).
+    /// Written by process_event; read back into PerWindowState fields in event_handler.
+    shell_input:   mlc_input_shell::InputState,
+    /// Portable chrome state (mirror of chrome_state above).
+    shell_chrome:  mlc_input_shell::ChromeState,
+    /// Dirty flags for this event-loop iteration (synced back to pw fields).
+    shell_dirty:   mlc_input_shell::DirtyFlags,
+    /// Per-event-loop-iteration output from process_event (synced back to pw fields).
+    dispatch_out:  mlc_input_shell::DispatchOut,
 }
 
 /// A pending request to open a new window.
@@ -1288,6 +1282,10 @@ impl App<'_> {
             was_minimized: false,
             spinner_start: None,
             awaiting_first_live_frame: false,
+            shell_input:  mlc_input_shell::InputState::default(),
+            shell_chrome: mlc_input_shell::ChromeState::new("chart-app-vello"),
+            shell_dirty:  mlc_input_shell::DirtyFlags::default(),
+            dispatch_out: mlc_input_shell::DispatchOut::default(),
         };
 
         self.windows.insert(win_id, pw);

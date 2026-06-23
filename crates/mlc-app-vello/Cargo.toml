@@ -17,6 +17,7 @@ mlc-alert-delivery = { path = "../mlc-alert-delivery", package = "mylittlechart-
 mlc-live-data = { path = "../mlc-live-data", package = "mylittlechart-live-data" }
 mlc-vello-context = { path = "../mlc-vello-context", package = "mylittlechart-vello-context" }
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
+mlc-input-shell = { path = "../mlc-input-shell", package = "mylittlechart-input-shell" }
 mlc-crypto = { path = "../mlc-crypto", package = "mylittlechart-crypto" }
 mlc-layout = { path = "../mlc-layout", package = "mylittlechart-layout" }
 uzor = "=1.4.15"

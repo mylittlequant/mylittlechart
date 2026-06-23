@@ -1,0 +1,16 @@
+[package]
+name    = "mylittlechart-input-shell"
+version.workspace = true
+edition.workspace = true
+description = "Platform-neutral input pipeline shared by vello and web shells"
+
+[lib]
+name = "mlc_input_shell"
+
+[dependencies]
+mlc-app    = { path = "../mlc-app",    package = "mylittlechart-app"    }
+mlc-core   = { path = "../mlc-core",   package = "mylittlechart-core"   }
+mlc-sidebar-content = { path = "../mlc-sidebar-content", package = "mylittlechart-sidebar-content" }
+uzor       = "=1.4.15"
+web-time   = "1"
+# NO winit, NO arboard, NO wasm-bindgen, NO vello

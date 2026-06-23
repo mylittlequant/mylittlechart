@@ -5,6 +5,7 @@ members = [
     "crates/mlc-layout",
     "crates/mlc-app",
     "crates/mlc-app-vello",
+    "crates/mlc-input-shell",
     "crates/mlc-indicators",
     "crates/mlc-sidebar-content",
     "crates/mlc-panels",

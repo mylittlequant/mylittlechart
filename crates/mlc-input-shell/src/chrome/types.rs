@@ -1,0 +1,142 @@
+//! Chrome types — all platform-neutral (no winit, no RenderContext).
+
+use crate::tooltip::TooltipState;
+
+/// Height of the chrome strip in logical pixels.
+pub const CHROME_HEIGHT: f64 = 32.0;
+
+/// Items available in the chrome right-click context menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChromeMenuAction {
+    CloseWindow,
+    DeleteWindow,
+}
+
+/// State for the chrome strip's right-click context menu.
+pub struct ChromeContextMenu {
+    pub open: bool,
+    /// Position where the menu was opened (logical px, relative to window).
+    pub x: f64,
+    pub y: f64,
+    /// Which item is currently hovered (-1 = none).
+    pub hovered_index: i32,
+}
+
+impl ChromeContextMenu {
+    pub fn new() -> Self {
+        Self { open: false, x: 0.0, y: 0.0, hovered_index: -1 }
+    }
+
+    pub fn open_at(&mut self, x: f64, y: f64) {
+        self.open = true;
+        self.x = x;
+        self.y = y;
+        self.hovered_index = -1;
+    }
+
+    pub fn close(&mut self) {
+        self.open = false;
+        self.hovered_index = -1;
+    }
+}
+
+impl Default for ChromeContextMenu {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Theme colours for the chrome strip, synced from the chart theme each frame.
+pub struct ChromeColors {
+    pub background: String,
+    pub icon_normal: String,
+    pub icon_hover: String,
+    pub button_hover: String,
+    pub close_hover: String,
+    pub separator: String,
+    pub tab_accent: String,
+    pub tooltip_bg: String,
+    pub tooltip_text: String,
+}
+
+impl Default for ChromeColors {
+    fn default() -> Self {
+        Self {
+            background:   "#131722".into(),
+            icon_normal:  "#a6adc8".into(),
+            icon_hover:   "#cdd6f4".into(),
+            button_hover: "#1f2937".into(),
+            close_hover:  "#e81123".into(),
+            separator:    "#313244".into(),
+            tab_accent:   "#3b82f6".into(),
+            tooltip_bg:   "#323232".into(),
+            tooltip_text: "#ffffff".into(),
+        }
+    }
+}
+
+/// A single tab in the chrome strip.
+#[derive(Clone)]
+pub struct Tab {
+    /// Preset id (used to fire LoadPreset event).
+    pub id: String,
+    /// Display name shown on the tab.
+    pub name: String,
+    /// Whether this is the currently active tab.
+    pub active: bool,
+}
+
+/// The region of the window chrome that was hit by a pointer event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChromeHit {
+    None,
+    Caption,
+    MinimizeButton,
+    MaximizeButton,
+    CloseButton,
+    CloseWindowButton,
+    MascotButton,
+    MenuButton,
+    Tab(usize),
+    TabClose(usize),
+    NewTabButton,
+    NewWindowButton,
+    ResizeTop,
+    ResizeBottom,
+    ResizeLeft,
+    ResizeRight,
+    ResizeTopLeft,
+    ResizeTopRight,
+    ResizeBottomLeft,
+    ResizeBottomRight,
+}
+
+/// Mutable rendering state for the chrome strip.
+pub struct ChromeState {
+    pub hovered: ChromeHit,
+    pub is_maximized: bool,
+    pub title: String,
+    pub colors: ChromeColors,
+    pub tabs: Vec<Tab>,
+    /// Pre-computed tab widths (updated each frame via `update_tab_widths` in vello shell).
+    pub tab_widths: Vec<f64>,
+    /// Right-click context menu state.
+    pub context_menu: ChromeContextMenu,
+    /// Tooltip state for chrome button hover tooltips.
+    pub tooltip: TooltipState,
+}
+
+impl ChromeState {
+    pub fn new(title: impl Into<String>) -> Self {
+        Self {
+            hovered:      ChromeHit::None,
+            is_maximized: false,
+            title:        title.into(),
+            colors:       ChromeColors::default(),
+            tabs:         Vec::new(),
+            tab_widths:   Vec::new(),
+            context_menu: ChromeContextMenu::new(),
+            tooltip:      TooltipState::new(),
+        }
+    }
+}
