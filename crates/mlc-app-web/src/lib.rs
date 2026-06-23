@@ -232,19 +232,25 @@ fn run_render_loop(
 /// Translate a uzor [`PlatformEvent`] into the corresponding `ChartApp` input
 /// method call.
 ///
-/// The vello shell does the same mapping from winit events.  When new input
-/// methods are added to `ChartApp`, add the corresponding arms here.
-/// Pointer-down state retained between mousedown and mouseup to distinguish
-/// a click (no movement) from a drag (>= CLICK_SLOP_PX moved before release).
-/// A real input coordinator would live in `WebWindowProvider`; the spike keeps
-/// it module-local until we promote the chrome work.
+/// Mirrors the vello shell's mouse pipeline (see
+/// `mlc-app-vello/src/window/event_handler.rs`):
+///   PointerDown(Left)  → `on_drag_start`           (always, unconditional)
+///   PointerUp(Left)    → if movement < 5px:  `on_click`  THEN `on_drag_end`
+///                        else:                          `on_drag_end`
+///   PointerMoved       → `on_mouse_move`
+/// The slop logic from the spike's first version was wrong — it withheld
+/// `on_drag_start` until the pointer had moved 4px, which broke every
+/// toolbar/sidebar handler that listens for drag_start. The vello shell
+/// fires drag_start on every press and emits `on_click` IN ADDITION to
+/// `on_drag_end` when the press never moved, so click handlers in mlc-app
+/// see both events.
 #[cfg(target_arch = "wasm32")]
-const CLICK_SLOP_PX: f64 = 4.0;
+const CLICK_SLOP_PX: f64 = 5.0;
 
 #[cfg(target_arch = "wasm32")]
 thread_local! {
-    static POINTER_DOWN: std::cell::Cell<Option<(f64, f64)>> = const { std::cell::Cell::new(None) };
-    static DRAG_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static PRESS_POS: std::cell::Cell<Option<(f64, f64)>> = const { std::cell::Cell::new(None) };
+    static MOUSE_PRESSED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -254,47 +260,35 @@ fn dispatch_event(chart: &mut ChartApp, event: uzor::input::core::event_processo
 
     match event {
         PlatformEvent::PointerDown { x, y, button: MouseButton::Left } => {
-            // Record the press location. Don't start a drag yet — we don't
-            // know if this is a click or a drag until pointer moves or
-            // releases.
-            POINTER_DOWN.with(|p| p.set(Some((x, y))));
-            DRAG_ACTIVE.with(|d| d.set(false));
+            MOUSE_PRESSED.with(|p| p.set(true));
+            PRESS_POS.with(|p| p.set(Some((x, y))));
+            let dismissed = chart.on_drag_start(x, y);
+            if dismissed {
+                // Popup-dismiss: synthetic drag-end to clean ui_drag_active.
+                chart.on_drag_end(x, y);
+                MOUSE_PRESSED.with(|p| p.set(false));
+                PRESS_POS.with(|p| p.set(None));
+            }
         }
         PlatformEvent::PointerUp { x, y, button: MouseButton::Left } => {
-            let press = POINTER_DOWN.with(|p| p.take());
-            let was_dragging = DRAG_ACTIVE.with(|d| d.replace(false));
-            if was_dragging {
+            if MOUSE_PRESSED.with(|p| p.replace(false)) {
+                if let Some((sx, sy)) = PRESS_POS.with(|p| p.take()) {
+                    let dx = x - sx;
+                    let dy = y - sy;
+                    if dx * dx + dy * dy < CLICK_SLOP_PX * CLICK_SLOP_PX {
+                        // Click + drag_end (vello shell's dual dispatch).
+                        chart.on_click(x, y);
+                    }
+                }
                 chart.on_drag_end(x, y);
-            } else if press.is_some() {
-                // Short press with no movement → button click. Toolbars,
-                // sidebar icons, chrome menu — all flow through here.
-                chart.on_click(x, y);
             }
         }
         PlatformEvent::PointerMoved { x, y } => {
-            // If a press is in progress and we crossed the slop threshold,
-            // promote it to a drag (which dispatches on_drag_start once).
-            let promote = POINTER_DOWN.with(|p| {
-                if let Some((px, py)) = p.get() {
-                    let dx = x - px;
-                    let dy = y - py;
-                    (dx * dx + dy * dy) > (CLICK_SLOP_PX * CLICK_SLOP_PX)
-                } else {
-                    false
-                }
-            });
-            if promote {
-                let already = DRAG_ACTIVE.with(|d| d.replace(true));
-                if !already {
-                    let start = POINTER_DOWN.with(|p| p.get()).unwrap_or((x, y));
-                    chart.on_drag_start(start.0, start.1);
-                }
-            }
             chart.on_mouse_move(x, y);
         }
         PlatformEvent::PointerLeft => {
-            POINTER_DOWN.with(|p| p.set(None));
-            DRAG_ACTIVE.with(|d| d.set(false));
+            MOUSE_PRESSED.with(|p| p.set(false));
+            PRESS_POS.with(|p| p.set(None));
             chart.on_mouse_leave();
         }
         PlatformEvent::Scroll { dx, dy } => {
