@@ -873,7 +873,7 @@ impl DataBridge {
                 }
             }
         }
-        eprintln!(
+        crate::dlog!(
             "[Bridge::prewarm_wire_symbol_cache] {:?}: seeded {} symbols in {}us",
             exchange_id, n, _t0.elapsed().as_micros(),
         );
@@ -1098,7 +1098,7 @@ impl DataBridge {
         // throw the result away anyway. Bug 10 in handoff-2026-06-17.
         let _ = &station_bar_seriskey;
 
-        eprintln!(
+        crate::dlog!(
             "[Bridge::request_bars enter] {:?} {} at={:?} tf={} force={}",
             exchange_id, symbol_str, account_type, tf_name, force,
         );
@@ -1120,7 +1120,7 @@ impl DataBridge {
         {
             let mut af = active_fetches.lock().unwrap_or_else(|e| e.into_inner());
             if af.contains(&cache_key) {
-                eprintln!("[Bridge::request_bars dedup-L1] in-flight, skip {:?} {} tf={}", exchange_id, symbol_str, tf_name);
+                crate::dlog!("[Bridge::request_bars dedup-L1] in-flight, skip {:?} {} tf={}", exchange_id, symbol_str, tf_name);
                 return;
             }
             af.insert(cache_key.clone());
@@ -1131,7 +1131,7 @@ impl DataBridge {
             subs.contains(&cache_key)
         };
         if already_subscribed && !force {
-            eprintln!("[Bridge::request_bars dedup-L2] subscriber live, non-force skip {:?} {} tf={}", exchange_id, symbol_str, tf_name);
+            crate::dlog!("[Bridge::request_bars dedup-L2] subscriber live, non-force skip {:?} {} tf={}", exchange_id, symbol_str, tf_name);
             if let Ok(mut af) = active_fetches.lock() { af.remove(&cache_key); }
             return;
         }
@@ -1172,7 +1172,7 @@ impl DataBridge {
         // freshly fetched 300 bars; live ticks arrive via LiveUpdate::BarUpdate.
 
         if need_spawn_kline_sub {
-            eprintln!(
+            crate::dlog!(
                 "[Bridge::request_bars spawn-kline-fwd] {:?} {} at={:?} tf={}",
                 exchange_id, symbol_str, account_type, tf_name,
             );
@@ -1211,7 +1211,7 @@ impl DataBridge {
                         bar_n = bar_n.wrapping_add(1);
                         // Sample-log to confirm forwarder is alive without flooding.
                         if bar_n <= 3 || bar_n % 50 == 0 {
-                            eprintln!(
+                            crate::dlog!(
                                 "[Bridge::kline-fwd emit BarUpdate] n={} {:?} {} at={:?} tf={} bar_ts={}",
                                 bar_n, exchange_id, station_symbol_canonical, account_type, station_tf_name, bar.timestamp,
                             );
@@ -1276,7 +1276,7 @@ impl DataBridge {
                     // passthrough fallback (symbol_str unchanged) which matches
                     // venues where canonical == native (e.g. Binance).
                     if connector_ready && attempts >= MAX_ATTEMPTS {
-                        eprintln!(
+                        crate::dlog!(
                             "[Bridge] wire_symbol unresolved after {}ms: exchange={:?} sym={} at={:?} — using passthrough",
                             attempts * 100, exchange_id, symbol_str, account_type
                         );
@@ -1347,11 +1347,11 @@ impl DataBridge {
                     let n = points.len();
                     crate::dlog!("[Bridge] Phase A: got {} bars (dig3)", n);
                     let bars = points.iter().map(bar_point_to_bar).collect::<Vec<_>>();
-                    eprintln!("[Bridge] Phase A ok: {:?} {} at={:?} tf={} -> {} bars", exchange_id, symbol_str, account_type, tf_name, n);
+                    crate::dlog!("[Bridge] Phase A ok: {:?} {} at={:?} tf={} -> {} bars", exchange_id, symbol_str, account_type, tf_name, n);
                     bars
                 }
                 Err(e) => {
-                    eprintln!("[Bridge] Phase A error: {:?} sym={} {}", exchange_id, symbol_str, e);
+                    crate::dlog!("[Bridge] Phase A error: {:?} sym={} {}", exchange_id, symbol_str, e);
                     let _ = tx.send(LiveUpdate::Error {
                         exchange_id,
                         account_type,
@@ -1375,7 +1375,7 @@ impl DataBridge {
             // forwarder receives the same WS klines and upsert_by_ts deduplicates
             // against any cached bars, so the bridge does not need a parallel
             // merge layer.
-            eprintln!(
+            crate::dlog!(
                 "[Bridge::PhaseA emit BarsLoaded] {:?} {} at={:?} tf={} bars={} first_ts={} last_ts={}",
                 exchange_id, symbol_str, account_type, tf_name, fresh_300.len(),
                 fresh_first_ts.unwrap_or(0), fresh_last_ts.unwrap_or(0),
@@ -1402,7 +1402,7 @@ impl DataBridge {
 
             finish_fetch!();
         });
-        eprintln!(
+        crate::dlog!(
             "[Bridge::request_bars sync-exit] {:?} tf={} total={}us hub={}us wire={}us",
             exchange_id, tf_name_for_log,
             _rb_total.elapsed().as_micros(),
@@ -1424,7 +1424,7 @@ impl DataBridge {
         account_type: AccountType,
         count: u32,
     ) {
-        eprintln!(
+        crate::dlog!(
             "[Bridge::request_tick_bars enter] {:?} {} at={:?} count={}",
             exchange_id, symbol, account_type, count,
         );
@@ -1482,7 +1482,7 @@ impl DataBridge {
         if let Ok(mut subs) = self.station_kline_subscribed.lock() {
             subs.remove(&key);
         }
-        eprintln!(
+        crate::dlog!(
             "[Bridge::abort_kline_bars] {:?} {} at={:?} tf={} aborted={}",
             exchange_id, symbol, account_type, timeframe, aborted,
         );
@@ -1558,7 +1558,7 @@ impl DataBridge {
         account_type: AccountType,
         interval: &str,
     ) {
-        eprintln!(
+        crate::dlog!(
             "[Bridge::request_footprint enter] {:?} {} at={:?} interval={}",
             exchange_id, symbol, account_type, interval,
         );
@@ -1793,7 +1793,7 @@ impl DataBridge {
             let mut ob_report = match station_ob.subscribe(ob_set).await {
                 Ok(r) => r,
                 Err(e) => {
-                    eprintln!("[Bridge::dom-heatmap-ob subscribe FAILED] {:?} {} wire={}: {:?}",
+                    crate::dlog!("[Bridge::dom-heatmap-ob subscribe FAILED] {:?} {} wire={}: {:?}",
                         exchange_id, sym_ob, sym_wire_ob, e);
                     return;
                 }
@@ -1812,7 +1812,7 @@ impl DataBridge {
                 let mut tr_report = match station_t.subscribe(tr_set).await {
                     Ok(r) => r,
                     Err(e) => {
-                        eprintln!("[Bridge::dom-heatmap-trade subscribe FAILED] {:?} {} wire={}: {:?}",
+                        crate::dlog!("[Bridge::dom-heatmap-trade subscribe FAILED] {:?} {} wire={}: {:?}",
                             exchange_id, sym_tr, sym_wire_tr, e);
                         return;
                     }
@@ -1874,7 +1874,7 @@ impl DataBridge {
                 }
             }
             trade_handle.abort();
-            eprintln!("[Bridge::dom-heatmap-ob exited] {:?} {}", exchange_id, sym_ob);
+            crate::dlog!("[Bridge::dom-heatmap-ob exited] {:?} {}", exchange_id, sym_ob);
         });
 
         if let Ok(mut subs) = self.derived_subs.lock() {
@@ -1920,7 +1920,7 @@ impl DataBridge {
             let mut liq_report = match station_liq.subscribe(liq_set).await {
                 Ok(r) => r,
                 Err(e) => {
-                    eprintln!("[Bridge::liq-heatmap-liq subscribe FAILED] {:?} {} wire={}: {:?}",
+                    crate::dlog!("[Bridge::liq-heatmap-liq subscribe FAILED] {:?} {} wire={}: {:?}",
                         exchange_id, sym_liq, sym_wire_liq, e);
                     return;
                 }
@@ -1939,7 +1939,7 @@ impl DataBridge {
                 let mut bkt_report = match station_bkt.subscribe(bkt_set).await {
                     Ok(r) => r,
                     Err(e) => {
-                        eprintln!("[Bridge::liq-heatmap-bucket subscribe FAILED] {:?} {} wire={}: {:?}",
+                        crate::dlog!("[Bridge::liq-heatmap-bucket subscribe FAILED] {:?} {} wire={}: {:?}",
                             exchange_id, sym_bkt, sym_wire_bkt, e);
                         return;
                     }
@@ -1971,7 +1971,7 @@ impl DataBridge {
                 }
             }
             bucket_handle.abort();
-            eprintln!("[Bridge::liq-heatmap-liq exited] {:?} {}", exchange_id, sym_liq);
+            crate::dlog!("[Bridge::liq-heatmap-liq exited] {:?} {}", exchange_id, sym_liq);
         });
 
         if let Ok(mut subs) = self.derived_subs.lock() {
@@ -2202,14 +2202,14 @@ impl DataBridge {
                     account_type,
                     [stream.clone()],
                 );
-                eprintln!(
+                crate::dlog!(
                     "[Bridge::derived-bar-fwd subscribing] respawn={} {:?} {} wire={} stream={}",
                     respawn_n, exchange_id, symbol_canonical, symbol_wire, stream_label,
                 );
                 let mut report = match station.subscribe(sub_set).await {
                     Ok(r) => r,
                     Err(e) => {
-                        eprintln!(
+                        crate::dlog!(
                             "[Bridge::derived-bar-fwd subscribe FAILED] respawn={} {:?} {} wire={} stream={}: {:?}",
                             respawn_n, exchange_id, symbol_canonical, symbol_wire, stream_label, e,
                         );
@@ -2219,7 +2219,7 @@ impl DataBridge {
                     }
                 };
                 if !report.failed.is_empty() {
-                    eprintln!(
+                    crate::dlog!(
                         "[Bridge::derived-bar-fwd subscribe partial-fail] respawn={} {:?} {} wire={} stream={}: {} failed (ok={})",
                         respawn_n, exchange_id, symbol_canonical, symbol_wire, stream_label,
                         report.failed.len(), report.ok.len(),
@@ -2229,7 +2229,7 @@ impl DataBridge {
                         return;
                     }
                 }
-                eprintln!(
+                crate::dlog!(
                     "[Bridge::derived-bar-fwd subscribed OK] respawn={} {:?} {} wire={} stream={} ok_streams={}",
                     respawn_n, exchange_id, symbol_canonical, symbol_wire, stream_label, report.ok.len(),
                 );
@@ -2240,7 +2240,7 @@ impl DataBridge {
                         bar_n_this_cycle = bar_n_this_cycle.wrapping_add(1);
                         total_bars = total_bars.wrapping_add(1);
                         if total_bars <= 3 || total_bars % 50 == 0 {
-                            eprintln!(
+                            crate::dlog!(
                                 "[Bridge::derived-bar-fwd emit BarUpdate] total={} cycle={} respawn={} {:?} {} stream={} bar_ts={}",
                                 total_bars, bar_n_this_cycle, respawn_n,
                                 exchange_id, symbol_canonical, stream_label, bar.timestamp,
@@ -2254,7 +2254,7 @@ impl DataBridge {
                         });
                     }
                 }
-                eprintln!(
+                crate::dlog!(
                     "[Bridge::derived-bar-fwd cycle ended] respawn={} {:?} {} stream={} bars_this_cycle={} total={}, respawning in 1s",
                     respawn_n, exchange_id, symbol_canonical, stream_label, bar_n_this_cycle, total_bars,
                 );
@@ -2282,7 +2282,7 @@ impl DataBridge {
     ) -> BgJoinHandle {
         spawn_bg_join(async move {
             let stream_label = format!("{:?}", stream);
-            eprintln!(
+            crate::dlog!(
                 "[Bridge::footprint-fwd subscribing] {:?} {} wire={} stream={}",
                 exchange_id, symbol_canonical, symbol_wire, stream_label,
             );
@@ -2295,7 +2295,7 @@ impl DataBridge {
             let mut report = match station.subscribe(sub_set).await {
                 Ok(r) => r,
                 Err(e) => {
-                    eprintln!(
+                    crate::dlog!(
                         "[Bridge::footprint-fwd subscribe FAILED] {:?} {} wire={} stream={}: {:?}",
                         exchange_id, symbol_canonical, symbol_wire, stream_label, e,
                     );
@@ -2303,12 +2303,12 @@ impl DataBridge {
                 }
             };
             if !report.failed.is_empty() {
-                eprintln!(
+                crate::dlog!(
                     "[Bridge::footprint-fwd subscribe partial-fail] {:?} {} wire={} stream={}: {} failed",
                     exchange_id, symbol_canonical, symbol_wire, stream_label, report.failed.len(),
                 );
             }
-            eprintln!(
+            crate::dlog!(
                 "[Bridge::footprint-fwd subscribed OK] {:?} {} wire={} stream={}",
                 exchange_id, symbol_canonical, symbol_wire, stream_label,
             );
@@ -2317,7 +2317,7 @@ impl DataBridge {
                 if let digdigdig3_station::Event::Footprint { point, .. } = ev {
                     fp_n = fp_n.wrapping_add(1);
                     if fp_n <= 5 || fp_n % 50 == 0 {
-                        eprintln!(
+                        crate::dlog!(
                             "[bridge-fp-fwd] emit n={} {:?} {} open_time={} levels.len={} vol={:.4}",
                             fp_n, exchange_id, symbol_canonical, point.open_time, point.levels.len(), point.volume,
                         );
@@ -2346,7 +2346,7 @@ impl DataBridge {
                     });
                 }
             }
-            eprintln!(
+            crate::dlog!(
                 "[Bridge::footprint-fwd exited] {:?} {} stream={} events_emitted={}",
                 exchange_id, symbol_canonical, stream_label, fp_n,
             );
@@ -2373,7 +2373,7 @@ impl DataBridge {
             let mut report = match station.subscribe(sub_set).await {
                 Ok(r) => r,
                 Err(e) => {
-                    eprintln!("[Bridge::renko-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
+                    crate::dlog!("[Bridge::renko-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
                         exchange_id, symbol_canonical, symbol_wire, e);
                     return;
                 }
@@ -2387,7 +2387,7 @@ impl DataBridge {
                     });
                 }
             }
-            eprintln!("[Bridge::renko-fwd exited] {:?} {} stream={}",
+            crate::dlog!("[Bridge::renko-fwd exited] {:?} {} stream={}",
                 exchange_id, symbol_canonical, stream_label);
         })
     }
@@ -2412,7 +2412,7 @@ impl DataBridge {
             let mut report = match station.subscribe(sub_set).await {
                 Ok(r) => r,
                 Err(e) => {
-                    eprintln!("[Bridge::tlb-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
+                    crate::dlog!("[Bridge::tlb-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
                         exchange_id, symbol_canonical, symbol_wire, e);
                     return;
                 }
@@ -2426,7 +2426,7 @@ impl DataBridge {
                     });
                 }
             }
-            eprintln!("[Bridge::tlb-fwd exited] {:?} {} stream={}",
+            crate::dlog!("[Bridge::tlb-fwd exited] {:?} {} stream={}",
                 exchange_id, symbol_canonical, stream_label);
         })
     }
@@ -2450,7 +2450,7 @@ impl DataBridge {
             let mut report = match station.subscribe(sub_set).await {
                 Ok(r) => r,
                 Err(e) => {
-                    eprintln!("[Bridge::pnf-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
+                    crate::dlog!("[Bridge::pnf-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
                         exchange_id, symbol_canonical, symbol_wire, e);
                     return;
                 }
@@ -2465,7 +2465,7 @@ impl DataBridge {
                     });
                 }
             }
-            eprintln!("[Bridge::pnf-fwd exited] {:?} {} stream={}",
+            crate::dlog!("[Bridge::pnf-fwd exited] {:?} {} stream={}",
                 exchange_id, symbol_canonical, stream_label);
         })
     }
@@ -2488,7 +2488,7 @@ impl DataBridge {
             let mut report = match station.subscribe(sub_set).await {
                 Ok(r) => r,
                 Err(e) => {
-                    eprintln!("[Bridge::kagi-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
+                    crate::dlog!("[Bridge::kagi-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
                         exchange_id, symbol_canonical, symbol_wire, e);
                     return;
                 }
@@ -2502,7 +2502,7 @@ impl DataBridge {
                     });
                 }
             }
-            eprintln!("[Bridge::kagi-fwd exited] {:?} {} stream={}",
+            crate::dlog!("[Bridge::kagi-fwd exited] {:?} {} stream={}",
                 exchange_id, symbol_canonical, stream_label);
         })
     }
@@ -2525,7 +2525,7 @@ impl DataBridge {
             let mut report = match station.subscribe(sub_set).await {
                 Ok(r) => r,
                 Err(e) => {
-                    eprintln!("[Bridge::cvd-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
+                    crate::dlog!("[Bridge::cvd-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
                         exchange_id, symbol_canonical, symbol_wire, e);
                     return;
                 }
@@ -2539,7 +2539,7 @@ impl DataBridge {
                     });
                 }
             }
-            eprintln!("[Bridge::cvd-fwd exited] {:?} {} stream={}",
+            crate::dlog!("[Bridge::cvd-fwd exited] {:?} {} stream={}",
                 exchange_id, symbol_canonical, stream_label);
         })
     }
@@ -2562,7 +2562,7 @@ impl DataBridge {
             let mut report = match station.subscribe(sub_set).await {
                 Ok(r) => r,
                 Err(e) => {
-                    eprintln!("[Bridge::tpo-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
+                    crate::dlog!("[Bridge::tpo-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
                         exchange_id, symbol_canonical, symbol_wire, e);
                     return;
                 }
@@ -2576,7 +2576,7 @@ impl DataBridge {
                     });
                 }
             }
-            eprintln!("[Bridge::tpo-fwd exited] {:?} {} stream={}",
+            crate::dlog!("[Bridge::tpo-fwd exited] {:?} {} stream={}",
                 exchange_id, symbol_canonical, stream_label);
         })
     }
@@ -2603,7 +2603,7 @@ impl DataBridge {
             let mut report = match station.subscribe(sub_set).await {
                 Ok(r) => r,
                 Err(e) => {
-                    eprintln!("[Bridge::oi-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
+                    crate::dlog!("[Bridge::oi-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
                         exchange_id, symbol_canonical, symbol_wire, e);
                     return;
                 }
@@ -2632,7 +2632,7 @@ impl DataBridge {
                     });
                 }
             }
-            eprintln!("[Bridge::oi-fwd exited] {:?} {} stream={}",
+            crate::dlog!("[Bridge::oi-fwd exited] {:?} {} stream={}",
                 exchange_id, symbol_canonical, stream_label);
         })
     }
@@ -2661,7 +2661,7 @@ impl DataBridge {
             let mut report = match station.subscribe(sub_set).await {
                 Ok(r) => r,
                 Err(e) => {
-                    eprintln!("[Bridge::fr-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
+                    crate::dlog!("[Bridge::fr-fwd subscribe FAILED] {:?} {} wire={}: {:?}",
                         exchange_id, symbol_canonical, symbol_wire, e);
                     return;
                 }
@@ -2682,7 +2682,7 @@ impl DataBridge {
                     });
                 }
             }
-            eprintln!("[Bridge::fr-fwd exited] {:?} {} stream={}",
+            crate::dlog!("[Bridge::fr-fwd exited] {:?} {} stream={}",
                 exchange_id, symbol_canonical, stream_label);
         })
     }
@@ -3545,7 +3545,7 @@ impl DataBridge {
                     }
                     attempts += 1;
                     if attempts > 50 {
-                        eprintln!(
+                        crate::dlog!(
                             "[Bridge] backfill: connector {:?} not initialized after 5s",
                             exchange_id
                         );
@@ -3721,7 +3721,7 @@ impl DataBridge {
                 "[Bridge] backfill {:?} sym={} tf={}: fetched {} bars over {} pages, emitting",
                 exchange_id, symbol_str, tf_name, accumulated.len(), pages
             );
-            eprintln!(
+            crate::dlog!(
                 "[Bridge::backfill emit BackfillComplete] {:?} {} at={:?} tf={} bars={} first_ts={} last_ts={} pages={}",
                 exchange_id, symbol_str, account_type, tf_name, accumulated.len(), acc_first, acc_last, pages,
             );
@@ -3897,7 +3897,7 @@ impl DataBridge {
                     }
                     attempts += 1;
                     if attempts > 50 {
-                        eprintln!(
+                        crate::dlog!(
                             "[Bridge] scroll: connector {:?} not initialized after 5s",
                             exchange_id
                         );
@@ -3933,7 +3933,7 @@ impl DataBridge {
 
             match result {
                 Err(e) => {
-                    eprintln!(
+                    crate::dlog!(
                         "[Bridge] scroll fetch error: {:?} sym={} tf={}: {}",
                         exchange_id, symbol_str, tf_name, e
                     );

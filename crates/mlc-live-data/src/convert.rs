@@ -10,7 +10,7 @@ use mlc_core::state::Timeframe;
 pub fn kline_to_bar(kline: &Kline) -> Bar {
     let ts = kline.open_time / 1000;
     if ts < 1_000_000_000 || ts > 9_999_999_999 {
-        eprintln!(
+        crate::dlog!(
             "[convert] WARNING: suspicious bar timestamp {} (from open_time={})",
             ts, kline.open_time
         );

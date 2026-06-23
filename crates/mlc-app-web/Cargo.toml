@@ -51,6 +51,13 @@ web-sys              = { version = "0.3", features = [
     "CssStyleDeclaration",
 ] }
 console_error_panic_hook = "0.1"
+# Wasm tracing subscriber — pipes every `tracing::info!/warn!/debug!/trace!`
+# call from dig3 + digdigdig3-station into the browser console. This is the
+# ONLY way to see Station internals (UniversalWsTransport heal loops, WS
+# silence-timer re-subscribe, mux entry lifecycle) on wasm; without it those
+# events vanish silently and the bridge looks idle when it's actually spinning.
+tracing      = "0.1"
+tracing-wasm = "0.2"
 
 # Tokio sync primitives — wasm32 uses the `sync + macros` subset; no rt
 tokio    = { version = "1", default-features = false, features = ["sync", "macros"] }

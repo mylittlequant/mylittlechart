@@ -44,3 +44,6 @@ wasm-bindgen-futures = "0.4"
 # native side uses `tokio::time::sleep` which would panic on wasm because
 # `tokio::time::Instant::now()` calls into `std::time::Instant::now()`.
 gloo-timers = { version = "0.3", features = ["futures"] }
+# console::log_1 for bridge dlog! macro on wasm (eprintln! goes to stderr,
+# invisible in the browser — we route through console.log instead).
+web-sys = { version = "0.3", features = ["console"] }

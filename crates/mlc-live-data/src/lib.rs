@@ -55,13 +55,28 @@ pub use convert::{kline_to_bar, timeframe_to_interval};
 static DEBUG_LOG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
 pub fn debug_log_enabled() -> bool {
-    *DEBUG_LOG.get_or_init(|| std::env::var("MLC_PERF_LOG").is_ok())
+    // On wasm, std::env::var is unavailable and always returns Err — but we
+    // want bridge logs visible by default in the browser (no terminal to
+    // pipe MLC_PERF_LOG into). Default ON for wasm, OFF for native unless
+    // MLC_PERF_LOG is set.
+    #[cfg(target_arch = "wasm32")]
+    { *DEBUG_LOG.get_or_init(|| true) }
+    #[cfg(not(target_arch = "wasm32"))]
+    { *DEBUG_LOG.get_or_init(|| std::env::var("MLC_PERF_LOG").is_ok()) }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn console_log_owned(s: String) {
+    web_sys::console::log_1(&s.into());
 }
 
 macro_rules! dlog {
     ($($arg:tt)*) => {
         if $crate::debug_log_enabled() {
-            eprintln!($($arg)*);
+            #[cfg(target_arch = "wasm32")]
+            { $crate::console_log_owned(format!($($arg)*)); }
+            #[cfg(not(target_arch = "wasm32"))]
+            { eprintln!($($arg)*); }
         }
     };
 }

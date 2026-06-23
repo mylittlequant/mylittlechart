@@ -61,13 +61,24 @@
       window.__FETCH_LOG__.push({ at: Date.now(), url: String(url).slice(0, 250) });
       return _OrigFetch(input, init);
     };
+    // Per-url message counters so we can see if incoming WS frames arrive
+    // (we don't log every frame — 100+/s on a busy book would balloon the log).
+    window.__WS_MSG_COUNT__ = {};            // { url: total_msgs }
+    window.__WS_LAST_MSG__  = {};            // { url: { at, preview } } — most recent only
     const _OrigWS = window.WebSocket;
     function WrappedWS(url, protocols) {
       const ws = protocols === undefined ? new _OrigWS(url) : new _OrigWS(url, protocols);
+      const urlShort = String(url).slice(0, 80);
       window.__WS_LOG__.push({ at: Date.now(), url: String(url).slice(0, 250), event: 'new' });
-      ws.addEventListener('open',  () => window.__WS_LOG__.push({ at: Date.now(), url: String(url).slice(0,80), event: 'open'  }));
-      ws.addEventListener('error', () => window.__WS_LOG__.push({ at: Date.now(), url: String(url).slice(0,80), event: 'error' }));
-      ws.addEventListener('close', (e) => window.__WS_LOG__.push({ at: Date.now(), url: String(url).slice(0,80), event: 'close', code: e.code }));
+      ws.addEventListener('open',  () => window.__WS_LOG__.push({ at: Date.now(), url: urlShort, event: 'open'  }));
+      ws.addEventListener('error', () => window.__WS_LOG__.push({ at: Date.now(), url: urlShort, event: 'error' }));
+      ws.addEventListener('close', (e) => window.__WS_LOG__.push({ at: Date.now(), url: urlShort, event: 'close', code: e.code }));
+      ws.addEventListener('message', (e) => {
+        window.__WS_MSG_COUNT__[urlShort] = (window.__WS_MSG_COUNT__[urlShort] || 0) + 1;
+        const data = e.data;
+        const preview = typeof data === 'string' ? data.slice(0, 200) : '[bin '+(data && data.byteLength)+'b]';
+        window.__WS_LAST_MSG__[urlShort] = { at: Date.now(), preview: preview };
+      });
       const _send = ws.send.bind(ws);
       ws.send = function(data) {
         const preview = typeof data === 'string' ? data.slice(0, 200) : '[bin]';

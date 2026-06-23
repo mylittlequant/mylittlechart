@@ -84,6 +84,18 @@ pub fn start() {
         );
         console_error_panic_hook::hook(info);
     }));
+    // Route all `tracing::*` calls (dig3 connectors + station internals)
+    // into the browser console. Without this the WS heal loops, mux churn,
+    // and silence-timer fires are silent on wasm and the bridge appears
+    // healthy when it's actually thrashing reconnects.
+    tracing_wasm::set_as_global_default_with_config(
+        tracing_wasm::WASMLayerConfigBuilder::new()
+            // TRACE so we see every per-frame dispatch (dig3::ws::frame),
+            // not just connect/error events. Yes, this is loud — that's the
+            // point. Filter in DevTools if needed.
+            .set_max_level(tracing::Level::TRACE)
+            .build(),
+    );
     web_sys::console::log_1(&"[mlc-app-web] booting".into());
 
     spawn_local(async {
