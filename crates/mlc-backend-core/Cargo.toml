@@ -14,7 +14,7 @@ mlc-indicators = { path = "../mlc-indicators", package = "mylittlechart-indicato
 mlc-live-data = { path = "../mlc-live-data", package = "mylittlechart-live-data" }
 mlc-trading-manager = { path = "../mlc-trading-manager", package = "mylittlechart-trading-manager" }
 mlc-sidebar-content = { path = "../mlc-sidebar-content", package = "mylittlechart-sidebar-content" }
-digdigdig3 = "=0.3.23"
+digdigdig3 = "=0.3.24"
 dashmap = "6"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -19,7 +19,7 @@ mlc-alerts = { path = "../mlc-alerts", package = "mylittlechart-alerts" }
 mlc-alert-delivery = { path = "../mlc-alert-delivery", package = "mylittlechart-alert-delivery" }
 mlc-live-data = { path = "../mlc-live-data", package = "mylittlechart-live-data" }
 mlc-trading-manager = { path = "../mlc-trading-manager", package = "mylittlechart-trading-manager" }
-digdigdig3 = "=0.3.23"
+digdigdig3 = "=0.3.24"
 tokio = { version = "1", features = ["sync"] }
 dashmap = "6"
 serde = { version = "1", features = ["derive"] }

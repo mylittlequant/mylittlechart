@@ -13,7 +13,7 @@ mlc-backend-core = { path = "../mlc-backend-core", package = "mylittlechart-back
 mlc-live-data = { path = "../mlc-live-data", package = "mylittlechart-live-data" }
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 mlc-agentic-server = { path = "../mlc-agentic-server", package = "mylittlechart-agentic-server" }
-digdigdig3 = "=0.3.23"
+digdigdig3 = "=0.3.24"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "process"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde_json = "1"
