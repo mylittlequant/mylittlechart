@@ -57,6 +57,8 @@ use uzor_window_web::WebWindowProvider;
 use mlc_app::ChartApp;
 #[cfg(target_arch = "wasm32")]
 use mlc_live_data::DataBridge;
+#[cfg(target_arch = "wasm32")]
+use mlc_core::state::Timeframe;
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
@@ -99,7 +101,14 @@ async fn run() -> Result<(), JsValue> {
     let bridge = Arc::new(bridge);
     web_sys::console::log_1(&"[mlc-app-web] bridge ready".into());
 
-    let app = ChartApp::new_empty(bridge.clone());
+    let mut app = ChartApp::new_empty(bridge.clone());
+    app.seed_default_chart(
+        digdigdig3::ExchangeId::Binance,
+        "BTCUSDT",
+        Timeframe::new("1H", 60),
+        digdigdig3::AccountType::Spot,
+        500,
+    );
     web_sys::console::log_1(&"[mlc-app-web] app ready".into());
 
     let provider = WebWindowProvider::from_id("chart")

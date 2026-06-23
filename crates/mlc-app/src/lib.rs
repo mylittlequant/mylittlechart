@@ -141,6 +141,22 @@ pub fn account_type_from_label(label: &str) -> digdigdig3::AccountType {
     }
 }
 
+/// Convert an [`AccountType`] back to the single-char label used in persisted
+/// state and bubble metadata.  Inverse of [`account_type_from_label`].
+pub fn account_type_to_label(at: digdigdig3::AccountType) -> &'static str {
+    use digdigdig3::AccountType;
+    match at {
+        AccountType::Spot             => "S",
+        AccountType::Margin           => "M",
+        AccountType::FuturesCross     => "F",
+        AccountType::FuturesIsolated  => "FI",
+        AccountType::Earn             => "E",
+        AccountType::Lending          => "L",
+        AccountType::Options          => "O",
+        AccountType::Convert          => "C",
+    }
+}
+
 // =============================================================================
 // Timeframe parsing
 // =============================================================================
@@ -1360,51 +1376,14 @@ impl ChartApp {
             // Preset restored successfully.
         } else {
             // ── Fresh state — Binance default ──────────────────────────────
-            // Phase 4 B: capture chart_id BEFORE the mutating block.
-            let active_chart_id = app.panel_app.panel_grid.active_container_id();
-            let active_pid_init = app.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-            if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
-                window.data_provider = data_provider.clone();
-                window.toolbar_config = ToolbarConfig::standalone();
-            }
-            if let Some(pid) = active_pid_init {
-                app.core.drawings_mut().entry_or_default(pid)
-                    .set_current_symbol_key("BTCUSDT", &exchange_name, "S");
-            }
-            if let Some(chart_id) = active_chart_id {
-                // Create auto-bubble for the initial chart and assign instrument.
-                let auto_bid = app.core.bubble_mut().bubble.create_group_auto(
-                    [0.0, 0.0, 0.0, 0.0],
-                    "BTCUSDT".to_string(),
-                    mlc_core::state::Timeframe::new("1H", 60),
-                );
-                let _ = app.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, auto_bid);
-                if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
-                    window.auto_bubble_id = auto_bid;
-                    window.current_bubble_id = auto_bid;
-                }
-                if let Some(bubble) = app.core.bubble_mut().bubble.bubble_mut(auto_bid) {
-                    bubble.symbol = "BTCUSDT".to_string();
-                    bubble.timeframe = mlc_core::state::Timeframe::new("1H", 60);
-                    bubble.exchange = exchange_name.clone();
-                    bubble.account_type = "S".to_string();
-                }
-                // Bind drawing manager style store to auto-bubble's shared Arc.
-                if let Some(pid) = active_pid_init {
-                    if let Some(style_arc) = app.core.bubble().bubble
-                        .bubble(auto_bid)
-                        .map(|g| g.last_used_style.clone())
-                    {
-                        app.core.drawings_mut().entry_or_default(pid)
-                            .bind_style_store(style_arc);
-                    }
-                }
-            }
-            app.panel_app.toolbar_config = ToolbarConfig::standalone();
-
-            // Ensure Binance connector and request paginated bars.
-            bridge.ensure_connector(exchange_id);
-            bridge.request_bars(exchange_id, "BTCUSDT", &mlc_core::state::Timeframe::new("1H", 60), digdigdig3::AccountType::Spot, None, Some(app.panel_app.user_manager.profile.bar_count as usize), false);
+            let bar_count = app.panel_app.user_manager.profile.bar_count as usize;
+            app.seed_default_chart(
+                digdigdig3::ExchangeId::Binance,
+                "BTCUSDT",
+                mlc_core::state::Timeframe::new("1H", 60),
+                digdigdig3::AccountType::Spot,
+                bar_count,
+            );
         }
 
         // The full set of enabled connectors is NOT connected here (that fired 21
@@ -1622,54 +1601,6 @@ impl ChartApp {
             ],
         );
 
-        // Fresh state — Binance default
-        let exchange_id = digdigdig3::ExchangeId::Binance;
-        let exchange_name = exchange_id.as_str().to_string();
-        let data_provider: SharedDataProvider = std::sync::Arc::new(
-            LiveDataProvider::new(exchange_id, exchange_name.clone(), digdigdig3::AccountType::Spot, bridge.clone()),
-        );
-
-        // Phase 4 B: capture chart_id BEFORE the mutating block.
-        let active_chart_id = app.panel_app.panel_grid.active_container_id();
-        let active_pid_init2 = app.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-        if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
-            window.data_provider = data_provider.clone();
-            window.toolbar_config = ToolbarConfig::standalone();
-        }
-        if let Some(pid) = active_pid_init2 {
-            app.core.drawings_mut().entry_or_default(pid)
-                .set_current_symbol_key("BTCUSDT", &exchange_name, "S");
-        }
-        // Create auto-bubble for the initial chart and assign instrument.
-        if let Some(chart_id) = active_chart_id {
-            let auto_bid = app.core.bubble_mut().bubble.create_group_auto(
-                [0.0, 0.0, 0.0, 0.0],
-                "BTCUSDT".to_string(),
-                mlc_core::state::Timeframe::new("1H", 60),
-            );
-            let _ = app.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, auto_bid);
-            if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
-                window.auto_bubble_id = auto_bid;
-                window.current_bubble_id = auto_bid;
-            }
-            if let Some(bubble) = app.core.bubble_mut().bubble.bubble_mut(auto_bid) {
-                bubble.symbol = "BTCUSDT".to_string();
-                bubble.timeframe = mlc_core::state::Timeframe::new("1H", 60);
-                bubble.exchange = exchange_name.clone();
-                bubble.account_type = "S".to_string();
-            }
-            if let Some(pid) = active_pid_init2 {
-                if let Some(style_arc) = app.core.bubble().bubble
-                    .bubble(auto_bid)
-                    .map(|g| g.last_used_style.clone())
-                {
-                    app.core.drawings_mut().entry_or_default(pid)
-                        .bind_style_store(style_arc);
-                }
-            }
-        }
-        app.panel_app.toolbar_config = ToolbarConfig::standalone();
-
         // Create a single "Untitled" preset tab.
         let untitled_preset = mlc_core::preset::preset::ChartPreset::new("Untitled".to_string());
         let untitled_id = untitled_preset.id.clone();
@@ -1677,16 +1608,14 @@ impl ChartApp {
         app.panel_app.open_tabs = vec![untitled_id.clone()];
         app.panel_app.active_preset_id = untitled_id;
 
-        // Ensure Binance connector and request bars.
-        bridge.ensure_connector(exchange_id);
-        bridge.request_bars(
-            exchange_id,
+        // Seed active window with Binance/BTCUSDT/1H defaults.
+        let bar_count = app.panel_app.user_manager.profile.bar_count as usize;
+        app.seed_default_chart(
+            digdigdig3::ExchangeId::Binance,
             "BTCUSDT",
-            &mlc_core::state::Timeframe::new("1H", 60),
+            mlc_core::state::Timeframe::new("1H", 60),
             digdigdig3::AccountType::Spot,
-            None,
-            Some(app.panel_app.user_manager.profile.bar_count as usize),
-            false,
+            bar_count,
         );
 
         // Register text fields on the InputCoordinator's TextFieldStore.
@@ -1708,6 +1637,83 @@ impl ChartApp {
         app.sync_sub_panes_from_manager();
 
         app
+    }
+
+    // -------------------------------------------------------------------------
+    // seed_default_chart — populate the active window with a default instrument
+    // -------------------------------------------------------------------------
+
+    /// Seed the active chart window with a default instrument and trigger the
+    /// initial bar fetch + connector setup.
+    ///
+    /// Available on all platforms (no `cfg(not(wasm32))` gate).  The web shell
+    /// calls this after [`new_empty`] to replicate the setup that the native
+    /// [`new`] performs inline.
+    pub fn seed_default_chart(
+        &mut self,
+        exchange_id: digdigdig3::ExchangeId,
+        symbol: &str,
+        timeframe: mlc_core::state::Timeframe,
+        account_type: digdigdig3::AccountType,
+        bar_count: usize,
+    ) {
+        let exchange_name = exchange_id.as_str().to_string();
+        let at_label = account_type_to_label(account_type).to_string();
+
+        let bridge = self.core.bridge.clone();
+
+        // Build a LiveDataProvider for the active window.
+        let data_provider: SharedDataProvider = std::sync::Arc::new(
+            LiveDataProvider::new(exchange_id, exchange_name.clone(), account_type, bridge.clone()),
+        );
+
+        let active_chart_id = self.panel_app.panel_grid.active_container_id();
+        let active_pid_init = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+
+        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+            window.data_provider = data_provider;
+            window.toolbar_config = ToolbarConfig::standalone();
+        }
+
+        if let Some(pid) = active_pid_init {
+            self.core.drawings_mut().entry_or_default(pid)
+                .set_current_symbol_key(symbol, &exchange_name, &at_label);
+        }
+
+        if let Some(chart_id) = active_chart_id {
+            let auto_bid = self.core.bubble_mut().bubble.create_group_auto(
+                [0.0, 0.0, 0.0, 0.0],
+                symbol.to_string(),
+                timeframe.clone(),
+            );
+            let _ = self.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, auto_bid);
+            if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                window.auto_bubble_id = auto_bid;
+                window.current_bubble_id = auto_bid;
+            }
+            if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(auto_bid) {
+                bubble.symbol = symbol.to_string();
+                bubble.timeframe = timeframe.clone();
+                bubble.exchange = exchange_name.clone();
+                bubble.account_type = at_label.clone();
+            }
+            if let Some(pid) = active_pid_init {
+                if let Some(style_arc) = self.core.bubble().bubble
+                    .bubble(auto_bid)
+                    .map(|g| g.last_used_style.clone())
+                {
+                    self.core.drawings_mut().entry_or_default(pid)
+                        .bind_style_store(style_arc);
+                }
+            }
+        }
+
+        self.panel_app.toolbar_config = ToolbarConfig::standalone();
+
+        bridge.ensure_connector(exchange_id);
+        bridge.request_bars(exchange_id, symbol, &timeframe, account_type, None, Some(bar_count), false);
+
+        self.needs_initial_viewport_fit = true;
     }
 
     // -------------------------------------------------------------------------
