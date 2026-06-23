@@ -24,6 +24,34 @@
 
     Adjust the path to wherever you pointed --out-dir.
   -->
+  <script>
+    // Capture unhandled errors / rejections BEFORE wasm init.
+    // STORE the first error in globalThis so dev-attach --eval can pull it
+    // out as a single string (avoids dev-attach's multi-arg console truncation).
+    window.__MLC_FIRST_ERROR__ = null;
+    window.__MLC_ERROR_COUNT__ = 0;
+    function captureError(label, msg, file, line, col, errObj) {
+      window.__MLC_ERROR_COUNT__++;
+      if (window.__MLC_FIRST_ERROR__) return;  // keep only the first
+      var stack = (errObj && errObj.stack) || '<no stack>';
+      window.__MLC_FIRST_ERROR__ = JSON.stringify({
+        label: label,
+        msg: String(msg),
+        file: file || '<none>',
+        line: line || 0,
+        col: col || 0,
+        stack: stack
+      });
+      // Also dump to console as ONE message (single arg) so dev-attach gets it whole.
+      console.error('[FIRST-WINDOW-ERROR] ' + window.__MLC_FIRST_ERROR__);
+    }
+    window.addEventListener('error', function(e) {
+      captureError('error', e.message, e.filename, e.lineno, e.colno, e.error);
+    });
+    window.addEventListener('unhandledrejection', function(e) {
+      captureError('unhandledrejection', e.reason, '', 0, 0, e.reason);
+    });
+  </script>
   <script type="module">
     import init from './mlc_app_web.js';
     await init();

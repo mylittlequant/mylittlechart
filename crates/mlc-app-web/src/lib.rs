@@ -78,7 +78,34 @@ use mlc_live_data::DataBridge;
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(start)]
 pub fn start() {
-    console_error_panic_hook::set_once();
+    // Custom panic hook BEFORE console_error_panic_hook so panic_info.location()
+    // (file:line of the actual `panic!()` call site) shows up in the browser
+    // console. The default hook only shows the post-unwind stack which on wasm
+    // collapses to console_error_panic_hook frames and tells us nothing about
+    // who actually panicked. We chain to console_error_panic_hook afterwards
+    // so its full Error.stack still arrives too.
+    std::panic::set_hook(Box::new(|info| {
+        let loc = info.location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "<unknown location>".to_string());
+        let msg = info.payload().downcast_ref::<&'static str>()
+            .copied()
+            .or_else(|| info.payload().downcast_ref::<String>().map(|s| s.as_str()))
+            .unwrap_or("<non-string payload>");
+        // Capture JS-side stack trace BEFORE we unwind. This is the only
+        // way to see who actually called the panicking fn on wasm — the
+        // post-unwind stack collapses to console_error_panic_hook frames.
+        let js_err = js_sys::Error::new("[panic-trace]");
+        let stack = js_sys::Reflect::get(&js_err, &"stack".into())
+            .ok()
+            .and_then(|v| v.as_string())
+            .unwrap_or_else(|| "<no stack>".to_string());
+        web_sys::console::error_1(
+            &format!("[PANIC] at {} :: {}\n=== CALLER STACK ===\n{}", loc, msg, stack).into()
+        );
+        // Chain to console_error_panic_hook for the full stack.
+        console_error_panic_hook::hook(info);
+    }));
     web_sys::console::log_1(&"[mlc-app-web] booting".into());
 
     spawn_local(async {
@@ -138,6 +165,19 @@ fn run_render_loop(
     let provider_clone = provider.clone();
 
     *closure.borrow_mut() = Some(Closure::wrap(Box::new(move || {
+        // ── Diag counter — bump window.MLC_FRAMES each frame so we can verify
+        //     externally that the RAF loop is alive.
+        if let Some(win) = web_sys::window() {
+            let _ = js_sys::Reflect::set(
+                &win,
+                &"MLC_FRAMES".into(),
+                &js_sys::Reflect::get(&win, &"MLC_FRAMES".into())
+                    .map(|v| v.as_f64().unwrap_or(0.0) + 1.0)
+                    .unwrap_or(1.0)
+                    .into(),
+            );
+        }
+
         // ── Process DOM events ────────────────────────────────────────────────
         let events = provider_clone.borrow_mut().poll_events();
         {
@@ -145,6 +185,18 @@ fn run_render_loop(
             for event in events {
                 dispatch_event(&mut chart, event);
             }
+        }
+
+        // ── Tick: drain LiveUpdate channel into BubbleStore + run lifecycle.
+        // Without this, bars fetched by `request_bars` sit in the broadcast
+        // channel forever — render reads from BubbleStore which stays empty
+        // and the chart is blank despite the status bar showing the instrument.
+        {
+            let now_ms = web_time::SystemTime::now()
+                .duration_since(web_time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            app_clone.borrow_mut().tick(now_ms);
         }
 
         // ── Render frame ──────────────────────────────────────────────────────
@@ -182,6 +234,19 @@ fn run_render_loop(
 ///
 /// The vello shell does the same mapping from winit events.  When new input
 /// methods are added to `ChartApp`, add the corresponding arms here.
+/// Pointer-down state retained between mousedown and mouseup to distinguish
+/// a click (no movement) from a drag (>= CLICK_SLOP_PX moved before release).
+/// A real input coordinator would live in `WebWindowProvider`; the spike keeps
+/// it module-local until we promote the chrome work.
+#[cfg(target_arch = "wasm32")]
+const CLICK_SLOP_PX: f64 = 4.0;
+
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static POINTER_DOWN: std::cell::Cell<Option<(f64, f64)>> = const { std::cell::Cell::new(None) };
+    static DRAG_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 #[cfg(target_arch = "wasm32")]
 fn dispatch_event(chart: &mut ChartApp, event: uzor::input::core::event_processor::PlatformEvent) {
     use uzor::input::core::event_processor::PlatformEvent;
@@ -189,15 +254,47 @@ fn dispatch_event(chart: &mut ChartApp, event: uzor::input::core::event_processo
 
     match event {
         PlatformEvent::PointerDown { x, y, button: MouseButton::Left } => {
-            chart.on_drag_start(x, y);
+            // Record the press location. Don't start a drag yet — we don't
+            // know if this is a click or a drag until pointer moves or
+            // releases.
+            POINTER_DOWN.with(|p| p.set(Some((x, y))));
+            DRAG_ACTIVE.with(|d| d.set(false));
         }
         PlatformEvent::PointerUp { x, y, button: MouseButton::Left } => {
-            chart.on_drag_end(x, y);
+            let press = POINTER_DOWN.with(|p| p.take());
+            let was_dragging = DRAG_ACTIVE.with(|d| d.replace(false));
+            if was_dragging {
+                chart.on_drag_end(x, y);
+            } else if press.is_some() {
+                // Short press with no movement → button click. Toolbars,
+                // sidebar icons, chrome menu — all flow through here.
+                chart.on_click(x, y);
+            }
         }
         PlatformEvent::PointerMoved { x, y } => {
+            // If a press is in progress and we crossed the slop threshold,
+            // promote it to a drag (which dispatches on_drag_start once).
+            let promote = POINTER_DOWN.with(|p| {
+                if let Some((px, py)) = p.get() {
+                    let dx = x - px;
+                    let dy = y - py;
+                    (dx * dx + dy * dy) > (CLICK_SLOP_PX * CLICK_SLOP_PX)
+                } else {
+                    false
+                }
+            });
+            if promote {
+                let already = DRAG_ACTIVE.with(|d| d.replace(true));
+                if !already {
+                    let start = POINTER_DOWN.with(|p| p.get()).unwrap_or((x, y));
+                    chart.on_drag_start(start.0, start.1);
+                }
+            }
             chart.on_mouse_move(x, y);
         }
         PlatformEvent::PointerLeft => {
+            POINTER_DOWN.with(|p| p.set(None));
+            DRAG_ACTIVE.with(|d| d.set(false));
             chart.on_mouse_leave();
         }
         PlatformEvent::Scroll { dx, dy } => {
