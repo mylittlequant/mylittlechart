@@ -80,6 +80,29 @@ fn main() {
 
     eprintln!("[mlc-headless] booting symbol={} on port {}", symbol, port);
 
+    // Server runtime: dedicated multi-thread runtime for axum + the snapshot
+    // freshness check AND the bridge background tasks.
+    //
+    // After commit `491f9576 phase 2 (wasm): bridge async-ify` the bridge no
+    // longer owns its own tokio runtime — every `bridge.*` call that does
+    // `tokio::spawn(...)` (`ensure_connector`, `request_*`, `warmup_*`, etc.)
+    // panics with "no reactor running" unless a tokio runtime is entered on
+    // the calling thread. The native UI (`mlc-app-vello`) was fixed by
+    // entering `App::live_data_handle` in `about_to_wait` + `start_promote_async`;
+    // `mlc-headless` had the same regression — `ChartApp::new(&symbol)` at
+    // line ~83 immediately calls `DataBridge::ensure_connector` which
+    // spawn_bg's an HTTP warmup task and panics on `tokio::spawn`.
+    //
+    // Fix: build the runtime BEFORE `ChartApp::new` and enter() its handle
+    // on the main thread for the whole tick loop, so every synchronous
+    // `bridge.*` call from the tick path also has a reactor.
+    let server_rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_name("mlc-headless-srv")
+        .build()
+        .expect("build server tokio runtime");
+    let _bridge_rt_guard = server_rt.handle().enter();
+
     let mut chart = ChartApp::new(&symbol);
     chart.resize(VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
     let bridge = chart.bridge_arc();
@@ -95,14 +118,6 @@ fn main() {
     let agent_state = Arc::new(AgentState::new(bridge, env!("CARGO_PKG_VERSION")));
     agent_state.attach_core(core);
 
-    // Server runtime: dedicated multi-thread runtime for axum + the snapshot
-    // freshness check. The ChartApp drives its own bridge / connectors
-    // runtime internally; we do NOT share it.
-    let server_rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .thread_name("mlc-headless-srv")
-        .build()
-        .expect("build server tokio runtime");
     let _server_handle = mlc_agentic_server::start_server(agent_state.clone(), server_rt.handle(), port);
     eprintln!("[mlc-headless] HTTP server spawned on http://127.0.0.1:{}", port);
 
