@@ -77,11 +77,20 @@ pub struct WatchlistSymbol {
     /// Defaults to "binance" for migration of old watchlists.
     #[serde(default = "default_exchange")]
     pub exchange: String,
-    /// Account type short label (e.g. "FC" for FuturesCross, "M" for Margin).
+    /// Account type short label: `"S"` (Spot), `"M"` (Margin), `"F"`
+    /// (FuturesCross), `"FI"` (FuturesIsolated), `"E"` (Earn), `"L"`
+    /// (Lending), `"O"` (Options), `"CV"` (Convert).
     ///
-    /// Empty string for Spot (the common case).
-    /// Uses `String` to avoid a dependency on digdigdig3 types.
-    #[serde(default)]
+    /// MUST match the same short-label form `mini_ticker` DashMap keys
+    /// and bubble metadata use; otherwise the watchlist render reads
+    /// `"BTCUSDT:binance:"` while the writer stored `"BTCUSDT:binance:S"`
+    /// and every row stays at 0.00. Uses `String` to avoid a
+    /// dependency on digdigdig3 types.
+    ///
+    /// Defaults to `"S"` on deserialize so old persisted entries that
+    /// were saved with the previous empty-string default (constructor
+    /// pre-2026-06-24) come back as Spot instead of empty.
+    #[serde(default = "default_spot_account_type")]
     pub account_type: String,
 }
 
@@ -89,9 +98,27 @@ fn default_exchange() -> String {
     "binance".to_string()
 }
 
+fn default_spot_account_type() -> String {
+    "S".to_string()
+}
+
 impl WatchlistSymbol {
-    pub fn new(symbol: String, exchange: String) -> Self {
-        Self { symbol, exchange, account_type: String::new() }
+    /// Construct a watchlist symbol.
+    ///
+    /// `account_type` MUST be the short label form (`"S"`, `"M"`, `"F"`,
+    /// `"FI"`, `"E"`, `"L"`, `"O"`, `"CV"`) — the same form `mini_ticker`
+    /// DashMap keys, drawing keys, alert keys and bubble metadata use.
+    /// Passing the long form (`"Spot"`, `"spot"`, `"Margin"`, ...) or
+    /// the empty string makes every cross-key lookup miss silently —
+    /// fresh-install watchlists used to show 0.0 for every row because
+    /// the previous default-arg constructor stamped the field with
+    /// `String::new()`.
+    pub fn new(symbol: String, exchange: String, account_type: String) -> Self {
+        debug_assert!(
+            !account_type.is_empty(),
+            "WatchlistSymbol::new: account_type must be a short label (e.g. \"S\"), got empty string",
+        );
+        Self { symbol, exchange, account_type }
     }
 }
 
@@ -118,7 +145,7 @@ where
         .into_iter()
         .map(|item| match item {
             SymbolOrString::Symbol(ws) => ws,
-            SymbolOrString::Plain(s) => WatchlistSymbol::new(s, "binance".to_string()),
+            SymbolOrString::Plain(s) => WatchlistSymbol::new(s, "binance".to_string(), "S".to_string()),
         })
         .collect())
 }
@@ -143,7 +170,7 @@ where
             .into_iter()
             .map(|item| match item {
                 SymbolOrString::Symbol(ws) => ws,
-                SymbolOrString::Plain(s) => WatchlistSymbol::new(s, "binance".to_string()),
+                SymbolOrString::Plain(s) => WatchlistSymbol::new(s, "binance".to_string(), "S".to_string()),
             })
             .collect()
     }))
@@ -326,8 +353,7 @@ impl WatchlistManager {
     pub fn new(default_symbols: Vec<WatchlistSymbol>) -> Self {
         let list = WatchlistList {
             id: 1,
-            name: "Watchlist 1".to_string(),
-            groups: Vec::new(),
+            name: "Watchlist 1".to_string(), groups: Vec::new(),
             ungrouped: default_symbols,
             column_config: WatchlistColumnConfig::default(),
             color_flags: HashMap::new(),
@@ -479,8 +505,7 @@ mod tests {
     #[test]
     fn test_new_manager_has_one_list() {
         let mgr = WatchlistManager::new(vec![WatchlistSymbol::new(
-            "BTCUSDT".to_string(),
-            "Binance".to_string(),
+            "BTCUSDT".to_string(), "Binance".to_string(),
         )]);
         assert_eq!(mgr.lists.len(), 1);
         assert_eq!(mgr.active_list_id, 1);
@@ -517,7 +542,7 @@ mod tests {
     #[test]
     fn test_create_and_delete_list() {
         let mut mgr = WatchlistManager::default();
-        let id = mgr.create_list("My List".to_string());
+        let id = mgr.create_list("My List".to_string(), "S".to_string());
         assert_eq!(mgr.lists.len(), 2);
         let deleted = mgr.delete_list(id);
         assert!(deleted);
@@ -555,13 +580,13 @@ mod tests {
             assert!(list.ungrouped.is_empty());
             assert_eq!(
                 list.groups[0].symbols,
-                vec![WatchlistSymbol::new("BTC".to_string(), "Binance".to_string())]
+                vec![WatchlistSymbol::new("BTC".to_string(), "Binance".to_string(), "S".to_string())]
             );
             list.remove_group(10);
             assert!(list.groups.is_empty());
             assert_eq!(
                 list.ungrouped,
-                vec![WatchlistSymbol::new("BTC".to_string(), "Binance".to_string())]
+                vec![WatchlistSymbol::new("BTC".to_string(), "Binance".to_string(), "S".to_string())]
             );
         }
     }
@@ -572,7 +597,7 @@ mod tests {
             id: 1,
             name: "Test".to_string(),
             groups: Vec::new(),
-            ungrouped: vec![WatchlistSymbol::new("AAPL".to_string(), "Binance".to_string())],
+            ungrouped: vec![WatchlistSymbol::new("AAPL".to_string(), "Binance".to_string(), "S".to_string())],
             column_config: WatchlistColumnConfig::default(),
             color_flags: HashMap::new(),
             order_snapshot: None,
@@ -580,7 +605,7 @@ mod tests {
         list.add_group(1, "Grp".to_string(), "#fff".to_string());
         list.groups[0]
             .symbols
-            .push(WatchlistSymbol::new("BTC".to_string(), "Binance".to_string()));
+            .push(WatchlistSymbol::new("BTC".to_string(), "Binance".to_string(), "S".to_string()));
         let syms = list.all_symbols();
         assert_eq!(syms[0].symbol, "BTC");
         assert_eq!(syms[1].symbol, "AAPL");

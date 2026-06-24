@@ -141,8 +141,17 @@ pub fn account_type_from_label(label: &str) -> digdigdig3::AccountType {
     }
 }
 
-/// Convert an [`AccountType`] back to the single-char label used in persisted
-/// state and bubble metadata.  Inverse of [`account_type_from_label`].
+/// Convert an [`AccountType`] back to the short label used in persisted
+/// state, bubble metadata, and every map key. Inverse of
+/// [`account_type_from_label`].
+///
+/// MUST stay in lockstep with `digdigdig3::AccountType::short_label()` —
+/// any divergence means a round-trip `short_label → string → from_label →
+/// to_label` produces a different string on the way back and every key
+/// keyed on `account_type` misses (the `mini_ticker` DashMap, drawing keys,
+/// alert keys, etc.). Notably `Convert` is `"CV"` here to match
+/// `short_label()`; pre-2026-06-24 this fn returned `"C"` which broke that
+/// round-trip.
 pub fn account_type_to_label(at: digdigdig3::AccountType) -> &'static str {
     use digdigdig3::AccountType;
     match at {
@@ -153,7 +162,7 @@ pub fn account_type_to_label(at: digdigdig3::AccountType) -> &'static str {
         AccountType::Earn             => "E",
         AccountType::Lending          => "L",
         AccountType::Options          => "O",
-        AccountType::Convert          => "C",
+        AccountType::Convert          => "CV",
     }
 }
 
@@ -1596,12 +1605,12 @@ impl ChartApp {
 
         *app.core.watchlist_mut() = mlc_sidebar_content::watchlist::WatchlistManager::new(
             vec![
-                mlc_sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "binance".to_string()),
-                mlc_sidebar_content::watchlist::WatchlistSymbol::new("ETHUSDT".to_string(), "binance".to_string()),
-                mlc_sidebar_content::watchlist::WatchlistSymbol::new("SOLUSDT".to_string(), "binance".to_string()),
-                mlc_sidebar_content::watchlist::WatchlistSymbol::new("BNBUSDT".to_string(), "binance".to_string()),
-                mlc_sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "bybit".to_string()),
-                mlc_sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "okx".to_string()),
+                mlc_sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "binance".to_string(), "S".to_string()),
+                mlc_sidebar_content::watchlist::WatchlistSymbol::new("ETHUSDT".to_string(), "binance".to_string(), "S".to_string()),
+                mlc_sidebar_content::watchlist::WatchlistSymbol::new("SOLUSDT".to_string(), "binance".to_string(), "S".to_string()),
+                mlc_sidebar_content::watchlist::WatchlistSymbol::new("BNBUSDT".to_string(), "binance".to_string(), "S".to_string()),
+                mlc_sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "bybit".to_string(), "S".to_string()),
+                mlc_sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "okx".to_string(), "S".to_string()),
             ],
         );
 
@@ -1900,12 +1909,12 @@ impl ChartApp {
         // Initialize watchlist with a minimal default — overwritten by load_watchlists below.
         *app.core.watchlist_mut() = mlc_sidebar_content::watchlist::WatchlistManager::new(
             vec![
-                mlc_sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "binance".to_string()),
-                mlc_sidebar_content::watchlist::WatchlistSymbol::new("ETHUSDT".to_string(), "binance".to_string()),
-                mlc_sidebar_content::watchlist::WatchlistSymbol::new("SOLUSDT".to_string(), "binance".to_string()),
-                mlc_sidebar_content::watchlist::WatchlistSymbol::new("BNBUSDT".to_string(), "binance".to_string()),
-                mlc_sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "bybit".to_string()),
-                mlc_sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "okx".to_string()),
+                mlc_sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "binance".to_string(), "S".to_string()),
+                mlc_sidebar_content::watchlist::WatchlistSymbol::new("ETHUSDT".to_string(), "binance".to_string(), "S".to_string()),
+                mlc_sidebar_content::watchlist::WatchlistSymbol::new("SOLUSDT".to_string(), "binance".to_string(), "S".to_string()),
+                mlc_sidebar_content::watchlist::WatchlistSymbol::new("BNBUSDT".to_string(), "binance".to_string(), "S".to_string()),
+                mlc_sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "bybit".to_string(), "S".to_string()),
+                mlc_sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "okx".to_string(), "S".to_string()),
             ],
         );
 

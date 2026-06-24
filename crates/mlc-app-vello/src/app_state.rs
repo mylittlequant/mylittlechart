@@ -73,12 +73,12 @@ impl AppState {
     ) -> Self {
         let default_wl = || {
             mlc_app::WatchlistManager::new(vec![
-                mlc_app::WatchlistSymbol::new("BTCUSDT".to_string(), "binance".to_string()),
-                mlc_app::WatchlistSymbol::new("ETHUSDT".to_string(), "binance".to_string()),
-                mlc_app::WatchlistSymbol::new("SOLUSDT".to_string(), "binance".to_string()),
-                mlc_app::WatchlistSymbol::new("BNBUSDT".to_string(), "binance".to_string()),
-                mlc_app::WatchlistSymbol::new("BTCUSDT".to_string(), "bybit".to_string()),
-                mlc_app::WatchlistSymbol::new("BTCUSDT".to_string(), "okx".to_string()),
+                mlc_app::WatchlistSymbol::new("BTCUSDT".to_string(), "binance".to_string(), "S".to_string()),
+                mlc_app::WatchlistSymbol::new("ETHUSDT".to_string(), "binance".to_string(), "S".to_string()),
+                mlc_app::WatchlistSymbol::new("SOLUSDT".to_string(), "binance".to_string(), "S".to_string()),
+                mlc_app::WatchlistSymbol::new("BNBUSDT".to_string(), "binance".to_string(), "S".to_string()),
+                mlc_app::WatchlistSymbol::new("BTCUSDT".to_string(), "bybit".to_string(), "S".to_string()),
+                mlc_app::WatchlistSymbol::new("BTCUSDT".to_string(), "okx".to_string(), "S".to_string()),
             ])
         };
 
