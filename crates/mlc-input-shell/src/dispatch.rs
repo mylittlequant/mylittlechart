@@ -147,6 +147,19 @@ pub fn process_event(
                 chrome::update_tooltip(chrome_st, x, y, time_ms);
             }
 
+            // Hover refresh — every cursor move outside a drag must request a
+            // redraw so the chrome (and overlay) repaint with the updated
+            // `chrome_st.hovered` value. Pre-carveout `event_handler.rs` set
+            // `pw.overlay_dirty = pw.chart_dirty = true` unconditionally inside
+            // its `CursorMoved` branch; the carveout (commit f5517a58) ported
+            // the state writes here but dropped the dirty marks, so hover
+            // highlights on the chrome strip and the crosshair stopped
+            // updating until a click forced a frame. Drag path above already
+            // sets its own dirty flags — keep this AFTER it, AFTER the early
+            // `return` for drags.
+            dirty.overlay_dirty = true;
+            dirty.chart_dirty   = true;
+
             match hit {
                 ChromeHit::ResizeTop | ChromeHit::ResizeBottom => {
                     platform.set_cursor_visible(true);

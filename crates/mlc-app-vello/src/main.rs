@@ -1487,6 +1487,16 @@ impl App<'_> {
         let bridge = self.bridge.clone();
         let profile = self.profile.clone();
         let profile_manager = self.profile_manager.clone();
+        // Tokio runtime handle for the worker — `ChartApp::new_window` and
+        // any `bridge.*` call inside it ultimately end in `spawn_bg(...)` ==
+        // `tokio::spawn(...)`, which panics with "no reactor running" unless
+        // the calling thread is inside a tokio runtime context. The
+        // `std::thread::spawn` worker below is OUTSIDE the runtime by default;
+        // we `handle.enter()` at the top of the worker so every downstream
+        // bridge call sees the runtime. Same fix as the `about_to_wait`
+        // bridge-rt guard — both were missed in the phase-2 wasm cutover
+        // (commit 491f9576) where `DataBridge` stopped owning its runtime.
+        let live_data_handle = self.live_data_handle.clone();
 
         // AppState fields needed for the sync block (read-only in the worker).
         let theme_preset = self.app_state.theme_preset.clone();
@@ -1509,6 +1519,13 @@ impl App<'_> {
         }).collect();
 
         std::thread::spawn(move || {
+            // Enter the live-data tokio runtime so every `bridge.*` call made
+            // by `ChartApp::new_window` below sees an active reactor —
+            // otherwise `spawn_bg(...)` panics on the worker. The guard is
+            // held across the whole worker body; dropping it at the bottom
+            // of the closure restores the original state of this thread.
+            let _bridge_rt_guard = live_data_handle.enter();
+
             let worker_t0 = web_time::Instant::now();
             let mut results: Vec<PromoteWindowResult> = Vec::with_capacity(window_ids.len());
 
@@ -2101,6 +2118,21 @@ impl ApplicationHandler<UserEvent> for App<'_> {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // Enter the live-data tokio runtime for the duration of this winit
+        // wakeup. EVERY `bridge.*` method called downstream — `tick_app_state`
+        // → `request_symbols`, `tick()` → `warmup_all_connectors` /
+        // `ensure_connector` / `request_*` — internally does
+        // `spawn_bg(...)` == `tokio::spawn(...)` and panics with
+        // "no reactor running" unless the calling thread is inside a tokio
+        // runtime context. Before the phase-2 wasm cutover (commit 491f9576)
+        // `DataBridge` held its own runtime and entered it internally on every
+        // method; now the runtime is owned by `App::live_data_rt` and main-
+        // thread call sites must enter it explicitly. Other call sites
+        // earlier in this file (`AlertDelivery::new`, agent server, Telegram)
+        // already do this — they were updated in 491f9576 but the winit
+        // tick path was missed.
+        let _bridge_rt_guard = self.live_data_handle.enter();
+
         // ── Agents panel: drain PTY events (non-blocking, before FPS cap) ───
         // PTY data arrives on a background broadcast channel. We drain it
         // every wake-up so bytes don't pile up, but rendering is still

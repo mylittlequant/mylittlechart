@@ -153,10 +153,23 @@ impl App<'_> {
         };
 
         // ── Call process_event via VelloPlatform ──────────────────────────
+        // NOTE: dispatch reads `chrome_st.tabs.get(idx)` to translate
+        // `ChromeHit::Tab(idx)` into a `chart.load_preset(&tab_id)` call.
+        // Tabs are synced from `chart.panel_app.open_tabs` in
+        // `render/scene_builder.rs:93` directly into `pw.chrome_state.tabs`
+        // (the legacy field). The carve-out commit (f5517a58) introduced a
+        // parallel `pw.shell_chrome` and pointed dispatch at it without
+        // updating scene_builder to write into the new field — so
+        // `shell_chrome.tabs` stayed empty forever, every tab click became
+        // a no-op (and same for `+`, `x`, context menu — they all index
+        // into the same tabs Vec or share the same hovered/context_menu
+        // state). Point dispatch at `pw.chrome_state`, the field render
+        // and update_tooltip already use. `pw.shell_chrome` is now a dead
+        // duplicate; left in place to keep this fix minimal.
         let platform = VelloPlatform { window: &pw.window };
         mlc_input_shell::process_event(
             &mut pw.shell_input,
-            &mut pw.shell_chrome,
+            &mut pw.chrome_state,
             &mut pw.shell_dirty,
             &mut pw.chart,
             &platform,
@@ -202,13 +215,13 @@ impl App<'_> {
         pw.last_sidebar_hover_row = pw.shell_input.last_sidebar_hover_row;
         pw.was_minimized          = pw.shell_input.was_minimized;
         pw.skeleton               = pw.shell_input.skeleton;
-        pw.chrome_state.is_maximized = pw.shell_chrome.is_maximized;
-        pw.chrome_state.hovered      = pw.shell_chrome.hovered;
-        pw.chrome_state.context_menu.open         = pw.shell_chrome.context_menu.open;
-        pw.chrome_state.context_menu.x            = pw.shell_chrome.context_menu.x;
-        pw.chrome_state.context_menu.y            = pw.shell_chrome.context_menu.y;
-        pw.chrome_state.context_menu.hovered_index = pw.shell_chrome.context_menu.hovered_index;
-        // Sync chrome tooltip — render functions read pw.chrome_state.tooltip.
-        pw.chrome_state.tooltip = pw.shell_chrome.tooltip.clone();
+        // NO `shell_chrome -> chrome_state` mirror here. `process_event` now
+        // writes directly into `pw.chrome_state` (see fix above), so copying
+        // the stale `pw.shell_chrome.*` over the fresh `pw.chrome_state.*`
+        // would clobber the dispatch's just-set hover / context-menu / tooltip
+        // — that's why every chrome hover stopped repainting the moment tabs
+        // were re-pointed. The legacy `pw.shell_chrome` field is left in
+        // place but is now write-once-by-Default; dispatch reads / writes
+        // `chrome_state` end-to-end.
     }
 }
