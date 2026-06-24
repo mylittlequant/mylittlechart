@@ -25,6 +25,13 @@
     Adjust the path to wherever you pointed --out-dir.
   -->
   <script>
+    // Suppress the browser's native right-click menu globally so our own
+    // chart context menu can paint on top of the canvas. The wasm-side
+    // canvas listener in uzor-window-web does the same on the canvas
+    // element, but a document-level fallback handles the case where the
+    // canvas listener races the default action.
+    window.addEventListener('contextmenu', function(e) { e.preventDefault(); }, false);
+
     // Capture unhandled errors / rejections BEFORE wasm init.
     // STORE the first error in globalThis so dev-attach --eval can pull it
     // out as a single string (avoids dev-attach's multi-arg console truncation).

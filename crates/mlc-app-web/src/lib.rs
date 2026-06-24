@@ -561,11 +561,21 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
     // strip — mirrors native scene_builder.rs:131-138 (chart_ctx y_offset =
     // CHROME_HEIGHT). Dispatch already subtracts CHROME_HEIGHT from mouse Y
     // (via `input.chrome_height`) so click coords stay consistent.
+    //
+    // render_modal_layer is rendered immediately after — it paints toolbar
+    // dropdowns, the preset-name dialog, indicator/symbol search modals, the
+    // settings modal, etc. Without it ALL modals are state-only: the flags
+    // flip but zero pixels paint. Native composites these via
+    // scene_builder.rs:280-284 with the same CHROME_HEIGHT offset.
     {
         use uzor::render::Painter;
         ctx.save();
         ctx.translate(0.0, CHROME_HEIGHT);
-        state.borrow_mut().chart.render(&mut ctx, now_ms, false);
+        {
+            let mut st = state.borrow_mut();
+            st.chart.render(&mut ctx, now_ms, false);
+            st.chart.render_modal_layer(&mut ctx, now_ms);
+        }
         ctx.restore();
     }
 

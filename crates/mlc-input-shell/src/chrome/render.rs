@@ -170,6 +170,11 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64, skel
         ctx.set_fill_color(&c.separator);
         ctx.fill_rect(new_tab_x, div_y, 1.0, div_h);
 
+        if state.hovered == ChromeHit::NewTabButton {
+            ctx.set_fill_color(&c.button_hover);
+            ctx.fill_rect(new_tab_x + 1.0, 0.0, NEW_TAB_BUTTON_WIDTH - 1.0, BUTTON_HEIGHT);
+        }
+
         let plus_color = if state.hovered == ChromeHit::NewTabButton {
             &c.icon_hover
         } else {
@@ -192,8 +197,12 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64, skel
         // ── Right-side buttons (flavor-dependent) ─────────────────────────────
         match state.flavor {
             ChromeFlavor::Native => {
-                // new_window icon.
+                // new_window cell + icon.
                 {
+                    if state.hovered == ChromeHit::NewWindowButton {
+                        ctx.set_fill_color(&c.button_hover);
+                        ctx.fill_rect(bp.new_window_left, 0.0, NEW_WINDOW_BUTTON_WIDTH, BUTTON_HEIGHT);
+                    }
                     let icon_color = if state.hovered == ChromeHit::NewWindowButton {
                         &c.icon_hover
                     } else {
@@ -206,8 +215,12 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64, skel
                     }
                 }
 
-                // menu icon.
+                // menu cell + icon.
                 {
+                    if state.hovered == ChromeHit::MenuButton {
+                        ctx.set_fill_color(&c.button_hover);
+                        ctx.fill_rect(bp.menu_left, 0.0, MENU_BUTTON_WIDTH, BUTTON_HEIGHT);
+                    }
                     let icon_color = if state.hovered == ChromeHit::MenuButton {
                         &c.icon_hover
                     } else {
@@ -223,6 +236,10 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64, skel
             ChromeFlavor::Web => {
                 // Only menu button on the right.
                 {
+                    if state.hovered == ChromeHit::MenuButton {
+                        ctx.set_fill_color(&c.button_hover);
+                        ctx.fill_rect(bp.menu_left, 0.0, MENU_BUTTON_WIDTH, BUTTON_HEIGHT);
+                    }
                     let icon_color = if state.hovered == ChromeHit::MenuButton {
                         &c.icon_hover
                     } else {
