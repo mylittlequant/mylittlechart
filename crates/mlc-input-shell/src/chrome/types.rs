@@ -2,6 +2,25 @@
 
 use crate::tooltip::TooltipState;
 
+/// Controls which chrome buttons are rendered / hit-tested.
+///
+/// - `Native` — full desktop chrome: tabs, (+), menu, close_window,
+///   minimize, maximize, close, new_window.
+/// - `Web` — browser-safe subset: tabs, (+), menu only. Window-management
+///   buttons (minimize / maximize / close / new_window) have no meaning in a
+///   browser tab and are suppressed.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ChromeFlavor {
+    Native,
+    Web,
+}
+
+impl Default for ChromeFlavor {
+    fn default() -> Self {
+        ChromeFlavor::Native
+    }
+}
+
 /// Height of the chrome strip in logical pixels.
 pub const CHROME_HEIGHT: f64 = 32.0;
 
@@ -118,12 +137,14 @@ pub struct ChromeState {
     pub title: String,
     pub colors: ChromeColors,
     pub tabs: Vec<Tab>,
-    /// Pre-computed tab widths (updated each frame via `update_tab_widths` in vello shell).
+    /// Pre-computed tab widths (updated each frame via `update_tab_widths`).
     pub tab_widths: Vec<f64>,
     /// Right-click context menu state.
     pub context_menu: ChromeContextMenu,
     /// Tooltip state for chrome button hover tooltips.
     pub tooltip: TooltipState,
+    /// Which buttons to render / hit-test. Default = `Native`.
+    pub flavor: ChromeFlavor,
 }
 
 impl ChromeState {
@@ -137,6 +158,7 @@ impl ChromeState {
             tab_widths:   Vec::new(),
             context_menu: ChromeContextMenu::new(),
             tooltip:      TooltipState::new(),
+            flavor:       ChromeFlavor::default(),
         }
     }
 }

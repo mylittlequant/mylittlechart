@@ -11,7 +11,11 @@ pub mod state;
 pub mod tooltip;
 pub mod dispatch;
 
-pub use chrome::{ChromeHit, ChromeMenuAction, ChromeContextMenu, ChromeColors, ChromeState, Tab, CHROME_HEIGHT};
+pub use chrome::{
+    ChromeFlavor, ChromeHit, ChromeMenuAction, ChromeContextMenu, ChromeColors, ChromeState, Tab,
+    CHROME_HEIGHT,
+    render, render_tooltip, render_tooltip_themed, render_context_menu, update_tab_widths,
+};
 pub use events::{ShellEvent, NormalizedModifiers, MouseBtn, LogicalKey, PhysicalKey, ResizeDir};
 pub use platform::{Platform, DispatchOut};
 pub use state::{InputState, DirtyFlags};

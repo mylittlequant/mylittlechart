@@ -59,6 +59,8 @@ use mlc_app::ChartApp;
 use mlc_live_data::DataBridge;
 #[cfg(target_arch = "wasm32")]
 use mlc_core::state::Timeframe;
+#[cfg(target_arch = "wasm32")]
+use mlc_input_shell::{ChromeFlavor, CHROME_HEIGHT};
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
@@ -158,12 +160,14 @@ struct WebAppState {
 impl WebAppState {
     fn new(chart: ChartApp, canvas_id: &str) -> Self {
         let mut input = mlc_input_shell::InputState::default();
-        // Web has no chrome strip — suppress chrome height.
-        input.chrome_height = 0.0;
+        // Web shell renders chrome — offset chart by chrome height.
+        input.chrome_height = CHROME_HEIGHT;
+        let mut chrome = mlc_input_shell::ChromeState::new("");
+        chrome.flavor = ChromeFlavor::Web;
         Self {
             chart,
             input,
-            chrome: mlc_input_shell::ChromeState::new(""),
+            chrome,
             dirty:  mlc_input_shell::DirtyFlags::default(),
             out:    mlc_input_shell::DispatchOut::default(),
             toolbar_tooltip:    mlc_input_shell::TooltipState::new(),
@@ -368,8 +372,9 @@ fn map_platform_event_to_shell(
     state: &mlc_input_shell::InputState,
 ) -> Option<mlc_input_shell::ShellEvent> {
     use uzor::input::core::event_processor::PlatformEvent;
+    use uzor::input::keyboard::events::KeyCode;
     use uzor::input::pointer::state::MouseButton;
-    use mlc_input_shell::{ShellEvent, MouseBtn};
+    use mlc_input_shell::{ShellEvent, MouseBtn, NormalizedModifiers, LogicalKey, PhysicalKey};
 
     match event {
         PlatformEvent::PointerDown { x, y, button: MouseButton::Left } => {
@@ -398,6 +403,52 @@ fn map_platform_event_to_shell(
             Some(ShellEvent::MouseInput { button: MouseBtn::Right, pressed: false,
                 x: state.last_mouse_pos.0, y: state.last_mouse_pos.1 })
         }
+
+        // Keyboard.  Mirrors mlc-app-vello/src/window/event_handler.rs:101-150 —
+        // KeyDown only (no KeyUp), explicit Logical/Physical mapping so modals
+        // and text fields see Escape / Enter / Backspace / character input.
+        PlatformEvent::ModifiersChanged { modifiers } => {
+            Some(ShellEvent::ModifiersChanged(NormalizedModifiers {
+                ctrl:  modifiers.ctrl,
+                shift: modifiers.shift,
+                alt:   modifiers.alt,
+            }))
+        }
+        PlatformEvent::KeyDown { key, .. } => {
+            let logical = match key {
+                KeyCode::Escape    => LogicalKey::Escape,
+                KeyCode::Backspace => LogicalKey::Backspace,
+                KeyCode::Enter     => LogicalKey::Enter,
+                KeyCode::Space     => LogicalKey::Space,
+                KeyCode::Tab       => LogicalKey::Tab,
+                KeyCode::Delete    => LogicalKey::Delete,
+                KeyCode::ArrowLeft  => LogicalKey::ArrowLeft,
+                KeyCode::ArrowRight => LogicalKey::ArrowRight,
+                KeyCode::ArrowUp    => LogicalKey::ArrowUp,
+                KeyCode::ArrowDown  => LogicalKey::ArrowDown,
+                KeyCode::Home       => LogicalKey::Home,
+                KeyCode::End        => LogicalKey::End,
+                KeyCode::PageUp     => LogicalKey::PageUp,
+                KeyCode::PageDown   => LogicalKey::PageDown,
+                _                   => LogicalKey::Other,
+            };
+            let physical = match key {
+                KeyCode::A => PhysicalKey::KeyA,
+                KeyCode::B => PhysicalKey::KeyB,
+                KeyCode::C => PhysicalKey::KeyC,
+                KeyCode::S => PhysicalKey::KeyS,
+                KeyCode::V => PhysicalKey::KeyV,
+                KeyCode::Y => PhysicalKey::KeyY,
+                KeyCode::Z => PhysicalKey::KeyZ,
+                _          => PhysicalKey::Other,
+            };
+            Some(ShellEvent::KeyPressed { logical, physical })
+        }
+        PlatformEvent::TextInput { text } => {
+            // Treat as IME commit so text-fields ingest typed characters.
+            Some(ShellEvent::ImeCommit(text))
+        }
+
         _ => None,
     }
 }
@@ -455,9 +506,13 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
 
     raw_ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0)?;
 
+    // Chart owns the area BELOW the chrome strip — shrink by CHROME_HEIGHT so
+    // the chart's panel/toolbar layout doesn't draw under the chrome and the
+    // bottom edge stays visible.
+    let chart_h = css_h.saturating_sub(CHROME_HEIGHT as u32);
     {
         let mut st = state.borrow_mut();
-        st.chart.resize(css_w, css_h);
+        st.chart.resize(css_w, chart_h);
     }
 
     let mut ctx = Canvas2dChartRenderContext::new(raw_ctx, dpr, css_w, css_h);
@@ -467,7 +522,59 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
         .map(|p| p.now() as u64)
         .unwrap_or(0);
 
-    state.borrow_mut().chart.render(&mut ctx, now_ms, false);
+    // ── Tab sync (mirror of scene_builder.rs:63-94 for the web shell) ─────────
+    {
+        let mut st = state.borrow_mut();
+        let open_tabs = &st.chart.panel_app.open_tabs;
+        let active_id = st.chart.panel_app.active_preset_id.clone();
+        let presets_guard = st.chart.core.presets();
+        let mut tabs: Vec<mlc_input_shell::Tab> = open_tabs
+            .iter()
+            .filter_map(|tab_id| {
+                presets_guard.get(tab_id).map(|p| mlc_input_shell::Tab {
+                    id: p.id.clone(),
+                    name: p.name.clone(),
+                    active: p.id == active_id,
+                })
+            })
+            .collect();
+        drop(presets_guard);
+        if tabs.is_empty() {
+            tabs.push(mlc_input_shell::Tab {
+                id: "__fallback__".to_string(),
+                name: "Untitled".to_string(),
+                active: true,
+            });
+        } else if !tabs.iter().any(|t| t.active) {
+            if let Some(first) = tabs.first_mut() {
+                first.active = true;
+            }
+        }
+        st.chrome.tabs = tabs;
+    }
+
+    // ── Measure tab widths ────────────────────────────────────────────────────
+    mlc_input_shell::update_tab_widths(&mut ctx, &mut state.borrow_mut().chrome);
+
+    // ── Chart render ──────────────────────────────────────────────────────────
+    // Translate by CHROME_HEIGHT so chart's local (0,0) is just below the chrome
+    // strip — mirrors native scene_builder.rs:131-138 (chart_ctx y_offset =
+    // CHROME_HEIGHT). Dispatch already subtracts CHROME_HEIGHT from mouse Y
+    // (via `input.chrome_height`) so click coords stay consistent.
+    {
+        use uzor::render::Painter;
+        ctx.save();
+        ctx.translate(0.0, CHROME_HEIGHT);
+        state.borrow_mut().chart.render(&mut ctx, now_ms, false);
+        ctx.restore();
+    }
+
+    // ── Chrome render ─────────────────────────────────────────────────────────
+    {
+        let st = state.borrow();
+        mlc_input_shell::render(&mut ctx, &st.chrome, css_w as f64, false);
+        mlc_input_shell::render_tooltip(&mut ctx, &st.chrome, css_w as f64, css_h as f64);
+    }
 
     Ok(())
 }

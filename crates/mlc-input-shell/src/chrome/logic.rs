@@ -4,7 +4,7 @@ use uzor::WidgetId;
 use mlc_core::i18n::{TooltipKey, current_language};
 
 use super::types::{
-    CHROME_HEIGHT, ChromeContextMenu, ChromeHit, ChromeMenuAction, ChromeState,
+    CHROME_HEIGHT, ChromeContextMenu, ChromeFlavor, ChromeHit, ChromeMenuAction, ChromeState,
 };
 
 // ── Layout constants (mirrored from vello chrome.rs) ─────────────────────────
@@ -54,30 +54,41 @@ impl ButtonPositions {
 // ── hit_test ──────────────────────────────────────────────────────────────────
 
 pub fn hit_test(x: f64, y: f64, width: f64, height: f64, state: &ChromeState) -> ChromeHit {
-    let in_top    = y < BORDER_WIDTH;
-    let in_bottom = y >= height - BORDER_WIDTH;
-    let in_left   = x < BORDER_WIDTH;
-    let in_right  = x >= width - BORDER_WIDTH;
+    // Resize edges only make sense in native (resizable) windows.
+    if state.flavor == ChromeFlavor::Native {
+        let in_top    = y < BORDER_WIDTH;
+        let in_bottom = y >= height - BORDER_WIDTH;
+        let in_left   = x < BORDER_WIDTH;
+        let in_right  = x >= width - BORDER_WIDTH;
 
-    if in_top && in_left  { return ChromeHit::ResizeTopLeft; }
-    if in_top && in_right { return ChromeHit::ResizeTopRight; }
-    if in_bottom && in_left  { return ChromeHit::ResizeBottomLeft; }
-    if in_bottom && in_right { return ChromeHit::ResizeBottomRight; }
-    if in_top    { return ChromeHit::ResizeTop; }
-    if in_bottom { return ChromeHit::ResizeBottom; }
-    if in_left   { return ChromeHit::ResizeLeft; }
-    if in_right  { return ChromeHit::ResizeRight; }
+        if in_top && in_left  { return ChromeHit::ResizeTopLeft; }
+        if in_top && in_right { return ChromeHit::ResizeTopRight; }
+        if in_bottom && in_left  { return ChromeHit::ResizeBottomLeft; }
+        if in_bottom && in_right { return ChromeHit::ResizeBottomRight; }
+        if in_top    { return ChromeHit::ResizeTop; }
+        if in_bottom { return ChromeHit::ResizeBottom; }
+        if in_left   { return ChromeHit::ResizeLeft; }
+        if in_right  { return ChromeHit::ResizeRight; }
+    }
 
     if y < CHROME_HEIGHT {
         let bp = ButtonPositions::compute(width);
 
-        if x >= bp.close_x          { return ChromeHit::CloseButton; }
-        if x >= bp.maximize_x       { return ChromeHit::MaximizeButton; }
-        if x >= bp.minimize_x       { return ChromeHit::MinimizeButton; }
-        if x >= bp.close_window_left && x < bp.minimize_x        { return ChromeHit::CloseWindowButton; }
-        if x >= bp.mascot_left       && x < bp.close_window_left { return ChromeHit::MascotButton; }
-        if x >= bp.menu_left         && x < bp.mascot_left       { return ChromeHit::MenuButton; }
-        if x >= bp.new_window_left   && x < bp.menu_left         { return ChromeHit::NewWindowButton; }
+        match state.flavor {
+            ChromeFlavor::Native => {
+                if x >= bp.close_x          { return ChromeHit::CloseButton; }
+                if x >= bp.maximize_x       { return ChromeHit::MaximizeButton; }
+                if x >= bp.minimize_x       { return ChromeHit::MinimizeButton; }
+                if x >= bp.close_window_left && x < bp.minimize_x        { return ChromeHit::CloseWindowButton; }
+                if x >= bp.mascot_left       && x < bp.close_window_left { return ChromeHit::MascotButton; }
+                if x >= bp.menu_left         && x < bp.mascot_left       { return ChromeHit::MenuButton; }
+                if x >= bp.new_window_left   && x < bp.menu_left         { return ChromeHit::NewWindowButton; }
+            }
+            ChromeFlavor::Web => {
+                // Web: only menu button on the right.
+                if x >= bp.menu_left { return ChromeHit::MenuButton; }
+            }
+        }
 
         // Tabs
         let mut cursor = TAB_LEFT_MARGIN;

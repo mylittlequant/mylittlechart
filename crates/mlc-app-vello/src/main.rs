@@ -245,8 +245,6 @@ struct PerWindowState {
     /// Portable input state (mirror of the scattered fields above).
     /// Written by process_event; read back into PerWindowState fields in event_handler.
     shell_input:   mlc_input_shell::InputState,
-    /// Portable chrome state (mirror of chrome_state above).
-    shell_chrome:  mlc_input_shell::ChromeState,
     /// Dirty flags for this event-loop iteration (synced back to pw fields).
     shell_dirty:   mlc_input_shell::DirtyFlags,
     /// Per-event-loop-iteration output from process_event (synced back to pw fields).
@@ -1283,7 +1281,6 @@ impl App<'_> {
             spinner_start: None,
             awaiting_first_live_frame: false,
             shell_input:  mlc_input_shell::InputState::default(),
-            shell_chrome: mlc_input_shell::ChromeState::new("chart-app-vello"),
             shell_dirty:  mlc_input_shell::DirtyFlags::default(),
             dispatch_out: mlc_input_shell::DispatchOut::default(),
         };
