@@ -109,7 +109,15 @@ pub fn start() {
 
 #[cfg(target_arch = "wasm32")]
 async fn run() -> Result<(), JsValue> {
-    let (bridge, _live_rx, _connector_ready_rx) = DataBridge::new().await;
+    let (bridge, live_rx, _connector_ready_rx) = DataBridge::new().await;
+    // 2026-06-24: do NOT hold the first receiver alive — `broadcast::Sender`
+    // measures "lag" per-receiver, and any unread receiver drags the slow-
+    // consumer counter on the whole channel. With this rx idle, BarUpdate
+    // frames piling up at 290/s overflow the 65536 buffer in <4 min and the
+    // backend's properly-drained receiver silently gets `Lagged`-skipped on
+    // every later try_recv. Drop it explicitly so the only live receiver is
+    // the one BackendCore::new owns via `bridge.add_listener()`.
+    drop(live_rx);
     let bridge = Arc::new(bridge);
     web_sys::console::log_1(&"[mlc-app-web] bridge ready".into());
 
@@ -117,7 +125,7 @@ async fn run() -> Result<(), JsValue> {
     app.seed_default_chart(
         digdigdig3::ExchangeId::Binance,
         "BTCUSDT",
-        Timeframe::new("1H", 60),
+        Timeframe::h1(),
         digdigdig3::AccountType::Spot,
         500,
     );

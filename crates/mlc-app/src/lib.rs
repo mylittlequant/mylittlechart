@@ -166,20 +166,24 @@ pub fn account_type_to_label(at: digdigdig3::AccountType) -> &'static str {
 fn parse_timeframe_name(name: &str) -> Option<mlc_core::state::Timeframe> {
     use mlc_core::state::Timeframe;
     // Match exact Timeframe.name values (case-sensitive: "1m" = minute, "1M" = month).
+    // Convention: `Timeframe.interval_ms` is REAL milliseconds for time TFs
+    // (the exchange-standard unit). Earlier this fn passed minute counts here,
+    // which made the reactor's `period_secs = interval_ms / 1000` round to 0
+    // and silently dropped every live trade for these TFs.
     match name {
         "1m"  => Some(Timeframe::m1()),
-        "3m"  => Some(Timeframe::new("3m", 3)),
+        "3m"  => Some(Timeframe::new("3m",  3 * 60_000)),
         "5m"  => Some(Timeframe::m5()),
         "15m" => Some(Timeframe::m15()),
         "30m" => Some(Timeframe::m30()),
         "1H" | "1h"  => Some(Timeframe::h1()),
-        "2H" | "2h"  => Some(Timeframe::new("2H", 120)),
+        "2H" | "2h"  => Some(Timeframe::new("2H",  2 * 3_600_000)),
         "4H" | "4h"  => Some(Timeframe::h4()),
-        "6H" | "6h"  => Some(Timeframe::new("6H", 360)),
-        "8H" | "8h"  => Some(Timeframe::new("8H", 480)),
-        "12H" | "12h" => Some(Timeframe::new("12H", 720)),
+        "6H" | "6h"  => Some(Timeframe::new("6H",  6 * 3_600_000)),
+        "8H" | "8h"  => Some(Timeframe::new("8H",  8 * 3_600_000)),
+        "12H" | "12h" => Some(Timeframe::new("12H", 12 * 3_600_000)),
         "1D" | "1d"  => Some(Timeframe::d1()),
-        "3D" | "3d"  => Some(Timeframe::new("3D", 4320)),
+        "3D" | "3d"  => Some(Timeframe::new("3D",  3 * 86_400_000)),
         "1W" | "1w"  => Some(Timeframe::w1()),
         "1M"  => Some(Timeframe::mn1()),
         _ => None,
@@ -1380,7 +1384,7 @@ impl ChartApp {
             app.seed_default_chart(
                 digdigdig3::ExchangeId::Binance,
                 "BTCUSDT",
-                mlc_core::state::Timeframe::new("1H", 60),
+                mlc_core::state::Timeframe::h1(),
                 digdigdig3::AccountType::Spot,
                 bar_count,
             );
@@ -1613,7 +1617,7 @@ impl ChartApp {
         app.seed_default_chart(
             digdigdig3::ExchangeId::Binance,
             "BTCUSDT",
-            mlc_core::state::Timeframe::new("1H", 60),
+            mlc_core::state::Timeframe::h1(),
             digdigdig3::AccountType::Spot,
             bar_count,
         );
@@ -2110,7 +2114,7 @@ impl ChartApp {
                     let auto_bid = app.core.bubble_mut().bubble.create_group_auto(
                         [0.0, 0.0, 0.0, 0.0],
                         "BTCUSDT".to_string(),
-                        mlc_core::state::Timeframe::new("1H", 60),
+                        mlc_core::state::Timeframe::h1(),
                     );
                     let _ = app.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, auto_bid);
                     if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
@@ -2119,7 +2123,7 @@ impl ChartApp {
                     }
                     if let Some(bubble) = app.core.bubble_mut().bubble.bubble_mut(auto_bid) {
                         bubble.symbol = "BTCUSDT".to_string();
-                        bubble.timeframe = mlc_core::state::Timeframe::new("1H", 60);
+                        bubble.timeframe = mlc_core::state::Timeframe::h1();
                         bubble.exchange = exchange_name.clone();
                         bubble.account_type = "S".to_string();
                     }
@@ -2172,7 +2176,7 @@ impl ChartApp {
                 bridge.request_bars(
                     exchange_id,
                     "BTCUSDT",
-                    &mlc_core::state::Timeframe::new("1H", 60),
+                    &mlc_core::state::Timeframe::h1(),
                     digdigdig3::AccountType::Spot,
                     None,
                     Some(app.panel_app.user_manager.profile.bar_count as usize),

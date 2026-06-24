@@ -8939,7 +8939,7 @@ impl ChartApp {
 
         // Hard defaults — new chart always starts clean.
         let default_symbol = "BTCUSDT".to_string();
-        let default_timeframe = mlc_core::state::Timeframe::new("1H", 60);
+        let default_timeframe = mlc_core::state::Timeframe::h1();
 
         // Full reset — single pane, no indicators, no primitives.
         self.panel_app.panel_grid.set_layout_single();
