@@ -1724,6 +1724,27 @@ impl ChartApp {
         bridge.ensure_connector(exchange_id);
         bridge.request_bars(exchange_id, symbol, &timeframe, account_type, None, Some(bar_count), false);
 
+        // Subscribe mini-tickers for every symbol in the active watchlist.
+        // Watchlist subscriptions are independent of whether the sidebar is
+        // visible: the connections stay open so prices are fresh the moment
+        // the user opens the panel. Native shell does this in `new_window`
+        // after loading a preset; wasm shell calls `seed_default_chart`
+        // instead and previously skipped this step → mini-ticker DashMap
+        // stayed empty and the watchlist froze at 0.0.
+        let wl_syms: Vec<(String, String, String)> = self.core.watchlist().active_list()
+            .map(|wl| wl.all_symbols().into_iter().map(|ws| (ws.exchange.clone(), ws.symbol.clone(), ws.account_type.clone())).collect())
+            .unwrap_or_default();
+        for (ws_exchange_str, ws_symbol, ws_account_type) in wl_syms {
+            let ws_exchange = digdigdig3::ExchangeId::from_str(&ws_exchange_str)
+                .unwrap_or(exchange_id);
+            if !self.sidebar_state.connector_enabled.get(ws_exchange.as_str()).copied().unwrap_or(true) {
+                continue;
+            }
+            let ws_at = account_type_from_label(&ws_account_type);
+            bridge.ensure_connector(ws_exchange);
+            bridge.subscribe_mini_ticker(ws_exchange, &ws_symbol, ws_at);
+        }
+
         self.needs_initial_viewport_fit = true;
     }
 
