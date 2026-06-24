@@ -1758,6 +1758,192 @@ impl ChartApp {
     }
 
     // -------------------------------------------------------------------------
+    // drain_watchlist_actions — apply queued WatchlistActions directly to
+    // BackendCore's watchlist + bridge.
+    // -------------------------------------------------------------------------
+    //
+    // Native shell (mlc-app-vello/main.rs:2191-2360) drains the same vec into
+    // its per-app `AppState::watchlist_manager` cache. Wasm shell has no
+    // AppState (one window, no multi-window sync), so it drives the single
+    // source of truth — `core.watchlist_manager` — directly.
+    //
+    // Returns true if any actions were applied (caller can flag sidebar_dirty
+    // or autosave_snapshot from this).
+    pub fn drain_watchlist_actions(&mut self) -> bool {
+        use crate::WatchlistAction;
+
+        let actions: Vec<WatchlistAction> = self.watchlist_actions.drain(..).collect();
+        if actions.is_empty() {
+            return false;
+        }
+
+        for action in actions {
+            match action {
+                WatchlistAction::Toggle { symbol, exchange, account_type } => {
+                    let now_in = self.core.watchlist_mut()
+                        .toggle_symbol(&symbol, &exchange, &account_type);
+                    if now_in {
+                        if let Some(eid) = ExchangeId::from_str(&exchange) {
+                            let enabled = self.sidebar_state.connector_enabled
+                                .get(eid.as_str()).copied().unwrap_or(true);
+                            if enabled {
+                                let at = account_type_from_label(&account_type);
+                                self.core.bridge.ensure_connector(eid);
+                                self.core.bridge.subscribe_mini_ticker(eid, &symbol, at);
+                            }
+                        }
+                        if let Some(list) = self.core.watchlist_mut().active_list_mut() {
+                            list.order_snapshot = None;
+                        }
+                    } else {
+                        if let Some(eid) = ExchangeId::from_str(&exchange) {
+                            let at = account_type_from_label(&account_type);
+                            self.core.bridge.unsubscribe_mini_ticker(eid, &symbol, at);
+                        }
+                        if let Some(list) = self.core.watchlist_mut().active_list_mut() {
+                            if let Some(ref mut snap) = list.order_snapshot {
+                                snap.retain(|s| s.symbol != symbol);
+                            }
+                        }
+                    }
+                }
+                WatchlistAction::Remove { symbol, exchange, account_type } => {
+                    self.core.watchlist_mut().remove_symbol(&symbol, &exchange, &account_type);
+                }
+                WatchlistAction::ClearOrderSnapshot => {
+                    if let Some(list) = self.core.watchlist_mut().active_list_mut() {
+                        list.order_snapshot = None;
+                    }
+                }
+                WatchlistAction::Reorder { from_idx, to_idx } => {
+                    self.core.watchlist_mut().reorder_symbol(from_idx, to_idx);
+                }
+                WatchlistAction::CreateList { name } => {
+                    let new_id = self.core.watchlist_mut().create_list(name);
+                    self.core.watchlist_mut().active_list_id = new_id;
+                }
+                WatchlistAction::RenameList { id, new_name } => {
+                    let mut wl = self.core.watchlist_mut();
+                    if let Some(list) = wl.lists.iter_mut().find(|l| l.id == id) {
+                        list.name = new_name;
+                    }
+                }
+                WatchlistAction::DeleteList { id } => {
+                    self.core.watchlist_mut().delete_list(id);
+                }
+                WatchlistAction::SetActiveList { id } => {
+                    self.core.watchlist_mut().active_list_id = id;
+                }
+                WatchlistAction::SetColorFlag { symbol, exchange, account_type, color } => {
+                    if let Some(list) = self.core.watchlist_mut().active_list_mut() {
+                        let color_str = color.as_deref().unwrap_or("");
+                        list.set_color_flag(&symbol, &exchange, &account_type, color_str);
+                    }
+                }
+                WatchlistAction::MoveToGroup { symbol, exchange, account_type, group_name } => {
+                    if let Some(list) = self.core.watchlist_mut().active_list_mut() {
+                        if let Some(group) = list.groups.iter().find(|g| g.name == group_name) {
+                            let group_id = group.id;
+                            list.move_to_group(&symbol, &exchange, &account_type, group_id);
+                        }
+                    }
+                }
+                WatchlistAction::RemoveFromGroup { symbol, exchange, account_type } => {
+                    if let Some(list) = self.core.watchlist_mut().active_list_mut() {
+                        let mut found: Option<mlc_sidebar_content::watchlist::WatchlistSymbol> = None;
+                        for g in &mut list.groups {
+                            if let Some(pos) = g.symbols.iter().position(|s|
+                                s.symbol == symbol && s.exchange == exchange && s.account_type == account_type)
+                            {
+                                found = Some(g.symbols.remove(pos));
+                                break;
+                            }
+                        }
+                        if let Some(ws) = found {
+                            list.ungrouped.push(ws);
+                        }
+                    }
+                }
+                WatchlistAction::SetSeparatorOffsets { offsets } => {
+                    if let Some(list) = self.core.watchlist_mut().active_list_mut() {
+                        list.column_config.separator_offsets = Some(offsets);
+                    }
+                }
+                WatchlistAction::ResetSeparatorOffsets => {
+                    if let Some(list) = self.core.watchlist_mut().active_list_mut() {
+                        list.column_config.separator_offsets = None;
+                    }
+                }
+                WatchlistAction::SetSeparatorOffset { index, value } => {
+                    if let Some(list) = self.core.watchlist_mut().active_list_mut() {
+                        let n_cols = {
+                            let c = &list.column_config;
+                            let mut n: usize = 1;
+                            if c.show_exchange     { n += 1; }
+                            if c.show_account_type { n += 1; }
+                            if c.show_last_price   { n += 1; }
+                            if c.show_change_pct   { n += 1; }
+                            if c.show_change_abs   { n += 1; }
+                            if c.show_high_low     { n += 2; }
+                            if c.show_volume       { n += 1; }
+                            n
+                        };
+                        let n_seps = n_cols.saturating_sub(1);
+                        let needs_init = list.column_config.separator_offsets
+                            .as_ref()
+                            .map(|o| o.len() != n_seps)
+                            .unwrap_or(true);
+                        if needs_init {
+                            list.column_config.separator_offsets = Some(vec![0.0; n_seps]);
+                        }
+                        if let Some(ref mut offsets) = list.column_config.separator_offsets {
+                            if index < offsets.len() {
+                                offsets[index] = value;
+                            }
+                        }
+                    }
+                }
+                WatchlistAction::ToggleColumnVisibility { column } => {
+                    if let Some(list) = self.core.watchlist_mut().active_list_mut() {
+                        match column.as_str() {
+                            "exchange"     => list.column_config.show_exchange     = !list.column_config.show_exchange,
+                            "last_price"   => list.column_config.show_last_price   = !list.column_config.show_last_price,
+                            "change_pct"   => list.column_config.show_change_pct   = !list.column_config.show_change_pct,
+                            "change_abs"   => list.column_config.show_change_abs   = !list.column_config.show_change_abs,
+                            "volume"       => list.column_config.show_volume       = !list.column_config.show_volume,
+                            "high_low"     => list.column_config.show_high_low     = !list.column_config.show_high_low,
+                            "account_type" => list.column_config.show_account_type = !list.column_config.show_account_type,
+                            "align_columns" => {
+                                list.column_config.align_columns = !list.column_config.align_columns;
+                                if list.column_config.align_columns {
+                                    list.column_config.separator_offsets = None;
+                                }
+                            }
+                            _ => {}
+                        }
+                        if column != "align_columns" {
+                            list.column_config.separator_offsets = None;
+                        }
+                    }
+                }
+                WatchlistAction::SortCycle => {
+                    if let Some(list) = self.core.watchlist_mut().active_list_mut() {
+                        list.order_snapshot = None;
+                    }
+                }
+                WatchlistAction::ResetSort => {
+                    if let Some(list) = self.core.watchlist_mut().active_list_mut() {
+                        list.order_snapshot = None;
+                    }
+                }
+            }
+        }
+
+        self.sidebar_data_dirty = true;
+        true
+    }
+
+    // -------------------------------------------------------------------------
     // new_window — unified per-window constructor (no primary/secondary distinction)
     // -------------------------------------------------------------------------
 

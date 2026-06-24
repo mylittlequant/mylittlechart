@@ -222,7 +222,16 @@ fn run_render_loop(
                 .duration_since(web_time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0);
-            state_clone.borrow_mut().chart.tick(now_ms);
+            let mut st = state_clone.borrow_mut();
+            st.chart.tick(now_ms);
+            // Drain queued WatchlistActions into core.watchlist_manager + bridge.
+            // Native equivalent: mlc-app-vello/main.rs:2191-2360 (which writes
+            // into a parallel AppState cache). Wasm has one window — drive the
+            // single source of truth (core.watchlist_manager) directly.
+            // Without this, Symbol Search star clicks queue Toggle actions that
+            // nobody consumes — symbols never reach the watchlist and the
+            // mini-ticker subscription never starts.
+            st.chart.drain_watchlist_actions();
         }
 
         // ── Diag: expose active bubble's last bar timestamp + bars count + close
