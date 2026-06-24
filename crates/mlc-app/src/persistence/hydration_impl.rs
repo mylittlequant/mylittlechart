@@ -13,6 +13,7 @@
 
 use crate::ChartApp;
 use mlc_core::preset::preset::ChartPreset;
+use mlc_core::chart::types::price_scale::ScaleMode;
 
 impl ChartApp {
     /// Apply a freshly cloned `ChartPreset` into the active window slot.
@@ -219,17 +220,21 @@ impl ChartApp {
                                     // Restore stashed scale mode (pre-join A/M/F, restored on desync).
                                     window.stashed_scale_mode = snap.stashed_scale_mode;
 
-                                    // Restore bar_spacing (user's zoom level). chart_width is NOT restored  - 
-                                    // it comes from layout on the first frame; view_start is NOT restored  - 
+                                    // Restore bar_spacing (user's zoom level). chart_width is NOT restored  -
+                                    // it comes from layout on the first frame; view_start is NOT restored  -
                                     // snap-to-end always positions to the latest bar.
                                     if snap.viewport.bar_spacing > 0.0 {
                                         window.viewport.bar_spacing = snap.viewport.bar_spacing;
                                     }
-                                    // Do NOT set scale_mode here. Instead, stash it into restore_scale_mode
-                                    // so set_bars() can apply it AFTER auto-scale completes. This prevents
-                                    // the BarsLoaded handler's `window.price_scale.scale_mode = default_scale_mode`
-                                    // from clobbering a Manual scale preference.
-                                    window.restore_scale_mode = Some(snap.price_scale.scale_mode);
+                                    // Cold-load rule (2026-06-24): every cold preset apply must
+                                    // land on Auto scale mode — viewport snaps to the right edge
+                                    // (`needs_snap_after_backfill = true` below) and the Y axis
+                                    // auto-fits the visible bars. Saved `scale_mode` (M / F) is
+                                    // ignored on cold path; user can re-toggle after the chart
+                                    // settles. Applies uniformly across sole / sync-group /
+                                    // all containers (this branch runs per-window in the
+                                    // `preset.windows` loop).
+                                    window.restore_scale_mode = Some(ScaleMode::Auto);
 
                                     // Bars arrive asynchronously via BarsLoaded.
                                     window.pending_symbol_load = true;
@@ -410,7 +415,9 @@ impl ChartApp {
                                     if snap.viewport.bar_spacing > 0.0 {
                                         window.viewport.bar_spacing = snap.viewport.bar_spacing;
                                     }
-                                    window.restore_scale_mode = Some(snap.price_scale.scale_mode);
+                                    // Cold-load rule (2026-06-24): force Auto scale mode on
+                                    // cold preset apply — see twin branch above for rationale.
+                                    window.restore_scale_mode = Some(ScaleMode::Auto);
 
                                     // Bars arrive asynchronously via BarsLoaded.
                                     window.pending_symbol_load = true;

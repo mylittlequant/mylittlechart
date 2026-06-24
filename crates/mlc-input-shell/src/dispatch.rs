@@ -107,9 +107,26 @@ pub fn process_event(
                     let dx = x - last_x;
                     let dy = y - last_y;
                     let chart_y = y - state.chrome_height;
+                    // Capture the inline-bar drag flag BEFORE on_drag_move so we
+                    // can mark the toolbar dirty on the very same frame the drag
+                    // started. Reading it AFTER on_drag_move would still work for
+                    // sustained drags, but checking before keeps the path uniform
+                    // with other drag flags.
+                    let inline_bar_dragging =
+                        chart.panel_app.toolbar_state.floating_inline_bar.dragging;
                     chart.on_drag_move(x, chart_y, dx, dy);
                     if chart.is_sidebar_separator_dragging() {
                         dirty.sidebar_dirty_scene = true;
+                        dirty.toolbar_dirty = true;
+                    }
+                    // Floating inline-config bar lives inside the toolbar
+                    // sub-scene; without this mark, dragging only updates
+                    // bar.x/bar.y in state but reuses the cached toolbar
+                    // scene → the bar jitters / lags by N frames until some
+                    // other event happens to dirty the toolbar.
+                    if inline_bar_dragging
+                        || chart.panel_app.toolbar_state.floating_inline_bar.dragging
+                    {
                         dirty.toolbar_dirty = true;
                     }
                     dirty.overlay_dirty = true;
@@ -267,10 +284,21 @@ pub fn process_event(
                     let dx = x - last_x;
                     let dy = y - last_y;
                     let last_chart_y = last_y - state.chrome_height;
+                    let inline_bar_dragging =
+                        chart.panel_app.toolbar_state.floating_inline_bar.dragging;
                     chart.on_drag_move(x, chart_y, dx, dy);
                     let _ = last_chart_y;
                     if chart.is_sidebar_separator_dragging() {
                         dirty.sidebar_dirty_scene = true;
+                        dirty.toolbar_dirty = true;
+                    }
+                    // See twin callsite above — toolbar caches the inline-bar
+                    // position; must mark it dirty for every drag move so the
+                    // bar redraws at 60 Hz instead of jittering once per
+                    // unrelated dirty event.
+                    if inline_bar_dragging
+                        || chart.panel_app.toolbar_state.floating_inline_bar.dragging
+                    {
                         dirty.toolbar_dirty = true;
                     }
                 }
