@@ -1265,9 +1265,9 @@ impl DataBridge {
             let station_tf_name = tf_name.clone();
             let handle = self.spawn_bg_join(async move {
                 let kline_iv = KlineInterval::new(&station_interval);
-                let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add(
                     exchange_id,
-                    station_symbol_wire.clone(),
+                    station_symbol_canonical.clone(),
                     account_type,
                     [digdigdig3_station::Stream::Kline(kline_iv)],
                 );
@@ -1865,8 +1865,8 @@ impl DataBridge {
 
         let handle = self.spawn_bg_join(async move {
             // Task 1 — OrderBook snapshots → DomHeatmapSnapshot
-            let ob_set = digdigdig3_station::SubscriptionSet::new().add_raw(
-                exchange_id, sym_wire_ob.clone(), account_type,
+            let ob_set = digdigdig3_station::SubscriptionSet::new().add(
+                exchange_id, sym_ob.clone(), account_type,
                 [digdigdig3_station::Stream::Orderbook],
             );
             let mut ob_report = match station_ob.subscribe(ob_set).await {
@@ -1887,8 +1887,8 @@ impl DataBridge {
             let sym_wire_tr = sym_wire_ob.clone();
             let station_t = station_ob.clone();
             let trade_handle = crate::bridge::spawn_bg_join_nested(async move {
-                let tr_set = digdigdig3_station::SubscriptionSet::new().add_raw(
-                    exchange_id, sym_wire_tr.clone(), account_type,
+                let tr_set = digdigdig3_station::SubscriptionSet::new().add(
+                    exchange_id, sym_tr.clone(), account_type,
                     [digdigdig3_station::Stream::Trade],
                 );
                 let mut tr_report = match station_t.subscribe(tr_set).await {
@@ -1995,8 +1995,8 @@ impl DataBridge {
 
         let handle = self.spawn_bg_join(async move {
             // Task 1 — per-event liquidation → LiquidationEvent
-            let liq_set = digdigdig3_station::SubscriptionSet::new().add_raw(
-                exchange_id, sym_wire_liq.clone(), account_type,
+            let liq_set = digdigdig3_station::SubscriptionSet::new().add(
+                exchange_id, sym_liq.clone(), account_type,
                 [digdigdig3_station::Stream::Liquidation],
             );
             let mut liq_report = match station_liq.subscribe(liq_set).await {
@@ -2016,8 +2016,8 @@ impl DataBridge {
             let sym_wire_bkt = sym_wire_liq.clone();
             let station_bkt = station_liq.clone();
             let bucket_handle = crate::bridge::spawn_bg_join_nested(async move {
-                let bkt_set = digdigdig3_station::SubscriptionSet::new().add_raw(
-                    exchange_id, sym_wire_bkt.clone(), account_type,
+                let bkt_set = digdigdig3_station::SubscriptionSet::new().add(
+                    exchange_id, sym_bkt.clone(), account_type,
                     [digdigdig3_station::Stream::LiquidationBucket],
                 );
                 let mut bkt_report = match station_bkt.subscribe(bkt_set).await {
@@ -2281,9 +2281,9 @@ impl DataBridge {
             let mut total_bars: u64 = 0;
             let mut respawn_n: u32 = 0;
             loop {
-                let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add(
                     exchange_id,
-                    symbol_wire.clone(),
+                    symbol_canonical.clone(),
                     account_type,
                     [stream.clone()],
                 );
@@ -2385,9 +2385,9 @@ impl DataBridge {
                     "[Bridge::footprint-fwd subscribing] respawn={} {:?} {} wire={} stream={}",
                     respawn_n, exchange_id, symbol_canonical, symbol_wire, stream_label,
                 );
-                let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add(
                     exchange_id,
-                    symbol_wire.clone(),
+                    symbol_canonical.clone(),
                     account_type,
                     [stream.clone()],
                 );
@@ -2484,8 +2484,8 @@ impl DataBridge {
             let stream_label = format!("{:?}", stream);
             let mut respawn_n: u32 = 0;
             loop {
-                let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
-                    exchange_id, symbol_wire.clone(), account_type, [stream.clone()],
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add(
+                    exchange_id, symbol_canonical.clone(), account_type, [stream.clone()],
                 );
                 let mut report = match station.subscribe(sub_set).await {
                     Ok(r) => r,
@@ -2530,8 +2530,8 @@ impl DataBridge {
             let stream_label = format!("{:?}", stream);
             let mut respawn_n: u32 = 0;
             loop {
-                let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
-                    exchange_id, symbol_wire.clone(), account_type, [stream.clone()],
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add(
+                    exchange_id, symbol_canonical.clone(), account_type, [stream.clone()],
                 );
                 let mut report = match station.subscribe(sub_set).await {
                     Ok(r) => r,
@@ -2575,8 +2575,8 @@ impl DataBridge {
             let stream_label = format!("{:?}", stream);
             let mut respawn_n: u32 = 0;
             loop {
-                let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
-                    exchange_id, symbol_wire.clone(), account_type, [stream.clone()],
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add(
+                    exchange_id, symbol_canonical.clone(), account_type, [stream.clone()],
                 );
                 let mut report = match station.subscribe(sub_set).await {
                     Ok(r) => r,
@@ -2620,8 +2620,8 @@ impl DataBridge {
             let stream_label = format!("{:?}", stream);
             let mut respawn_n: u32 = 0;
             loop {
-                let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
-                    exchange_id, symbol_wire.clone(), account_type, [stream.clone()],
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add(
+                    exchange_id, symbol_canonical.clone(), account_type, [stream.clone()],
                 );
                 let mut report = match station.subscribe(sub_set).await {
                     Ok(r) => r,
@@ -2664,8 +2664,8 @@ impl DataBridge {
             let stream_label = format!("{:?}", stream);
             let mut respawn_n: u32 = 0;
             loop {
-                let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
-                    exchange_id, symbol_wire.clone(), account_type, [stream.clone()],
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add(
+                    exchange_id, symbol_canonical.clone(), account_type, [stream.clone()],
                 );
                 let mut report = match station.subscribe(sub_set).await {
                     Ok(r) => r,
@@ -2708,8 +2708,8 @@ impl DataBridge {
             let stream_label = format!("{:?}", stream);
             let mut respawn_n: u32 = 0;
             loop {
-                let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
-                    exchange_id, symbol_wire.clone(), account_type, [stream.clone()],
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add(
+                    exchange_id, symbol_canonical.clone(), account_type, [stream.clone()],
                 );
                 let mut report = match station.subscribe(sub_set).await {
                     Ok(r) => r,
@@ -2764,8 +2764,8 @@ impl DataBridge {
             let mut last_oi: Option<f64> = None;
             let mut respawn_n: u32 = 0;
             loop {
-                let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
-                    exchange_id, symbol_wire.clone(), account_type, [stream.clone()],
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add(
+                    exchange_id, symbol_canonical.clone(), account_type, [stream.clone()],
                 );
                 let mut report = match station.subscribe(sub_set).await {
                     Ok(r) => r,
@@ -2828,8 +2828,8 @@ impl DataBridge {
             let stream_label = format!("{:?}", stream);
             let mut respawn_n: u32 = 0;
             loop {
-                let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
-                    exchange_id, symbol_wire.clone(), account_type, [stream.clone()],
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add(
+                    exchange_id, symbol_canonical.clone(), account_type, [stream.clone()],
                 );
                 let mut report = match station.subscribe(sub_set).await {
                     Ok(r) => r,
@@ -2998,9 +2998,9 @@ impl DataBridge {
                 let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
                 let gate_key_task = gate_key.clone();
                 self.spawn_bg(async move {
-                    let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                    let sub_set = digdigdig3_station::SubscriptionSet::new().add(
                         exchange_id,
-                        symbol_wire.clone(),
+                        symbol_canonical.clone(),
                         account_type,
                         [digdigdig3_station::Stream::Trade],
                     );
@@ -3087,15 +3087,26 @@ impl DataBridge {
         let station = self.station.clone();
         let tx = self.tx.clone();
         let subs_set = self.station_ticker_subscribed.clone();
-        // Canonical form — emitted back in MiniTickerUpdate.symbol.
+        // Canonical form — emitted back in MiniTickerUpdate.symbol AND passed
+        // to dig3 station via `.add()` (the normalizer-translated path).
+        // Pre-2026-06-24 we did `wire_symbol(...) → .add_raw(...)`, but
+        // `wire_symbol` reads `station.symbols(exchange)` which is empty on
+        // the very first subscribe after boot — wasm shell hit this on OKX
+        // (raw `"BTCUSDT"` passed through, OKX requires `"BTC-USDT"`, sub
+        // rejected with code 60018). dig3's own `SubscriptionSet::add` runs
+        // the canonical → native translation per-venue via `SymbolNormalizer`
+        // (see digdigdig3-station/src/subscription.rs:196), which does NOT
+        // depend on the station's REST symbol catalogue, so it works from
+        // the first call. Keep `symbol_wire` only for the legacy logging
+        // path below; the real subscription uses canonical now.
         let symbol_canonical = symbol.to_string();
-        // Wire form — passed to dig3 station add_raw.
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
         let key_for_cleanup = ticker_key;
+        let canonical_for_sub = symbol_canonical.clone();
         self.spawn_bg(async move {
-            let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+            let sub_set = digdigdig3_station::SubscriptionSet::new().add(
                 exchange_id,
-                symbol_wire.clone(),
+                canonical_for_sub,
                 account_type,
                 [digdigdig3_station::Stream::Ticker],
             );
@@ -3218,9 +3229,9 @@ impl DataBridge {
             let key_for_cleanup = gate_key;
             let tracker_clone = tracker.clone();
             self.spawn_bg(async move {
-                let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add(
                     exchange_id,
-                    symbol_wire.clone(),
+                    symbol_canonical.clone(),
                     account_type,
                     [digdigdig3_station::Stream::OrderbookDelta],
                 );
