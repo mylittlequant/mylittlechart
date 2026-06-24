@@ -79,3 +79,18 @@ pub const NEW_PROFILE_NAME: &str = "new_profile_name";
 
 /// Inline profile rename input (user settings profile list row).
 pub const PROFILE_RENAME: &str = "profile_rename";
+
+/// New passphrase input (profile manager / welcome wizard / settings sync tab / vault unlock).
+/// Rendered with asterisk masking.
+pub const NEW_PASSPHRASE: &str = "new_passphrase";
+
+/// Confirm passphrase input (profile manager CreatePassphrase/SetNewPassphrase / wizard).
+/// Rendered with asterisk masking.
+pub const CONFIRM_PASSPHRASE: &str = "confirm_passphrase";
+
+/// Recovery key display box (UseRecoveryKey page).
+/// Long paste-friendly text field; read-only display on ShowRecoveryKey page.
+pub const RECOVERY_KEY: &str = "recovery_key";
+
+/// Telegram bot token input (alert settings notifications tab).
+pub const ALERT_TG_TOKEN: &str = "alert_tg_token";

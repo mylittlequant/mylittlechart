@@ -1463,6 +1463,13 @@ impl ChartApp {
             tf.register(text_input::INDICATOR_SETTINGS_FIELD, TextFieldConfig::text());
             tf.register(text_input::CHART_SETTINGS_FIELD, TextFieldConfig::text());
             tf.register(text_input::COMPARE_SETTINGS_FIELD, TextFieldConfig::text());
+            // Wave 3 profile management + alert token fields.
+            tf.register(text_input::NEW_PROFILE_NAME, TextFieldConfig::text());
+            tf.register(text_input::PROFILE_RENAME, TextFieldConfig::text());
+            tf.register(text_input::NEW_PASSPHRASE, TextFieldConfig::password());
+            tf.register(text_input::CONFIRM_PASSPHRASE, TextFieldConfig::password());
+            tf.register(text_input::RECOVERY_KEY, TextFieldConfig::text());
+            tf.register(text_input::ALERT_TG_TOKEN, TextFieldConfig::text());
         }
 
         // Populate sub_panes from the real indicator_manager.
@@ -1680,6 +1687,13 @@ impl ChartApp {
             tf.register(text_input::INDICATOR_SETTINGS_FIELD, TextFieldConfig::text());
             tf.register(text_input::CHART_SETTINGS_FIELD, TextFieldConfig::text());
             tf.register(text_input::COMPARE_SETTINGS_FIELD, TextFieldConfig::text());
+            // Wave 3 profile management + alert token fields.
+            tf.register(text_input::NEW_PROFILE_NAME, TextFieldConfig::text());
+            tf.register(text_input::PROFILE_RENAME, TextFieldConfig::text());
+            tf.register(text_input::NEW_PASSPHRASE, TextFieldConfig::password());
+            tf.register(text_input::CONFIRM_PASSPHRASE, TextFieldConfig::password());
+            tf.register(text_input::RECOVERY_KEY, TextFieldConfig::text());
+            tf.register(text_input::ALERT_TG_TOKEN, TextFieldConfig::text());
         }
 
         app.needs_initial_viewport_fit = true;
@@ -2571,7 +2585,11 @@ impl ChartApp {
             profile.notification_settings.telegram.subscribers.len(),
         );
         self.panel_app.alert_settings_state.notification_settings = profile.notification_settings.clone();
-        self.panel_app.alert_settings_state.tg_bot_token_input = profile.notification_settings.telegram.bot_token.clone();
+        {
+            let tg_wid = uzor::WidgetId::from(crate::text_input::ALERT_TG_TOKEN);
+            self.input_coordinator.borrow_mut().text_fields_mut()
+                .set_text(&tg_wid, &profile.notification_settings.telegram.bot_token);
+        }
 
         // Agents docking container restore — per-window profile state.
         // Layout topology (tree shape + splits) is rebuilt from LayoutSnapshot.
@@ -5977,6 +5995,50 @@ impl ChartApp {
                 };
             } else {
                 self.panel_app.compare_settings_state.active_render = ActiveFieldRender::default();
+            }
+
+            // Wave 3 — profile management fields
+            {
+                let populate_proxy = |id: &str, tf: &uzor::input::TextFieldStore, focused: bool| -> ActiveFieldRender {
+                    let wid = uzor::WidgetId::from(id);
+                    ActiveFieldRender {
+                        text: tf.text(&wid).to_string(),
+                        cursor: tf.cursor(&wid),
+                        selection_start: tf.selection_range(&wid).map(|(s, _)| s),
+                        cursor_visible: cursor_blink && focused,
+                    }
+                };
+                let (pf_new_profile_name, pf_profile_rename, pf_new_passphrase, pf_confirm_passphrase, pf_recovery_key) = {
+                    let uss = &self.panel_app.user_settings_state;
+                    (
+                        populate_proxy(text_input::NEW_PROFILE_NAME, tf, uss.new_profile_name_focused),
+                        populate_proxy(text_input::PROFILE_RENAME, tf, uss.profile_rename_focused),
+                        populate_proxy(text_input::NEW_PASSPHRASE, tf, uss.new_passphrase_focused),
+                        populate_proxy(text_input::CONFIRM_PASSPHRASE, tf, uss.confirm_passphrase_focused),
+                        populate_proxy(text_input::RECOVERY_KEY, tf, uss.recovery_key_display_focused),
+                    )
+                };
+                let uss_mut = &mut self.panel_app.user_settings_state;
+                uss_mut.new_profile_name_render = pf_new_profile_name;
+                uss_mut.profile_rename_render = pf_profile_rename;
+                uss_mut.new_passphrase_render = pf_new_passphrase;
+                uss_mut.confirm_passphrase_render = pf_confirm_passphrase;
+                uss_mut.recovery_key_display_render = pf_recovery_key;
+            }
+
+            // Wave 3 — alert token field
+            {
+                let tg_wid = uzor::WidgetId::from(text_input::ALERT_TG_TOKEN);
+                let tg_text = tf.text(&tg_wid).to_string();
+                let tg_cursor = tf.cursor(&tg_wid);
+                let tg_sel = tf.selection_range(&tg_wid).map(|(s, _)| s);
+                let tg_focused = tf.is_focused(&tg_wid);
+                self.panel_app.alert_settings_state.tg_token_render = ActiveFieldRender {
+                    text: tg_text,
+                    cursor: tg_cursor,
+                    selection_start: tg_sel,
+                    cursor_visible: cursor_blink && tg_focused,
+                };
             }
         }
 

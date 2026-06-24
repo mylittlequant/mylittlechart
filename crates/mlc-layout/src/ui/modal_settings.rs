@@ -13,7 +13,6 @@ use mlc_alert_delivery::NotificationSettings;
 
 // Pure-data types relocated to mlc-core — re-exported here for layout-side widget code.
 pub use mlc_core::state::modal_data::{
-    TextEditingState,
     SubPaneButton,
     SubPaneOverlayState,
     IndicatorDisplayInfo,
@@ -2056,16 +2055,12 @@ pub struct AlertSettingsState {
     pub drag_offset: Option<(f64, f64)>,
     /// Currently hovered item for highlight effects.
     pub hovered_item_id: Option<String>,
-    /// Active text editing state (for name field, price fields).
-    pub editing_text: Option<TextEditingState>,
     /// Which condition dropdown is open (if any).
     pub condition_dropdown_open: bool,
     /// Notification settings (mirrors profile, edited in modal).
     pub notification_settings: NotificationSettings,
-    /// Telegram bot token input text (editable).
-    pub tg_bot_token_input: String,
-    /// Whether Telegram token field is focused.
-    pub tg_token_focused: bool,
+    /// Render-time snapshot of the Telegram bot token input (populated from TextFieldStore by ChartApp).
+    pub tg_token_render: ActiveFieldRender,
     /// Detected users from getUpdates: (chat_id, display_name, username).
     pub tg_detected_users: Vec<(String, String, String)>,
     /// Result of last Telegram test/verify operation.
@@ -2120,11 +2115,9 @@ impl Default for AlertSettingsState {
             is_dragging: false,
             drag_offset: None,
             hovered_item_id: None,
-            editing_text: None,
             condition_dropdown_open: false,
             notification_settings: NotificationSettings::default(),
-            tg_bot_token_input: String::new(),
-            tg_token_focused: false,
+            tg_token_render: ActiveFieldRender::default(),
             tg_detected_users: Vec::new(),
             tg_status_message: String::new(),
             tg_test_pending: false,
@@ -2185,7 +2178,6 @@ impl AlertSettingsState {
         self.is_dragging = false;
         self.drag_offset = None;
         self.hovered_item_id = None;
-        self.editing_text = None;
         self.condition_dropdown_open = false;
         // Keep position from last use
     }
@@ -2232,7 +2224,6 @@ impl AlertSettingsState {
         self.is_dragging = false;
         self.drag_offset = None;
         self.hovered_item_id = None;
-        self.editing_text = None;
         self.condition_dropdown_open = false;
     }
 
@@ -2303,7 +2294,6 @@ impl AlertSettingsState {
         self.editing_alert_id = None;
         self.is_dragging = false;
         self.drag_offset = None;
-        self.editing_text = None;
         self.condition_dropdown_open = false;
         self.trigger_mode_dropdown_open = false;
         self.signal_direction_dropdown_open = false;
@@ -3089,8 +3079,8 @@ pub struct UserSettingsState {
     pub available_profiles: Vec<(String, String, String)>,
     /// Whether the profile name is currently being edited inline.
     pub profile_rename_mode: bool,
-    /// Text editing state for the inline rename input.
-    pub profile_rename_editing: TextEditingState,
+    /// Render-time snapshot of the profile rename input (populated from TextFieldStore by ChartApp).
+    pub profile_rename_render: ActiveFieldRender,
     /// Whether the profile rename input field is focused for keyboard input.
     pub profile_rename_focused: bool,
     /// ID of the profile row currently being renamed (None = not renaming).
@@ -3101,20 +3091,19 @@ pub struct UserSettingsState {
     pub profile_avatar_target_id: Option<String>,
     /// Whether the "New Profile" inline dialog is open.
     pub show_new_profile_dialog: bool,
-    /// Text editing state for the new profile name input.
-    pub new_profile_name_editing: TextEditingState,
+    /// Render-time snapshot of the new profile name input (populated from TextFieldStore by ChartApp).
+    pub new_profile_name_render: ActiveFieldRender,
     /// Whether the new profile name input field is focused for keyboard input.
     pub new_profile_name_focused: bool,
 
     // ── Set New Passphrase (post-recovery re-key) ─────────────────────────────
-    /// In-memory buffer for the new passphrase during the SetNewPassphrase flow.
-    /// Never persisted to disk.
-    pub new_passphrase_editing: TextEditingState,
+    /// Render-time snapshot of the new passphrase input (populated from TextFieldStore by ChartApp).
+    /// The TextFieldStore holds the real text; this proxy is read by the layout layer.
+    pub new_passphrase_render: ActiveFieldRender,
     /// Whether the new passphrase input field has keyboard focus.
     pub new_passphrase_focused: bool,
-    /// In-memory buffer for the confirm passphrase during the SetNewPassphrase flow.
-    /// Never persisted to disk.
-    pub confirm_passphrase_editing: TextEditingState,
+    /// Render-time snapshot of the confirm passphrase input (populated from TextFieldStore by ChartApp).
+    pub confirm_passphrase_render: ActiveFieldRender,
     /// Whether the confirm passphrase input field has keyboard focus.
     pub confirm_passphrase_focused: bool,
     /// Error message shown on the SetNewPassphrase page (e.g. "Passphrases do not match").
@@ -3131,10 +3120,9 @@ pub struct UserSettingsState {
     pub profile_mgr_text_select_dragging: Option<String>,
 
     // ── Recovery key display editing state ────────────────────────────────────
-    /// Read-only editing state for the recovery key display box (ShowRecoveryKey page).
-    /// Populated from `recovery_key_display` each frame so the user can select/copy
-    /// the key text by clicking and dragging inside the display box.
-    pub recovery_key_display_editing: TextEditingState,
+    /// Render-time snapshot of the recovery key display box (populated from TextFieldStore by ChartApp).
+    /// The user can select/copy the key text by clicking and dragging inside the display box.
+    pub recovery_key_display_render: ActiveFieldRender,
     /// Whether the recovery key display box has logical focus (user clicked it).
     /// Does NOT allow typing — only Ctrl+A and Ctrl+C (via on_copy_selection) are active.
     pub recovery_key_display_focused: bool,
@@ -3203,52 +3191,22 @@ impl Default for UserSettingsState {
             runtime_profile_id: String::new(),
             available_profiles: Vec::new(),
             profile_rename_mode: false,
-            profile_rename_editing: TextEditingState {
-                field_id: "profile_rename".to_string(),
-                text: String::new(),
-                cursor: 0,
-                selection_start: None,
-                blink_time: 0,
-            },
+            profile_rename_render: ActiveFieldRender::default(),
             profile_rename_focused: false,
             profile_rename_target_id: None,
             show_avatar_picker: false,
             profile_avatar_target_id: None,
             show_new_profile_dialog: false,
-            new_profile_name_editing: TextEditingState {
-                field_id: "new_profile_name".to_string(),
-                text: String::new(),
-                cursor: 0,
-                selection_start: None,
-                blink_time: 0,
-            },
+            new_profile_name_render: ActiveFieldRender::default(),
             new_profile_name_focused: false,
-            new_passphrase_editing: TextEditingState {
-                field_id: "new_passphrase".to_string(),
-                text: String::new(),
-                cursor: 0,
-                selection_start: None,
-                blink_time: 0,
-            },
+            new_passphrase_render: ActiveFieldRender::default(),
             new_passphrase_focused: false,
-            confirm_passphrase_editing: TextEditingState {
-                field_id: "confirm_passphrase".to_string(),
-                text: String::new(),
-                cursor: 0,
-                selection_start: None,
-                blink_time: 0,
-            },
+            confirm_passphrase_render: ActiveFieldRender::default(),
             confirm_passphrase_focused: false,
             set_passphrase_error: String::new(),
             profile_list_scroll: ScrollState::new(),
             profile_mgr_text_select_dragging: None,
-            recovery_key_display_editing: TextEditingState {
-                field_id: "recovery_key_display".to_string(),
-                text: String::new(),
-                cursor: 0,
-                selection_start: None,
-                blink_time: 0,
-            },
+            recovery_key_display_render: ActiveFieldRender::default(),
             recovery_key_display_focused: false,
             recovery_key_copied_at: 0,
             data_bg_bars: 2000,

@@ -3099,8 +3099,10 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                 pw.chart.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreatePassphrase;
                                 pw.chart.panel_app.user_settings_state.profile_manager_target_id = meta.id.clone();
                                 pw.chart.panel_app.user_settings_state.profile_manager_target_name = meta.display_name.clone();
-                                pw.chart.panel_app.user_settings_state.new_passphrase_editing.text.clear();
-                                pw.chart.panel_app.user_settings_state.new_passphrase_editing.cursor = 0;
+                                {
+                                    let np_wid = uzor::WidgetId::from(mlc_app::text_input::NEW_PASSPHRASE);
+                                    pw.chart.input_coordinator.borrow_mut().text_fields_mut().clear(&np_wid);
+                                }
                                 pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
                             }
                         }
@@ -3207,11 +3209,17 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
                             pw.chart.panel_app.user_settings_state.recovery_key_display =
                                 recovery_key.clone();
-                            // Sync read-only display editing state so it can be selected/copied.
+                            // Sync TextFieldStore recovery key display so it can be selected/copied.
                             let key_str = recovery_key.as_deref().unwrap_or("");
-                            pw.chart.panel_app.user_settings_state.recovery_key_display_editing.text = key_str.to_string();
-                            pw.chart.panel_app.user_settings_state.recovery_key_display_editing.cursor = key_str.chars().count();
-                            pw.chart.panel_app.user_settings_state.recovery_key_display_editing.selection_start = None;
+                            {
+                                let rk_wid = uzor::WidgetId::from(mlc_app::text_input::RECOVERY_KEY);
+                                let klen = key_str.chars().count();
+                                pw.chart.input_coordinator.borrow_mut().text_fields_mut().set_text(&rk_wid, key_str);
+                                if let Some(fs) = pw.chart.input_coordinator.borrow_mut().text_fields_mut().field_state_mut(&rk_wid) {
+                                    fs.cursor = klen;
+                                    fs.selection_start = None;
+                                }
+                            }
                             // Navigate to wizard page 3 (recovery key) — wizard stays open
                             pw.chart.panel_app.user_settings_state.wizard_page = 3;
                             pw.chart.panel_app.user_settings_state.show_welcome_wizard = true;
@@ -3252,16 +3260,24 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                             for pw in self.windows.values_mut() {
                                                 use mlc_layout::ui::modal_settings::ProfileManagerPage;
                                                 pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
-                                                pw.chart.panel_app.user_settings_state.new_passphrase_editing.text.clear();
-                                                pw.chart.panel_app.user_settings_state.new_passphrase_editing.cursor = 0;
+                                                {
+                                                    let np_wid = uzor::WidgetId::from(mlc_app::text_input::NEW_PASSPHRASE);
+                                                    pw.chart.input_coordinator.borrow_mut().text_fields_mut().clear(&np_wid);
+                                                }
                                                 pw.chart.panel_app.user_settings_state.new_passphrase_focused = false;
                                                 pw.chart.panel_app.user_settings_state.recovery_key_display =
                                                     recovery_key.clone();
-                                                // Sync read-only display editing state so it can be selected/copied.
+                                                // Sync TextFieldStore recovery key display so it can be selected/copied.
                                                 let key_str = recovery_key.as_deref().unwrap_or("");
-                                                pw.chart.panel_app.user_settings_state.recovery_key_display_editing.text = key_str.to_string();
-                                                pw.chart.panel_app.user_settings_state.recovery_key_display_editing.cursor = key_str.chars().count();
-                                                pw.chart.panel_app.user_settings_state.recovery_key_display_editing.selection_start = None;
+                                                {
+                                                    let rk_wid = uzor::WidgetId::from(mlc_app::text_input::RECOVERY_KEY);
+                                                    let klen = key_str.chars().count();
+                                                    pw.chart.input_coordinator.borrow_mut().text_fields_mut().set_text(&rk_wid, key_str);
+                                                    if let Some(fs) = pw.chart.input_coordinator.borrow_mut().text_fields_mut().field_state_mut(&rk_wid) {
+                                                        fs.cursor = klen;
+                                                        fs.selection_start = None;
+                                                    }
+                                                }
                                                 pw.chart.panel_app.user_settings_state.profile_manager_page =
                                                     ProfileManagerPage::ShowRecoveryKey;
                                                 pw.chart.panel_app.user_settings_state.show_profile_manager = true;
@@ -3273,8 +3289,10 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                             self.pending_profile_switch = Some(new_profile_id.clone());
                                             for pw in self.windows.values_mut() {
                                                 pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
-                                                pw.chart.panel_app.user_settings_state.new_passphrase_editing.text.clear();
-                                                pw.chart.panel_app.user_settings_state.new_passphrase_editing.cursor = 0;
+                                                {
+                                                    let np_wid = uzor::WidgetId::from(mlc_app::text_input::NEW_PASSPHRASE);
+                                                    pw.chart.input_coordinator.borrow_mut().text_fields_mut().clear(&np_wid);
+                                                }
                                                 pw.chart.panel_app.user_settings_state.new_passphrase_focused = false;
                                                 pw.chart.panel_app.user_settings_state.show_profile_manager = false;
                                             }
@@ -3325,8 +3343,10 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                             self.pending_profile_switch = Some(target_id);
                                             for pw in self.windows.values_mut() {
                                                 pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
-                                                pw.chart.panel_app.user_settings_state.new_passphrase_editing.text.clear();
-                                                pw.chart.panel_app.user_settings_state.new_passphrase_editing.cursor = 0;
+                                                {
+                                                    let np_wid = uzor::WidgetId::from(mlc_app::text_input::NEW_PASSPHRASE);
+                                                    pw.chart.input_coordinator.borrow_mut().text_fields_mut().clear(&np_wid);
+                                                }
                                                 pw.chart.panel_app.user_settings_state.new_passphrase_focused = false;
                                                 pw.chart.panel_app.user_settings_state.show_profile_manager = false;
                                                 pw.chart.panel_app.user_settings_state.is_open = false;
@@ -3355,8 +3375,10 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                             self.pending_profile_switch = Some(target_id);
                                             for pw in self.windows.values_mut() {
                                                 pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
-                                                pw.chart.panel_app.user_settings_state.new_passphrase_editing.text.clear();
-                                                pw.chart.panel_app.user_settings_state.new_passphrase_editing.cursor = 0;
+                                                {
+                                                    let np_wid = uzor::WidgetId::from(mlc_app::text_input::NEW_PASSPHRASE);
+                                                    pw.chart.input_coordinator.borrow_mut().text_fields_mut().clear(&np_wid);
+                                                }
                                                 pw.chart.panel_app.user_settings_state.new_passphrase_focused = false;
                                                 pw.chart.panel_app.user_settings_state.show_profile_manager = false;
                                                 pw.chart.panel_app.user_settings_state.is_open = false;
@@ -3415,11 +3437,17 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                         pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
                                         pw.chart.panel_app.user_settings_state.recovery_key_display =
                                             recovery_key.clone();
-                                        // Sync read-only display editing state so it can be selected/copied.
+                                        // Sync TextFieldStore recovery key display so it can be selected/copied.
                                         let key_str = recovery_key.as_deref().unwrap_or("");
-                                        pw.chart.panel_app.user_settings_state.recovery_key_display_editing.text = key_str.to_string();
-                                        pw.chart.panel_app.user_settings_state.recovery_key_display_editing.cursor = key_str.chars().count();
-                                        pw.chart.panel_app.user_settings_state.recovery_key_display_editing.selection_start = None;
+                                        {
+                                            let rk_wid = uzor::WidgetId::from(mlc_app::text_input::RECOVERY_KEY);
+                                            let klen = key_str.chars().count();
+                                            pw.chart.input_coordinator.borrow_mut().text_fields_mut().set_text(&rk_wid, key_str);
+                                            if let Some(fs) = pw.chart.input_coordinator.borrow_mut().text_fields_mut().field_state_mut(&rk_wid) {
+                                                fs.cursor = klen;
+                                                fs.selection_start = None;
+                                            }
+                                        }
                                         pw.chart.panel_app.user_settings_state.profile_manager_page =
                                             ProfileManagerPage::ShowRecoveryKey;
                                         pw.chart.panel_app.user_settings_state.show_profile_manager = true;
@@ -3507,10 +3535,14 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                                             pw.chart.panel_app.user_settings_state.needs_vault_unlock = false;
                                                             pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
                                                             pw.chart.panel_app.user_settings_state.set_passphrase_error.clear();
-                                                            pw.chart.panel_app.user_settings_state.new_passphrase_editing.text.clear();
-                                                            pw.chart.panel_app.user_settings_state.new_passphrase_editing.cursor = 0;
-                                                            pw.chart.panel_app.user_settings_state.confirm_passphrase_editing.text.clear();
-                                                            pw.chart.panel_app.user_settings_state.confirm_passphrase_editing.cursor = 0;
+                                                            {
+                                                                let np_wid = uzor::WidgetId::from(mlc_app::text_input::NEW_PASSPHRASE);
+                                                                let cp_wid = uzor::WidgetId::from(mlc_app::text_input::CONFIRM_PASSPHRASE);
+                                                                let mut ic = pw.chart.input_coordinator.borrow_mut();
+                                                                ic.text_fields_mut().clear(&np_wid);
+                                                                ic.text_fields_mut().clear(&cp_wid);
+                                                                ic.text_fields_mut().blur();
+                                                            }
                                                             pw.chart.panel_app.user_settings_state.new_passphrase_focused = false;
                                                             pw.chart.panel_app.user_settings_state.confirm_passphrase_focused = false;
                                                             pw.chart.panel_app.user_settings_state.profile_manager_page =
@@ -3523,8 +3555,11 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                                         self.pending_profile_switch = Some(target_id.clone());
                                                         for pw in self.windows.values_mut() {
                                                             pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
-                                                            pw.chart.panel_app.user_settings_state.recovery_key_display_editing.text.clear();
-                                                            pw.chart.panel_app.user_settings_state.recovery_key_display_editing.cursor = 0;
+                                                            {
+                                                                let rk_wid = uzor::WidgetId::from(mlc_app::text_input::RECOVERY_KEY);
+                                                                pw.chart.input_coordinator.borrow_mut().text_fields_mut().clear(&rk_wid);
+                                                                pw.chart.input_coordinator.borrow_mut().text_fields_mut().blur();
+                                                            }
                                                             pw.chart.panel_app.user_settings_state.recovery_key_display_focused = false;
                                                             pw.chart.panel_app.user_settings_state.show_profile_manager = false;
                                                             pw.chart.panel_app.user_settings_state.is_open = false;
@@ -3628,14 +3663,24 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                     for pw in self.windows.values_mut() {
                                         pw.chart.panel_app.user_settings_state.recovery_key_display =
                                             Some(new_recovery_key_fmt.clone());
-                                        // Sync read-only display editing state so it can be selected/copied.
-                                        pw.chart.panel_app.user_settings_state.recovery_key_display_editing.text = new_recovery_key_fmt.clone();
-                                        pw.chart.panel_app.user_settings_state.recovery_key_display_editing.cursor = new_recovery_key_fmt.chars().count();
-                                        pw.chart.panel_app.user_settings_state.recovery_key_display_editing.selection_start = None;
-                                        pw.chart.panel_app.user_settings_state.new_passphrase_editing.text.clear();
-                                        pw.chart.panel_app.user_settings_state.new_passphrase_editing.cursor = 0;
-                                        pw.chart.panel_app.user_settings_state.confirm_passphrase_editing.text.clear();
-                                        pw.chart.panel_app.user_settings_state.confirm_passphrase_editing.cursor = 0;
+                                        // Sync TextFieldStore recovery key display so it can be selected/copied.
+                                        {
+                                            let rk_wid = uzor::WidgetId::from(mlc_app::text_input::RECOVERY_KEY);
+                                            let klen = new_recovery_key_fmt.chars().count();
+                                            pw.chart.input_coordinator.borrow_mut().text_fields_mut().set_text(&rk_wid, &new_recovery_key_fmt);
+                                            if let Some(fs) = pw.chart.input_coordinator.borrow_mut().text_fields_mut().field_state_mut(&rk_wid) {
+                                                fs.cursor = klen;
+                                                fs.selection_start = None;
+                                            }
+                                        }
+                                        {
+                                            let np_wid = uzor::WidgetId::from(mlc_app::text_input::NEW_PASSPHRASE);
+                                            let cp_wid = uzor::WidgetId::from(mlc_app::text_input::CONFIRM_PASSPHRASE);
+                                            let mut ic = pw.chart.input_coordinator.borrow_mut();
+                                            ic.text_fields_mut().clear(&np_wid);
+                                            ic.text_fields_mut().clear(&cp_wid);
+                                            ic.text_fields_mut().blur();
+                                        }
                                         pw.chart.panel_app.user_settings_state.new_passphrase_focused = false;
                                         pw.chart.panel_app.user_settings_state.confirm_passphrase_focused = false;
                                         pw.chart.panel_app.user_settings_state.set_passphrase_error.clear();
@@ -3710,9 +3755,10 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         pw.chart.panel_app.user_settings_state.show_welcome_wizard = true;
                         pw.chart.panel_app.user_settings_state.wizard_page = 0;
                         // Clear the passphrase field so the wizard starts clean.
-                        pw.chart.panel_app.user_settings_state.new_passphrase_editing.text.clear();
-                        pw.chart.panel_app.user_settings_state.new_passphrase_editing.cursor = 0;
-                        pw.chart.panel_app.user_settings_state.new_passphrase_editing.selection_start = None;
+                        {
+                            let np_wid = uzor::WidgetId::from(mlc_app::text_input::NEW_PASSPHRASE);
+                            pw.chart.input_coordinator.borrow_mut().text_fields_mut().clear(&np_wid);
+                        }
                         pw.chart.panel_app.user_settings_state.new_passphrase_focused = false;
                     }
                     // Treat this as first-run so wizard_complete configures the already-

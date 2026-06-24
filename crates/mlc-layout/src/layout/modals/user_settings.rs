@@ -493,7 +493,7 @@ fn render_profile_section(
     text_color: &str,
     toolbar_theme: &ToolbarTheme,
     frame_theme: &FrameTheme,
-    current_time_ms: u64,
+    _current_time_ms: u64,
     input_coordinator: &mut uzor::input::InputCoordinator,
     layer_id: &uzor::input::LayerId,
     result: &mut UserSettingsResult,
@@ -645,14 +645,15 @@ fn render_profile_section(
             let input_rect = WidgetRect::new(name_x, input_y, input_w, input_h);
             let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
 
-            let (sel_start, sel_end) = if let Some((lo, hi)) = state.profile_rename_editing.selection_range() {
+            let pr_render = &state.profile_rename_render;
+            let (sel_start, sel_end) = if let Some((lo, hi)) = pr_render.selection_range() {
                 (Some(lo), Some(hi))
             } else {
                 (None, None)
             };
-            let rename_input_config = InputConfig::new(&state.profile_rename_editing.text)
+            let rename_input_config = InputConfig::new(&pr_render.text)
                 .with_focused(state.profile_rename_focused)
-                .with_cursor(state.profile_rename_editing.cursor)
+                .with_cursor(pr_render.cursor)
                 .with_placeholder("Profile name...")
                 .with_selection(sel_start, sel_end);
 
@@ -667,7 +668,7 @@ fn render_profile_section(
             );
 
             // Draw blinking cursor when focused
-            if state.profile_rename_focused && state.profile_rename_editing.is_cursor_visible(current_time_ms) {
+            if state.profile_rename_focused && pr_render.cursor_visible {
                 draw_input_cursor(
                     ctx,
                     rename_input_result.cursor_x,
@@ -893,14 +894,15 @@ fn render_profile_section(
         let new_name_input_rect = WidgetRect::new(x, cy, input_w, input_h);
         let widget_theme_new = toolbar_to_widget_theme(toolbar_theme, frame_theme);
 
-        let (new_sel_start, new_sel_end) = if let Some((lo, hi)) = state.new_profile_name_editing.selection_range() {
+        let npn_us_render = &state.new_profile_name_render;
+        let (new_sel_start, new_sel_end) = if let Some((lo, hi)) = npn_us_render.selection_range() {
             (Some(lo), Some(hi))
         } else {
             (None, None)
         };
-        let new_name_input_config = InputConfig::new(&state.new_profile_name_editing.text)
+        let new_name_input_config = InputConfig::new(&npn_us_render.text)
             .with_focused(state.new_profile_name_focused)
-            .with_cursor(state.new_profile_name_editing.cursor)
+            .with_cursor(npn_us_render.cursor)
             .with_placeholder("Profile name...")
             .with_selection(new_sel_start, new_sel_end);
 
@@ -915,7 +917,7 @@ fn render_profile_section(
         );
 
         // Draw blinking cursor when focused
-        if state.new_profile_name_focused && state.new_profile_name_editing.is_cursor_visible(current_time_ms) {
+        if state.new_profile_name_focused && npn_us_render.cursor_visible {
             draw_input_cursor(
                 ctx,
                 new_name_input_result.cursor_x,

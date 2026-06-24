@@ -172,5 +172,5 @@ pub use chart_settings_data::{ChartSettingsData, InstrumentSettings, ScalesLines
 pub use icons::Icon;
 pub use scroll_state::ScrollState;
 pub use modal_state::{ModalState, OpenModal, SearchResult, IndicatorCategory, IndicatorCategoryFilter, IndicatorCatalogItem, ClockPopupState};
-pub use modal_data::{TextEditingState, SubPaneButton, SubPaneOverlayState, IndicatorDisplayInfo, IndicatorParamDef, IndicatorParamType, IndicatorOutputDef, IndicatorOutputType};
+pub use modal_data::{SubPaneButton, SubPaneOverlayState, IndicatorDisplayInfo, IndicatorParamDef, IndicatorParamType, IndicatorOutputDef, IndicatorOutputType};
 pub use toolbar_geometry::{WidgetRect, ToolbarRect, ToolbarRenderResult, PRESET_COLORS};

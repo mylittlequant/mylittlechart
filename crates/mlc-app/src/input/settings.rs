@@ -2354,14 +2354,16 @@ impl ChartApp {
                 let s = &mut self.panel_app.alert_settings_state;
                 s.notification_settings.telegram.enabled = !s.notification_settings.telegram.enabled;
                 s.notification_settings_dirty = true;
-                // Sync token input buffer when enabling
+                // Sync saved token into TextFieldStore when enabling
                 if s.notification_settings.telegram.enabled {
-                    s.tg_bot_token_input = s.notification_settings.telegram.bot_token.clone();
+                    let token = s.notification_settings.telegram.bot_token.clone();
+                    let tg_wid = uzor::WidgetId::from(crate::text_input::ALERT_TG_TOKEN);
+                    self.input_coordinator.borrow_mut().text_fields_mut().set_text(&tg_wid, &token);
                 }
             }
             "notif:tg_token" => {
-                let s = &mut self.panel_app.alert_settings_state;
-                s.tg_token_focused = true;
+                let tg_wid = uzor::WidgetId::from(crate::text_input::ALERT_TG_TOKEN);
+                self.input_coordinator.borrow_mut().text_fields_mut().focus(tg_wid);
             }
             "notif:tg_screenshot" => {
                 let s = &mut self.panel_app.alert_settings_state;
@@ -2370,17 +2372,20 @@ impl ChartApp {
                 s.notification_settings_dirty = true;
             }
             "notif:tg_test" => {
+                let tg_wid = uzor::WidgetId::from(crate::text_input::ALERT_TG_TOKEN);
+                let token = self.input_coordinator.borrow().text_fields().text(&tg_wid).trim().to_string();
                 let s = &mut self.panel_app.alert_settings_state;
-                // Sync token buffer back to settings before testing
-                s.notification_settings.telegram.bot_token = s.tg_bot_token_input.clone();
+                s.notification_settings.telegram.bot_token = token;
                 s.tg_test_pending = true;
                 s.notification_settings_dirty = true;
                 s.tg_status_message = "Sending test...".to_string();
                 eprintln!("[AlertSettings] Telegram test requested");
             }
             "notif:tg_detect" => {
+                let tg_wid = uzor::WidgetId::from(crate::text_input::ALERT_TG_TOKEN);
+                let token = self.input_coordinator.borrow().text_fields().text(&tg_wid).trim().to_string();
                 let s = &mut self.panel_app.alert_settings_state;
-                s.notification_settings.telegram.bot_token = s.tg_bot_token_input.clone();
+                s.notification_settings.telegram.bot_token = token;
                 s.tg_detect_pending = true;
                 s.notification_settings_dirty = true;
                 s.tg_status_message = "Detecting users...".to_string();

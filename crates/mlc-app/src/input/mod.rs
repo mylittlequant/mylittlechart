@@ -1773,77 +1773,59 @@ impl ChartApp {
                         }
                     }
                     if let Some(field_id) = drag_field {
-                        // Set cursor and selection anchor on the appropriate editing state.
-                        // Also activate focus (drag = click, should focus the field).
-                        // Clear selection on ALL other fields to prevent multiple highlights.
-                        match field_id.as_str() {
-                            "e2e_passphrase_input" | "wizard_passphrase_input" => {
-                                self.panel_app.user_settings_state.new_passphrase_editing.cursor = drag_cursor;
-                                self.panel_app.user_settings_state.new_passphrase_editing.selection_start = Some(drag_cursor);
-                                self.panel_app.user_settings_state.new_passphrase_focused = true;
-                                self.panel_app.user_settings_state.new_profile_name_focused = false;
-                                self.panel_app.user_settings_state.confirm_passphrase_focused = false;
-                                self.panel_app.user_settings_state.recovery_key_display_focused = false;
-                                self.panel_app.user_settings_state.new_profile_name_editing.selection_start = None;
-                                self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
-                                self.panel_app.user_settings_state.recovery_key_display_editing.selection_start = None;
+                        // Route drag start to TextFieldStore: focus the tapped field,
+                        // set cursor + selection anchor, clear selection on all others.
+                        // Also update the *_focused booleans that drive proxy population.
+                        let uss = &mut self.panel_app.user_settings_state;
+                        let focused_wid: Option<WidgetId> = match field_id.as_str() {
+                            "e2e_passphrase_input" | "wizard_passphrase_input"
+                            | "profile_mgr:new_passphrase_input" => {
+                                uss.new_passphrase_focused = true;
+                                uss.new_profile_name_focused = false;
+                                uss.confirm_passphrase_focused = false;
+                                uss.recovery_key_display_focused = false;
+                                Some(WidgetId::from(crate::text_input::NEW_PASSPHRASE))
                             }
                             "wizard_profile_name_input" | "profile_mgr:name_input" => {
-                                self.panel_app.user_settings_state.new_profile_name_editing.cursor = drag_cursor;
-                                self.panel_app.user_settings_state.new_profile_name_editing.selection_start = Some(drag_cursor);
-                                self.panel_app.user_settings_state.new_profile_name_focused = true;
-                                self.panel_app.user_settings_state.new_passphrase_focused = false;
-                                self.panel_app.user_settings_state.confirm_passphrase_focused = false;
-                                self.panel_app.user_settings_state.recovery_key_display_focused = false;
-                                self.panel_app.user_settings_state.new_passphrase_editing.selection_start = None;
-                                self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
-                                self.panel_app.user_settings_state.recovery_key_display_editing.selection_start = None;
+                                uss.new_profile_name_focused = true;
+                                uss.new_passphrase_focused = false;
+                                uss.confirm_passphrase_focused = false;
+                                uss.recovery_key_display_focused = false;
+                                Some(WidgetId::from(crate::text_input::NEW_PROFILE_NAME))
                             }
                             "profile_mgr:recovery_key_input" => {
-                                self.panel_app.user_settings_state.recovery_key_display_editing.cursor = drag_cursor;
-                                self.panel_app.user_settings_state.recovery_key_display_editing.selection_start = Some(drag_cursor);
-                                self.panel_app.user_settings_state.recovery_key_display_focused = true;
-                                self.panel_app.user_settings_state.new_passphrase_focused = false;
-                                self.panel_app.user_settings_state.new_profile_name_focused = false;
-                                self.panel_app.user_settings_state.confirm_passphrase_focused = false;
-                                self.panel_app.user_settings_state.new_passphrase_editing.selection_start = None;
-                                self.panel_app.user_settings_state.new_profile_name_editing.selection_start = None;
-                                self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
-                            }
-                            "profile_mgr:new_passphrase_input" => {
-                                self.panel_app.user_settings_state.new_passphrase_editing.cursor = drag_cursor;
-                                self.panel_app.user_settings_state.new_passphrase_editing.selection_start = Some(drag_cursor);
-                                self.panel_app.user_settings_state.new_passphrase_focused = true;
-                                self.panel_app.user_settings_state.new_passphrase_focused = false;
-                                self.panel_app.user_settings_state.confirm_passphrase_focused = false;
-                                self.panel_app.user_settings_state.new_passphrase_editing.selection_start = None;
-                                self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
+                                uss.recovery_key_display_focused = true;
+                                uss.new_passphrase_focused = false;
+                                uss.new_profile_name_focused = false;
+                                uss.confirm_passphrase_focused = false;
+                                Some(WidgetId::from(crate::text_input::RECOVERY_KEY))
                             }
                             "profile_mgr:confirm_passphrase_input"
                             | "wizard_confirm_passphrase_input"
                             | "profile_mgr:create_confirm_passphrase_input" => {
-                                self.panel_app.user_settings_state.confirm_passphrase_editing.cursor = drag_cursor;
-                                self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = Some(drag_cursor);
-                                self.panel_app.user_settings_state.confirm_passphrase_focused = true;
-                                self.panel_app.user_settings_state.new_passphrase_focused = false;
-                                self.panel_app.user_settings_state.new_profile_name_focused = false;
-                                self.panel_app.user_settings_state.recovery_key_display_focused = false;
-                                self.panel_app.user_settings_state.new_passphrase_editing.selection_start = None;
-                                self.panel_app.user_settings_state.new_profile_name_editing.selection_start = None;
-                                self.panel_app.user_settings_state.recovery_key_display_editing.selection_start = None;
+                                uss.confirm_passphrase_focused = true;
+                                uss.new_passphrase_focused = false;
+                                uss.new_profile_name_focused = false;
+                                uss.recovery_key_display_focused = false;
+                                Some(WidgetId::from(crate::text_input::CONFIRM_PASSPHRASE))
                             }
                             "profile_mgr:recovery_key_display" => {
-                                self.panel_app.user_settings_state.recovery_key_display_editing.cursor = drag_cursor;
-                                self.panel_app.user_settings_state.recovery_key_display_editing.selection_start = Some(drag_cursor);
-                                self.panel_app.user_settings_state.recovery_key_display_focused = true;
-                                self.panel_app.user_settings_state.new_passphrase_focused = false;
-                                self.panel_app.user_settings_state.new_profile_name_focused = false;
-                                self.panel_app.user_settings_state.confirm_passphrase_focused = false;
-                                self.panel_app.user_settings_state.new_passphrase_editing.selection_start = None;
-                                self.panel_app.user_settings_state.new_profile_name_editing.selection_start = None;
-                                self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
+                                uss.recovery_key_display_focused = true;
+                                uss.new_passphrase_focused = false;
+                                uss.new_profile_name_focused = false;
+                                uss.confirm_passphrase_focused = false;
+                                Some(WidgetId::from(crate::text_input::RECOVERY_KEY))
                             }
-                            _ => {}
+                            _ => None,
+                        };
+                        if let Some(wid) = focused_wid {
+                            let mut ic = self.input_coordinator.borrow_mut();
+                            let tf = ic.text_fields_mut();
+                            tf.focus(wid.clone());
+                            if let Some(fs) = tf.field_state_mut(&wid) {
+                                fs.cursor = drag_cursor;
+                                fs.selection_start = Some(drag_cursor);
+                            }
                         }
                         self.panel_app.user_settings_state.profile_mgr_text_select_dragging = Some(field_id.clone());
                         eprintln!("[ChartApp] profile_mgr text select drag started: {} at char {}", field_id, drag_cursor);
@@ -3071,30 +3053,30 @@ impl ChartApp {
                 .unwrap_or_default();
             if !char_positions.is_empty() {
                 let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
-                match field_id.as_str() {
-                    "e2e_passphrase_input" | "wizard_passphrase_input" => {
-                        self.panel_app.user_settings_state.new_passphrase_editing.cursor = new_cursor;
+                let drag_wid: Option<WidgetId> = match field_id.as_str() {
+                    "e2e_passphrase_input" | "wizard_passphrase_input"
+                    | "profile_mgr:new_passphrase_input" => {
+                        Some(WidgetId::from(crate::text_input::NEW_PASSPHRASE))
                     }
                     "wizard_profile_name_input" | "profile_mgr:name_input" => {
-                        self.panel_app.user_settings_state.new_profile_name_editing.cursor = new_cursor;
+                        Some(WidgetId::from(crate::text_input::NEW_PROFILE_NAME))
                     }
-                    "profile_mgr:recovery_key_input" => {
-                        self.panel_app.user_settings_state.recovery_key_display_editing.cursor = new_cursor;
-                    }
-                    "profile_mgr:new_passphrase_input" => {
-                        self.panel_app.user_settings_state.new_passphrase_editing.cursor = new_cursor;
+                    "profile_mgr:recovery_key_input" | "profile_mgr:recovery_key_display" => {
+                        Some(WidgetId::from(crate::text_input::RECOVERY_KEY))
                     }
                     "profile_mgr:confirm_passphrase_input"
                     | "wizard_confirm_passphrase_input"
                     | "profile_mgr:create_confirm_passphrase_input" => {
-                        self.panel_app.user_settings_state.confirm_passphrase_editing.cursor = new_cursor;
+                        Some(WidgetId::from(crate::text_input::CONFIRM_PASSPHRASE))
                     }
-                    "profile_mgr:recovery_key_display" => {
-                        self.panel_app.user_settings_state.recovery_key_display_editing.cursor = new_cursor;
+                    _ => None,
+                };
+                if let Some(wid) = drag_wid {
+                    if let Some(fs) = self.input_coordinator.borrow_mut().text_fields_mut().field_state_mut(&wid) {
+                        fs.cursor = new_cursor;
+                        // selection_start stays as the anchor set during drag_start
                     }
-                    _ => {}
                 }
-                // selection_start stays as the anchor set during drag_start
             }
             return;
         }
@@ -3801,58 +3783,30 @@ impl ChartApp {
         if self.panel_app.user_settings_state.profile_mgr_text_select_dragging.is_some() {
             let field_id = self.panel_app.user_settings_state.profile_mgr_text_select_dragging.take().unwrap_or_default();
             // Finalize: if anchor == cursor (plain click jitter), clear the selection.
-            let (anchor, cursor) = match field_id.as_str() {
-                "e2e_passphrase_input" | "wizard_passphrase_input" => (
-                    self.panel_app.user_settings_state.new_passphrase_editing.selection_start,
-                    self.panel_app.user_settings_state.new_passphrase_editing.cursor,
-                ),
-                "wizard_profile_name_input" | "profile_mgr:name_input" => (
-                    self.panel_app.user_settings_state.new_profile_name_editing.selection_start,
-                    self.panel_app.user_settings_state.new_profile_name_editing.cursor,
-                ),
-                "profile_mgr:recovery_key_input" => (
-                    self.panel_app.user_settings_state.recovery_key_display_editing.selection_start,
-                    self.panel_app.user_settings_state.recovery_key_display_editing.cursor,
-                ),
-                "profile_mgr:new_passphrase_input" => (
-                    self.panel_app.user_settings_state.new_passphrase_editing.selection_start,
-                    self.panel_app.user_settings_state.new_passphrase_editing.cursor,
-                ),
+            let end_wid: Option<WidgetId> = match field_id.as_str() {
+                "e2e_passphrase_input" | "wizard_passphrase_input"
+                | "profile_mgr:new_passphrase_input" => {
+                    Some(WidgetId::from(crate::text_input::NEW_PASSPHRASE))
+                }
+                "wizard_profile_name_input" | "profile_mgr:name_input" => {
+                    Some(WidgetId::from(crate::text_input::NEW_PROFILE_NAME))
+                }
+                "profile_mgr:recovery_key_input" | "profile_mgr:recovery_key_display" => {
+                    Some(WidgetId::from(crate::text_input::RECOVERY_KEY))
+                }
                 "profile_mgr:confirm_passphrase_input"
                 | "wizard_confirm_passphrase_input"
-                | "profile_mgr:create_confirm_passphrase_input" => (
-                    self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start,
-                    self.panel_app.user_settings_state.confirm_passphrase_editing.cursor,
-                ),
-                "profile_mgr:recovery_key_display" => (
-                    self.panel_app.user_settings_state.recovery_key_display_editing.selection_start,
-                    self.panel_app.user_settings_state.recovery_key_display_editing.cursor,
-                ),
-                _ => (None, 0),
+                | "profile_mgr:create_confirm_passphrase_input" => {
+                    Some(WidgetId::from(crate::text_input::CONFIRM_PASSPHRASE))
+                }
+                _ => None,
             };
-            if anchor == Some(cursor) {
-                match field_id.as_str() {
-                    "e2e_passphrase_input" | "wizard_passphrase_input" => {
-                        self.panel_app.user_settings_state.new_passphrase_editing.selection_start = None;
+            if let Some(wid) = end_wid {
+                let mut ic = self.input_coordinator.borrow_mut();
+                if let Some(fs) = ic.text_fields_mut().field_state_mut(&wid) {
+                    if fs.selection_start == Some(fs.cursor) {
+                        fs.selection_start = None;
                     }
-                    "wizard_profile_name_input" | "profile_mgr:name_input" => {
-                        self.panel_app.user_settings_state.new_profile_name_editing.selection_start = None;
-                    }
-                    "profile_mgr:recovery_key_input" => {
-                        self.panel_app.user_settings_state.recovery_key_display_editing.selection_start = None;
-                    }
-                    "profile_mgr:new_passphrase_input" => {
-                        self.panel_app.user_settings_state.new_passphrase_editing.selection_start = None;
-                    }
-                    "profile_mgr:confirm_passphrase_input"
-                    | "wizard_confirm_passphrase_input"
-                    | "profile_mgr:create_confirm_passphrase_input" => {
-                        self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
-                    }
-                    "profile_mgr:recovery_key_display" => {
-                        self.panel_app.user_settings_state.recovery_key_display_editing.selection_start = None;
-                    }
-                    _ => {}
                 }
             }
             eprintln!("[ChartApp] profile_mgr text select drag ended: {}", field_id);
@@ -6181,67 +6135,51 @@ impl ChartApp {
         if (self.panel_app.user_settings_state.is_open || self.panel_app.user_settings_state.show_welcome_wizard || self.panel_app.user_settings_state.needs_vault_unlock || self.panel_app.user_settings_state.show_profile_manager)
             && self.panel_app.user_settings_state.new_passphrase_focused
         {
-            let editing = &mut self.panel_app.user_settings_state.new_passphrase_editing;
+            let uss = &mut self.panel_app.user_settings_state;
             match ch {
-                '\r' | '\n' => {
-                    // Enter submits the passphrase — only when on an
-                    // appropriate page (unlock / create-passphrase / settings
-                    // sync tab / wizard).  On the ProfileList or CreateNew
-                    // pages the passphrase field should not be active, but
-                    // guard against stale focus just in case.
-                    use mlc_layout::ui::modal_settings::ProfileManagerPage;
-                    let on_passphrase_page = if self.panel_app.user_settings_state.show_profile_manager {
-                        matches!(
-                            self.panel_app.user_settings_state.profile_manager_page,
-                            ProfileManagerPage::UnlockPassphrase | ProfileManagerPage::CreatePassphrase
-                        )
-                    } else {
-                        true // settings sync tab, wizard, vault_unlock — always valid
-                    };
-
-                    let passphrase = editing.text.trim().to_string();
-                    if !passphrase.is_empty() && on_passphrase_page {
-                        self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
-                        editing.text.clear();
-                        editing.cursor = 0;
-                        editing.selection_start = None;
-                    }
-                    self.panel_app.user_settings_state.new_passphrase_focused = false;
-                }
                 '\x09' => {
                     // Tab moves to next field in wizard.
-                    if self.panel_app.user_settings_state.show_welcome_wizard {
-                        self.panel_app.user_settings_state.new_passphrase_focused = false;
-                        self.panel_app.user_settings_state.confirm_passphrase_focused = true;
+                    if uss.show_welcome_wizard {
+                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                        let cp_wid = WidgetId::from(crate::text_input::CONFIRM_PASSPHRASE);
+                        self.input_coordinator.borrow_mut().text_fields_mut().focus(cp_wid);
+                        uss.new_passphrase_focused = false;
+                        uss.confirm_passphrase_focused = true;
                     }
                 }
                 '\x1b' => {
-                    // Escape unfocuses without submitting
-                    self.panel_app.user_settings_state.new_passphrase_focused = false;
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    uss.new_passphrase_focused = false;
                 }
-                '\x08' => {
-                    // Backspace — clear the error so the user knows they can retry.
-                    self.panel_app.user_settings_state.vault_unlock_error = None;
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    } else if editing.cursor > 0 {
-                        let byte_end = editing.char_to_byte_pos(editing.cursor);
-                        let byte_start = editing.char_to_byte_pos(editing.cursor - 1);
-                        editing.text.drain(byte_start..byte_end);
-                        editing.cursor -= 1;
+                _ => {
+                    let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
+                    match action {
+                        TextAction::Commit(passphrase) => {
+                            use mlc_layout::ui::modal_settings::ProfileManagerPage;
+                            let on_passphrase_page = if uss.show_profile_manager {
+                                matches!(
+                                    uss.profile_manager_page,
+                                    ProfileManagerPage::UnlockPassphrase | ProfileManagerPage::CreatePassphrase
+                                )
+                            } else {
+                                true
+                            };
+                            let passphrase = passphrase.trim().to_string();
+                            if !passphrase.is_empty() && on_passphrase_page {
+                                self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
+                                self.input_coordinator.borrow_mut().text_fields_mut().clear(
+                                    &WidgetId::from(crate::text_input::NEW_PASSPHRASE)
+                                );
+                            }
+                            uss.new_passphrase_focused = false;
+                        }
+                        _ => {
+                            if ch == '\x08' || !ch.is_control() {
+                                uss.vault_unlock_error = None;
+                            }
+                        }
                     }
                 }
-                c if !c.is_control() => {
-                    // Any character typed — clear the error so the user can retry.
-                    self.panel_app.user_settings_state.vault_unlock_error = None;
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    }
-                    let byte_idx = editing.char_to_byte_pos(editing.cursor);
-                    editing.text.insert(byte_idx, c);
-                    editing.cursor += 1;
-                }
-                _ => {}
             }
             return;
         }
@@ -6250,84 +6188,30 @@ impl ChartApp {
         if self.panel_app.user_settings_state.show_profile_manager
             && self.panel_app.user_settings_state.recovery_key_display_focused
         {
-            let editing = &mut self.panel_app.user_settings_state.recovery_key_display_editing;
+            let uss = &mut self.panel_app.user_settings_state;
             match ch {
-                '\r' | '\n' => {
-                    // Enter submits the recovery key if long enough.
-                    let key_text = editing.text.clone();
-                    if key_text.len() >= 40 {
-                        self.panel_app.user_settings_state.vault_unlock_error = None;
-                        self.pending_updater_cmd = Some(format!("recovery_unlock:{}", key_text));
-                        eprintln!("[ChartApp] profile_mgr: recovery unlock submitted via Enter");
-                    }
-                    self.panel_app.user_settings_state.recovery_key_display_focused = false;
-                }
                 '\x1b' => {
-                    // Escape unfocuses without submitting
-                    self.panel_app.user_settings_state.recovery_key_display_focused = false;
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    uss.recovery_key_display_focused = false;
                 }
-                '\x08' => {
-                    // Backspace — clear any error.
-                    self.panel_app.user_settings_state.vault_unlock_error = None;
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    } else if editing.cursor > 0 {
-                        let byte_end = editing.char_to_byte_pos(editing.cursor);
-                        let byte_start = editing.char_to_byte_pos(editing.cursor - 1);
-                        editing.text.drain(byte_start..byte_end);
-                        editing.cursor -= 1;
+                _ => {
+                    let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
+                    match action {
+                        TextAction::Commit(key_text) => {
+                            if key_text.len() >= 40 {
+                                uss.vault_unlock_error = None;
+                                self.pending_updater_cmd = Some(format!("recovery_unlock:{}", key_text));
+                                eprintln!("[ChartApp] profile_mgr: recovery unlock submitted via Enter");
+                            }
+                            uss.recovery_key_display_focused = false;
+                        }
+                        _ => {
+                            if ch == '\x08' || !ch.is_control() {
+                                uss.vault_unlock_error = None;
+                            }
+                        }
                     }
                 }
-                c if !c.is_control() => {
-                    // Any character typed — clear error.
-                    self.panel_app.user_settings_state.vault_unlock_error = None;
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    }
-                    let byte_idx = editing.char_to_byte_pos(editing.cursor);
-                    editing.text.insert(byte_idx, c);
-                    editing.cursor += 1;
-                }
-                _ => {}
-            }
-            return;
-        }
-
-        // Handle new passphrase input in the SetNewPassphrase profile manager page
-        if self.panel_app.user_settings_state.show_profile_manager
-            && self.panel_app.user_settings_state.new_passphrase_focused
-        {
-            let editing = &mut self.panel_app.user_settings_state.new_passphrase_editing;
-            match ch {
-                '\r' | '\n' => {
-                    // Tab to next field (confirm passphrase).
-                    self.panel_app.user_settings_state.new_passphrase_focused = false;
-                    self.panel_app.user_settings_state.confirm_passphrase_focused = true;
-                }
-                '\x1b' => {
-                    self.panel_app.user_settings_state.new_passphrase_focused = false;
-                }
-                '\x08' => {
-                    self.panel_app.user_settings_state.set_passphrase_error.clear();
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    } else if editing.cursor > 0 {
-                        let byte_end = editing.char_to_byte_pos(editing.cursor);
-                        let byte_start = editing.char_to_byte_pos(editing.cursor - 1);
-                        editing.text.drain(byte_start..byte_end);
-                        editing.cursor -= 1;
-                    }
-                }
-                c if !c.is_control() => {
-                    self.panel_app.user_settings_state.set_passphrase_error.clear();
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    }
-                    let byte_idx = editing.char_to_byte_pos(editing.cursor);
-                    editing.text.insert(byte_idx, c);
-                    editing.cursor += 1;
-                }
-                _ => {}
             }
             return;
         }
@@ -6336,65 +6220,60 @@ impl ChartApp {
         if (self.panel_app.user_settings_state.show_profile_manager || self.panel_app.user_settings_state.show_welcome_wizard)
             && self.panel_app.user_settings_state.confirm_passphrase_focused
         {
-            // For SetNewPassphrase page, compare against new_passphrase_editing; for wizard/CreatePassphrase compare against new_passphrase_editing.
-            let passphrase_text = if self.panel_app.user_settings_state.show_profile_manager
-                && !self.panel_app.user_settings_state.new_passphrase_editing.text.is_empty()
-            {
-                self.panel_app.user_settings_state.new_passphrase_editing.text.clone()
-            } else {
-                self.panel_app.user_settings_state.new_passphrase_editing.text.clone()
-            };
-            let editing = &mut self.panel_app.user_settings_state.confirm_passphrase_editing;
+            let uss = &mut self.panel_app.user_settings_state;
             match ch {
-                '\r' | '\n' => {
-                    // Enter submits if passphrases match and meet min length.
-                    let confirm_text = editing.text.clone();
-                    use mlc_core::user_manager::profile_manager::MIN_PASSPHRASE_LENGTH;
-                    if passphrase_text.len() >= MIN_PASSPHRASE_LENGTH
-                        && confirm_text == passphrase_text
-                    {
-                        self.panel_app.user_settings_state.set_passphrase_error.clear();
-                        self.panel_app.user_settings_state.confirm_passphrase_focused = false;
-                        self.pending_updater_cmd = Some(format!("set_new_passphrase:{}", passphrase_text));
-                        eprintln!("[ChartApp] profile_mgr: set_new_passphrase submitted via Enter");
-                    } else if confirm_text != passphrase_text {
-                        self.panel_app.user_settings_state.set_passphrase_error =
-                            "Passphrases do not match".to_string();
-                    }
-                }
                 '\x09' => {
                     // Tab cycles to next/first field.
-                    self.panel_app.user_settings_state.confirm_passphrase_focused = false;
-                    if self.panel_app.user_settings_state.show_welcome_wizard {
-                        self.panel_app.user_settings_state.new_profile_name_focused = true;
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    if uss.show_welcome_wizard {
+                        let npn_wid = WidgetId::from(crate::text_input::NEW_PROFILE_NAME);
+                        self.input_coordinator.borrow_mut().text_fields_mut().focus(npn_wid);
+                        uss.confirm_passphrase_focused = false;
+                        uss.new_profile_name_focused = true;
                     } else {
-                        self.panel_app.user_settings_state.new_passphrase_focused = true;
+                        let np_wid = WidgetId::from(crate::text_input::NEW_PASSPHRASE);
+                        self.input_coordinator.borrow_mut().text_fields_mut().focus(np_wid);
+                        uss.confirm_passphrase_focused = false;
+                        uss.new_passphrase_focused = true;
                     }
                 }
                 '\x1b' => {
-                    self.panel_app.user_settings_state.confirm_passphrase_focused = false;
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    uss.confirm_passphrase_focused = false;
                 }
-                '\x08' => {
-                    self.panel_app.user_settings_state.set_passphrase_error.clear();
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    } else if editing.cursor > 0 {
-                        let byte_end = editing.char_to_byte_pos(editing.cursor);
-                        let byte_start = editing.char_to_byte_pos(editing.cursor - 1);
-                        editing.text.drain(byte_start..byte_end);
-                        editing.cursor -= 1;
+                _ => {
+                    let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
+                    match action {
+                        TextAction::Commit(_) => {
+                            let np_wid = WidgetId::from(crate::text_input::NEW_PASSPHRASE);
+                            let cp_wid = WidgetId::from(crate::text_input::CONFIRM_PASSPHRASE);
+                            let passphrase_text = {
+                                let ic = self.input_coordinator.borrow();
+                                ic.text_fields().text(&np_wid).to_string()
+                            };
+                            let confirm_text = {
+                                let ic = self.input_coordinator.borrow();
+                                ic.text_fields().text(&cp_wid).to_string()
+                            };
+                            use mlc_core::user_manager::profile_manager::MIN_PASSPHRASE_LENGTH;
+                            if passphrase_text.len() >= MIN_PASSPHRASE_LENGTH
+                                && confirm_text == passphrase_text
+                            {
+                                uss.set_passphrase_error.clear();
+                                uss.confirm_passphrase_focused = false;
+                                self.pending_updater_cmd = Some(format!("set_new_passphrase:{}", passphrase_text));
+                                eprintln!("[ChartApp] profile_mgr: set_new_passphrase submitted via Enter");
+                            } else if confirm_text != passphrase_text {
+                                uss.set_passphrase_error = "Passphrases do not match".to_string();
+                            }
+                        }
+                        _ => {
+                            if ch == '\x08' || !ch.is_control() {
+                                uss.set_passphrase_error.clear();
+                            }
+                        }
                     }
                 }
-                c if !c.is_control() => {
-                    self.panel_app.user_settings_state.set_passphrase_error.clear();
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    }
-                    let byte_idx = editing.char_to_byte_pos(editing.cursor);
-                    editing.text.insert(byte_idx, c);
-                    editing.cursor += 1;
-                }
-                _ => {}
             }
             return;
         }
@@ -6403,44 +6282,27 @@ impl ChartApp {
         if self.panel_app.user_settings_state.is_open
             && self.panel_app.user_settings_state.profile_rename_focused
         {
-            let editing = &mut self.panel_app.user_settings_state.profile_rename_editing;
+            let uss = &mut self.panel_app.user_settings_state;
             match ch {
-                '\r' | '\n' => {
-                    // Enter submits the rename — fire the same action as clicking Save.
-                    self.panel_app.user_settings_state.profile_rename_focused = false;
-                    let new_name = editing.text.trim().to_string();
-                    if !new_name.is_empty() {
-                        self.panel_app.user_settings_state.profile_display_name = new_name.clone();
-                        self.panel_app.user_settings_state.profile_rename_mode = false;
-                        self.panel_app.user_settings_state.profile_rename_target_id = None;
-                        self.pending_updater_cmd = Some(format!("profile_rename:{}", new_name));
-                    }
-                }
                 '\x1b' => {
-                    // Escape cancels.
-                    self.panel_app.user_settings_state.profile_rename_focused = false;
-                    self.panel_app.user_settings_state.profile_rename_mode = false;
-                    self.panel_app.user_settings_state.profile_rename_target_id = None;
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    uss.profile_rename_focused = false;
+                    uss.profile_rename_mode = false;
+                    uss.profile_rename_target_id = None;
                 }
-                '\x08' => {
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    } else if editing.cursor > 0 {
-                        let byte_end = editing.char_to_byte_pos(editing.cursor);
-                        let byte_start = editing.char_to_byte_pos(editing.cursor - 1);
-                        editing.text.drain(byte_start..byte_end);
-                        editing.cursor -= 1;
+                _ => {
+                    let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
+                    if let TextAction::Commit(new_name) = action {
+                        let new_name = new_name.trim().to_string();
+                        uss.profile_rename_focused = false;
+                        if !new_name.is_empty() {
+                            uss.profile_display_name = new_name.clone();
+                            uss.profile_rename_mode = false;
+                            uss.profile_rename_target_id = None;
+                            self.pending_updater_cmd = Some(format!("profile_rename:{}", new_name));
+                        }
                     }
                 }
-                c if !c.is_control() => {
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    }
-                    let byte_idx = editing.char_to_byte_pos(editing.cursor);
-                    editing.text.insert(byte_idx, c);
-                    editing.cursor += 1;
-                }
-                _ => {}
             }
             return;
         }
@@ -6449,54 +6311,42 @@ impl ChartApp {
         if (self.panel_app.user_settings_state.is_open || self.panel_app.user_settings_state.show_profile_manager || self.panel_app.user_settings_state.show_welcome_wizard)
             && self.panel_app.user_settings_state.new_profile_name_focused
         {
-            let editing = &mut self.panel_app.user_settings_state.new_profile_name_editing;
+            let uss = &mut self.panel_app.user_settings_state;
             match ch {
-                '\r' | '\n' => {
-                    if self.panel_app.user_settings_state.show_welcome_wizard {
-                        // In the wizard, Enter in the profile name field moves focus to passphrase.
-                        self.panel_app.user_settings_state.new_profile_name_focused = false;
-                        self.panel_app.user_settings_state.new_passphrase_focused = true;
-                    } else {
-                        // Enter submits the new profile creation.
-                        self.panel_app.user_settings_state.new_profile_name_focused = false;
-                        let name = editing.text.trim().to_string();
-                        if !name.is_empty() {
-                            self.pending_updater_cmd = Some(format!("profile_create:{}", name));
-                            self.panel_app.user_settings_state.show_new_profile_dialog = false;
-                        }
-                    }
-                }
                 '\x09' => {
                     // Tab moves to next field.
-                    if self.panel_app.user_settings_state.show_welcome_wizard {
-                        self.panel_app.user_settings_state.new_profile_name_focused = false;
-                        self.panel_app.user_settings_state.new_passphrase_focused = true;
+                    if uss.show_welcome_wizard {
+                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                        let np_wid = WidgetId::from(crate::text_input::NEW_PASSPHRASE);
+                        self.input_coordinator.borrow_mut().text_fields_mut().focus(np_wid);
+                        uss.new_profile_name_focused = false;
+                        uss.new_passphrase_focused = true;
                     }
                 }
                 '\x1b' => {
-                    // Escape cancels (wizard handles its own Escape elsewhere).
-                    self.panel_app.user_settings_state.new_profile_name_focused = false;
-                    self.panel_app.user_settings_state.show_new_profile_dialog = false;
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    uss.new_profile_name_focused = false;
+                    uss.show_new_profile_dialog = false;
                 }
-                '\x08' => {
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    } else if editing.cursor > 0 {
-                        let byte_end = editing.char_to_byte_pos(editing.cursor);
-                        let byte_start = editing.char_to_byte_pos(editing.cursor - 1);
-                        editing.text.drain(byte_start..byte_end);
-                        editing.cursor -= 1;
+                _ => {
+                    let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
+                    if let TextAction::Commit(name) = action {
+                        if uss.show_welcome_wizard {
+                            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                            let np_wid = WidgetId::from(crate::text_input::NEW_PASSPHRASE);
+                            self.input_coordinator.borrow_mut().text_fields_mut().focus(np_wid);
+                            uss.new_profile_name_focused = false;
+                            uss.new_passphrase_focused = true;
+                        } else {
+                            uss.new_profile_name_focused = false;
+                            let name = name.trim().to_string();
+                            if !name.is_empty() {
+                                self.pending_updater_cmd = Some(format!("profile_create:{}", name));
+                                uss.show_new_profile_dialog = false;
+                            }
+                        }
                     }
                 }
-                c if !c.is_control() => {
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    }
-                    let byte_idx = editing.char_to_byte_pos(editing.cursor);
-                    editing.text.insert(byte_idx, c);
-                    editing.cursor += 1;
-                }
-                _ => {}
             }
             return;
         }
@@ -6675,25 +6525,19 @@ impl ChartApp {
 
         // Handle text input for Telegram bot token field in the Alert Settings modal.
         if self.panel_app.alert_settings_state.is_open() {
-            let tg_token_focused = self.panel_app.alert_settings_state.tg_token_focused;
-
-            if tg_token_focused {
+            let tg_wid = WidgetId::from(crate::text_input::ALERT_TG_TOKEN);
+            if self.input_coordinator.borrow().text_fields().is_focused(&tg_wid) {
                 match ch {
                     '\r' | '\n' | '\x1b' => {
-                        // Enter/Escape unfocuses and syncs buffer to settings
-                        self.panel_app.alert_settings_state.tg_token_focused = false;
-                        let token = self.panel_app.alert_settings_state.tg_bot_token_input.clone();
+                        // Enter/Escape: commit current text to notification settings.
+                        let token = self.input_coordinator.borrow().text_fields().text(&tg_wid).trim().to_string();
                         self.panel_app.alert_settings_state.notification_settings.telegram.bot_token = token;
                         self.panel_app.alert_settings_state.notification_settings_dirty = true;
+                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     }
-                    '\x08' => {
-                        // Backspace
-                        self.panel_app.alert_settings_state.tg_bot_token_input.pop();
+                    _ => {
+                        let _action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
                     }
-                    c if !c.is_control() => {
-                        self.panel_app.alert_settings_state.tg_bot_token_input.push(c);
-                    }
-                    _ => {}
                 }
                 return;
             }
@@ -6752,178 +6596,41 @@ impl ChartApp {
     /// Handle named key presses that cannot be expressed as a single `char`.
     ///
     /// Routes cursor movement and delete to the active text editing state.
-    /// Wave 1+2a+2b fields route through TextFieldStore. Wave 3 fields still
-    /// use `TextEditingState` + `apply_key` (profile name, passphrase, rename, etc.).
+    /// All fields (Wave 1/2a/2b/3) route through TextFieldStore.
     pub fn on_key_press(&mut self, key: super::input::KeyPress) {
         use super::input::KeyPress;
 
         // While the profile manager is shown, only allow key events to reach the
         // passphrase, recovery key, or name input fields.  This prevents keyboard
         // shortcuts (Escape, arrow keys, etc.) from operating on the hidden chart UI.
-        // Special case: when the read-only recovery key display box is focused, allow
-        // SelectAll (Ctrl+A) through so the user can select all text.  Ctrl+C is
-        // handled passively via on_copy_selection() without needing a key event.
         if self.panel_app.user_settings_state.show_profile_manager
             && !self.panel_app.user_settings_state.new_passphrase_focused
             && !self.panel_app.user_settings_state.new_profile_name_focused
             && !self.panel_app.user_settings_state.recovery_key_display_focused
-            && !self.panel_app.user_settings_state.new_passphrase_focused
             && !self.panel_app.user_settings_state.confirm_passphrase_focused
         {
-            // Allow Ctrl+A (SelectAll) to reach the recovery key display box.
-            if self.panel_app.user_settings_state.recovery_key_display_focused
-                && matches!(key, KeyPress::SelectAll) {
-                    self.panel_app.user_settings_state.recovery_key_display_editing.select_all();
-                    return;
-                }
             return;
         }
 
-        // ── Telegram input fields: intercept Paste for focused tg fields ──
+        // ── Alert/Telegram token key events (route through TextFieldStore) ──
         if self.panel_app.alert_settings_state.is_open() {
-            if let KeyPress::Paste(ref text) = key {
-                if self.panel_app.alert_settings_state.tg_token_focused {
-                    self.panel_app.alert_settings_state.tg_bot_token_input.push_str(text);
+            let tg_wid = WidgetId::from(crate::text_input::ALERT_TG_TOKEN);
+            if self.input_coordinator.borrow().text_fields().is_focused(&tg_wid) {
+                if let KeyPress::Paste(_) = key {
+                    // fall through to generic TextFieldStore routing below
+                } else if let Some(uzor_key) = to_uzor_key(&key) {
+                    let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
+                    match action {
+                        TextAction::Commit(_) | TextAction::Cancel => {
+                            let token = self.input_coordinator.borrow().text_fields().text(&tg_wid).trim().to_string();
+                            self.panel_app.alert_settings_state.notification_settings.telegram.bot_token = token;
+                            self.panel_app.alert_settings_state.notification_settings_dirty = true;
+                            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                        }
+                        _ => {}
+                    }
                     return;
                 }
-            }
-        }
-
-        // Helper closure operating on a mutable TextEditingState reference.
-        // Returns true if the key was consumed.
-        fn apply_key(editing: &mut mlc_core::state::modal_data::TextEditingState, key: KeyPress) -> bool {
-            let char_count = editing.text.chars().count();
-            match key {
-                // ── Delete (forward) ──────────────────────────────────────────
-                KeyPress::Delete => {
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    } else if editing.cursor < char_count {
-                        let byte_idx = editing.text
-                            .char_indices()
-                            .nth(editing.cursor)
-                            .map(|(i, _)| i)
-                            .unwrap_or(editing.text.len());
-                        editing.text.remove(byte_idx);
-                    }
-                    true
-                }
-                // ── Plain movement — collapses any active selection ───────────
-                KeyPress::ArrowLeft => {
-                    if editing.has_selection() {
-                        // Collapse to the left edge of the selection.
-                        let (lo, _) = editing.selection_range().unwrap();
-                        editing.cursor = lo;
-                        editing.selection_start = None;
-                    } else if editing.cursor > 0 {
-                        editing.cursor -= 1;
-                    }
-                    true
-                }
-                KeyPress::ArrowRight => {
-                    if editing.has_selection() {
-                        // Collapse to the right edge of the selection.
-                        let (_, hi) = editing.selection_range().unwrap();
-                        editing.cursor = hi;
-                        editing.selection_start = None;
-                    } else if editing.cursor < char_count {
-                        editing.cursor += 1;
-                    }
-                    true
-                }
-                KeyPress::Home => {
-                    editing.cursor = 0;
-                    editing.selection_start = None;
-                    true
-                }
-                KeyPress::End => {
-                    editing.cursor = char_count;
-                    editing.selection_start = None;
-                    true
-                }
-                // ── Select-all (Ctrl+A) ───────────────────────────────────────
-                KeyPress::SelectAll => {
-                    editing.select_all();
-                    true
-                }
-                // ── Shift movement — extends/creates selection ────────────────
-                KeyPress::ShiftLeft => {
-                    if editing.selection_start.is_none() {
-                        editing.selection_start = Some(editing.cursor);
-                    }
-                    if editing.cursor > 0 {
-                        editing.cursor -= 1;
-                    }
-                    // If anchor == cursor after move, clear selection.
-                    if editing.selection_start == Some(editing.cursor) {
-                        editing.selection_start = None;
-                    }
-                    true
-                }
-                KeyPress::ShiftRight => {
-                    if editing.selection_start.is_none() {
-                        editing.selection_start = Some(editing.cursor);
-                    }
-                    if editing.cursor < char_count {
-                        editing.cursor += 1;
-                    }
-                    if editing.selection_start == Some(editing.cursor) {
-                        editing.selection_start = None;
-                    }
-                    true
-                }
-                KeyPress::ShiftHome => {
-                    if editing.selection_start.is_none() {
-                        editing.selection_start = Some(editing.cursor);
-                    }
-                    editing.cursor = 0;
-                    if editing.selection_start == Some(editing.cursor) {
-                        editing.selection_start = None;
-                    }
-                    true
-                }
-                KeyPress::ShiftEnd => {
-                    if editing.selection_start.is_none() {
-                        editing.selection_start = Some(editing.cursor);
-                    }
-                    editing.cursor = char_count;
-                    if editing.selection_start == Some(editing.cursor) {
-                        editing.selection_start = None;
-                    }
-                    true
-                }
-                // ── Copy (Ctrl+C) — handled externally; no state change here ─
-                KeyPress::Copy => {
-                    // Copy is handled by the platform runner via on_copy_selection().
-                    // Return false so the caller knows no state was mutated.
-                    false
-                }
-                // ── Paste (Ctrl+V) — insert supplied text at cursor ───────────
-                KeyPress::Paste(ref text) => {
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    }
-                    for ch in text.chars() {
-                        if !ch.is_control() {
-                            let byte_idx = editing.char_to_byte_pos(editing.cursor);
-                            editing.text.insert(byte_idx, ch);
-                            editing.cursor += 1;
-                        }
-                    }
-                    true
-                }
-                // ── Undo/Redo — not consumed by text fields ───────────────────
-                KeyPress::Undo | KeyPress::Redo => false,
-                // ── PTY-only named keys — not meaningful in text fields ───────
-                KeyPress::ArrowUp
-                | KeyPress::ArrowDown
-                | KeyPress::Enter
-                | KeyPress::Escape
-                | KeyPress::Tab
-                | KeyPress::Backspace
-                | KeyPress::CtrlC
-                | KeyPress::PageUp
-                | KeyPress::PageDown => false,
             }
         }
 
@@ -6931,50 +6638,62 @@ impl ChartApp {
         if self.panel_app.user_settings_state.is_open
             && self.panel_app.user_settings_state.profile_rename_focused
         {
-            apply_key(&mut self.panel_app.user_settings_state.profile_rename_editing, key);
+            if let Some(uzor_key) = to_uzor_key(&key) {
+                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
+                if let TextAction::Commit(new_name) = action {
+                    let new_name = new_name.trim().to_string();
+                    self.panel_app.user_settings_state.profile_rename_focused = false;
+                    if !new_name.is_empty() {
+                        self.panel_app.user_settings_state.profile_display_name = new_name.clone();
+                        self.panel_app.user_settings_state.profile_rename_mode = false;
+                        self.panel_app.user_settings_state.profile_rename_target_id = None;
+                        self.pending_updater_cmd = Some(format!("profile_rename:{}", new_name));
+                    }
+                }
+            }
             return;
         }
 
-        // ── E2E passphrase text input key events (settings modal, wizard, vault unlock, or profile manager) ──
+        // ── E2E passphrase text input key events ──────────────────────────────
         if (self.panel_app.user_settings_state.is_open
             || self.panel_app.user_settings_state.show_welcome_wizard
             || self.panel_app.user_settings_state.needs_vault_unlock
             || self.panel_app.user_settings_state.show_profile_manager)
             && self.panel_app.user_settings_state.new_passphrase_focused
         {
-            apply_key(&mut self.panel_app.user_settings_state.new_passphrase_editing, key);
+            if let Some(uzor_key) = to_uzor_key(&key) {
+                let _action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
+            }
             return;
         }
 
-        // ── New profile name text input key events (settings modal, profile manager, or welcome wizard) ──
+        // ── New profile name text input key events ────────────────────────────
         if (self.panel_app.user_settings_state.is_open || self.panel_app.user_settings_state.show_profile_manager || self.panel_app.user_settings_state.show_welcome_wizard)
             && self.panel_app.user_settings_state.new_profile_name_focused
         {
-            apply_key(&mut self.panel_app.user_settings_state.new_profile_name_editing, key);
+            if let Some(uzor_key) = to_uzor_key(&key) {
+                let _action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
+            }
             return;
         }
 
-        // ── Recovery key text input key events (profile manager UseRecoveryKey page) ──
+        // ── Recovery key text input key events ────────────────────────────────
         if self.panel_app.user_settings_state.show_profile_manager
             && self.panel_app.user_settings_state.recovery_key_display_focused
         {
-            apply_key(&mut self.panel_app.user_settings_state.recovery_key_display_editing, key);
+            if let Some(uzor_key) = to_uzor_key(&key) {
+                let _action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
+            }
             return;
         }
 
-        // ── New passphrase text input key events (profile manager SetNewPassphrase page) ──
-        if self.panel_app.user_settings_state.show_profile_manager
-            && self.panel_app.user_settings_state.new_passphrase_focused
-        {
-            apply_key(&mut self.panel_app.user_settings_state.new_passphrase_editing, key);
-            return;
-        }
-
-        // ── Confirm passphrase text input key events (profile manager or wizard) ──
+        // ── Confirm passphrase text input key events ──────────────────────────
         if (self.panel_app.user_settings_state.show_profile_manager || self.panel_app.user_settings_state.show_welcome_wizard)
             && self.panel_app.user_settings_state.confirm_passphrase_focused
         {
-            apply_key(&mut self.panel_app.user_settings_state.confirm_passphrase_editing, key);
+            if let Some(uzor_key) = to_uzor_key(&key) {
+                let _action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
+            }
             return;
         }
 
@@ -7452,52 +7171,11 @@ impl ChartApp {
     /// The platform runner calls this on Ctrl+C to obtain text to place on the
     /// system clipboard.
     pub fn on_copy_selection(&self) -> Option<String> {
-        fn get_selection(editing: &mlc_core::state::modal_data::TextEditingState) -> Option<String> {
-            let (start, end) = editing.selection_range()?;
-            let start_byte = editing.char_to_byte_pos(start);
-            let end_byte = editing.char_to_byte_pos(end);
-            Some(editing.text[start_byte..end_byte].to_string())
-        }
-
-        // Text-field store handles all Wave 1 fields (search overlays, chart browser,
-        // watchlist search/group name, preset name) + HexColor, AgentPty, AgentChat.
-        if let Some(text) = self.input_coordinator.borrow().text_fields().copy_selection() {
-            return Some(text);
-        }
-
-        // Wave 2b: prim/ind/chart/compare settings fields are now in TextFieldStore,
-        // so copy_selection() above (line ~7467) already handles them.
-
-        // Profile manager text fields
-        {
-            let uss = &self.panel_app.user_settings_state;
-            if let Some(text) = get_selection(&uss.new_passphrase_editing) {
-                return Some(text);
-            }
-            if let Some(text) = get_selection(&uss.new_profile_name_editing) {
-                return Some(text);
-            }
-            if let Some(text) = get_selection(&uss.recovery_key_display_editing) {
-                return Some(text);
-            }
-            if let Some(text) = get_selection(&uss.new_passphrase_editing) {
-                return Some(text);
-            }
-            if let Some(text) = get_selection(&uss.confirm_passphrase_editing) {
-                return Some(text);
-            }
-            // Recovery key DISPLAY — read-only, but user can select and copy text.
-            if let Some(text) = get_selection(&uss.recovery_key_display_editing) {
-                return Some(text);
-            }
-        }
-
-        // User settings profile rename field
-        if let Some(text) = get_selection(&self.panel_app.user_settings_state.profile_rename_editing) {
-            return Some(text);
-        }
-
-        None
+        // TextFieldStore covers all registered fields: Wave 1 (search overlays, chart browser,
+        // watchlist search/group name, preset name), Wave 2a/2b (settings fields, HexColor,
+        // AgentPty, AgentChat), and Wave 3 (profile manager: NEW_PASSPHRASE, NEW_PROFILE_NAME,
+        // CONFIRM_PASSPHRASE, RECOVERY_KEY, PROFILE_RENAME, ALERT_TG_TOKEN).
+        self.input_coordinator.borrow().text_fields().copy_selection()
     }
 
     // -------------------------------------------------------------------------

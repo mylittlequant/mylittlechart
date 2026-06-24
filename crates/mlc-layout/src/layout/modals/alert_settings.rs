@@ -877,14 +877,17 @@ fn render_notifications_tab(
 
     if ns.telegram.enabled {
         // -- Bot Token field --
-        // Show masked value: if non-empty show "****...last4", else placeholder
-        let token_display = if state.tg_bot_token_input.is_empty() {
+        // Show masked value: if non-empty and not focused, show "****...last4".
+        // When focused, show the real token from the render proxy.
+        let tg_render = &state.tg_token_render;
+        let tg_focused = !tg_render.text.is_empty() || tg_render.cursor > 0;
+        let token_display = if tg_render.text.is_empty() {
             String::new()
-        } else if state.tg_token_focused {
-            state.tg_bot_token_input.clone()
+        } else if tg_focused {
+            tg_render.text.clone()
         } else {
             // Show last 4 chars masked
-            let chars: Vec<char> = state.tg_bot_token_input.chars().collect();
+            let chars: Vec<char> = tg_render.text.chars().collect();
             let visible = chars.len().min(4);
             let masked_count = chars.len().saturating_sub(visible);
             let masked: String = "*".repeat(masked_count.min(8));
@@ -896,7 +899,7 @@ fn render_notifications_tab(
             "Bot Token", "alert_set:notif:tg_token",
             &token_display,
             "Paste bot token...",
-            state.tg_token_focused,
+            tg_focused,
             y,
         );
         y += ROW_H + ITEM_PADDING;

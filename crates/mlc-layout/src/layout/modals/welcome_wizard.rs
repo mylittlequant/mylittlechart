@@ -366,15 +366,15 @@ fn render_page2_profile(
     let input_h = 32.0;
     let name_rect = WidgetRect::new(x, *cy, w, input_h);
     let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
-    let name_editing = &state.new_profile_name_editing;
-    let (name_sel_start, name_sel_end) = if let Some((lo, hi)) = name_editing.selection_range() {
+    let wz_npn_render = &state.new_profile_name_render;
+    let (name_sel_start, name_sel_end) = if let Some((lo, hi)) = wz_npn_render.selection_range() {
         (Some(lo), Some(hi))
     } else {
         (None, None)
     };
-    let name_config = InputConfig::new(&name_editing.text)
+    let name_config = InputConfig::new(&wz_npn_render.text)
         .with_focused(state.new_profile_name_focused)
-        .with_cursor(name_editing.cursor)
+        .with_cursor(wz_npn_render.cursor)
         .with_placeholder("Default")
         .with_type(InputType::Text)
         .with_selection(name_sel_start, name_sel_end);
@@ -385,7 +385,7 @@ fn render_page2_profile(
     result.input_char_positions.push(("wizard_profile_name_input".to_string(), name_input_result.char_x_positions.clone()));
     input_coordinator.register_on_layer("user_settings:wizard_profile_name_input", name_rect, Sense::CLICK, layer_id);
 
-    if state.new_profile_name_focused && name_editing.is_cursor_visible(current_time_ms) {
+    if state.new_profile_name_focused && wz_npn_render.cursor_visible {
         draw_input_cursor(
             ctx,
             name_input_result.cursor_x,
@@ -415,15 +415,15 @@ fn render_page2_profile(
 
     let confirm_h = 32.0;
     let confirm_rect = WidgetRect::new(x, *cy, w, confirm_h);
-    let confirm_editing = &state.confirm_passphrase_editing;
-    let (conf_sel_start, conf_sel_end) = if let Some((lo, hi)) = confirm_editing.selection_range() {
+    let wz_cp_render = &state.confirm_passphrase_render;
+    let (conf_sel_start, conf_sel_end) = if let Some((lo, hi)) = wz_cp_render.selection_range() {
         (Some(lo), Some(hi))
     } else {
         (None, None)
     };
-    let confirm_config = InputConfig::new(&confirm_editing.text)
+    let confirm_config = InputConfig::new(&wz_cp_render.text)
         .with_focused(state.confirm_passphrase_focused)
-        .with_cursor(confirm_editing.cursor)
+        .with_cursor(wz_cp_render.cursor)
         .with_placeholder(t_wizard(WizardKey::PassphrasePlaceholder))
         .with_type(InputType::Password)
         .with_selection(conf_sel_start, conf_sel_end);
@@ -434,7 +434,7 @@ fn render_page2_profile(
     result.input_char_positions.push(("wizard_confirm_passphrase_input".to_string(), confirm_result.char_x_positions.clone()));
     input_coordinator.register_on_layer("user_settings:wizard_confirm_passphrase_input", confirm_rect, Sense::CLICK, layer_id);
 
-    if state.confirm_passphrase_focused && confirm_editing.is_cursor_visible(current_time_ms) {
+    if state.confirm_passphrase_focused && wz_cp_render.cursor_visible {
         draw_input_cursor(
             ctx,
             confirm_result.cursor_x,
@@ -447,8 +447,8 @@ fn render_page2_profile(
     *cy += confirm_h + 4.0;
 
     // Mismatch error
-    let passphrase_text = &state.new_passphrase_editing.text;
-    let confirm_text = &state.confirm_passphrase_editing.text;
+    let passphrase_text = &state.new_passphrase_render.text;
+    let confirm_text = &state.confirm_passphrase_render.text;
     if !confirm_text.is_empty() && !passphrase_text.is_empty() && confirm_text != passphrase_text {
         ctx.set_font("11px sans-serif");
         ctx.set_fill_color(toolbar_theme.danger.as_str());
@@ -474,10 +474,10 @@ fn render_page2_profile(
     *cy += note_h + 14.0;
 
     // ── Complete Setup button ─────────────────────────────────────────────────
-    let profile_name = state.new_profile_name_editing.text.trim().to_string();
+    let profile_name = state.new_profile_name_render.text.trim().to_string();
     let profile_name_ok = !profile_name.is_empty();
-    let passphrase_ok = state.new_passphrase_editing.text.len() >= mlc_core::user_manager::MIN_PASSPHRASE_LENGTH;
-    let confirm_matches = state.confirm_passphrase_editing.text == state.new_passphrase_editing.text;
+    let passphrase_ok = state.new_passphrase_render.text.len() >= mlc_core::user_manager::MIN_PASSPHRASE_LENGTH;
+    let confirm_matches = state.confirm_passphrase_render.text == state.new_passphrase_render.text;
     let finish_disabled = !passphrase_ok || !profile_name_ok || !confirm_matches;
 
     let is_finish_hovered = !finish_disabled && hovered == Some("wizard_finish");
@@ -529,7 +529,7 @@ fn render_page3_recovery(
     text_color: &str,
     toolbar_theme: &ToolbarTheme,
     frame_theme: &FrameTheme,
-    current_time_ms: u64,
+    _current_time_ms: u64,
     input_coordinator: &mut uzor::input::InputCoordinator,
     layer_id: &uzor::input::LayerId,
     result: &mut UserSettingsResult,
@@ -572,15 +572,15 @@ fn render_page3_recovery(
 
     let key_box_h = 40.0;
     let key_display_rect = WidgetRect::new(x, *cy, w, key_box_h);
-    let editing = &state.recovery_key_display_editing;
-    let (sel_start, sel_end) = if let Some((lo, hi)) = editing.selection_range() {
+    let wz_rk_render = &state.recovery_key_display_render;
+    let (sel_start, sel_end) = if let Some((lo, hi)) = wz_rk_render.selection_range() {
         (Some(lo), Some(hi))
     } else {
         (None, None)
     };
     let key_display_config = InputConfig::new(key_text)
         .with_focused(state.recovery_key_display_focused)
-        .with_cursor(editing.cursor)
+        .with_cursor(wz_rk_render.cursor)
         .with_type(InputType::Text)
         .with_font_size(13.0)
         .with_padding(10.0)
@@ -599,7 +599,7 @@ fn render_page3_recovery(
     );
 
     let _ = frame_theme;
-    if state.recovery_key_display_focused && editing.is_cursor_visible(current_time_ms) {
+    if state.recovery_key_display_focused && wz_rk_render.cursor_visible {
         draw_input_cursor(
             ctx,
             key_display_result.cursor_x,
@@ -739,7 +739,7 @@ fn render_passphrase_input(
     _text_color: &str,
     toolbar_theme: &ToolbarTheme,
     frame_theme: &FrameTheme,
-    current_time_ms: u64,
+    _current_time_ms: u64,
     layer_id: &uzor::input::LayerId,
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
@@ -756,15 +756,15 @@ fn render_passphrase_input(
     let input_rect = WidgetRect::new(x, *cy, w, input_h);
 
     let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
-    let editing = &state.new_passphrase_editing;
-    let (sel_start, sel_end) = if let Some((lo, hi)) = editing.selection_range() {
+    let wz_pw_render = &state.new_passphrase_render;
+    let (sel_start, sel_end) = if let Some((lo, hi)) = wz_pw_render.selection_range() {
         (Some(lo), Some(hi))
     } else {
         (None, None)
     };
-    let input_config = InputConfig::new(&editing.text)
+    let input_config = InputConfig::new(&wz_pw_render.text)
         .with_focused(state.new_passphrase_focused)
-        .with_cursor(editing.cursor)
+        .with_cursor(wz_pw_render.cursor)
         .with_placeholder(t_wizard(WizardKey::PassphrasePlaceholder))
         .with_type(InputType::Password)
         .with_selection(sel_start, sel_end);
@@ -777,7 +777,7 @@ fn render_passphrase_input(
     input_coordinator.register_on_layer("user_settings:wizard_passphrase_input", input_rect, Sense::CLICK, layer_id);
 
     // Blinking cursor (only when focused)
-    if state.new_passphrase_focused && editing.is_cursor_visible(current_time_ms) {
+    if state.new_passphrase_focused && wz_pw_render.cursor_visible {
         draw_input_cursor(
             ctx,
             input_result.cursor_x,
@@ -883,7 +883,7 @@ pub fn render_vault_unlock(
     cy = render_passphrase_input(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, frame_theme, current_time_ms, &layer_id, input_coordinator, result);
 
     // Unlock button (disabled until passphrase is entered)
-    let unlock_disabled = state.new_passphrase_editing.text.is_empty();
+    let unlock_disabled = state.new_passphrase_render.text.is_empty();
     let hovered = state.hovered_item_id.as_deref();
     let is_unlock_hovered = !unlock_disabled && hovered == Some("vault_unlock_btn");
     let btn_bg = if unlock_disabled {
