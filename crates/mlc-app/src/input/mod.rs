@@ -1715,10 +1715,10 @@ impl ChartApp {
                                     };
                                     let min_pos = (current_min as f64 - min_val) / (max_val - min_val);
                                     let max_pos = (current_max as f64 - min_val) / (max_val - min_val);
-                                    if let Some(ref edit) = self.panel_app.primitive_settings_state.editing_text {
-                                        if edit.field_id == format!("tf_{}_min", tf_idx) {
+                                    if let Some(ref active_fid) = self.panel_app.primitive_settings_state.active_field_id {
+                                        if *active_fid == format!("tf_{}_min", tf_idx) {
                                             DualSliderHandle::Min
-                                        } else if edit.field_id == format!("tf_{}_max", tf_idx) {
+                                        } else if *active_fid == format!("tf_{}_max", tf_idx) {
                                             DualSliderHandle::Max
                                         } else if (t - min_pos).abs() <= (t - max_pos).abs() {
                                             DualSliderHandle::Min
@@ -1865,83 +1865,55 @@ impl ChartApp {
                     return false;
                 }
             }
-            // Primitive settings — text select drag on ANY active text input field
-            if let Some(ref ps) = result.primitive_settings {
-                if let Some(input_rect) = ps.active_input_rect {
-                    if input_rect.contains(x, y)
-                        && self.panel_app.primitive_settings_state.is_open()
-                        && self.panel_app.primitive_settings_state.editing_text.is_some()
-                    {
-                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
-                            &ps.active_input_char_positions,
-                            x,
-                        );
-                        if let Some(ref mut edit) = self.panel_app.primitive_settings_state.editing_text {
-                            edit.cursor = new_cursor;
-                            edit.selection_start = Some(new_cursor);
+            // Primitive settings — text select drag on the active sub-field (TextFieldStore).
+            if self.panel_app.primitive_settings_state.active_field_id.is_some()
+                && self.panel_app.primitive_settings_state.is_open()
+            {
+                if let Some(ref ps) = result.primitive_settings {
+                    if let Some(input_rect) = ps.active_input_rect {
+                        if input_rect.contains(x, y) {
+                            self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
+                            return false;
                         }
-                        self.panel_app.primitive_settings_state.text_select_dragging = true;
-                        return false;
                     }
                 }
             }
-            // Indicator settings — text select drag on the active text input field
-            if let Some(ref is) = result.indicator_settings {
-                if let Some(input_rect) = is.active_input_rect {
-                    if input_rect.contains(x, y)
-                        && self.panel_app.indicator_settings_state.is_open()
-                        && self.panel_app.indicator_settings_state.editing_text_state.is_some()
-                    {
-                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
-                            &is.active_input_char_positions,
-                            x,
-                        );
-                        if let Some(ref mut edit) = self.panel_app.indicator_settings_state.editing_text_state {
-                            edit.cursor = new_cursor;
-                            edit.selection_start = Some(new_cursor);
+            // Indicator settings — text select drag on the active sub-field (TextFieldStore).
+            if self.panel_app.indicator_settings_state.active_field_id.is_some()
+                && self.panel_app.indicator_settings_state.is_open()
+            {
+                if let Some(ref is) = result.indicator_settings {
+                    if let Some(input_rect) = is.active_input_rect {
+                        if input_rect.contains(x, y) {
+                            self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
+                            return false;
                         }
-                        self.panel_app.indicator_settings_state.text_select_dragging = true;
-                        return false;
                     }
                 }
             }
-            // Chart settings — text select drag on the active text input field
-            if let Some(ref cs) = result.chart_settings {
-                if let Some(input_rect) = cs.active_input_rect {
-                    if input_rect.contains(x, y)
-                        && self.panel_app.chart_settings_state.is_open
-                        && self.panel_app.chart_settings_state.editing_text.is_some()
-                    {
-                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
-                            &cs.active_input_char_positions,
-                            x,
-                        );
-                        if let Some(ref mut edit) = self.panel_app.chart_settings_state.editing_text {
-                            edit.cursor = new_cursor;
-                            edit.selection_start = Some(new_cursor);
+            // Chart settings — text select drag on the active sub-field (TextFieldStore).
+            if self.panel_app.chart_settings_state.active_field_id.is_some()
+                && self.panel_app.chart_settings_state.is_open
+            {
+                if let Some(ref cs) = result.chart_settings {
+                    if let Some(input_rect) = cs.active_input_rect {
+                        if input_rect.contains(x, y) {
+                            self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
+                            return false;
                         }
-                        self.panel_app.chart_settings_state.text_select_dragging = true;
-                        return false;
                     }
                 }
             }
-            // Compare settings — text select drag on the active tf_min/tf_max input field
-            if let Some(ref cs_result) = result.compare_settings {
-                if let Some(input_rect) = cs_result.tf_active_input_rect {
-                    if input_rect.contains(x, y)
-                        && self.panel_app.compare_settings_state.is_open()
-                        && self.panel_app.compare_settings_state.editing_text.is_some()
-                    {
-                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
-                            &cs_result.tf_active_input_char_positions,
-                            x,
-                        );
-                        if let Some(ref mut edit) = self.panel_app.compare_settings_state.editing_text {
-                            edit.cursor = new_cursor;
-                            edit.selection_start = Some(new_cursor);
+            // Compare settings — text select drag on the active tf_min/tf_max input (TextFieldStore).
+            if self.panel_app.compare_settings_state.active_field_id.is_some()
+                && self.panel_app.compare_settings_state.is_open()
+            {
+                if let Some(ref cs_result) = result.compare_settings {
+                    if let Some(input_rect) = cs_result.tf_active_input_rect {
+                        if input_rect.contains(x, y) {
+                            self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
+                            return false;
                         }
-                        self.panel_app.compare_settings_state.text_select_dragging = true;
-                        return false;
                     }
                 }
             }
@@ -3165,78 +3137,9 @@ impl ChartApp {
                 return;
             }
         }
-        if self.panel_app.primitive_settings_state.text_select_dragging {
-            // Update text selection cursor from mouse X position.
-            let char_positions: Vec<f64> = self.frame_result.as_ref()
-                .and_then(|r| r.primitive_settings.as_ref())
-                .map(|ps| ps.active_input_char_positions.clone())
-                .unwrap_or_default();
-            if !char_positions.is_empty() {
-                let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
-                    &char_positions,
-                    x,
-                );
-                if let Some(ref mut edit) = self.panel_app.primitive_settings_state.editing_text {
-                    edit.cursor = new_cursor;
-                    // selection_start stays as the anchor set during drag_start
-                }
-            }
-            return;
-        }
-        if self.panel_app.indicator_settings_state.text_select_dragging {
-            // Update text selection cursor from mouse X position.
-            let char_positions: Vec<f64> = self.frame_result.as_ref()
-                .and_then(|r| r.indicator_settings.as_ref())
-                .map(|is| is.active_input_char_positions.clone())
-                .unwrap_or_default();
-            if !char_positions.is_empty() {
-                let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
-                    &char_positions,
-                    x,
-                );
-                if let Some(ref mut edit) = self.panel_app.indicator_settings_state.editing_text_state {
-                    edit.cursor = new_cursor;
-                    // selection_start stays as the anchor set during drag_start
-                }
-            }
-            return;
-        }
-        if self.panel_app.chart_settings_state.text_select_dragging {
-            // Update text selection cursor from mouse X position.
-            let char_positions: Vec<f64> = self.frame_result.as_ref()
-                .and_then(|r| r.chart_settings.as_ref())
-                .map(|cs| cs.active_input_char_positions.clone())
-                .unwrap_or_default();
-            if !char_positions.is_empty() {
-                let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
-                    &char_positions,
-                    x,
-                );
-                if let Some(ref mut edit) = self.panel_app.chart_settings_state.editing_text {
-                    edit.cursor = new_cursor;
-                    // selection_start stays as the anchor set during drag_start
-                }
-            }
-            return;
-        }
-        if self.panel_app.compare_settings_state.text_select_dragging {
-            // Update text selection cursor from mouse X position.
-            let char_positions: Vec<f64> = self.frame_result.as_ref()
-                .and_then(|r| r.compare_settings.as_ref())
-                .map(|cs| cs.tf_active_input_char_positions.clone())
-                .unwrap_or_default();
-            if !char_positions.is_empty() {
-                let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
-                    &char_positions,
-                    x,
-                );
-                if let Some(ref mut edit) = self.panel_app.compare_settings_state.editing_text {
-                    edit.cursor = new_cursor;
-                    // selection_start stays as the anchor set during drag_start
-                }
-            }
-            return;
-        }
+        // text_select_dragging for all 4 settings modals is now handled by the
+        // TextFieldStore drag_active() check above (Wave 2b migration).
+        // The old per-modal blocks have been removed.
         if self.wl_group_name_input.is_dragging {
             self.wl_group_name_input.update_drag(x, y);
             return;
@@ -3975,62 +3878,9 @@ impl ChartApp {
             eprintln!("[ChartApp] watchlist_modal drag ended");
             return;
         }
-        if self.panel_app.primitive_settings_state.text_select_dragging {
-            // Finalize text selection: clear if anchor == cursor (plain click jitter).
-            self.panel_app.primitive_settings_state.text_select_dragging = false;
-            let (anchor, cursor) = self.panel_app.primitive_settings_state.editing_text
-                .as_ref()
-                .map(|e| (e.selection_start, e.cursor))
-                .unwrap_or((None, 0));
-            if anchor == Some(cursor) {
-                if let Some(ref mut edit) = self.panel_app.primitive_settings_state.editing_text {
-                    edit.selection_start = None;
-                }
-            }
-            return;
-        }
-        if self.panel_app.indicator_settings_state.text_select_dragging {
-            // Finalize text selection: clear if anchor == cursor (plain click jitter).
-            self.panel_app.indicator_settings_state.text_select_dragging = false;
-            let (anchor, cursor) = self.panel_app.indicator_settings_state.editing_text_state
-                .as_ref()
-                .map(|e| (e.selection_start, e.cursor))
-                .unwrap_or((None, 0));
-            if anchor == Some(cursor) {
-                if let Some(ref mut edit) = self.panel_app.indicator_settings_state.editing_text_state {
-                    edit.selection_start = None;
-                }
-            }
-            return;
-        }
-        if self.panel_app.chart_settings_state.text_select_dragging {
-            // Finalize text selection: clear if anchor == cursor (plain click jitter).
-            self.panel_app.chart_settings_state.text_select_dragging = false;
-            let (anchor, cursor) = self.panel_app.chart_settings_state.editing_text
-                .as_ref()
-                .map(|e| (e.selection_start, e.cursor))
-                .unwrap_or((None, 0));
-            if anchor == Some(cursor) {
-                if let Some(ref mut edit) = self.panel_app.chart_settings_state.editing_text {
-                    edit.selection_start = None;
-                }
-            }
-            return;
-        }
-        if self.panel_app.compare_settings_state.text_select_dragging {
-            // Finalize text selection: clear if anchor == cursor (plain click jitter).
-            self.panel_app.compare_settings_state.text_select_dragging = false;
-            let (anchor, cursor) = self.panel_app.compare_settings_state.editing_text
-                .as_ref()
-                .map(|e| (e.selection_start, e.cursor))
-                .unwrap_or((None, 0));
-            if anchor == Some(cursor) {
-                if let Some(ref mut edit) = self.panel_app.compare_settings_state.editing_text {
-                    edit.selection_start = None;
-                }
-            }
-            return;
-        }
+        // text_select_dragging for all 4 settings modals is handled by
+        // text_fields_mut().on_drag_end() which is called unconditionally at line ~3632.
+        // The old per-modal blocks have been removed (Wave 2b migration).
         if self.wl_group_name_input.is_dragging {
             self.wl_group_name_input.end_drag();
             eprintln!("[ChartApp] wl_group_name_input modal drag ended");
@@ -6049,21 +5899,30 @@ impl ChartApp {
             return;
         }
 
-        // If text editing is active in any modal, cancel it first before closing the modal.
+        // If text editing is active in any settings modal, cancel it first before closing the modal.
         // This follows the pattern: first Escape cancels editing, second Escape closes the modal.
-        if self.panel_app.primitive_settings_state.editing_text.is_some() {
-            self.panel_app.primitive_settings_state.editing_text = None;
+        if self.panel_app.primitive_settings_state.active_field_id.is_some() {
+            self.panel_app.primitive_settings_state.active_field_id = None;
+            self.input_coordinator.borrow_mut().text_fields_mut().blur();
             eprintln!("[ChartApp] prim_settings text editing cancelled");
             return;
         }
-        if self.panel_app.indicator_settings_state.editing_text_state.is_some() {
-            self.panel_app.indicator_settings_state.editing_text_state = None;
+        if self.panel_app.indicator_settings_state.active_field_id.is_some() {
+            self.panel_app.indicator_settings_state.active_field_id = None;
+            self.input_coordinator.borrow_mut().text_fields_mut().blur();
             eprintln!("[ChartApp] ind_settings text editing cancelled");
             return;
         }
-        if self.panel_app.chart_settings_state.editing_text.is_some() {
-            self.panel_app.chart_settings_state.editing_text = None;
+        if self.panel_app.chart_settings_state.active_field_id.is_some() {
+            self.panel_app.chart_settings_state.active_field_id = None;
+            self.input_coordinator.borrow_mut().text_fields_mut().blur();
             eprintln!("[ChartApp] chart_settings text editing cancelled");
+            return;
+        }
+        if self.panel_app.compare_settings_state.active_field_id.is_some() {
+            self.panel_app.compare_settings_state.active_field_id = None;
+            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+            eprintln!("[ChartApp] cmp_settings text editing cancelled");
             return;
         }
 
@@ -6730,400 +6589,89 @@ impl ChartApp {
             return;
         }
 
-        // Handle text_content editing in primitive settings
-        // Guard with is_open() so stale editing_text from a closed modal cannot
-        // intercept keypresses intended for other active modals (e.g. chart settings).
-        if self.panel_app.primitive_settings_state.is_open() {
-        if let Some(ref mut editing) = self.panel_app.primitive_settings_state.editing_text {
-            match ch {
-                '\r' | '\n' => {
-                    // Commit the text on Enter
-                    let text = editing.text.clone();
-                    let field = editing.field_id.clone();
-                    self.panel_app.primitive_settings_state.editing_text = None;
-                    let active_pid_char = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-                    if field == "text_content" {
-                        if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
-                            if let Some(pid) = active_pid_char {
-                                if let Some(mut data) = self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)) {
-                                    if let Some(ref mut t) = data.text {
-                                        t.content = text.clone();
-                                    } else {
-                                        data.text = Some({
-                                            use mlc_core::drawing::primitives_v2::PrimitiveText;
-                                            PrimitiveText {
-                                                content: text.clone(),
-                                                ..PrimitiveText::default()
-                                            }
-                                        });
-                                    }
-                                    self.core.drawings_mut().entry_or_default(pid).set_data_at(idx, &data);
-                                }
-                            }
-                        }
-                        self.sync_drawing_back_to_group();
-                        eprintln!("[ChartApp] prim_settings text_content committed: {}", text);
-                    } else if field == "stroke_width_value" || field == "stroke_width" {
-                        if let Ok(width) = text.trim().parse::<f64>() {
-                            if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
-                                if let Some(pid) = active_pid_char {
-                                    if let Some(mut data) = self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)) {
-                                        data.width = width.clamp(0.5, 20.0);
-                                        self.core.drawings_mut().entry_or_default(pid).set_data_at(idx, &data);
-                                    }
-                                }
-                            }
-                        }
-                        self.sync_drawing_back_to_group();
-                    } else if field == "text_font_size" {
-                        if let Ok(font_size) = text.trim().parse::<f64>() {
-                            if let Some(pid) = active_pid_char {
-                                self.core.drawings_mut().entry_or_default(pid).set_selected_text_font_size(font_size);
-                            }
-                        }
-                        eprintln!("[ChartApp] prim_settings text_font_size committed: {}", text);
-                    } else if field.starts_with("tf_") && field.ends_with("_min") {
-                        if let Ok(val) = text.trim().parse::<u32>() {
-                            if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
-                                if let Some(tf_idx) = field.strip_prefix("tf_")
-                                    .and_then(|s| s.strip_suffix("_min"))
-                                    .and_then(|s| s.parse::<usize>().ok())
-                                {
-                                    self.apply_tf_min_value(idx, tf_idx, val);
-                                }
-                            }
-                        }
-                    } else if field.starts_with("tf_") && field.ends_with("_max") {
-                        if let Ok(val) = text.trim().parse::<u32>() {
-                            if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
-                                if let Some(tf_idx) = field.strip_prefix("tf_")
-                                    .and_then(|s| s.strip_suffix("_max"))
-                                    .and_then(|s| s.parse::<usize>().ok())
-                                {
-                                    self.apply_tf_max_value(idx, tf_idx, val);
-                                }
-                            }
-                        }
-                    } else if field.starts_with("level_") && field.ends_with("_value") {
-                        if let Ok(val) = text.trim().parse::<f64>() {
-                            if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
-                                if let Some(level_idx) = field.strip_prefix("level_")
-                                    .and_then(|s| s.strip_suffix("_value"))
-                                    .and_then(|s| s.parse::<usize>().ok())
-                                {
-                                    if let Some(pid) = active_pid_char {
-                                        let mut guard = self.core.drawings_mut();
-                                        let prims = guard.entry_or_default(pid).primitives_mut();
-                                        if idx < prims.len() {
-                                            if let Some(mut configs) = prims[idx].level_configs() {
-                                                if level_idx < configs.len() {
-                                                    configs[level_idx].level = val;
-                                                    prims[idx].set_level_configs(configs);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } else if field.starts_with("coord_") && field.ends_with("_price") {
-                        if let Ok(price) = text.trim().parse::<f64>() {
-                            if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
-                                if let Some(pt_idx) = field.strip_prefix("coord_")
-                                    .and_then(|s| s.strip_suffix("_price"))
-                                    .and_then(|s| s.parse::<usize>().ok())
-                                {
-                                    if let Some(pid) = active_pid_char {
-                                        let mut guard = self.core.drawings_mut();
-                                        let prims = guard.entry_or_default(pid).primitives_mut();
-                                        if idx < prims.len() {
-                                            let mut pts = prims[idx].points().to_vec();
-                                            if pt_idx < pts.len() {
-                                                pts[pt_idx].1 = price;
-                                                prims[idx].set_points(&pts);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } else if field.starts_with("coord_") && field.ends_with("_bar") {
-                        if let Ok(bar) = text.trim().parse::<f64>() {
-                            if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
-                                if let Some(pt_idx) = field.strip_prefix("coord_")
-                                    .and_then(|s| s.strip_suffix("_bar"))
-                                    .and_then(|s| s.parse::<usize>().ok())
-                                {
-                                    if let Some(_window) = self.panel_app.panel_grid.active_container() {
-                                        let coord_bars = self.active_chart_bars();
-                                        let ts_ms = mlc_core::bar_f64_to_timestamp_ms(&coord_bars[..], bar);
-                                        if let Some(pid) = active_pid_char {
-                                            let mut guard = self.core.drawings_mut();
-                                            let prims = guard.entry_or_default(pid).primitives_mut();
-                                            if idx < prims.len() {
-                                                let mut pts = prims[idx].points().to_vec();
-                                                if pt_idx < pts.len() {
-                                                    pts[pt_idx].0 = ts_ms;
-                                                    prims[idx].set_points(&pts);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } else if let Some(prop_id) = field.strip_prefix("text_prop:") {
-                        // text_prop field — commit as string or number based on prop type
-                        use mlc_core::drawing::primitives_v2::config::{PropertyValue, PropertyType};
-                        if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
-                            // Look up the property type to decide how to commit
-                            let prop_type_opt = active_pid_char
-                                .and_then(|pid| {
-                                    let guard = self.core.drawings();
-                                    guard.get(pid).and_then(|dm| {
-                                        let prims = dm.primitives();
-                                        prims.get(idx).and_then(|p| {
-                                            p.text_properties().and_then(|props| {
-                                                props.into_iter()
-                                                    .find(|p| p.id == prop_id)
-                                                    .map(|p| p.prop_type)
-                                            })
-                                        })
-                                    })
-                                });
-
-                            let value = match prop_type_opt {
-                                Some(PropertyType::Text { .. }) => {
-                                    PropertyValue::String(text.clone())
-                                }
-                                _ => {
-                                    if let Ok(val) = text.trim().parse::<f64>() {
-                                        PropertyValue::Number(val)
-                                    } else {
-                                        PropertyValue::String(text.clone())
-                                    }
-                                }
-                            };
-
-                            if let Some(pid) = active_pid_char {
-                                self.core.drawings_mut().entry_or_default(pid).apply_text_property(idx, prop_id, value);
-                            }
-                        }
-                        eprintln!("[ChartApp] prim_settings text_prop '{}' committed: {}", prop_id, text);
-                    } else if let Some(prop_id) = field.strip_prefix("style_prop:") {
-                        // style_prop Number field — commit parsed value
-                        use mlc_core::drawing::primitives_v2::config::PropertyValue;
-                        if let Ok(val) = text.trim().parse::<f64>() {
-                            if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
-                                if let Some(pid) = active_pid_char {
-                                    self.core.drawings_mut().entry_or_default(pid).apply_style_property(idx, prop_id, PropertyValue::Number(val));
-                                }
-                            }
-                        }
-                        self.sync_drawing_back_to_group();
-                        self.autosave_snapshot();
-                        eprintln!("[ChartApp] prim_settings style_prop '{}' committed: {}", prop_id, text);
-                    } else {
-                        // For all other unrecognized fields, just close editing.
-                        eprintln!("[ChartApp] prim_settings '{}' editing closed (value: {})", field, text);
+        // Handle text input in primitive settings (TextFieldStore, Wave 2b).
+        if self.panel_app.primitive_settings_state.is_open()
+            && self.panel_app.primitive_settings_state.active_field_id.is_some()
+        {
+            let prim_wid = uzor::WidgetId::from(crate::text_input::PRIMITIVE_SETTINGS_FIELD);
+            if self.input_coordinator.borrow().text_fields().is_focused(&prim_wid) {
+                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
+                match action {
+                    TextAction::Commit(_) => {
+                        self.commit_prim_editing_text();
                     }
-                }
-                '\x08' => {
-                    // Backspace — delete selection if active, else single char.
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    } else if editing.cursor > 0 {
-                        let byte_end = editing.text.char_indices().nth(editing.cursor).map(|(i, _)| i).unwrap_or(editing.text.len());
-                        let byte_start = editing.text.char_indices().nth(editing.cursor - 1).map(|(i, _)| i).unwrap_or(0);
-                        editing.text.drain(byte_start..byte_end);
-                        editing.cursor -= 1;
+                    TextAction::Cancel => {
+                        self.panel_app.primitive_settings_state.active_field_id = None;
+                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     }
+                    TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
                 }
-                c if !c.is_control() => {
-                    // If there is an active selection, replace it with the typed char.
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    }
-                    let byte_idx = editing.text.char_indices().nth(editing.cursor).map(|(i, _)| i).unwrap_or(editing.text.len());
-                    editing.text.insert(byte_idx, c);
-                    editing.cursor += 1;
-                }
-                _ => {}
+                return;
             }
-            return;
         }
-        } // end is_open() guard for primitive_settings
-
-        // Handle text editing in indicator settings
-        // Guard with is_open() so stale editing_text_state cannot intercept keypresses.
-        if self.panel_app.indicator_settings_state.is_open() {
-        if let Some(ref mut editing) = self.panel_app.indicator_settings_state.editing_text_state {
-            match ch {
-                '\r' | '\n' => {
-                    // Commit the indicator param value on Enter
-                    let text = editing.text.clone();
-                    let field = editing.field_id.clone();
-                    self.panel_app.indicator_settings_state.editing_text_state = None;
-                    if let Some(param_name) = field.strip_prefix("indicator_param:") {
-                        use mlc_indicators::IndicatorParamValue as IndValue;
-                        if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
-                            if let Some(inst) = self.core.indicators_mut().get_instance_mut(ind_id) {
-                                // Try parsing as float first, then int, else string
-                                let value = if let Ok(f) = text.trim().parse::<f64>() {
-                                    IndValue::Float(f)
-                                } else if let Ok(i) = text.trim().parse::<i32>() {
-                                    IndValue::Int(i)
-                                } else {
-                                    IndValue::String(text.trim().to_string())
-                                };
-                                inst.set_param(param_name, value);
-                            }
-                            let active_cid = self.panel_app.panel_grid.docking().active_leaf()
-                                .and_then(|leaf| self.panel_app.panel_grid.container_id_for_leaf(leaf))
-                                .map(|c| c.0);
-                            if let Some(cid) = active_cid {
-                                let bars = self.active_chart_bars();
-                                self.core.indicators_mut().calculate_all_for_window(cid, &bars);
-                            }
-                        }
-                        eprintln!("[ChartApp] ind_settings param '{}' committed: {}", param_name, text);
-                    } else if field.starts_with("tf_") && field.ends_with("_min") {
-                        if let Ok(val) = text.trim().parse::<u32>() {
-                            if let Some(tf_idx) = field.strip_prefix("tf_")
-                                .and_then(|s| s.strip_suffix("_min"))
-                                .and_then(|s| s.parse::<usize>().ok())
-                            {
-                                self.apply_ind_tf_min_value(tf_idx, val);
-                            }
-                        }
-                    } else if field.starts_with("tf_") && field.ends_with("_max") {
-                        if let Ok(val) = text.trim().parse::<u32>() {
-                            if let Some(tf_idx) = field.strip_prefix("tf_")
-                                .and_then(|s| s.strip_suffix("_max"))
-                                .and_then(|s| s.parse::<usize>().ok())
-                            {
-                                self.apply_ind_tf_max_value(tf_idx, val);
-                            }
-                        }
+        // Handle text input in indicator settings (TextFieldStore, Wave 2b).
+        if self.panel_app.indicator_settings_state.is_open()
+            && self.panel_app.indicator_settings_state.active_field_id.is_some()
+        {
+            let ind_wid = uzor::WidgetId::from(crate::text_input::INDICATOR_SETTINGS_FIELD);
+            if self.input_coordinator.borrow().text_fields().is_focused(&ind_wid) {
+                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
+                match action {
+                    TextAction::Commit(_) => {
+                        self.commit_ind_editing_text();
                     }
-                    return;
-                }
-                '\x08' => {
-                    // Backspace — delete selection if active, else single char.
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    } else if editing.cursor > 0 {
-                        let byte_end = editing.text.char_indices().nth(editing.cursor).map(|(i, _)| i).unwrap_or(editing.text.len());
-                        let byte_start = editing.text.char_indices().nth(editing.cursor - 1).map(|(i, _)| i).unwrap_or(0);
-                        editing.text.drain(byte_start..byte_end);
-                        editing.cursor -= 1;
+                    TextAction::Cancel => {
+                        self.panel_app.indicator_settings_state.active_field_id = None;
+                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     }
+                    TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
                 }
-                c if !c.is_control() => {
-                    // If there is an active selection, replace it with the typed char.
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    }
-                    let byte_idx = editing.text.char_indices().nth(editing.cursor).map(|(i, _)| i).unwrap_or(editing.text.len());
-                    editing.text.insert(byte_idx, c);
-                    editing.cursor += 1;
-                }
-                _ => {}
+                return;
             }
-            return;
         }
-        } // end is_open() guard for indicator_settings
 
-        // Handle text editing in chart settings
-        // Guard with is_open so zombie editing_text cannot intercept keypresses
-        // when chart settings is closed.
-        if self.panel_app.chart_settings_state.is_open {
-        if let Some(ref mut editing) = self.panel_app.chart_settings_state.editing_text {
-            match ch {
-                '\r' | '\n' => {
-                    // Enter: commit watermark text and close editing
-                    let text = editing.text.clone();
-                    let field = editing.field_id.clone();
-                    self.panel_app.chart_settings_state.editing_text = None;
-                    if field == "status:watermark_text" {
-                        let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-                        if let Some(pid) = pid {
-                            let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
-                            if let Some(ref mut watermark) = panel.watermark {
-                                if let Some(line) = watermark.lines.first_mut() {
-                                    line.text = text.clone();
-                                }
-                            }
-                        }
-                        eprintln!("[ChartApp] chart_settings watermark_text committed: {}", text);
+        // Handle text input in chart settings (TextFieldStore, Wave 2b).
+        if self.panel_app.chart_settings_state.is_open
+            && self.panel_app.chart_settings_state.active_field_id.is_some()
+        {
+            let chart_wid = uzor::WidgetId::from(crate::text_input::CHART_SETTINGS_FIELD);
+            if self.input_coordinator.borrow().text_fields().is_focused(&chart_wid) {
+                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
+                match action {
+                    TextAction::Commit(_) => {
+                        self.commit_chart_settings_editing_text();
                     }
-                }
-                '\x08' => {
-                    // Backspace — delete selection if active, else single char.
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    } else if editing.cursor > 0 {
-                        let byte_end = editing.text.char_indices().nth(editing.cursor).map(|(i, _)| i).unwrap_or(editing.text.len());
-                        let byte_start = editing.text.char_indices().nth(editing.cursor - 1).map(|(i, _)| i).unwrap_or(0);
-                        editing.text.drain(byte_start..byte_end);
-                        editing.cursor -= 1;
+                    TextAction::Cancel => {
+                        self.panel_app.chart_settings_state.active_field_id = None;
+                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     }
+                    TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
                 }
-                c if !c.is_control() => {
-                    // If there is an active selection, replace it with the typed char.
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    }
-                    let byte_idx = editing.text.char_indices().nth(editing.cursor).map(|(i, _)| i).unwrap_or(editing.text.len());
-                    editing.text.insert(byte_idx, c);
-                    editing.cursor += 1;
-                }
-                _ => {}
+                return;
             }
-            return;
         }
-        } // end is_open guard for chart_settings
 
-        // Handle text editing in compare settings (tf_*_min / tf_*_max fields).
-        if self.panel_app.compare_settings_state.is_open() {
-        if let Some(ref mut editing) = self.panel_app.compare_settings_state.editing_text {
-            match ch {
-                '\r' | '\n' => {
-                    let text = editing.text.clone();
-                    let field = editing.field_id.clone();
-                    self.panel_app.compare_settings_state.editing_text = None;
-                    self.apply_cmp_tf_text_commit(&field, &text);
-                }
-                '\x08' => {
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    } else if editing.cursor > 0 {
-                        let byte_end = editing.text.char_indices().nth(editing.cursor).map(|(i, _)| i).unwrap_or(editing.text.len());
-                        let byte_start = editing.text.char_indices().nth(editing.cursor - 1).map(|(i, _)| i).unwrap_or(0);
-                        editing.text.drain(byte_start..byte_end);
-                        editing.cursor -= 1;
+        // Handle text input in compare settings (TextFieldStore, Wave 2b).
+        if self.panel_app.compare_settings_state.is_open()
+            && self.panel_app.compare_settings_state.active_field_id.is_some()
+        {
+            let cmp_wid = uzor::WidgetId::from(crate::text_input::COMPARE_SETTINGS_FIELD);
+            if self.input_coordinator.borrow().text_fields().is_focused(&cmp_wid) {
+                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
+                match action {
+                    TextAction::Commit(_) => {
+                        self.commit_cmp_editing_text();
                     }
-                }
-                '\x7f' => {
-                    if editing.cursor < editing.text.chars().count() {
-                        let byte_start = editing.text.char_indices().nth(editing.cursor).map(|(i, _)| i).unwrap_or(editing.text.len());
-                        let byte_end = editing.text.char_indices().nth(editing.cursor + 1).map(|(i, _)| i).unwrap_or(editing.text.len());
-                        editing.text.drain(byte_start..byte_end);
+                    TextAction::Cancel => {
+                        self.panel_app.compare_settings_state.active_field_id = None;
+                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     }
+                    TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
                 }
-                c if !c.is_control() => {
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    }
-                    let byte_idx = editing.text.char_indices().nth(editing.cursor).map(|(i, _)| i).unwrap_or(editing.text.len());
-                    editing.text.insert(byte_idx, c);
-                    editing.cursor += 1;
-                }
-                _ => {}
+                return;
             }
-            return;
         }
-        } // end is_open guard for compare_settings
+
 
         // Handle text input for Telegram bot token field in the Alert Settings modal.
         if self.panel_app.alert_settings_state.is_open() {
@@ -7204,11 +6752,8 @@ impl ChartApp {
     /// Handle named key presses that cannot be expressed as a single `char`.
     ///
     /// Routes cursor movement and delete to the active text editing state.
-    /// Supports all `TextEditingState`-bearing modals:
-    /// - `primitive_settings_state.editing_text`
-    /// - `indicator_settings_state.editing_text_state`
-    /// - `chart_settings_state.editing_text`
-    /// - `modal_state.editing_text` (search input)
+    /// Wave 1+2a+2b fields route through TextFieldStore. Wave 3 fields still
+    /// use `TextEditingState` + `apply_key` (profile name, passphrase, rename, etc.).
     pub fn on_key_press(&mut self, key: super::input::KeyPress) {
         use super::input::KeyPress;
 
@@ -7702,28 +7247,86 @@ impl ChartApp {
             return;
         }
 
-        // 1. Primitive settings text editing
-        if let Some(ref mut editing) = self.panel_app.primitive_settings_state.editing_text {
-            apply_key(editing, key);
-            return;
+        // 1. Primitive settings text editing (TextFieldStore, Wave 2b).
+        if self.panel_app.primitive_settings_state.is_open()
+            && self.panel_app.primitive_settings_state.active_field_id.is_some()
+        {
+            let prim_wid = uzor::WidgetId::from(crate::text_input::PRIMITIVE_SETTINGS_FIELD);
+            if self.input_coordinator.borrow().text_fields().is_focused(&prim_wid) {
+                if let Some(uzor_key) = to_uzor_key(&key) {
+                    let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
+                    match action {
+                        TextAction::Commit(_) => { self.commit_prim_editing_text(); }
+                        TextAction::Cancel => {
+                            self.panel_app.primitive_settings_state.active_field_id = None;
+                            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                        }
+                        TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
+                    }
+                }
+                return;
+            }
         }
 
-        // 2. Indicator settings text editing
-        if let Some(ref mut editing) = self.panel_app.indicator_settings_state.editing_text_state {
-            apply_key(editing, key);
-            return;
+        // 2. Indicator settings text editing (TextFieldStore, Wave 2b).
+        if self.panel_app.indicator_settings_state.is_open()
+            && self.panel_app.indicator_settings_state.active_field_id.is_some()
+        {
+            let ind_wid = uzor::WidgetId::from(crate::text_input::INDICATOR_SETTINGS_FIELD);
+            if self.input_coordinator.borrow().text_fields().is_focused(&ind_wid) {
+                if let Some(uzor_key) = to_uzor_key(&key) {
+                    let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
+                    match action {
+                        TextAction::Commit(_) => { self.commit_ind_editing_text(); }
+                        TextAction::Cancel => {
+                            self.panel_app.indicator_settings_state.active_field_id = None;
+                            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                        }
+                        TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
+                    }
+                }
+                return;
+            }
         }
 
-        // 3. Chart settings inline text editing
-        if let Some(ref mut editing) = self.panel_app.chart_settings_state.editing_text {
-            apply_key(editing, key);
-            return;
+        // 3. Chart settings inline text editing (TextFieldStore, Wave 2b).
+        if self.panel_app.chart_settings_state.is_open
+            && self.panel_app.chart_settings_state.active_field_id.is_some()
+        {
+            let chart_wid = uzor::WidgetId::from(crate::text_input::CHART_SETTINGS_FIELD);
+            if self.input_coordinator.borrow().text_fields().is_focused(&chart_wid) {
+                if let Some(uzor_key) = to_uzor_key(&key) {
+                    let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
+                    match action {
+                        TextAction::Commit(_) => { self.commit_chart_settings_editing_text(); }
+                        TextAction::Cancel => {
+                            self.panel_app.chart_settings_state.active_field_id = None;
+                            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                        }
+                        TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
+                    }
+                }
+                return;
+            }
         }
 
-        // 3b. Compare settings tf_min/max text editing
-        if self.panel_app.compare_settings_state.is_open() {
-            if let Some(ref mut editing) = self.panel_app.compare_settings_state.editing_text {
-                apply_key(editing, key);
+        // 3b. Compare settings tf_min/max text editing (TextFieldStore, Wave 2b).
+        if self.panel_app.compare_settings_state.is_open()
+            && self.panel_app.compare_settings_state.active_field_id.is_some()
+        {
+            let cmp_wid = uzor::WidgetId::from(crate::text_input::COMPARE_SETTINGS_FIELD);
+            if self.input_coordinator.borrow().text_fields().is_focused(&cmp_wid) {
+                if let Some(uzor_key) = to_uzor_key(&key) {
+                    let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
+                    match action {
+                        TextAction::Commit(_) => { self.commit_cmp_editing_text(); }
+                        TextAction::Cancel => {
+                            self.panel_app.compare_settings_state.active_field_id = None;
+                            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                        }
+                        TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
+                    }
+                }
                 return;
             }
         }
@@ -7862,20 +7465,8 @@ impl ChartApp {
             return Some(text);
         }
 
-        // Primitive settings text editing
-        if let Some(ref editing) = self.panel_app.primitive_settings_state.editing_text {
-            return get_selection(editing);
-        }
-
-        // Indicator settings text editing
-        if let Some(ref editing) = self.panel_app.indicator_settings_state.editing_text_state {
-            return get_selection(editing);
-        }
-
-        // Chart settings inline text editing
-        if let Some(ref editing) = self.panel_app.chart_settings_state.editing_text {
-            return get_selection(editing);
-        }
+        // Wave 2b: prim/ind/chart/compare settings fields are now in TextFieldStore,
+        // so copy_selection() above (line ~7467) already handles them.
 
         // Profile manager text fields
         {

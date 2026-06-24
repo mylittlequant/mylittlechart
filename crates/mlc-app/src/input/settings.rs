@@ -28,11 +28,11 @@ impl ChartApp {
 
         // Auto-commit: if an input field is being edited and the click lands on a
         // DIFFERENT widget inside the same modal, commit the value (same as Enter).
-        if self.panel_app.chart_settings_state.editing_text.is_some() {
-            let editing_field = self.panel_app.chart_settings_state.editing_text
-                .as_ref()
-                .map(|e| e.field_id.clone())
-                .unwrap_or_default();
+        if self.panel_app.chart_settings_state.active_field_id.is_some() {
+            let editing_field = self.panel_app.chart_settings_state.active_field_id
+                .as_deref()
+                .unwrap_or_default()
+                .to_string();
             let click_targets_same_field = rest
                 .strip_prefix("item:")
                 .map(|item_id| item_id == editing_field)
@@ -63,21 +63,20 @@ impl ChartApp {
                 let item_id = &rest["item:".len()..];
                 // Click-to-cursor: if the clicked field is already being edited,
                 // reposition cursor using active_input_char_positions.
-                let already_editing = self.panel_app.chart_settings_state.editing_text
-                    .as_ref()
-                    .map(|e| e.field_id == item_id)
-                    .unwrap_or(false);
+                let already_editing = self.panel_app.chart_settings_state.active_field_id
+                    .as_deref() == Some(item_id);
                 if already_editing {
                     let char_positions: Vec<f64> = self.frame_result.as_ref()
                         .and_then(|r| r.chart_settings.as_ref())
                         .map(|cs| cs.active_input_char_positions.clone())
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
+                        let wid = uzor::WidgetId::from(crate::text_input::CHART_SETTINGS_FIELD);
                         let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
-                        if let Some(ref mut edit) = self.panel_app.chart_settings_state.editing_text {
-                            edit.cursor = new_cursor;
-                            edit.selection_start = None;
-                            edit.reset_blink(0);
+                        let mut coord = self.input_coordinator.borrow_mut();
+                        if let Some(fs) = coord.text_fields_mut().field_state_mut(&wid) {
+                            fs.cursor = new_cursor;
+                            fs.selection_start = None;
                         }
                         return;
                     }
@@ -160,11 +159,14 @@ impl ChartApp {
     ///
     /// Applies the same logic as the Enter-key handler in `on_char_input` so that
     /// clicking a different widget inside the same modal auto-commits the in-progress value.
-    fn commit_chart_settings_editing_text(&mut self) {
-        let (text, field) = match self.panel_app.chart_settings_state.editing_text.take() {
-            Some(e) => (e.text, e.field_id),
+    pub(super) fn commit_chart_settings_editing_text(&mut self) {
+        let field = match self.panel_app.chart_settings_state.active_field_id.take() {
+            Some(f) => f,
             None => return,
         };
+        let wid = uzor::WidgetId::from(crate::text_input::CHART_SETTINGS_FIELD);
+        let text = self.input_coordinator.borrow().text_fields().text(&wid).to_string();
+        self.input_coordinator.borrow_mut().text_fields_mut().blur();
         if field == "status:watermark_text" {
             let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
             if let Some(pid) = pid {
@@ -632,7 +634,6 @@ impl ChartApp {
                     eprintln!("[ChartApp] chart_settings opened color picker for watermark_color");
                 }
                 "watermark_text" => {
-                    use mlc_core::state::modal_data::TextEditingState;
                     let pid2 = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                     let current_text = pid2
                         .and_then(|pid| self.panels_store.chart_panel.get(&pid))
@@ -640,14 +641,14 @@ impl ChartApp {
                         .and_then(|wm| wm.lines.first())
                         .map(|line| line.text.clone())
                         .unwrap_or_default();
-                    let cursor = current_text.chars().count();
-                    self.panel_app.chart_settings_state.editing_text = Some(TextEditingState {
-                        field_id: "status:watermark_text".to_string(),
-                        text: current_text,
-                        cursor,
-                        selection_start: Some(0),
-                        blink_time: 0,
-                    });
+                    let wid = uzor::WidgetId::from(crate::text_input::CHART_SETTINGS_FIELD);
+                    self.panel_app.chart_settings_state.active_field_id = Some("status:watermark_text".to_string());
+                    let mut coord = self.input_coordinator.borrow_mut();
+                    coord.text_fields_mut().set_text(&wid, &current_text);
+                    coord.text_fields_mut().focus(wid.clone());
+                    if let Some(fs) = coord.text_fields_mut().field_state_mut(&wid) {
+                        fs.selection_start = Some(0);
+                    }
                     eprintln!("[ChartApp] chart_settings watermark_text editing started");
                 }
                 "show_indicator_overlay" => {
@@ -928,11 +929,11 @@ impl ChartApp {
 
         // Auto-commit: if an input field is being edited and the click lands on a
         // DIFFERENT widget inside the same modal, commit the value (same as Enter).
-        if self.panel_app.primitive_settings_state.editing_text.is_some() {
-            let editing_field = self.panel_app.primitive_settings_state.editing_text
-                .as_ref()
-                .map(|e| e.field_id.clone())
-                .unwrap_or_default();
+        if self.panel_app.primitive_settings_state.active_field_id.is_some() {
+            let editing_field = self.panel_app.primitive_settings_state.active_field_id
+                .as_deref()
+                .unwrap_or_default()
+                .to_string();
             // Determine if the click targets the *same* input field being edited.
             let click_targets_same_field = rest
                 .strip_prefix("item:")
@@ -971,21 +972,20 @@ impl ChartApp {
                 let item_id = &rest["item:".len()..];
                 // Click-to-cursor: if the clicked field is already being edited,
                 // reposition cursor using active_input_char_positions instead of restarting.
-                let already_editing = self.panel_app.primitive_settings_state.editing_text
-                    .as_ref()
-                    .map(|e| e.field_id == item_id)
-                    .unwrap_or(false);
+                let already_editing = self.panel_app.primitive_settings_state.active_field_id
+                    .as_deref() == Some(item_id);
                 if already_editing {
                     let char_positions: Vec<f64> = self.frame_result.as_ref()
                         .and_then(|r| r.primitive_settings.as_ref())
                         .map(|ps| ps.active_input_char_positions.clone())
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
+                        let wid = uzor::WidgetId::from(crate::text_input::PRIMITIVE_SETTINGS_FIELD);
                         let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
-                        if let Some(ref mut edit) = self.panel_app.primitive_settings_state.editing_text {
-                            edit.cursor = new_cursor;
-                            edit.selection_start = None;
-                            edit.reset_blink(0);
+                        let mut coord = self.input_coordinator.borrow_mut();
+                        if let Some(fs) = coord.text_fields_mut().field_state_mut(&wid) {
+                            fs.cursor = new_cursor;
+                            fs.selection_start = None;
                         }
                         return;
                     }
@@ -1003,11 +1003,14 @@ impl ChartApp {
     /// This applies the same logic as the Enter-key handler in `on_char_input`, but
     /// is callable from click handlers so that clicking a different widget inside the
     /// same modal auto-commits the in-progress value.
-    fn commit_prim_editing_text(&mut self) {
-        let (text, field) = match self.panel_app.primitive_settings_state.editing_text.take() {
-            Some(e) => (e.text, e.field_id),
+    pub(super) fn commit_prim_editing_text(&mut self) {
+        let field = match self.panel_app.primitive_settings_state.active_field_id.take() {
+            Some(f) => f,
             None => return,
         };
+        let wid = uzor::WidgetId::from(crate::text_input::PRIMITIVE_SETTINGS_FIELD);
+        let text = self.input_coordinator.borrow().text_fields().text(&wid).to_string();
+        self.input_coordinator.borrow_mut().text_fields_mut().blur();
         let active_pid_prim = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
 
         if field == "text_content" {
@@ -1193,6 +1196,24 @@ impl ChartApp {
         }
     }
 
+    /// Start inline editing for a primitive settings sub-field.
+    ///
+    /// Sets `active_field_id`, loads `text` into the TextFieldStore, and focuses
+    /// `PRIMITIVE_SETTINGS_FIELD`.  When `select_all` is true the initial selection
+    /// covers the full text (for numeric inputs); for text content it starts unselected.
+    fn start_prim_field_editing(&mut self, field_id: &str, text: &str, select_all: bool) {
+        let wid = uzor::WidgetId::from(crate::text_input::PRIMITIVE_SETTINGS_FIELD);
+        self.panel_app.primitive_settings_state.active_field_id = Some(field_id.to_string());
+        let mut coord = self.input_coordinator.borrow_mut();
+        coord.text_fields_mut().set_text(&wid, text);
+        coord.text_fields_mut().focus(wid.clone());
+        if select_all {
+            if let Some(fs) = coord.text_fields_mut().field_state_mut(&wid) {
+                fs.selection_start = Some(0);
+            }
+        }
+    }
+
     /// Handle a click on a specific primitive settings item.
     fn handle_prim_settings_item(&mut self, item_id: &str, x: f64, _y: f64) {
         use mlc_core::drawing::primitives_v2::{LineStyle, TextAlign};
@@ -1367,57 +1388,32 @@ impl ChartApp {
 
         // ── Stroke width value — start inline text editing ───────────────────
         if item_id == "stroke_width_value" {
-            use mlc_core::state::modal_data::TextEditingState;
             let current_width = active_pid_prim
                 .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
                 .map(|data| format!("{}", data.width as u32))
                 .unwrap_or_default();
-            let cursor = current_width.chars().count();
-            self.panel_app.primitive_settings_state.editing_text = Some(TextEditingState {
-                field_id: "stroke_width_value".to_string(),
-                text: current_width,
-                cursor,
-                selection_start: None,
-                blink_time: 0,
-            });
+            self.start_prim_field_editing("stroke_width_value", &current_width, false);
             return;
         }
 
         // ── Text content — start inline text editing ──────────────────────────
         if item_id == "text_content" {
-            use mlc_core::state::modal_data::TextEditingState;
-            // Read the current text value from the primitive
             let current_text = active_pid_prim
                 .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
                 .and_then(|data| data.text.map(|t| t.content.clone()))
                 .unwrap_or_default();
-            let cursor = current_text.chars().count();
-            self.panel_app.primitive_settings_state.editing_text = Some(TextEditingState {
-                field_id: "text_content".to_string(),
-                text: current_text,
-                cursor,
-                selection_start: None,
-                blink_time: 0,
-            });
+            self.start_prim_field_editing("text_content", &current_text, false);
             eprintln!("[ChartApp] prim_settings text_content editing started");
             return;
         }
 
         // ── Text font size — start inline text editing ────────────────────────
         if item_id == "text_font_size" {
-            use mlc_core::state::modal_data::TextEditingState;
             let current_font_size = active_pid_prim
                 .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
                 .and_then(|data| data.text.map(|t| format!("{:.0}", t.font_size)))
                 .unwrap_or_else(|| "14".to_string());
-            let cursor = current_font_size.chars().count();
-            self.panel_app.primitive_settings_state.editing_text = Some(TextEditingState {
-                field_id: "text_font_size".to_string(),
-                text: current_font_size,
-                cursor,
-                selection_start: Some(0),
-                blink_time: 0,
-            });
+            self.start_prim_field_editing("text_font_size", &current_font_size, true);
             eprintln!("[ChartApp] prim_settings text_font_size editing started");
             return;
         }
@@ -1518,7 +1514,6 @@ impl ChartApp {
 
         // ── Timeframe min/max inputs — start inline text editing ─────────────
         if item_id.starts_with("tf_") && (item_id.ends_with("_min") || item_id.ends_with("_max")) {
-            use mlc_core::state::modal_data::TextEditingState;
             use mlc_core::drawing::TimeframeVisibilityConfig;
 
             let is_min = item_id.ends_with("_min");
@@ -1545,14 +1540,7 @@ impl ChartApp {
             } else {
                 String::new()
             };
-            let cursor = current_val.chars().count();
-            self.panel_app.primitive_settings_state.editing_text = Some(TextEditingState {
-                field_id: item_id.to_string(),
-                text: current_val,
-                cursor,
-                selection_start: Some(0),
-                blink_time: 0,
-            });
+            self.start_prim_field_editing(item_id, &current_val, true);
             eprintln!("[ChartApp] prim_settings {} editing started", item_id);
             return;
         }
@@ -1699,7 +1687,6 @@ impl ChartApp {
 
         // ── Level value: level_{i}_value ─ start inline text editing ─────────
         if item_id.starts_with("level_") && item_id.ends_with("_value") && !item_id.starts_with("level_prop:") {
-            use mlc_core::state::modal_data::TextEditingState;
             let parts: Vec<&str> = item_id.split('_').collect();
             let current_val: String = if parts.len() >= 3 {
                 if let Ok(level_idx) = parts[1].parse::<usize>() {
@@ -1725,21 +1712,13 @@ impl ChartApp {
             } else {
                 String::new()
             };
-            let cursor = current_val.chars().count();
-            self.panel_app.primitive_settings_state.editing_text = Some(TextEditingState {
-                field_id: item_id.to_string(),
-                text: current_val,
-                cursor,
-                selection_start: Some(0),
-                blink_time: 0,
-            });
+            self.start_prim_field_editing(item_id, &current_val, true);
             eprintln!("[ChartApp] prim_settings {} editing started", item_id);
             return;
         }
 
         // ── Coordinate editing: coord_{idx}_{price|bar} ── start inline editing
         if item_id.starts_with("coord_") {
-            use mlc_core::state::modal_data::TextEditingState;
             let is_price = item_id.ends_with("_price");
             let current_val: String = if let Some(pt_idx) = item_id.strip_prefix("coord_")
                 .and_then(|s| if is_price { s.strip_suffix("_price") } else { s.strip_suffix("_bar") })
@@ -1767,14 +1746,7 @@ impl ChartApp {
             } else {
                 String::new()
             };
-            let cursor = current_val.chars().count();
-            self.panel_app.primitive_settings_state.editing_text = Some(TextEditingState {
-                field_id: item_id.to_string(),
-                text: current_val,
-                cursor,
-                selection_start: Some(0),
-                blink_time: 0,
-            });
+            self.start_prim_field_editing(item_id, &current_val, true);
             eprintln!("[ChartApp] prim_settings {} editing started", item_id);
             return;
         }
@@ -1835,20 +1807,12 @@ impl ChartApp {
                         eprintln!("[ChartApp] prim_settings style_prop '{}' color picker opened", prop_id);
                     }
                     PropertyType::Number { .. } => {
-                        use mlc_core::state::modal_data::TextEditingState;
                         let current_val = match prop_value {
                             PropertyValue::Number(f) => format!("{}", f),
                             PropertyValue::Integer(i) => format!("{}", i),
                             _ => String::new(),
                         };
-                        let cursor = current_val.chars().count();
-                        self.panel_app.primitive_settings_state.editing_text = Some(TextEditingState {
-                            field_id: item_id.to_string(),
-                            text: current_val,
-                            cursor,
-                            selection_start: Some(0),
-                            blink_time: 0,
-                        });
+                        self.start_prim_field_editing(item_id, &current_val, true);
                         eprintln!("[ChartApp] prim_settings style_prop '{}' number editing started", prop_id);
                     }
                     _ => {
@@ -1973,21 +1937,13 @@ impl ChartApp {
                         eprintln!("[ChartApp] prim_settings text_prop '{}' color picker opened", prop_id);
                     }
                     PropertyType::Text { .. } | PropertyType::Number { .. } => {
-                        use mlc_core::state::modal_data::TextEditingState;
                         let current_val = match &prop_value {
                             PropertyValue::String(s) => s.clone(),
                             PropertyValue::Number(f) => format!("{}", f),
                             PropertyValue::Integer(i) => format!("{}", i),
                             _ => String::new(),
                         };
-                        let cursor = current_val.chars().count();
-                        self.panel_app.primitive_settings_state.editing_text = Some(TextEditingState {
-                            field_id: item_id.to_string(),
-                            text: current_val,
-                            cursor,
-                            selection_start: Some(0),
-                            blink_time: 0,
-                        });
+                        self.start_prim_field_editing(item_id, &current_val, true);
                         eprintln!("[ChartApp] prim_settings text_prop '{}' editing started", prop_id);
                     }
                     _ => {
@@ -2544,13 +2500,13 @@ impl ChartApp {
 
         // Auto-commit: if a param input is being edited and the click lands on a
         // DIFFERENT widget inside the same modal, commit the value (same as Enter).
-        if self.panel_app.indicator_settings_state.editing_text_state.is_some() {
-            let editing_field = self.panel_app.indicator_settings_state.editing_text_state
-                .as_ref()
-                .map(|e| e.field_id.clone())
-                .unwrap_or_default();
-            // The editing field_id is "indicator_param:<name>", the click item_id is
-            // "input:<name>", so reconstruct the active_field_id for comparison.
+        if self.panel_app.indicator_settings_state.active_field_id.is_some() {
+            let editing_field = self.panel_app.indicator_settings_state.active_field_id
+                .as_deref()
+                .unwrap_or_default()
+                .to_string();
+            // The active_field_id is "indicator_param:<name>", the click item_id is
+            // "input:<name>", so reconstruct for comparison.
             let click_targets_same_field = rest
                 .strip_prefix("item:")
                 .and_then(|item_id| item_id.strip_prefix("input:"))
@@ -2590,22 +2546,16 @@ impl ChartApp {
                 // Click-to-cursor: if the clicked field corresponds to the field being edited,
                 // reposition cursor using active_input_char_positions instead of restarting.
                 //
-                // For "input:<name>" items, editing field_id is "indicator_param:<name>".
-                // For "tf_<i>_min" / "tf_<i>_max" items, editing field_id equals item_id directly.
+                // active_field_id is "indicator_param:<name>" for input fields, or "tf_N_min/max"
+                // for timeframe visibility range inputs.
                 let already_editing = {
-                    let editing_field = self.panel_app.indicator_settings_state.editing_text_state
-                        .as_ref()
-                        .map(|e| e.field_id.as_str())
-                        .unwrap_or_default();
+                    let active = self.panel_app.indicator_settings_state.active_field_id.as_deref().unwrap_or_default();
                     if let Some(input_name) = item_id.strip_prefix("input:") {
-                        // "input:<name>" maps to "indicator_param:<name>"
-                        let active_field_id = format!("indicator_param:{}", input_name);
-                        editing_field == active_field_id
+                        active == format!("indicator_param:{}", input_name)
                     } else if (item_id.starts_with("tf_") && item_id.ends_with("_min"))
                         || (item_id.starts_with("tf_") && item_id.ends_with("_max"))
                     {
-                        // tf_ min/max items: field_id stored as item_id (e.g. "tf_1_min")
-                        editing_field == item_id
+                        active == item_id
                     } else {
                         false
                     }
@@ -2616,11 +2566,12 @@ impl ChartApp {
                         .map(|is| is.active_input_char_positions.clone())
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
+                        let wid = uzor::WidgetId::from(crate::text_input::INDICATOR_SETTINGS_FIELD);
                         let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
-                        if let Some(ref mut edit) = self.panel_app.indicator_settings_state.editing_text_state {
-                            edit.cursor = new_cursor;
-                            edit.selection_start = None;
-                            edit.reset_blink(0);
+                        let mut coord = self.input_coordinator.borrow_mut();
+                        if let Some(fs) = coord.text_fields_mut().field_state_mut(&wid) {
+                            fs.cursor = new_cursor;
+                            fs.selection_start = None;
                         }
                         return;
                     }
@@ -2746,11 +2697,14 @@ impl ChartApp {
     ///
     /// Applies the same logic as the Enter-key handler in `on_char_input` so that
     /// clicking a different widget inside the same modal auto-commits the in-progress value.
-    fn commit_ind_editing_text(&mut self) {
-        let (text, field) = match self.panel_app.indicator_settings_state.editing_text_state.take() {
-            Some(e) => (e.text, e.field_id),
+    pub(super) fn commit_ind_editing_text(&mut self) {
+        let field = match self.panel_app.indicator_settings_state.active_field_id.take() {
+            Some(f) => f,
             None => return,
         };
+        let wid = uzor::WidgetId::from(crate::text_input::INDICATOR_SETTINGS_FIELD);
+        let text = self.input_coordinator.borrow().text_fields().text(&wid).to_string();
+        self.input_coordinator.borrow_mut().text_fields_mut().blur();
         if let Some(param_name) = field.strip_prefix("indicator_param:") {
             use mlc_indicators::IndicatorParamValue as IndValue;
             if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
@@ -2793,6 +2747,23 @@ impl ChartApp {
         }
         // Snapshot after any committed indicator text change.
         self.snapshot_indicator_settings_to_user_manager();
+    }
+
+    /// Start inline editing for an indicator settings sub-field.
+    ///
+    /// Sets `active_field_id`, loads `text` into the TextFieldStore, and focuses
+    /// `INDICATOR_SETTINGS_FIELD`.
+    fn start_ind_field_editing(&mut self, field_id: &str, text: &str, select_all: bool) {
+        let wid = uzor::WidgetId::from(crate::text_input::INDICATOR_SETTINGS_FIELD);
+        self.panel_app.indicator_settings_state.active_field_id = Some(field_id.to_string());
+        let mut coord = self.input_coordinator.borrow_mut();
+        coord.text_fields_mut().set_text(&wid, text);
+        coord.text_fields_mut().focus(wid.clone());
+        if select_all {
+            if let Some(fs) = coord.text_fields_mut().field_state_mut(&wid) {
+                fs.selection_start = Some(0);
+            }
+        }
     }
 
     /// Handle a click on a specific indicator settings item.
@@ -2969,7 +2940,6 @@ impl ChartApp {
 
         // ── Timeframe min/max inputs — start inline text editing ─────────────
         if item_id.starts_with("tf_") && (item_id.ends_with("_min") || item_id.ends_with("_max")) {
-            use mlc_core::state::modal_data::TextEditingState;
             use mlc_core::drawing::TimeframeVisibilityConfig;
 
             let is_min = item_id.ends_with("_min");
@@ -2996,14 +2966,7 @@ impl ChartApp {
             } else {
                 String::new()
             };
-            let cursor = current_val.chars().count();
-            self.panel_app.indicator_settings_state.editing_text_state = Some(TextEditingState {
-                field_id: item_id.to_string(),
-                text: current_val,
-                cursor,
-                selection_start: Some(0),
-                blink_time: 0,
-            });
+            self.start_ind_field_editing(item_id, &current_val, true);
             eprintln!("[ChartApp] ind_settings {} editing started", item_id);
             return;
         }
@@ -3019,17 +2982,8 @@ impl ChartApp {
                         .map(|v| v.to_display_string())
                 })
                 .unwrap_or_default();
-            let cursor = current_value.chars().count();
             let field_id = format!("indicator_param:{}", param_name);
-            self.panel_app.indicator_settings_state.editing_text_state = Some(
-                mlc_core::state::modal_data::TextEditingState {
-                    field_id,
-                    text: current_value,
-                    cursor,
-                    selection_start: None,
-                    blink_time: 0,
-                }
-            );
+            self.start_ind_field_editing(&field_id, &current_value, false);
             eprintln!("[ChartApp] ind_settings text input editing started: {}", param_name);
             return;
         }

@@ -24,6 +24,62 @@ pub use mlc_core::state::modal_data::{
 };
 
 // =============================================================================
+// TextFieldStore widget IDs for settings sub-field editing
+//
+// Each settings modal uses ONE WidgetId for all its inline sub-field edits.
+// The `active_field_id: Option<String>` in each state struct carries the
+// discriminant (which concrete sub-field is being edited); text/cursor/selection
+// live in the TextFieldStore under these IDs.
+// =============================================================================
+
+/// Sub-field edit input in the Primitive Settings modal.
+pub const PRIMITIVE_SETTINGS_FIELD: &str = "prim_settings_field";
+
+/// Sub-field edit input in the Indicator Settings modal.
+pub const INDICATOR_SETTINGS_FIELD: &str = "ind_settings_field";
+
+/// Sub-field edit input in the Chart Settings modal (watermark text, etc.).
+pub const CHART_SETTINGS_FIELD: &str = "chart_settings_field";
+
+/// Sub-field edit input in the Compare Settings modal (tf min/max fields).
+pub const COMPARE_SETTINGS_FIELD: &str = "cmp_settings_field";
+
+// =============================================================================
+// Render proxy for the active sub-field (populated by ChartApp before render)
+// =============================================================================
+
+/// Render-time snapshot of the currently focused sub-field.
+///
+/// ChartApp populates this from TextFieldStore before calling the layout render
+/// function.  The layout layer reads `active_render` instead of the removed
+/// `editing_text` / `editing_text_state` fields.
+#[derive(Clone, Debug, Default)]
+pub struct ActiveFieldRender {
+    /// Text currently in the field (from TextFieldStore).
+    pub text: String,
+    /// Cursor character index.
+    pub cursor: usize,
+    /// Selection anchor (start of selection range, < cursor = forward selection).
+    pub selection_start: Option<usize>,
+    /// Whether the cursor blink phase is currently visible.
+    pub cursor_visible: bool,
+}
+
+impl ActiveFieldRender {
+    /// True if a selection exists (selection_start is Some and != cursor).
+    pub fn has_selection(&self) -> bool {
+        self.selection_start.map_or(false, |s| s != self.cursor)
+    }
+
+    /// Returns `(lo, hi)` selection byte-char bounds, or `None` if no selection.
+    pub fn selection_range(&self) -> Option<(usize, usize)> {
+        self.selection_start.and_then(|s| {
+            if s == self.cursor { None } else { Some((s.min(self.cursor), s.max(self.cursor))) }
+        })
+    }
+}
+
+// =============================================================================
 // Preset Name Input State
 // =============================================================================
 
@@ -235,9 +291,12 @@ pub struct PrimitiveSettingsState {
     pub color_picker_field: Option<String>,
     /// Currently hovered content item ID
     pub hovered_item_id: Option<String>,
-    /// Text input editing state (field_id, text, cursor_pos)
-    /// Set when a text field is being edited (e.g., "text_content")
-    pub editing_text: Option<TextEditingState>,
+    /// Which sub-field is currently being edited inside this modal.
+    /// The field_id discriminant — text/cursor/selection live in TextFieldStore
+    /// under `PRIMITIVE_SETTINGS_FIELD`.
+    pub active_field_id: Option<String>,
+    /// Render-time snapshot of the focused sub-field (populated by ChartApp before each render).
+    pub active_render: ActiveFieldRender,
     /// Slider drag state for number sliders
     pub slider_drag: Option<SliderDragState>,
     /// Whether the user is drag-selecting text in the active text input.
@@ -277,9 +336,9 @@ impl PrimitiveSettingsState {
         self.position = None;
         self.is_dragging = false;
         self.drag_offset = None;
-        // Clear editing state so zombie editing_text cannot intercept keypresses
+        // Clear editing state so stale active_field_id cannot intercept keypresses
         // in other modals after this one is closed.
-        self.editing_text = None;
+        self.active_field_id = None;
         self.slider_drag = None;
         self.text_select_dragging = false;
         self.open_line_style_dropdown = false;
@@ -652,8 +711,11 @@ pub struct ChartSettingsState {
     pub slider_drag: Option<SliderDragState>,
     /// Text input editing state (for slider value editing)
     pub text_input: TextInputState,
-    /// Inline text editing state (for watermark text etc.)
-    pub editing_text: Option<TextEditingState>,
+    /// Which sub-field is currently being edited inside this modal.
+    /// Text/cursor/selection live in TextFieldStore under `CHART_SETTINGS_FIELD`.
+    pub active_field_id: Option<String>,
+    /// Render-time snapshot of the focused sub-field (populated by ChartApp before each render).
+    pub active_render: ActiveFieldRender,
     /// Instrument checkbox: use previous close color
     pub instrument_use_prev_close: bool,
     /// Instrument checkbox: body enabled
@@ -690,7 +752,8 @@ impl Default for ChartSettingsState {
             scroll: ScrollState::default(),
             slider_drag: None,
             text_input: TextInputState::default(),
-            editing_text: None,
+            active_field_id: None,
+            active_render: ActiveFieldRender::default(),
             instrument_use_prev_close: false,
             instrument_body_enabled: true,
             instrument_border_enabled: true,
@@ -719,9 +782,9 @@ impl ChartSettingsState {
     /// Close the chart settings modal
     pub fn close(&mut self) {
         self.is_open = false;
-        // Clear editing state to prevent zombie editing_text from intercepting
+        // Clear editing state to prevent stale active_field_id from intercepting
         // keypresses in other modals after chart settings is closed.
-        self.editing_text = None;
+        self.active_field_id = None;
         self.slider_drag = None;
         self.text_select_dragging = false;
         self.template_dropdown_open = false;
@@ -1037,16 +1100,19 @@ pub struct IndicatorSettingsState {
     pub hovered_item_id: Option<String>,
     /// Scroll state for content area
     pub scroll: ScrollState,
-    /// Currently editing input field (param name) - LEGACY, use editing_text_state
+    /// Currently editing input field (param name) - LEGACY, use active_field_id
     pub editing_field: Option<String>,
-    /// Text being edited - LEGACY, use editing_text_state
+    /// Text being edited - LEGACY (still used as renderer fallback)
     pub editing_text: String,
-    /// Cursor position in editing text - LEGACY, use editing_text_state
+    /// Cursor position in editing text - LEGACY (still used as renderer fallback)
     pub editing_cursor: usize,
     /// Hovered footer button
     pub hovered_footer_button: Option<String>,
-    /// Text editing state (matches PrimitiveSettingsState pattern)
-    pub editing_text_state: Option<TextEditingState>,
+    /// Which sub-field is currently being edited inside this modal.
+    /// Text/cursor/selection live in TextFieldStore under `INDICATOR_SETTINGS_FIELD`.
+    pub active_field_id: Option<String>,
+    /// Render-time snapshot of the focused sub-field (populated by ChartApp before each render).
+    pub active_render: ActiveFieldRender,
     /// Slider drag state for dual-handle sliders
     pub slider_drag: Option<SliderDragState>,
     /// Currently open parameter dropdown menu (param_name)
@@ -1080,7 +1146,7 @@ impl IndicatorSettingsState {
         self.editing_text.clear();
         self.editing_cursor = 0;
         self.hovered_footer_button = None;
-        self.editing_text_state = None;
+        self.active_field_id = None;
         self.slider_drag = None;
         self.open_param_dropdown = None;
         self.template_dropdown_open = false;
@@ -1102,7 +1168,7 @@ impl IndicatorSettingsState {
         self.editing_text.clear();
         self.editing_cursor = 0;
         self.hovered_footer_button = None;
-        self.editing_text_state = None;
+        self.active_field_id = None;
         self.slider_drag = None;
         self.open_param_dropdown = None;
         self.template_dropdown_open = false;
@@ -1590,8 +1656,11 @@ pub struct CompareSettingsState {
     /// Original timeframe visibility (for Cancel revert).
     pub original_timeframe_visibility: Option<TimeframeVisibilityConfig>,
     // ---- Inline text editing for tf min/max number fields ----
-    /// Active text-field editing state (e.g., "tf_1_min").
-    pub editing_text: Option<TextEditingState>,
+    /// Which sub-field is currently being edited inside this modal.
+    /// Text/cursor/selection live in TextFieldStore under `COMPARE_SETTINGS_FIELD`.
+    pub active_field_id: Option<String>,
+    /// Render-time snapshot of the focused sub-field (populated by ChartApp before each render).
+    pub active_render: ActiveFieldRender,
     /// Whether the user is drag-selecting text in the active input field.
     pub text_select_dragging: bool,
     // ---- Template UI state ----
@@ -1630,7 +1699,8 @@ impl Default for CompareSettingsState {
             original_line_width: 2.0,
             original_line_style: "solid".to_string(),
             original_timeframe_visibility: None,
-            editing_text: None,
+            active_field_id: None,
+            active_render: ActiveFieldRender::default(),
             text_select_dragging: false,
             template_dropdown_open: false,
             applied_template_id: None,
@@ -1667,7 +1737,7 @@ impl CompareSettingsState {
         self.line_style_dropdown_open = false;
         self.hovered_item_id = None;
         self.slider_drag = None;
-        self.editing_text = None;
+        self.active_field_id = None;
         self.text_select_dragging = false;
         self.cached_symbol = symbol.to_string();
         self.cached_name = name.to_string();
@@ -1720,7 +1790,7 @@ impl CompareSettingsState {
         self.line_style_dropdown_open = false;
         self.hovered_item_id = None;
         self.slider_drag = None;
-        self.editing_text = None;
+        self.active_field_id = None;
         self.text_select_dragging = false;
         self.template_dropdown_open = false;
         self.save_template_mode = false;

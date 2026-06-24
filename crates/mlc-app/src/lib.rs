@@ -1453,6 +1453,16 @@ impl ChartApp {
             tf.register(text_input::WATCHLIST_SEARCH, TextFieldConfig::text());
             tf.register(text_input::WATCHLIST_GROUP_NAME, TextFieldConfig::text());
             tf.register(text_input::PRESET_NAME_INPUT, TextFieldConfig::text());
+            // Wave 2a template-name overlay fields.
+            tf.register(text_input::PRIMITIVE_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
+            tf.register(text_input::INDICATOR_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
+            tf.register(text_input::COMPARE_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
+            tf.register(text_input::CHART_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
+            // Wave 2b inline sub-field editor (one WidgetId per modal, discriminant in active_field_id).
+            tf.register(text_input::PRIMITIVE_SETTINGS_FIELD, TextFieldConfig::text());
+            tf.register(text_input::INDICATOR_SETTINGS_FIELD, TextFieldConfig::text());
+            tf.register(text_input::CHART_SETTINGS_FIELD, TextFieldConfig::text());
+            tf.register(text_input::COMPARE_SETTINGS_FIELD, TextFieldConfig::text());
         }
 
         // Populate sub_panes from the real indicator_manager.
@@ -1660,6 +1670,16 @@ impl ChartApp {
             tf.register(text_input::WATCHLIST_SEARCH, TextFieldConfig::text());
             tf.register(text_input::WATCHLIST_GROUP_NAME, TextFieldConfig::text());
             tf.register(text_input::PRESET_NAME_INPUT, TextFieldConfig::text());
+            // Wave 2a template-name overlay fields.
+            tf.register(text_input::PRIMITIVE_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
+            tf.register(text_input::INDICATOR_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
+            tf.register(text_input::COMPARE_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
+            tf.register(text_input::CHART_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
+            // Wave 2b inline sub-field editor (one WidgetId per modal, discriminant in active_field_id).
+            tf.register(text_input::PRIMITIVE_SETTINGS_FIELD, TextFieldConfig::text());
+            tf.register(text_input::INDICATOR_SETTINGS_FIELD, TextFieldConfig::text());
+            tf.register(text_input::CHART_SETTINGS_FIELD, TextFieldConfig::text());
+            tf.register(text_input::COMPARE_SETTINGS_FIELD, TextFieldConfig::text());
         }
 
         app.needs_initial_viewport_fit = true;
@@ -2467,6 +2487,16 @@ impl ChartApp {
             tf.register(text_input::WATCHLIST_SEARCH, TextFieldConfig::text());
             tf.register(text_input::WATCHLIST_GROUP_NAME, TextFieldConfig::text());
             tf.register(text_input::PRESET_NAME_INPUT, TextFieldConfig::text());
+            // Wave 2a template-name overlay fields.
+            tf.register(text_input::PRIMITIVE_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
+            tf.register(text_input::INDICATOR_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
+            tf.register(text_input::COMPARE_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
+            tf.register(text_input::CHART_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
+            // Wave 2b inline sub-field editor (one WidgetId per modal, discriminant in active_field_id).
+            tf.register(text_input::PRIMITIVE_SETTINGS_FIELD, TextFieldConfig::text());
+            tf.register(text_input::INDICATOR_SETTINGS_FIELD, TextFieldConfig::text());
+            tf.register(text_input::CHART_SETTINGS_FIELD, TextFieldConfig::text());
+            tf.register(text_input::COMPARE_SETTINGS_FIELD, TextFieldConfig::text());
         }
 
         app.sync_sub_panes_from_manager();
@@ -5230,6 +5260,57 @@ impl ChartApp {
                 smr.search_char_positions.clone(),
             );
         }
+        // Wave 2b: settings sub-field editors — update geometry so on_drag_start works.
+        if let Some(ref fr) = self.frame_result {
+            if let Some(ref ps) = fr.primitive_settings {
+                if let (Some(rect), positions) = (ps.active_input_rect, ps.active_input_char_positions.clone()) {
+                    if !positions.is_empty() {
+                        let prim_id = WidgetId::from(text_input::PRIMITIVE_SETTINGS_FIELD);
+                        self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                            &prim_id,
+                            (rect.x, rect.y, rect.width, rect.height),
+                            positions,
+                        );
+                    }
+                }
+            }
+            if let Some(ref ind_s) = fr.indicator_settings {
+                if let (Some(rect), positions) = (ind_s.active_input_rect, ind_s.active_input_char_positions.clone()) {
+                    if !positions.is_empty() {
+                        let ind_id = WidgetId::from(text_input::INDICATOR_SETTINGS_FIELD);
+                        self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                            &ind_id,
+                            (rect.x, rect.y, rect.width, rect.height),
+                            positions,
+                        );
+                    }
+                }
+            }
+            if let Some(ref cs) = fr.chart_settings {
+                if let (Some(rect), positions) = (cs.active_input_rect, cs.active_input_char_positions.clone()) {
+                    if !positions.is_empty() {
+                        let chart_id = WidgetId::from(text_input::CHART_SETTINGS_FIELD);
+                        self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                            &chart_id,
+                            (rect.x, rect.y, rect.width, rect.height),
+                            positions,
+                        );
+                    }
+                }
+            }
+            if let Some(ref cmp) = fr.compare_settings {
+                if let (Some(rect), positions) = (cmp.tf_active_input_rect, cmp.tf_active_input_char_positions.clone()) {
+                    if !positions.is_empty() {
+                        let cmp_id = WidgetId::from(text_input::COMPARE_SETTINGS_FIELD);
+                        self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                            &cmp_id,
+                            (rect.x, rect.y, rect.width, rect.height),
+                            positions,
+                        );
+                    }
+                }
+            }
+        }
 
         // Auto-snap chat scroll to bottom when new messages arrive.
         // Check ALL chat leaves (not just focused) so switching to a leaf
@@ -5825,6 +5906,80 @@ impl ChartApp {
         let dm_ref: Option<&mlc_core::drawing::DrawingManager> = active_dm_pid
             .and_then(|pid| drawings_guard_modals.get(pid));
         let chart_settings_data = self.build_chart_settings_data();
+
+        // Wave 2b: populate active_render from TextFieldStore before render_modals so
+        // that layout renderers can read text/cursor/selection without touching the store.
+        {
+            use mlc_layout::ui::modal_settings::ActiveFieldRender;
+            let tf = self.input_coordinator.borrow();
+            let tf = tf.text_fields();
+            let cursor_blink = tf.cursor_visible(current_time_ms);
+
+            // Primitive settings
+            if let Some(ref fid) = self.panel_app.primitive_settings_state.active_field_id.clone() {
+                let wid = uzor::WidgetId::from(text_input::PRIMITIVE_SETTINGS_FIELD);
+                let text = tf.text(&wid).to_string();
+                let cursor = tf.cursor(&wid);
+                let selection_start = tf.selection_range(&wid).map(|(s, _)| s);
+                self.panel_app.primitive_settings_state.active_render = ActiveFieldRender {
+                    text,
+                    cursor,
+                    selection_start,
+                    cursor_visible: cursor_blink && self.panel_app.primitive_settings_state.active_field_id.as_deref() == Some(fid.as_str()),
+                };
+            } else {
+                self.panel_app.primitive_settings_state.active_render = ActiveFieldRender::default();
+            }
+
+            // Indicator settings
+            if let Some(ref fid) = self.panel_app.indicator_settings_state.active_field_id.clone() {
+                let wid = uzor::WidgetId::from(text_input::INDICATOR_SETTINGS_FIELD);
+                let text = tf.text(&wid).to_string();
+                let cursor = tf.cursor(&wid);
+                let selection_start = tf.selection_range(&wid).map(|(s, _)| s);
+                self.panel_app.indicator_settings_state.active_render = ActiveFieldRender {
+                    text,
+                    cursor,
+                    selection_start,
+                    cursor_visible: cursor_blink && self.panel_app.indicator_settings_state.active_field_id.as_deref() == Some(fid.as_str()),
+                };
+            } else {
+                self.panel_app.indicator_settings_state.active_render = ActiveFieldRender::default();
+            }
+
+            // Chart settings
+            if let Some(ref fid) = self.panel_app.chart_settings_state.active_field_id.clone() {
+                let wid = uzor::WidgetId::from(text_input::CHART_SETTINGS_FIELD);
+                let text = tf.text(&wid).to_string();
+                let cursor = tf.cursor(&wid);
+                let selection_start = tf.selection_range(&wid).map(|(s, _)| s);
+                self.panel_app.chart_settings_state.active_render = ActiveFieldRender {
+                    text,
+                    cursor,
+                    selection_start,
+                    cursor_visible: cursor_blink && self.panel_app.chart_settings_state.active_field_id.as_deref() == Some(fid.as_str()),
+                };
+            } else {
+                self.panel_app.chart_settings_state.active_render = ActiveFieldRender::default();
+            }
+
+            // Compare settings
+            if let Some(ref fid) = self.panel_app.compare_settings_state.active_field_id.clone() {
+                let wid = uzor::WidgetId::from(text_input::COMPARE_SETTINGS_FIELD);
+                let text = tf.text(&wid).to_string();
+                let cursor = tf.cursor(&wid);
+                let selection_start = tf.selection_range(&wid).map(|(s, _)| s);
+                self.panel_app.compare_settings_state.active_render = ActiveFieldRender {
+                    text,
+                    cursor,
+                    selection_start,
+                    cursor_visible: cursor_blink && self.panel_app.compare_settings_state.active_field_id.as_deref() == Some(fid.as_str()),
+                };
+            } else {
+                self.panel_app.compare_settings_state.active_render = ActiveFieldRender::default();
+            }
+        }
+
         let theme_manager_ptr: *const mlc_core::theme::ThemeManager =
             &self.panel_app.theme_manager as *const _;
         let indicator_guard_modals = self.core.indicators();

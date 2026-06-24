@@ -167,10 +167,13 @@ impl ChartApp {
                 DualSliderHandle::Min => new_range.0.to_string(),
                 DualSliderHandle::Max => new_range.1.to_string(),
             };
-            if let Some(ref mut edit) = self.panel_app.primitive_settings_state.editing_text {
-                if edit.field_id == edit_field {
-                    edit.text = value_str;
-                    edit.cursor = edit.text.len();
+            if self.panel_app.primitive_settings_state.active_field_id.as_deref() == Some(edit_field.as_str()) {
+                let prim_wid = uzor::WidgetId::from(crate::text_input::PRIMITIVE_SETTINGS_FIELD);
+                let len = value_str.len();
+                let mut coord = self.input_coordinator.borrow_mut();
+                coord.text_fields_mut().set_text(&prim_wid, &value_str);
+                if let Some(fs) = coord.text_fields_mut().field_state_mut(&prim_wid) {
+                    fs.cursor = len;
                 }
             }
         }
@@ -278,10 +281,13 @@ impl ChartApp {
             DualSliderHandle::Min => new_range.0.to_string(),
             DualSliderHandle::Max => new_range.1.to_string(),
         };
-        if let Some(ref mut edit) = self.panel_app.indicator_settings_state.editing_text_state {
-            if edit.field_id == edit_field {
-                edit.text = value_str;
-                edit.cursor = edit.text.len();
+        if self.panel_app.indicator_settings_state.active_field_id.as_deref() == Some(edit_field.as_str()) {
+            let ind_wid = uzor::WidgetId::from(crate::text_input::INDICATOR_SETTINGS_FIELD);
+            let len = value_str.len();
+            let mut coord = self.input_coordinator.borrow_mut();
+            coord.text_fields_mut().set_text(&ind_wid, &value_str);
+            if let Some(fs) = coord.text_fields_mut().field_state_mut(&ind_wid) {
+                fs.cursor = len;
             }
         }
 
@@ -396,10 +402,13 @@ impl ChartApp {
             DualSliderHandle::Min => new_range.0.to_string(),
             DualSliderHandle::Max => new_range.1.to_string(),
         };
-        if let Some(ref mut edit) = self.panel_app.compare_settings_state.editing_text {
-            if edit.field_id == edit_field {
-                edit.text = value_str;
-                edit.cursor = edit.text.len();
+        if self.panel_app.compare_settings_state.active_field_id.as_deref() == Some(edit_field.as_str()) {
+            let cmp_wid = uzor::WidgetId::from(crate::text_input::COMPARE_SETTINGS_FIELD);
+            let len = value_str.len();
+            let mut coord = self.input_coordinator.borrow_mut();
+            coord.text_fields_mut().set_text(&cmp_wid, &value_str);
+            if let Some(fs) = coord.text_fields_mut().field_state_mut(&cmp_wid) {
+                fs.cursor = len;
             }
         }
 

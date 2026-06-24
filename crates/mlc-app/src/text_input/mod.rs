@@ -59,6 +59,21 @@ pub const COMPARE_SETTINGS_TEMPLATE_NAME: &str = "cmp_tmpl_name";
 /// Template name input for the "Save as Template" overlay in chart settings.
 pub const CHART_SETTINGS_TEMPLATE_NAME: &str = "chart_tmpl_name";
 
+/// Sub-field edit input in the Primitive Settings modal.
+/// One WidgetId covers ALL inline sub-fields (stroke_width, text_content, level_N_value,
+/// coord_N_price, coord_N_bar, tf_N_min/max, style_prop:*, text_prop:*).
+/// The discriminant (which sub-field) lives in `PrimitiveSettingsState.active_field_id`.
+pub const PRIMITIVE_SETTINGS_FIELD: &str = "prim_settings_field";
+
+/// Sub-field edit input in the Indicator Settings modal.
+pub const INDICATOR_SETTINGS_FIELD: &str = "ind_settings_field";
+
+/// Sub-field edit input in the Chart Settings modal (watermark text, etc.).
+pub const CHART_SETTINGS_FIELD: &str = "chart_settings_field";
+
+/// Sub-field edit input in the Compare Settings modal (tf min/max fields).
+pub const COMPARE_SETTINGS_FIELD: &str = "cmp_settings_field";
+
 /// New profile name input (profile manager / welcome wizard / settings modal).
 pub const NEW_PROFILE_NAME: &str = "new_profile_name";
 

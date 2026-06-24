@@ -62,7 +62,7 @@ pub fn render_indicator_settings_modal(
     signals_enabled: bool,
     signal_display: &SignalDisplayConfig,
     timeframe_visibility: Option<&TimeframeVisibilityConfig>,
-    current_time_ms: u64,
+    _current_time_ms: u64,
     frame_theme: &FrameTheme,
     toolbar_theme: &ToolbarTheme,
     input_coordinator: &mut uzor::input::InputCoordinator,
@@ -270,10 +270,7 @@ pub fn render_indicator_settings_modal(
 
                 // Check if editing this param
                 let field_id = format!("indicator_param:{}", param_name);
-                let is_editing = indicator_state.editing_text_state
-                    .as_ref()
-                    .map(|e| e.field_id == field_id)
-                    .unwrap_or(false)
+                let is_editing = indicator_state.active_field_id.as_deref() == Some(field_id.as_str())
                     || indicator_state.is_editing_field(param_name);
                 let is_hovered = indicator_state.hovered_item_id.as_deref() == Some(param_name);
 
@@ -370,15 +367,12 @@ pub fn render_indicator_settings_modal(
                         // Default: render text input for Int/Float
                         let input_width = 80.0;
 
-                        // Get text and cursor from editing_text_state or legacy fields
-                        let (display_text, cursor_pos, selection_start, selection_end) = if let Some(ref edit) = indicator_state.editing_text_state {
-                            if edit.field_id == field_id {
-                                (edit.text.as_str(), edit.cursor, edit.selection_start, Some(edit.cursor))
-                            } else {
-                                (param_value.as_str(), param_value.len(), None, None)
-                            }
-                        } else if is_editing {
-                            // Legacy fallback
+                        // Get text and cursor from active_render (populated by ChartApp from TextFieldStore).
+                        let ar = &indicator_state.active_render;
+                        let (display_text, cursor_pos, selection_start, selection_end) = if is_editing {
+                            (ar.text.as_str(), ar.cursor, ar.selection_start, Some(ar.cursor))
+                        } else if indicator_state.is_editing_field(param_name) {
+                            // Legacy fallback for LEGACY editing_text/editing_cursor
                             (indicator_state.editing_text.as_str(), indicator_state.editing_cursor, None, None)
                         } else {
                             (param_value.as_str(), param_value.len(), None, None)
@@ -406,10 +400,7 @@ pub fn render_indicator_settings_modal(
 
                         // Draw cursor when editing (with blink)
                         if is_editing {
-                            let cursor_visible = indicator_state.editing_text_state
-                                .as_ref()
-                                .map(|e| e.is_cursor_visible(current_time_ms))
-                                .unwrap_or(true);
+                            let cursor_visible = indicator_state.active_render.cursor_visible;
 
                             if cursor_visible {
                                 draw_input_cursor(
@@ -592,21 +583,18 @@ pub fn render_indicator_settings_modal(
                     let min_field_id = format!("tf_{}_min", i);
                     let max_field_id = format!("tf_{}_max", i);
 
-                    let editing_min_info = indicator_state.editing_text_state.as_ref()
-                        .filter(|e| e.field_id == min_field_id)
-                        .map(|e| SliderEditingInfo {
-                            text: &e.text,
-                            cursor: e.cursor,
-                            selection_start: e.selection_start,
-                        });
+                    let ar = &indicator_state.active_render;
+                    let editing_min_info = if indicator_state.active_field_id.as_deref() == Some(min_field_id.as_str()) {
+                        Some(SliderEditingInfo { text: ar.text.as_str(), cursor: ar.cursor, selection_start: ar.selection_start })
+                    } else {
+                        None
+                    };
 
-                    let editing_max_info = indicator_state.editing_text_state.as_ref()
-                        .filter(|e| e.field_id == max_field_id)
-                        .map(|e| SliderEditingInfo {
-                            text: &e.text,
-                            cursor: e.cursor,
-                            selection_start: e.selection_start,
-                        });
+                    let editing_max_info = if indicator_state.active_field_id.as_deref() == Some(max_field_id.as_str()) {
+                        Some(SliderEditingInfo { text: ar.text.as_str(), cursor: ar.cursor, selection_start: ar.selection_start })
+                    } else {
+                        None
+                    };
 
                     let slider_field_id = format!("tf_{}_slider", i);
                     let hovered = indicator_state.slider_drag.as_ref()
@@ -652,10 +640,7 @@ pub fn render_indicator_settings_modal(
                     // Register input fields and populate active_input_rect/char_positions
                     if let Some(min_input_rect) = slider_result.min_input_rect {
                         result.content_items.push((min_field_id.clone(), min_input_rect));
-                        if indicator_state.editing_text_state.as_ref()
-                            .map(|e| e.field_id == min_field_id)
-                            .unwrap_or(false)
-                        {
+                        if indicator_state.active_field_id.as_deref() == Some(min_field_id.as_str()) {
                             result.active_input_rect = Some(min_input_rect);
                             if let Some(ref ir) = slider_result.min_input_result {
                                 result.active_input_char_positions = ir.char_x_positions.clone();
@@ -664,10 +649,7 @@ pub fn render_indicator_settings_modal(
                     }
                     if let Some(max_input_rect) = slider_result.max_input_rect {
                         result.content_items.push((max_field_id.clone(), max_input_rect));
-                        if indicator_state.editing_text_state.as_ref()
-                            .map(|e| e.field_id == max_field_id)
-                            .unwrap_or(false)
-                        {
+                        if indicator_state.active_field_id.as_deref() == Some(max_field_id.as_str()) {
                             result.active_input_rect = Some(max_input_rect);
                             if let Some(ref ir) = slider_result.max_input_result {
                                 result.active_input_char_positions = ir.char_x_positions.clone();

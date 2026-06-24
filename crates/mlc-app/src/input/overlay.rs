@@ -397,16 +397,18 @@ impl ChartApp {
                     };
                     let current_val = if is_min { cur_min } else { cur_max };
                     let text = current_val.to_string();
-                    let cursor = text.len();
-                    self.panel_app.compare_settings_state.editing_text = Some(
-                        mlc_core::state::modal_data::TextEditingState {
-                            field_id,
-                            text,
-                            cursor,
-                            selection_start: Some(0),
-                            blink_time: 0,
+                    // Wave 2b: start editing via TextFieldStore.
+                    let cmp_wid = uzor::WidgetId::from(crate::text_input::COMPARE_SETTINGS_FIELD);
+                    self.panel_app.compare_settings_state.active_field_id = Some(field_id);
+                    {
+                        let mut coord = self.input_coordinator.borrow_mut();
+                        coord.text_fields_mut().set_text(&cmp_wid, &text);
+                        coord.text_fields_mut().focus(cmp_wid.clone());
+                        if let Some(fs) = coord.text_fields_mut().field_state_mut(&cmp_wid) {
+                            fs.cursor = text.len();
+                            fs.selection_start = Some(0);
                         }
-                    );
+                    }
                     eprintln!("[ChartApp] cmp_settings editing tf_{} {}", tf_idx, if is_min { "min" } else { "max" });
                 }
             }
@@ -588,6 +590,21 @@ impl ChartApp {
         }
         self.autosave_snapshot();
         eprintln!("[ChartApp] cmp_settings tf_{} {:?} committed: {}", tf_idx, handle, new_val);
+    }
+
+    /// Commit the active compare-settings sub-field from TextFieldStore (Wave 2b).
+    ///
+    /// Reads the current text from the store, takes `active_field_id`, blurs the
+    /// field, then delegates to `apply_cmp_tf_text_commit`.
+    pub(super) fn commit_cmp_editing_text(&mut self) {
+        let cmp_wid = uzor::WidgetId::from(crate::text_input::COMPARE_SETTINGS_FIELD);
+        let field_id = match self.panel_app.compare_settings_state.active_field_id.take() {
+            Some(f) => f,
+            None => return,
+        };
+        let text = self.input_coordinator.borrow().text_fields().text(&cmp_wid).to_string();
+        self.input_coordinator.borrow_mut().text_fields_mut().blur();
+        self.apply_cmp_tf_text_commit(&field_id, &text);
     }
 
     /// Handle clicks on the indicator overlay widget (top-left of chart).

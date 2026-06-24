@@ -674,21 +674,18 @@ fn draw_visibility_tab(
             let min_field_id = format!("tf_{}_min", i);
             let max_field_id = format!("tf_{}_max", i);
 
-            let editing_min_info = state.editing_text.as_ref()
-                .filter(|e| e.field_id == min_field_id)
-                .map(|e| SliderEditingInfo {
-                    text: &e.text,
-                    cursor: e.cursor,
-                    selection_start: e.selection_start,
-                });
+            let ar = &state.active_render;
+            let editing_min_info = if state.active_field_id.as_deref() == Some(min_field_id.as_str()) {
+                Some(SliderEditingInfo { text: ar.text.as_str(), cursor: ar.cursor, selection_start: ar.selection_start })
+            } else {
+                None
+            };
 
-            let editing_max_info = state.editing_text.as_ref()
-                .filter(|e| e.field_id == max_field_id)
-                .map(|e| SliderEditingInfo {
-                    text: &e.text,
-                    cursor: e.cursor,
-                    selection_start: e.selection_start,
-                });
+            let editing_max_info = if state.active_field_id.as_deref() == Some(max_field_id.as_str()) {
+                Some(SliderEditingInfo { text: ar.text.as_str(), cursor: ar.cursor, selection_start: ar.selection_start })
+            } else {
+                None
+            };
 
             let slider_field_id = format!("tf_{}_slider", i);
             let hovered = state.slider_drag.as_ref()
@@ -732,7 +729,7 @@ fn draw_visibility_tab(
 
             if let Some(min_input_rect) = slider_result.min_input_rect {
                 result.tf_content_items.push((min_field_id.clone(), min_input_rect));
-                if state.editing_text.as_ref().map(|e| e.field_id == min_field_id).unwrap_or(false) {
+                if state.active_field_id.as_deref() == Some(min_field_id.as_str()) {
                     result.tf_active_input_rect = Some(min_input_rect);
                     if let Some(ref ir) = slider_result.min_input_result {
                         result.tf_active_input_char_positions = ir.char_x_positions.clone();
@@ -741,7 +738,7 @@ fn draw_visibility_tab(
             }
             if let Some(max_input_rect) = slider_result.max_input_rect {
                 result.tf_content_items.push((max_field_id.clone(), max_input_rect));
-                if state.editing_text.as_ref().map(|e| e.field_id == max_field_id).unwrap_or(false) {
+                if state.active_field_id.as_deref() == Some(max_field_id.as_str()) {
                     result.tf_active_input_rect = Some(max_input_rect);
                     if let Some(ref ir) = slider_result.max_input_result {
                         result.tf_active_input_char_positions = ir.char_x_positions.clone();

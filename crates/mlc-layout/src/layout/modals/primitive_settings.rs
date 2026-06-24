@@ -3,7 +3,7 @@
 use mlc_core::engine::render::RenderContext;
 use crate::ui::toolbar_render::ToolbarTheme;
 use uzor::types::Rect as WidgetRect;
-use crate::ui::modal_settings::{PrimitiveSettingsState, PrimitiveSettingsTab, DualSliderHandle};
+use crate::ui::modal_settings::{PrimitiveSettingsState, PrimitiveSettingsTab, DualSliderHandle, ActiveFieldRender};
 use mlc_core::drawing::{DrawingManager, LineStyle};
 use mlc_core::drawing::primitives_v2::config::PropertyType;
 use crate::layout::render_frame::{
@@ -26,7 +26,8 @@ fn render_level_item(
     toolbar_theme: &ToolbarTheme,
     prim_data: &mlc_core::drawing::PrimitiveData,
     result: &mut PrimitiveSettingsResult,
-    editing_text: Option<&crate::ui::modal_settings::TextEditingState>,
+    active_field_id: Option<&str>,
+    active_render: &ActiveFieldRender,
     x: f64,
     y: f64,
     row_height: f64,
@@ -37,9 +38,7 @@ fn render_level_item(
     let level_label = format!("{:.3}", config.level);
 
     // Check if this field is being edited
-    let is_editing = editing_text
-        .map(|e| e.field_id == field_id)
-        .unwrap_or(false);
+    let is_editing = active_field_id == Some(field_id.as_str());
 
     // Visibility checkbox - clickable
     let check_rect = WidgetRect::new(x, y + 4.0, 16.0, 16.0);
@@ -61,13 +60,9 @@ fn render_level_item(
     // Level value input - editable field
     let value_rect = WidgetRect::new(x + 24.0, y + 2.0, 55.0, row_height - 4.0);
 
-    // Get display text and cursor/selection from editing state
-    let (display_text, cursor_pos, selection_start, selection_end): (&str, usize, Option<usize>, Option<usize>) = if let Some(edit) = editing_text {
-        if edit.field_id == field_id {
-            (&edit.text as &str, edit.cursor, edit.selection_start, Some(edit.cursor))
-        } else {
-            (&level_label as &str, level_label.len(), None, None)
-        }
+    // Get display text and cursor/selection from active_render (populated from TextFieldStore).
+    let (display_text, cursor_pos, selection_start, selection_end): (&str, usize, Option<usize>, Option<usize>) = if is_editing {
+        (active_render.text.as_str(), active_render.cursor, active_render.selection_start, Some(active_render.cursor))
     } else {
         (&level_label as &str, level_label.len(), None, None)
     };
@@ -478,13 +473,12 @@ pub fn render_primitive_settings_modal(
                 .unwrap_or(prim_data.width);
 
             // Build editing info if the user is actively typing into the value field.
-            let stroke_width_editing = state.editing_text.as_ref()
-                .filter(|e| e.field_id == "stroke_width_value")
-                .map(|e| SliderEditingInfo {
-                    text: &e.text,
-                    cursor: e.cursor,
-                    selection_start: e.selection_start,
-                });
+            let ar = &state.active_render;
+            let stroke_width_editing = if state.active_field_id.as_deref() == Some("stroke_width_value") {
+                Some(SliderEditingInfo { text: ar.text.as_str(), cursor: ar.cursor, selection_start: ar.selection_start })
+            } else {
+                None
+            };
 
             let slider_result = render_single_slider(
                 ctx,
@@ -502,7 +496,7 @@ pub fn render_primitive_settings_modal(
                 result.content_items.push(("stroke_width_value".to_string(), input_rect));
 
                 // Expose cursor and char positions so click-to-cursor and drag-to-select work.
-                if state.editing_text.as_ref().map(|e| e.field_id == "stroke_width_value").unwrap_or(false) {
+                if state.active_field_id.as_deref() == Some("stroke_width_value") {
                     result.active_input_rect = Some(input_rect);
                     if let Some(ref ir) = slider_result.input_result {
                         result.active_input_char_positions = ir.char_x_positions.clone();
@@ -844,18 +838,13 @@ pub fn render_primitive_settings_modal(
                             draw_label(ctx, &prop.name, row_y);
                             let input_rect = WidgetRect::new(control_left, row_y + 2.0, control_width.min(180.0), row_height - 4.0);
                             let field_id = format!("text_prop:{}", prop.id);
-                            let is_editing = state.editing_text.as_ref()
-                                .map(|e| e.field_id == field_id)
-                                .unwrap_or(false);
+                            let is_editing = state.active_field_id.as_deref() == Some(field_id.as_str());
 
                             let default_text = prop.value.as_string().unwrap_or("");
                             let empty_placeholder = "(пусто)";
-                            let (display_text, cursor_pos, selection_start, selection_end): (&str, usize, Option<usize>, Option<usize>) = if let Some(ref edit) = state.editing_text {
-                                if edit.field_id == field_id {
-                                    (&edit.text, edit.cursor, edit.selection_start, Some(edit.cursor))
-                                } else {
-                                    (if default_text.is_empty() { empty_placeholder } else { default_text }, default_text.len(), None, None)
-                                }
+                            let ar = &state.active_render;
+                            let (display_text, cursor_pos, selection_start, selection_end): (&str, usize, Option<usize>, Option<usize>) = if is_editing {
+                                (ar.text.as_str(), ar.cursor, ar.selection_start, Some(ar.cursor))
                             } else {
                                 (if default_text.is_empty() { empty_placeholder } else { default_text }, default_text.len(), None, None)
                             };
@@ -893,19 +882,14 @@ pub fn render_primitive_settings_modal(
                             let current_val = prop.value.as_number().unwrap_or(0.0);
                             let input_rect = WidgetRect::new(control_left, row_y + 2.0, 70.0, row_height - 4.0);
                             let field_id = format!("text_prop:{}", prop.id);
-                            let is_editing = state.editing_text.as_ref()
-                                .map(|e| e.field_id == field_id)
-                                .unwrap_or(false);
+                            let is_editing = state.active_field_id.as_deref() == Some(field_id.as_str());
 
                             let default_text = format!("{:.0}", current_val);
-                            let (display_text, cursor_pos, selection_start, selection_end): (&str, usize, Option<usize>, Option<usize>) = if let Some(ref edit) = state.editing_text {
-                                if edit.field_id == field_id {
-                                    (&edit.text, edit.cursor, edit.selection_start, Some(edit.cursor))
-                                } else {
-                                    (&default_text, default_text.len(), None, None)
-                                }
+                            let ar = &state.active_render;
+                            let (display_text, cursor_pos, selection_start, selection_end): (&str, usize, Option<usize>, Option<usize>) = if is_editing {
+                                (ar.text.as_str(), ar.cursor, ar.selection_start, Some(ar.cursor))
                             } else {
-                                (&default_text, default_text.len(), None, None)
+                                (default_text.as_str(), default_text.len(), None, None)
                             };
 
                             let input_config = InputConfig::new(display_text)
@@ -1060,17 +1044,12 @@ pub fn render_primitive_settings_modal(
                 draw_label(ctx, "Текст:", row_y);
                 let input_rect = WidgetRect::new(control_left, row_y + 2.0, control_width.min(180.0), row_height - 4.0);
 
-                let is_editing = state.editing_text.as_ref()
-                    .map(|e| e.field_id == "text_content")
-                    .unwrap_or(false);
+                let is_editing = state.active_field_id.as_deref() == Some("text_content");
 
-                let (display_text, cursor_pos, selection_start, selection_end): (&str, usize, Option<usize>, Option<usize>) = if let Some(ref edit) = state.editing_text {
-                    if edit.field_id == "text_content" {
-                        let text = if edit.text.is_empty() { "" } else { &edit.text };
-                        (text, edit.cursor, edit.selection_start, Some(edit.cursor))
-                    } else {
-                        (if current_content.is_empty() { "(пусто)" } else { current_content }, current_content.len(), None, None)
-                    }
+                let ar = &state.active_render;
+                let (display_text, cursor_pos, selection_start, selection_end): (&str, usize, Option<usize>, Option<usize>) = if is_editing {
+                    let text = if ar.text.is_empty() { "" } else { &ar.text };
+                    (text, ar.cursor, ar.selection_start, Some(ar.cursor))
                 } else {
                     (if current_content.is_empty() { "(пусто)" } else { current_content }, current_content.len(), None, None)
                 };
@@ -1113,19 +1092,14 @@ pub fn render_primitive_settings_modal(
                 draw_label(ctx, "Размер шрифта:", row_y);
                 let font_size_rect = WidgetRect::new(control_left, row_y + 2.0, 80.0, row_height - 4.0);
 
-                let is_editing_font_size = state.editing_text.as_ref()
-                    .map(|e| e.field_id == "text_font_size")
-                    .unwrap_or(false);
+                let is_editing_font_size = state.active_field_id.as_deref() == Some("text_font_size");
 
                 let font_size_str = format!("{:.0}", current_font_size);
-                let (fs_display, fs_cursor, fs_sel_start, fs_sel_end): (&str, usize, Option<usize>, Option<usize>) = if let Some(ref edit) = state.editing_text {
-                    if edit.field_id == "text_font_size" {
-                        (&edit.text, edit.cursor, edit.selection_start, Some(edit.cursor))
-                    } else {
-                        (&font_size_str, font_size_str.len(), None, None)
-                    }
+                let ar = &state.active_render;
+                let (fs_display, fs_cursor, fs_sel_start, fs_sel_end): (&str, usize, Option<usize>, Option<usize>) = if is_editing_font_size {
+                    (ar.text.as_str(), ar.cursor, ar.selection_start, Some(ar.cursor))
                 } else {
-                    (&font_size_str, font_size_str.len(), None, None)
+                    (font_size_str.as_str(), font_size_str.len(), None, None)
                 };
 
                 let font_size_input_config = InputConfig::new(fs_display)
@@ -1303,9 +1277,7 @@ pub fn render_primitive_settings_modal(
                 // Price field
                 let price_field_id = format!("coord_{}_price", i);
                 let price_rect = WidgetRect::new(control_left, field_y, field_width, field_height);
-                let is_editing_price = state.editing_text.as_ref()
-                    .map(|e| e.field_id == price_field_id)
-                    .unwrap_or(false);
+                let is_editing_price = state.active_field_id.as_deref() == Some(price_field_id.as_str());
 
                 ctx.set_font("11px sans-serif");
                 ctx.set_fill_color(&toolbar_theme.item_text);
@@ -1314,14 +1286,11 @@ pub fn render_primitive_settings_modal(
                 ctx.fill_text(t_indicator(IndicatorKey::PriceLabel), control_left, field_y - 2.0);
 
                 let price_text = format!("{:.4}", price);
+                let ar = &state.active_render;
                 let (price_display, price_cursor, price_sel_start, price_sel_end) = if is_editing_price {
-                    if let Some(ref edit) = state.editing_text {
-                        (&edit.text, edit.cursor, edit.selection_start, Some(edit.cursor))
-                    } else {
-                        (&price_text, price_text.len(), None, None)
-                    }
+                    (ar.text.as_str(), ar.cursor, ar.selection_start, Some(ar.cursor))
                 } else {
-                    (&price_text, price_text.len(), None, None)
+                    (price_text.as_str(), price_text.len(), None, None)
                 };
 
                 let price_input_config = InputConfig::new(price_display)
@@ -1354,9 +1323,7 @@ pub fn render_primitive_settings_modal(
                 // Bar field
                 let bar_field_id = format!("coord_{}_bar", i);
                 let bar_rect = WidgetRect::new(control_left + field_width + field_gap, field_y, field_width, field_height);
-                let is_editing_bar = state.editing_text.as_ref()
-                    .map(|e| e.field_id == bar_field_id)
-                    .unwrap_or(false);
+                let is_editing_bar = state.active_field_id.as_deref() == Some(bar_field_id.as_str());
 
                 ctx.set_font("11px sans-serif");
                 ctx.set_fill_color(&toolbar_theme.item_text);
@@ -1365,14 +1332,11 @@ pub fn render_primitive_settings_modal(
                 ctx.fill_text(t_indicator(IndicatorKey::BarLabel), bar_rect.x, field_y - 2.0);
 
                 let bar_text = format!("{:.0}", bar);
+                let ar = &state.active_render;
                 let (bar_display, bar_cursor, bar_sel_start, bar_sel_end) = if is_editing_bar {
-                    if let Some(ref edit) = state.editing_text {
-                        (&edit.text, edit.cursor, edit.selection_start, Some(edit.cursor))
-                    } else {
-                        (&bar_text, bar_text.len(), None, None)
-                    }
+                    (ar.text.as_str(), ar.cursor, ar.selection_start, Some(ar.cursor))
                 } else {
-                    (&bar_text, bar_text.len(), None, None)
+                    (bar_text.as_str(), bar_text.len(), None, None)
                 };
 
                 let bar_input_config = InputConfig::new(bar_display)
@@ -1426,21 +1390,21 @@ pub fn render_primitive_settings_modal(
                         if col1_idx < num_levels {
                             let config = &configs[col1_idx];
                             render_level_item(ctx, frame_theme, toolbar_theme, &prim_data,
-                                             &mut result, state.editing_text.as_ref(),
+                                             &mut result, state.active_field_id.as_deref(), &state.active_render,
                                              col1_x, row_y, row_height, col1_idx, config);
                         }
 
                         if col2_idx < num_levels {
                             let config = &configs[col2_idx];
                             render_level_item(ctx, frame_theme, toolbar_theme, &prim_data,
-                                             &mut result, state.editing_text.as_ref(),
+                                             &mut result, state.active_field_id.as_deref(), &state.active_render,
                                              col2_x, row_y, row_height, col2_idx, config);
                         }
 
                         if col3_idx < num_levels {
                             let config = &configs[col3_idx];
                             render_level_item(ctx, frame_theme, toolbar_theme, &prim_data,
-                                             &mut result, state.editing_text.as_ref(),
+                                             &mut result, state.active_field_id.as_deref(), &state.active_render,
                                              col3_x, row_y, row_height, col3_idx, config);
                         }
 
@@ -1635,21 +1599,18 @@ pub fn render_primitive_settings_modal(
                     let min_field_id = format!("tf_{}_min", i);
                     let max_field_id = format!("tf_{}_max", i);
 
-                    let editing_min_info = state.editing_text.as_ref()
-                        .filter(|e| e.field_id == min_field_id)
-                        .map(|e| SliderEditingInfo {
-                            text: &e.text,
-                            cursor: e.cursor,
-                            selection_start: e.selection_start,
-                        });
+                    let ar = &state.active_render;
+                    let editing_min_info = if state.active_field_id.as_deref() == Some(min_field_id.as_str()) {
+                        Some(SliderEditingInfo { text: ar.text.as_str(), cursor: ar.cursor, selection_start: ar.selection_start })
+                    } else {
+                        None
+                    };
 
-                    let editing_max_info = state.editing_text.as_ref()
-                        .filter(|e| e.field_id == max_field_id)
-                        .map(|e| SliderEditingInfo {
-                            text: &e.text,
-                            cursor: e.cursor,
-                            selection_start: e.selection_start,
-                        });
+                    let editing_max_info = if state.active_field_id.as_deref() == Some(max_field_id.as_str()) {
+                        Some(SliderEditingInfo { text: ar.text.as_str(), cursor: ar.cursor, selection_start: ar.selection_start })
+                    } else {
+                        None
+                    };
 
                     let slider_field_id = format!("tf_{}_slider", i);
                     let hovered = state.slider_drag.as_ref()
@@ -1696,7 +1657,7 @@ pub fn render_primitive_settings_modal(
                         result.content_items.push((min_field_id.clone(), min_input_rect));
 
                         // Expose cursor/char positions so click-to-cursor and drag-to-select work.
-                        if state.editing_text.as_ref().map(|e| e.field_id == min_field_id).unwrap_or(false) {
+                        if state.active_field_id.as_deref() == Some(min_field_id.as_str()) {
                             result.active_input_rect = Some(min_input_rect);
                             if let Some(ref ir) = slider_result.min_input_result {
                                 result.active_input_char_positions = ir.char_x_positions.clone();
@@ -1707,7 +1668,7 @@ pub fn render_primitive_settings_modal(
                         result.content_items.push((max_field_id.clone(), max_input_rect));
 
                         // Expose cursor/char positions so click-to-cursor and drag-to-select work.
-                        if state.editing_text.as_ref().map(|e| e.field_id == max_field_id).unwrap_or(false) {
+                        if state.active_field_id.as_deref() == Some(max_field_id.as_str()) {
                             result.active_input_rect = Some(max_input_rect);
                             if let Some(ref ir) = slider_result.max_input_result {
                                 result.active_input_char_positions = ir.char_x_positions.clone();

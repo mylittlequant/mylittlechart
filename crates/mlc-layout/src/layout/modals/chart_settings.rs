@@ -1903,17 +1903,11 @@ fn render_status_line_settings(
     ctx.fill_text(t_settings(SettingsKey::Text), x, row_y + row_height / 2.0);
 
     let input_rect = WidgetRect::new(dropdown_x, row_y + 2.0, 200.0, row_height - 4.0);
-    let is_editing = chart_settings_state.editing_text.as_ref()
-        .map(|e| e.field_id == "status:watermark_text")
-        .unwrap_or(false);
-
-    let (display_text, cursor_pos, selection_start, selection_end) = if let Some(ref edit) = chart_settings_state.editing_text {
-        if edit.field_id == "status:watermark_text" {
-            let text: &str = if edit.text.is_empty() { "" } else { &edit.text };
-            (text, edit.cursor, edit.selection_start, Some(edit.cursor))
-        } else {
-            (settings.watermark_text.as_str(), settings.watermark_text.len(), None, None)
-        }
+    let is_editing = chart_settings_state.active_field_id.as_deref() == Some("status:watermark_text");
+    let ar = &chart_settings_state.active_render;
+    let (display_text, cursor_pos, selection_start, selection_end) = if is_editing {
+        let text: &str = if ar.text.is_empty() { "" } else { &ar.text };
+        (text, ar.cursor, ar.selection_start, Some(ar.cursor))
     } else {
         (settings.watermark_text.as_str(), settings.watermark_text.len(), None, None)
     };
