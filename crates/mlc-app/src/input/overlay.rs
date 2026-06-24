@@ -426,16 +426,9 @@ impl ChartApp {
                     .max()
                     .unwrap_or(0);
                 let default_name = format!("{}{}", prefix, max_n + 1);
-                let default_cursor = default_name.chars().count();
-                self.panel_app.compare_settings_state.template_name_editing = Some(
-                    mlc_core::state::modal_data::TextEditingState {
-                        field_id: "template_name".to_string(),
-                        text: default_name,
-                        cursor: default_cursor,
-                        selection_start: None,
-                        blink_time: 0,
-                    }
-                );
+                let field_id = uzor::WidgetId::from(crate::text_input::COMPARE_SETTINGS_TEMPLATE_NAME);
+                self.input_coordinator.borrow_mut().text_fields_mut().focus(field_id.clone());
+                self.input_coordinator.borrow_mut().text_fields_mut().set_text(&field_id, &default_name);
                 eprintln!("[ChartApp] cmp_settings template save-as opened");
             }
             "template_default" => {

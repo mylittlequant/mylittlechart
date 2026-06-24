@@ -46,3 +46,21 @@ pub const WATCHLIST_GROUP_NAME: &str = "watchlist_group_name";
 
 /// Preset name input modal text field.
 pub const PRESET_NAME_INPUT: &str = "preset_name_input";
+
+/// Template name input for the "Save as Template" overlay in primitive settings.
+pub const PRIMITIVE_SETTINGS_TEMPLATE_NAME: &str = "prim_tmpl_name";
+
+/// Template name input for the "Save as Template" overlay in indicator settings.
+pub const INDICATOR_SETTINGS_TEMPLATE_NAME: &str = "ind_tmpl_name";
+
+/// Template name input for the "Save as Template" overlay in compare settings.
+pub const COMPARE_SETTINGS_TEMPLATE_NAME: &str = "cmp_tmpl_name";
+
+/// Template name input for the "Save as Template" overlay in chart settings.
+pub const CHART_SETTINGS_TEMPLATE_NAME: &str = "chart_tmpl_name";
+
+/// New profile name input (profile manager / welcome wizard / settings modal).
+pub const NEW_PROFILE_NAME: &str = "new_profile_name";
+
+/// Inline profile rename input (user settings profile list row).
+pub const PROFILE_RENAME: &str = "profile_rename";

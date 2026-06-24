@@ -110,16 +110,9 @@ impl ChartApp {
                             .max()
                             .unwrap_or(0);
                         let default_name = format!("{}{}", prefix, max_n + 1);
-                        let default_cursor = default_name.chars().count();
-                        self.panel_app.chart_settings_state.template_name_editing = Some(
-                            mlc_core::state::modal_data::TextEditingState {
-                                field_id: "template_name".to_string(),
-                                text: default_name,
-                                cursor: default_cursor,
-                                selection_start: None,
-                                blink_time: 0,
-                            }
-                        );
+                        let field_id = uzor::WidgetId::from(crate::text_input::CHART_SETTINGS_TEMPLATE_NAME);
+                        self.input_coordinator.borrow_mut().text_fields_mut().focus(field_id.clone());
+                        self.input_coordinator.borrow_mut().text_fields_mut().set_text(&field_id, &default_name);
                         eprintln!("[ChartApp] chart_settings template save-as opened");
                     }
                     "template_default" => {
@@ -2063,16 +2056,9 @@ impl ChartApp {
                 .max()
                 .unwrap_or(0);
             let default_name = format!("{}{}", prefix, max_n + 1);
-            let default_cursor = default_name.chars().count();
-            self.panel_app.primitive_settings_state.template_name_editing = Some(
-                mlc_core::state::modal_data::TextEditingState {
-                    field_id: "template_name".to_string(),
-                    text: default_name,
-                    cursor: default_cursor,
-                    selection_start: None,
-                    blink_time: 0,
-                }
-            );
+            let field_id = uzor::WidgetId::from(crate::text_input::PRIMITIVE_SETTINGS_TEMPLATE_NAME);
+            self.input_coordinator.borrow_mut().text_fields_mut().focus(field_id.clone());
+            self.input_coordinator.borrow_mut().text_fields_mut().set_text(&field_id, &default_name);
             eprintln!("[ChartApp] prim_settings template save-as opened");
             return;
         }
@@ -2113,17 +2099,17 @@ impl ChartApp {
             }
             "close" | "cancel" => {
                 self.panel_app.primitive_settings_state.save_template_mode = false;
-                self.panel_app.primitive_settings_state.template_name_editing = None;
+                self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 eprintln!("[ChartApp] prim_tmpl modal cancelled");
             }
             "save" => {
-                let name = self.panel_app.primitive_settings_state.template_name_editing
-                    .as_ref().map(|e| e.text.clone()).unwrap_or_default();
+                let field_id = uzor::WidgetId::from(crate::text_input::PRIMITIVE_SETTINGS_TEMPLATE_NAME);
+                let name = self.input_coordinator.borrow().text_fields().text(&field_id).to_string();
                 let idx = match self.panel_app.primitive_settings_state.primitive_idx {
                     Some(i) => i,
                     None => {
                         self.panel_app.primitive_settings_state.save_template_mode = false;
-                        self.panel_app.primitive_settings_state.template_name_editing = None;
+                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
                         return;
                     }
                 };
@@ -2138,7 +2124,7 @@ impl ChartApp {
                     }
                 }
                 self.panel_app.primitive_settings_state.save_template_mode = false;
-                self.panel_app.primitive_settings_state.template_name_editing = None;
+                self.input_coordinator.borrow_mut().text_fields_mut().blur();
             }
             _ => {
                 eprintln!("[ChartApp] prim_tmpl: unhandled: {}", rest);
@@ -2152,12 +2138,12 @@ impl ChartApp {
             "modal_bg" | "input" => {}
             "close" | "cancel" => {
                 self.panel_app.indicator_settings_state.save_template_mode = false;
-                self.panel_app.indicator_settings_state.template_name_editing = None;
+                self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 eprintln!("[ChartApp] ind_tmpl modal cancelled");
             }
             "save" => {
-                let name = self.panel_app.indicator_settings_state.template_name_editing
-                    .as_ref().map(|e| e.text.clone()).unwrap_or_default();
+                let field_id = uzor::WidgetId::from(crate::text_input::INDICATOR_SETTINGS_TEMPLATE_NAME);
+                let name = self.input_coordinator.borrow().text_fields().text(&field_id).to_string();
                 if !name.is_empty() {
                     if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
                         let type_id = self.core.indicators().get_instance(ind_id)
@@ -2185,7 +2171,7 @@ impl ChartApp {
                     }
                 }
                 self.panel_app.indicator_settings_state.save_template_mode = false;
-                self.panel_app.indicator_settings_state.template_name_editing = None;
+                self.input_coordinator.borrow_mut().text_fields_mut().blur();
             }
             _ => {
                 eprintln!("[ChartApp] ind_tmpl: unhandled: {}", rest);
@@ -2199,12 +2185,12 @@ impl ChartApp {
             "modal_bg" | "input" => {}
             "close" | "cancel" => {
                 self.panel_app.compare_settings_state.save_template_mode = false;
-                self.panel_app.compare_settings_state.template_name_editing = None;
+                self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 eprintln!("[ChartApp] cmp_tmpl modal cancelled");
             }
             "save" => {
-                let name = self.panel_app.compare_settings_state.template_name_editing
-                    .as_ref().map(|e| e.text.clone()).unwrap_or_default();
+                let field_id = uzor::WidgetId::from(crate::text_input::COMPARE_SETTINGS_TEMPLATE_NAME);
+                let name = self.input_coordinator.borrow().text_fields().text(&field_id).to_string();
                 if !name.is_empty() {
                     let color = self.panel_app.compare_settings_state.cached_color.clone();
                     let line_width = self.panel_app.compare_settings_state.cached_line_width;
@@ -2216,7 +2202,7 @@ impl ChartApp {
                     self.template_actions.push(crate::TemplateAction::AddCompare(tmpl));
                 }
                 self.panel_app.compare_settings_state.save_template_mode = false;
-                self.panel_app.compare_settings_state.template_name_editing = None;
+                self.input_coordinator.borrow_mut().text_fields_mut().blur();
             }
             _ => {
                 eprintln!("[ChartApp] cmp_tmpl: unhandled: {}", rest);
@@ -2232,12 +2218,12 @@ impl ChartApp {
             }
             "close" | "cancel" => {
                 self.panel_app.chart_settings_state.save_template_mode = false;
-                self.panel_app.chart_settings_state.template_name_editing = None;
+                self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 eprintln!("[ChartApp] chart_tmpl modal cancelled");
             }
             "save" => {
-                let name = self.panel_app.chart_settings_state.template_name_editing
-                    .as_ref().map(|e| e.text.clone()).unwrap_or_default();
+                let field_id = uzor::WidgetId::from(crate::text_input::CHART_SETTINGS_TEMPLATE_NAME);
+                let name = self.input_coordinator.borrow().text_fields().text(&field_id).to_string();
                 if !name.is_empty() {
                     let data = self.build_chart_settings_data();
                     let tmpl = mlc_core::templates::ChartTemplate::new(&name, &data);
@@ -2245,7 +2231,7 @@ impl ChartApp {
                     self.template_actions.push(crate::TemplateAction::AddChart(tmpl));
                 }
                 self.panel_app.chart_settings_state.save_template_mode = false;
-                self.panel_app.chart_settings_state.template_name_editing = None;
+                self.input_coordinator.borrow_mut().text_fields_mut().blur();
             }
             _ => {
                 eprintln!("[ChartApp] chart_tmpl: unhandled: {}", rest);
@@ -2665,16 +2651,9 @@ impl ChartApp {
                             .max()
                             .unwrap_or(0);
                         let default_name = format!("{}{}", prefix, max_n + 1);
-                        let default_cursor = default_name.chars().count();
-                        self.panel_app.indicator_settings_state.template_name_editing = Some(
-                            mlc_core::state::modal_data::TextEditingState {
-                                field_id: "template_name".to_string(),
-                                text: default_name,
-                                cursor: default_cursor,
-                                selection_start: None,
-                                blink_time: 0,
-                            }
-                        );
+                        let field_id = uzor::WidgetId::from(crate::text_input::INDICATOR_SETTINGS_TEMPLATE_NAME);
+                        self.input_coordinator.borrow_mut().text_fields_mut().focus(field_id.clone());
+                        self.input_coordinator.borrow_mut().text_fields_mut().set_text(&field_id, &default_name);
                         eprintln!("[ChartApp] ind_settings template save-as opened");
                     }
                     "template_default" => {

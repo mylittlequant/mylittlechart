@@ -3,14 +3,12 @@
 //! Shown as an overlay when the user clicks "Save As..." in any of the three
 //! settings-modal template dropdowns (primitive, indicator, compare).
 //!
-//! Reuses the `TextEditingState` already stored in the three settings states
-//! (`template_name_editing`).  Rendered on `ZLayer::ModalOverlay` so it
-//! appears above the parent settings modal.
+//! Text is owned by the uzor `TextFieldStore` (keyed by `field_id`).
+//! Rendered on `ZLayer::ModalOverlay` so it appears above the parent settings modal.
 
 use mlc_core::engine::render::{RenderContext, draw_svg_icon};
 use uzor::render::{TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
-use crate::ui::modal_settings::TextEditingState;
 use crate::ui::toolbar_render::ToolbarTheme;
 use crate::ui::widgets::{render_modal_frame_only, ModalTheme};
 use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig};
@@ -46,13 +44,17 @@ pub struct TemplateNameModalResult {
 /// `"prim_tmpl"`, `"ind_tmpl"`, or `"cmp_tmpl"`.  All registered widget IDs
 /// have the form `"{ns_prefix}:{id}"`.
 ///
+/// `field_id` — the `TextFieldStore` key whose text, cursor, and selection are
+/// rendered inside the input box.  The field must already be registered and
+/// focused by the caller before this function is called.
+///
 /// Returns hit-test rectangles the caller uses for rendering the blinking
 /// cursor and for input handling.
 pub fn render_template_name_modal(
     ctx: &mut dyn RenderContext,
     screen_w: f64,
     screen_h: f64,
-    editing: &TextEditingState,
+    field_id: &str,
     ns_prefix: &str,
     frame_theme: &FrameTheme,
     toolbar_theme: &ToolbarTheme,
@@ -143,15 +145,19 @@ pub fn render_template_name_modal(
     );
     result.input_rect = input_rect;
 
-    let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
-    let (sel_start, sel_end) = if let Some((lo, hi)) = editing.selection_range() {
-        (Some(lo), Some(hi))
-    } else {
-        (None, None)
+    // Read text, cursor, and selection from TextFieldStore.
+    let wid = uzor::WidgetId::from(field_id);
+    let display_text = input_coordinator.text_fields().text(&wid).to_string();
+    let cursor_pos = input_coordinator.text_fields().cursor(&wid);
+    let (sel_start, sel_end) = match input_coordinator.text_fields().selection_range(&wid) {
+        Some((lo, hi)) => (Some(lo), Some(hi)),
+        None => (None, None),
     };
-    let input_config = InputConfig::new(&editing.text)
+
+    let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
+    let input_config = InputConfig::new(&display_text)
         .with_focused(true)
-        .with_cursor(editing.cursor)
+        .with_cursor(cursor_pos)
         .with_placeholder(t_modal(ModalKey::TemplateNamePlaceholder))
         .with_selection(sel_start, sel_end);
 
@@ -167,7 +173,7 @@ pub fn render_template_name_modal(
     );
 
     // Blinking cursor.
-    if editing.is_cursor_visible(current_time_ms) {
+    if input_coordinator.text_fields().cursor_visible(current_time_ms) {
         draw_input_cursor(
             ctx,
             input_result.cursor_x,

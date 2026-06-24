@@ -254,8 +254,6 @@ pub struct PrimitiveSettingsState {
     pub applied_template_id: Option<String>,
     /// When true, show the template name input for "Save as Template".
     pub save_template_mode: bool,
-    /// Text editing state for the template name input.
-    pub template_name_editing: Option<TextEditingState>,
 }
 
 impl PrimitiveSettingsState {
@@ -288,7 +286,6 @@ impl PrimitiveSettingsState {
         self.open_select_dropdown = None;
         self.template_dropdown_open = false;
         self.save_template_mode = false;
-        self.template_name_editing = None;
     }
 
     /// Check if open
@@ -674,8 +671,6 @@ pub struct ChartSettingsState {
     pub applied_template_id: Option<String>,
     /// When true, show the template name input for "Save as Template".
     pub save_template_mode: bool,
-    /// Text editing state for the template name input.
-    pub template_name_editing: Option<TextEditingState>,
     /// Hovered footer button
     pub hovered_footer_button: Option<String>,
 }
@@ -704,7 +699,6 @@ impl Default for ChartSettingsState {
             template_dropdown_open: false,
             applied_template_id: None,
             save_template_mode: false,
-            template_name_editing: None,
             hovered_footer_button: None,
         }
     }
@@ -732,7 +726,6 @@ impl ChartSettingsState {
         self.text_select_dragging = false;
         self.template_dropdown_open = false;
         self.save_template_mode = false;
-        self.template_name_editing = None;
         self.hovered_footer_button = None;
     }
 
@@ -1067,8 +1060,6 @@ pub struct IndicatorSettingsState {
     pub applied_template_id: Option<String>,
     /// When true, show the template name input for "Save as Template".
     pub save_template_mode: bool,
-    /// Text editing state for the template name input.
-    pub template_name_editing: Option<TextEditingState>,
 }
 
 impl IndicatorSettingsState {
@@ -1094,7 +1085,6 @@ impl IndicatorSettingsState {
         self.open_param_dropdown = None;
         self.template_dropdown_open = false;
         self.save_template_mode = false;
-        self.template_name_editing = None;
         // Keep position for convenience
     }
 
@@ -1117,7 +1107,6 @@ impl IndicatorSettingsState {
         self.open_param_dropdown = None;
         self.template_dropdown_open = false;
         self.save_template_mode = false;
-        self.template_name_editing = None;
     }
 
     /// Check if open
@@ -1612,8 +1601,6 @@ pub struct CompareSettingsState {
     pub applied_template_id: Option<String>,
     /// When true, show the template name input for "Save as Template".
     pub save_template_mode: bool,
-    /// Text editing state for the template name input.
-    pub template_name_editing: Option<TextEditingState>,
 }
 
 impl Default for CompareSettingsState {
@@ -1648,7 +1635,6 @@ impl Default for CompareSettingsState {
             template_dropdown_open: false,
             applied_template_id: None,
             save_template_mode: false,
-            template_name_editing: None,
         }
     }
 }
@@ -1738,7 +1724,6 @@ impl CompareSettingsState {
         self.text_select_dragging = false;
         self.template_dropdown_open = false;
         self.save_template_mode = false;
-        self.template_name_editing = None;
     }
 
     /// Is the modal open?

@@ -1998,74 +1998,66 @@ impl ChartPanelApp {
 
         // Template name overlay modal — primitive settings
         if self.primitive_settings_state.save_template_mode {
-            if let Some(ref editing) = self.primitive_settings_state.template_name_editing {
-                use crate::layout::modals::template_name_modal::render_template_name_modal;
-                result.prim_template_name = Some(render_template_name_modal(
-                    ctx,
-                    modal_layout.prim_screen_w,
-                    modal_layout.prim_screen_h,
-                    editing,
-                    "prim_tmpl",
-                    frame_theme,
-                    toolbar_theme,
-                    current_time_ms,
-                    input_coordinator,
-                ));
-            }
+            use crate::layout::modals::template_name_modal::render_template_name_modal;
+            result.prim_template_name = Some(render_template_name_modal(
+                ctx,
+                modal_layout.prim_screen_w,
+                modal_layout.prim_screen_h,
+                "prim_tmpl_name",
+                "prim_tmpl",
+                frame_theme,
+                toolbar_theme,
+                current_time_ms,
+                input_coordinator,
+            ));
         }
 
         // Template name overlay modal — indicator settings
         if self.indicator_settings_state.save_template_mode {
-            if let Some(ref editing) = self.indicator_settings_state.template_name_editing {
-                use crate::layout::modals::template_name_modal::render_template_name_modal;
-                result.ind_template_name = Some(render_template_name_modal(
-                    ctx,
-                    modal_layout.prim_screen_w,
-                    modal_layout.prim_screen_h,
-                    editing,
-                    "ind_tmpl",
-                    frame_theme,
-                    toolbar_theme,
-                    current_time_ms,
-                    input_coordinator,
-                ));
-            }
+            use crate::layout::modals::template_name_modal::render_template_name_modal;
+            result.ind_template_name = Some(render_template_name_modal(
+                ctx,
+                modal_layout.prim_screen_w,
+                modal_layout.prim_screen_h,
+                "ind_tmpl_name",
+                "ind_tmpl",
+                frame_theme,
+                toolbar_theme,
+                current_time_ms,
+                input_coordinator,
+            ));
         }
 
         // Template name overlay modal — compare settings
         if self.compare_settings_state.save_template_mode {
-            if let Some(ref editing) = self.compare_settings_state.template_name_editing {
-                use crate::layout::modals::template_name_modal::render_template_name_modal;
-                result.cmp_template_name = Some(render_template_name_modal(
-                    ctx,
-                    modal_layout.prim_screen_w,
-                    modal_layout.prim_screen_h,
-                    editing,
-                    "cmp_tmpl",
-                    frame_theme,
-                    toolbar_theme,
-                    current_time_ms,
-                    input_coordinator,
-                ));
-            }
+            use crate::layout::modals::template_name_modal::render_template_name_modal;
+            result.cmp_template_name = Some(render_template_name_modal(
+                ctx,
+                modal_layout.prim_screen_w,
+                modal_layout.prim_screen_h,
+                "cmp_tmpl_name",
+                "cmp_tmpl",
+                frame_theme,
+                toolbar_theme,
+                current_time_ms,
+                input_coordinator,
+            ));
         }
 
         // Template name overlay modal — chart settings
         if self.chart_settings_state.save_template_mode {
-            if let Some(ref editing) = self.chart_settings_state.template_name_editing {
-                use crate::layout::modals::template_name_modal::render_template_name_modal;
-                result.chart_template_name = Some(render_template_name_modal(
-                    ctx,
-                    modal_layout.prim_screen_w,
-                    modal_layout.prim_screen_h,
-                    editing,
-                    "chart_tmpl",
-                    frame_theme,
-                    toolbar_theme,
-                    current_time_ms,
-                    input_coordinator,
-                ));
-            }
+            use crate::layout::modals::template_name_modal::render_template_name_modal;
+            result.chart_template_name = Some(render_template_name_modal(
+                ctx,
+                modal_layout.prim_screen_w,
+                modal_layout.prim_screen_h,
+                "chart_tmpl_name",
+                "chart_tmpl",
+                frame_theme,
+                toolbar_theme,
+                current_time_ms,
+                input_coordinator,
+            ));
         }
 
         // Chart browser modal

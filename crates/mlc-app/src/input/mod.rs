@@ -6692,6 +6692,44 @@ impl ChartApp {
             return;
         }
 
+        // Handle template name input modals (overlay over any settings modal).
+        // Only one can be active at a time; route through TextFieldStore.
+        if self.panel_app.primitive_settings_state.save_template_mode
+            || self.panel_app.indicator_settings_state.save_template_mode
+            || self.panel_app.compare_settings_state.save_template_mode
+            || self.panel_app.chart_settings_state.save_template_mode
+        {
+            let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
+            match action {
+                TextAction::Commit(_) => {
+                    // Enter triggers save — dispatch the matching save handler.
+                    if self.panel_app.primitive_settings_state.save_template_mode {
+                        self.handle_prim_tmpl_modal_click("save");
+                    } else if self.panel_app.indicator_settings_state.save_template_mode {
+                        self.handle_ind_tmpl_modal_click("save");
+                    } else if self.panel_app.compare_settings_state.save_template_mode {
+                        self.handle_cmp_tmpl_modal_click("save");
+                    } else if self.panel_app.chart_settings_state.save_template_mode {
+                        self.handle_chart_tmpl_modal_click("save");
+                    }
+                }
+                TextAction::Cancel => {
+                    // Escape — cancel the template save.
+                    if self.panel_app.primitive_settings_state.save_template_mode {
+                        self.handle_prim_tmpl_modal_click("cancel");
+                    } else if self.panel_app.indicator_settings_state.save_template_mode {
+                        self.handle_ind_tmpl_modal_click("cancel");
+                    } else if self.panel_app.compare_settings_state.save_template_mode {
+                        self.handle_cmp_tmpl_modal_click("cancel");
+                    } else if self.panel_app.chart_settings_state.save_template_mode {
+                        self.handle_chart_tmpl_modal_click("cancel");
+                    }
+                }
+                TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
+            }
+            return;
+        }
+
         // Handle text_content editing in primitive settings
         // Guard with is_open() so stale editing_text from a closed modal cannot
         // intercept keypresses intended for other active modals (e.g. chart settings).
@@ -7627,36 +7665,41 @@ impl ChartApp {
             return;
         }
 
-        // 0c. Primitive settings template name modal
-        if self.panel_app.primitive_settings_state.save_template_mode {
-            if let Some(ref mut editing) = self.panel_app.primitive_settings_state.template_name_editing {
-                apply_key(editing, key);
-                return;
+        // 0c-0f. Template name modals (overlay over settings modals) — TextFieldStore.
+        if self.panel_app.primitive_settings_state.save_template_mode
+            || self.panel_app.indicator_settings_state.save_template_mode
+            || self.panel_app.compare_settings_state.save_template_mode
+            || self.panel_app.chart_settings_state.save_template_mode
+        {
+            if let Some(uzor_key) = to_uzor_key(&key) {
+                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
+                match action {
+                    TextAction::Commit(_) => {
+                        if self.panel_app.primitive_settings_state.save_template_mode {
+                            self.handle_prim_tmpl_modal_click("save");
+                        } else if self.panel_app.indicator_settings_state.save_template_mode {
+                            self.handle_ind_tmpl_modal_click("save");
+                        } else if self.panel_app.compare_settings_state.save_template_mode {
+                            self.handle_cmp_tmpl_modal_click("save");
+                        } else if self.panel_app.chart_settings_state.save_template_mode {
+                            self.handle_chart_tmpl_modal_click("save");
+                        }
+                    }
+                    TextAction::Cancel => {
+                        if self.panel_app.primitive_settings_state.save_template_mode {
+                            self.handle_prim_tmpl_modal_click("cancel");
+                        } else if self.panel_app.indicator_settings_state.save_template_mode {
+                            self.handle_ind_tmpl_modal_click("cancel");
+                        } else if self.panel_app.compare_settings_state.save_template_mode {
+                            self.handle_cmp_tmpl_modal_click("cancel");
+                        } else if self.panel_app.chart_settings_state.save_template_mode {
+                            self.handle_chart_tmpl_modal_click("cancel");
+                        }
+                    }
+                    TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
+                }
             }
-        }
-
-        // 0d. Indicator settings template name modal
-        if self.panel_app.indicator_settings_state.save_template_mode {
-            if let Some(ref mut editing) = self.panel_app.indicator_settings_state.template_name_editing {
-                apply_key(editing, key);
-                return;
-            }
-        }
-
-        // 0e. Compare settings template name modal
-        if self.panel_app.compare_settings_state.save_template_mode {
-            if let Some(ref mut editing) = self.panel_app.compare_settings_state.template_name_editing {
-                apply_key(editing, key);
-                return;
-            }
-        }
-
-        // 0f. Chart settings template name modal
-        if self.panel_app.chart_settings_state.save_template_mode {
-            if let Some(ref mut editing) = self.panel_app.chart_settings_state.template_name_editing {
-                apply_key(editing, key);
-                return;
-            }
+            return;
         }
 
         // 1. Primitive settings text editing
