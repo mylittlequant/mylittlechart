@@ -60,7 +60,10 @@ opt-level = 2
 # so the manifest stays honest; the patch just resolves them to the
 # working tree so in-flight uzor fixes are picked up without a publish
 # round-trip. Keep pins == published uzor version on every bump.
-uzor = { path = "../uzor/uzor" }
+uzor                  = { path = "../uzor/uzor" }
+uzor-fonts            = { path = "../uzor/uzor-fonts" }
+uzor-window-web       = { path = "../uzor/uzor-window-web" }
+uzor-render-canvas2d  = { path = "../uzor/uzor-render-canvas2d" }
 # Local dig3 path build — same policy as uzor. Pins stay at the published
 # 0.3.23; the patch resolves them to the working tree so in-flight dig3
 # fixes are picked up without a publish round-trip. Keep pins == published

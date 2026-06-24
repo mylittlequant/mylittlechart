@@ -15,7 +15,26 @@
   </style>
 </head>
 <body>
-  <canvas id="chart"></canvas>
+  <canvas id="chart" tabindex="0"></canvas>
+  <script>
+    // The canvas must be focusable AND focused for keydown events to land.
+    // Without this the browser never delivers `keydown` to the canvas
+    // listener registered by uzor-window-web, so text fields, Escape,
+    // Ctrl+C, etc. all stay dead.
+    document.addEventListener('DOMContentLoaded', function() {
+      var c = document.getElementById('chart');
+      if (c) { c.focus(); }
+    });
+    // Re-focus on any pointer interaction in case focus drifts to body.
+    window.addEventListener('pointerdown', function() {
+      var c = document.getElementById('chart');
+      if (c && document.activeElement !== c) c.focus();
+    }, true);
+    // Suppress focus ring on the canvas (we render our own indicators).
+    var _style = document.createElement('style');
+    _style.textContent = '#chart:focus { outline: none; }';
+    document.head.appendChild(_style);
+  </script>
 
   <!--
     wasm-pack outputs:
