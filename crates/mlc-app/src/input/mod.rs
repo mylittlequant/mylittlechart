@@ -8974,6 +8974,16 @@ impl ChartApp {
                     default_timeframe.clone(),
                 );
                 let _ = self.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, group_id);
+                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                    // Mirrors seed_default_chart: react.rs writes BarsLoaded /
+                    // *BarAppended events into `window.current_bubble_id`.
+                    // Without binding the new group here every incoming bar
+                    // landed in the deleted preset's stale bubble id and the
+                    // chart stayed empty (PresetNameInput modal then kept
+                    // waiting for the chart to "load").
+                    window.auto_bubble_id = group_id;
+                    window.current_bubble_id = group_id;
+                }
                 if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(group_id) {
                     bubble.symbol = default_symbol.clone();
                     bubble.timeframe = default_timeframe.clone();
