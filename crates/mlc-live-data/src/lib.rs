@@ -66,10 +66,11 @@ pub fn debug_log_enabled() -> bool {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn console_log_owned(s: String) {
+pub fn console_log_owned(s: String) {
     web_sys::console::log_1(&s.into());
 }
 
+#[macro_export]
 macro_rules! dlog {
     ($($arg:tt)*) => {
         if $crate::debug_log_enabled() {
@@ -80,7 +81,6 @@ macro_rules! dlog {
         }
     };
 }
-pub(crate) use dlog;
 
 // ── Process-relative clock (startup-freeze diagnostics) ──────────────────────
 // A single monotonic origin captured the first time it is queried. Bridge
