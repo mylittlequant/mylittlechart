@@ -171,10 +171,19 @@ pub fn render_chart_browser(
     let search_input_rect = WidgetRect::new(search_input_x, search_input_y, search_input_w, input_h);
     result.search_input_rect = search_input_rect;
 
+    // Search input — text/cursor/selection come from TextFieldStore.
+    let cb_search_id = uzor::WidgetId::from("chart_browser_search");
+    let cb_text = input_coordinator.text_fields().text(&cb_search_id).to_string();
+    let cb_cursor = input_coordinator.text_fields().cursor(&cb_search_id);
+    let (cb_sel_start, cb_sel_end) = match input_coordinator.text_fields().selection_range(&cb_search_id) {
+        Some((lo, hi)) => (Some(lo), Some(hi)),
+        None => (None, None),
+    };
     let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
-    let input_config = InputConfig::new(&state.search_editing.text)
+    let input_config = InputConfig::new(&cb_text)
         .with_focused(true)
-        .with_cursor(state.search_editing.cursor)
+        .with_cursor(cb_cursor)
+        .with_selection(cb_sel_start, cb_sel_end)
         .with_placeholder(t_modal(ModalKey::SearchChartsPlaceholder))
         .with_padding(26.0);  // Leave room for the search icon on left
 
@@ -200,7 +209,7 @@ pub fn render_chart_browser(
     );
 
     // Blinking cursor in search input
-    if state.search_editing.is_cursor_visible(current_time_ms) {
+    if input_coordinator.text_fields().cursor_visible(current_time_ms) {
         draw_input_cursor(
             ctx,
             input_result.cursor_x,

@@ -1851,31 +1851,17 @@ impl ChartApp {
                     }
                 }
             }
-            // Preset name input — text select drag on the input field
+            // Preset name input — text select drag on the input field (TextFieldStore).
             if let Some(ref pni) = result.preset_name_input {
                 if pni.input_rect.contains(x, y) && self.panel_app.preset_name_input.is_open {
-                    let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
-                        &pni.char_x_positions,
-                        x,
-                    );
-                    self.panel_app.preset_name_input.editing.cursor = new_cursor;
-                    self.panel_app.preset_name_input.editing.selection_start = Some(new_cursor);
-                    self.panel_app.preset_name_input.text_select_dragging = true;
-                    eprintln!("[ChartApp] preset_name_input text select drag started at char {}", new_cursor);
+                    self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
                     return false;
                 }
             }
-            // Chart browser — text select drag on the search input field
+            // Chart browser — text select drag on the search input field (TextFieldStore).
             if let Some(ref br) = result.chart_browser {
                 if br.search_input_rect.contains(x, y) && self.panel_app.chart_browser.is_open {
-                    let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
-                        &br.search_char_positions,
-                        x,
-                    );
-                    self.panel_app.chart_browser.search_editing.cursor = new_cursor;
-                    self.panel_app.chart_browser.search_editing.selection_start = Some(new_cursor);
-                    self.panel_app.chart_browser.search_text_select_dragging = true;
-                    eprintln!("[ChartApp] chart_browser search text select drag started at char {}", new_cursor);
+                    self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
                     return false;
                 }
             }
@@ -1961,37 +1947,23 @@ impl ChartApp {
             }
         }
 
-        // Watchlist group name input — text select drag on the input field
+        // Watchlist group name input — text select drag on the input field (TextFieldStore).
         if self.wl_group_name_input.is_open() {
             if let Some(ref gni) = self.last_wl_group_name_result {
                 if gni.input_rect.contains(x, y) {
-                    let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
-                        &gni.char_x_positions,
-                        x,
-                    );
-                    self.wl_group_name_input.editing.cursor = new_cursor;
-                    self.wl_group_name_input.editing.selection_start = Some(new_cursor);
-                    self.wl_group_name_input.text_select_dragging = true;
-                    eprintln!("[ChartApp] wl_group_name_input text select drag started at char {}", new_cursor);
+                    self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
                     return false;
                 }
             }
         }
 
-        // Watchlist modal — text select drag on the search input field (Overview tab only).
+        // Watchlist modal — text select drag on the search input field (Overview tab only, TextFieldStore).
         if self.watchlist_modal.is_open() {
             use mlc_layout::ui::modal_settings::WatchlistModalTab;
             if self.watchlist_modal.active_tab == WatchlistModalTab::Overview {
                 if let Some(ref wl) = self.last_watchlist_modal_result {
                     if wl.search_input_rect.contains(x, y) {
-                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
-                            &wl.search_char_positions,
-                            x,
-                        );
-                        self.watchlist_modal.search_editing.cursor = new_cursor;
-                        self.watchlist_modal.search_editing.selection_start = Some(new_cursor);
-                        self.watchlist_modal.search_text_select_dragging = true;
-                        eprintln!("[ChartApp] watchlist_modal search text select drag started at char {}", new_cursor);
+                        self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
                         return false;
                     }
                 }
@@ -2035,19 +2007,11 @@ impl ChartApp {
             }
         }
 
-        // Search overlay modal (symbol / indicator / compare search) — drag-to-select in search input.
+        // Search overlay modal (symbol / indicator / compare search) — drag-to-select (TextFieldStore).
         if self.modal_state.current.is_search_overlay() {
             if let Some(ref smr) = self.search_modal_result {
-                if smr.input_rect.contains(x, y) && self.modal_state.editing_text.is_some() {
-                    let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
-                        &smr.search_char_positions,
-                        x,
-                    );
-                    if let Some(ref mut edit) = self.modal_state.editing_text {
-                        edit.cursor = new_cursor;
-                        edit.selection_start = Some(new_cursor);
-                    }
-                    self.modal_state.text_select_dragging = true;
+                if smr.input_rect.contains(x, y) {
+                    self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
                     return false;
                 }
             }
@@ -3162,34 +3126,12 @@ impl ChartApp {
             }
             return;
         }
-        if self.panel_app.preset_name_input.text_select_dragging {
-            // Update text selection cursor from mouse X position.
-            if let Some(pni) = self.frame_result.as_ref().and_then(|r| r.preset_name_input.as_ref()) {
-                let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
-                    &pni.char_x_positions,
-                    x,
-                );
-                self.panel_app.preset_name_input.editing.cursor = new_cursor;
-                // selection_start stays as the anchor set during drag_start
-            }
-            return;
-        }
         if self.panel_app.preset_name_input.is_dragging {
             self.panel_app.preset_name_input.update_drag(x, y);
             return;
         }
-        if self.panel_app.chart_browser.search_text_select_dragging {
-            // Update search text selection cursor from mouse X position.
-            if let Some(br) = self.frame_result.as_ref().and_then(|r| r.chart_browser.as_ref()) {
-                let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
-                    &br.search_char_positions,
-                    x,
-                );
-                self.panel_app.chart_browser.search_editing.cursor = new_cursor;
-                // selection_start stays as the anchor set during drag_start
-            }
-            return;
-        }
+        // Chart browser search text select drag move — TextFieldStore owns the drag.
+        // (The store's drag_field tracks the active drag; no separate flag needed.)
         if self.panel_app.chart_browser.is_dragging {
             self.panel_app.chart_browser.update_drag(x, y);
             return;
@@ -3210,33 +3152,18 @@ impl ChartApp {
             }
             return;
         }
-        if self.watchlist_modal.search_text_select_dragging {
-            // Update search text selection cursor from mouse X position.
-            if let Some(ref wl) = self.last_watchlist_modal_result {
-                let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
-                    &wl.search_char_positions,
-                    x,
-                );
-                self.watchlist_modal.search_editing.cursor = new_cursor;
-                // selection_start stays as the anchor set during drag_start
-            }
-            return;
-        }
         if self.watchlist_modal.is_dragging {
             self.watchlist_modal.update_drag(x, y);
             return;
         }
-        if self.wl_group_name_input.text_select_dragging {
-            // Update text selection cursor from mouse X position.
-            if let Some(ref gni) = self.last_wl_group_name_result {
-                let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
-                    &gni.char_x_positions,
-                    x,
-                );
-                self.wl_group_name_input.editing.cursor = new_cursor;
-                // selection_start stays as the anchor set during drag_start
+        // Watchlist / wl_group_name / preset_name / search overlay drag move
+        // — forwarded to TextFieldStore which owns the drag state.
+        {
+            let has_drag = self.input_coordinator.borrow().text_fields().drag_active();
+            if has_drag {
+                self.input_coordinator.borrow_mut().text_fields_mut().on_drag_move(x);
+                return;
             }
-            return;
         }
         if self.panel_app.primitive_settings_state.text_select_dragging {
             // Update text selection cursor from mouse X position.
@@ -3315,20 +3242,6 @@ impl ChartApp {
             return;
         }
 
-        // === Search overlay modal search input text select drag move ===
-        if self.modal_state.text_select_dragging {
-            if let Some(ref smr) = self.search_modal_result {
-                let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
-                    &smr.search_char_positions,
-                    x,
-                );
-                if let Some(ref mut edit) = self.modal_state.editing_text {
-                    edit.cursor = new_cursor;
-                    // selection_start stays as the anchor set during drag_start
-                }
-            }
-            return;
-        }
         // === Search overlay modal drag move ===
         if self.modal_state.is_dragging {
             self.modal_state.update_drag(x, y);
@@ -4042,32 +3955,9 @@ impl ChartApp {
             eprintln!("[ChartApp] profile_mgr text select drag ended: {}", field_id);
             return;
         }
-        if self.panel_app.preset_name_input.text_select_dragging {
-            // Finalize text selection: clear if anchor == cursor (no movement = plain click that
-            // the platform classified as a drag due to minor movement jitter).
-            self.panel_app.preset_name_input.text_select_dragging = false;
-            let anchor = self.panel_app.preset_name_input.editing.selection_start;
-            let cursor = self.panel_app.preset_name_input.editing.cursor;
-            if anchor == Some(cursor) {
-                self.panel_app.preset_name_input.editing.selection_start = None;
-            }
-            eprintln!("[ChartApp] preset_name_input text select drag ended");
-            return;
-        }
         if self.panel_app.preset_name_input.is_dragging {
             self.panel_app.preset_name_input.end_drag();
             eprintln!("[ChartApp] preset_name_input modal drag ended");
-            return;
-        }
-        if self.panel_app.chart_browser.search_text_select_dragging {
-            // Finalize search text selection: clear if anchor == cursor (plain click jitter).
-            self.panel_app.chart_browser.search_text_select_dragging = false;
-            let anchor = self.panel_app.chart_browser.search_editing.selection_start;
-            let cursor = self.panel_app.chart_browser.search_editing.cursor;
-            if anchor == Some(cursor) {
-                self.panel_app.chart_browser.search_editing.selection_start = None;
-            }
-            eprintln!("[ChartApp] chart_browser search text select drag ended");
             return;
         }
         if self.panel_app.chart_browser.scroll.is_dragging {
@@ -4080,31 +3970,9 @@ impl ChartApp {
             eprintln!("[ChartApp] chart_browser modal drag ended");
             return;
         }
-        if self.watchlist_modal.search_text_select_dragging {
-            // Finalize search text selection: clear if anchor == cursor (plain click jitter).
-            self.watchlist_modal.search_text_select_dragging = false;
-            let anchor = self.watchlist_modal.search_editing.selection_start;
-            let cursor = self.watchlist_modal.search_editing.cursor;
-            if anchor == Some(cursor) {
-                self.watchlist_modal.search_editing.selection_start = None;
-            }
-            eprintln!("[ChartApp] watchlist_modal search text select drag ended");
-            return;
-        }
         if self.watchlist_modal.is_dragging {
             self.watchlist_modal.end_drag();
             eprintln!("[ChartApp] watchlist_modal drag ended");
-            return;
-        }
-        if self.wl_group_name_input.text_select_dragging {
-            // Finalize text selection: clear if anchor == cursor (plain click jitter).
-            self.wl_group_name_input.text_select_dragging = false;
-            let anchor = self.wl_group_name_input.editing.selection_start;
-            let cursor = self.wl_group_name_input.editing.cursor;
-            if anchor == Some(cursor) {
-                self.wl_group_name_input.editing.selection_start = None;
-            }
-            eprintln!("[ChartApp] wl_group_name_input text select drag ended");
             return;
         }
         if self.panel_app.primitive_settings_state.text_select_dragging {
@@ -4169,18 +4037,6 @@ impl ChartApp {
             return;
         }
 
-        // === Search overlay modal search input text select drag end ===
-        if self.modal_state.text_select_dragging {
-            self.modal_state.text_select_dragging = false;
-            let anchor = self.modal_state.editing_text.as_ref().and_then(|e| e.selection_start);
-            let cursor = self.modal_state.editing_text.as_ref().map(|e| e.cursor).unwrap_or(0);
-            if anchor == Some(cursor) {
-                if let Some(ref mut edit) = self.modal_state.editing_text {
-                    edit.selection_start = None;
-                }
-            }
-            return;
-        }
         // === Search overlay modal drag end ===
         if self.modal_state.is_dragging {
             self.modal_state.end_drag();
@@ -6280,82 +6136,39 @@ impl ChartApp {
             return;
         }
 
-        // Handle chart browser modal search input
+        // Handle chart browser modal search input — routed through TextFieldStore.
         if self.panel_app.chart_browser.is_open {
-            match ch {
-                '\r' | '\n' => {
-                    // Enter does nothing — items are clicked to load
-                }
-                '\x08' => {
-                    // Backspace — delete selection if active, else single char.
-                    let editing = &mut self.panel_app.chart_browser.search_editing;
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    } else if editing.cursor > 0 {
-                        let byte_pos = editing.char_to_byte_pos(editing.cursor - 1);
-                        let byte_end = editing.char_to_byte_pos(editing.cursor);
-                        editing.text.drain(byte_pos..byte_end);
-                        editing.cursor -= 1;
+            let cb_id = WidgetId::from(crate::text_input::CHART_BROWSER_SEARCH);
+            if self.input_coordinator.borrow().text_fields().is_focused(&cb_id) {
+                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
+                match action {
+                    TextAction::TextChanged(ref new_text) | TextAction::Commit(ref new_text) => {
+                        self.panel_app.chart_browser.search_query = new_text.clone();
+                        self.panel_app.chart_browser.scroll.reset();
                     }
-                    editing.reset_blink(0);
-                    self.panel_app.chart_browser.search_query = self.panel_app.chart_browser.search_editing.text.clone();
-                    self.panel_app.chart_browser.scroll.reset();
+                    TextAction::Cancel | TextAction::None | TextAction::RawInput(_) => {}
                 }
-                c if !c.is_control() => {
-                    let editing = &mut self.panel_app.chart_browser.search_editing;
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    }
-                    let byte_pos = editing.char_to_byte_pos(editing.cursor);
-                    editing.text.insert(byte_pos, c);
-                    editing.cursor += 1;
-                    editing.reset_blink(0);
-                    self.panel_app.chart_browser.search_query = self.panel_app.chart_browser.search_editing.text.clone();
-                    self.panel_app.chart_browser.scroll.reset();
-                }
-                _ => {}
+                return;
             }
             return;
         }
 
-        // Handle watchlist modal search input (Overview tab only)
+        // Handle watchlist modal search input (Overview tab only) — TextFieldStore.
         {
             use mlc_layout::ui::modal_settings::WatchlistModalTab;
             if self.watchlist_modal.is_open()
                 && self.watchlist_modal.active_tab == WatchlistModalTab::Overview
             {
-                match ch {
-                    '\r' | '\n' => {
-                        // Enter does nothing in the watchlist search field
-                    }
-                    '\x08' => {
-                        // Backspace — delete selection if active, else single char.
-                        let editing = &mut self.watchlist_modal.search_editing;
-                        if editing.has_selection() {
-                            editing.delete_selection();
-                        } else if editing.cursor > 0 {
-                            let byte_pos = editing.char_to_byte_pos(editing.cursor - 1);
-                            let byte_end = editing.char_to_byte_pos(editing.cursor);
-                            editing.text.drain(byte_pos..byte_end);
-                            editing.cursor -= 1;
+                let wl_id = WidgetId::from(crate::text_input::WATCHLIST_SEARCH);
+                if self.input_coordinator.borrow().text_fields().is_focused(&wl_id) {
+                    let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
+                    match action {
+                        TextAction::TextChanged(ref new_text) | TextAction::Commit(ref new_text) => {
+                            self.watchlist_modal.search_query = new_text.clone();
+                            self.watchlist_modal.scroll.reset();
                         }
-                        editing.reset_blink(0);
-                        self.watchlist_modal.search_query = self.watchlist_modal.search_editing.text.clone();
-                        self.watchlist_modal.scroll.reset();
+                        TextAction::Cancel | TextAction::None | TextAction::RawInput(_) => {}
                     }
-                    c if !c.is_control() => {
-                        let editing = &mut self.watchlist_modal.search_editing;
-                        if editing.has_selection() {
-                            editing.delete_selection();
-                        }
-                        let byte_pos = editing.char_to_byte_pos(editing.cursor);
-                        editing.text.insert(byte_pos, c);
-                        editing.cursor += 1;
-                        editing.reset_blink(0);
-                        self.watchlist_modal.search_query = self.watchlist_modal.search_editing.text.clone();
-                        self.watchlist_modal.scroll.reset();
-                    }
-                    _ => {}
                 }
                 return;
             }
@@ -6461,13 +6274,12 @@ impl ChartApp {
             }
             return;
         }
-        // Handle preset name input modal
+        // Handle preset name input modal — routed through TextFieldStore.
         if self.panel_app.preset_name_input.is_open {
-            let editing = &mut self.panel_app.preset_name_input.editing;
-            match ch {
-                '\r' | '\n' => {
-                    // Commit — extract the name and mode, then close
-                    let name = self.panel_app.preset_name_input.name().to_string();
+            let pni_id = WidgetId::from(crate::text_input::PRESET_NAME_INPUT);
+            let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
+            match action {
+                TextAction::Commit(name) => {
                     if !name.trim().is_empty() {
                         use mlc_layout::ui::modal_settings::PresetNameInputMode;
                         match self.panel_app.preset_name_input.mode {
@@ -6493,29 +6305,16 @@ impl ChartApp {
                     }
                     self.panel_app.preset_name_input.close();
                     self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::None;
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 }
-                '\x08' => {
-                    // Backspace — delete selection if active, else single char.
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    } else if editing.cursor > 0 {
-                        let byte_end = editing.text.char_indices().nth(editing.cursor).map(|(i, _)| i).unwrap_or(editing.text.len());
-                        let byte_start = editing.text.char_indices().nth(editing.cursor - 1).map(|(i, _)| i).unwrap_or(0);
-                        editing.text.drain(byte_start..byte_end);
-                        editing.cursor -= 1;
-                    }
+                TextAction::Cancel => {
+                    self.panel_app.preset_name_input.close();
+                    self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::None;
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 }
-                c if !c.is_control() => {
-                    // If there is an active selection, replace it with the typed char.
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    }
-                    let byte_idx = editing.text.char_indices().nth(editing.cursor).map(|(i, _)| i).unwrap_or(editing.text.len());
-                    editing.text.insert(byte_idx, c);
-                    editing.cursor += 1;
-                }
-                _ => {}
+                TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
             }
+            let _ = pni_id;
             return;
         }
 
@@ -6843,13 +6642,13 @@ impl ChartApp {
             return;
         }
 
-        // Handle watchlist group name input modal
+        // Handle watchlist group name input modal — routed through TextFieldStore.
         if self.wl_group_name_input.is_open() {
-            let editing = &mut self.wl_group_name_input.editing;
-            match ch {
-                '\r' | '\n' => {
-                    // Commit
-                    let name = self.wl_group_name_input.editing.text.trim().to_string();
+            let wl_gn_id = WidgetId::from(crate::text_input::WATCHLIST_GROUP_NAME);
+            let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
+            match action {
+                TextAction::Commit(name) => {
+                    let name = name.trim().to_string();
                     if !name.is_empty() {
                         use mlc_layout::ui::modal_settings::WatchlistGroupNameMode;
                         match self.wl_group_name_input.mode.clone() {
@@ -6881,32 +6680,15 @@ impl ChartApp {
                         }
                     }
                     self.wl_group_name_input.close();
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 }
-                '\x1b' => {
-                    // Escape handled in on_escape, but also handle here for safety
+                TextAction::Cancel => {
                     self.wl_group_name_input.close();
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 }
-                '\x08' => {
-                    // Backspace
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    } else if editing.cursor > 0 {
-                        let byte_end = editing.text.char_indices().nth(editing.cursor).map(|(i, _)| i).unwrap_or(editing.text.len());
-                        let byte_start = editing.text.char_indices().nth(editing.cursor - 1).map(|(i, _)| i).unwrap_or(0);
-                        editing.text.drain(byte_start..byte_end);
-                        editing.cursor -= 1;
-                    }
-                }
-                c if !c.is_control() => {
-                    if editing.has_selection() {
-                        editing.delete_selection();
-                    }
-                    let byte_idx = editing.text.char_indices().nth(editing.cursor).map(|(i, _)| i).unwrap_or(editing.text.len());
-                    editing.text.insert(byte_idx, c);
-                    editing.cursor += 1;
-                }
-                _ => {}
+                TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
             }
+            let _ = wl_gn_id;
             return;
         }
 
@@ -7333,8 +7115,15 @@ impl ChartApp {
 
         // Route typing to the search modal when it is open (indicator, symbol, or compare).
         if self.modal_state.current.is_search_overlay() {
-            match ch {
-                '\r' | '\n' => {
+            let search_id = match self.modal_state.current {
+                OpenModal::SymbolSearch => WidgetId::from(crate::text_input::SYMBOL_SEARCH),
+                OpenModal::IndicatorSearch => WidgetId::from(crate::text_input::INDICATOR_SEARCH),
+                OpenModal::CompareSearch => WidgetId::from(crate::text_input::COMPARE_SEARCH),
+                _ => WidgetId::from(crate::text_input::SYMBOL_SEARCH),
+            };
+            let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
+            match action {
+                TextAction::Commit(_) => {
                     // Enter: select the first result if any, or just close.
                     let first_item = match self.modal_state.current {
                         OpenModal::SymbolSearch | OpenModal::CompareSearch => {
@@ -7343,7 +7132,6 @@ impl ChartApp {
                                 .map(|r| format!("{}:{}:{}", r.symbol, r.exchange_id, r.account_type))
                         }
                         OpenModal::IndicatorSearch => {
-                            // Use hovered item or first result from IndicatorManager.
                             self.modal_state.hovered_item_id.clone()
                         }
                         _ => None,
@@ -7355,10 +7143,9 @@ impl ChartApp {
                         self.modal_state.close();
                     }
                 }
-                '\x08' => {
-                    // Backspace — delete char before cursor in search query.
-                    self.modal_state.delete_char_before(0);
-                    // Re-filter symbol results after query change.
+                TextAction::TextChanged(ref new_text) => {
+                    // Sync search_query for display + re-filter symbol results.
+                    self.modal_state.search_query = new_text.clone();
                     if self.modal_state.current == OpenModal::SymbolSearch
                         || self.modal_state.current == OpenModal::CompareSearch
                     {
@@ -7367,20 +7154,12 @@ impl ChartApp {
                             crate::ChartApp::build_demo_symbol_results(&q, &self.core.watchlist(), &self.core.exchange_symbols_read());
                     }
                 }
-                c if !c.is_control() => {
-                    // Regular character — insert into search query.
-                    self.modal_state.insert_char(c, 0);
-                    // Re-filter symbol results after query change.
-                    if self.modal_state.current == OpenModal::SymbolSearch
-                        || self.modal_state.current == OpenModal::CompareSearch
-                    {
-                        let q = self.modal_state.search_query.clone();
-                        self.modal_state.symbol_search_results =
-                            crate::ChartApp::build_demo_symbol_results(&q, &self.core.watchlist(), &self.core.exchange_symbols_read());
-                    }
+                TextAction::Cancel => {
+                    self.modal_state.close();
                 }
-                _ => {}
+                TextAction::None | TextAction::RawInput(_) => {}
             }
+            let _ = search_id;
         }
     }
 
@@ -7742,38 +7521,109 @@ impl ChartApp {
             _ => {}
         }
 
-        // 0a. Chart browser search input
+        // 0a. Chart browser search input — TextFieldStore.
         if self.panel_app.chart_browser.is_open {
-            apply_key(&mut self.panel_app.chart_browser.search_editing, key);
-            // Keep search_query in sync with search_editing.text
-            self.panel_app.chart_browser.search_query = self.panel_app.chart_browser.search_editing.text.clone();
-            self.panel_app.chart_browser.scroll.reset();
+            if let Some(uzor_key) = to_uzor_key(&key) {
+                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
+                if let TextAction::TextChanged(ref new_text) | TextAction::Commit(ref new_text) = action {
+                    self.panel_app.chart_browser.search_query = new_text.clone();
+                    self.panel_app.chart_browser.scroll.reset();
+                }
+            }
             return;
         }
 
-        // 0b. Watchlist modal search input (Overview tab only)
+        // 0b. Watchlist modal search input (Overview tab only) — TextFieldStore.
         {
             use mlc_layout::ui::modal_settings::WatchlistModalTab;
             if self.watchlist_modal.is_open()
                 && self.watchlist_modal.active_tab == WatchlistModalTab::Overview
             {
-                apply_key(&mut self.watchlist_modal.search_editing, key);
-                // Keep search_query in sync with search_editing.text
-                self.watchlist_modal.search_query = self.watchlist_modal.search_editing.text.clone();
-                self.watchlist_modal.scroll.reset();
+                if let Some(uzor_key) = to_uzor_key(&key) {
+                    let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
+                    if let TextAction::TextChanged(ref new_text) | TextAction::Commit(ref new_text) = action {
+                        self.watchlist_modal.search_query = new_text.clone();
+                        self.watchlist_modal.scroll.reset();
+                    }
+                }
                 return;
             }
         }
 
-        // 0a. Watchlist group name input modal
+        // 0a. Watchlist group name input modal — TextFieldStore.
         if self.wl_group_name_input.is_open() {
-            apply_key(&mut self.wl_group_name_input.editing, key);
+            if let Some(uzor_key) = to_uzor_key(&key) {
+                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
+                match action {
+                    TextAction::Commit(name) => {
+                        let name = name.trim().to_string();
+                        if !name.is_empty() {
+                            use mlc_layout::ui::modal_settings::WatchlistGroupNameMode;
+                            match self.wl_group_name_input.mode.clone() {
+                                WatchlistGroupNameMode::CreateNew => {
+                                    let new_id = self.core.watchlist_mut().create_list(name.clone());
+                                    self.core.watchlist_mut().active_list_id = new_id;
+                                    self.watchlist_actions.push(crate::WatchlistAction::CreateList { name: name.clone() });
+                                    self.watchlists_dirty = true;
+                                    self.persist_watchlists();
+                                }
+                                WatchlistGroupNameMode::Rename(id) => {
+                                    let mut wl = self.core.watchlist_mut();
+                                    if let Some(list) = wl.lists.iter_mut().find(|l| l.id == id) {
+                                        list.name = name.clone();
+                                    }
+                                }
+                            }
+                        }
+                        self.wl_group_name_input.close();
+                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    }
+                    TextAction::Cancel => {
+                        self.wl_group_name_input.close();
+                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    }
+                    _ => {}
+                }
+            }
             return;
         }
 
-        // 0. Preset name input modal
+        // 0. Preset name input modal — TextFieldStore.
         if self.panel_app.preset_name_input.is_open {
-            apply_key(&mut self.panel_app.preset_name_input.editing, key);
+            if let Some(uzor_key) = to_uzor_key(&key) {
+                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
+                match action {
+                    TextAction::Commit(name) => {
+                        if !name.trim().is_empty() {
+                            use mlc_layout::ui::modal_settings::PresetNameInputMode;
+                            match self.panel_app.preset_name_input.mode {
+                                PresetNameInputMode::SaveAs => {
+                                    self.process_chart_out_event(mlc_core::events::ChartOutEvent::SavePreset { name });
+                                }
+                                PresetNameInputMode::Rename => {
+                                    let id = self.panel_app.preset_name_input.rename_preset_id.clone().unwrap_or_default();
+                                    self.process_chart_out_event(mlc_core::events::ChartOutEvent::RenamePreset { id, new_name: name });
+                                }
+                                PresetNameInputMode::NewChart => {
+                                    self.execute_new_chart_with_name(name);
+                                }
+                                PresetNameInputMode::CreateIndicatorSet => {
+                                    self.execute_create_indicator_set(name);
+                                }
+                            }
+                        }
+                        self.panel_app.preset_name_input.close();
+                        self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::None;
+                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    }
+                    TextAction::Cancel => {
+                        self.panel_app.preset_name_input.close();
+                        self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::None;
+                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    }
+                    _ => {}
+                }
+            }
             return;
         }
 
@@ -7835,21 +7685,29 @@ impl ChartApp {
             }
         }
 
-        // 4. Search modal input
-        if let Some(ref mut editing) = self.modal_state.editing_text {
-            apply_key(editing, key);
-            // Sync search_query with the updated editing text so that subsequent
-            // renders and search-result filtering reflect the latest content.
-            // (Paste and Delete via apply_key modify editing.text directly —
-            // without this sync the displayed results would be stale.)
-            self.modal_state.search_query = editing.text.clone();
-            // Rebuild symbol search results if the text changed (Paste / Delete).
-            if self.modal_state.current == OpenModal::SymbolSearch
-                || self.modal_state.current == OpenModal::CompareSearch
-            {
-                let q = self.modal_state.search_query.clone();
-                self.modal_state.symbol_search_results =
-                    crate::ChartApp::build_demo_symbol_results(&q, &self.core.watchlist(), &self.core.exchange_symbols_read());
+        // 4. Search modal input — TextFieldStore.
+        if self.modal_state.current.is_search_overlay() {
+            if let Some(uzor_key) = to_uzor_key(&key) {
+                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
+                match action {
+                    TextAction::TextChanged(ref new_text) => {
+                        self.modal_state.search_query = new_text.clone();
+                        if self.modal_state.current == OpenModal::SymbolSearch
+                            || self.modal_state.current == OpenModal::CompareSearch
+                        {
+                            let q = self.modal_state.search_query.clone();
+                            self.modal_state.symbol_search_results =
+                                crate::ChartApp::build_demo_symbol_results(&q, &self.core.watchlist(), &self.core.exchange_symbols_read());
+                        }
+                    }
+                    TextAction::Commit(_) => {
+                        // Enter already handled in on_char — key routing hits on_char first.
+                    }
+                    TextAction::Cancel => {
+                        self.modal_state.close();
+                    }
+                    TextAction::None | TextAction::RawInput(_) => {}
+                }
             }
             return;
         }
@@ -7955,24 +7813,10 @@ impl ChartApp {
             Some(editing.text[start_byte..end_byte].to_string())
         }
 
-        // Text-field store handles HexColor, AgentPty, AgentChat selections.
+        // Text-field store handles all Wave 1 fields (search overlays, chart browser,
+        // watchlist search/group name, preset name) + HexColor, AgentPty, AgentChat.
         if let Some(text) = self.input_coordinator.borrow().text_fields().copy_selection() {
             return Some(text);
-        }
-
-        // Chart browser search
-        if self.panel_app.chart_browser.is_open {
-            return get_selection(&self.panel_app.chart_browser.search_editing);
-        }
-
-        // Watchlist group name input modal
-        if self.wl_group_name_input.is_open() {
-            return get_selection(&self.wl_group_name_input.editing);
-        }
-
-        // Preset name input modal
-        if self.panel_app.preset_name_input.is_open {
-            return get_selection(&self.panel_app.preset_name_input.editing);
         }
 
         // Primitive settings text editing
@@ -7987,21 +7831,6 @@ impl ChartApp {
 
         // Chart settings inline text editing
         if let Some(ref editing) = self.panel_app.chart_settings_state.editing_text {
-            return get_selection(editing);
-        }
-
-        // Watchlist modal search input (Overview tab only)
-        {
-            use mlc_layout::ui::modal_settings::WatchlistModalTab;
-            if self.watchlist_modal.is_open()
-                && self.watchlist_modal.active_tab == WatchlistModalTab::Overview
-            {
-                return get_selection(&self.watchlist_modal.search_editing);
-            }
-        }
-
-        // Search modal input (symbol search, indicator search, compare search)
-        if let Some(ref editing) = self.modal_state.editing_text {
             return get_selection(editing);
         }
 

@@ -25,3 +25,24 @@ pub const AGENT_CHAT: &str = "agent_chat";
 /// bar-mode dropdown opens.  On `Enter` the value is parsed and
 /// `ChartOutEvent::UpdateBarModeParam` is emitted.
 pub const BAR_MODE_PARAM: &str = "bar_mode_param";
+
+/// Symbol search overlay search input.
+pub const SYMBOL_SEARCH: &str = "symbol_search";
+
+/// Indicator search overlay search input.
+pub const INDICATOR_SEARCH: &str = "indicator_search";
+
+/// Compare search overlay search input.
+pub const COMPARE_SEARCH: &str = "compare_search";
+
+/// Chart browser modal search input.
+pub const CHART_BROWSER_SEARCH: &str = "chart_browser_search";
+
+/// Watchlist modal Overview-tab search input.
+pub const WATCHLIST_SEARCH: &str = "watchlist_search";
+
+/// Watchlist group name dialog input.
+pub const WATCHLIST_GROUP_NAME: &str = "watchlist_group_name";
+
+/// Preset name input modal text field.
+pub const PRESET_NAME_INPUT: &str = "preset_name_input";

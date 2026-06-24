@@ -146,17 +146,21 @@ pub fn render_preset_name_input(
     );
     result.input_rect = input_rect;
 
-    let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
-    let (sel_start, sel_end) = if let Some((lo, hi)) = state.editing.selection_range() {
-        (Some(lo), Some(hi))
-    } else {
-        (None, None)
+    // Text input — text/cursor/selection from TextFieldStore.
+    let pni_id = uzor::WidgetId::from("preset_name_input");
+    let pni_text = input_coordinator.text_fields().text(&pni_id).to_string();
+    let pni_cursor = input_coordinator.text_fields().cursor(&pni_id);
+    let (pni_sel_start, pni_sel_end) = match input_coordinator.text_fields().selection_range(&pni_id) {
+        Some((lo, hi)) => (Some(lo), Some(hi)),
+        None => (None, None),
     };
-    let input_config = InputConfig::new(&state.editing.text)
+
+    let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
+    let input_config = InputConfig::new(&pni_text)
         .with_focused(true)
-        .with_cursor(state.editing.cursor)
+        .with_cursor(pni_cursor)
         .with_placeholder("Preset name...")
-        .with_selection(sel_start, sel_end);
+        .with_selection(pni_sel_start, pni_sel_end);
 
     let input_result = draw_input(ctx, &input_config, WidgetState::Normal, input_rect, &widget_theme);
     result.input_text_rect = input_result.text_rect;
@@ -171,7 +175,7 @@ pub fn render_preset_name_input(
     );
 
     // Blinking cursor
-    if state.editing.is_cursor_visible(current_time_ms) {
+    if input_coordinator.text_fields().cursor_visible(current_time_ms) {
         draw_input_cursor(
             ctx,
             input_result.cursor_x,

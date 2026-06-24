@@ -659,7 +659,13 @@ impl ChartApp {
             ChartOutEvent::ToggleIndicators => {
                 self.modal_state.toggle(OpenModal::IndicatorSearch);
                 if self.modal_state.current == OpenModal::IndicatorSearch {
-                    self.modal_state.start_editing(0);
+                    let ind_id = uzor::WidgetId::from(crate::text_input::INDICATOR_SEARCH);
+                    let q = self.modal_state.search_query.clone();
+                    self.input_coordinator.borrow_mut().text_fields_mut().set_text(&ind_id, &q);
+                    self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&ind_id);
+                    self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::INDICATOR_SEARCH);
+                } else {
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 }
                 eprintln!("[ChartApp] indicator search modal toggled: {:?}", self.modal_state.current);
             }
@@ -667,7 +673,12 @@ impl ChartApp {
                 self.modal_state.open(OpenModal::SymbolSearch);
                 self.modal_state.symbol_search_results =
                     crate::ChartApp::build_demo_symbol_results("", &self.core.watchlist(), &self.core.exchange_symbols_read());
-                self.modal_state.start_editing(0);
+                {
+                    let sym_id = uzor::WidgetId::from(crate::text_input::SYMBOL_SEARCH);
+                    self.input_coordinator.borrow_mut().text_fields_mut().clear(&sym_id);
+                    self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&sym_id);
+                    self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::SYMBOL_SEARCH);
+                }
                 eprintln!("[ChartApp] symbol search modal opened");
             }
             ChartOutEvent::ApplySymbol { chart_id, symbol, exchange, account_type } => {
@@ -771,7 +782,12 @@ impl ChartApp {
                 self.modal_state.open(OpenModal::CompareSearch);
                 self.modal_state.symbol_search_results =
                     crate::ChartApp::build_demo_symbol_results("", &self.core.watchlist(), &self.core.exchange_symbols_read());
-                self.modal_state.start_editing(0);
+                {
+                    let cmp_id = uzor::WidgetId::from(crate::text_input::COMPARE_SEARCH);
+                    self.input_coordinator.borrow_mut().text_fields_mut().clear(&cmp_id);
+                    self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&cmp_id);
+                    self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::COMPARE_SEARCH);
+                }
                 eprintln!("[ChartApp] compare search modal opened");
             }
             // Chart settings modal  -  opened by gear dropdown "Chart Settings..." item.
@@ -1516,6 +1532,12 @@ impl ChartApp {
                 let default_name = format!("Untitled {}", max_n + 1);
                 self.panel_app.preset_name_input.open_save_as(&default_name, 0);
                 self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::PresetNameInput;
+                {
+                    let pni_id = uzor::WidgetId::from(crate::text_input::PRESET_NAME_INPUT);
+                    self.input_coordinator.borrow_mut().text_fields_mut().set_text(&pni_id, &default_name);
+                    self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&pni_id);
+                    self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::PRESET_NAME_INPUT);
+                }
                 eprintln!("[ChartApp] opened preset name input (save-as), default='{}'", default_name);
             }
 
@@ -1528,6 +1550,12 @@ impl ChartApp {
                     let current_name = preset.name.clone();
                     self.panel_app.preset_name_input.open_rename(&target_id, &current_name, 0);
                     self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::PresetNameInput;
+                    {
+                        let pni_id = uzor::WidgetId::from(crate::text_input::PRESET_NAME_INPUT);
+                        self.input_coordinator.borrow_mut().text_fields_mut().set_text(&pni_id, &current_name);
+                        self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&pni_id);
+                        self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::PRESET_NAME_INPUT);
+                    }
                     eprintln!("[ChartApp] opened preset name input (rename), preset='{}'", target_id);
                 } else {
                     eprintln!("[ChartApp] preset '{}' not found for rename modal", target_id);
@@ -1560,6 +1588,12 @@ impl ChartApp {
             ChartOutEvent::OpenChartBrowser => {
                 self.panel_app.chart_browser.open(0);
                 self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::ChartBrowser;
+                {
+                    let cb_id = uzor::WidgetId::from(crate::text_input::CHART_BROWSER_SEARCH);
+                    self.input_coordinator.borrow_mut().text_fields_mut().clear(&cb_id);
+                    self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&cb_id);
+                    self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::CHART_BROWSER_SEARCH);
+                }
                 eprintln!("[ChartApp] chart browser opened");
             }
 
@@ -1567,6 +1601,12 @@ impl ChartApp {
                 self.panel_app.chart_browser.open(0);
                 self.panel_app.chart_browser.open_in_new_tab = true;
                 self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::ChartBrowser;
+                {
+                    let cb_id = uzor::WidgetId::from(crate::text_input::CHART_BROWSER_SEARCH);
+                    self.input_coordinator.borrow_mut().text_fields_mut().clear(&cb_id);
+                    self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&cb_id);
+                    self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::CHART_BROWSER_SEARCH);
+                }
                 eprintln!("[ChartApp] chart browser opened (new-tab mode)");
             }
 
@@ -1602,6 +1642,12 @@ impl ChartApp {
                 let default_name = format!("Untitled {}", max_n + 1);
                 self.panel_app.preset_name_input.open_new_chart(&default_name, 0);
                 self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::PresetNameInput;
+                {
+                    let pni_id = uzor::WidgetId::from(crate::text_input::PRESET_NAME_INPUT);
+                    self.input_coordinator.borrow_mut().text_fields_mut().set_text(&pni_id, &default_name);
+                    self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&pni_id);
+                    self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::PRESET_NAME_INPUT);
+                }
                 eprintln!("[ChartApp] opened preset name input (new-chart), default='{}'", default_name);
             }
 

@@ -11,7 +11,6 @@
 //! Core re-exports all of these via `pub use mlc_core::ui::modal_state::*`.
 
 use crate::state::scroll_state::ScrollState;
-use crate::state::modal_data::TextEditingState;
 
 // =============================================================================
 // SearchResult — flat, chart-owned search result for the symbol search modal
@@ -177,12 +176,8 @@ pub struct ModalState {
     pub is_dragging: bool,
     /// Drag offset from modal top-left
     pub drag_offset: Option<(f64, f64)>,
-    /// Text editing state for search input
-    pub editing_text: Option<TextEditingState>,
     /// Indicator category filter (for indicator search modal)
     pub indicator_category_filter: IndicatorCategoryFilter,
-    /// Whether the user is drag-selecting text in the search input.
-    pub text_select_dragging: bool,
     /// When true, the indicator search modal shows the Indicator Sets view
     /// instead of the individual indicator list.
     pub show_indicator_sets: bool,
@@ -205,18 +200,6 @@ impl ModalState {
         self.search_query.clear();
         self.active_tab = None;
         self.scroll.reset();
-        // Auto-focus search input for search overlay modals so the user can type immediately
-        if modal.is_search_overlay() {
-            self.editing_text = Some(TextEditingState {
-                field_id: "search_input".to_string(),
-                text: String::new(),
-                cursor: 0,
-                selection_start: None,
-                blink_time: 0, // updated on first render frame
-            });
-        } else {
-            self.editing_text = None;
-        }
         // Reset category filter for indicator search
         self.indicator_category_filter = IndicatorCategoryFilter::All;
         self.show_indicator_sets = false;
@@ -234,7 +217,6 @@ impl ModalState {
         self.position = None;
         self.is_dragging = false;
         self.drag_offset = None;
-        self.editing_text = None;
         self.indicator_category_filter = IndicatorCategoryFilter::All;
         self.show_indicator_sets = false;
     }
@@ -250,154 +232,8 @@ impl ModalState {
 
     /// Set search query and reset scroll
     pub fn set_query(&mut self, query: impl Into<String>) {
-        let q: String = query.into();
-        self.search_query = q.clone();
+        self.search_query = query.into();
         self.scroll.reset();
-        // Sync with editing state if present
-        if let Some(ref mut edit) = self.editing_text {
-            edit.cursor = q.chars().count();
-            edit.text = q;
-            edit.selection_start = None;
-        }
-    }
-
-    /// Start editing the search input field
-    pub fn start_editing(&mut self, current_time_ms: u64) {
-        self.editing_text = Some(TextEditingState {
-            field_id: "search_input".to_string(),
-            text: self.search_query.clone(),
-            cursor: self.search_query.chars().count(),
-            selection_start: None,
-            blink_time: current_time_ms,
-        });
-    }
-
-    /// Click at position in search input (for cursor positioning)
-    pub fn click_at_position(&mut self, click_x: f64, input_x: f64, char_width: f64, current_time_ms: u64) {
-        if let Some(ref mut edit) = self.editing_text {
-            let text_x = input_x + 28.0; // After search icon
-            let relative_x = (click_x - text_x).max(0.0);
-            let char_index = (relative_x / char_width).round() as usize;
-            edit.cursor = char_index.min(edit.text.chars().count());
-            edit.selection_start = None;
-            edit.reset_blink(current_time_ms);
-        }
-    }
-
-    /// Insert character at cursor position
-    pub fn insert_char(&mut self, c: char, current_time_ms: u64) {
-        if let Some(ref mut edit) = self.editing_text {
-            // Delete selection first if any
-            if let Some(sel_start) = edit.selection_start {
-                let start = sel_start.min(edit.cursor);
-                let end = sel_start.max(edit.cursor);
-                let byte_start = edit.char_to_byte_pos(start);
-                let byte_end = edit.char_to_byte_pos(end);
-                edit.text.drain(byte_start..byte_end);
-                edit.cursor = start;
-                edit.selection_start = None;
-            }
-            let byte_pos = edit.char_to_byte_pos(edit.cursor);
-            edit.text.insert(byte_pos, c);
-            edit.cursor += 1;
-            edit.reset_blink(current_time_ms);
-            self.search_query = edit.text.clone();
-            self.scroll.reset();
-        }
-    }
-
-    /// Delete character before cursor (backspace)
-    pub fn delete_char_before(&mut self, current_time_ms: u64) {
-        if let Some(ref mut edit) = self.editing_text {
-            if let Some(sel_start) = edit.selection_start {
-                let start = sel_start.min(edit.cursor);
-                let end = sel_start.max(edit.cursor);
-                let byte_start = edit.char_to_byte_pos(start);
-                let byte_end = edit.char_to_byte_pos(end);
-                edit.text.drain(byte_start..byte_end);
-                edit.cursor = start;
-                edit.selection_start = None;
-            } else if edit.cursor > 0 {
-                edit.cursor -= 1;
-                let byte_start = edit.char_to_byte_pos(edit.cursor);
-                let byte_end = edit.char_to_byte_pos(edit.cursor + 1);
-                edit.text.drain(byte_start..byte_end);
-            }
-            edit.reset_blink(current_time_ms);
-            self.search_query = edit.text.clone();
-            self.scroll.reset();
-        }
-    }
-
-    /// Delete character after cursor (delete key)
-    pub fn delete_char_after(&mut self, current_time_ms: u64) {
-        if let Some(ref mut edit) = self.editing_text {
-            if let Some(sel_start) = edit.selection_start {
-                let start = sel_start.min(edit.cursor);
-                let end = sel_start.max(edit.cursor);
-                let byte_start = edit.char_to_byte_pos(start);
-                let byte_end = edit.char_to_byte_pos(end);
-                edit.text.drain(byte_start..byte_end);
-                edit.cursor = start;
-                edit.selection_start = None;
-            } else if edit.cursor < edit.text.chars().count() {
-                let byte_start = edit.char_to_byte_pos(edit.cursor);
-                let byte_end = edit.char_to_byte_pos(edit.cursor + 1);
-                edit.text.drain(byte_start..byte_end);
-            }
-            edit.reset_blink(current_time_ms);
-            self.search_query = edit.text.clone();
-            self.scroll.reset();
-        }
-    }
-
-    /// Move cursor left
-    pub fn move_cursor_left(&mut self, current_time_ms: u64) {
-        if let Some(ref mut edit) = self.editing_text {
-            if edit.cursor > 0 {
-                edit.cursor -= 1;
-            }
-            edit.selection_start = None;
-            edit.reset_blink(current_time_ms);
-        }
-    }
-
-    /// Move cursor right
-    pub fn move_cursor_right(&mut self, current_time_ms: u64) {
-        if let Some(ref mut edit) = self.editing_text {
-            if edit.cursor < edit.text.chars().count() {
-                edit.cursor += 1;
-            }
-            edit.selection_start = None;
-            edit.reset_blink(current_time_ms);
-        }
-    }
-
-    /// Move cursor to start
-    pub fn move_cursor_home(&mut self, current_time_ms: u64) {
-        if let Some(ref mut edit) = self.editing_text {
-            edit.cursor = 0;
-            edit.selection_start = None;
-            edit.reset_blink(current_time_ms);
-        }
-    }
-
-    /// Move cursor to end
-    pub fn move_cursor_end(&mut self, current_time_ms: u64) {
-        if let Some(ref mut edit) = self.editing_text {
-            edit.cursor = edit.text.chars().count();
-            edit.selection_start = None;
-            edit.reset_blink(current_time_ms);
-        }
-    }
-
-    /// Select all text
-    pub fn select_all(&mut self, current_time_ms: u64) {
-        if let Some(ref mut edit) = self.editing_text {
-            edit.selection_start = Some(0);
-            edit.cursor = edit.text.chars().count();
-            edit.reset_blink(current_time_ms);
-        }
     }
 
     /// Set active tab

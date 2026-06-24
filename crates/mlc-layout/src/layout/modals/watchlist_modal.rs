@@ -465,12 +465,21 @@ fn render_overview_tab(
     let search_input_y = search_row_y + (search_h - input_h) / 2.0;
     let search_input_rect = WidgetRect::new(search_input_x, search_input_y, search_input_w, input_h);
 
+    // Search input — text/cursor/selection from TextFieldStore.
+    let wl_search_id = uzor::WidgetId::from("watchlist_search");
+    let wl_text = input_coordinator.text_fields().text(&wl_search_id).to_string();
+    let wl_cursor = input_coordinator.text_fields().cursor(&wl_search_id);
+    let (wl_sel_start, wl_sel_end) = match input_coordinator.text_fields().selection_range(&wl_search_id) {
+        Some((lo, hi)) => (Some(lo), Some(hi)),
+        None => (None, None),
+    };
+
     let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
-    let input_config = InputConfig::new(&state.search_editing.text)
+    let input_config = InputConfig::new(&wl_text)
         .with_focused(true)
-        .with_cursor(state.search_editing.cursor)
+        .with_cursor(wl_cursor)
         .with_placeholder("Search symbols...")
-        .with_selection(state.search_editing.selection_start, Some(state.search_editing.cursor))
+        .with_selection(wl_sel_start, wl_sel_end)
         .with_padding(26.0);
 
     let search_input_result = draw_input(ctx, &input_config, WidgetState::Normal, search_input_rect, &widget_theme);
@@ -488,7 +497,7 @@ fn render_overview_tab(
     );
 
     // Blinking cursor for search input
-    if state.search_editing.is_cursor_visible(current_time_ms) {
+    if input_coordinator.text_fields().cursor_visible(current_time_ms) {
         draw_input_cursor(
             ctx,
             search_input_result.cursor_x,
@@ -1233,17 +1242,21 @@ pub fn render_wl_group_name_input(
     );
     result.input_rect = input_rect;
 
-    let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
-    let (sel_start, sel_end) = if let Some((lo, hi)) = state.editing.selection_range() {
-        (Some(lo), Some(hi))
-    } else {
-        (None, None)
+    // Text input — text/cursor/selection from TextFieldStore.
+    let wl_gn_id = uzor::WidgetId::from("watchlist_group_name");
+    let wl_gn_text = input_coordinator.text_fields().text(&wl_gn_id).to_string();
+    let wl_gn_cursor = input_coordinator.text_fields().cursor(&wl_gn_id);
+    let (wl_gn_sel_start, wl_gn_sel_end) = match input_coordinator.text_fields().selection_range(&wl_gn_id) {
+        Some((lo, hi)) => (Some(lo), Some(hi)),
+        None => (None, None),
     };
-    let input_config = InputConfig::new(&state.editing.text)
+
+    let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
+    let input_config = InputConfig::new(&wl_gn_text)
         .with_focused(true)
-        .with_cursor(state.editing.cursor)
+        .with_cursor(wl_gn_cursor)
         .with_placeholder("Watchlist name...")
-        .with_selection(sel_start, sel_end);
+        .with_selection(wl_gn_sel_start, wl_gn_sel_end);
 
     let input_result = draw_input(ctx, &input_config, WidgetState::Normal, input_rect, &widget_theme);
     result.input_text_rect = input_result.text_rect;
@@ -1258,7 +1271,7 @@ pub fn render_wl_group_name_input(
     );
 
     // Blinking cursor
-    if state.editing.is_cursor_visible(current_time_ms) {
+    if input_coordinator.text_fields().cursor_visible(current_time_ms) {
         draw_input_cursor(
             ctx,
             input_result.cursor_x,

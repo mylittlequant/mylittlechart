@@ -18,6 +18,9 @@ use mlc_core::templates::indicator_set::IndicatorSet;
 use mlc_core::i18n::{ModalKey, t_modal};
 
 /// Render search overlay (symbol/indicator search).
+///
+/// `field_id` is the TextFieldStore key for the active search overlay — one of
+/// `"symbol_search"`, `"indicator_search"`, or `"compare_search"`.
 pub fn render_search_overlay(
     ctx: &mut dyn RenderContext,
     screen: ChartScreenArea,
@@ -29,6 +32,7 @@ pub fn render_search_overlay(
     toolbar_theme: &ToolbarTheme,
     current_time_ms: u64,
     input_coordinator: &mut uzor::input::InputCoordinator,
+    field_id: &str,
 ) -> ModalSearchResult {
     use mlc_core::render::{TextAlign, TextBaseline};
     use mlc_core::engine::render::draw_svg_icon;
@@ -214,33 +218,36 @@ pub fn render_search_overlay(
         );
     }
 
-    // Search input
+    // Search input — reads text/cursor/selection from TextFieldStore.
     let input_y = modal_y + header_height + modal_padding;
     let input_width = content_width - modal_padding * 2.0;
     let input_x = content_x + modal_padding;
 
-    let is_editing = modal_state.editing_text.as_ref()
-        .map(|e| e.field_id == "search_input")
-        .unwrap_or(false);
-
-    let (input_value, cursor_pos, selection_start, selection_end) = if let Some(ref edit) = modal_state.editing_text {
-        if edit.field_id == "search_input" {
-            (&edit.text, edit.cursor, edit.selection_start, Some(edit.cursor))
-        } else {
-            (&modal_state.search_query, modal_state.search_query.len(), None, None)
-        }
-    } else {
-        (&modal_state.search_query, modal_state.search_query.len(), None, None)
+    let search_field_id = uzor::WidgetId::from(field_id);
+    let is_focused = input_coordinator.text_fields().is_focused(&search_field_id);
+    let input_text = input_coordinator.text_fields().text(&search_field_id).to_string();
+    let cursor_pos = input_coordinator.text_fields().cursor(&search_field_id);
+    let (selection_start, selection_end) = match input_coordinator.text_fields().selection_range(&search_field_id) {
+        Some((lo, hi)) => (Some(lo), Some(hi)),
+        None => (None, None),
     };
 
-    let input_config = InputConfig::new(input_value)
+    // Use the store text when focused; fall back to modal_state.search_query for display.
+    let display_text = if is_focused || !input_text.is_empty() {
+        input_text.clone()
+    } else {
+        modal_state.search_query.clone()
+    };
+    let display_cursor = if is_focused { cursor_pos } else { display_text.len() };
+
+    let input_config = InputConfig::new(&display_text)
         .with_placeholder(placeholder)
-        .with_focused(is_editing)
+        .with_focused(is_focused)
         .with_type(InputType::Search)
         .with_font_size(13.0)
         .with_padding(28.0)
         .with_radius(0.0)
-        .with_cursor(cursor_pos)
+        .with_cursor(display_cursor)
         .with_selection(selection_start, selection_end);
 
     let widget_theme = toolbar_to_widget_theme(toolbar_theme, theme);
@@ -265,12 +272,8 @@ pub fn render_search_overlay(
         &toolbar_theme.item_text_muted,
     );
 
-    if is_editing {
-        if let Some(ref edit) = modal_state.editing_text {
-            if edit.field_id == "search_input" && edit.is_cursor_visible(current_time_ms) {
-                draw_input_cursor(ctx, input_result.cursor_x, input_result.cursor_y, input_result.cursor_height, &toolbar_theme.item_text);
-            }
-        }
+    if is_focused && input_coordinator.text_fields().cursor_visible(current_time_ms) {
+        draw_input_cursor(ctx, input_result.cursor_x, input_result.cursor_y, input_result.cursor_height, &toolbar_theme.item_text);
     }
 
     // Results area

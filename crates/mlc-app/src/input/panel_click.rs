@@ -116,6 +116,12 @@ impl ChartApp {
 
         if widget_id == "watchlist_open_modal" {
             self.watchlist_modal.open();
+            {
+                let wl_id = WidgetId::from(crate::text_input::WATCHLIST_SEARCH);
+                self.input_coordinator.borrow_mut().text_fields_mut().clear(&wl_id);
+                self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&wl_id);
+                self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::WATCHLIST_SEARCH);
+            }
             eprintln!("[Sidebar] Watchlist expand button clicked — opening watchlist modal");
             return;
         }
@@ -3657,7 +3663,9 @@ impl ChartApp {
         if let Some(rest) = widget_id.strip_prefix("wl_group_name:") {
             match rest {
                 "save" => {
-                    let name = self.wl_group_name_input.editing.text.trim().to_string();
+                    // Read text from TextFieldStore.
+                    let wl_gn_id = uzor::WidgetId::from(crate::text_input::WATCHLIST_GROUP_NAME);
+                    let name = self.input_coordinator.borrow().text_fields().text(&wl_gn_id).trim().to_string();
                     if !name.is_empty() {
                         use mlc_layout::ui::modal_settings::WatchlistGroupNameMode;
                         match self.wl_group_name_input.mode.clone() {
@@ -3689,21 +3697,17 @@ impl ChartApp {
                         }
                     }
                     self.wl_group_name_input.close();
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 }
                 "cancel" | "close" => {
                     self.wl_group_name_input.close();
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     eprintln!("[WatchlistGroupName] cancelled");
                 }
                 "input" => {
-                    // Click-to-cursor using pre-computed character positions
-                    if let Some(ref gni) = self.last_wl_group_name_result {
-                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
-                            &gni.char_x_positions,
-                            x,
-                        );
-                        self.wl_group_name_input.editing.cursor = new_cursor;
-                        self.wl_group_name_input.editing.selection_start = None;
-                    }
+                    // Click-to-cursor — TextFieldStore repositions cursor via on_drag_start+end.
+                    self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
+                    self.input_coordinator.borrow_mut().text_fields_mut().on_drag_end();
                 }
                 "modal_bg" => {
                     // Absorb clicks on modal background — do nothing
@@ -3798,8 +3802,10 @@ impl ChartApp {
         if let Some(rest) = widget_id.strip_prefix("preset_name_input:") {
             match rest {
                 "save" => {
-                    let name = self.panel_app.preset_name_input.name().to_string();
-                    if !name.trim().is_empty() {
+                    // Read text from TextFieldStore.
+                    let pni_id = WidgetId::from(crate::text_input::PRESET_NAME_INPUT);
+                    let name = self.input_coordinator.borrow().text_fields().text(&pni_id).trim().to_string();
+                    if !name.is_empty() {
                         use mlc_layout::ui::modal_settings::PresetNameInputMode;
                         match self.panel_app.preset_name_input.mode {
                             PresetNameInputMode::SaveAs => {
@@ -3824,28 +3830,25 @@ impl ChartApp {
                     }
                     self.panel_app.preset_name_input.close();
                     self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::None;
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     eprintln!("[ChartApp] preset name input committed via Save button");
                 }
                 "cancel" => {
                     self.panel_app.preset_name_input.close();
                     self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::None;
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     eprintln!("[ChartApp] preset name input closed via Cancel button");
                 }
                 "close" => {
                     self.panel_app.preset_name_input.close();
                     self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::None;
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     eprintln!("[ChartApp] preset name input closed via X");
                 }
                 "input" => {
-                    // Click-to-cursor using pre-computed character positions
-                    if let Some(pni) = self.frame_result.as_ref().and_then(|r| r.preset_name_input.as_ref()) {
-                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
-                            &pni.char_x_positions,
-                            x,
-                        );
-                        self.panel_app.preset_name_input.editing.cursor = new_cursor;
-                        self.panel_app.preset_name_input.editing.selection_start = None;
-                    }
+                    // Click-to-cursor — TextFieldStore repositions cursor via on_drag_start+end.
+                    self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
+                    self.input_coordinator.borrow_mut().text_fields_mut().on_drag_end();
                 }
                 "modal_bg" => {
                     // No-op — absorb click to prevent fall-through.
@@ -3866,25 +3869,25 @@ impl ChartApp {
             } else if action == "modal_bg" {
                 // Absorb click — no-op.
             } else if action == "search_input" {
-                // Click in search input — position cursor using char positions.
-                let char_positions = self.frame_result.as_ref()
-                    .and_then(|r| r.chart_browser.as_ref())
-                    .map(|br| br.search_char_positions.clone());
-                if let Some(positions) = char_positions {
-                    let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&positions, x);
-                    self.panel_app.chart_browser.search_editing.cursor = new_cursor;
-                    self.panel_app.chart_browser.search_editing.selection_start = None;
-                    self.panel_app.chart_browser.search_editing.reset_blink(0);
-                }
+                // Click-to-cursor — TextFieldStore repositions cursor via on_drag_start+end.
+                self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
+                self.input_coordinator.borrow_mut().text_fields_mut().on_drag_end();
             } else if let Some(preset_id) = action.strip_prefix("rename:") {
                 // Click rename icon — close browser, open rename modal for this preset.
                 let preset_id = preset_id.to_string();
                 let name_opt = self.core.presets().get(&preset_id).map(|p| p.name.clone());
                 self.panel_app.chart_browser.close();
                 self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::None;
+                self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 if let Some(name) = name_opt {
                     self.panel_app.preset_name_input.open_rename(&preset_id, &name, 0);
                     self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::PresetNameInput;
+                    {
+                        let pni_id = WidgetId::from(crate::text_input::PRESET_NAME_INPUT);
+                        self.input_coordinator.borrow_mut().text_fields_mut().set_text(&pni_id, &name);
+                        self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&pni_id);
+                        self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::PRESET_NAME_INPUT);
+                    }
                     eprintln!("[ChartApp] chart browser: rename preset '{}'", preset_id);
                 }
             } else if let Some(preset_id) = action.strip_prefix("delete:") {

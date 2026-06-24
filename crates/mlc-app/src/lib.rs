@@ -1445,6 +1445,14 @@ impl ChartApp {
             tf.register(text_input::BAR_MODE_PARAM, TextFieldConfig::text()
                 .with_filter(|c| c.is_ascii_digit() || c == '.')
                 .with_max_len(12));
+            // Wave 1 search/dialog fields.
+            tf.register(text_input::SYMBOL_SEARCH, TextFieldConfig::text());
+            tf.register(text_input::INDICATOR_SEARCH, TextFieldConfig::text());
+            tf.register(text_input::COMPARE_SEARCH, TextFieldConfig::text());
+            tf.register(text_input::CHART_BROWSER_SEARCH, TextFieldConfig::text());
+            tf.register(text_input::WATCHLIST_SEARCH, TextFieldConfig::text());
+            tf.register(text_input::WATCHLIST_GROUP_NAME, TextFieldConfig::text());
+            tf.register(text_input::PRESET_NAME_INPUT, TextFieldConfig::text());
         }
 
         // Populate sub_panes from the real indicator_manager.
@@ -1644,6 +1652,14 @@ impl ChartApp {
             tf.register(text_input::BAR_MODE_PARAM, TextFieldConfig::text()
                 .with_filter(|c| c.is_ascii_digit() || c == '.')
                 .with_max_len(12));
+            // Wave 1 search/dialog fields.
+            tf.register(text_input::SYMBOL_SEARCH, TextFieldConfig::text());
+            tf.register(text_input::INDICATOR_SEARCH, TextFieldConfig::text());
+            tf.register(text_input::COMPARE_SEARCH, TextFieldConfig::text());
+            tf.register(text_input::CHART_BROWSER_SEARCH, TextFieldConfig::text());
+            tf.register(text_input::WATCHLIST_SEARCH, TextFieldConfig::text());
+            tf.register(text_input::WATCHLIST_GROUP_NAME, TextFieldConfig::text());
+            tf.register(text_input::PRESET_NAME_INPUT, TextFieldConfig::text());
         }
 
         app.needs_initial_viewport_fit = true;
@@ -2443,6 +2459,14 @@ impl ChartApp {
             tf.register(text_input::BAR_MODE_PARAM, TextFieldConfig::text()
                 .with_filter(|c| c.is_ascii_digit() || c == '.')
                 .with_max_len(12));
+            // Wave 1 search/dialog fields.
+            tf.register(text_input::SYMBOL_SEARCH, TextFieldConfig::text());
+            tf.register(text_input::INDICATOR_SEARCH, TextFieldConfig::text());
+            tf.register(text_input::COMPARE_SEARCH, TextFieldConfig::text());
+            tf.register(text_input::CHART_BROWSER_SEARCH, TextFieldConfig::text());
+            tf.register(text_input::WATCHLIST_SEARCH, TextFieldConfig::text());
+            tf.register(text_input::WATCHLIST_GROUP_NAME, TextFieldConfig::text());
+            tf.register(text_input::PRESET_NAME_INPUT, TextFieldConfig::text());
         }
 
         app.sync_sub_panes_from_manager();
@@ -5150,6 +5174,63 @@ impl ChartApp {
             }
         }
 
+        // Update text-field geometry for Wave 1 drag-select fields.
+        // Enables on_drag_start / on_drag_move rect-based hit-testing.
+        if let Some(ref wl) = self.last_watchlist_modal_result {
+            let r = &wl.search_input_rect;
+            let wl_id = WidgetId::from(text_input::WATCHLIST_SEARCH);
+            self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                &wl_id,
+                (r.x, r.y, r.width, r.height),
+                wl.search_char_positions.clone(),
+            );
+        }
+        if let Some(ref gni) = self.last_wl_group_name_result {
+            let r = &gni.input_text_rect;
+            let gn_id = WidgetId::from(text_input::WATCHLIST_GROUP_NAME);
+            self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                &gn_id,
+                (r.x, r.y, r.width, r.height),
+                gni.char_x_positions.clone(),
+            );
+        }
+        // Chart browser and preset name — stored in frame_result.
+        if let Some(ref fr) = self.frame_result {
+            if let Some(ref cbr) = fr.chart_browser {
+                let r = &cbr.search_input_rect;
+                let cb_id = WidgetId::from(text_input::CHART_BROWSER_SEARCH);
+                self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                    &cb_id,
+                    (r.x, r.y, r.width, r.height),
+                    cbr.search_char_positions.clone(),
+                );
+            }
+            if let Some(ref pni) = fr.preset_name_input {
+                let r = &pni.input_text_rect;
+                let pni_id = WidgetId::from(text_input::PRESET_NAME_INPUT);
+                self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                    &pni_id,
+                    (r.x, r.y, r.width, r.height),
+                    pni.char_x_positions.clone(),
+                );
+            }
+        }
+        // Search overlay field — stored in self.search_modal_result.
+        if let Some(ref smr) = self.search_modal_result {
+            let search_id = match self.modal_state.current {
+                mlc_core::state::modal_state::OpenModal::SymbolSearch => WidgetId::from(text_input::SYMBOL_SEARCH),
+                mlc_core::state::modal_state::OpenModal::IndicatorSearch => WidgetId::from(text_input::INDICATOR_SEARCH),
+                mlc_core::state::modal_state::OpenModal::CompareSearch => WidgetId::from(text_input::COMPARE_SEARCH),
+                _ => WidgetId::from(text_input::SYMBOL_SEARCH),
+            };
+            let r = &smr.input_rect;
+            self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                &search_id,
+                (r.x, r.y, r.width, r.height),
+                smr.search_char_positions.clone(),
+            );
+        }
+
         // Auto-snap chat scroll to bottom when new messages arrive.
         // Check ALL chat leaves (not just focused) so switching to a leaf
         // that received messages while unfocused shows the latest content.
@@ -5783,6 +5864,12 @@ impl ChartApp {
                 let toolbar_theme_search = self.panel_app.toolbar_theme_for_render();
                 let tm_guard_search = self.core.template_manager();
                 let indicator_sets = &tm_guard_search.indicator_sets;
+                let search_field_id = match self.modal_state.current {
+                    mlc_core::state::modal_state::OpenModal::SymbolSearch => crate::text_input::SYMBOL_SEARCH,
+                    mlc_core::state::modal_state::OpenModal::IndicatorSearch => crate::text_input::INDICATOR_SEARCH,
+                    mlc_core::state::modal_state::OpenModal::CompareSearch => crate::text_input::COMPARE_SEARCH,
+                    _ => crate::text_input::SYMBOL_SEARCH,
+                };
                 Some(render_search_overlay(
                     ctx,
                     screen,
@@ -5794,6 +5881,7 @@ impl ChartApp {
                     &toolbar_theme_search,
                     current_time_ms,
                     &mut self.input_coordinator.borrow_mut(),
+                    search_field_id,
                 ))
             } else {
                 None

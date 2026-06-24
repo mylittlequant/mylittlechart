@@ -287,7 +287,7 @@ impl ChartApp {
     }
 
     /// Handle clicks on widgets registered with the "wl_modal:" prefix.
-    pub(super) fn handle_watchlist_modal_click(&mut self, rest: &str, x: f64, _y: f64) {
+    pub(super) fn handle_watchlist_modal_click(&mut self, rest: &str, x: f64, y: f64) {
         match rest {
             "close" => {
                 self.watchlist_modal.close();
@@ -297,16 +297,9 @@ impl ChartApp {
                 // Absorbed — no-op for backdrop clicks, drag zone, scroll zone
             }
             "search_input" => {
-                // Click-to-cursor using pre-computed character positions
-                if let Some(ref wl) = self.last_watchlist_modal_result {
-                    let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(
-                        &wl.search_char_positions,
-                        x,
-                    );
-                    self.watchlist_modal.search_editing.cursor = new_cursor;
-                    self.watchlist_modal.search_editing.selection_start = None;
-                    self.watchlist_modal.search_editing.reset_blink(0);
-                }
+                // Click-to-cursor — TextFieldStore repositions cursor via on_drag_start+end.
+                self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
+                self.input_coordinator.borrow_mut().text_fields_mut().on_drag_end();
             }
             _ if rest.starts_with("tab:") => {
                 use mlc_layout::ui::modal_settings::WatchlistModalTab;
@@ -506,6 +499,12 @@ impl ChartApp {
                     .unwrap_or(0);
                 let default_name = format!("Watchlist {}", max_n + 1);
                 self.wl_group_name_input.open_create_new_with_name(&default_name);
+                {
+                    let wgn_id = uzor::WidgetId::from(crate::text_input::WATCHLIST_GROUP_NAME);
+                    self.input_coordinator.borrow_mut().text_fields_mut().set_text(&wgn_id, &default_name);
+                    self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&wgn_id);
+                    self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::WATCHLIST_GROUP_NAME);
+                }
                 eprintln!("[WatchlistModal] opening group name input for create new: '{}'", default_name);
             }
             // Rename a watchlist — open name input modal pre-filled with current name
@@ -515,6 +514,12 @@ impl ChartApp {
                     if let Some(list) = self.core.watchlist().lists.iter().find(|l| l.id == id) {
                         let name = list.name.clone();
                         self.wl_group_name_input.open_rename(id, &name);
+                        {
+                            let wgn_id = uzor::WidgetId::from(crate::text_input::WATCHLIST_GROUP_NAME);
+                            self.input_coordinator.borrow_mut().text_fields_mut().set_text(&wgn_id, &name);
+                            self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&wgn_id);
+                            self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::WATCHLIST_GROUP_NAME);
+                        }
                         eprintln!("[WatchlistModal] opening group name input for rename id={}", id);
                     }
                 }
@@ -556,6 +561,13 @@ impl ChartApp {
                     &default_name,
                     current_time_ms,
                 );
+                self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::PresetNameInput;
+                {
+                    let pni_id = uzor::WidgetId::from(crate::text_input::PRESET_NAME_INPUT);
+                    self.input_coordinator.borrow_mut().text_fields_mut().set_text(&pni_id, &default_name);
+                    self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&pni_id);
+                    self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::PRESET_NAME_INPUT);
+                }
                 eprintln!("[ChartApp] ind_search: opening create indicator set modal");
             }
             _ if rest.starts_with("set_delete:") => {
@@ -739,7 +751,7 @@ impl ChartApp {
     }
 
     /// Handle clicks on widgets registered with the "modal_search:" prefix.
-    pub(super) fn handle_search_modal_click(&mut self, rest: &str, x: f64, _y: f64) {
+    pub(super) fn handle_search_modal_click(&mut self, rest: &str, x: f64, y: f64) {
         match rest {
             "close" => {
                 self.modal_state.close();
@@ -749,22 +761,9 @@ impl ChartApp {
                 // Click inside modal body — no-op (prevents backdrop close)
             }
             "search_input" => {
-                // Activate text editing on the search input, positioning cursor at click point
-                let char_positions = self.search_modal_result.as_ref()
-                    .map(|ms| ms.search_char_positions.clone());
-                if let Some(positions) = char_positions {
-                    let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&positions, x);
-                    // Start editing if not already
-                    if self.modal_state.editing_text.is_none() {
-                        self.modal_state.start_editing(0);
-                    }
-                    if let Some(ref mut edit) = self.modal_state.editing_text {
-                        edit.cursor = new_cursor;
-                        edit.selection_start = None;
-                    }
-                } else {
-                    self.modal_state.start_editing(0);
-                }
+                // Click-to-cursor — TextFieldStore repositions cursor via on_drag_start+end.
+                self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
+                self.input_coordinator.borrow_mut().text_fields_mut().on_drag_end();
                 eprintln!("[ChartApp] search input activated");
             }
             _ if rest.starts_with("star:") => {
@@ -2294,7 +2293,12 @@ impl ChartApp {
                         self.modal_state.open(OpenModal::SymbolSearch);
                         self.modal_state.symbol_search_results =
                             crate::ChartApp::build_demo_symbol_results("", &self.core.watchlist(), &self.core.exchange_symbols_read());
-                        self.modal_state.start_editing(0);
+                        {
+                            let sym_id = uzor::WidgetId::from(crate::text_input::SYMBOL_SEARCH);
+                            self.input_coordinator.borrow_mut().text_fields_mut().clear(&sym_id);
+                            self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&sym_id);
+                            self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::SYMBOL_SEARCH);
+                        }
                         eprintln!("[ChartApp] symbol search opened from context menu");
                     }
                     "reset_cache" => {

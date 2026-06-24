@@ -47,8 +47,6 @@ pub struct PresetNameInputState {
     pub is_open: bool,
     /// What action this modal performs.
     pub mode: PresetNameInputMode,
-    /// Text editing state (field_id, text, cursor, selection, blink).
-    pub editing: TextEditingState,
     /// The preset ID being renamed (only used in Rename mode).
     pub rename_preset_id: Option<String>,
     /// Modal position (None = centered on screen).
@@ -57,8 +55,6 @@ pub struct PresetNameInputState {
     pub is_dragging: bool,
     /// Offset from mouse to modal top-left (for smooth dragging).
     pub drag_offset: Option<(f64, f64)>,
-    /// Whether the user is drag-selecting text in the input field.
-    pub text_select_dragging: bool,
 }
 
 impl Default for PresetNameInputState {
@@ -66,95 +62,50 @@ impl Default for PresetNameInputState {
         Self {
             is_open: false,
             mode: PresetNameInputMode::SaveAs,
-            editing: TextEditingState {
-                field_id: "preset_name".to_string(),
-                text: String::new(),
-                cursor: 0,
-                selection_start: None,
-                blink_time: 0,
-            },
             rename_preset_id: None,
             position: None,
             is_dragging: false,
             drag_offset: None,
-            text_select_dragging: false,
         }
     }
 }
 
 impl PresetNameInputState {
-    /// Open the modal for "Save As" with a default preset name.
-    pub fn open_save_as(&mut self, default_name: &str, current_time_ms: u64) {
+    /// Open the modal for "Save As". Caller must seed TextFieldStore with the default name.
+    pub fn open_save_as(&mut self, _default_name: &str, _current_time_ms: u64) {
         self.is_open = true;
         self.mode = PresetNameInputMode::SaveAs;
         self.rename_preset_id = None;
-        self.editing = TextEditingState {
-            field_id: "preset_name".to_string(),
-            text: default_name.to_string(),
-            cursor: default_name.chars().count(),
-            selection_start: None,
-            blink_time: current_time_ms,
-        };
     }
 
-    /// Open the modal for "Rename" with the current preset name pre-filled.
-    pub fn open_rename(&mut self, preset_id: &str, current_name: &str, current_time_ms: u64) {
+    /// Open the modal for "Rename". Caller must seed TextFieldStore with the current name.
+    pub fn open_rename(&mut self, preset_id: &str, _current_name: &str, _current_time_ms: u64) {
         self.is_open = true;
         self.mode = PresetNameInputMode::Rename;
         self.rename_preset_id = Some(preset_id.to_string());
-        self.editing = TextEditingState {
-            field_id: "preset_name".to_string(),
-            text: current_name.to_string(),
-            cursor: current_name.chars().count(),
-            selection_start: None,
-            blink_time: current_time_ms,
-        };
     }
 
-    /// Open the modal for "New Chart" with a default "Untitled N" name pre-filled.
-    pub fn open_new_chart(&mut self, default_name: &str, current_time_ms: u64) {
+    /// Open the modal for "New Chart". Caller must seed TextFieldStore with the default name.
+    pub fn open_new_chart(&mut self, _default_name: &str, _current_time_ms: u64) {
         self.is_open = true;
         self.mode = PresetNameInputMode::NewChart;
         self.rename_preset_id = None;
-        self.editing = TextEditingState {
-            field_id: "preset_name".to_string(),
-            text: default_name.to_string(),
-            cursor: default_name.chars().count(),
-            selection_start: None,
-            blink_time: current_time_ms,
-        };
     }
 
-    /// Open the modal for "Create Indicator Set" with a default name.
-    pub fn open_create_indicator_set(&mut self, default_name: &str, current_time_ms: u64) {
+    /// Open the modal for "Create Indicator Set". Caller must seed TextFieldStore with the default name.
+    pub fn open_create_indicator_set(&mut self, _default_name: &str, _current_time_ms: u64) {
         self.is_open = true;
         self.mode = PresetNameInputMode::CreateIndicatorSet;
         self.rename_preset_id = None;
-        self.editing = TextEditingState {
-            field_id: "preset_name".to_string(),
-            text: default_name.to_string(),
-            cursor: default_name.chars().count(),
-            selection_start: None,
-            blink_time: current_time_ms,
-        };
     }
 
     /// Close the modal and reset state.
     pub fn close(&mut self) {
         self.is_open = false;
-        self.editing.text.clear();
-        self.editing.cursor = 0;
-        self.editing.selection_start = None;
         self.rename_preset_id = None;
         self.is_dragging = false;
         self.drag_offset = None;
-        self.text_select_dragging = false;
         // Don't reset position — preserve last drag position for reopening
-    }
-
-    /// Get the entered name text.
-    pub fn name(&self) -> &str {
-        &self.editing.text
     }
 
     /// Start dragging from the header.
@@ -2541,10 +2492,8 @@ impl OverlaySettingsState {
 pub struct ChartBrowserState {
     /// Whether the modal is currently open.
     pub is_open: bool,
-    /// The text typed into the search box (mirrors `search_editing.text`).
+    /// The text typed into the search box.
     pub search_query: String,
-    /// Text editing state for the search input.
-    pub search_editing: TextEditingState,
     /// Scroll state for the preset list.
     pub scroll: ScrollState,
     /// The preset ID currently under the mouse cursor (for hover icons).
@@ -2555,8 +2504,6 @@ pub struct ChartBrowserState {
     pub is_dragging: bool,
     /// Offset from mouse to modal top-left when drag started.
     pub drag_offset: Option<(f64, f64)>,
-    /// Whether the user is drag-selecting text in the search input field.
-    pub search_text_select_dragging: bool,
     /// When true, selecting a preset opens it in a new tab instead of the active tab.
     pub open_in_new_tab: bool,
 }
@@ -2566,39 +2513,26 @@ impl Default for ChartBrowserState {
         Self {
             is_open: false,
             search_query: String::new(),
-            search_editing: TextEditingState {
-                field_id: "chart_browser_search".to_string(),
-                text: String::new(),
-                cursor: 0,
-                selection_start: None,
-                blink_time: 0,
-            },
             scroll: ScrollState::default(),
             hovered_preset_id: None,
             position: None,
             is_dragging: false,
             drag_offset: None,
-            search_text_select_dragging: false,
             open_in_new_tab: false,
         }
     }
 }
 
 impl ChartBrowserState {
-    /// Open the modal, resetting search and scroll state.
-    pub fn open(&mut self, current_time_ms: u64) {
+    /// Open the modal, resetting search and scroll state. Caller must clear TextFieldStore.
+    pub fn open(&mut self, _current_time_ms: u64) {
         self.is_open = true;
         self.search_query.clear();
-        self.search_editing.text.clear();
-        self.search_editing.cursor = 0;
-        self.search_editing.selection_start = None;
-        self.search_editing.reset_blink(current_time_ms);
         self.scroll.reset();
         self.hovered_preset_id = None;
         self.position = None;
         self.is_dragging = false;
         self.drag_offset = None;
-        self.search_text_select_dragging = false;
         self.open_in_new_tab = false;
     }
 
@@ -2736,7 +2670,6 @@ pub struct WatchlistModalState {
     pub is_open: bool,
     pub scroll: ScrollState,
     pub search_query: String,
-    pub search_editing: TextEditingState,
     pub active_tab: WatchlistModalTab,
     pub position: Option<(f64, f64)>,
     pub is_dragging: bool,
@@ -2754,8 +2687,6 @@ pub struct WatchlistModalState {
     pub drop_index: Option<usize>,
     /// ID of the widget currently hovered inside the watchlist modal.
     pub hovered_widget: Option<String>,
-    /// Whether the user is drag-selecting text in the search input field.
-    pub search_text_select_dragging: bool,
 }
 
 impl WatchlistModalState {
@@ -2764,13 +2695,6 @@ impl WatchlistModalState {
             is_open: false,
             scroll: ScrollState::default(),
             search_query: String::new(),
-            search_editing: TextEditingState {
-                field_id: "watchlist_modal_search".to_string(),
-                text: String::new(),
-                cursor: 0,
-                selection_start: None,
-                blink_time: 0,
-            },
             active_tab: WatchlistModalTab::Overview,
             position: None,
             is_dragging: false,
@@ -2780,7 +2704,6 @@ impl WatchlistModalState {
             drag_reorder_pending: None,
             drop_index: None,
             hovered_widget: None,
-            search_text_select_dragging: false,
         }
     }
 
@@ -2788,9 +2711,6 @@ impl WatchlistModalState {
         self.is_open = true;
         self.scroll.reset();
         self.search_query.clear();
-        self.search_editing.text.clear();
-        self.search_editing.cursor = 0;
-        self.search_editing.selection_start = None;
         self.active_tab = WatchlistModalTab::Overview;
         self.drag_reorder = None;
         self.drag_reorder_pending = None;
@@ -2806,7 +2726,6 @@ impl WatchlistModalState {
         self.drag_reorder_pending = None;
         self.drop_index = None;
         self.hovered_widget = None;
-        self.search_text_select_dragging = false;
     }
 
     pub fn is_open(&self) -> bool {
@@ -2856,16 +2775,12 @@ pub struct WatchlistGroupNameInputState {
     pub is_open: bool,
     /// What action this modal performs.
     pub mode: WatchlistGroupNameMode,
-    /// Text editing state.
-    pub editing: TextEditingState,
     /// Modal position (None = centered on screen).
     pub position: Option<(f64, f64)>,
     /// Whether the modal is being dragged by its header.
     pub is_dragging: bool,
     /// Offset from mouse to modal top-left (for smooth dragging).
     pub drag_offset: Option<(f64, f64)>,
-    /// Whether the user is drag-selecting text in the input field.
-    pub text_select_dragging: bool,
 }
 
 impl WatchlistGroupNameInputState {
@@ -2873,17 +2788,9 @@ impl WatchlistGroupNameInputState {
         Self {
             is_open: false,
             mode: WatchlistGroupNameMode::CreateNew,
-            editing: TextEditingState {
-                field_id: "wl_group_name".to_string(),
-                text: String::new(),
-                cursor: 0,
-                selection_start: None,
-                blink_time: 0,
-            },
             position: None,
             is_dragging: false,
             drag_offset: None,
-            text_select_dragging: false,
         }
     }
 
@@ -2893,50 +2800,26 @@ impl WatchlistGroupNameInputState {
     }
 
     /// Open the modal for creating a new watchlist group with a specific default name.
-    pub fn open_create_new_with_name(&mut self, default_name: &str) {
+    /// Caller must seed TextFieldStore with `default_name`.
+    pub fn open_create_new_with_name(&mut self, _default_name: &str) {
         self.is_open = true;
         self.mode = WatchlistGroupNameMode::CreateNew;
-        let default = default_name.to_string();
-        let len = default.chars().count();
-        self.editing = TextEditingState {
-            field_id: "wl_group_name".to_string(),
-            text: default,
-            cursor: len,
-            selection_start: Some(0),
-            blink_time: 0,
-        };
         self.position = None;
     }
 
     /// Open the modal for renaming an existing watchlist group.
-    pub fn open_rename(&mut self, list_id: u64, current_name: &str) {
+    /// Caller must seed TextFieldStore with `current_name`.
+    pub fn open_rename(&mut self, list_id: u64, _current_name: &str) {
         self.is_open = true;
         self.mode = WatchlistGroupNameMode::Rename(list_id);
-        let len = current_name.chars().count();
-        self.editing = TextEditingState {
-            field_id: "wl_group_name".to_string(),
-            text: current_name.to_string(),
-            cursor: len,
-            selection_start: Some(0),
-            blink_time: 0,
-        };
         self.position = None;
     }
 
     /// Close the modal and reset state.
     pub fn close(&mut self) {
         self.is_open = false;
-        self.editing.text.clear();
-        self.editing.cursor = 0;
-        self.editing.selection_start = None;
         self.is_dragging = false;
         self.drag_offset = None;
-        self.text_select_dragging = false;
-    }
-
-    /// Get the entered name text.
-    pub fn name(&self) -> &str {
-        &self.editing.text
     }
 
     pub fn is_open(&self) -> bool {
