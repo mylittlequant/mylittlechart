@@ -1,9 +1,29 @@
 //! `DataBridge` — live-data bridge backed by digdigdig3-station.
 //!
-//! All async work is driven by whichever tokio runtime the caller provides
-//! (native: the runtime built in `main`; wasm: the browser's microtask loop).
-//! Background tasks are spawned via the `spawn_bg` helper which cfg-splits
-//! between `tokio::spawn` (native) and `wasm_bindgen_futures::spawn_local` (wasm).
+//! ## Runtime ownership (2026-06-24 centralised fix)
+//!
+//! `DataBridge::new()` is async, so it runs inside SOME tokio runtime —
+//! the caller's. The bridge captures that runtime's `Handle` at
+//! construction time and stores it in `self.runtime_handle`. Every
+//! background task `DataBridge` spawns goes through `self.spawn_bg(...)` /
+//! `self.spawn_bg_join(...)`, which `enter()` the captured handle around
+//! the `tokio::spawn` call. This way callers do NOT have to maintain a
+//! tokio context around `bridge.*` invocations — the bridge is a sync
+//! façade from the caller's point of view, and all knowledge of tokio
+//! dies on the spawn-helper boundary.
+//!
+//! Before this fix the spawn helpers were free functions that
+//! unconditionally called `tokio::spawn`, forcing every caller path
+//! (winit `window_event`, `about_to_wait`, `user_event`, `resumed`,
+//! `start_promote_async`, `mlc-headless::main`, alert delivery, agent
+//! server) to wrap calls in `let _g = handle.enter();` — a forgotten
+//! one anywhere crashed with "no reactor running". The wasm cutover
+//! (commit 491f9576) made it worse by removing the runtime from
+//! `DataBridge` without re-establishing the cfg-split here.
+//!
+//! On wasm32 the helpers map to `wasm_bindgen_futures::spawn_local`,
+//! which needs no runtime context — `runtime_handle` does not exist on
+//! that target.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -57,32 +77,10 @@ use mlc_core::state::Timeframe;
 use digdigdig3::core::websocket::KlineInterval;
 use crate::convert::timeframe_to_interval;
 
-/// Spawn a background future with no return value.
-///
-/// On native (non-wasm) platforms this calls `tokio::spawn`, which requires the
-/// future to be `Send`. On wasm32 this calls
-/// `wasm_bindgen_futures::spawn_local`, which accepts `!Send` futures but must
-/// be called from within a wasm context where there is no multi-threading.
-///
-/// All `DataBridge` background tasks are spawned through this helper so the
-/// bridge itself does not need to own a `tokio::runtime::Runtime`.
-#[cfg(not(target_arch = "wasm32"))]
-#[inline]
-pub(crate) fn spawn_bg<F>(fut: F)
-where
-    F: std::future::Future<Output = ()> + Send + 'static,
-{
-    tokio::spawn(fut);
-}
-
-#[cfg(target_arch = "wasm32")]
-#[inline]
-pub(crate) fn spawn_bg<F>(fut: F)
-where
-    F: std::future::Future<Output = ()> + 'static,
-{
-    wasm_bindgen_futures::spawn_local(fut);
-}
+// `spawn_bg` / `spawn_bg_join` are inherent methods on `DataBridge` (see
+// the bottom of `impl DataBridge`). They live there so the native path can
+// `enter()` the captured `runtime_handle` before `tokio::spawn` —
+// freeing every caller path of having to maintain its own runtime context.
 
 /// Cross-platform handle to a spawned background task.
 ///
@@ -127,13 +125,18 @@ pub(crate) async fn sleep_ms(ms: u64) {
     gloo_timers::future::TimeoutFuture::new(ms as u32).await;
 }
 
-/// Spawn a background future and return a [`BgJoinHandle`] that can cancel it.
-///
-/// Native: `Send + 'static` future via `tokio::spawn`.
-/// Wasm: `'static` future (no `Send` required) via `wasm_bindgen_futures::spawn_local`,
-/// wrapped in `futures_util::future::Abortable` so the handle can cancel it.
+// `spawn_bg_join` is an inherent method on `DataBridge` — see comment above
+// near where `spawn_bg` used to live.
+
+/// Spawn a background future and return a [`BgJoinHandle`] WITHOUT entering
+/// any runtime — for use from inside an already-spawned task where the
+/// runtime is guaranteed to be active. Unlike `DataBridge::spawn_bg_join`
+/// this does not need `&self`, so it can be called from inside a
+/// `spawn_bg_join(async move { ... })` body where capturing `self` would
+/// make the future non-`'static`.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn spawn_bg_join<F>(fut: F) -> BgJoinHandle
+#[inline]
+pub(crate) fn spawn_bg_join_nested<F>(fut: F) -> BgJoinHandle
 where
     F: std::future::Future<Output = ()> + Send + 'static,
 {
@@ -141,7 +144,8 @@ where
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn spawn_bg_join<F>(fut: F) -> BgJoinHandle
+#[inline]
+pub(crate) fn spawn_bg_join_nested<F>(fut: F) -> BgJoinHandle
 where
     F: std::future::Future<Output = ()> + 'static,
 {
@@ -617,6 +621,18 @@ pub struct DataBridge {
     /// window and prevents the old `(BTCUSDT, 1h)` forwarder from staying
     /// live after the user switches to `(BTCUSDT, 1m)`.
     station_kline_handles: Arc<Mutex<HashMap<FetchKey, BgJoinHandle>>>,
+    /// Captured tokio runtime handle (native only).
+    ///
+    /// Filled in `new()` via `Handle::current()` — that always succeeds
+    /// because `new()` is `async` and therefore already runs inside the
+    /// caller's runtime. Every `tokio::spawn` site inside `DataBridge`
+    /// goes through `self.spawn_bg(...)` / `self.spawn_bg_join(...)`,
+    /// which `enter()` this handle around `tokio::spawn` so synchronous
+    /// caller paths (winit event handlers, headless tick loop, alert
+    /// delivery init, agent server bootstrap) do NOT need to wrap each
+    /// bridge call in their own runtime context.
+    #[cfg(not(target_arch = "wasm32"))]
+    runtime_handle: tokio::runtime::Handle,
 }
 
 impl DataBridge {
@@ -696,7 +712,11 @@ impl DataBridge {
             let fwd_tx = tx.clone();
             let fwd_ready_tx = connector_ready_tx.clone();
             let fwd_station = station.clone();
-            spawn_bg(async move {
+            // Inside `new()` we are already inside the caller's tokio
+            // runtime (this fn is `async`), so spawn directly without going
+            // through the `self.spawn_bg` helper which needs `&self` (the
+            // struct does not yet exist at this point).
+            let fwd_task = async move {
                 let mut events = station_events;
                 // Per-exchange dedup. Station emits ConnectorReady on EVERY
                 // warmup pass over an exchange, including the targeted
@@ -732,7 +752,11 @@ impl DataBridge {
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
                 }
-            });
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            tokio::spawn(fwd_task);
+            #[cfg(target_arch = "wasm32")]
+            wasm_bindgen_futures::spawn_local(fwd_task);
         }
 
         (Self {
@@ -756,7 +780,62 @@ impl DataBridge {
             wire_symbol_cache: Arc::new(Mutex::new(HashMap::new())),
             wire_symbol_prewarmed_count: Arc::new(Mutex::new(HashMap::new())),
             station_kline_handles: Arc::new(Mutex::new(HashMap::new())),
+            // `new()` is async — `Handle::current()` ALWAYS succeeds here
+            // because it is being driven by the caller's runtime.
+            #[cfg(not(target_arch = "wasm32"))]
+            runtime_handle: tokio::runtime::Handle::current(),
         }, rx, connector_ready_rx)
+    }
+
+    // ── spawn helpers (centralised tokio runtime entry, see crate-top doc) ──
+    //
+    // These were free functions before 2026-06-24. Each spawn site inside
+    // `DataBridge` now calls `self.spawn_bg(...)` / `self.spawn_bg_join(...)`.
+    // The native impl `enter()`s `self.runtime_handle` for the duration of
+    // the `tokio::spawn` call so synchronous callers don't have to.
+
+    /// Spawn a background future with no return value.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[inline]
+    pub(crate) fn spawn_bg<F>(&self, fut: F)
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let _g = self.runtime_handle.enter();
+        tokio::spawn(fut);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[inline]
+    pub(crate) fn spawn_bg<F>(&self, fut: F)
+    where
+        F: std::future::Future<Output = ()> + 'static,
+    {
+        wasm_bindgen_futures::spawn_local(fut);
+    }
+
+    /// Spawn a background future and return a [`BgJoinHandle`] that can
+    /// cancel it.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn spawn_bg_join<F>(&self, fut: F) -> BgJoinHandle
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let _g = self.runtime_handle.enter();
+        BgJoinHandle { inner: tokio::spawn(fut) }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn spawn_bg_join<F>(&self, fut: F) -> BgJoinHandle
+    where
+        F: std::future::Future<Output = ()> + 'static,
+    {
+        let (abort, reg) = futures_util::future::AbortHandle::new_pair();
+        let abortable = futures_util::future::Abortable::new(fut, reg);
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = abortable.await;
+        });
+        BgJoinHandle { abort }
     }
 
     /// Access to the underlying [`digdigdig3_station::Station`].
@@ -958,7 +1037,7 @@ impl DataBridge {
         let station = self.station.clone();
         let tx = self.tx.clone();
         let exchanges = exchanges.to_vec();
-        spawn_bg(async move {
+        self.spawn_bg(async move {
             let report = station.warmup(&exchanges).await;
             crate::dlog!(
                 "[STARTUP-WAVE bridge] station warmup DONE t={}ms ok={} failed={}",
@@ -995,7 +1074,7 @@ impl DataBridge {
             exchange_id,
             crate::elapsed_ms()
         );
-        spawn_bg(async move {
+        self.spawn_bg(async move {
             let _connect_t0 = crate::elapsed_ms();
             // Creating connector asynchronously. No stagger — the connector
             // tokio runtime is independent of the UI thread, so a startup burst
@@ -1184,7 +1263,7 @@ impl DataBridge {
             let station_symbol_wire = wire_sym.clone();
             let station_interval = interval.clone();
             let station_tf_name = tf_name.clone();
-            let handle = spawn_bg_join(async move {
+            let handle = self.spawn_bg_join(async move {
                 let kline_iv = KlineInterval::new(&station_interval);
                 let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                     exchange_id,
@@ -1231,7 +1310,7 @@ impl DataBridge {
             }
         }
 
-        spawn_bg(async move {
+        self.spawn_bg(async move {
             // Helper macro to remove the in-flight key on every exit path.
             macro_rules! finish_fetch {
                 () => {
@@ -1440,7 +1519,7 @@ impl DataBridge {
         let sub_key = (exchange_id, symbol.to_string(), account_type);
 
         let stream = digdigdig3_station::Stream::TickBar(count);
-        let handle = Self::spawn_derived_bar_sub(
+        let handle = self.spawn_derived_bar_sub(
             station, tx, exchange_id, account_type,
             symbol_str, symbol_wire, stream,
         );
@@ -1510,7 +1589,7 @@ impl DataBridge {
         let sub_key = (exchange_id, symbol.to_string(), account_type);
 
         let stream = digdigdig3_station::Stream::RangeBar(price_units);
-        let handle = Self::spawn_derived_bar_sub(
+        let handle = self.spawn_derived_bar_sub(
             station, tx, exchange_id, account_type,
             symbol_str, symbol_wire, stream,
         );
@@ -1536,7 +1615,7 @@ impl DataBridge {
         let sub_key = (exchange_id, symbol.to_string(), account_type);
 
         let stream = digdigdig3_station::Stream::VolumeBar(volume_units);
-        let handle = Self::spawn_derived_bar_sub(
+        let handle = self.spawn_derived_bar_sub(
             station, tx, exchange_id, account_type,
             symbol_str, symbol_wire, stream,
         );
@@ -1593,7 +1672,7 @@ impl DataBridge {
             .or_insert_with(|| Arc::new(tokio::sync::RwLock::new(Vec::new())))
             .clone();
 
-        let handle = Self::spawn_footprint_sub(
+        let handle = self.spawn_footprint_sub(
             station, tx, series, exchange_id, account_type,
             symbol_str, symbol_wire, stream,
         );
@@ -1643,7 +1722,7 @@ impl DataBridge {
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
         let sub_key = (exchange_id, symbol.to_string(), account_type);
         let stream = digdigdig3_station::Stream::RenkoBar(box_size_units, reversal_count);
-        let handle = Self::spawn_renko_sub(
+        let handle = self.spawn_renko_sub(
             station, tx, exchange_id, account_type,
             symbol_str, symbol_wire, stream,
         );
@@ -1669,7 +1748,7 @@ impl DataBridge {
         let sub_key = (exchange_id, symbol.to_string(), account_type);
         let stream = digdigdig3_station::Stream::PnfBar(box_size_units, reversal_count);
         let box_size = box_size_units as f64 / 1e8;
-        let handle = Self::spawn_pnf_sub(
+        let handle = self.spawn_pnf_sub(
             station, tx, exchange_id, account_type,
             symbol_str, symbol_wire, stream, box_size,
         );
@@ -1693,7 +1772,7 @@ impl DataBridge {
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
         let sub_key = (exchange_id, symbol.to_string(), account_type);
         let stream = digdigdig3_station::Stream::KagiBar(reversal_units);
-        let handle = Self::spawn_kagi_sub(
+        let handle = self.spawn_kagi_sub(
             station, tx, exchange_id, account_type,
             symbol_str, symbol_wire, stream,
         );
@@ -1716,7 +1795,7 @@ impl DataBridge {
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
         let sub_key = (exchange_id, symbol.to_string(), account_type);
         let stream = digdigdig3_station::Stream::CvdLine;
-        let handle = Self::spawn_cvd_sub(
+        let handle = self.spawn_cvd_sub(
             station, tx, exchange_id, account_type,
             symbol_str, symbol_wire, stream,
         );
@@ -1745,7 +1824,7 @@ impl DataBridge {
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
         let sub_key = (exchange_id, symbol.to_string(), account_type);
         let stream = digdigdig3_station::Stream::TpoProfile(freq_minutes, source);
-        let handle = Self::spawn_tpo_sub(
+        let handle = self.spawn_tpo_sub(
             station, tx, exchange_id, account_type,
             symbol_str, symbol_wire, stream,
         );
@@ -1784,7 +1863,7 @@ impl DataBridge {
         let sym_wire_ob = symbol_wire.clone();
         let station_ob = station.clone();
 
-        let handle = spawn_bg_join(async move {
+        let handle = self.spawn_bg_join(async move {
             // Task 1 — OrderBook snapshots → DomHeatmapSnapshot
             let ob_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                 exchange_id, sym_wire_ob.clone(), account_type,
@@ -1799,12 +1878,15 @@ impl DataBridge {
                 }
             };
 
-            // Task 2 — Trade ticks → DomTradeDot  (spawned inside, shared lifetime)
+            // Task 2 — Trade ticks → DomTradeDot  (spawned inside, shared lifetime).
+            // We are already inside a spawned task → the tokio runtime is
+            // entered → spawn directly without going through self.spawn_bg_join
+            // (which would require `self` to be 'static — it isn't).
             let tx_t = tx_clone.clone();
             let sym_tr = sym_ob.clone();
             let sym_wire_tr = sym_wire_ob.clone();
             let station_t = station_ob.clone();
-            let trade_handle = spawn_bg_join(async move {
+            let trade_handle = crate::bridge::spawn_bg_join_nested(async move {
                 let tr_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                     exchange_id, sym_wire_tr.clone(), account_type,
                     [digdigdig3_station::Stream::Trade],
@@ -1911,7 +1993,7 @@ impl DataBridge {
         let sym_wire_liq = symbol_wire.clone();
         let station_liq = station.clone();
 
-        let handle = spawn_bg_join(async move {
+        let handle = self.spawn_bg_join(async move {
             // Task 1 — per-event liquidation → LiquidationEvent
             let liq_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                 exchange_id, sym_wire_liq.clone(), account_type,
@@ -1926,12 +2008,14 @@ impl DataBridge {
                 }
             };
 
-            // Task 2 — bucketed liquidation stats → LiquidationBucketUpdate
+            // Task 2 — bucketed liquidation stats → LiquidationBucketUpdate.
+            // Nested spawn: we are already inside a spawned task → use the
+            // free `spawn_bg_join_nested` helper which does not require `&self`.
             let tx_bkt = tx_liq.clone();
             let sym_bkt = sym_liq.clone();
             let sym_wire_bkt = sym_wire_liq.clone();
             let station_bkt = station_liq.clone();
-            let bucket_handle = spawn_bg_join(async move {
+            let bucket_handle = crate::bridge::spawn_bg_join_nested(async move {
                 let bkt_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                     exchange_id, sym_wire_bkt.clone(), account_type,
                     [digdigdig3_station::Stream::LiquidationBucket],
@@ -2000,7 +2084,7 @@ impl DataBridge {
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
         let sub_key = (exchange_id, symbol.to_string(), account_type);
         let stream = digdigdig3_station::Stream::DollarBar { dollar_threshold };
-        let handle = Self::spawn_derived_bar_sub(
+        let handle = self.spawn_derived_bar_sub(
             station, tx, exchange_id, account_type,
             symbol_str, symbol_wire, stream,
         );
@@ -2027,7 +2111,7 @@ impl DataBridge {
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
         let sub_key = (exchange_id, symbol.to_string(), account_type);
         let stream = digdigdig3_station::Stream::TickImbalanceBar { alpha_x100, min_ticks };
-        let handle = Self::spawn_derived_bar_sub(
+        let handle = self.spawn_derived_bar_sub(
             station, tx, exchange_id, account_type,
             symbol_str, symbol_wire, stream,
         );
@@ -2052,7 +2136,7 @@ impl DataBridge {
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
         let sub_key = (exchange_id, symbol.to_string(), account_type);
         let stream = digdigdig3_station::Stream::VolumeImbalanceBar { alpha_x100, min_ticks };
-        let handle = Self::spawn_derived_bar_sub(
+        let handle = self.spawn_derived_bar_sub(
             station, tx, exchange_id, account_type,
             symbol_str, symbol_wire, stream,
         );
@@ -2077,7 +2161,7 @@ impl DataBridge {
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
         let sub_key = (exchange_id, symbol.to_string(), account_type);
         let stream = digdigdig3_station::Stream::RunBar { alpha_x100, min_ticks };
-        let handle = Self::spawn_derived_bar_sub(
+        let handle = self.spawn_derived_bar_sub(
             station, tx, exchange_id, account_type,
             symbol_str, symbol_wire, stream,
         );
@@ -2102,7 +2186,7 @@ impl DataBridge {
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
         let sub_key = (exchange_id, symbol.to_string(), account_type);
         let stream = digdigdig3_station::Stream::ThreeLineBreak { lines_back };
-        let handle = Self::spawn_three_line_break_sub(
+        let handle = self.spawn_three_line_break_sub(
             station, tx, exchange_id, account_type,
             symbol_str, symbol_wire, stream,
         );
@@ -2128,7 +2212,7 @@ impl DataBridge {
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
         let sub_key = (exchange_id, symbol.to_string(), account_type);
         let stream = digdigdig3_station::Stream::OpenInterest;
-        let handle = Self::spawn_open_interest_sub(
+        let handle = self.spawn_open_interest_sub(
             station, tx, exchange_id, account_type,
             symbol_str, symbol_wire, stream,
         );
@@ -2150,7 +2234,7 @@ impl DataBridge {
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
         let sub_key = (exchange_id, symbol.to_string(), account_type);
         let stream = digdigdig3_station::Stream::FundingRate;
-        let handle = Self::spawn_funding_rate_sub(
+        let handle = self.spawn_funding_rate_sub(
             station, tx, exchange_id, account_type,
             symbol_str, symbol_wire, stream,
         );
@@ -2173,6 +2257,7 @@ impl DataBridge {
     /// The station emits `Event::Bar` for all three derived-bar types; we
     /// re-emit them as `LiveUpdate::BarUpdate` (same as kline live bars).
     fn spawn_derived_bar_sub(
+        &self,
         station: std::sync::Arc<digdigdig3_station::Station>,
         tx: tokio::sync::broadcast::Sender<LiveUpdate>,
         exchange_id: ExchangeId,
@@ -2181,7 +2266,7 @@ impl DataBridge {
         symbol_wire: String,
         stream: digdigdig3_station::Stream,
     ) -> BgJoinHandle {
-        spawn_bg_join(async move {
+        self.spawn_bg_join(async move {
             let stream_label = format!("{:?}", stream);
             // dig3-station 0.3.7+ explicitly disables auto-heal for non-kline
             // streams (their forwarders exit cleanly on disconnect). Our derived
@@ -2271,6 +2356,7 @@ impl DataBridge {
     /// `LiveUpdate::FootprintUpdate`. Same lifecycle as `spawn_derived_bar_sub`
     /// (one task per instrument, aborts on chart-type/TF switch).
     fn spawn_footprint_sub(
+        &self,
         station: std::sync::Arc<digdigdig3_station::Station>,
         tx: tokio::sync::broadcast::Sender<LiveUpdate>,
         series: SharedFootprintSeries,
@@ -2280,7 +2366,7 @@ impl DataBridge {
         symbol_wire: String,
         stream: digdigdig3_station::Stream,
     ) -> BgJoinHandle {
-        spawn_bg_join(async move {
+        self.spawn_bg_join(async move {
             let stream_label = format!("{:?}", stream);
             // Footprint is a non-kline station stream. As of dig3-station
             // 0.3.7+, station's own auto-heal is kline-only, so the
@@ -2381,6 +2467,7 @@ impl DataBridge {
     /// `Event::RenkoBar` per closed brick; we re-emit as
     /// `LiveUpdate::RenkoBarUpdate`.
     fn spawn_renko_sub(
+        &self,
         station: std::sync::Arc<digdigdig3_station::Station>,
         tx: tokio::sync::broadcast::Sender<LiveUpdate>,
         exchange_id: ExchangeId,
@@ -2389,7 +2476,7 @@ impl DataBridge {
         symbol_wire: String,
         stream: digdigdig3_station::Stream,
     ) -> BgJoinHandle {
-        spawn_bg_join(async move {
+        self.spawn_bg_join(async move {
             // Same respawn-loop rationale as spawn_footprint_sub: station's
             // auto-heal is kline-only (0.3.7+), so non-kline forwarders end
             // with a clean `None` on every grace cycle. Without the loop, the
@@ -2430,6 +2517,7 @@ impl DataBridge {
     /// `Event::ThreeLineBreakUpdate` per closed line; we re-emit as
     /// `LiveUpdate::ThreeLineBreakUpdate`.
     fn spawn_three_line_break_sub(
+        &self,
         station: std::sync::Arc<digdigdig3_station::Station>,
         tx: tokio::sync::broadcast::Sender<LiveUpdate>,
         exchange_id: ExchangeId,
@@ -2438,7 +2526,7 @@ impl DataBridge {
         symbol_wire: String,
         stream: digdigdig3_station::Stream,
     ) -> BgJoinHandle {
-        spawn_bg_join(async move {
+        self.spawn_bg_join(async move {
             let stream_label = format!("{:?}", stream);
             let mut respawn_n: u32 = 0;
             loop {
@@ -2473,6 +2561,7 @@ impl DataBridge {
 
     /// Spawn a P&F station subscriber.
     fn spawn_pnf_sub(
+        &self,
         station: std::sync::Arc<digdigdig3_station::Station>,
         tx: tokio::sync::broadcast::Sender<LiveUpdate>,
         exchange_id: ExchangeId,
@@ -2482,7 +2571,7 @@ impl DataBridge {
         stream: digdigdig3_station::Stream,
         box_size: f64,
     ) -> BgJoinHandle {
-        spawn_bg_join(async move {
+        self.spawn_bg_join(async move {
             let stream_label = format!("{:?}", stream);
             let mut respawn_n: u32 = 0;
             loop {
@@ -2518,6 +2607,7 @@ impl DataBridge {
 
     /// Spawn a Kagi station subscriber.
     fn spawn_kagi_sub(
+        &self,
         station: std::sync::Arc<digdigdig3_station::Station>,
         tx: tokio::sync::broadcast::Sender<LiveUpdate>,
         exchange_id: ExchangeId,
@@ -2526,7 +2616,7 @@ impl DataBridge {
         symbol_wire: String,
         stream: digdigdig3_station::Stream,
     ) -> BgJoinHandle {
-        spawn_bg_join(async move {
+        self.spawn_bg_join(async move {
             let stream_label = format!("{:?}", stream);
             let mut respawn_n: u32 = 0;
             loop {
@@ -2561,6 +2651,7 @@ impl DataBridge {
 
     /// Spawn a CVD station subscriber.
     fn spawn_cvd_sub(
+        &self,
         station: std::sync::Arc<digdigdig3_station::Station>,
         tx: tokio::sync::broadcast::Sender<LiveUpdate>,
         exchange_id: ExchangeId,
@@ -2569,7 +2660,7 @@ impl DataBridge {
         symbol_wire: String,
         stream: digdigdig3_station::Stream,
     ) -> BgJoinHandle {
-        spawn_bg_join(async move {
+        self.spawn_bg_join(async move {
             let stream_label = format!("{:?}", stream);
             let mut respawn_n: u32 = 0;
             loop {
@@ -2604,6 +2695,7 @@ impl DataBridge {
 
     /// Spawn a TPO station subscriber.
     fn spawn_tpo_sub(
+        &self,
         station: std::sync::Arc<digdigdig3_station::Station>,
         tx: tokio::sync::broadcast::Sender<LiveUpdate>,
         exchange_id: ExchangeId,
@@ -2612,7 +2704,7 @@ impl DataBridge {
         symbol_wire: String,
         stream: digdigdig3_station::Stream,
     ) -> BgJoinHandle {
-        spawn_bg_join(async move {
+        self.spawn_bg_join(async move {
             let stream_label = format!("{:?}", stream);
             let mut respawn_n: u32 = 0;
             loop {
@@ -2651,6 +2743,7 @@ impl DataBridge {
     /// `LiveUpdate::OpenInterestUpdate` with a running Δ computed from the
     /// previous OI level. The first event carries delta = 0.0 — canonical seed.
     fn spawn_open_interest_sub(
+        &self,
         station: std::sync::Arc<digdigdig3_station::Station>,
         tx: tokio::sync::broadcast::Sender<LiveUpdate>,
         exchange_id: ExchangeId,
@@ -2659,7 +2752,7 @@ impl DataBridge {
         symbol_wire: String,
         stream: digdigdig3_station::Stream,
     ) -> BgJoinHandle {
-        spawn_bg_join(async move {
+        self.spawn_bg_join(async move {
             // Same respawn-loop rationale as the derived bars forwarders:
             // station's auto-heal is kline-only, so non-kline forwarders end
             // with a clean `None` per grace cycle. Without the loop OI silently
@@ -2722,6 +2815,7 @@ impl DataBridge {
     /// the interval directly (via a richer FundingRatePoint), that value should
     /// be used instead.
     fn spawn_funding_rate_sub(
+        &self,
         station: std::sync::Arc<digdigdig3_station::Station>,
         tx: tokio::sync::broadcast::Sender<LiveUpdate>,
         exchange_id: ExchangeId,
@@ -2730,7 +2824,7 @@ impl DataBridge {
         symbol_wire: String,
         stream: digdigdig3_station::Stream,
     ) -> BgJoinHandle {
-        spawn_bg_join(async move {
+        self.spawn_bg_join(async move {
             let stream_label = format!("{:?}", stream);
             let mut respawn_n: u32 = 0;
             loop {
@@ -2827,7 +2921,7 @@ impl DataBridge {
             exchange_id, crate::elapsed_ms()
         );
         let inflight_set = self.symbols_warmup_inflight.clone();
-        spawn_bg(async move {
+        self.spawn_bg(async move {
             let report = station.warmup(&[exchange_id]).await;
             let symbols = station.symbols(exchange_id);
             if symbols.is_empty() {
@@ -2903,7 +2997,7 @@ impl DataBridge {
                 // Wire form — passed to dig3 station add_raw.
                 let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
                 let gate_key_task = gate_key.clone();
-                spawn_bg(async move {
+                self.spawn_bg(async move {
                     let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                         exchange_id,
                         symbol_wire.clone(),
@@ -2998,7 +3092,7 @@ impl DataBridge {
         // Wire form — passed to dig3 station add_raw.
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
         let key_for_cleanup = ticker_key;
-        spawn_bg(async move {
+        self.spawn_bg(async move {
             let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                 exchange_id,
                 symbol_wire.clone(),
@@ -3076,7 +3170,7 @@ impl DataBridge {
             let symbol_canonical = symbol.to_string();
             let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
             let tracker_clone = tracker.clone();
-            spawn_bg(async move {
+            self.spawn_bg(async move {
                 let Some(rest) = hub.rest(exchange_id) else { return };
                 let ob = match rest
                     .get_orderbook(
@@ -3123,7 +3217,7 @@ impl DataBridge {
             let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
             let key_for_cleanup = gate_key;
             let tracker_clone = tracker.clone();
-            spawn_bg(async move {
+            self.spawn_bg(async move {
                 let sub_set = digdigdig3_station::SubscriptionSet::new().add_raw(
                     exchange_id,
                     symbol_wire.clone(),
@@ -3280,7 +3374,7 @@ impl DataBridge {
         let station = self.station.clone();
         let tx = self.tx.clone();
         let subs_set = self.station_private_subscribed.clone();
-        spawn_bg(async move {
+        self.spawn_bg(async move {
             let sub_set = digdigdig3_station::SubscriptionSet::new().add_authenticated(
                 exchange_id,
                 account_type,
@@ -3608,7 +3702,7 @@ impl DataBridge {
             return;
         }
 
-        spawn_bg(async move {
+        self.spawn_bg(async move {
             macro_rules! finish_backfill {
                 () => {
                     if let Ok(mut af) = active_fetches.lock() {
@@ -3960,7 +4054,7 @@ impl DataBridge {
         }
 
         // ── REST fetch ────────────────────────────────────────────────────────
-        spawn_bg(async move {
+        self.spawn_bg(async move {
             macro_rules! finish_scroll {
                 () => {
                     if let Ok(mut af) = active_fetches.lock() {

@@ -80,29 +80,20 @@ fn main() {
 
     eprintln!("[mlc-headless] booting symbol={} on port {}", symbol, port);
 
-    // Server runtime: dedicated multi-thread runtime for axum + the snapshot
-    // freshness check AND the bridge background tasks.
-    //
-    // After commit `491f9576 phase 2 (wasm): bridge async-ify` the bridge no
-    // longer owns its own tokio runtime — every `bridge.*` call that does
-    // `tokio::spawn(...)` (`ensure_connector`, `request_*`, `warmup_*`, etc.)
-    // panics with "no reactor running" unless a tokio runtime is entered on
-    // the calling thread. The native UI (`mlc-app-vello`) was fixed by
-    // entering `App::live_data_handle` in `about_to_wait` + `start_promote_async`;
-    // `mlc-headless` had the same regression — `ChartApp::new(&symbol)` at
-    // line ~83 immediately calls `DataBridge::ensure_connector` which
-    // spawn_bg's an HTTP warmup task and panics on `tokio::spawn`.
-    //
-    // Fix: build the runtime BEFORE `ChartApp::new` and enter() its handle
-    // on the main thread for the whole tick loop, so every synchronous
-    // `bridge.*` call from the tick path also has a reactor.
+    // Dedicated runtime for the axum HTTP server. The bridge has its OWN
+    // runtime owned by `ChartApp::new` and enters it internally on every
+    // `spawn_bg(...)`; this `server_rt` is purely for serving HTTP requests
+    // off the tick loop.
     let server_rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_name("mlc-headless-srv")
         .build()
         .expect("build server tokio runtime");
-    let _bridge_rt_guard = server_rt.handle().enter();
 
+    // `ChartApp::new` builds its own multi-thread tokio runtime and runs
+    // `DataBridge::new().await` on it via `block_on`; the bridge captures
+    // that runtime's `Handle` and enters it internally on every
+    // `spawn_bg(...)` so the tick loop here doesn't need its own guard.
     let mut chart = ChartApp::new(&symbol);
     chart.resize(VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
     let bridge = chart.bridge_arc();
