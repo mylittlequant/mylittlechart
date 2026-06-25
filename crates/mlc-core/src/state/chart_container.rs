@@ -1263,11 +1263,24 @@ impl ChartContainer {
             toolbar_config: ToolbarConfig::minimal(),
 
             symbol_drawings: HashMap::new(),
-            pending_symbol_load: false,
+            // Sibling born from a split starts with an empty bubble (until
+            // `do_split` seeds it).  Flag the cold-load path so the first
+            // BarsLoaded replaces the empty bars wholesale + snaps to the
+            // right edge instead of running the backfill anchor logic, which
+            // requires non-empty prev_bars to make sense.  Without this the
+            // sibling's reconcile branch goes through `reconcile_view_keep_anchor`
+            // with an empty anchor and the viewport sits at view_start=0 /
+            // bar_count=0, painting a blank chart even after the bubble
+            // received the REST sweep.
+            pending_symbol_load: true,
             needs_auto_scale_after_bars: false,
             restore_scale_mode: None,
             stashed_scale_mode: None,
-            needs_snap_after_backfill: false,
+            // Pair with `pending_symbol_load: true` above — when the deferred
+            // REST sweep lands as BarsLoaded the reconcile path will fresh-snap
+            // the viewport to the right edge with the standard padding, same
+            // contract as `seed_default_chart`.
+            needs_snap_after_backfill: true,
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
             data_error: None,

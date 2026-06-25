@@ -83,7 +83,7 @@ pub enum KeyPress {
     Redo,
 }
 
-use crate::ChartApp;
+use crate::{ChartApp, sglog};
 use mlc_core::{
     ChartInputAction,
     ChartOutputAction,
@@ -7048,6 +7048,7 @@ impl ChartApp {
     /// 3. Creates the new blank preset with the given name and makes it active.
     pub(crate) fn execute_new_chart_with_name(&mut self, new_name: String) {
         use mlc_core::preset::preset::unix_timestamp_parts;
+        sglog!("[execute_new_chart_with_name] ENTER name='{}'", new_name);
 
         // Auto-save current named preset before reset.
         // (__default__ is already saved in OpenPresetNewChart before the modal opens.)
@@ -7059,20 +7060,35 @@ impl ChartApp {
         let default_symbol = "BTCUSDT".to_string();
         let default_timeframe = mlc_core::state::Timeframe::h1();
 
-        // Full reset — single pane, no indicators, no primitives.
+        // Park the outgoing preset's full session state into `live_preset_cache`
+        // so switching back via a chrome tab restores everything (panel_grid +
+        // tag_manager + indicator_manager + alert_manager + panels_store + ...)
+        // via the same path `LoadPreset` warm-cache uses.  Without this the
+        // global session state stays bound to the OUTGOING preset id, the new
+        // preset's reset stomps it in place, and clicking the outgoing tab
+        // back finds nothing in `live_preset_cache` -> falls through to a cold
+        // load that has to read from disk + can't replay live bars.  Owner
+        // repro 2026-06-26: tab 0 and tab 1 showed the SAME chart because tab
+        // 1 was created without parking tab 0 first.
+        //
+        // park_active_preset is a no-op if the outgoing id is empty / default,
+        // and `LoadPreset` will still re-park properly when the user switches.
+        // We park unconditionally here because `set_layout_single` below
+        // replaces panel_grid in place (resets to one container), so without
+        // parking first the outgoing layout / bubbles are lost wholesale.
+        let outgoing_id = self.panel_app.active_preset_id.clone();
+        if !outgoing_id.is_empty() && outgoing_id != "__default__" {
+            self.park_active_preset(&outgoing_id);
+            sglog!("[execute_new_chart_with_name] parked outgoing preset '{}'", outgoing_id);
+        }
+
+        // After park_active_preset every session-scoped manager has been
+        // replaced with a fresh placeholder, so the reset below is operating
+        // on an already-empty world — no need to `bubble.clear()` etc.
         self.panel_app.panel_grid.set_layout_single();
         self.panel_app.panel_grid.reassign_active_chart_id();
-        {
-            let all_pids: Vec<_> = self.panels_store.chart_panel.keys().copied().collect();
-            for pid in all_pids {
-                self.core.drawings_mut().entry_or_default(pid).clear_all_primitives();
-            }
-        }
-        self.core.bubble_mut().bubble.clear();
-        self.core.indicators_mut().clear_all();
         self.panel_app.indicator_overlay_states.clear();
         self.panel_app.leaf_color_tags.clear();
-        self.core.bubble_mut().alert.clear();
         self.sidebar_data_dirty = true;
 
         // Auto-create a default sync group for the single window so primitives
@@ -7136,16 +7152,25 @@ impl ChartApp {
                     window.needs_snap_after_backfill = true;
                 }
                 self.core.bridge.ensure_connector(digdigdig3::ExchangeId::Binance);
+                let bar_count_new = self.panel_app.user_manager.profile.bar_count as usize;
+                sglog!(
+                    "[execute_new_chart_with_name] calling bridge.request_bars Binance BTCUSDT tf={:?} bars={} force=true",
+                    default_timeframe, bar_count_new
+                );
                 self.core.bridge.request_bars(
                     digdigdig3::ExchangeId::Binance,
                     "BTCUSDT",
                     &default_timeframe,
                     digdigdig3::AccountType::Spot,
                     None,
-                    Some(self.panel_app.user_manager.profile.bar_count as usize),
-                    false,
+                    Some(bar_count_new),
+                    true,
                 );
-                eprintln!("[ChartApp] Auto-created invisible sync group {:?} for new chart", group_id);
+                sglog!(
+                    "[execute_new_chart_with_name] Auto-created auto group {:?} chart_id={:?} window.current_bubble_id={:?}",
+                    group_id, chart_id,
+                    self.panel_app.panel_grid.containers().get(&chart_id).map(|w| w.current_bubble_id)
+                );
             }
         }
 
