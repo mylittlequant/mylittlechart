@@ -2623,7 +2623,11 @@ impl ChartApp {
         // Pattern: "alert_delete_{id}"
         if widget_id.starts_with("alert_delete_") {
             if let Some(id) = widget_id.strip_prefix("alert_delete_").and_then(|s| s.parse::<u64>().ok()) {
+                let snapshot = self.core.bubble_mut().alert.get(id).cloned();
                 self.core.bubble_mut().alert.remove(id);
+                if let Some(snap) = snapshot {
+                    self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot: snap });
+                }
                 eprintln!("[Sidebar] Alert deleted: {}", id);
                 self.sidebar_data_dirty = true;
                 self.autosave_snapshot();
@@ -2869,31 +2873,72 @@ impl ChartApp {
         }
 
         // === Compare overlay object tree handlers ===
-        // Widget IDs use "cmp_" prefix. The numeric suffix is the series index.
+        // Widget IDs use the "{section}_{key}_cmp_*" prefix layout that the
+        // sidebar renderer produces (see `mlc-sidebar-content/src/render.rs`
+        // around line 2205 — `widget_prefix = "{section_tag}_{key_slug}"`).
+        // Mirror what `_drw_delete_` / `_ind_delete_` do: accept both the
+        // prefixed contains-form AND the bare starts_with form so legacy ids
+        // (if any sidebar path still emits them) still route.
 
         // --- Compare delete ---
-        if widget_id.starts_with("cmp_delete_") {
-            if let Some(idx) = widget_id.strip_prefix("cmp_delete_").and_then(|s| s.parse::<usize>().ok()) {
-                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                    if let Some(symbol) = window.compare_overlay.remove_series(idx) {
-                        eprintln!("[Sidebar] Compare series removed: {} (idx={})", symbol, idx);
-                    }
+        if widget_id.contains("_cmp_delete_") || widget_id.starts_with("cmp_delete_") {
+            if let Some(idx) = widget_id.rsplit("cmp_delete_").next()
+                .and_then(|s| s.parse::<usize>().ok())
+            {
+                let removed = if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                    window.compare_overlay.series.get(idx).cloned()
+                        .and_then(|snap| {
+                            window.compare_overlay.remove_series(idx).map(|sym| (sym, snap))
+                        })
+                } else {
+                    None
+                };
+                if let Some((symbol, snapshot)) = removed {
+                    self.push_undo_command(mlc_core::Command::RemoveCompareSeries {
+                        symbol: symbol.clone(),
+                        series: snapshot.without_bars(),
+                    });
+                    eprintln!("[Sidebar] Compare series removed: {} (idx={})", symbol, idx);
                 }
             }
             return;
         }
         // --- Compare visibility toggle ---
-        if widget_id.starts_with("cmp_vis_") {
-            if let Some(idx) = widget_id.strip_prefix("cmp_vis_").and_then(|s| s.parse::<usize>().ok()) {
-                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+        if widget_id.contains("_cmp_vis_") || widget_id.starts_with("cmp_vis_") {
+            if let Some(idx) = widget_id.rsplit("cmp_vis_").next()
+                .and_then(|s| s.parse::<usize>().ok())
+            {
+                let (symbol_for_undo, prev_vis, new_vis) = if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                    let prev = window.compare_overlay.series.get(idx).map(|s| (s.symbol.clone(), s.visible));
                     let new_vis = window.compare_overlay.toggle_visibility(idx);
-                    eprintln!("[Sidebar] Compare visibility toggled: idx={} -> visible={}", idx, new_vis);
+                    match prev {
+                        Some((sym, pv)) => (Some(sym), pv, new_vis),
+                        None => (None, false, new_vis),
+                    }
+                } else {
+                    (None, false, false)
+                };
+                if let Some(symbol) = symbol_for_undo {
+                    self.push_undo_command(mlc_core::Command::SetCompareSeriesVisibility {
+                        symbol: symbol.clone(),
+                        visible: new_vis,
+                        previous: prev_vis,
+                    });
+                    eprintln!("[Sidebar] Compare visibility toggled: {} idx={} -> visible={}", symbol, idx, new_vis);
                 }
             }
             return;
         }
-        // --- Compare settings / alert / lock (no-op stubs) ---
-        if widget_id.starts_with("cmp_settings_") || widget_id.starts_with("cmp_alert_") || widget_id.starts_with("cmp_lock_") {
+        // --- Compare settings / alert / lock — intentionally inert ---
+        // Compare series do not carry per-series settings, alerts or lock state
+        // the way drawings / indicators do (the line is a derived overlay on
+        // top of the host chart's bars, not a first-class object).  The
+        // sidebar renderer should grey these icons out for compare rows; we
+        // still swallow the click here so no other handler picks it up.
+        if widget_id.contains("_cmp_settings_") || widget_id.starts_with("cmp_settings_")
+            || widget_id.contains("_cmp_alert_") || widget_id.starts_with("cmp_alert_")
+            || widget_id.contains("_cmp_lock_") || widget_id.starts_with("cmp_lock_")
+        {
             return;
         }
         // --- Compare row click (row selection) ---
@@ -3708,9 +3753,9 @@ impl ChartApp {
                     eprintln!("[WatchlistGroupName] cancelled");
                 }
                 "input" => {
-                    // Click-to-cursor — TextFieldStore repositions cursor via on_drag_start+end.
+                    // Click-to-cursor — reposition caret. on_drag_end fires on mouseup
+                    // via the global path in mod.rs::on_drag_end (line ~3614).
                     self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
-                    self.input_coordinator.borrow_mut().text_fields_mut().on_drag_end();
                 }
                 "modal_bg" => {
                     // Absorb clicks on modal background — do nothing
@@ -3849,9 +3894,9 @@ impl ChartApp {
                     eprintln!("[ChartApp] preset name input closed via X");
                 }
                 "input" => {
-                    // Click-to-cursor — TextFieldStore repositions cursor via on_drag_start+end.
+                    // Click-to-cursor — reposition caret. on_drag_end fires on mouseup
+                    // via the global path in mod.rs::on_drag_end (line ~3614).
                     self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
-                    self.input_coordinator.borrow_mut().text_fields_mut().on_drag_end();
                 }
                 "modal_bg" => {
                     // No-op — absorb click to prevent fall-through.
@@ -3872,9 +3917,9 @@ impl ChartApp {
             } else if action == "modal_bg" {
                 // Absorb click — no-op.
             } else if action == "search_input" {
-                // Click-to-cursor — TextFieldStore repositions cursor via on_drag_start+end.
+                // Click-to-cursor — reposition caret. on_drag_end fires on mouseup
+                // via the global path in mod.rs::on_drag_end (line ~3614).
                 self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
-                self.input_coordinator.borrow_mut().text_fields_mut().on_drag_end();
             } else if let Some(preset_id) = action.strip_prefix("rename:") {
                 // Click rename icon — close browser, open rename modal for this preset.
                 let preset_id = preset_id.to_string();

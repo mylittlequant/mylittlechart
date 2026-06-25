@@ -208,6 +208,23 @@ impl ChartApp {
 
         self.last_event_process_us = events_start.elapsed().as_micros() as u64;
 
+        // ── Pending compare deadline countdown ───────────────────────────────
+        // Evict entries that timed out without a BarsLoaded response (~10 s at 60 fps).
+        self.pending_compare.retain_mut(|p| {
+            if p.deadline_frames == 0 {
+                eprintln!(
+                    "[Compare] Timed out waiting for bars: symbol={} exchange={} at={}",
+                    p.symbol,
+                    p.exchange.as_str(),
+                    p.account_type_label
+                );
+                false
+            } else {
+                p.deadline_frames = p.deadline_frames.saturating_sub(1);
+                true
+            }
+        });
+
         // ── Coalesced orderbook panel re-aggregation ─────────────────────────
         // DOM + heatmap: tick once per frame with the merged level changes (they
         // track current book state, not history — per-event ts is irrelevant).

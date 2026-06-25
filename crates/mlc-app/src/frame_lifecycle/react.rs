@@ -240,6 +240,96 @@ impl ChartApp {
                         self.core.bridge.subscribe_trades(*exchange_id, symbol, account_type_from_label(account_type));
                     }
                 }
+
+                // ── Pending compare retry ─────────────────────────────────────────
+                // If BarsLoaded carries data for a compare symbol (not the main window
+                // symbol), find queued PendingCompareAdd entries that match, fill the
+                // data_provider cache, and retry add_compare_symbol.
+                {
+                    // Collect indices of pending entries that match this BarsLoaded.
+                    let matching_indices: Vec<usize> = self.pending_compare
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, p)| {
+                            p.symbol == *symbol
+                                && p.exchange.as_str() == exchange_id.as_str()
+                                && p.account_type_label == account_type.as_str()
+                        })
+                        .map(|(i, _)| i)
+                        .collect();
+
+                    if !matching_indices.is_empty() {
+                        // Fill the data_provider cache on every container so that
+                        // add_compare_symbol's cache lookup succeeds regardless of which
+                        // window holds the overlay.
+                        for w in self.panel_app.panel_grid.containers().values() {
+                            w.data_provider.insert_bars(symbol, tf_name, new_bars.clone());
+                        }
+
+                        // Collect the pending entries we are going to consume (in reverse
+                        // index order so swap_remove doesn't shift the wrong index).
+                        let mut to_process: Vec<crate::PendingCompareAdd> = {
+                            let mut idxs = matching_indices;
+                            idxs.sort_unstable();
+                            idxs.dedup();
+                            idxs.into_iter().rev()
+                                .map(|i| self.pending_compare.swap_remove(i))
+                                .collect()
+                        };
+                        to_process.reverse(); // restore original order for determinism
+
+                        for pending in to_process {
+                            // Collect what the target window needs to know.
+                            let cid = pending.chart_id;
+                            let main_sym = self.symbol_for_chart(cid)
+                                .map(String::from)
+                                .unwrap_or_default();
+                            let main_tf = self.timeframe_for_chart(cid)
+                                .unwrap_or_else(mlc_core::state::Timeframe::h1);
+                            let main_bars = self.panel_app.panel_grid.containers()
+                                .get(&cid)
+                                .and_then(|w| self.bubble_for_chart(cid)
+                                    .and_then(|bid| {
+                                        // Read bars from the bubble rather than re-fetching.
+                                        let _ = w; // use w to satisfy borrow checker
+                                        self.core.bubble_mut().bubble.bubble_mut(bid)
+                                            .map(|b| b.bars.clone())
+                                    }))
+                                .unwrap_or_default();
+
+                            let added_series =
+                                if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&cid) {
+                                    let added = window.add_compare_symbol(
+                                        &pending.symbol,
+                                        &main_sym,
+                                        &main_tf,
+                                        &main_bars,
+                                    );
+                                    eprintln!(
+                                        "[Compare] Retry {} on cid={}: {}",
+                                        pending.symbol,
+                                        cid.0,
+                                        if added { "added" } else { "still unavailable" }
+                                    );
+                                    if added {
+                                        window.compare_overlay.get_series(&pending.symbol).cloned()
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                };
+
+                            if let Some(series) = added_series {
+                                self.push_undo_command(mlc_core::Command::AddCompareSeries {
+                                    series: series.without_bars(),
+                                });
+                                eprintln!("[Compare] Recorded AddCompareSeries {} (retry)", pending.symbol);
+                                self.autosave_snapshot();
+                            }
+                        }
+                    }
+                }
             }
 
             // ── BackfillCompleted ───────────────────────────────────────────────

@@ -596,7 +596,7 @@ impl ChartApp {
     ///
     /// Reads the current text from the store, takes `active_field_id`, blurs the
     /// field, then delegates to `apply_cmp_tf_text_commit`.
-    pub(super) fn commit_cmp_editing_text(&mut self) {
+    pub(crate) fn commit_cmp_editing_text(&mut self) {
         let cmp_wid = uzor::WidgetId::from(crate::text_input::COMPARE_SETTINGS_FIELD);
         let field_id = match self.panel_app.compare_settings_state.active_field_id.take() {
             Some(f) => f,

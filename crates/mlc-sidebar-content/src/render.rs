@@ -2301,11 +2301,27 @@ fn render_object_tree_items(
                     draw_svg_icon(ctx, Icon::Close.svg(), del_x, icon_y, icon_size, icon_size, delete_color);
 
                     // Settings gear.
+                    // Compare series do not carry per-series settings (the
+                    // line is a derived overlay over the host chart's bars,
+                    // not a first-class object).  Render the gear muted so it
+                    // visually signals "not actionable"; the click handler in
+                    // `panel_click.rs` swallows the event so nothing else
+                    // catches it either.
+                    let is_compare = item.category == ObjectCategory::Compare;
                     result.settings_button_rects.push((set_id, settings_rect));
-                    draw_svg_icon(ctx, Icon::Settings.svg(), set_x, icon_y, icon_size, icon_size, row_color);
+                    let settings_color = if is_compare {
+                        theme.item_text_hidden.as_str()
+                    } else {
+                        row_color.as_str()
+                    };
+                    draw_svg_icon(ctx, Icon::Settings.svg(), set_x, icon_y, icon_size, icon_size, settings_color);
 
                     // Alert bell — accent colour when an alert is bound, row color otherwise.
-                    let alert_bell_color = if item.has_alert {
+                    // Compare series cannot bind alerts (the bar source isn't
+                    // owned by the chart), so render the bell muted.
+                    let alert_bell_color = if is_compare {
+                        theme.item_text_hidden.as_str()
+                    } else if item.has_alert {
                         theme.accent.as_str()
                     } else {
                         row_color.as_str()
