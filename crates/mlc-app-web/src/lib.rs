@@ -349,6 +349,17 @@ fn run_render_loop(
             }
         }
 
+        // ── Drain pending REST cure ───────────────────────────────────────────
+        // Mirrors the native shell (mlc-app-vello/src/main.rs:4372).  Any flow
+        // that enqueues onto `pending_cure_after_preset_load` (LoadPreset warm
+        // path, do_split, retag — anything that needs a fresh REST sweep)
+        // relies on a per-frame drain on the host side, otherwise the queue
+        // accumulates forever and the new chart sits on stale data.
+        {
+            let mut st = state_clone.borrow_mut();
+            st.chart.drain_pending_cure_after_preset_load();
+        }
+
         // ── Schedule next frame ───────────────────────────────────────────────
         if let Some(win) = web_sys::window() {
             if let Some(cb) = closure_clone.borrow().as_ref() {

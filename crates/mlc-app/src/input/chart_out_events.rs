@@ -1245,34 +1245,34 @@ impl ChartApp {
             }
 
             ChartOutEvent::LoadPresetInActiveSlot { id } => {
-                // Rotate the chrome strip BEFORE delegating to LoadPreset so
-                // the active slot is filled with the new id by the time
-                // LoadPreset runs (it then sees the id already present and
-                // takes the no-mutation path).
                 let prev_id = self.panel_app.active_preset_id.clone();
-                {
-                    let tabs = &mut self.panel_app.open_tabs;
-                    let already_open = tabs.iter().any(|t| t == &id);
-                    let prev_idx = tabs.iter().position(|t| t == &prev_id);
-                    match (already_open, prev_idx) {
-                        (true, _) => {
-                            // id already in strip; drop prev_id from the
-                            // strip if different — keeps the strip from
-                            // showing a stale closed preset.
-                            if prev_id != id {
-                                tabs.retain(|t| t != &prev_id);
-                            }
-                        }
-                        (false, Some(idx)) => {
-                            tabs[idx] = id.clone();
-                        }
-                        (false, None) => {
-                            tabs.push(id.clone());
-                        }
+                let already_open = self.panel_app.open_tabs.iter().any(|t| t == &id);
+                if already_open {
+                    // Owner UX: id already has its own tab — pure switch to
+                    // that tab. Source tab keeps its preset untouched: no
+                    // park (the source state stays live under prev_id), no
+                    // collect (we're not saving over anything), no rotation
+                    // of open_tabs. Same effect as if the user had clicked
+                    // the existing chrome tab directly.
+                    sglog!(
+                        "[LoadPresetInActiveSlot] id='{}' already in open_tabs={:?} prev='{}' — bare switch via LoadPreset",
+                        id, self.panel_app.open_tabs, prev_id
+                    );
+                    self.process_chart_out_event(ChartOutEvent::LoadPreset { id });
+                } else {
+                    // id not yet open: replace the active slot in-place
+                    // (rename the current tab's id to the new preset's id).
+                    let prev_idx = self.panel_app.open_tabs.iter().position(|t| t == &prev_id);
+                    match prev_idx {
+                        Some(idx) => { self.panel_app.open_tabs[idx] = id.clone(); }
+                        None => { self.panel_app.open_tabs.push(id.clone()); }
                     }
-                    sglog!("[LoadPresetInActiveSlot] open_tabs after rotation: {:?}", tabs);
+                    sglog!(
+                        "[LoadPresetInActiveSlot] id='{}' replaced active slot (prev='{}'), open_tabs={:?}",
+                        id, prev_id, self.panel_app.open_tabs
+                    );
+                    self.process_chart_out_event(ChartOutEvent::LoadPreset { id });
                 }
-                self.process_chart_out_event(ChartOutEvent::LoadPreset { id });
             }
 
             ChartOutEvent::LoadPreset { id } => {
@@ -1377,6 +1377,20 @@ impl ChartApp {
                 sglog!("[LoadPreset] unpark_preset('{}') -> {} (cache_keys_after={:?})",
                     id, if unpark_hit { "HIT" } else { "MISS, will cold-load" },
                     self.live_preset_cache.keys().cloned().collect::<Vec<_>>());
+                {
+                    let containers = self.panel_app.panel_grid.containers();
+                    let active_cid = self.panel_app.panel_grid.active_container_id();
+                    let summary: Vec<(u64, u64, u64)> = containers.iter()
+                        .map(|(cid, w)| (cid.0, w.auto_bubble_id.0, w.current_bubble_id.0))
+                        .collect();
+                    let active_sym = active_cid
+                        .and_then(|cid| self.symbol_for_chart(cid))
+                        .unwrap_or_default();
+                    sglog!(
+                        "[LoadPreset] post-unpark active_cid={:?} sym='{}' containers(cid,auto_bid,cur_bid)={:?}",
+                        active_cid, active_sym, summary
+                    );
+                }
                 if unpark_hit {
                     let _lp_t_cure = web_time::Instant::now();
 
@@ -1530,13 +1544,17 @@ impl ChartApp {
             ChartOutEvent::OpenTab { id } => {
                 eprintln!("[ChartApp] open tab: {}", id);
                 if self.panel_app.open_tabs.contains(&id) {
-                    // Preset already open  -  just switch to it.
-                    self.panel_app.active_preset_id = id.clone();
-                    self.process_chart_out_event(ChartOutEvent::LoadPreset { id });
+                    // Preset already open  -  pure redirect to that tab.
+                    // Do NOT pre-set active_preset_id here: LoadPreset reads
+                    // its own `prev_id` from active_preset_id and only parks
+                    // when `prev != id`.  Pre-assigning makes prev == id, the
+                    // park step is skipped, the source tab's live state is
+                    // then dropped by the unpark mem::replace — exactly the
+                    // "source tab broke" symptom.
                 } else {
                     self.panel_app.open_tabs.push(id.clone());
-                    self.process_chart_out_event(ChartOutEvent::LoadPreset { id });
                 }
+                self.process_chart_out_event(ChartOutEvent::LoadPreset { id });
                 self.persist_profile();
             }
 
