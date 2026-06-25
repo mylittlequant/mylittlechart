@@ -691,30 +691,72 @@ impl ChartApp {
             }
 
             // Give each NEW (non-mother) leaf its own fresh auto_created group.
+            // Read the instrument from `pre_split_chart_id` (the source) — at
+            // this point the new leaves are not yet attached to any bubble so
+            // `symbol_for_chart(new_cid)` would always return `""`, and the
+            // auto_bubble gets seeded with a blank instrument key.  Owner repro
+            // 2026-06-25: split (auto-tag) → untag → tag-in-new-color landed in
+            // a group with empty symbol/exchange/account_type because untag
+            // re-attaches to the auto_bubble (whose seed was blank) and the
+            // subsequent join reads identity from there.
+            let split_untagged_sym = pre_split_chart_id
+                .and_then(|c| self.symbol_for_chart(c))
+                .map(String::from)
+                .unwrap_or_default();
+            let split_untagged_tf = pre_split_chart_id
+                .and_then(|c| self.timeframe_for_chart(c))
+                .unwrap_or_else(mlc_core::state::Timeframe::h1);
+            let split_untagged_exch = pre_split_chart_id
+                .and_then(|c| self.exchange_for_chart(c))
+                .map(String::from)
+                .unwrap_or_default();
+            let split_untagged_at = pre_split_chart_id
+                .and_then(|c| self.account_type_for_chart(c))
+                .map(String::from)
+                .unwrap_or_else(|| "S".to_string());
+
             for &leaf_id in new_leaves.iter().skip(1) {
                 let new_chart_id = self.panel_app.panel_grid.container_id_for_leaf(leaf_id);
                 if self.panel_app.panel_grid.container_for_leaf(leaf_id).is_none() {
                     eprintln!("[sync_group] split untagged: container_for_leaf({:?}) returned None — skipping new leaf", leaf_id);
                     continue;
                 }
-                let symbol = new_chart_id
-                    .and_then(|c| self.symbol_for_chart(c))
-                    .map(String::from)
-                    .unwrap_or_default();
-                let timeframe = new_chart_id
-                    .and_then(|c| self.timeframe_for_chart(c))
-                    .unwrap_or_else(mlc_core::state::Timeframe::h1);
                 let gid = self.core.bubble_mut().bubble.create_group_auto(
                     [0.0, 0.0, 0.0, 0.0],
-                    symbol,
-                    timeframe,
+                    split_untagged_sym.clone(),
+                    split_untagged_tf.clone(),
                 );
+                // Complete the identity record (create_group_auto only takes
+                // symbol + timeframe; exchange + account_type stay blank
+                // unless filled here).  Without these the post-untag retag
+                // flow seeds the new color group with an empty exchange key,
+                // which then breaks bridge routing and panel sym:exch:AT keys.
+                {
+                    let mut bm = self.core.bubble_mut();
+                    if let Some(b) = bm.bubble.bubble_mut(gid) {
+                        b.exchange = split_untagged_exch.clone();
+                        b.account_type = split_untagged_at.clone();
+                    }
+                    drop(bm);
+                }
                 if let Some(chart_id) = new_chart_id {
                     let _ = self.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, gid);
                 }
+                // Seed bars from the source bubble so the new untagged sibling
+                // paints immediately instead of waiting for a live tick.
+                if !source_bars.is_empty() {
+                    let mut bm = self.core.bubble_mut();
+                    if let Some(b) = bm.bubble.bubble_mut(gid) {
+                        b.bars = source_bars.clone();
+                    }
+                    drop(bm);
+                }
                 // BubbleStore reverse index updated by attach_chart_to_bubble above.
                 self.panel_app.leaf_color_tags.remove(&leaf_id);
-                eprintln!("[BubbleStore] (SplitUntagged) Created auto group {:?} for new leaf {:?}", gid, leaf_id);
+                eprintln!(
+                    "[BubbleStore] (SplitUntagged) Created auto group {:?} for new leaf {:?} sym='{}' exch='{}' at='{}' bars={}",
+                    gid, leaf_id, split_untagged_sym, split_untagged_exch, split_untagged_at, source_bars.len()
+                );
             }
             self.sync_sub_panes_from_manager();
             return;
