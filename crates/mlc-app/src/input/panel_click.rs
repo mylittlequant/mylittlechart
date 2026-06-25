@@ -3955,7 +3955,8 @@ impl ChartApp {
                 if open_in_new_tab {
                     self.process_chart_out_event(mlc_core::events::ChartOutEvent::OpenTab { id: preset_id });
                 } else {
-                    self.process_chart_out_event(mlc_core::events::ChartOutEvent::LoadPreset { id: preset_id });
+                    // ChartBrowser "load" button = replace active slot.
+                    self.process_chart_out_event(mlc_core::events::ChartOutEvent::LoadPresetInActiveSlot { id: preset_id });
                 }
             } else {
                 eprintln!("[ChartApp] chart_browser unhandled action: {}", action);

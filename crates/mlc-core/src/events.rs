@@ -183,6 +183,13 @@ pub enum ChartOutEvent {
     SavePreset { name: String },
     /// Load a preset by its id.
     LoadPreset { id: String },
+    /// Load a preset by its id INTO the currently-active tab's slot in
+    /// `open_tabs` — the active preset id is replaced in place.  Used by the
+    /// toolbar presets dropdown and ChartBrowser modal's "load" button:
+    /// owner UX = top-toolbar actions act on the active chart slot, never
+    /// spawn a new tab.  Distinct from `LoadPreset` (which is what chrome
+    /// tab clicks emit — that path must not mutate `open_tabs`).
+    LoadPresetInActiveSlot { id: String },
     /// Delete a preset by its id.
     DeletePreset { id: String },
     /// Close a tab without deleting the preset.

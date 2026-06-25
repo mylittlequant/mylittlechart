@@ -1155,14 +1155,11 @@ impl ChartToolbarState {
                     vec![ChartOutEvent::OpenPresetSaveAs]
                 } else if item_id.starts_with("preset_load:") {
                     let id = item_id.strip_prefix("preset_load:").unwrap_or("").to_string();
-                    // Dropdown is a "load into active tab" action (same as
-                    // ChartBrowser's load button).  LoadPreset replaces the
-                    // active preset in place; the handler itself ensures the
-                    // id ends up in `open_tabs` so the chrome strip reflects
-                    // the new active preset.  Going through OpenTab here was
-                    // wrong — it APPENDED a new tab next to the active one
-                    // instead of replacing.
-                    vec![ChartOutEvent::LoadPreset { id }]
+                    // Top-toolbar dropdown = "act on the active chart slot"
+                    // per owner UX rule.  Use LoadPresetInActiveSlot so the
+                    // active tab's id in `open_tabs` is replaced with the
+                    // loaded preset, NOT appended next to it.
+                    vec![ChartOutEvent::LoadPresetInActiveSlot { id }]
                 } else if item_id == "preset_rename" {
                     vec![ChartOutEvent::OpenPresetRename]
                 } else if item_id == "preset_new_chart" {

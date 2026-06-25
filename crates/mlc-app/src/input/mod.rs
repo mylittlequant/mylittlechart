@@ -4344,6 +4344,16 @@ impl ChartApp {
                     self.panel_app.user_settings_state.hovered_item_id = Some(local.to_string());
                 } else if let Some(local) = id.strip_prefix("chart_browser:item:") {
                     self.panel_app.chart_browser.hovered_preset_id = Some(local.to_string());
+                } else if let Some(local) = id.strip_prefix("chart_browser:rename:") {
+                    // Cursor over the rename icon counts as hovering the row —
+                    // otherwise the icon disappears (it's only painted on
+                    // hover/active) the moment you move toward it.  Owner repro
+                    // 2026-06-26: rename/delete icons unclickable on the
+                    // non-active row because the icon vanished as soon as the
+                    // cursor crossed into its rect.
+                    self.panel_app.chart_browser.hovered_preset_id = Some(local.to_string());
+                } else if let Some(local) = id.strip_prefix("chart_browser:delete:") {
+                    self.panel_app.chart_browser.hovered_preset_id = Some(local.to_string());
                 } else if let Some(local) = id.strip_prefix("wl_modal:item:") {
                     self.watchlist_modal.hovered_item_id = Some(local.to_string());
                 } else if id.starts_with("tags_tabs:") || id.starts_with("overlay_settings:") {

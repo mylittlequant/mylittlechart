@@ -1244,6 +1244,37 @@ impl ChartApp {
                 }
             }
 
+            ChartOutEvent::LoadPresetInActiveSlot { id } => {
+                // Rotate the chrome strip BEFORE delegating to LoadPreset so
+                // the active slot is filled with the new id by the time
+                // LoadPreset runs (it then sees the id already present and
+                // takes the no-mutation path).
+                let prev_id = self.panel_app.active_preset_id.clone();
+                {
+                    let tabs = &mut self.panel_app.open_tabs;
+                    let already_open = tabs.iter().any(|t| t == &id);
+                    let prev_idx = tabs.iter().position(|t| t == &prev_id);
+                    match (already_open, prev_idx) {
+                        (true, _) => {
+                            // id already in strip; drop prev_id from the
+                            // strip if different — keeps the strip from
+                            // showing a stale closed preset.
+                            if prev_id != id {
+                                tabs.retain(|t| t != &prev_id);
+                            }
+                        }
+                        (false, Some(idx)) => {
+                            tabs[idx] = id.clone();
+                        }
+                        (false, None) => {
+                            tabs.push(id.clone());
+                        }
+                    }
+                    sglog!("[LoadPresetInActiveSlot] open_tabs after rotation: {:?}", tabs);
+                }
+                self.process_chart_out_event(ChartOutEvent::LoadPreset { id });
+            }
+
             ChartOutEvent::LoadPreset { id } => {
                 let _lp_total = web_time::Instant::now();
                 let prev_id = self.panel_app.active_preset_id.clone();
@@ -1320,46 +1351,21 @@ impl ChartApp {
                 }
                 let lp_park_us = _lp_t_park.elapsed().as_micros();
 
-                // Replace the active tab's slot in `open_tabs` with the
-                // loaded preset id so the chrome strip reflects the new
-                // active.  Three sub-cases:
-                //  - id already in open_tabs: nothing to do (it stays in
-                //    place, prev_id is removed if different).
-                //  - id NOT in open_tabs and prev_id IN open_tabs: replace
-                //    prev_id with id at the same index — same UX as the
-                //    chart-browser "load" button.
-                //  - prev_id NOT in open_tabs (first boot / placeholder
-                //    state): just append id at the end.
+                // `LoadPreset` is the "switch active to this id" path emitted
+                // by chrome tab clicks.  It must NOT mutate `open_tabs` — the
+                // user clicked an existing tab, the strip is already correct.
+                // (`LoadPresetInActiveSlot` and `OpenTab` handle the
+                // dropdown / chart-browser-load and chart-browser-new-tab
+                // UX paths respectively and DO own `open_tabs` mutation.)
                 //
-                // Owner repro 2026-06-26: dropdown -> Load preset_2 after
-                // closing preset_2's tab left the chrome strip on preset_1
-                // because LoadPreset never touched open_tabs.  Now the slot
-                // is rotated synchronously with active_preset_id.
-                {
-                    let tabs = &mut self.panel_app.open_tabs;
-                    let already_open = tabs.iter().any(|t| t == &id);
-                    let prev_idx = tabs.iter().position(|t| t == &prev_id);
-                    match (already_open, prev_idx) {
-                        (true, _) => {
-                            // id already present — drop prev_id if different so the
-                            // strip doesn't show a stale closed preset.
-                            if prev_id != id {
-                                tabs.retain(|t| t != &prev_id);
-                            }
-                        }
-                        (false, Some(idx)) => {
-                            // Replace prev slot.
-                            tabs[idx] = id.clone();
-                        }
-                        (false, None) => {
-                            // No active slot to replace — append.
-                            tabs.push(id.clone());
-                        }
-                    }
-                    sglog!(
-                        "[LoadPreset] open_tabs after slot rotation: {:?}",
-                        tabs
-                    );
+                // Defensive append: if a caller wires LoadPreset for a preset
+                // that is NOT currently in the strip (e.g. cold boot from a
+                // profile snapshot where the active id was persisted without
+                // its tab), the chrome strip would have no slot to show it
+                // active.  Append in that case so the strip stays consistent.
+                if !self.panel_app.open_tabs.iter().any(|t| t == &id) {
+                    self.panel_app.open_tabs.push(id.clone());
+                    sglog!("[LoadPreset] appended missing id '{}' to open_tabs (was bare-switch)", id);
                 }
                 self.panel_app.active_preset_id = id.clone();
                 self.persist_profile();
