@@ -506,6 +506,51 @@ impl ChartApp {
                     sglog!("[sync_join_color_group] cleared drawing_manager pid={:?} (group view will repopulate)", pid);
                 }
 
+                // Seed bars into the brand-new color group from the chart's
+                // home auto_bubble so the chart paints immediately under the
+                // group view.  Without this seed the chart's
+                // `current_bubble_id = group_id` points at an empty
+                // `bubble.bars` (create_group initialises it empty), and the
+                // chart sits blank until the next live BarsLoaded happens to
+                // run against `bubbles_for_instrument` — which only fires when
+                // the REST sweep is re-issued, not on tag.  Owner repro
+                // 2026-06-26: tagged sibling chart stayed blank because no
+                // new REST fetch was triggered and the group bubble was empty
+                // while the auto_bubble had the full 300 bars.
+                let auto_bars: Vec<mlc_core::Bar> = auto_bid
+                    .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()))
+                    .unwrap_or_default();
+                if !auto_bars.is_empty() {
+                    let n = auto_bars.len();
+                    {
+                        let mut bm = self.core.bubble_mut();
+                        if let Some(group) = bm.bubble.bubble_mut(group_id) {
+                            group.bars = auto_bars;
+                        }
+                        drop(bm);
+                    }
+                    sglog!("[sync_join_color_group] seeded {} bars from auto_bubble into new group {:?}", n, group_id);
+                }
+
+                // Enqueue an auto-cure REST sweep so the brand-new group also
+                // gets a fresh authoritative payload (in case the home bubble's
+                // bars were stale).  Drains on the next frame via the host's
+                // pending_cure_after_preset_load drain loop.
+                let cure_eid = self.exchange_for_chart(chart_id)
+                    .and_then(|e| digdigdig3::ExchangeId::from_str(&e));
+                let cure_sym = self.symbol_for_chart(chart_id).map(String::from).unwrap_or_default();
+                let cure_at_label = self.account_type_for_chart(chart_id).map(String::from).unwrap_or_else(|| "S".to_string());
+                let cure_tf = self.timeframe_for_chart(chart_id).unwrap_or_else(mlc_core::state::Timeframe::h1);
+                if let Some(eid) = cure_eid {
+                    if !cure_sym.is_empty()
+                        && self.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true)
+                    {
+                        let at = crate::account_type_from_label(&cure_at_label);
+                        self.pending_cure_after_preset_load.push((eid, cure_sym.clone(), cure_tf, at, true));
+                        sglog!("[sync_join_color_group] enqueued cure for {:?} {} (force=true)", eid, cure_sym);
+                    }
+                }
+
                 // Seed indicator configs from the creating window's indicators.
                 let (seed_symbol, seed_exchange, seed_account_type) = {
                     let sym = self.symbol_for_chart(chart_id)
@@ -579,6 +624,49 @@ impl ChartApp {
             // Clear drawing_manager; group prims arrive via per-frame sync.
             if let Some(pid) = pid_join {
                 self.core.drawings_mut().entry_or_default(pid).clear_all_primitives();
+            }
+
+            // If the existing color group's `bars` is empty (cold-load preset
+            // path that hasn't yet seen a BarsLoaded for this instrument), seed
+            // it from the joining chart's auto_bubble so the chart paints
+            // immediately under the group view.  An auto-cure request below
+            // refreshes the data authoritatively once REST returns.
+            let existing_bars_empty = self.with_bubble(group_id, |g| g.bars.is_empty()).unwrap_or(true);
+            if existing_bars_empty {
+                let auto_bid_existing = self.panel_app.panel_grid.containers().get(&chart_id)
+                    .map(|w| w.auto_bubble_id);
+                let auto_bars: Vec<mlc_core::Bar> = auto_bid_existing
+                    .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()))
+                    .unwrap_or_default();
+                if !auto_bars.is_empty() {
+                    let n = auto_bars.len();
+                    {
+                        let mut bm = self.core.bubble_mut();
+                        if let Some(g) = bm.bubble.bubble_mut(group_id) {
+                            g.bars = auto_bars;
+                        }
+                        drop(bm);
+                    }
+                    sglog!("[sync_join_color_group] existing-group {:?} was empty; seeded {} bars from auto_bubble", group_id, n);
+                }
+            }
+
+            // Auto-cure for existing-group join too — same rationale as new-group.
+            {
+                let cure_eid = self.exchange_for_chart(chart_id)
+                    .and_then(|e| digdigdig3::ExchangeId::from_str(&e));
+                let cure_sym = self.symbol_for_chart(chart_id).map(String::from).unwrap_or_default();
+                let cure_at_label = self.account_type_for_chart(chart_id).map(String::from).unwrap_or_else(|| "S".to_string());
+                let cure_tf = self.timeframe_for_chart(chart_id).unwrap_or_else(mlc_core::state::Timeframe::h1);
+                if let Some(eid) = cure_eid {
+                    if !cure_sym.is_empty()
+                        && self.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true)
+                    {
+                        let at = crate::account_type_from_label(&cure_at_label);
+                        self.pending_cure_after_preset_load.push((eid, cure_sym.clone(), cure_tf, at, true));
+                        sglog!("[sync_join_color_group] enqueued cure for existing group {:?} {} (force=true)", eid, cure_sym);
+                    }
+                }
             }
 
             // Get auto_bubble_id before taking mutable window borrow.
@@ -1210,6 +1298,36 @@ impl ChartApp {
             // Reconcile sub_panes so split children don't show source's indicator panels.
             self.sync_sub_panes_from_manager();
         }
+
+        // Auto-cure: every chart born by this split needs a fresh REST sweep
+        // so its bubble's `bars` is repopulated from authoritative data (the
+        // source_bars seed at the top of `do_split` is best-effort — it gets
+        // the chart painting immediately, but doesn't guarantee the bars are
+        // complete or current).  Defer via `pending_cure_after_preset_load`
+        // so the request goes out AFTER the next frame paints (skeleton +
+        // spinner while the request lands instead of freezing the click).
+        // Mirrors the LoadPreset warm-path cure pattern.
+        let cure_chart_ids: Vec<mlc_core::state::ChartId> = new_leaves
+            .iter()
+            .filter_map(|&lid| self.panel_app.panel_grid.container_id_for_leaf(lid))
+            .collect();
+        for cid in &cure_chart_ids {
+            let sym = self.symbol_for_chart(*cid).map(String::from).unwrap_or_default();
+            let exch = self.exchange_for_chart(*cid).map(String::from).unwrap_or_default();
+            let at_label = self.account_type_for_chart(*cid).map(String::from).unwrap_or_else(|| "S".to_string());
+            let tf = self.timeframe_for_chart(*cid).unwrap_or_else(mlc_core::state::Timeframe::h1);
+            if sym.is_empty() || exch.is_empty() { continue; }
+            let eid = match digdigdig3::ExchangeId::from_str(&exch) {
+                Some(e) => e,
+                None => continue,
+            };
+            if !self.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) { continue; }
+            let at = crate::account_type_from_label(&at_label);
+            let has_bars = !self.bars_for_chart(*cid).is_empty();
+            let force = !has_bars;
+            self.pending_cure_after_preset_load.push((eid, sym, tf, at, force));
+        }
+        sglog!("[do_split] enqueued cure for {} new chart_ids", cure_chart_ids.len());
     }
 
     /// After a split, propagate the crosshair and viewport from the first leaf
