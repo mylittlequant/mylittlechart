@@ -86,10 +86,23 @@ impl ChartApp {
             .map(|w| w.auto_bubble_id);
 
         // 1b. Disconnect from current color-tag group.
-        if let Some(old_group_id) = self.core.bubble_mut().bubble.detach_chart_from_bubble(chart_id) {
-            let remaining = self.core.bubble().bubble
-                .members(old_group_id)
-                .map_or(0, |m| m.len());
+        // The write guard from `self.core.bubble_mut()` lives in the if-let
+        // scrutinee position, which Rust extends to the end of the if-body.
+        // The inner `self.core.bubble()` then tries to take a READ guard while
+        // the WRITE guard is still alive — std::sync::RwLock on wasm32 is
+        // single-threaded and aborts on any read↔write overlap, which the JS
+        // host surfaces as the RAF loop freezing (no panic, no JS error,
+        // `MLC_FRAMES` stops advancing).  Drop the write guard explicitly by
+        // binding the Option to a local first, then take the read guard in a
+        // fresh scope.
+        let detached_group: Option<mlc_core::tag_manager::BubbleId> = {
+            self.core.bubble_mut().bubble.detach_chart_from_bubble(chart_id)
+        };
+        if let Some(old_group_id) = detached_group {
+            let remaining = {
+                let bm = self.core.bubble();
+                bm.bubble.members(old_group_id).map_or(0, |m| m.len())
+            };
             eprintln!(
                 "[BubbleStore] Disconnected chart {:?} from group {:?} ({} remaining)",
                 chart_id, old_group_id, remaining
