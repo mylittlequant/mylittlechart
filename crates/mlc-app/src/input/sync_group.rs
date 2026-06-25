@@ -1760,11 +1760,19 @@ impl ChartApp {
         };
         let _ = self.core.bubble_mut().bubble.detach_chart_from_bubble(chart_id);
         // Remove the old group if it is now empty and was auto-created.
-        if let Some(g) = self.core.bubble().bubble.bubble(old_gid) {
-            if g.auto_created && g.members.is_empty() {
-                self.core.bubble_mut().bubble.remove_group(old_gid);
-                eprintln!("[BubbleStore] Removed empty auto group {:?}", old_gid);
-            }
+        // Same wasm32 RwLock contract as fix(layout)/fix(untag): the if-let
+        // scrutinee `self.core.bubble().bubble.bubble(old_gid)` extends the
+        // read guard to the end of the if-let body, so the `bubble_mut()` in
+        // the body would overlap with the live read guard and abort.
+        let should_remove = {
+            let bm = self.core.bubble();
+            bm.bubble.bubble(old_gid)
+                .map(|g| g.auto_created && g.members.is_empty())
+                .unwrap_or(false)
+        };
+        if should_remove {
+            self.core.bubble_mut().bubble.remove_group(old_gid);
+            eprintln!("[BubbleStore] Removed empty auto group {:?}", old_gid);
         }
     }
 
