@@ -1,9 +1,13 @@
 //! String IDs for text fields managed by `InputCoordinator::text_fields`.
 //!
+//! See also the [`dispatch`] submodule for the centralised text-input dispatcher.
+//!
 //! These constants are the canonical identifiers passed to the uzor
 //! `TextFieldStore` API.  They replace the former `FieldId` enum now that
 //! `TextInputManager` has been removed in favour of the coordinator-owned
 //! `TextFieldStore`.
+
+pub mod dispatch;
 
 /// Hex-color field in the L2 color-picker popup.
 pub const HEX_COLOR: &str = "hex_color";

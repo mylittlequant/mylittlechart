@@ -16,7 +16,8 @@ use crate::ui::modal_settings::{
 };
 use crate::ui::scroll_widget::{draw_scrollbar, ScrollbarConfig, ScrollbarState as SbState};
 use crate::ui::toolbar_render::ToolbarTheme;
-use crate::ui::widgets::{render_modal_frame_only, ModalTheme, WidgetTheme};
+use crate::ui::widgets::{draw_input, draw_input_cursor, render_modal_frame_only, InputConfig, ModalTheme, WidgetTheme};
+use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::ui::z_order::ZLayer;
 use mlc_core::i18n::{ModalKey, TextKey, t_modal, t_text};
 use crate::ui::Icon;
@@ -349,7 +350,7 @@ pub fn render_alert_settings_modal(
             content_x, content_y, content_w,
         ),
         AlertSettingsTab::Notifications => render_notifications_tab(
-            ctx, state, toolbar_theme, input_coordinator, &layer_id, &mut result,
+            ctx, state, frame_theme, toolbar_theme, input_coordinator, &layer_id, &mut result,
             content_x, content_y, content_w,
         ),
         AlertSettingsTab::AlertsList => render_alerts_list_tab(
@@ -755,6 +756,7 @@ fn render_settings_tab(
 fn render_notifications_tab(
     ctx: &mut dyn RenderContext,
     state: &AlertSettingsState,
+    frame_theme: &FrameTheme,
     toolbar_theme: &ToolbarTheme,
     input_coordinator: &mut uzor::input::InputCoordinator,
     layer_id: &uzor::input::LayerId,
@@ -796,57 +798,6 @@ fn render_notifications_tab(
         ctx.fill_text(label, cb_x + cb_size + 10.0, row_y + ROW_H / 2.0);
 
         let r = WidgetRect::new(cb_x, row_y, content_w, ROW_H);
-        result.content_items.push((widget_id.to_string(), r));
-        input_coordinator.register_on_layer(widget_id, r, Sense::CLICK, layer_id);
-    };
-
-    // ------------------------------------------------------------------
-    // Local helper: draw a labeled text input field (with focus highlight).
-    // ------------------------------------------------------------------
-    let draw_text_field = |ctx: &mut dyn RenderContext,
-                           result: &mut AlertSettingsResult,
-                           input_coordinator: &mut uzor::input::InputCoordinator,
-                           label: &str,
-                           widget_id: &str,
-                           value: &str,
-                           placeholder: &str,
-                           focused: bool,
-                           row_y: f64| {
-        let label_w = LABEL_W;
-        let field_x = content_x + label_w;
-        let field_w = content_w - label_w;
-
-        // Label
-        ctx.set_fill_color(&toolbar_theme.item_text_muted);
-        ctx.set_font("12px sans-serif");
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(label, content_x, row_y + ROW_H / 2.0);
-
-        // Field background
-        let bg = if focused { &toolbar_theme.item_bg_hover } else { &toolbar_theme.dropdown_bg };
-        ctx.set_fill_color(bg);
-        ctx.fill_rounded_rect(field_x, row_y, field_w, ROW_H, 4.0);
-
-        // Focus border highlight
-        let border_color = if focused { &toolbar_theme.item_text_active } else { &toolbar_theme.separator };
-        ctx.set_stroke_color(border_color);
-        ctx.set_stroke_width(if focused { 1.5 } else { 1.0 });
-        ctx.stroke_rounded_rect(field_x, row_y, field_w, ROW_H, 4.0);
-
-        // Value text (mask with asterisks for token field if non-empty and not focused)
-        let (display_text, text_color) = if value.is_empty() {
-            (placeholder.to_string(), toolbar_theme.item_text_muted.clone())
-        } else {
-            (value.to_string(), toolbar_theme.item_text.clone())
-        };
-        ctx.set_fill_color(&text_color);
-        ctx.set_font("12px sans-serif");
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(&display_text, field_x + 8.0, row_y + ROW_H / 2.0);
-
-        let r = WidgetRect::new(field_x, row_y, field_w, ROW_H);
         result.content_items.push((widget_id.to_string(), r));
         input_coordinator.register_on_layer(widget_id, r, Sense::CLICK, layer_id);
     };
@@ -894,14 +845,61 @@ fn render_notifications_tab(
             let tail: String = chars[chars.len() - visible..].iter().collect();
             format!("{}{}", masked, tail)
         };
-        draw_text_field(
-            ctx, result, input_coordinator,
-            "Bot Token", "alert_set:notif:tg_token",
-            &token_display,
-            "Paste bot token...",
-            tg_focused,
-            y,
-        );
+        // Bot Token field using canonical draw_input.
+        {
+            let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
+            let label_w = LABEL_W;
+            let field_x = content_x + label_w;
+            let field_w = content_w - label_w;
+            let field_rect = WidgetRect::new(field_x, y, field_w, ROW_H);
+
+            // Label
+            ctx.set_fill_color(&toolbar_theme.item_text_muted);
+            ctx.set_font("12px sans-serif");
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text("Bot Token", content_x, y + ROW_H / 2.0);
+
+            let (sel_start, sel_end) = if let Some((lo, hi)) = tg_render.selection_range() {
+                (Some(lo), Some(hi))
+            } else {
+                (None, None)
+            };
+            let tg_input_config = InputConfig::new(&token_display)
+                .with_placeholder("Paste bot token\u{2026}")
+                .with_focused(tg_focused)
+                .with_cursor(tg_render.cursor)
+                .with_selection(sel_start, sel_end)
+                .with_font_size(12.0);
+            let tg_input_result = draw_input(
+                ctx, &tg_input_config,
+                crate::ui::widgets::types::WidgetState::Normal,
+                field_rect,
+                &widget_theme,
+            );
+
+            if tg_focused && tg_render.cursor_visible {
+                draw_input_cursor(
+                    ctx,
+                    tg_input_result.cursor_x,
+                    tg_input_result.cursor_y,
+                    tg_input_result.cursor_height,
+                    &toolbar_theme.item_text,
+                );
+            }
+
+            result.content_items.push(("alert_set:notif:tg_token".to_string(), field_rect));
+            result.input_char_positions.push((
+                "alert_set:notif:tg_token".to_string(),
+                tg_input_result.char_x_positions,
+            ));
+            input_coordinator.register_on_layer(
+                "alert_set:notif:tg_token",
+                field_rect,
+                Sense::CLICK,
+                layer_id,
+            );
+        }
         y += ROW_H + ITEM_PADDING;
 
         // -- Subscribers section header --

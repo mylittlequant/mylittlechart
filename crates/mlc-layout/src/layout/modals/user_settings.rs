@@ -659,6 +659,18 @@ fn render_profile_section(
 
             let rename_input_result = draw_input(ctx, &rename_input_config, WidgetState::Normal, input_rect, &widget_theme);
 
+            // Surface outer rect + char positions to the embedder so it can feed
+            // them to TextFieldStore.update_field every frame (required for
+            // click-to-cursor and drag-select to land on the right glyph).
+            result.content_items.push((
+                "user_settings:profile_rename_input".to_string(),
+                WidgetRect::new(name_x, input_y, input_w, input_h),
+            ));
+            result.input_char_positions.push((
+                "user_settings:profile_rename_input".to_string(),
+                rename_input_result.char_x_positions.clone(),
+            ));
+
             // Register click target so mouse clicks focus this input
             input_coordinator.register_on_layer(
                 "user_settings:profile_rename_input",

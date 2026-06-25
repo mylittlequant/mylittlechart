@@ -382,6 +382,9 @@ pub struct AlertSettingsResult {
     pub content_rect: WidgetRect,
     /// Content item rects for hit testing: (item_id, rect).
     pub content_items: Vec<(String, WidgetRect)>,
+    /// Per-field character X positions for click-to-cursor in text inputs.
+    /// Each entry is (field_key, char_x_positions) matching keys in content_items.
+    pub input_char_positions: Vec<(String, Vec<f64>)>,
     /// Scrollbar handle rect for the AlertsList tab.
     pub scrollbar_handle_rect: Option<WidgetRect>,
     /// Scrollbar track rect for the AlertsList tab.
