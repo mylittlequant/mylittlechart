@@ -904,10 +904,20 @@ impl ChartToolbarState {
                 vec![ChartOutEvent::Consumed]
             }
 
-            // === Undo / Redo — handled by caller (command history lives in core) ===
-            "undo" | "redo" => {
-                eprintln!("[ChartToolbar] {}", item_id);
-                vec![ChartOutEvent::Consumed]
+            // === Undo / Redo ===
+            "undo" => {
+                eprintln!("[ChartToolbar] undo");
+                vec![ChartOutEvent::Undo]
+            }
+            "redo" => {
+                eprintln!("[ChartToolbar] redo");
+                vec![ChartOutEvent::Redo]
+            }
+
+            // === Screenshot ===
+            "screenshot" => {
+                eprintln!("[ChartToolbar] screenshot");
+                vec![ChartOutEvent::Screenshot]
             }
 
             // === Chart settings — app-level modal ===

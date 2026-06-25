@@ -675,6 +675,21 @@ pub fn process_event(
                         }
                         return;
                     }
+                    PhysicalKey::KeyX => {
+                        // Cut = copy selection, then delete via Backspace.
+                        // uzor's TextFieldStore handles Backspace only through
+                        // `on_char('\x08')` (apply_key returns false for the
+                        // Backspace KeyPress variant — see uzor store.rs:762),
+                        // so we route through `on_char_input`, not
+                        // `on_key_press(Backspace)`.
+                        if let Some(text) = chart.on_copy_selection() {
+                            if !text.is_empty() {
+                                platform.clipboard_write(&text);
+                                chart.on_char_input('\x08');
+                            }
+                        }
+                        return;
+                    }
                     PhysicalKey::KeyZ => {
                         if state.modifiers.shift {
                             chart.on_key_press(mlc_app::KeyPress::Redo);

@@ -138,6 +138,7 @@ impl App<'_> {
                     WinitPhysical::Code(KeyCode::KeyC) => PhysicalKey::KeyC,
                     WinitPhysical::Code(KeyCode::KeyS) => PhysicalKey::KeyS,
                     WinitPhysical::Code(KeyCode::KeyV) => PhysicalKey::KeyV,
+                    WinitPhysical::Code(KeyCode::KeyX) => PhysicalKey::KeyX,
                     WinitPhysical::Code(KeyCode::KeyY) => PhysicalKey::KeyY,
                     WinitPhysical::Code(KeyCode::KeyZ) => PhysicalKey::KeyZ,
                     _                                  => PhysicalKey::Other,

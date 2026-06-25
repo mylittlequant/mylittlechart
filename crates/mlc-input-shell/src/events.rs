@@ -67,6 +67,7 @@ pub enum PhysicalKey {
     KeyC,
     KeyS,
     KeyV,
+    KeyX,
     KeyY,
     KeyZ,
     Other,

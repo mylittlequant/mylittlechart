@@ -1993,6 +1993,18 @@ impl ChartApp {
                 eprintln!("[ChartApp] split_without_group toggled to {}", self.split_without_group);
             }
 
+            ChartOutEvent::Undo => {
+                self.perform_undo_with_group();
+            }
+
+            ChartOutEvent::Redo => {
+                self.perform_redo_with_group();
+            }
+
+            ChartOutEvent::Screenshot => {
+                self.request_screenshot();
+            }
+
             ref other => {
                 eprintln!("[ChartApp] unhandled event: {:?}", other);
             }

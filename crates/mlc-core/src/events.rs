@@ -209,6 +209,16 @@ pub enum ChartOutEvent {
     /// Create a new blank chart (auto-save current if unsaved).
     NewChart,
 
+    // === Undo / Redo ===
+    /// Perform one undo step (mirrors Ctrl+Z keyboard path).
+    Undo,
+    /// Perform one redo step (mirrors Ctrl+Y keyboard path).
+    Redo,
+
+    /// Capture a screenshot of the current chart on the next rendered frame
+    /// (mirrors Ctrl+S keyboard path).
+    Screenshot,
+
     // === Consumed (chart handled it internally) ===
     /// The chart fully handled this action. No app-level work needed.
     Consumed,
