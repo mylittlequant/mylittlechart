@@ -22,6 +22,7 @@ use serde::{Serialize, Deserialize};
 use crate::drawing::PrimitiveData;
 use crate::chart::CompareSeries;
 use crate::state::Timeframe;
+use mlc_alerts::AlertItem;
 
 // =============================================================================
 // TimeframeVisibility - controls on which timeframes an object is shown
@@ -389,6 +390,22 @@ pub enum Command {
     },
 
     // =========================================================================
+    // Alert commands
+    // =========================================================================
+
+    /// Add an alert (recorded at creation time; inverse = DeleteAlert)
+    AddAlert {
+        /// Full alert state captured immediately after creation
+        snapshot: AlertItem,
+    },
+
+    /// Delete an alert (recorded at deletion time; inverse = AddAlert)
+    DeleteAlert {
+        /// Full alert state captured immediately before deletion
+        snapshot: AlertItem,
+    },
+
+    // =========================================================================
     // Symbol/Timeframe/ChartType commands
     // =========================================================================
 
@@ -690,6 +707,15 @@ impl Command {
                 }
             }
 
+            // Alert commands
+            Command::AddAlert { snapshot } => {
+                Command::DeleteAlert { snapshot: snapshot.clone() }
+            }
+
+            Command::DeleteAlert { snapshot } => {
+                Command::AddAlert { snapshot: snapshot.clone() }
+            }
+
             // Symbol/Timeframe/ChartType commands
             Command::ChangeSymbol { previous_symbol, new_symbol } => {
                 Command::ChangeSymbol {
@@ -833,6 +859,10 @@ impl Command {
             // Indicator commands
             Command::AddIndicator { .. } => "Add Indicator",
             Command::RemoveIndicator { .. } => "Remove Indicator",
+
+            // Alert commands
+            Command::AddAlert { .. } => "Add Alert",
+            Command::DeleteAlert { .. } => "Delete Alert",
 
             // Symbol/Timeframe/ChartType commands
             Command::ChangeSymbol { .. } => "Change Symbol",

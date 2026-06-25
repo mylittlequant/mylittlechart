@@ -112,7 +112,11 @@ impl ChartApp {
                 }
                 self.sync_drawing_back_to_group();
                 if let Some(pid) = prim_id {
+                    let removed_alerts = self.core.bubble_mut().alert.alerts_for_drawing(pid);
                     self.core.bubble_mut().alert.remove_alerts_for_drawing(pid);
+                    for alert_snapshot in removed_alerts {
+                        self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot: alert_snapshot });
+                    }
                 }
                 self.autosave_snapshot();
             }
@@ -297,9 +301,9 @@ impl ChartApp {
                 // Absorbed — no-op for backdrop clicks, drag zone, scroll zone
             }
             "search_input" => {
-                // Click-to-cursor — TextFieldStore repositions cursor via on_drag_start+end.
+                // Click-to-cursor — reposition caret. on_drag_end fires on mouseup
+                // via the global path in mod.rs::on_drag_end (line ~3614).
                 self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
-                self.input_coordinator.borrow_mut().text_fields_mut().on_drag_end();
             }
             _ if rest.starts_with("tab:") => {
                 use mlc_layout::ui::modal_settings::WatchlistModalTab;
@@ -701,7 +705,7 @@ impl ChartApp {
     ///
     /// Called when the user confirms a name in the Create Indicator Set modal.
     /// Captures a full snapshot of each indicator's params and output styles.
-    pub(super) fn execute_create_indicator_set(&mut self, name: String) {
+    pub(crate) fn execute_create_indicator_set(&mut self, name: String) {
         use mlc_core::templates::{IndicatorTemplate, OutputStyleConfig};
 
         // S2.7.1e: read symbol via branch_meta (B1).
@@ -751,7 +755,7 @@ impl ChartApp {
     }
 
     /// Handle clicks on widgets registered with the "modal_search:" prefix.
-    pub(super) fn handle_search_modal_click(&mut self, rest: &str, x: f64, y: f64) {
+    pub(crate) fn handle_search_modal_click(&mut self, rest: &str, x: f64, y: f64) {
         match rest {
             "close" => {
                 self.modal_state.close();
@@ -761,9 +765,9 @@ impl ChartApp {
                 // Click inside modal body — no-op (prevents backdrop close)
             }
             "search_input" => {
-                // Click-to-cursor — TextFieldStore repositions cursor via on_drag_start+end.
+                // Click-to-cursor — reposition caret. on_drag_end fires on mouseup
+                // via the global path in mod.rs::on_drag_end (line ~3614).
                 self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
-                self.input_coordinator.borrow_mut().text_fields_mut().on_drag_end();
                 eprintln!("[ChartApp] search input activated");
             }
             _ if rest.starts_with("star:") => {
@@ -935,10 +939,12 @@ impl ChartApp {
                         self.modal_state.close();
                     }
                     OpenModal::CompareSearch => {
+                        self.compare_add_attempts = self.compare_add_attempts.saturating_add(1);
                         // Add the selected symbol as a compare overlay on the active chart window.
-                        // ChartContainer::add_compare_symbol() fetches bars via the attached
-                        // DemoDataProvider (which generates synthetic data for any symbol) and
-                        // adds a CompareSeries with percentage normalization already handled.
+                        // `add_compare_symbol` calls data_provider.get_bars() which on a cache
+                        // miss fires an async bridge.request_bars() and returns None → false.
+                        // In that case we queue a PendingCompareAdd so react.rs can retry once
+                        // the BarsLoaded event arrives.
                         let active_cmp_cid = self.panel_app.panel_grid.active_container_id();
                         let main_sym_for_cmp = active_cmp_cid
                             .and_then(|cid| self.symbol_for_chart(cid))
@@ -953,7 +959,7 @@ impl ChartApp {
                             eprintln!(
                                 "[ChartApp] Compare symbol {}: {}",
                                 symbol_part,
-                                if added { "added" } else { "already present or unavailable" }
+                                if added { "added" } else { "queuing retry (bars not yet cached)" }
                             );
                             if added {
                                 // Capture the newly-added series for the undo record.
@@ -966,11 +972,54 @@ impl ChartApp {
                         };
                         // Record AddCompareSeries so the user can undo adding this overlay.
                         if let Some(series) = added_series {
+                            self.compare_add_success = self.compare_add_success.saturating_add(1);
                             self.push_undo_command(mlc_core::Command::AddCompareSeries {
                                 series: series.without_bars(),
                             });
                             eprintln!("[ChartApp] Recorded AddCompareSeries {}", symbol_part);
                             self.autosave_snapshot();
+                        } else if let Some(cid) = active_cmp_cid {
+                            self.compare_add_queued = self.compare_add_queued.saturating_add(1);
+                            // add_compare_symbol returned false — bars not in cache.
+                            //
+                            // The window's `data_provider` is hardwired to the window's
+                            // OWN exchange + account_type (BTCUSDT@binance/Spot in the
+                            // default seed), so calling `data_provider.get_bars` for a
+                            // compare symbol that lives on a different exchange/AT
+                            // would fire `bridge.request_bars` against the WRONG
+                            // exchange/AT pair — the server returns nothing for
+                            // ETH-USD-SWAP @ Binance@Spot, so no BarsLoaded ever fires.
+                            //
+                            // Fire the request explicitly here with the resolved
+                            // exchange + account type from the compare modal pick.
+                            // `force=true` so we bypass dedup-L1 / dedup-L2 —
+                            // the user explicitly asked for this overlay, and
+                            // a non-force call would silently no-op if any
+                            // previous session subscribed the same kline key.
+                            let cmp_at = crate::account_type_from_label(&item_at_label);
+                            self.core.bridge.ensure_connector(resolved_exchange);
+                            self.core.bridge.request_bars(
+                                resolved_exchange,
+                                symbol_part,
+                                &main_tf_for_cmp,
+                                cmp_at,
+                                None,
+                                Some(self.panel_app.user_manager.profile.bar_count as usize),
+                                true,
+                            );
+                            eprintln!(
+                                "[Compare] Queued retry + bridge.request_bars for {}@{} ({})",
+                                symbol_part,
+                                resolved_exchange.as_str(),
+                                item_at_label
+                            );
+                            self.pending_compare.push(crate::PendingCompareAdd {
+                                chart_id: mlc_core::ChartId(cid.0),
+                                symbol: symbol_part.to_string(),
+                                exchange: resolved_exchange,
+                                account_type_label: item_at_label.clone(),
+                                deadline_frames: 600,
+                            });
                         }
                         self.modal_state.close();
                     }
@@ -978,7 +1027,33 @@ impl ChartApp {
                         // Create indicator instance from catalog — bound to the active
                         // window, NOT to the symbol it currently displays.
                         let type_id_str = item_id.to_string();
-                        let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
+                        // Approach A: if docking has no active leaf (can happen on wasm after
+                        // deserialization restores the tree without replaying the active-leaf
+                        // selection), fall back to the first registered leaf and activate it so
+                        // the indicator is not silently dropped.
+                        let active_leaf = {
+                            let from_docking = self.panel_app.panel_grid.docking().active_leaf();
+                            if from_docking.is_none() {
+                                if let Some(fallback) = self.panel_app.panel_grid.first_leaf_id() {
+                                    eprintln!(
+                                        "[IndicatorSearch] docking().active_leaf() = None; \
+                                         activating fallback leaf {:?} so indicator '{}' is not orphaned",
+                                        fallback, type_id_str
+                                    );
+                                    self.panel_app.panel_grid.set_active_leaf(fallback);
+                                    Some(fallback)
+                                } else {
+                                    eprintln!(
+                                        "[IndicatorSearch] no leaves in panel_grid — \
+                                         cannot assign indicator '{}'; it will be orphaned",
+                                        type_id_str
+                                    );
+                                    None
+                                }
+                            } else {
+                                from_docking
+                            }
+                        };
                         let active_container_id = active_leaf
                             .and_then(|leaf| self.panel_app.panel_grid.container_id_for_leaf(leaf));
                         // Determine auto-color for overlay duplicates BEFORE create_instance
@@ -2165,7 +2240,11 @@ impl ChartApp {
                                 self.core.drawings_mut().entry_or_default(pid).remove(idx);
                                 eprintln!("[ChartApp] Deleted primitive #{}", idx);
                             }
+                            let removed_alerts = self.core.bubble_mut().alert.alerts_for_drawing(prim_id);
                             self.core.bubble_mut().alert.remove_alerts_for_drawing(prim_id);
+                            for alert_snapshot in removed_alerts {
+                                self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot: alert_snapshot });
+                            }
                             self.sync_drawing_back_to_group();
                             self.autosave_snapshot();
                         } else {
@@ -2178,7 +2257,11 @@ impl ChartApp {
                                 eprintln!("[ChartApp] Deleted primitive #{} (no undo snapshot)", idx);
                             }
                             if let Some(pid) = prim_id {
+                                let removed_alerts = self.core.bubble_mut().alert.alerts_for_drawing(pid);
                                 self.core.bubble_mut().alert.remove_alerts_for_drawing(pid);
+                                for alert_snapshot in removed_alerts {
+                                    self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot: alert_snapshot });
+                                }
                             }
                             self.sync_drawing_back_to_group();
                             self.autosave_snapshot();

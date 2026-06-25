@@ -290,6 +290,17 @@ impl ChartApp {
                                         self.panel_app.panel_grid.replace_docking(restored_tree);
                                         self.panel_app.panel_grid.replace_containers(new_containers);
                                         self.panel_app.panel_grid.replace_leaf_to_chart(new_leaf_to_chart);
+                                        // After restore the docking tree's active_leaf may be None
+                                        // if the serialized snapshot did not include that field
+                                        // (older presets). Activate the first available leaf so
+                                        // subsequent calls to active_container() / active_leaf()
+                                        // return a valid result rather than silently skipping.
+                                        if self.panel_app.panel_grid.docking().active_leaf().is_none() {
+                                            if let Some(lid) = self.panel_app.panel_grid.first_leaf_id() {
+                                                self.panel_app.panel_grid.set_active_leaf(lid);
+                                                eprintln!("[ChartApp] active_leaf was None after restore — activated first leaf {:?}", lid);
+                                            }
+                                        }
                                         eprintln!("[ChartApp] layout topology restored");
                                         true
                                     }

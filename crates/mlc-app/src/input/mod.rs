@@ -100,17 +100,15 @@ use mlc_layout::ui::context_menu::{
     ContextMenuTarget, ContextMenuItemState,
     build_primitive_context_menu,
 };
-use mlc_core::state::modal_state::OpenModal;
 use mlc_layout::ui::modal_settings::DualSliderHandle;
 use mlc_core::drawing::TimeframeVisibilityConfig;
-use uzor::input::TextAction;
 use uzor::WidgetId;
 
 /// Convert chart-app's `KeyPress` to the uzor `KeyPress` understood by `TextFieldStore`.
 ///
 /// Only the variants that `TextFieldStore` acts on are mapped; everything
 /// else becomes `None` and the caller skips forwarding to the store.
-fn to_uzor_key(key: &KeyPress) -> Option<uzor::input::KeyPress> {
+pub(crate) fn to_uzor_key(key: &KeyPress) -> Option<uzor::input::KeyPress> {
     use uzor::input::KeyPress as UK;
     Some(match key {
         KeyPress::Delete      => UK::Delete,
@@ -5934,663 +5932,7 @@ impl ChartApp {
     /// Routes to active text editing state (primitive settings text_content).
     /// On Enter, commits the edited text back to the primitive.
     pub fn on_char_input(&mut self, ch: char) {
-        // While the profile manager is shown, only the passphrase, recovery key,
-        // and name inputs may receive keyboard events.  All other char routing is
-        // blocked to prevent data leaking into hidden inputs or triggering chart
-        // keyboard shortcuts.
-        // The recovery key DISPLAY box (read-only) is also excluded from char input.
-        if self.panel_app.user_settings_state.show_profile_manager
-            && !self.panel_app.user_settings_state.new_passphrase_focused
-            && !self.panel_app.user_settings_state.new_profile_name_focused
-            && !self.panel_app.user_settings_state.recovery_key_display_focused
-            && !self.panel_app.user_settings_state.new_passphrase_focused
-            && !self.panel_app.user_settings_state.confirm_passphrase_focused
-        {
-            return;
-        }
-
-        // Handle chart browser modal search input — routed through TextFieldStore.
-        if self.panel_app.chart_browser.is_open {
-            let cb_id = WidgetId::from(crate::text_input::CHART_BROWSER_SEARCH);
-            if self.input_coordinator.borrow().text_fields().is_focused(&cb_id) {
-                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
-                match action {
-                    TextAction::TextChanged(ref new_text) | TextAction::Commit(ref new_text) => {
-                        self.panel_app.chart_browser.search_query = new_text.clone();
-                        self.panel_app.chart_browser.scroll.reset();
-                    }
-                    TextAction::Cancel | TextAction::None | TextAction::RawInput(_) => {}
-                }
-                return;
-            }
-            return;
-        }
-
-        // Handle watchlist modal search input (Overview tab only) — TextFieldStore.
-        {
-            use mlc_layout::ui::modal_settings::WatchlistModalTab;
-            if self.watchlist_modal.is_open()
-                && self.watchlist_modal.active_tab == WatchlistModalTab::Overview
-            {
-                let wl_id = WidgetId::from(crate::text_input::WATCHLIST_SEARCH);
-                if self.input_coordinator.borrow().text_fields().is_focused(&wl_id) {
-                    let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
-                    match action {
-                        TextAction::TextChanged(ref new_text) | TextAction::Commit(ref new_text) => {
-                            self.watchlist_modal.search_query = new_text.clone();
-                            self.watchlist_modal.scroll.reset();
-                        }
-                        TextAction::Cancel | TextAction::None | TextAction::RawInput(_) => {}
-                    }
-                }
-                return;
-            }
-        }
-
-        // Handle color picker hex input editing.
-        // Check all color picker instances; the first one with hex_editing=true consumes the event.
-        let hex_id = WidgetId::from(crate::text_input::HEX_COLOR);
-        if self.input_coordinator.borrow().text_fields().is_focused(&hex_id) {
-            let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
-            match action {
-                TextAction::Commit(_) | TextAction::Cancel => {
-                    // Close hex editing on all pickers.
-                    self.panel_app.primitive_settings_state.color_picker.hex_editing = false;
-                    self.panel_app.indicator_settings_state.color_picker.hex_editing = false;
-                    self.panel_app.chart_settings_state.color_picker.hex_editing = false;
-                    self.panel_app.compare_settings_state.color_picker.hex_editing = false;
-                    self.panel_app.panel_color_picker.hex_editing = false;
-                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                }
-                TextAction::TextChanged(ref new_hex) => {
-                    // Live-apply: sync the new hex text to the active picker.
-                    let pickers: [(&mut mlc_layout::ui::color_picker_state::ColorPickerState, &str); 5] = [
-                        (&mut self.panel_app.primitive_settings_state.color_picker, "primitive"),
-                        (&mut self.panel_app.indicator_settings_state.color_picker, "indicator"),
-                        (&mut self.panel_app.chart_settings_state.color_picker, "chart"),
-                        (&mut self.panel_app.compare_settings_state.color_picker, "compare"),
-                        (&mut self.panel_app.panel_color_picker, "panel"),
-                    ];
-                    for (picker, _src) in pickers {
-                        if picker.hex_editing {
-                            picker.hex_set_text(new_hex);
-                            break;
-                        }
-                    }
-                }
-                TextAction::None => {}
-                TextAction::RawInput(_) => {
-                    // RawInput is for AgentPty, not HexColor — ignore here.
-                }
-            }
-            return;
-        }
-        // Agent PTY input — route raw characters directly to the focused leaf's PTY.
-        let pty_id = WidgetId::from(crate::text_input::AGENT_PTY);
-        if self.input_coordinator.borrow().text_fields().is_focused(&pty_id) {
-            let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
-            if let TextAction::RawInput(bytes) = action {
-                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
-                    if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id).cloned() {
-                        if desc.mode == gate4agent::InstanceMode::Pty {
-                            let text = String::from_utf8_lossy(&bytes).to_string();
-                            let id = desc.instance_id;
-                            #[cfg(not(target_arch = "wasm32"))]
-                            if let Some(rt) = self.core.native_rt() {
-                                let _ = rt.block_on(self.agent.write_pty_instance(id, &text));
-                            }
-                        }
-                    }
-                }
-            }
-            return;
-        }
-        // Agent chat input — route printable characters and Enter to the focused leaf's chat.
-        let chat_id = WidgetId::from(crate::text_input::AGENT_CHAT);
-        if self.input_coordinator.borrow().text_fields().is_focused(&chat_id) {
-            if ch == '\r' || ch == '\n' {
-                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
-                    let desc = self.sidebar_state.agent_leaves.get(&leaf_id).cloned();
-                    if let Some(desc) = desc {
-                        let text = {
-                            let coord = self.input_coordinator.borrow();
-                            coord.text_fields().text(&chat_id).to_string()
-                        };
-                        eprintln!("[gate4agent::chat] Enter via on_char text_len={}", text.len());
-                        if !text.is_empty() {
-                            let id = desc.instance_id;
-                            #[cfg(not(target_arch = "wasm32"))]
-                            if let Some(rt) = self.core.native_rt() {
-                                match rt.block_on(self.agent.send_chat_instance(id, &text)) {
-                                    Ok(()) => {
-                                        let buf = self.sidebar_state.agent_input_buffers
-                                            .entry(leaf_id).or_default();
-                                        buf.clear();
-                                        self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, "");
-                                        eprintln!("[gate4agent::chat] Enter via on_char OK");
-                                    }
-                                    Err(e) => eprintln!("[gate4agent::chat] Enter via on_char error: {}", e),
-                                }
-                            }
-                        }
-                    }
-                }
-            } else {
-                let _action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
-                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
-                    let new_text = {
-                        let coord = self.input_coordinator.borrow();
-                        coord.text_fields().text(&chat_id).to_string()
-                    };
-                    self.sidebar_state.agent_input_buffers.insert(leaf_id, new_text);
-                }
-            }
-            return;
-        }
-        // Handle preset name input modal — routed through TextFieldStore.
-        if self.panel_app.preset_name_input.is_open {
-            let pni_id = WidgetId::from(crate::text_input::PRESET_NAME_INPUT);
-            let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
-            match action {
-                TextAction::Commit(name) => {
-                    if !name.trim().is_empty() {
-                        use mlc_layout::ui::modal_settings::PresetNameInputMode;
-                        match self.panel_app.preset_name_input.mode {
-                            PresetNameInputMode::SaveAs => {
-                                self.process_chart_out_event(
-                                    mlc_core::events::ChartOutEvent::SavePreset { name }
-                                );
-                            }
-                            PresetNameInputMode::Rename => {
-                                let id = self.panel_app.preset_name_input.rename_preset_id
-                                    .clone().unwrap_or_default();
-                                self.process_chart_out_event(
-                                    mlc_core::events::ChartOutEvent::RenamePreset { id, new_name: name }
-                                );
-                            }
-                            PresetNameInputMode::NewChart => {
-                                self.execute_new_chart_with_name(name);
-                            }
-                            PresetNameInputMode::CreateIndicatorSet => {
-                                self.execute_create_indicator_set(name);
-                            }
-                        }
-                    }
-                    self.panel_app.preset_name_input.close();
-                    self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::None;
-                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                }
-                TextAction::Cancel => {
-                    self.panel_app.preset_name_input.close();
-                    self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::None;
-                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                }
-                TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
-            }
-            let _ = pni_id;
-            return;
-        }
-
-        // Handle E2E passphrase input in User Settings Sync tab, Welcome Wizard, or Profile Manager
-        if (self.panel_app.user_settings_state.is_open || self.panel_app.user_settings_state.show_welcome_wizard || self.panel_app.user_settings_state.needs_vault_unlock || self.panel_app.user_settings_state.show_profile_manager)
-            && self.panel_app.user_settings_state.new_passphrase_focused
-        {
-            let uss = &mut self.panel_app.user_settings_state;
-            match ch {
-                '\x09' => {
-                    // Tab moves to next field in wizard.
-                    if uss.show_welcome_wizard {
-                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                        let cp_wid = WidgetId::from(crate::text_input::CONFIRM_PASSPHRASE);
-                        self.input_coordinator.borrow_mut().text_fields_mut().focus(cp_wid);
-                        uss.new_passphrase_focused = false;
-                        uss.confirm_passphrase_focused = true;
-                    }
-                }
-                '\x1b' => {
-                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                    uss.new_passphrase_focused = false;
-                }
-                _ => {
-                    let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
-                    match action {
-                        TextAction::Commit(passphrase) => {
-                            use mlc_layout::ui::modal_settings::ProfileManagerPage;
-                            let on_passphrase_page = if uss.show_profile_manager {
-                                matches!(
-                                    uss.profile_manager_page,
-                                    ProfileManagerPage::UnlockPassphrase | ProfileManagerPage::CreatePassphrase
-                                )
-                            } else {
-                                true
-                            };
-                            let passphrase = passphrase.trim().to_string();
-                            if !passphrase.is_empty() && on_passphrase_page {
-                                self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
-                                self.input_coordinator.borrow_mut().text_fields_mut().clear(
-                                    &WidgetId::from(crate::text_input::NEW_PASSPHRASE)
-                                );
-                            }
-                            uss.new_passphrase_focused = false;
-                        }
-                        _ => {
-                            if ch == '\x08' || !ch.is_control() {
-                                uss.vault_unlock_error = None;
-                            }
-                        }
-                    }
-                }
-            }
-            return;
-        }
-
-        // Handle recovery key input in the UseRecoveryKey profile manager page
-        if self.panel_app.user_settings_state.show_profile_manager
-            && self.panel_app.user_settings_state.recovery_key_display_focused
-        {
-            let uss = &mut self.panel_app.user_settings_state;
-            match ch {
-                '\x1b' => {
-                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                    uss.recovery_key_display_focused = false;
-                }
-                _ => {
-                    let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
-                    match action {
-                        TextAction::Commit(key_text) => {
-                            if key_text.len() >= 40 {
-                                uss.vault_unlock_error = None;
-                                self.pending_updater_cmd = Some(format!("recovery_unlock:{}", key_text));
-                                eprintln!("[ChartApp] profile_mgr: recovery unlock submitted via Enter");
-                            }
-                            uss.recovery_key_display_focused = false;
-                        }
-                        _ => {
-                            if ch == '\x08' || !ch.is_control() {
-                                uss.vault_unlock_error = None;
-                            }
-                        }
-                    }
-                }
-            }
-            return;
-        }
-
-        // Handle confirm passphrase input in the SetNewPassphrase profile manager page or wizard page 2
-        if (self.panel_app.user_settings_state.show_profile_manager || self.panel_app.user_settings_state.show_welcome_wizard)
-            && self.panel_app.user_settings_state.confirm_passphrase_focused
-        {
-            let uss = &mut self.panel_app.user_settings_state;
-            match ch {
-                '\x09' => {
-                    // Tab cycles to next/first field.
-                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                    if uss.show_welcome_wizard {
-                        let npn_wid = WidgetId::from(crate::text_input::NEW_PROFILE_NAME);
-                        self.input_coordinator.borrow_mut().text_fields_mut().focus(npn_wid);
-                        uss.confirm_passphrase_focused = false;
-                        uss.new_profile_name_focused = true;
-                    } else {
-                        let np_wid = WidgetId::from(crate::text_input::NEW_PASSPHRASE);
-                        self.input_coordinator.borrow_mut().text_fields_mut().focus(np_wid);
-                        uss.confirm_passphrase_focused = false;
-                        uss.new_passphrase_focused = true;
-                    }
-                }
-                '\x1b' => {
-                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                    uss.confirm_passphrase_focused = false;
-                }
-                _ => {
-                    let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
-                    match action {
-                        TextAction::Commit(_) => {
-                            let np_wid = WidgetId::from(crate::text_input::NEW_PASSPHRASE);
-                            let cp_wid = WidgetId::from(crate::text_input::CONFIRM_PASSPHRASE);
-                            let passphrase_text = {
-                                let ic = self.input_coordinator.borrow();
-                                ic.text_fields().text(&np_wid).to_string()
-                            };
-                            let confirm_text = {
-                                let ic = self.input_coordinator.borrow();
-                                ic.text_fields().text(&cp_wid).to_string()
-                            };
-                            use mlc_core::user_manager::profile_manager::MIN_PASSPHRASE_LENGTH;
-                            if passphrase_text.len() >= MIN_PASSPHRASE_LENGTH
-                                && confirm_text == passphrase_text
-                            {
-                                uss.set_passphrase_error.clear();
-                                uss.confirm_passphrase_focused = false;
-                                self.pending_updater_cmd = Some(format!("set_new_passphrase:{}", passphrase_text));
-                                eprintln!("[ChartApp] profile_mgr: set_new_passphrase submitted via Enter");
-                            } else if confirm_text != passphrase_text {
-                                uss.set_passphrase_error = "Passphrases do not match".to_string();
-                            }
-                        }
-                        _ => {
-                            if ch == '\x08' || !ch.is_control() {
-                                uss.set_passphrase_error.clear();
-                            }
-                        }
-                    }
-                }
-            }
-            return;
-        }
-
-        // Handle profile rename text input
-        if self.panel_app.user_settings_state.is_open
-            && self.panel_app.user_settings_state.profile_rename_focused
-        {
-            let uss = &mut self.panel_app.user_settings_state;
-            match ch {
-                '\x1b' => {
-                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                    uss.profile_rename_focused = false;
-                    uss.profile_rename_mode = false;
-                    uss.profile_rename_target_id = None;
-                }
-                _ => {
-                    let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
-                    if let TextAction::Commit(new_name) = action {
-                        let new_name = new_name.trim().to_string();
-                        uss.profile_rename_focused = false;
-                        if !new_name.is_empty() {
-                            uss.profile_display_name = new_name.clone();
-                            uss.profile_rename_mode = false;
-                            uss.profile_rename_target_id = None;
-                            self.pending_updater_cmd = Some(format!("profile_rename:{}", new_name));
-                        }
-                    }
-                }
-            }
-            return;
-        }
-
-        // Handle new profile name text input (in settings modal, profile manager, or welcome wizard)
-        if (self.panel_app.user_settings_state.is_open || self.panel_app.user_settings_state.show_profile_manager || self.panel_app.user_settings_state.show_welcome_wizard)
-            && self.panel_app.user_settings_state.new_profile_name_focused
-        {
-            let uss = &mut self.panel_app.user_settings_state;
-            match ch {
-                '\x09' => {
-                    // Tab moves to next field.
-                    if uss.show_welcome_wizard {
-                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                        let np_wid = WidgetId::from(crate::text_input::NEW_PASSPHRASE);
-                        self.input_coordinator.borrow_mut().text_fields_mut().focus(np_wid);
-                        uss.new_profile_name_focused = false;
-                        uss.new_passphrase_focused = true;
-                    }
-                }
-                '\x1b' => {
-                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                    uss.new_profile_name_focused = false;
-                    uss.show_new_profile_dialog = false;
-                }
-                _ => {
-                    let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
-                    if let TextAction::Commit(name) = action {
-                        if uss.show_welcome_wizard {
-                            self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                            let np_wid = WidgetId::from(crate::text_input::NEW_PASSPHRASE);
-                            self.input_coordinator.borrow_mut().text_fields_mut().focus(np_wid);
-                            uss.new_profile_name_focused = false;
-                            uss.new_passphrase_focused = true;
-                        } else {
-                            uss.new_profile_name_focused = false;
-                            let name = name.trim().to_string();
-                            if !name.is_empty() {
-                                self.pending_updater_cmd = Some(format!("profile_create:{}", name));
-                                uss.show_new_profile_dialog = false;
-                            }
-                        }
-                    }
-                }
-            }
-            return;
-        }
-
-        // Handle watchlist group name input modal — routed through TextFieldStore.
-        if self.wl_group_name_input.is_open() {
-            let wl_gn_id = WidgetId::from(crate::text_input::WATCHLIST_GROUP_NAME);
-            let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
-            match action {
-                TextAction::Commit(name) => {
-                    let name = name.trim().to_string();
-                    if !name.is_empty() {
-                        use mlc_layout::ui::modal_settings::WatchlistGroupNameMode;
-                        match self.wl_group_name_input.mode.clone() {
-                            WatchlistGroupNameMode::CreateNew => {
-                                let new_id = self.core.watchlist_mut().create_list(name.clone());
-                                self.core.watchlist_mut().active_list_id = new_id;
-                                self.watchlist_actions.push(crate::WatchlistAction::CreateList { name: name.clone() });
-                                self.watchlists_dirty = true;
-                                self.persist_watchlists();
-                                eprintln!("[WatchlistGroupName] created new list '{}' id={}", name, new_id);
-                            }
-                            WatchlistGroupNameMode::Rename(id) => {
-                                let found = {
-                                    let mut wl = self.core.watchlist_mut();
-                                    if let Some(list) = wl.lists.iter_mut().find(|l| l.id == id) {
-                                        list.name = name.clone();
-                                        true
-                                    } else {
-                                        false
-                                    }
-                                };
-                                if found {
-                                    self.watchlist_actions.push(crate::WatchlistAction::RenameList { id, new_name: name.clone() });
-                                    self.watchlists_dirty = true;
-                                    self.persist_watchlists();
-                                    eprintln!("[WatchlistGroupName] renamed list id={} to '{}'", id, name);
-                                }
-                            }
-                        }
-                    }
-                    self.wl_group_name_input.close();
-                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                }
-                TextAction::Cancel => {
-                    self.wl_group_name_input.close();
-                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                }
-                TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
-            }
-            let _ = wl_gn_id;
-            return;
-        }
-
-        // Handle template name input modals (overlay over any settings modal).
-        // Only one can be active at a time; route through TextFieldStore.
-        if self.panel_app.primitive_settings_state.save_template_mode
-            || self.panel_app.indicator_settings_state.save_template_mode
-            || self.panel_app.compare_settings_state.save_template_mode
-            || self.panel_app.chart_settings_state.save_template_mode
-        {
-            let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
-            match action {
-                TextAction::Commit(_) => {
-                    // Enter triggers save — dispatch the matching save handler.
-                    if self.panel_app.primitive_settings_state.save_template_mode {
-                        self.handle_prim_tmpl_modal_click("save");
-                    } else if self.panel_app.indicator_settings_state.save_template_mode {
-                        self.handle_ind_tmpl_modal_click("save");
-                    } else if self.panel_app.compare_settings_state.save_template_mode {
-                        self.handle_cmp_tmpl_modal_click("save");
-                    } else if self.panel_app.chart_settings_state.save_template_mode {
-                        self.handle_chart_tmpl_modal_click("save");
-                    }
-                }
-                TextAction::Cancel => {
-                    // Escape — cancel the template save.
-                    if self.panel_app.primitive_settings_state.save_template_mode {
-                        self.handle_prim_tmpl_modal_click("cancel");
-                    } else if self.panel_app.indicator_settings_state.save_template_mode {
-                        self.handle_ind_tmpl_modal_click("cancel");
-                    } else if self.panel_app.compare_settings_state.save_template_mode {
-                        self.handle_cmp_tmpl_modal_click("cancel");
-                    } else if self.panel_app.chart_settings_state.save_template_mode {
-                        self.handle_chart_tmpl_modal_click("cancel");
-                    }
-                }
-                TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
-            }
-            return;
-        }
-
-        // Handle text input in primitive settings (TextFieldStore, Wave 2b).
-        if self.panel_app.primitive_settings_state.is_open()
-            && self.panel_app.primitive_settings_state.active_field_id.is_some()
-        {
-            let prim_wid = uzor::WidgetId::from(crate::text_input::PRIMITIVE_SETTINGS_FIELD);
-            if self.input_coordinator.borrow().text_fields().is_focused(&prim_wid) {
-                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
-                match action {
-                    TextAction::Commit(_) => {
-                        self.commit_prim_editing_text();
-                    }
-                    TextAction::Cancel => {
-                        self.panel_app.primitive_settings_state.active_field_id = None;
-                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                    }
-                    TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
-                }
-                return;
-            }
-        }
-        // Handle text input in indicator settings (TextFieldStore, Wave 2b).
-        if self.panel_app.indicator_settings_state.is_open()
-            && self.panel_app.indicator_settings_state.active_field_id.is_some()
-        {
-            let ind_wid = uzor::WidgetId::from(crate::text_input::INDICATOR_SETTINGS_FIELD);
-            if self.input_coordinator.borrow().text_fields().is_focused(&ind_wid) {
-                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
-                match action {
-                    TextAction::Commit(_) => {
-                        self.commit_ind_editing_text();
-                    }
-                    TextAction::Cancel => {
-                        self.panel_app.indicator_settings_state.active_field_id = None;
-                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                    }
-                    TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
-                }
-                return;
-            }
-        }
-
-        // Handle text input in chart settings (TextFieldStore, Wave 2b).
-        if self.panel_app.chart_settings_state.is_open
-            && self.panel_app.chart_settings_state.active_field_id.is_some()
-        {
-            let chart_wid = uzor::WidgetId::from(crate::text_input::CHART_SETTINGS_FIELD);
-            if self.input_coordinator.borrow().text_fields().is_focused(&chart_wid) {
-                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
-                match action {
-                    TextAction::Commit(_) => {
-                        self.commit_chart_settings_editing_text();
-                    }
-                    TextAction::Cancel => {
-                        self.panel_app.chart_settings_state.active_field_id = None;
-                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                    }
-                    TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
-                }
-                return;
-            }
-        }
-
-        // Handle text input in compare settings (TextFieldStore, Wave 2b).
-        if self.panel_app.compare_settings_state.is_open()
-            && self.panel_app.compare_settings_state.active_field_id.is_some()
-        {
-            let cmp_wid = uzor::WidgetId::from(crate::text_input::COMPARE_SETTINGS_FIELD);
-            if self.input_coordinator.borrow().text_fields().is_focused(&cmp_wid) {
-                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
-                match action {
-                    TextAction::Commit(_) => {
-                        self.commit_cmp_editing_text();
-                    }
-                    TextAction::Cancel => {
-                        self.panel_app.compare_settings_state.active_field_id = None;
-                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                    }
-                    TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
-                }
-                return;
-            }
-        }
-
-
-        // Handle text input for Telegram bot token field in the Alert Settings modal.
-        if self.panel_app.alert_settings_state.is_open() {
-            let tg_wid = WidgetId::from(crate::text_input::ALERT_TG_TOKEN);
-            if self.input_coordinator.borrow().text_fields().is_focused(&tg_wid) {
-                match ch {
-                    '\r' | '\n' | '\x1b' => {
-                        // Enter/Escape: commit current text to notification settings.
-                        let token = self.input_coordinator.borrow().text_fields().text(&tg_wid).trim().to_string();
-                        self.panel_app.alert_settings_state.notification_settings.telegram.bot_token = token;
-                        self.panel_app.alert_settings_state.notification_settings_dirty = true;
-                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                    }
-                    _ => {
-                        let _action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
-                    }
-                }
-                return;
-            }
-        }
-
-        // Route typing to the search modal when it is open (indicator, symbol, or compare).
-        if self.modal_state.current.is_search_overlay() {
-            let search_id = match self.modal_state.current {
-                OpenModal::SymbolSearch => WidgetId::from(crate::text_input::SYMBOL_SEARCH),
-                OpenModal::IndicatorSearch => WidgetId::from(crate::text_input::INDICATOR_SEARCH),
-                OpenModal::CompareSearch => WidgetId::from(crate::text_input::COMPARE_SEARCH),
-                _ => WidgetId::from(crate::text_input::SYMBOL_SEARCH),
-            };
-            let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
-            match action {
-                TextAction::Commit(_) => {
-                    // Enter: select the first result if any, or just close.
-                    let first_item = match self.modal_state.current {
-                        OpenModal::SymbolSearch | OpenModal::CompareSearch => {
-                            self.modal_state.symbol_search_results
-                                .first()
-                                .map(|r| format!("{}:{}:{}", r.symbol, r.exchange_id, r.account_type))
-                        }
-                        OpenModal::IndicatorSearch => {
-                            self.modal_state.hovered_item_id.clone()
-                        }
-                        _ => None,
-                    };
-                    if let Some(item_id) = first_item {
-                        let rest = format!("item:{}", item_id);
-                        self.handle_search_modal_click(&rest, 0.0, 0.0);
-                    } else if self.modal_state.current != OpenModal::IndicatorSearch {
-                        self.modal_state.close();
-                    }
-                }
-                TextAction::TextChanged(ref new_text) => {
-                    // Sync search_query for display + re-filter symbol results.
-                    self.modal_state.search_query = new_text.clone();
-                    if self.modal_state.current == OpenModal::SymbolSearch
-                        || self.modal_state.current == OpenModal::CompareSearch
-                    {
-                        let q = self.modal_state.search_query.clone();
-                        self.modal_state.symbol_search_results =
-                            crate::ChartApp::build_demo_symbol_results(&q, &self.core.watchlist(), &self.core.exchange_symbols_read());
-                    }
-                }
-                TextAction::Cancel => {
-                    self.modal_state.close();
-                }
-                TextAction::None | TextAction::RawInput(_) => {}
-            }
-            let _ = search_id;
-        }
+        self.dispatch_text_char(ch);
     }
 
     /// Handle named key presses that cannot be expressed as a single `char`.
@@ -6612,205 +5954,14 @@ impl ChartApp {
             return;
         }
 
-        // ── Alert/Telegram token key events (route through TextFieldStore) ──
-        if self.panel_app.alert_settings_state.is_open() {
-            let tg_wid = WidgetId::from(crate::text_input::ALERT_TG_TOKEN);
-            if self.input_coordinator.borrow().text_fields().is_focused(&tg_wid) {
-                if let KeyPress::Paste(_) = key {
-                    // fall through to generic TextFieldStore routing below
-                } else if let Some(uzor_key) = to_uzor_key(&key) {
-                    let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
-                    match action {
-                        TextAction::Commit(_) | TextAction::Cancel => {
-                            let token = self.input_coordinator.borrow().text_fields().text(&tg_wid).trim().to_string();
-                            self.panel_app.alert_settings_state.notification_settings.telegram.bot_token = token;
-                            self.panel_app.alert_settings_state.notification_settings_dirty = true;
-                            self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                        }
-                        _ => {}
-                    }
-                    return;
-                }
-            }
-        }
-
-        // ── Profile rename text input key events ──────────────────────────────
-        if self.panel_app.user_settings_state.is_open
-            && self.panel_app.user_settings_state.profile_rename_focused
-        {
-            if let Some(uzor_key) = to_uzor_key(&key) {
-                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
-                if let TextAction::Commit(new_name) = action {
-                    let new_name = new_name.trim().to_string();
-                    self.panel_app.user_settings_state.profile_rename_focused = false;
-                    if !new_name.is_empty() {
-                        self.panel_app.user_settings_state.profile_display_name = new_name.clone();
-                        self.panel_app.user_settings_state.profile_rename_mode = false;
-                        self.panel_app.user_settings_state.profile_rename_target_id = None;
-                        self.pending_updater_cmd = Some(format!("profile_rename:{}", new_name));
-                    }
-                }
-            }
+        // Early text dispatch: covers ALERT_TG_TOKEN, profile/passphrase fields,
+        // BAR_MODE_PARAM, HEX_COLOR, AGENT_PTY, AGENT_CHAT — all routed before
+        // global undo/redo.
+        if self.dispatch_text_key_early(&key) {
             return;
         }
 
-        // ── E2E passphrase text input key events ──────────────────────────────
-        if (self.panel_app.user_settings_state.is_open
-            || self.panel_app.user_settings_state.show_welcome_wizard
-            || self.panel_app.user_settings_state.needs_vault_unlock
-            || self.panel_app.user_settings_state.show_profile_manager)
-            && self.panel_app.user_settings_state.new_passphrase_focused
-        {
-            if let Some(uzor_key) = to_uzor_key(&key) {
-                let _action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
-            }
-            return;
-        }
-
-        // ── New profile name text input key events ────────────────────────────
-        if (self.panel_app.user_settings_state.is_open || self.panel_app.user_settings_state.show_profile_manager || self.panel_app.user_settings_state.show_welcome_wizard)
-            && self.panel_app.user_settings_state.new_profile_name_focused
-        {
-            if let Some(uzor_key) = to_uzor_key(&key) {
-                let _action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
-            }
-            return;
-        }
-
-        // ── Recovery key text input key events ────────────────────────────────
-        if self.panel_app.user_settings_state.show_profile_manager
-            && self.panel_app.user_settings_state.recovery_key_display_focused
-        {
-            if let Some(uzor_key) = to_uzor_key(&key) {
-                let _action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
-            }
-            return;
-        }
-
-        // ── Confirm passphrase text input key events ──────────────────────────
-        if (self.panel_app.user_settings_state.show_profile_manager || self.panel_app.user_settings_state.show_welcome_wizard)
-            && self.panel_app.user_settings_state.confirm_passphrase_focused
-        {
-            if let Some(uzor_key) = to_uzor_key(&key) {
-                let _action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
-            }
-            return;
-        }
-
-        // ── Chart-type inline param-input key routing ────────────────────────
-        // The dropdown's range_bar / volume_bar / footprint rows carry an
-        // inline TextField (registered as BAR_MODE_PARAM). When focused, route
-        // its keys here. Commit (Enter) emits the right UpdateChartType* event
-        // based on toolbar_state.active_param_chart_type (set by the click
-        // handler in panel_click.rs).
-        let param_id = WidgetId::from(crate::text_input::BAR_MODE_PARAM);
-        if self.input_coordinator.borrow().text_fields().is_focused(&param_id) {
-            if let Some(uzor_key) = to_uzor_key(&key) {
-                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
-                match action {
-                    TextAction::Commit(text) => {
-                        let active_ct = self.panel_app.toolbar_state.active_param_chart_type.clone();
-                        if active_ct.as_deref() == Some("footprint") {
-                            self.process_chart_out_event(
-                                mlc_core::events::ChartOutEvent::UpdateChartTypeInterval { interval: text }
-                            );
-                        } else if let Ok(v) = text.trim().parse::<f64>() {
-                            self.process_chart_out_event(
-                                mlc_core::events::ChartOutEvent::UpdateChartTypeParam { value: v }
-                            );
-                        } else {
-                            self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                        }
-                        self.panel_app.toolbar_state.active_param_chart_type = None;
-                    }
-                    TextAction::Cancel => {
-                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                        self.panel_app.toolbar_state.active_param_chart_type = None;
-                    }
-                    TextAction::TextChanged(_) | TextAction::None => {}
-                    TextAction::RawInput(_) => {}
-                }
-            }
-            return;
-        }
-
-        // ── Hex color picker key routing ──────────────────────────────────────
-        let hex_id = WidgetId::from(crate::text_input::HEX_COLOR);
-        if self.input_coordinator.borrow().text_fields().is_focused(&hex_id) {
-            if let Some(uzor_key) = to_uzor_key(&key) {
-                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
-                match action {
-                    TextAction::Commit(_) | TextAction::Cancel => {
-                        self.panel_app.primitive_settings_state.color_picker.hex_editing = false;
-                        self.panel_app.indicator_settings_state.color_picker.hex_editing = false;
-                        self.panel_app.chart_settings_state.color_picker.hex_editing = false;
-                        self.panel_app.compare_settings_state.color_picker.hex_editing = false;
-                        self.panel_app.panel_color_picker.hex_editing = false;
-                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                    }
-                    TextAction::TextChanged(ref new_hex) => {
-                        let pickers: [(&mut mlc_layout::ui::color_picker_state::ColorPickerState, &str); 5] = [
-                            (&mut self.panel_app.primitive_settings_state.color_picker, "primitive"),
-                            (&mut self.panel_app.indicator_settings_state.color_picker, "indicator"),
-                            (&mut self.panel_app.chart_settings_state.color_picker, "chart"),
-                            (&mut self.panel_app.compare_settings_state.color_picker, "compare"),
-                            (&mut self.panel_app.panel_color_picker, "panel"),
-                        ];
-                        for (picker, _src) in pickers {
-                            if picker.hex_editing {
-                                picker.hex_set_text(new_hex);
-                                break;
-                            }
-                        }
-                    }
-                    TextAction::None => {}
-                    TextAction::RawInput(_) => {
-                        // RawInput is for AgentPty, not HexColor — ignore here.
-                    }
-                }
-            }
-            return;
-        }
-
-        // ── Agent PTY key routing — sends to focused leaf's PTY instance ─────────
-        if self.is_agent_pty_focused() {
-            if let Some(uzor_key) = to_uzor_key(&key) {
-                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
-                if let TextAction::RawInput(bytes) = action {
-                    if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
-                        if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id).cloned() {
-                            if desc.mode == gate4agent::InstanceMode::Pty {
-                                let text = String::from_utf8_lossy(&bytes).to_string();
-                                let id = desc.instance_id;
-                                #[cfg(not(target_arch = "wasm32"))]
-                                if let Some(rt) = self.core.native_rt() {
-                                    let _ = rt.block_on(self.agent.write_pty_instance(id, &text));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            return;
-        }
-
-        // ── Agent chat key routing — syncs focused leaf's input buffer ────────
-        let chat_id = WidgetId::from(crate::text_input::AGENT_CHAT);
-        if self.input_coordinator.borrow().text_fields().is_focused(&chat_id) {
-            if let Some(uzor_key) = to_uzor_key(&key) {
-                let _action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
-            }
-            if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
-                let new_text = {
-                    let coord = self.input_coordinator.borrow();
-                    coord.text_fields().text(&chat_id).to_string()
-                };
-                self.sidebar_state.agent_input_buffers.insert(leaf_id, new_text);
-            }
-            return;
-        }
-
-        // ── Global undo/redo — handled before any modal short-circuits ────────
+        // ── Global undo/redo — after early text fields, before late modals ────
         match key {
             KeyPress::Undo => {
                 self.perform_undo_with_group();
@@ -6823,257 +5974,9 @@ impl ChartApp {
             _ => {}
         }
 
-        // 0a. Chart browser search input — TextFieldStore.
-        if self.panel_app.chart_browser.is_open {
-            if let Some(uzor_key) = to_uzor_key(&key) {
-                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
-                if let TextAction::TextChanged(ref new_text) | TextAction::Commit(ref new_text) = action {
-                    self.panel_app.chart_browser.search_query = new_text.clone();
-                    self.panel_app.chart_browser.scroll.reset();
-                }
-            }
-            return;
-        }
-
-        // 0b. Watchlist modal search input (Overview tab only) — TextFieldStore.
-        {
-            use mlc_layout::ui::modal_settings::WatchlistModalTab;
-            if self.watchlist_modal.is_open()
-                && self.watchlist_modal.active_tab == WatchlistModalTab::Overview
-            {
-                if let Some(uzor_key) = to_uzor_key(&key) {
-                    let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
-                    if let TextAction::TextChanged(ref new_text) | TextAction::Commit(ref new_text) = action {
-                        self.watchlist_modal.search_query = new_text.clone();
-                        self.watchlist_modal.scroll.reset();
-                    }
-                }
-                return;
-            }
-        }
-
-        // 0a. Watchlist group name input modal — TextFieldStore.
-        if self.wl_group_name_input.is_open() {
-            if let Some(uzor_key) = to_uzor_key(&key) {
-                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
-                match action {
-                    TextAction::Commit(name) => {
-                        let name = name.trim().to_string();
-                        if !name.is_empty() {
-                            use mlc_layout::ui::modal_settings::WatchlistGroupNameMode;
-                            match self.wl_group_name_input.mode.clone() {
-                                WatchlistGroupNameMode::CreateNew => {
-                                    let new_id = self.core.watchlist_mut().create_list(name.clone());
-                                    self.core.watchlist_mut().active_list_id = new_id;
-                                    self.watchlist_actions.push(crate::WatchlistAction::CreateList { name: name.clone() });
-                                    self.watchlists_dirty = true;
-                                    self.persist_watchlists();
-                                }
-                                WatchlistGroupNameMode::Rename(id) => {
-                                    let mut wl = self.core.watchlist_mut();
-                                    if let Some(list) = wl.lists.iter_mut().find(|l| l.id == id) {
-                                        list.name = name.clone();
-                                    }
-                                }
-                            }
-                        }
-                        self.wl_group_name_input.close();
-                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                    }
-                    TextAction::Cancel => {
-                        self.wl_group_name_input.close();
-                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                    }
-                    _ => {}
-                }
-            }
-            return;
-        }
-
-        // 0. Preset name input modal — TextFieldStore.
-        if self.panel_app.preset_name_input.is_open {
-            if let Some(uzor_key) = to_uzor_key(&key) {
-                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
-                match action {
-                    TextAction::Commit(name) => {
-                        if !name.trim().is_empty() {
-                            use mlc_layout::ui::modal_settings::PresetNameInputMode;
-                            match self.panel_app.preset_name_input.mode {
-                                PresetNameInputMode::SaveAs => {
-                                    self.process_chart_out_event(mlc_core::events::ChartOutEvent::SavePreset { name });
-                                }
-                                PresetNameInputMode::Rename => {
-                                    let id = self.panel_app.preset_name_input.rename_preset_id.clone().unwrap_or_default();
-                                    self.process_chart_out_event(mlc_core::events::ChartOutEvent::RenamePreset { id, new_name: name });
-                                }
-                                PresetNameInputMode::NewChart => {
-                                    self.execute_new_chart_with_name(name);
-                                }
-                                PresetNameInputMode::CreateIndicatorSet => {
-                                    self.execute_create_indicator_set(name);
-                                }
-                            }
-                        }
-                        self.panel_app.preset_name_input.close();
-                        self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::None;
-                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                    }
-                    TextAction::Cancel => {
-                        self.panel_app.preset_name_input.close();
-                        self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::None;
-                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                    }
-                    _ => {}
-                }
-            }
-            return;
-        }
-
-        // 0c-0f. Template name modals (overlay over settings modals) — TextFieldStore.
-        if self.panel_app.primitive_settings_state.save_template_mode
-            || self.panel_app.indicator_settings_state.save_template_mode
-            || self.panel_app.compare_settings_state.save_template_mode
-            || self.panel_app.chart_settings_state.save_template_mode
-        {
-            if let Some(uzor_key) = to_uzor_key(&key) {
-                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
-                match action {
-                    TextAction::Commit(_) => {
-                        if self.panel_app.primitive_settings_state.save_template_mode {
-                            self.handle_prim_tmpl_modal_click("save");
-                        } else if self.panel_app.indicator_settings_state.save_template_mode {
-                            self.handle_ind_tmpl_modal_click("save");
-                        } else if self.panel_app.compare_settings_state.save_template_mode {
-                            self.handle_cmp_tmpl_modal_click("save");
-                        } else if self.panel_app.chart_settings_state.save_template_mode {
-                            self.handle_chart_tmpl_modal_click("save");
-                        }
-                    }
-                    TextAction::Cancel => {
-                        if self.panel_app.primitive_settings_state.save_template_mode {
-                            self.handle_prim_tmpl_modal_click("cancel");
-                        } else if self.panel_app.indicator_settings_state.save_template_mode {
-                            self.handle_ind_tmpl_modal_click("cancel");
-                        } else if self.panel_app.compare_settings_state.save_template_mode {
-                            self.handle_cmp_tmpl_modal_click("cancel");
-                        } else if self.panel_app.chart_settings_state.save_template_mode {
-                            self.handle_chart_tmpl_modal_click("cancel");
-                        }
-                    }
-                    TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
-                }
-            }
-            return;
-        }
-
-        // 1. Primitive settings text editing (TextFieldStore, Wave 2b).
-        if self.panel_app.primitive_settings_state.is_open()
-            && self.panel_app.primitive_settings_state.active_field_id.is_some()
-        {
-            let prim_wid = uzor::WidgetId::from(crate::text_input::PRIMITIVE_SETTINGS_FIELD);
-            if self.input_coordinator.borrow().text_fields().is_focused(&prim_wid) {
-                if let Some(uzor_key) = to_uzor_key(&key) {
-                    let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
-                    match action {
-                        TextAction::Commit(_) => { self.commit_prim_editing_text(); }
-                        TextAction::Cancel => {
-                            self.panel_app.primitive_settings_state.active_field_id = None;
-                            self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                        }
-                        TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
-                    }
-                }
-                return;
-            }
-        }
-
-        // 2. Indicator settings text editing (TextFieldStore, Wave 2b).
-        if self.panel_app.indicator_settings_state.is_open()
-            && self.panel_app.indicator_settings_state.active_field_id.is_some()
-        {
-            let ind_wid = uzor::WidgetId::from(crate::text_input::INDICATOR_SETTINGS_FIELD);
-            if self.input_coordinator.borrow().text_fields().is_focused(&ind_wid) {
-                if let Some(uzor_key) = to_uzor_key(&key) {
-                    let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
-                    match action {
-                        TextAction::Commit(_) => { self.commit_ind_editing_text(); }
-                        TextAction::Cancel => {
-                            self.panel_app.indicator_settings_state.active_field_id = None;
-                            self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                        }
-                        TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
-                    }
-                }
-                return;
-            }
-        }
-
-        // 3. Chart settings inline text editing (TextFieldStore, Wave 2b).
-        if self.panel_app.chart_settings_state.is_open
-            && self.panel_app.chart_settings_state.active_field_id.is_some()
-        {
-            let chart_wid = uzor::WidgetId::from(crate::text_input::CHART_SETTINGS_FIELD);
-            if self.input_coordinator.borrow().text_fields().is_focused(&chart_wid) {
-                if let Some(uzor_key) = to_uzor_key(&key) {
-                    let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
-                    match action {
-                        TextAction::Commit(_) => { self.commit_chart_settings_editing_text(); }
-                        TextAction::Cancel => {
-                            self.panel_app.chart_settings_state.active_field_id = None;
-                            self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                        }
-                        TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
-                    }
-                }
-                return;
-            }
-        }
-
-        // 3b. Compare settings tf_min/max text editing (TextFieldStore, Wave 2b).
-        if self.panel_app.compare_settings_state.is_open()
-            && self.panel_app.compare_settings_state.active_field_id.is_some()
-        {
-            let cmp_wid = uzor::WidgetId::from(crate::text_input::COMPARE_SETTINGS_FIELD);
-            if self.input_coordinator.borrow().text_fields().is_focused(&cmp_wid) {
-                if let Some(uzor_key) = to_uzor_key(&key) {
-                    let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
-                    match action {
-                        TextAction::Commit(_) => { self.commit_cmp_editing_text(); }
-                        TextAction::Cancel => {
-                            self.panel_app.compare_settings_state.active_field_id = None;
-                            self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                        }
-                        TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
-                    }
-                }
-                return;
-            }
-        }
-
-        // 4. Search modal input — TextFieldStore.
-        if self.modal_state.current.is_search_overlay() {
-            if let Some(uzor_key) = to_uzor_key(&key) {
-                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
-                match action {
-                    TextAction::TextChanged(ref new_text) => {
-                        self.modal_state.search_query = new_text.clone();
-                        if self.modal_state.current == OpenModal::SymbolSearch
-                            || self.modal_state.current == OpenModal::CompareSearch
-                        {
-                            let q = self.modal_state.search_query.clone();
-                            self.modal_state.symbol_search_results =
-                                crate::ChartApp::build_demo_symbol_results(&q, &self.core.watchlist(), &self.core.exchange_symbols_read());
-                        }
-                    }
-                    TextAction::Commit(_) => {
-                        // Enter already handled in on_char — key routing hits on_char first.
-                    }
-                    TextAction::Cancel => {
-                        self.modal_state.close();
-                    }
-                    TextAction::None | TextAction::RawInput(_) => {}
-                }
-            }
+        // Late text dispatch: covers chart_browser, watchlist search/group-name,
+        // preset name, template names, settings sub-fields, search overlay.
+        if self.dispatch_text_key_late(&key) {
             return;
         }
 
@@ -7194,8 +6097,17 @@ impl ChartApp {
 
         // Determine up front whether we are operating in grouped or standalone mode.
         // We must not hold a borrow on panel_grid across the mutable tag_manager calls below.
+        //
+        // Use `shared_group_for_chart` to filter out auto-mono groups — those
+        // exist on every freshly seeded chart but their primitives live in
+        // `window.drawing_manager`, not `group.primitives`.  Treating an
+        // auto-mono group as a real sync group here would make undo/redo of
+        // primitive create/delete/modify operate on the empty `group.primitives`
+        // Vec while the actual primitive sits in `window.drawing_manager`,
+        // producing the symptom owner reported: "drawing undo doesn't do
+        // anything" — silent no-op rather than visible error.
         let group_id = self.panel_app.panel_grid.active_container_id()
-            .and_then(|cid| self.bubble_for_chart(cid));
+            .and_then(|cid| self.shared_group_for_chart(cid));
         let active_pid_cmd = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
 
         match cmd {
@@ -7407,9 +6319,35 @@ impl ChartApp {
                 }
             }
             Command::AddCompareSeries { series } => {
+                // The recorded command intentionally drops `bars` (see
+                // `CompareSeries::without_bars` — bars are re-fetchable and would
+                // bloat undo history with hundreds of KB per series).  On redo
+                // we need to RESTORE bars from the per-window data_provider
+                // cache so the line actually renders.  The provider was filled
+                // either by the original add path (modals.rs CompareSearch
+                // branch + react.rs BarsLoaded retry) or by the active chart's
+                // existing subscription.  If both miss, the series goes into
+                // the overlay with empty bars — visible in the sidebar tree but
+                // invisible on the chart — and the user can re-pick from the
+                // compare modal to fire a fresh fetch.
+                let main_tf = self.panel_app.panel_grid.active_container_id()
+                    .and_then(|cid| self.timeframe_for_chart(cid))
+                    .unwrap_or_else(mlc_core::state::Timeframe::h1);
+                let bars: Vec<mlc_core::Bar> = self.panel_app.panel_grid.containers().values()
+                    .find_map(|w| w.data_provider.get_bars(&series.symbol, &main_tf))
+                    .unwrap_or_default();
                 if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                     if !w.compare_overlay.has_symbol(&series.symbol) {
-                        w.compare_overlay.add_series(series.clone());
+                        let mut hydrated = series.clone();
+                        if !bars.is_empty() {
+                            // Re-seed base price/timestamp from the first bar so
+                            // the percentage axis lines up.
+                            let first = &bars[0];
+                            hydrated.base_price = first.close;
+                            hydrated.base_timestamp = first.timestamp;
+                            hydrated.bars = bars;
+                        }
+                        w.compare_overlay.add_series(hydrated);
                     }
                 }
             }
@@ -7495,6 +6433,28 @@ impl ChartApp {
                     eprintln!("[Undo/Redo] Removed indicator instance {}", instance_id);
                 } else {
                     eprintln!("[Undo/Redo] Indicator instance {} not found", instance_id);
+                }
+            }
+            Command::AddAlert { snapshot } => {
+                // Restore a previously deleted (or redo-add) alert from its snapshot.
+                // If an alert with this ID already exists, skip to keep state consistent.
+                let alert_id = snapshot.id;
+                if self.core.bubble_mut().alert.get(alert_id).is_none() {
+                    self.core.bubble_mut().alert.restore_one(snapshot.clone());
+                    self.sidebar_data_dirty = true;
+                    eprintln!("[Undo/Redo] Restored alert id={}", alert_id);
+                } else {
+                    eprintln!("[Undo/Redo] Alert id={} already exists, skipping AddAlert", alert_id);
+                }
+            }
+            Command::DeleteAlert { snapshot } => {
+                // Remove the alert identified by the snapshot's ID.
+                let alert_id = snapshot.id;
+                if self.core.bubble_mut().alert.remove(alert_id) {
+                    self.sidebar_data_dirty = true;
+                    eprintln!("[Undo/Redo] Deleted alert id={}", alert_id);
+                } else {
+                    eprintln!("[Undo/Redo] Alert id={} not found for DeleteAlert", alert_id);
                 }
             }
             other => {
@@ -7772,9 +6732,12 @@ impl ChartApp {
     ///
     /// Priority: group history first (shared ops), then window-local history.
     fn perform_undo_with_group(&mut self) {
-        // Extract group_id before any mutable borrows.
+        // Extract group_id before any mutable borrows.  Use
+        // `shared_group_for_chart` so auto-mono groups (every fresh chart)
+        // skip group history entirely — those operations were already pushed
+        // to window-local history by `push_undo_command`.
         let group_id = self.panel_app.panel_grid.active_container_id()
-            .and_then(|cid| self.bubble_for_chart(cid));
+            .and_then(|cid| self.shared_group_for_chart(cid));
 
         if let Some(gid) = group_id {
             // Try group history first (shared: primitives, indicators).
@@ -7808,9 +6771,11 @@ impl ChartApp {
     /// Execute a redo step, routing through the group history for shared
     /// operations when the active window is in a sync group.
     fn perform_redo_with_group(&mut self) {
-        // Extract group_id before any mutable borrows.
+        // Extract group_id before any mutable borrows.  Use
+        // `shared_group_for_chart` so auto-mono groups skip group history —
+        // mirror of perform_undo_with_group.
         let group_id = self.panel_app.panel_grid.active_container_id()
-            .and_then(|cid| self.bubble_for_chart(cid));
+            .and_then(|cid| self.shared_group_for_chart(cid));
 
         if let Some(gid) = group_id {
             // Try group history first (shared: primitives, indicators).
@@ -7943,11 +6908,23 @@ impl ChartApp {
                 | Command::ReorderPrimitive { .. }
                 | Command::AddIndicator { .. }
                 | Command::RemoveIndicator { .. }
+                | Command::AddAlert { .. }
+                | Command::DeleteAlert { .. }
         );
 
+        // Use `shared_group_for_chart` (not `bubble_for_chart`) so auto-mono
+        // groups — present on every freshly seeded chart but whose primitives
+        // live in `window.drawing_manager`, not `group.primitives` — fall
+        // through to the per-window command_history.  Pushing to
+        // `group.command_history` for an auto-mono group would route undo
+        // through `apply_command_to_active_window`'s grouped branch (which
+        // would `group.primitives.remove(idx)` against an empty Vec — silent
+        // no-op).  Matches the auto-mono guards already in
+        // `intercept_completed_primitive_to_group` (sync_group.rs:1596) and
+        // `prepare_frame`.
         let group_id = if is_shared {
             self.panel_app.panel_grid.active_container_id()
-                .and_then(|cid| self.bubble_for_chart(cid))
+                .and_then(|cid| self.shared_group_for_chart(cid))
         } else {
             None
         };
@@ -7959,7 +6936,7 @@ impl ChartApp {
             }
         }
 
-        // Local command or no group — push to the active window's history.
+        // Local command or no real group — push to the active window's history.
         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
             window.command_history.push(cmd);
         }
@@ -8069,7 +7046,7 @@ impl ChartApp {
     /// 1. Auto-saves the current state if it has no named preset yet (__default__).
     /// 2. Performs a full reset (single layout, no primitives, no indicators).
     /// 3. Creates the new blank preset with the given name and makes it active.
-    fn execute_new_chart_with_name(&mut self, new_name: String) {
+    pub(crate) fn execute_new_chart_with_name(&mut self, new_name: String) {
         use mlc_core::preset::preset::unix_timestamp_parts;
 
         // Auto-save current named preset before reset.

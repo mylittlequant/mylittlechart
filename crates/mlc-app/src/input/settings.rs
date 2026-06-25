@@ -159,7 +159,7 @@ impl ChartApp {
     ///
     /// Applies the same logic as the Enter-key handler in `on_char_input` so that
     /// clicking a different widget inside the same modal auto-commits the in-progress value.
-    pub(super) fn commit_chart_settings_editing_text(&mut self) {
+    pub(crate) fn commit_chart_settings_editing_text(&mut self) {
         let field = match self.panel_app.chart_settings_state.active_field_id.take() {
             Some(f) => f,
             None => return,
@@ -1003,7 +1003,7 @@ impl ChartApp {
     /// This applies the same logic as the Enter-key handler in `on_char_input`, but
     /// is callable from click handlers so that clicking a different widget inside the
     /// same modal auto-commits the in-progress value.
-    pub(super) fn commit_prim_editing_text(&mut self) {
+    pub(crate) fn commit_prim_editing_text(&mut self) {
         let field = match self.panel_app.primitive_settings_state.active_field_id.take() {
             Some(f) => f,
             None => return,
@@ -2048,7 +2048,7 @@ impl ChartApp {
     // =========================================================================
 
     /// Handle clicks in the template name modal for primitive settings ("prim_tmpl:*").
-    pub(super) fn handle_prim_tmpl_modal_click(&mut self, rest: &str) {
+    pub(crate) fn handle_prim_tmpl_modal_click(&mut self, rest: &str) {
         match rest {
             "modal_bg" | "input" => {
                 // No-op — click inside the modal is absorbed.
@@ -2089,7 +2089,7 @@ impl ChartApp {
     }
 
     /// Handle clicks in the template name modal for indicator settings ("ind_tmpl:*").
-    pub(super) fn handle_ind_tmpl_modal_click(&mut self, rest: &str) {
+    pub(crate) fn handle_ind_tmpl_modal_click(&mut self, rest: &str) {
         match rest {
             "modal_bg" | "input" => {}
             "close" | "cancel" => {
@@ -2136,7 +2136,7 @@ impl ChartApp {
     }
 
     /// Handle clicks in the template name modal for compare settings ("cmp_tmpl:*").
-    pub(super) fn handle_cmp_tmpl_modal_click(&mut self, rest: &str) {
+    pub(crate) fn handle_cmp_tmpl_modal_click(&mut self, rest: &str) {
         match rest {
             "modal_bg" | "input" => {}
             "close" | "cancel" => {
@@ -2167,7 +2167,7 @@ impl ChartApp {
     }
 
     /// Handle clicks in the template name modal for chart settings ("chart_tmpl:*").
-    pub(super) fn handle_chart_tmpl_modal_click(&mut self, rest: &str) {
+    pub(crate) fn handle_chart_tmpl_modal_click(&mut self, rest: &str) {
         match rest {
             "modal_bg" | "input" => {
                 // No-op — click inside the modal is absorbed.
@@ -2205,51 +2205,67 @@ impl ChartApp {
                 // No-op (catch-all, drag handled separately)
             }
             "save" => {
-                let state = &self.panel_app.alert_settings_state;
-                let source = state.source.clone();
-                let name = state.name.clone();
-                let price = state.price;
-                let price2 = state.price2;
-                let percentage = state.percentage;
-                let condition = state.condition;
-                let trigger_mode = state.build_trigger_mode();
-                let transports = state.build_transports();
+                // Snapshot all the AlertSettingsState fields we need up front
+                // so we don't keep a borrow on `self.panel_app` while taking
+                // `self.core.bubble_mut()` below.
+                let (source, name, price, price2, percentage, condition,
+                     trigger_mode, transports, editing_id) = {
+                    let s = &self.panel_app.alert_settings_state;
+                    (
+                        s.source.clone(), s.name.clone(),
+                        s.price, s.price2, s.percentage, s.condition,
+                        s.build_trigger_mode(), s.build_transports(),
+                        s.editing_alert_id,
+                    )
+                };
 
-                let alert_id = if let Some(existing_id) = state.editing_alert_id {
+                // Resolve all chart-bound scoping fields BEFORE taking the
+                // bubble write-lock.  On wasm32 std::sync::RwLock is
+                // single-threaded and aborts on a reentrant read-after-write
+                // (e.g. `bubble_mut().alert.get_mut(id)` keeping the write
+                // guard alive while `exchange_for_chart(cid)` tries to take
+                // a read lock on the same RwLock from inside the same call).
+                // Cache the read results into plain values so the write
+                // section below borrows nothing else.
+                let active_cid = self.panel_app.panel_grid.active_container_id();
+                let active_exchange = active_cid
+                    .and_then(|cid| self.exchange_for_chart(cid))
+                    .unwrap_or_default();
+                let active_tf_name = active_cid
+                    .and_then(|cid| self.timeframe_for_chart(cid))
+                    .map(|tf| tf.name.clone())
+                    .unwrap_or_default();
+                let active_sym = active_cid
+                    .and_then(|cid| self.symbol_for_chart(cid))
+                    .unwrap_or_default();
+                let active_group_id = active_cid
+                    .and_then(|cid| self.bubble_for_chart(cid))
+                    .map(|g| g.0);
+                let active_window_id = self.panel_app.panel_grid
+                    .active_container().map(|w| w.id.0);
+
+                let alert_id = if let Some(existing_id) = editing_id {
                     self.core.bubble_mut().alert.update_full(
                         existing_id, source, &name, price, price2, percentage,
                         condition, trigger_mode, transports,
                     );
                     existing_id
                 } else {
-                    let id = self.core.bubble_mut().alert.create(source, &name, price, condition);
-                    // Set extra fields on the newly created alert
-                    if let Some(alert) = self.core.bubble_mut().alert.get_mut(id) {
+                    let mut bubble = self.core.bubble_mut();
+                    let id = bubble.alert.create(source.clone(), &name, price, condition);
+                    // Set extra fields on the newly created alert — all using
+                    // only `bubble` (the live write-guard) and the values
+                    // already resolved into local variables above.
+                    if let Some(alert) = bubble.alert.get_mut(id) {
                         alert.price2 = price2;
                         alert.percentage = percentage;
                         alert.trigger_mode = trigger_mode;
                         alert.transports = transports;
-                        // Stamp scoping fields from branch_meta / active window id.
-                        let active_cid = self.panel_app.panel_grid.active_container_id();
-                        let active_exchange = active_cid
-                            .and_then(|cid| self.exchange_for_chart(cid))
-                            .map(String::from)
-                            .unwrap_or_default();
-                        let active_tf_name = active_cid
-                            .and_then(|cid| self.timeframe_for_chart(cid))
-                            .map(|tf| tf.name.clone())
-                            .unwrap_or_default();
-                        let active_sym = active_cid
-                            .and_then(|cid| self.symbol_for_chart(cid))
-                            .map(String::from)
-                            .unwrap_or_default();
-                        if let Some(window) = self.panel_app.panel_grid.active_container() {
+                        if active_window_id.is_some() {
                             alert.exchange = active_exchange;
                             alert.timeframe = active_tf_name;
-                            alert.window_id_hint = Some(window.id.0);
-                            alert.group_id = active_cid
-                                .and_then(|cid| self.bubble_for_chart(cid))
-                                .map(|g| g.0);
+                            alert.window_id_hint = active_window_id;
+                            alert.group_id = active_group_id;
                             if !matches!(alert.source, mlc_alerts::AlertSource::Price { .. }) {
                                 alert.set_symbol(active_sym);
                             }
@@ -2257,6 +2273,19 @@ impl ChartApp {
                     }
                     id
                 };
+                // Snapshot for undo — taken in its own borrow scope so the
+                // write guard is dropped before `push_undo_command` re-acquires
+                // a write lock on bubble (push routes into group's
+                // command_history via bubble_mut() too).
+                if editing_id.is_none() {
+                    let snapshot = {
+                        let bubble = self.core.bubble();
+                        bubble.alert.get(alert_id).cloned()
+                    };
+                    if let Some(snap) = snapshot {
+                        self.push_undo_command(mlc_core::Command::AddAlert { snapshot: snap });
+                    }
+                }
                 eprintln!("[AlertSettings] Alert saved: id={}", alert_id);
                 self.sidebar_data_dirty = true;
                 self.panel_app.alert_settings_state.close();
@@ -2466,7 +2495,11 @@ impl ChartApp {
             _ if rest.starts_with("list_delete:") => {
                 if let Some(id_str) = rest.strip_prefix("list_delete:") {
                     if let Ok(id) = id_str.parse::<u64>() {
+                        let snapshot = self.core.bubble_mut().alert.get(id).cloned();
                         self.core.bubble_mut().alert.remove(id);
+                        if let Some(snap) = snapshot {
+                            self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot: snap });
+                        }
                         // Refresh the list
                         self.panel_app.alert_settings_state.all_alerts =
                             self.core.bubble().alert.items().to_vec();
@@ -2702,7 +2735,7 @@ impl ChartApp {
     ///
     /// Applies the same logic as the Enter-key handler in `on_char_input` so that
     /// clicking a different widget inside the same modal auto-commits the in-progress value.
-    pub(super) fn commit_ind_editing_text(&mut self) {
+    pub(crate) fn commit_ind_editing_text(&mut self) {
         let field = match self.panel_app.indicator_settings_state.active_field_id.take() {
             Some(f) => f,
             None => return,

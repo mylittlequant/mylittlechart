@@ -1199,6 +1199,16 @@ impl ChartPanelGrid {
         self.containers.get_mut(&chart_id)
     }
 
+    /// Return the `LeafId` of any leaf registered in this grid, or `None` if
+    /// the grid has no leaves yet.
+    ///
+    /// Used as a fallback when `docking().active_leaf()` returns `None` (e.g.
+    /// after deserialization restores the tree but does not replay the active
+    /// leaf selection).
+    pub fn first_leaf_id(&self) -> Option<LeafId> {
+        self.leaf_to_chart.keys().next().copied()
+    }
+
     // =========================================================================
     // resolve_input — unified input hit-testing
     // =========================================================================

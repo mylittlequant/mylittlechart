@@ -108,6 +108,17 @@ impl AlertManager {
         )
     }
 
+    /// Insert a single alert item verbatim (for undo/redo restore).
+    ///
+    /// The item is inserted with its existing `id`. If `next_id` is not already
+    /// past this id, it is bumped so that future `create()` calls never collide.
+    pub fn restore_one(&mut self, item: AlertItem) {
+        if item.id >= self.next_id {
+            self.next_id = item.id + 1;
+        }
+        self.items.push(item);
+    }
+
     // =========================================================================
     // Update
     // =========================================================================
@@ -174,6 +185,15 @@ impl AlertManager {
         self.items.clear();
         self.next_id = 1;
         self.last_prices.clear();
+    }
+
+    /// Snapshot all alerts attached to a specific drawing primitive (for undo).
+    pub fn alerts_for_drawing(&self, primitive_id: u64) -> Vec<AlertItem> {
+        self.items
+            .iter()
+            .filter(|a| matches!(&a.source, AlertSource::Drawing { primitive_id: pid, .. } if *pid == primitive_id))
+            .cloned()
+            .collect()
     }
 
     /// Remove all alerts attached to a specific drawing primitive.
