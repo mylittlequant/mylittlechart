@@ -1246,8 +1246,14 @@ impl ChartApp {
 
             ChartOutEvent::LoadPreset { id } => {
                 let _lp_total = web_time::Instant::now();
-                eprintln!("[ChartApp] load preset: {}", id);
                 let prev_id = self.panel_app.active_preset_id.clone();
+                sglog!(
+                    "[LoadPreset] ENTER id='{}' prev_active='{}' open_tabs={:?} live_cache={:?} preset_files={:?}",
+                    id, prev_id,
+                    self.panel_app.open_tabs,
+                    self.live_preset_cache.keys().cloned().collect::<Vec<_>>(),
+                    self.core.presets().keys().cloned().collect::<Vec<_>>()
+                );
 
                 // Is the CURRENT live state actually a materialized preset?
                 // At startup active_preset_id is already set from the profile
@@ -1267,8 +1273,12 @@ impl ChartApp {
                 // Same tab AND live state real  -  no-op (and nothing changed,
                 // so no autosave either).
                 if prev_id == id && already_materialized {
-                    eprintln!("[ChartApp] LoadPreset: already active, skipping (materialized_check={}us)", lp_materialized_us);
+                    sglog!("[LoadPreset] no-op: prev_id == id == '{}' and already_materialized=true", id);
                 } else {
+                sglog!(
+                    "[LoadPreset] proceeding: already_materialized={} (prev_id != id ? {})",
+                    already_materialized, prev_id != id
+                );
 
                 // Save the outgoing preset (with bars) before switching away —
                 // but never snapshot a non-materialized placeholder state over
@@ -1310,6 +1320,47 @@ impl ChartApp {
                 }
                 let lp_park_us = _lp_t_park.elapsed().as_micros();
 
+                // Replace the active tab's slot in `open_tabs` with the
+                // loaded preset id so the chrome strip reflects the new
+                // active.  Three sub-cases:
+                //  - id already in open_tabs: nothing to do (it stays in
+                //    place, prev_id is removed if different).
+                //  - id NOT in open_tabs and prev_id IN open_tabs: replace
+                //    prev_id with id at the same index — same UX as the
+                //    chart-browser "load" button.
+                //  - prev_id NOT in open_tabs (first boot / placeholder
+                //    state): just append id at the end.
+                //
+                // Owner repro 2026-06-26: dropdown -> Load preset_2 after
+                // closing preset_2's tab left the chrome strip on preset_1
+                // because LoadPreset never touched open_tabs.  Now the slot
+                // is rotated synchronously with active_preset_id.
+                {
+                    let tabs = &mut self.panel_app.open_tabs;
+                    let already_open = tabs.iter().any(|t| t == &id);
+                    let prev_idx = tabs.iter().position(|t| t == &prev_id);
+                    match (already_open, prev_idx) {
+                        (true, _) => {
+                            // id already present — drop prev_id if different so the
+                            // strip doesn't show a stale closed preset.
+                            if prev_id != id {
+                                tabs.retain(|t| t != &prev_id);
+                            }
+                        }
+                        (false, Some(idx)) => {
+                            // Replace prev slot.
+                            tabs[idx] = id.clone();
+                        }
+                        (false, None) => {
+                            // No active slot to replace — append.
+                            tabs.push(id.clone());
+                        }
+                    }
+                    sglog!(
+                        "[LoadPreset] open_tabs after slot rotation: {:?}",
+                        tabs
+                    );
+                }
                 self.panel_app.active_preset_id = id.clone();
                 self.persist_profile();
 
@@ -1317,9 +1368,10 @@ impl ChartApp {
                 let _lp_t_unpark = web_time::Instant::now();
                 let unpark_hit = self.unpark_preset(&id);
                 let lp_unpark_us = _lp_t_unpark.elapsed().as_micros();
+                sglog!("[LoadPreset] unpark_preset('{}') -> {} (cache_keys_after={:?})",
+                    id, if unpark_hit { "HIT" } else { "MISS, will cold-load" },
+                    self.live_preset_cache.keys().cloned().collect::<Vec<_>>());
                 if unpark_hit {
-                    eprintln!("[ChartApp] LoadPreset '{}': live cache hit  -  zero-flicker switch (materialized={}us autosave={}us park={}us unpark={}us)",
-                        id, lp_materialized_us, lp_autosave_us, lp_park_us, lp_unpark_us);
                     let _lp_t_cure = web_time::Instant::now();
 
                     // Per-window cure: only force=true when the unparked window
