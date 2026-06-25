@@ -67,7 +67,17 @@ impl ChartApp {
                         && win_at.as_str() == account_type.as_str();
                     if matched {
                         any_matched = true;
-                        let is_backfill = !window.pending_symbol_load && !prev_bars_for_anchor.is_empty();
+                        // FRESH-LOAD only when the window is explicitly waiting
+                        // for the first delivery of a new instrument
+                        // (`pending_symbol_load=true`).  Empty `prev_bars` ALONE
+                        // is not enough: a warm preset switch + cure-path
+                        // `request_bars` legitimately fires `BarsLoaded` on a
+                        // bubble whose bars haven't been populated yet, and
+                        // treating that as a cold load resets viewport +
+                        // scale_mode — exactly what owner saw (3-month
+                        // X-jump, scale_mode flipped from Manual back to
+                        // Auto on every tab switch).  Fresh = pending only.
+                        let is_backfill = !window.pending_symbol_load;
                         let anchor = if is_backfill {
                             window.capture_view_anchor(prev_bars_for_anchor)
                         } else {
