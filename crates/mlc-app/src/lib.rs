@@ -221,6 +221,23 @@ pub use mlc_backend_core::MiniTickerData;
 /// and a `DefaultChartInputHandler` for chart canvas input.
 ///
 /// There is no sync bridge — with only one window the state flows directly.
+/// A compare-symbol add that is waiting for its bars to arrive from the bridge.
+///
+/// Created when `ChartContainer::add_compare_symbol` returns `false` (cache miss).
+/// Consumed in `react_to_bubble_event / BarsLoaded` when matching bars arrive.
+pub(crate) struct PendingCompareAdd {
+    /// Target chart container that should receive the compare series.
+    pub chart_id: mlc_core::ChartId,
+    /// The compare symbol (e.g. "ETHUSDT").
+    pub symbol: String,
+    /// Exchange the compare symbol belongs to.
+    pub exchange: digdigdig3::ExchangeId,
+    /// Account type label (e.g. "S", "F").
+    pub account_type_label: String,
+    /// Remaining frames before this entry is evicted (~600 at 60 fps = 10 s).
+    pub deadline_frames: u32,
+}
+
 pub struct PendingColdApply {
     pub preset: mlc_core::preset::preset::ChartPreset,
     pub stashed_at: web_time::Instant,
@@ -786,6 +803,21 @@ pub struct ChartApp {
     /// Per-leaf chart geometry for split mode, keyed by LeafId. Same lifecycle.
     pub(crate) frame_layouts: std::collections::HashMap<mlc_core::LeafId, mlc_core::ExtendedFrameLayout>,
 
+    /// Compare symbols waiting for their first bar delivery.
+    ///
+    /// Populated when `add_compare_symbol` returns `false` because the
+    /// `LiveDataProvider` cache missed and fired an async `request_bars`.
+    /// Drained in `react_to_bubble_event / BarsLoaded` once the data arrives.
+    /// Each entry carries a `deadline_frames` counter (decremented per tick)
+    /// so stale entries are evicted after ~10 s without a server response.
+    pub(crate) pending_compare: Vec<PendingCompareAdd>,
+
+    /// Diagnostic counters for compare-add attempts.  Updated in
+    /// `OpenModal::CompareSearch` click handler in `modals.rs`.
+    pub(crate) compare_add_attempts: u32,
+    pub(crate) compare_add_success: u32,
+    pub(crate) compare_add_queued: u32,
+
 }
 
 /// An action that mutates the app-level watchlist.
@@ -1024,6 +1056,34 @@ impl ChartApp {
     #[inline]
     pub fn bubble_for_chart(&self, chart_id: mlc_core::state::ChartId) -> Option<mlc_core::tag_manager::BubbleId> {
         self.core.bubble().bubble.bubble_for_chart(chart_id)
+    }
+
+    /// Resolve a "real" sync group for this chart — returns `Some(BubbleId)`
+    /// only when the group has more than one member or was created explicitly
+    /// (not via auto-mono).  Auto-mono groups exist for every freshly seeded
+    /// chart so it can later promote to a shared sync group, but their
+    /// primitives / indicators / alerts still live in the per-window
+    /// drawing_manager / panel_grid container.  Anything that asks
+    /// "which group owns the *committed state* for this chart" must use this
+    /// helper, not `bubble_for_chart` directly — otherwise undo/redo lookups
+    /// route to `group.command_history` while the actual primitives are in
+    /// `window.drawing_manager`, and the apply path silently misses.
+    /// `intercept_completed_primitive_to_group` and `prepare_frame` already
+    /// use the same auto-mono guard.
+    #[inline]
+    pub fn shared_group_for_chart(
+        &self,
+        chart_id: mlc_core::state::ChartId,
+    ) -> Option<mlc_core::tag_manager::BubbleId> {
+        let gid = self.bubble_for_chart(chart_id)?;
+        let is_auto_mono = self
+            .core
+            .bubble()
+            .bubble
+            .bubble(gid)
+            .map(|g| g.auto_created && g.members.len() <= 1)
+            .unwrap_or(false);
+        if is_auto_mono { None } else { Some(gid) }
     }
 
     /// Symbol of the bubble attached to this chart (cloned).
@@ -1283,6 +1343,8 @@ impl ChartApp {
             slot_tradetape_drag: None,
             active_frame_layout: None,
             frame_layouts: std::collections::HashMap::new(),
+            pending_compare: Vec::new(),
+            compare_add_attempts: 0, compare_add_success: 0, compare_add_queued: 0,
         };
 
         if let Some(tm) = app.core.trading_lock() {
@@ -1626,6 +1688,8 @@ impl ChartApp {
             slot_tradetape_drag: None,
             active_frame_layout: None,
             frame_layouts: std::collections::HashMap::new(),
+            pending_compare: Vec::new(),
+            compare_add_attempts: 0, compare_add_success: 0, compare_add_queued: 0,
         };
 
         *app.core.watchlist_mut() = mlc_sidebar_content::watchlist::WatchlistManager::new(
@@ -1729,6 +1793,27 @@ impl ChartApp {
         let data_provider: SharedDataProvider = std::sync::Arc::new(
             LiveDataProvider::new(exchange_id, exchange_name.clone(), account_type, bridge.clone()),
         );
+
+        // Approach B: guarantee an active leaf before seeding the chart.
+        // On wasm the DockingManager may have been restored from a snapshot
+        // that had no persisted active-leaf selection, leaving active_leaf=None.
+        // Without this guard every subsequent call that queries active_container
+        // silently returns None and the chart window is never seeded.
+        if self.panel_app.panel_grid.docking().active_leaf().is_none() {
+            if let Some(fallback) = self.panel_app.panel_grid.first_leaf_id() {
+                eprintln!(
+                    "[seed_default_chart] docking().active_leaf() = None before seed; \
+                     activating first leaf {:?}",
+                    fallback
+                );
+                self.panel_app.panel_grid.set_active_leaf(fallback);
+            } else {
+                eprintln!(
+                    "[seed_default_chart] no leaves in panel_grid — \
+                     cannot seed chart for {}/{}", exchange_name, symbol
+                );
+            }
+        }
 
         let active_chart_id = self.panel_app.panel_grid.active_container_id();
         let active_pid_init = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
@@ -2140,6 +2225,8 @@ impl ChartApp {
             slot_tradetape_drag: None,
             active_frame_layout: None,
             frame_layouts: std::collections::HashMap::new(),
+            pending_compare: Vec::new(),
+            compare_add_attempts: 0, compare_add_success: 0, compare_add_queued: 0,
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_watchlists below.
@@ -2511,6 +2598,18 @@ impl ChartApp {
             tf.register(text_input::INDICATOR_SETTINGS_FIELD, TextFieldConfig::text());
             tf.register(text_input::CHART_SETTINGS_FIELD, TextFieldConfig::text());
             tf.register(text_input::COMPARE_SETTINGS_FIELD, TextFieldConfig::text());
+            // Wave 3 profile management + alert token fields.  Skeleton-mode
+            // (profile-manager unlock screen) creates the ChartApp through
+            // `new_window`, NOT `new`; without registering these here the
+            // passphrase / profile-name / recovery-key / tg-token inputs
+            // silently drop every character (TextFieldStore::on_char returns
+            // TextAction::None when the field is not registered).
+            tf.register(text_input::NEW_PROFILE_NAME, TextFieldConfig::text());
+            tf.register(text_input::PROFILE_RENAME, TextFieldConfig::text());
+            tf.register(text_input::NEW_PASSPHRASE, TextFieldConfig::password());
+            tf.register(text_input::CONFIRM_PASSPHRASE, TextFieldConfig::password());
+            tf.register(text_input::RECOVERY_KEY, TextFieldConfig::text());
+            tf.register(text_input::ALERT_TG_TOKEN, TextFieldConfig::text());
         }
 
         app.sync_sub_panes_from_manager();
@@ -2926,6 +3025,28 @@ impl ChartApp {
         self.process_chart_out_event(event);
         true
     }
+
+    /// Diagnostic: snapshot of the pending-compare queue formatted as
+    /// short strings.  Used by `mlc-app-web` to expose state through
+    /// `window.MLC_DEBUG.pending_compare` for `dev-attach --eval`.
+    pub fn pending_compare_diag(&self) -> Vec<String> {
+        self.pending_compare.iter()
+            .map(|p| format!("{}@{} ({}) frames={}",
+                p.symbol, p.exchange.as_str(), p.account_type_label, p.deadline_frames))
+            .collect()
+    }
+
+    /// Diagnostic: current modal open state as a short string.
+    pub fn modal_state_diag(&self) -> String {
+        format!("{:?}", self.modal_state.current)
+    }
+
+    /// Diagnostic: total number of times the compare-add path was entered.
+    /// Used by `mlc-app-web` to detect whether the compare modal click is
+    /// even reaching the `OpenModal::CompareSearch` branch.
+    pub fn compare_add_attempts(&self) -> u32 { self.compare_add_attempts }
+    pub fn compare_add_success(&self) -> u32 { self.compare_add_success }
+    pub fn compare_add_queued(&self) -> u32 { self.compare_add_queued }
 
     /// Drain the pending screenshot request.
     ///
@@ -5190,146 +5311,6 @@ impl ChartApp {
         }
         // Loading-spinner geometry for this frame, read by the host renderer.
         self.last_loading_spinners = output.loading_spinners;
-        // Update text-field geometry for the HexColor field whenever the
-        // L2 color picker is visible.  This gives on_drag_start accurate rect +
-        // char positions so cursor-from-click works correctly.
-        if let Some(ref fr) = self.frame_result {
-            if let Some(ref cp) = fr.color_picker {
-                if let Some(ref l2) = cp.l2_result {
-                    let r = &l2.hex_input_rect;
-                    let hex_id = WidgetId::from(text_input::HEX_COLOR);
-                    self.input_coordinator.borrow_mut().text_fields_mut().update_field(
-                        &hex_id,
-                        (r.x, r.y, r.width, r.height),
-                        l2.hex_char_positions.clone(),
-                    );
-                }
-            }
-        }
-        // Update text-field geometry for the agent chat input field so
-        // on_drag_start can compute cursor-from-click correctly.
-        if let Some(ref sidebar_result) = self.last_sidebar_result {
-            if let (Some(rect), Some(char_positions)) = (
-                sidebar_result.agent_input_rect,
-                sidebar_result.agent_input_char_positions.clone(),
-            ) {
-                let chat_id = WidgetId::from(text_input::AGENT_CHAT);
-                self.input_coordinator.borrow_mut().text_fields_mut().update_field(
-                    &chat_id,
-                    (rect.x, rect.y, rect.width, rect.height),
-                    char_positions,
-                );
-            }
-        }
-
-        // Update text-field geometry for Wave 1 drag-select fields.
-        // Enables on_drag_start / on_drag_move rect-based hit-testing.
-        if let Some(ref wl) = self.last_watchlist_modal_result {
-            let r = &wl.search_input_rect;
-            let wl_id = WidgetId::from(text_input::WATCHLIST_SEARCH);
-            self.input_coordinator.borrow_mut().text_fields_mut().update_field(
-                &wl_id,
-                (r.x, r.y, r.width, r.height),
-                wl.search_char_positions.clone(),
-            );
-        }
-        if let Some(ref gni) = self.last_wl_group_name_result {
-            let r = &gni.input_text_rect;
-            let gn_id = WidgetId::from(text_input::WATCHLIST_GROUP_NAME);
-            self.input_coordinator.borrow_mut().text_fields_mut().update_field(
-                &gn_id,
-                (r.x, r.y, r.width, r.height),
-                gni.char_x_positions.clone(),
-            );
-        }
-        // Chart browser and preset name — stored in frame_result.
-        if let Some(ref fr) = self.frame_result {
-            if let Some(ref cbr) = fr.chart_browser {
-                let r = &cbr.search_input_rect;
-                let cb_id = WidgetId::from(text_input::CHART_BROWSER_SEARCH);
-                self.input_coordinator.borrow_mut().text_fields_mut().update_field(
-                    &cb_id,
-                    (r.x, r.y, r.width, r.height),
-                    cbr.search_char_positions.clone(),
-                );
-            }
-            if let Some(ref pni) = fr.preset_name_input {
-                let r = &pni.input_text_rect;
-                let pni_id = WidgetId::from(text_input::PRESET_NAME_INPUT);
-                self.input_coordinator.borrow_mut().text_fields_mut().update_field(
-                    &pni_id,
-                    (r.x, r.y, r.width, r.height),
-                    pni.char_x_positions.clone(),
-                );
-            }
-        }
-        // Search overlay field — stored in self.search_modal_result.
-        if let Some(ref smr) = self.search_modal_result {
-            let search_id = match self.modal_state.current {
-                mlc_core::state::modal_state::OpenModal::SymbolSearch => WidgetId::from(text_input::SYMBOL_SEARCH),
-                mlc_core::state::modal_state::OpenModal::IndicatorSearch => WidgetId::from(text_input::INDICATOR_SEARCH),
-                mlc_core::state::modal_state::OpenModal::CompareSearch => WidgetId::from(text_input::COMPARE_SEARCH),
-                _ => WidgetId::from(text_input::SYMBOL_SEARCH),
-            };
-            let r = &smr.input_rect;
-            self.input_coordinator.borrow_mut().text_fields_mut().update_field(
-                &search_id,
-                (r.x, r.y, r.width, r.height),
-                smr.search_char_positions.clone(),
-            );
-        }
-        // Wave 2b: settings sub-field editors — update geometry so on_drag_start works.
-        if let Some(ref fr) = self.frame_result {
-            if let Some(ref ps) = fr.primitive_settings {
-                if let (Some(rect), positions) = (ps.active_input_rect, ps.active_input_char_positions.clone()) {
-                    if !positions.is_empty() {
-                        let prim_id = WidgetId::from(text_input::PRIMITIVE_SETTINGS_FIELD);
-                        self.input_coordinator.borrow_mut().text_fields_mut().update_field(
-                            &prim_id,
-                            (rect.x, rect.y, rect.width, rect.height),
-                            positions,
-                        );
-                    }
-                }
-            }
-            if let Some(ref ind_s) = fr.indicator_settings {
-                if let (Some(rect), positions) = (ind_s.active_input_rect, ind_s.active_input_char_positions.clone()) {
-                    if !positions.is_empty() {
-                        let ind_id = WidgetId::from(text_input::INDICATOR_SETTINGS_FIELD);
-                        self.input_coordinator.borrow_mut().text_fields_mut().update_field(
-                            &ind_id,
-                            (rect.x, rect.y, rect.width, rect.height),
-                            positions,
-                        );
-                    }
-                }
-            }
-            if let Some(ref cs) = fr.chart_settings {
-                if let (Some(rect), positions) = (cs.active_input_rect, cs.active_input_char_positions.clone()) {
-                    if !positions.is_empty() {
-                        let chart_id = WidgetId::from(text_input::CHART_SETTINGS_FIELD);
-                        self.input_coordinator.borrow_mut().text_fields_mut().update_field(
-                            &chart_id,
-                            (rect.x, rect.y, rect.width, rect.height),
-                            positions,
-                        );
-                    }
-                }
-            }
-            if let Some(ref cmp) = fr.compare_settings {
-                if let (Some(rect), positions) = (cmp.tf_active_input_rect, cmp.tf_active_input_char_positions.clone()) {
-                    if !positions.is_empty() {
-                        let cmp_id = WidgetId::from(text_input::COMPARE_SETTINGS_FIELD);
-                        self.input_coordinator.borrow_mut().text_fields_mut().update_field(
-                            &cmp_id,
-                            (rect.x, rect.y, rect.width, rect.height),
-                            positions,
-                        );
-                    }
-                }
-            }
-        }
-
         // Auto-snap chat scroll to bottom when new messages arrive.
         // Check ALL chat leaves (not just focused) so switching to a leaf
         // that received messages while unfocused shows the latest content.
@@ -6270,7 +6251,172 @@ impl ChartApp {
         self.context_menu_result = context_menu_result;
         self.last_watchlist_modal_result = last_watchlist_modal_result;
         self.last_wl_group_name_result = last_wl_group_name_result;
+
+        // Drop remaining read guards on core (drawings + indicators) so the
+        // mutable borrow inside update_text_field_geometry below is allowed.
+        drop(drawings_guard_modals);
+        drop(indicator_guard_modals);
+
+        // Feed fresh modal geometry into TextFieldStore so click-to-cursor,
+        // drag-select, and Ctrl+shortcuts hit the right rect.  MUST run AFTER
+        // the self.* assignments above (those write the freshly-rendered
+        // results from this frame).  apply_render_output runs BEFORE this
+        // path on the same frame and would see stale Nones.
+        self.update_text_field_geometry();
     }
+
+    /// Feed fresh modal/sidebar geometry into uzor TextFieldStore so
+    /// `on_drag_start(x, y)` can hit-test, click-to-cursor lands on the
+    /// right glyph, drag-select highlights correctly, and Ctrl+shortcuts
+    /// reach the right field.
+    ///
+    /// MUST be called every frame AFTER `render_modal_layer` finished
+    /// writing into `self.frame_result` / `self.search_modal_result` /
+    /// `self.last_watchlist_modal_result` / `self.last_wl_group_name_result`.
+    /// `render_modal_layer` calls this at the end automatically; external
+    /// callers that bypass that path must invoke it themselves.
+    pub fn update_text_field_geometry(&mut self) {
+        // Update text-field geometry for the HexColor field whenever the
+        // L2 color picker is visible.  This gives on_drag_start accurate rect +
+        // char positions so cursor-from-click works correctly.
+        if let Some(ref fr) = self.frame_result {
+            if let Some(ref cp) = fr.color_picker {
+                if let Some(ref l2) = cp.l2_result {
+                    let r = &l2.hex_input_rect;
+                    let hex_id = WidgetId::from(text_input::HEX_COLOR);
+                    self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                        &hex_id,
+                        (r.x, r.y, r.width, r.height),
+                        l2.hex_char_positions.clone(),
+                    );
+                }
+            }
+        }
+        // Update text-field geometry for the agent chat input field so
+        // on_drag_start can compute cursor-from-click correctly.
+        if let Some(ref sidebar_result) = self.last_sidebar_result {
+            if let (Some(rect), Some(char_positions)) = (
+                sidebar_result.agent_input_rect,
+                sidebar_result.agent_input_char_positions.clone(),
+            ) {
+                let chat_id = WidgetId::from(text_input::AGENT_CHAT);
+                self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                    &chat_id,
+                    (rect.x, rect.y, rect.width, rect.height),
+                    char_positions,
+                );
+            }
+        }
+
+        // Update text-field geometry for Wave 1 drag-select fields.
+        // Enables on_drag_start / on_drag_move rect-based hit-testing.
+        if let Some(ref wl) = self.last_watchlist_modal_result {
+            let r = &wl.search_input_rect;
+            let wl_id = WidgetId::from(text_input::WATCHLIST_SEARCH);
+            self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                &wl_id,
+                (r.x, r.y, r.width, r.height),
+                wl.search_char_positions.clone(),
+            );
+        }
+        if let Some(ref gni) = self.last_wl_group_name_result {
+            let r = &gni.input_text_rect;
+            let gn_id = WidgetId::from(text_input::WATCHLIST_GROUP_NAME);
+            self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                &gn_id,
+                (r.x, r.y, r.width, r.height),
+                gni.char_x_positions.clone(),
+            );
+        }
+        // Chart browser and preset name — stored in frame_result.
+        if let Some(ref fr) = self.frame_result {
+            if let Some(ref cbr) = fr.chart_browser {
+                let r = &cbr.search_input_rect;
+                let cb_id = WidgetId::from(text_input::CHART_BROWSER_SEARCH);
+                self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                    &cb_id,
+                    (r.x, r.y, r.width, r.height),
+                    cbr.search_char_positions.clone(),
+                );
+            }
+            if let Some(ref pni) = fr.preset_name_input {
+                let r = &pni.input_text_rect;
+                let pni_id = WidgetId::from(text_input::PRESET_NAME_INPUT);
+                self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                    &pni_id,
+                    (r.x, r.y, r.width, r.height),
+                    pni.char_x_positions.clone(),
+                );
+            }
+        }
+        // Search overlay field — stored in self.search_modal_result.
+        if let Some(ref smr) = self.search_modal_result {
+            let search_id = match self.modal_state.current {
+                mlc_core::state::modal_state::OpenModal::SymbolSearch => WidgetId::from(text_input::SYMBOL_SEARCH),
+                mlc_core::state::modal_state::OpenModal::IndicatorSearch => WidgetId::from(text_input::INDICATOR_SEARCH),
+                mlc_core::state::modal_state::OpenModal::CompareSearch => WidgetId::from(text_input::COMPARE_SEARCH),
+                _ => WidgetId::from(text_input::SYMBOL_SEARCH),
+            };
+            let r = &smr.input_rect;
+            self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                &search_id,
+                (r.x, r.y, r.width, r.height),
+                smr.search_char_positions.clone(),
+            );
+        }
+        // Wave 2b: settings sub-field editors — update geometry so on_drag_start works.
+        if let Some(ref fr) = self.frame_result {
+            if let Some(ref ps) = fr.primitive_settings {
+                if let (Some(rect), positions) = (ps.active_input_rect, ps.active_input_char_positions.clone()) {
+                    if !positions.is_empty() {
+                        let prim_id = WidgetId::from(text_input::PRIMITIVE_SETTINGS_FIELD);
+                        self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                            &prim_id,
+                            (rect.x, rect.y, rect.width, rect.height),
+                            positions,
+                        );
+                    }
+                }
+            }
+            if let Some(ref ind_s) = fr.indicator_settings {
+                if let (Some(rect), positions) = (ind_s.active_input_rect, ind_s.active_input_char_positions.clone()) {
+                    if !positions.is_empty() {
+                        let ind_id = WidgetId::from(text_input::INDICATOR_SETTINGS_FIELD);
+                        self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                            &ind_id,
+                            (rect.x, rect.y, rect.width, rect.height),
+                            positions,
+                        );
+                    }
+                }
+            }
+            if let Some(ref cs) = fr.chart_settings {
+                if let (Some(rect), positions) = (cs.active_input_rect, cs.active_input_char_positions.clone()) {
+                    if !positions.is_empty() {
+                        let chart_id = WidgetId::from(text_input::CHART_SETTINGS_FIELD);
+                        self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                            &chart_id,
+                            (rect.x, rect.y, rect.width, rect.height),
+                            positions,
+                        );
+                    }
+                }
+            }
+            if let Some(ref cmp) = fr.compare_settings {
+                if let (Some(rect), positions) = (cmp.tf_active_input_rect, cmp.tf_active_input_char_positions.clone()) {
+                    if !positions.is_empty() {
+                        let cmp_id = WidgetId::from(text_input::COMPARE_SETTINGS_FIELD);
+                        self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                            &cmp_id,
+                            (rect.x, rect.y, rect.width, rect.height),
+                            positions,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
 
     // -------------------------------------------------------------------------
     // Agent hover-focus

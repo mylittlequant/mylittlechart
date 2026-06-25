@@ -185,6 +185,19 @@ fn run_render_loop(
     provider: WebWindowProvider,
 ) -> Result<(), JsValue> {
     let state = Rc::new(RefCell::new(WebAppState::new(app, "chart")));
+
+    // Wire Ctrl+C / Ctrl+X to read the active selection out of TextFieldStore.
+    // The closure runs synchronously inside the DOM `copy` / `cut` listener in
+    // uzor-window-web — only window allowed to write `clipboardData`.
+    {
+        let state_for_copy = state.clone();
+        provider.set_copy_provider(move || {
+            let st = state_for_copy.borrow();
+            let coord = st.chart.input_coordinator.borrow();
+            coord.text_fields().copy_selection()
+        });
+    }
+
     let provider = Rc::new(RefCell::new(provider));
 
     let closure: Rc<RefCell<Option<Closure<dyn FnMut()>>>> = Rc::new(RefCell::new(None));
@@ -272,6 +285,37 @@ fn run_render_loop(
             let _ = js_sys::Reflect::set(&dbg, &"bar_spacing".into(), &bar_spacing.into());
             let _ = js_sys::Reflect::set(&dbg, &"chart_width".into(), &chart_width.into());
             let _ = js_sys::Reflect::set(&dbg, &"bar_count_vp".into(), &bar_count_vp.into());
+
+            // Compare overlay diag — for debugging the compare-chart retry path.
+            // Shows what compare series are currently mounted on the active
+            // window and what's still queued in `pending_compare` waiting for
+            // BarsLoaded.
+            {
+                let pending: Vec<String> = st.chart.pending_compare_diag();
+                let pending_arr = js_sys::Array::new();
+                for s in &pending {
+                    pending_arr.push(&s.clone().into());
+                }
+                let _ = js_sys::Reflect::set(&dbg, &"pending_compare".into(), &pending_arr);
+
+                let series: Vec<String> = active_cid
+                    .and_then(|cid| st.chart.panel_app.panel_grid.containers().get(&cid))
+                    .map(|w| w.compare_overlay.series.iter()
+                        .map(|s| format!("{} bars={} vis={}", s.symbol, s.bars.len(), s.visible))
+                        .collect())
+                    .unwrap_or_default();
+                let series_arr = js_sys::Array::new();
+                for s in &series {
+                    series_arr.push(&s.clone().into());
+                }
+                let _ = js_sys::Reflect::set(&dbg, &"compare_series".into(), &series_arr);
+
+                let _ = js_sys::Reflect::set(&dbg, &"modal".into(), &st.chart.modal_state_diag().into());
+                let _ = js_sys::Reflect::set(&dbg, &"cmp_attempts".into(), &(st.chart.compare_add_attempts() as f64).into());
+                let _ = js_sys::Reflect::set(&dbg, &"cmp_success".into(), &(st.chart.compare_add_success() as f64).into());
+                let _ = js_sys::Reflect::set(&dbg, &"cmp_queued".into(), &(st.chart.compare_add_queued() as f64).into());
+            }
+
             let _ = js_sys::Reflect::set(&win, &"MLC_DEBUG".into(), &dbg);
         }
 
@@ -279,6 +323,30 @@ fn run_render_loop(
         let render_result = render_frame(state_clone.clone());
         if let Err(e) = render_result {
             web_sys::console::error_1(&format!("[mlc-app-web] render error: {:?}", e).into());
+        }
+
+        // ── Screenshot capture ────────────────────────────────────────────────
+        // Check AFTER render so the canvas contains the just-painted frame.
+        // Two triggers feed the same path:
+        //   1. `WebAppState.screenshot_pending` — set by the shell Ctrl+S
+        //      branch (`mlc-input-shell/src/dispatch.rs:635`) via `&mut bool`.
+        //   2. `ChartApp.drain_pending_screenshot()` — set by
+        //      `ChartApp::request_screenshot()`, which is what the toolbar
+        //      camera button reaches through
+        //      `ChartOutEvent::Screenshot → process_chart_out_event` (same path
+        //      native uses).  Without draining this on every frame the toolbar
+        //      button silently misses.
+        {
+            let pending = {
+                let mut st = state_clone.borrow_mut();
+                let shell_flag = st.screenshot_pending;
+                if shell_flag { st.screenshot_pending = false; }
+                let chart_flag = st.chart.drain_pending_screenshot();
+                shell_flag || chart_flag
+            };
+            if pending {
+                trigger_screenshot_to_clipboard("chart");
+            }
         }
 
         // ── Schedule next frame ───────────────────────────────────────────────
@@ -447,6 +515,7 @@ fn map_platform_event_to_shell(
                 KeyCode::C => PhysicalKey::KeyC,
                 KeyCode::S => PhysicalKey::KeyS,
                 KeyCode::V => PhysicalKey::KeyV,
+                KeyCode::X => PhysicalKey::KeyX,
                 KeyCode::Y => PhysicalKey::KeyY,
                 KeyCode::Z => PhysicalKey::KeyZ,
                 _          => PhysicalKey::Other,
@@ -456,6 +525,22 @@ fn map_platform_event_to_shell(
         PlatformEvent::TextInput { text } => {
             // Treat as IME commit so text-fields ingest typed characters.
             Some(ShellEvent::ImeCommit(text))
+        }
+        PlatformEvent::ClipboardPaste { text } => {
+            // Ctrl+V routed via the `paste` DOM listener in uzor-window-web.
+            // ImeCommit feeds the whole string into the focused TextFieldStore
+            // field at once — matches winit Ime::Commit on native.
+            Some(ShellEvent::ImeCommit(text))
+        }
+        PlatformEvent::ClipboardCut => {
+            // Ctrl+X: the `cut` DOM listener has already written the selection
+            // to the OS clipboard.  Now we synthesize a Backspace into the
+            // focused field; TextFieldStore's Backspace handler deletes the
+            // current selection if one is active (store.rs:454).
+            Some(ShellEvent::KeyPressed {
+                logical:  LogicalKey::Backspace,
+                physical: PhysicalKey::Other,
+            })
         }
 
         _ => None,
@@ -596,4 +681,83 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
     }
 
     Ok(())
+}
+
+// ─── Screenshot via canvas.toBlob → navigator.clipboard.write ────────────────
+
+/// Copies the current canvas contents as a PNG to the OS clipboard.
+///
+/// Flow: `canvas.to_blob_with_type("image/png")` → callback receives `Blob` →
+/// `ClipboardItem({"image/png": blob})` → `navigator.clipboard.write([item])`.
+///
+/// The `Closure` is stored in an `Rc<RefCell<Option<…>>>` so the JS GC cannot
+/// collect it before the callback fires, then it self-destructs.
+#[cfg(target_arch = "wasm32")]
+fn trigger_screenshot_to_clipboard(canvas_id: &str) {
+    use wasm_bindgen::JsCast;
+
+    let canvas = match get_canvas(canvas_id) {
+        Some(c) => c,
+        None => {
+            web_sys::console::warn_1(&"[screenshot] canvas not found".into());
+            return;
+        }
+    };
+
+    // Keep the closure alive until the browser calls it once, then self-drop.
+    let closure_slot: Rc<RefCell<Option<Closure<dyn FnMut(web_sys::Blob)>>>> =
+        Rc::new(RefCell::new(None));
+    let closure_slot_inner = closure_slot.clone();
+
+    let cb = Closure::once(move |blob: web_sys::Blob| {
+        let _ = closure_slot_inner.borrow_mut().take();
+
+        let result: Result<(), JsValue> = (|| {
+            // Build ClipboardItem: { "image/png": blob }
+            let record = js_sys::Object::new();
+            js_sys::Reflect::set(&record, &"image/png".into(), &blob)?;
+            let item =
+                web_sys::ClipboardItem::new_with_record_from_str_to_blob_promise(&record)?;
+            let items = js_sys::Array::of1(&item);
+
+            let win = web_sys::window().ok_or_else(|| JsValue::from_str("no window"))?;
+            let clipboard = win.navigator().clipboard();
+            let promise = clipboard.write(items.as_ref());
+
+            // Drive the promise to completion in a detached microtask.
+            wasm_bindgen_futures::spawn_local(async move {
+                if let Err(e) = wasm_bindgen_futures::JsFuture::from(promise).await {
+                    web_sys::console::error_1(
+                        &format!("[screenshot] clipboard.write failed: {:?}", e).into(),
+                    );
+                } else {
+                    web_sys::console::log_1(&"[screenshot] copied to clipboard".into());
+                }
+            });
+
+            Ok(())
+        })();
+
+        if let Err(e) = result {
+            web_sys::console::error_1(
+                &format!("[screenshot] clipboard setup failed: {:?}", e).into(),
+            );
+        }
+    });
+
+    *closure_slot.borrow_mut() = Some(cb);
+
+    let cb_ref = closure_slot
+        .borrow()
+        .as_ref()
+        .map(|c| c.as_ref().unchecked_ref::<js_sys::Function>().clone());
+
+    if let Some(cb_fn) = cb_ref {
+        if let Err(e) = canvas.to_blob_with_type(&cb_fn, "image/png") {
+            web_sys::console::error_1(
+                &format!("[screenshot] to_blob_with_type failed: {:?}", e).into(),
+            );
+            let _ = closure_slot.borrow_mut().take();
+        }
+    }
 }
