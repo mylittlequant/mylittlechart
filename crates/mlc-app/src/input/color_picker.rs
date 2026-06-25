@@ -1,7 +1,7 @@
 //! Color picker click/drag handlers and color appliers for the 5 picker sources
 //! (primitive, indicator, chart settings, compare settings, panel).
 
-use crate::ChartApp;
+use crate::{ChartApp, sglog};
 use mlc_core::ThemeSettingsPanel;
 use uzor::WidgetId;
 
@@ -433,6 +433,12 @@ impl ChartApp {
 
     /// Handle clicks on widgets registered with the "sync_color_grid:" prefix.
     pub(super) fn handle_sync_color_grid_click(&mut self, widget_id: &str, x: f64, y: f64) {
+        sglog!(
+            "[sync_color_grid_click] ENTER widget='{}' xy=({:.0},{:.0}) target_leaf={:?} target_panel={:?}",
+            widget_id, x, y,
+            self.panel_app.sync_color_grid.target_leaf,
+            self.panel_app.sync_color_grid.target_panel
+        );
         use mlc_layout::ui::sync_color_grid::{hit_test_sync_color_grid, SyncColorGridHitResult};
 
         // Backdrop click (full-screen transparent rect behind the popup) — close.
@@ -510,6 +516,14 @@ impl ChartApp {
                             && (oc[1] - new_color[1]).abs() < 0.01
                             && (oc[2] - new_color[2]).abs() < 0.01
                         );
+                        sglog!(
+                            "[swatch-leaf] leaf={:?} idx={} new=[{:.2},{:.2},{:.2}] old={:?} same={} -> path={}",
+                            leaf_id, idx, new_color[0], new_color[1], new_color[2],
+                            old_color, same_color,
+                            if same_color { "skip" }
+                            else if old_color.is_some() { "retag(desync+join)" }
+                            else { "tag-from-untagged(disconnect+join)" }
+                        );
                         if !same_color {
                             // Desync from old group (purge cloned primitives/indicators).
                             if old_color.is_some() {
@@ -522,9 +536,9 @@ impl ChartApp {
                             }
                             // Assign new color.
                             self.panel_app.leaf_color_tags.insert(leaf_id, new_color);
-                            eprintln!(
-                                "[ChartApp] Sync color grid: assigned color [{:.2},{:.2},{:.2}] to leaf {:?}",
-                                new_color[0], new_color[1], new_color[2], leaf_id
+                            sglog!(
+                                "[swatch-leaf] assigned color to leaf {:?}, calling sync_join_color_group",
+                                leaf_id
                             );
                             // Sync with new group — clone primitives/indicators from peers.
                             self.sync_join_color_group(leaf_id, new_color);

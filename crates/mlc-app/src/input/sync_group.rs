@@ -2,7 +2,7 @@
 //! crosshair, indicators) across all charts in the same sync group.
 //! Also handles split, desync, color-group join.
 
-use crate::ChartApp;
+use crate::{ChartApp, sglog};
 use super::sync_colors_match;
 
 impl ChartApp {
@@ -62,6 +62,21 @@ impl ChartApp {
     }
 
     pub(super) fn perform_desync(&mut self, leaf_id: mlc_core::LeafId) {
+        // Diagnostic: dump auto_bubble state on ENTER.
+        {
+            let cid_dbg = self.panel_app.panel_grid.container_id_for_leaf(leaf_id);
+            let auto_bid_dbg = cid_dbg
+                .and_then(|cid| self.panel_app.panel_grid.containers().get(&cid).map(|w| w.auto_bubble_id));
+            let cur_bid_dbg = cid_dbg.and_then(|cid| self.bubble_for_chart(cid));
+            let auto_snap = auto_bid_dbg
+                .and_then(|bid| self.with_bubble(bid, |b| (b.symbol.clone(), b.exchange.clone(), b.account_type.clone())));
+            let cur_snap = cur_bid_dbg
+                .and_then(|bid| self.with_bubble(bid, |b| (b.symbol.clone(), b.exchange.clone(), b.account_type.clone())));
+            sglog!(
+                "[perform_desync] ENTER leaf={:?} cid={:?} auto_bid={:?} auto={:?} cur_bid={:?} cur={:?}",
+                leaf_id, cid_dbg, auto_bid_dbg, auto_snap, cur_bid_dbg, cur_snap
+            );
+        }
         // 1. Remove color tag.
         self.panel_app.leaf_color_tags.remove(&leaf_id);
 
@@ -258,6 +273,21 @@ impl ChartApp {
     /// Join an existing color group: clone primitives and indicators from a peer
     /// that already belongs to this color group into the joining leaf.
     pub(super) fn sync_join_color_group(&mut self, joining_leaf: mlc_core::LeafId, color: [f32; 4]) {
+        {
+            let cid_dbg = self.panel_app.panel_grid.container_id_for_leaf(joining_leaf);
+            let auto_bid_dbg = cid_dbg
+                .and_then(|cid| self.panel_app.panel_grid.containers().get(&cid).map(|w| w.auto_bubble_id));
+            let cur_bid_dbg = cid_dbg.and_then(|cid| self.bubble_for_chart(cid));
+            let auto_snap = auto_bid_dbg
+                .and_then(|bid| self.with_bubble(bid, |b| (b.symbol.clone(), b.exchange.clone(), b.account_type.clone())));
+            let cur_snap = cur_bid_dbg
+                .and_then(|bid| self.with_bubble(bid, |b| (b.symbol.clone(), b.exchange.clone(), b.account_type.clone())));
+            sglog!(
+                "[sync_join_color_group] ENTER leaf={:?} cid={:?} auto_bid={:?} auto={:?} cur_bid={:?} cur={:?} color=[{:.2},{:.2},{:.2},{:.2}]",
+                joining_leaf, cid_dbg, auto_bid_dbg, auto_snap, cur_bid_dbg, cur_snap,
+                color[0], color[1], color[2], color[3]
+            );
+        }
         // Connect the joining leaf's chart to the TagManager group for this color.
         // Find-or-create the group so TagManager stays consistent regardless of
         // whether this is the first leaf in the group or a later joiner.
@@ -271,12 +301,58 @@ impl ChartApp {
                     eprintln!("[sync_group] sync_join_color_group: container_for_leaf({:?}) returned None — skipping join", joining_leaf);
                     return;
                 }
-                let sym = self.symbol_for_chart(chart_id)
-                    .map(String::from)
-                    .unwrap_or_default();
-                let tf = self.timeframe_for_chart(chart_id)
-                    .unwrap_or_else(mlc_core::state::Timeframe::h1);
-                self.core.bubble_mut().bubble.create_group(color, sym, tf)
+                // The instrument key MUST be inherited from the chart's home
+                // auto-bubble — not from `symbol_for_chart(chart_id)`, because
+                // `disconnect_from_current_group` (or `perform_desync`) called
+                // just before this join detaches `chart_id` from any bubble in
+                // the swatch-click flow.  After detach `bubble_for_chart` is
+                // None and `symbol_for_chart` returns "", so the new color
+                // group inherits an EMPTY key and the chart renders with no
+                // title and broken sym:exch:AT panel routing.  Owner's repro
+                // 2026-06-25: split (auto-tag) -> untag -> tag-in-new-color
+                // landed in a group with blank key — exactly this path.
+                //
+                // The home auto_bubble is the source of truth: it is created
+                // and populated in do_split / the constructor flows and is
+                // never detached from the chart's container (window.auto_bubble_id
+                // is a permanent home pointer).  Read identity straight from
+                // there so a transient detach in the middle of a re-tag
+                // cannot blank the new tag-group's key.
+                let auto_bid = self.panel_app.panel_grid.containers().get(&chart_id)
+                    .map(|w| w.auto_bubble_id);
+                let auto_view: Option<(String, String, String, mlc_core::state::Timeframe)> = auto_bid
+                    .and_then(|bid| self.with_bubble(bid, |b| {
+                        (b.symbol.clone(), b.exchange.clone(), b.account_type.clone(), b.timeframe.clone())
+                    }));
+                let (sym, exch_join, at_join, tf) = if let Some((s, e, a, t)) = auto_view {
+                    (s, e, a, t)
+                } else {
+                    let s = self.symbol_for_chart(chart_id).map(String::from).unwrap_or_default();
+                    let e = self.exchange_for_chart(chart_id).map(String::from).unwrap_or_default();
+                    let a = self.account_type_for_chart(chart_id).map(String::from).unwrap_or_else(|| "S".to_string());
+                    let t = self.timeframe_for_chart(chart_id).unwrap_or_else(mlc_core::state::Timeframe::h1);
+                    (s, e, a, t)
+                };
+                let at_join = if at_join.is_empty() { "S".to_string() } else { at_join };
+                sglog!(
+                    "[sync_join_color_group] new color group: read from auto_bid={:?} (fallback chart_id={:?}) sym='{}' exch='{}' at='{}' tf={:?}",
+                    auto_bid, chart_id, sym, exch_join, at_join, tf
+                );
+                let new_gid = self.core.bubble_mut().bubble.create_group(color, sym.clone(), tf.clone());
+                // create_group only takes (color, symbol, timeframe) — fill exchange + account_type explicitly.
+                {
+                    let mut bm = self.core.bubble_mut();
+                    if let Some(b) = bm.bubble.bubble_mut(new_gid) {
+                        b.exchange = exch_join.clone();
+                        b.account_type = at_join.clone();
+                    }
+                    drop(bm);
+                }
+                sglog!(
+                    "[sync_join_color_group] new gid={:?} seeded sym='{}' exch='{}' at='{}'",
+                    new_gid, sym, exch_join, at_join
+                );
+                new_gid
             };
             let _ = self.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, group_id);
             eprintln!(
@@ -354,19 +430,33 @@ impl ChartApp {
                         .unwrap_or_else(|| "S".to_string());
                     (sym, exch, at)
                 };
-                let source_prims: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
+                // Source-of-truth for an untagged chart's home drawings is the
+                // window's `drawing_manager`, NOT `auto_bubble.primitives`.
+                // `intercept_completed_primitive_to_group` returns early for
+                // auto-mono groups (the chart's untagged home state) so newly
+                // drawn primitives never flow into `auto_bubble.primitives`.
+                // Owner repro 2026-06-26: split -> untag -> draw two primitives
+                // -> tag-in-new-color landed in a group with empty drawings
+                // because we read from the empty auto_bubble.primitives.  Read
+                // drawing_manager first; fall back to auto_bubble.primitives if
+                // drawing_manager has nothing (e.g. cold-load presets).
+                let dm_prims: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
+                    pid_join.and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.primitives().iter()
+                            .filter(|p| p.data().origin_id.is_none())
+                            .map(|p| p.clone_box())
+                            .collect::<Vec<_>>()))
+                        .unwrap_or_default();
+                let auto_prims: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
                     if let Some(bid) = auto_bid {
                         self.core.bubble().bubble.bubble(bid)
                             .map(|bub| bub.primitives.iter().map(|p| p.clone_box()).collect())
                             .unwrap_or_default()
-                    } else {
-                        // Fallback: read from drawing_manager if no valid auto_bubble.
-                        pid_join.and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.primitives().iter()
-                                .filter(|p| p.data().origin_id.is_none())
-                                .map(|p| p.clone_box())
-                                .collect::<Vec<_>>()))
-                            .unwrap_or_default()
-                    };
+                    } else { Vec::new() };
+                let source_prims = if !dm_prims.is_empty() { dm_prims } else { auto_prims };
+                sglog!(
+                    "[sync_join_color_group] new-group seed primitives count={} (dm-primary, auto-fallback)",
+                    source_prims.len()
+                );
                 let mut group_prims = source_prims;
                 for p in &mut group_prims {
                     let d = p.data_mut();
@@ -378,6 +468,42 @@ impl ChartApp {
                 }
                 if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(group_id) {
                     group.primitives = group_prims;
+                }
+                // Stash a copy of the home drawings into `auto_bubble.primitives`
+                // so a later `perform_desync` can restore them.  source_prims
+                // above is the pre-clone drawing list (with original ids); we
+                // need the originals here so the stash survives any re-ID
+                // applied to the group copies.  Without this stash, the
+                // drawing_manager gets cleared in the next step + the
+                // auto_bubble is empty -> untag would render a blank chart.
+                if let Some(bid) = auto_bid {
+                    // Re-read drawing_manager since source_prims was moved into
+                    // group_prims.  drawing_manager still holds the originals.
+                    let home_copy: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
+                        pid_join.and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.primitives().iter()
+                                .filter(|p| p.data().origin_id.is_none())
+                                .map(|p| p.clone_box())
+                                .collect::<Vec<_>>()))
+                            .unwrap_or_default();
+                    let home_count = home_copy.len();
+                    {
+                        let mut bm = self.core.bubble_mut();
+                        if let Some(auto_bub) = bm.bubble.bubble_mut(bid) {
+                            auto_bub.primitives = home_copy;
+                        }
+                        drop(bm);
+                    }
+                    sglog!(
+                        "[sync_join_color_group] stashed {} home primitives into auto_bubble {:?}",
+                        home_count, bid
+                    );
+                }
+                // Clear drawing_manager — per-frame forward sync from
+                // group.primitives will repopulate it with the re-ID'd group
+                // copies so we render the group view, not the home view.
+                if let Some(pid) = pid_join {
+                    self.core.drawings_mut().entry_or_default(pid).clear_all_primitives();
+                    sglog!("[sync_join_color_group] cleared drawing_manager pid={:?} (group view will repopulate)", pid);
                 }
 
                 // Seed indicator configs from the creating window's indicators.
@@ -504,6 +630,10 @@ impl ChartApp {
     /// LeafId is destroyed by `split_leaf`), then assign inherited or new color
     /// to all resulting leaves and propagate crosshair/viewport.
     pub(super) fn do_split(&mut self, kind: mlc_core::SplitKind) {
+        sglog!(
+            "[do_split] ENTER kind={:?} split_without_group={}",
+            kind, self.split_without_group
+        );
         // Snapshot color, group_id, and chart_id BEFORE split — active_leaf will be destroyed.
         let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
         let pre_split_color = active_leaf
@@ -624,14 +754,28 @@ impl ChartApp {
             .map(String::from)
             .unwrap_or_else(|| "S".to_string());
 
+        sglog!(
+            "[do_split-key] source pre_split_cid={:?} sym='{}' exch='{}' at='{}' tf={:?} (will seed {} new chart_ids)",
+            pre_split_chart_id, source_sym, source_exch, source_at, source_tf, new_chart_ids.len()
+        );
         for chart_id in new_chart_ids {
-            if let Some(bid) = self.bubble_for_chart(chart_id) {
+            let pre_bid = self.bubble_for_chart(chart_id);
+            if let Some(bid) = pre_bid {
                 if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(bid) {
                     bubble.symbol = source_sym.clone();
                     bubble.timeframe = source_tf.clone();
                     bubble.exchange = source_exch.clone();
                     bubble.account_type = source_at.clone();
                 }
+                sglog!(
+                    "[do_split-key] cid={:?} bid={:?} <- sym='{}' exch='{}' at='{}'",
+                    chart_id, bid, source_sym, source_exch, source_at
+                );
+            } else {
+                sglog!(
+                    "[do_split-key] cid={:?} NOT ATTACHED to any bubble — skipping seed (this chart will render with blank key)",
+                    chart_id
+                );
             }
             // Containers born in this split carry a fresh ChartPanelId with NO
             // ChartPanelState behind it — the restore cycle (LoadPreset) inserts
@@ -776,30 +920,28 @@ impl ChartApp {
 
             // Disconnect the old chart from its group (leaf destroyed by split).
             if let (Some(old_cid), Some(old_gid)) = (pre_split_chart_id, pre_split_group_id) {
+                // Whether `old_gid` is the chart's permanent HOME auto_bubble.
+                // Read BEFORE detach so the auto_bubble_id is still resolvable
+                // via window.auto_bubble_id (which persists across detach).
+                let old_cid_auto_home = self.panel_app.panel_grid.containers().get(&old_cid)
+                    .map(|w| w.auto_bubble_id);
                 let _ = self.core.bubble_mut().bubble.detach_chart_from_bubble(old_cid);
-                eprintln!("[BubbleStore] Disconnected destroyed chart {:?} from group {:?}", old_cid, old_gid);
+                sglog!("[BubbleStore] Disconnected destroyed chart {:?} from group {:?} (home auto_bid={:?})", old_cid, old_gid, old_cid_auto_home);
                 // Bug C fix: remove the old group if it became empty and was
-                // auto-created.  Snapshot the predicate inside its own scope
-                // so the RwLock READ guard drops BEFORE `bubble_mut()` takes
-                // the WRITE guard.  Previously this was an inline
-                // `if let Some(g) = self.core.bubble()... { self.core.bubble_mut()... }` —
-                // Rust extends the `Some(g)` temporary's lifetime to the end
-                // of the if-let body, so the read guard was still alive when
-                // bubble_mut() was called.  std::sync::RwLock on wasm32 is
-                // single-threaded and aborts on any read↔write overlap (which
-                // is why every Layout split on wasm aborted with `RuntimeError:
-                // unreachable` at `RwLock::write` inside `do_split`).  Same
-                // pattern needed for native correctness once contention shows
-                // up but the symptom there is performance, not abort.
+                // auto-created.  Scoped to keep wasm32 RwLock contract.
+                // NEVER remove the chart's permanent home auto_bubble — see
+                // `disconnect_from_current_group` for full reasoning.
                 let should_remove = {
                     let bm = self.core.bubble();
                     bm.bubble.bubble(old_gid)
                         .map(|g| g.auto_created && g.members.is_empty())
                         .unwrap_or(false)
-                };
+                } && old_cid_auto_home != Some(old_gid);
                 if should_remove {
                     self.core.bubble_mut().bubble.remove_group(old_gid);
-                    eprintln!("[BubbleStore] Removed empty auto group {:?} after split", old_gid);
+                    sglog!("[BubbleStore] Removed empty auto group {:?} after split", old_gid);
+                } else if old_cid_auto_home == Some(old_gid) {
+                    sglog!("[BubbleStore] PRESERVED home auto_bubble {:?} after split-detach", old_gid);
                 }
             }
 
@@ -1800,21 +1942,37 @@ impl ChartApp {
             Some(gid) => gid,
             None => return,
         };
+        // The permanent home auto_bubble for this chart — MUST survive any
+        // disconnect/cleanup, otherwise the chart loses its identity (symbol,
+        // exchange, account_type, drawings, command history) and every
+        // subsequent join reads an empty key.  Owner repro 2026-06-26:
+        // split (auto-tag) -> untag -> tag-in-new-color landed with sym=''
+        // because `disconnect_from_current_group` saw the auto_bubble empty
+        // after detach and removed it as "an empty auto group", taking the
+        // chart's home with it.  Skip removal when `old_gid == auto_bubble_id`.
+        let auto_bid_home = self.panel_app.panel_grid.containers().get(&chart_id)
+            .map(|w| w.auto_bubble_id);
+        sglog!(
+            "[disconnect_from_current_group] leaf={:?} cid={:?} old_gid={:?} auto_bid_home={:?}",
+            leaf_id, chart_id, old_gid, auto_bid_home
+        );
         let _ = self.core.bubble_mut().bubble.detach_chart_from_bubble(chart_id);
-        // Remove the old group if it is now empty and was auto-created.
-        // Same wasm32 RwLock contract as fix(layout)/fix(untag): the if-let
-        // scrutinee `self.core.bubble().bubble.bubble(old_gid)` extends the
-        // read guard to the end of the if-let body, so the `bubble_mut()` in
-        // the body would overlap with the live read guard and abort.
+        // Remove the old group if it is now empty and was auto-created — but
+        // NEVER remove the chart's permanent home auto_bubble.
         let should_remove = {
             let bm = self.core.bubble();
             bm.bubble.bubble(old_gid)
                 .map(|g| g.auto_created && g.members.is_empty())
                 .unwrap_or(false)
-        };
+        } && auto_bid_home != Some(old_gid);
         if should_remove {
             self.core.bubble_mut().bubble.remove_group(old_gid);
-            eprintln!("[BubbleStore] Removed empty auto group {:?}", old_gid);
+            sglog!("[disconnect_from_current_group] removed empty auto group {:?}", old_gid);
+        } else if auto_bid_home == Some(old_gid) {
+            sglog!(
+                "[disconnect_from_current_group] PRESERVED home auto_bubble {:?} (would have orphaned chart {:?})",
+                old_gid, chart_id
+            );
         }
     }
 

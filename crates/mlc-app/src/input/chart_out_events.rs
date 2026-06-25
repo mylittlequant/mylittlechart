@@ -2,7 +2,7 @@
 //! (viewport, timeframe, symbol, indicator, drawing changes) to sync groups,
 //! tag manager, autosave, and other downstream consumers.
 
-use crate::ChartApp;
+use crate::{ChartApp, sglog};
 use mlc_core::UIStyle;
 use mlc_core::state::modal_state::OpenModal;
 
@@ -1065,16 +1065,16 @@ impl ChartApp {
             // Split layout events  -  wire to ChartPanelGrid split system.
             // After each split all new leaves receive a shared sync color tag so
             // that symbol / timeframe changes propagate across the split group.
-            ChartOutEvent::InternalSplitHorizontal => { self.do_split(mlc_core::SplitKind::SplitRight); state_mutated = true; }
-            ChartOutEvent::InternalSplitVertical => { self.do_split(mlc_core::SplitKind::SplitBottom); state_mutated = true; }
-            ChartOutEvent::InternalSplitGrid2x2 => { self.do_split(mlc_core::SplitKind::Grid2x2); state_mutated = true; }
-            ChartOutEvent::InternalSplit2Left1Right => { self.do_split(mlc_core::SplitKind::TwoLeftOneRight); state_mutated = true; }
-            ChartOutEvent::InternalSplit1Left2Right => { self.do_split(mlc_core::SplitKind::OneLeftTwoRight); state_mutated = true; }
-            ChartOutEvent::InternalSplit2Top1Bottom => { self.do_split(mlc_core::SplitKind::TwoTopOneBottom); state_mutated = true; }
-            ChartOutEvent::InternalSplit1Top2Bottom => { self.do_split(mlc_core::SplitKind::OneTopTwoBottom); state_mutated = true; }
-            ChartOutEvent::InternalSplit3Columns => { self.do_split(mlc_core::SplitKind::ThreeColumns); state_mutated = true; }
-            ChartOutEvent::InternalSplit3Rows => { self.do_split(mlc_core::SplitKind::ThreeRows); state_mutated = true; }
-            ChartOutEvent::InternalSplit1Big3Small => { self.do_split(mlc_core::SplitKind::OneBig3Small); state_mutated = true; }
+            ChartOutEvent::InternalSplitHorizontal => { sglog!("[chart-out] InternalSplitHorizontal -> do_split"); self.do_split(mlc_core::SplitKind::SplitRight); state_mutated = true; }
+            ChartOutEvent::InternalSplitVertical => { sglog!("[chart-out] InternalSplitVertical -> do_split"); self.do_split(mlc_core::SplitKind::SplitBottom); state_mutated = true; }
+            ChartOutEvent::InternalSplitGrid2x2 => { sglog!("[chart-out] InternalSplitGrid2x2 -> do_split"); self.do_split(mlc_core::SplitKind::Grid2x2); state_mutated = true; }
+            ChartOutEvent::InternalSplit2Left1Right => { sglog!("[chart-out] InternalSplit2Left1Right -> do_split"); self.do_split(mlc_core::SplitKind::TwoLeftOneRight); state_mutated = true; }
+            ChartOutEvent::InternalSplit1Left2Right => { sglog!("[chart-out] InternalSplit1Left2Right -> do_split"); self.do_split(mlc_core::SplitKind::OneLeftTwoRight); state_mutated = true; }
+            ChartOutEvent::InternalSplit2Top1Bottom => { sglog!("[chart-out] InternalSplit2Top1Bottom -> do_split"); self.do_split(mlc_core::SplitKind::TwoTopOneBottom); state_mutated = true; }
+            ChartOutEvent::InternalSplit1Top2Bottom => { sglog!("[chart-out] InternalSplit1Top2Bottom -> do_split"); self.do_split(mlc_core::SplitKind::OneTopTwoBottom); state_mutated = true; }
+            ChartOutEvent::InternalSplit3Columns => { sglog!("[chart-out] InternalSplit3Columns -> do_split"); self.do_split(mlc_core::SplitKind::ThreeColumns); state_mutated = true; }
+            ChartOutEvent::InternalSplit3Rows => { sglog!("[chart-out] InternalSplit3Rows -> do_split"); self.do_split(mlc_core::SplitKind::ThreeRows); state_mutated = true; }
+            ChartOutEvent::InternalSplit1Big3Small => { sglog!("[chart-out] InternalSplit1Big3Small -> do_split"); self.do_split(mlc_core::SplitKind::OneBig3Small); state_mutated = true; }
             ChartOutEvent::InternalSetLayoutSingle => {
                 self.panel_app.panel_grid.set_layout_single();
                 state_mutated = true;

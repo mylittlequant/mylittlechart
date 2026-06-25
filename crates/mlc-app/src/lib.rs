@@ -63,6 +63,24 @@ macro_rules! dlog {
 }
 pub(crate) use dlog;
 
+/// Wasm-aware diagnostic log: native goes to stderr via `eprintln!`, wasm
+/// goes to the browser console via `web_sys::console::log_1` because wasm
+/// stderr is dropped on the floor.  Always emits — no env-var gate.  Use
+/// for short-lived diagnostic dumps that need to surface in DevTools.
+macro_rules! sglog {
+    ($($arg:tt)*) => {{
+        #[cfg(target_arch = "wasm32")]
+        {
+            ::web_sys::console::log_1(&format!($($arg)*).into());
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            eprintln!($($arg)*);
+        }
+    }};
+}
+pub(crate) use sglog;
+
 use std::cell::RefCell;
 use std::sync::atomic::Ordering as AtomicOrdering;
 
