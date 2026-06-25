@@ -501,6 +501,29 @@ impl ChartApp {
         let pre_split_chart_id = active_leaf
             .and_then(|lid| self.panel_app.panel_grid.container_id_for_leaf(lid));
 
+        // Phase X0 / C5c regression fix: snapshot the bars from the source
+        // bubble BEFORE the split.  Pre-migration, `clone_for_split_shell`
+        // physically copied `window.bars` into the new ChartContainer so the
+        // sibling started life with bars already mounted.  After the bubble
+        // ownership refactor bars live on `DataBubble.bars`; the split creates
+        // brand-new bubbles initialised with `bars: Vec::new()` and the source
+        // bars never make it across.  Renderer reads
+        // `bars_for_chart(new_cid)` -> `bubble.bars.clone()` -> empty vec ->
+        // blank chart.  Snapshot here; seed below for every new bubble
+        // (auto-mono fix-up loop + the shared `group_id` path).
+        //
+        // Read into an owned Vec inside its own scope so the RwLock read
+        // guard drops before any subsequent bubble_mut() — on wasm32
+        // std::sync::RwLock is single-threaded and aborts on any
+        // overlap between read and write acquisitions.
+        let source_bars: Vec<mlc_core::Bar> = {
+            let bm = self.core.bubble();
+            pre_split_group_id
+                .and_then(|bid| bm.bubble.bubble(bid))
+                .map(|b| b.bars.clone())
+                .unwrap_or_default()
+        };
+
         let new_leaves = self.panel_app.panel_grid.split_active(kind);
 
         // Assign fresh auto-bubbles for any split-produced charts that still carry
@@ -526,12 +549,34 @@ impl ChartApp {
                 let auto_bid = self.core.bubble_mut().bubble.create_group_auto(
                     [0.0, 0.0, 0.0, 0.0], sym, tf,
                 );
-                if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&cid) {
-                    window.auto_bubble_id = auto_bid;
-                    window.current_bubble_id = auto_bid;
+                // Seed bars from the source bubble so the new chart paints
+                // immediately instead of staying blank until the next live
+                // tick arrives.  Each bubble lock acquisition is scoped to its
+                // own block — on wasm32 std::sync::RwLock is single-threaded
+                // and aborts on any overlap, even between two consecutive
+                // bubble_mut() calls if the first guard's drop is delayed past
+                // the start of the second call (which rustc can do when the
+                // first lives inside a method-chain temporary).
+                if !source_bars.is_empty() {
+                    let mut bm = self.core.bubble_mut();
+                    if let Some(b) = bm.bubble.bubble_mut(auto_bid) {
+                        b.bars = source_bars.clone();
+                    }
+                    drop(bm);
                 }
-                let _ = self.core.bubble_mut().bubble.attach_chart_to_bubble(cid, auto_bid);
-                eprintln!("[BubbleStore] do_split: created auto-bubble {:?} for chart {:?}", auto_bid, cid);
+                {
+                    if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&cid) {
+                        window.auto_bubble_id = auto_bid;
+                        window.current_bubble_id = auto_bid;
+                    }
+                }
+                {
+                    let mut bm = self.core.bubble_mut();
+                    let _ = bm.bubble.attach_chart_to_bubble(cid, auto_bid);
+                    drop(bm);
+                }
+                eprintln!("[BubbleStore] do_split: created auto-bubble {:?} for chart {:?} (seeded {} bars)",
+                    auto_bid, cid, source_bars.len());
             }
         }
 
@@ -678,12 +723,28 @@ impl ChartApp {
             if let (Some(old_cid), Some(old_gid)) = (pre_split_chart_id, pre_split_group_id) {
                 let _ = self.core.bubble_mut().bubble.detach_chart_from_bubble(old_cid);
                 eprintln!("[BubbleStore] Disconnected destroyed chart {:?} from group {:?}", old_cid, old_gid);
-                // Bug C fix: remove the old group if it became empty and was auto-created.
-                if let Some(g) = self.core.bubble().bubble.bubble(old_gid) {
-                    if g.auto_created && g.members.is_empty() {
-                        self.core.bubble_mut().bubble.remove_group(old_gid);
-                        eprintln!("[BubbleStore] Removed empty auto group {:?} after split", old_gid);
-                    }
+                // Bug C fix: remove the old group if it became empty and was
+                // auto-created.  Snapshot the predicate inside its own scope
+                // so the RwLock READ guard drops BEFORE `bubble_mut()` takes
+                // the WRITE guard.  Previously this was an inline
+                // `if let Some(g) = self.core.bubble()... { self.core.bubble_mut()... }` —
+                // Rust extends the `Some(g)` temporary's lifetime to the end
+                // of the if-let body, so the read guard was still alive when
+                // bubble_mut() was called.  std::sync::RwLock on wasm32 is
+                // single-threaded and aborts on any read↔write overlap (which
+                // is why every Layout split on wasm aborted with `RuntimeError:
+                // unreachable` at `RwLock::write` inside `do_split`).  Same
+                // pattern needed for native correctness once contention shows
+                // up but the symptom there is performance, not abort.
+                let should_remove = {
+                    let bm = self.core.bubble();
+                    bm.bubble.bubble(old_gid)
+                        .map(|g| g.auto_created && g.members.is_empty())
+                        .unwrap_or(false)
+                };
+                if should_remove {
+                    self.core.bubble_mut().bubble.remove_group(old_gid);
+                    eprintln!("[BubbleStore] Removed empty auto group {:?} after split", old_gid);
                 }
             }
 
@@ -727,11 +788,24 @@ impl ChartApp {
             // create_group leaves exchange/account_type empty — complete the
             // identity record from the source instrument for groups born here.
             // (Existing user-tagged groups keep their own identity untouched.)
+            // Scoped block ensures the write guard drops before the next read
+            // below at line ~784 — see the wasm32 RwLock note in the auto-mono
+            // loop above for why this matters.
             if created_fresh_group {
-                if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(group_id) {
+                let mut bm = self.core.bubble_mut();
+                if let Some(bubble) = bm.bubble.bubble_mut(group_id) {
                     bubble.exchange = source_exch.clone();
                     bubble.account_type = source_at.clone();
+                    // Phase X0 / C5c regression fix: seed bars from the source
+                    // bubble snapshot taken at the top of do_split.  Without
+                    // this, every new sibling chart renders blank until the
+                    // next live tick because `bars_for_chart` reads
+                    // `bubble.bars` which `create_group` initialises empty.
+                    if !source_bars.is_empty() && bubble.bars.is_empty() {
+                        bubble.bars = source_bars.clone();
+                    }
                 }
+                drop(bm);
             }
 
             // --- Shared group path (user-tagged groups or brand-new groups) ---
