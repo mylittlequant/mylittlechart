@@ -11,6 +11,8 @@
 
 pub mod store;
 pub mod tag;
+pub mod view;
 
 pub use store::TagStore;
 pub use tag::{Tag, TagId};
+pub use view::build_group_view;

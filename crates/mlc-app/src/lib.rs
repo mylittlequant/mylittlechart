@@ -4995,6 +4995,10 @@ impl ChartApp {
             };
             let bubble_guard_tb = self.core.bubble();
             let presets_guard_tb = self.core.presets();
+            let (active_sync_flags_owned, active_is_mono_group) = active_gid
+                .and_then(|gid| bubble_guard_tb.bubble.bubble(gid))
+                .map(|g| (Some(g.sync_flags.clone()), g.members.len() <= 1))
+                .unwrap_or((None, true));
             let toolbar_result = self.panel_app.render_toolbars_with_theme(
                 ctx,
                 &panel_layout,
@@ -5004,8 +5008,8 @@ impl ChartApp {
                 Some(active_sym_str.as_str()),
                 Some(active_tf_str.as_str()),
                 sidebar_w,
-                active_gid,
-                &bubble_guard_tb.bubble,
+                active_sync_flags_owned.as_ref(),
+                active_is_mono_group,
                 &*presets_guard_tb,
             );
             drop(bubble_guard_tb);
@@ -5667,6 +5671,10 @@ impl ChartApp {
 
         let bubble_guard_tb2 = self.core.bubble();
         let presets_guard_tb2 = self.core.presets();
+        let (active_sync_flags_owned, active_is_mono_group) = active_gid
+            .and_then(|gid| bubble_guard_tb2.bubble.bubble(gid))
+            .map(|g| (Some(g.sync_flags.clone()), g.members.len() <= 1))
+            .unwrap_or((None, true));
         let toolbar_result = self.panel_app.render_toolbars_with_theme(
             ctx,
             &panel_layout,
@@ -5676,8 +5684,8 @@ impl ChartApp {
             Some(active_sym_str.as_str()),
             Some(active_tf_str.as_str()),
             sidebar_w,
-            active_gid,
-            &bubble_guard_tb2.bubble,
+            active_sync_flags_owned.as_ref(),
+            active_is_mono_group,
             &*presets_guard_tb2,
         );
         drop(bubble_guard_tb2);
@@ -6021,12 +6029,25 @@ impl ChartApp {
                 content_w: w,
                 content_h: h,
             };
+            let target_panel_group_color = self
+                .panel_app
+                .sync_color_grid
+                .target_panel
+                .and_then(|pid| {
+                    let member = mlc_core::SyncMemberId::Panel(pid);
+                    let bg = self.core.bubble();
+                    bg.bubble
+                        .group_for_member(member)
+                        .and_then(|gid| bg.bubble.bubble(gid))
+                        .filter(|g| !g.auto_created)
+                        .map(|g| g.color)
+                });
             self.panel_app.render_color_picker_popups(
                 ctx,
                 &modal_layout,
                 &toolbar_theme,
                 &mut self.input_coordinator.borrow_mut(),
-                &self.core.bubble().bubble,
+                target_panel_group_color,
             );
         }
 
@@ -6251,6 +6272,19 @@ impl ChartApp {
         let bubble_guard_modals = self.core.bubble();
         let tm_guard_modals = self.core.template_manager();
         let presets_guard_modals = self.core.presets();
+        // Build GroupView slice for the render layer (it no longer reads
+        // BubbleStore directly).  Selected_group is the one Details tab
+        // currently focuses on (state.selected_group_id).
+        let groups_for_modals: Vec<mlc_core::GroupView> = bubble_guard_modals
+            .bubble
+            .bubbles()
+            .map(crate::tag::build_group_view)
+            .collect();
+        let selected_group_for_modals: Option<&mlc_core::GroupView> = self
+            .panel_app
+            .tags_tabs_state
+            .selected_group_id
+            .and_then(|gid| groups_for_modals.iter().find(|gv| gv.id == gid));
         let modal_result = self.panel_app.render_modals(
             ctx,
             &modal_layout,
@@ -6265,7 +6299,8 @@ impl ChartApp {
             &toolbar_state,
             current_time_ms,
             &mut self.input_coordinator.borrow_mut(),
-            &bubble_guard_modals.bubble,
+            &groups_for_modals,
+            selected_group_for_modals,
             &*tm_guard_modals,
             &*presets_guard_modals,
         );
@@ -6345,12 +6380,15 @@ impl ChartApp {
         // 8a. Color picker popups (non-panel-targeting ones).
         // Panel-targeting sync_color_grid is still handled by render_panel_overlay_popups().
         if !self.panel_app.sync_color_grid.target_is_panel() {
+            // target_is_panel() is false → sync_color_grid is for a leaf, not
+            // a panel.  Pass `None` for the panel color (only consumed in the
+            // panel-target branch inside render_color_picker_popups).
             let cp_result = self.panel_app.render_color_picker_popups(
                 ctx,
                 &modal_layout,
                 &toolbar_theme,
                 &mut self.input_coordinator.borrow_mut(),
-                &self.core.bubble().bubble,
+                None,
             );
             if let Some(ref mut fr) = frame_result {
                 if cp_result.color_picker.is_some() {

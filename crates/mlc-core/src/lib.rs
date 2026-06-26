@@ -100,7 +100,7 @@ pub mod modal;
 // Shared identifier + sync types — vocabulary used by both backend
 // (mlc-backend-core::bubble) and app (mlc-app::tag).
 pub mod ids;
-pub use ids::{BubbleId, SyncFlags, SyncMemberId, MemberSyncOverride};
+pub use ids::{BubbleId, GroupView, MemberSyncOverride, SyncFlags, SyncMemberId};
 
 // Tag / sync-group manager (Step 1–2 of the TagManager architecture).
 // Holds DataBubble + BubbleStore — physically moves to mlc-backend-core

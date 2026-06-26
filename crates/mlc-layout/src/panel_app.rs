@@ -325,7 +325,7 @@ pub fn chart_toolbar_render_toolbars(
     presets: &std::collections::HashMap<String, mlc_core::preset::preset::ChartPreset>,
     active_preset_id: &str,
     autosave_enabled: bool,
-    sync_flags: Option<&mlc_core::tag_manager::SyncFlags>,
+    sync_flags: Option<&mlc_core::SyncFlags>,
     is_expanded: bool,
     split_without_group: bool,
     is_mono_group: bool,
@@ -816,7 +816,7 @@ fn chart_toolbar_render_dropdown(
     presets: &std::collections::HashMap<String, mlc_core::preset::preset::ChartPreset>,
     active_preset_id: &str,
     autosave_enabled: bool,
-    sync_flags: Option<&mlc_core::tag_manager::SyncFlags>,
+    sync_flags: Option<&mlc_core::SyncFlags>,
     _is_expanded: bool,
     split_without_group: bool,
     is_mono_group: bool,
@@ -1783,18 +1783,14 @@ impl ChartPanelApp {
         active_symbol: Option<&str>,
         active_timeframe: Option<&str>,
         sidebar_w: f64,
-        active_group_id: Option<mlc_core::tag_manager::BubbleId>,
-        bubble_store: &mlc_core::tag_manager::BubbleStore,
+        active_sync_flags: Option<&mlc_core::SyncFlags>,
+        active_is_mono_group: bool,
         presets: &std::collections::HashMap<String, mlc_core::preset::preset::ChartPreset>,
     ) -> ChartToolbarRenderResult {
         let toolbar_theme = self.toolbar_theme_for_render();
         let dropdown_theme = self.dropdown_theme_for_render();
-        // Get sync flags for the active window's group (used to show toggle state in layout_menu)
-        let active_gid = active_group_id;
-        let sync_flags = active_gid.and_then(|gid| bubble_store.bubble(gid)).map(|g| &g.sync_flags);
-        let is_mono_group = active_gid.and_then(|gid| bubble_store.bubble(gid)).map(|g| g.members.len() <= 1).unwrap_or(true);
         let is_expanded = self.panel_grid.is_expanded();
-        chart_toolbar_render_toolbars(&self.toolbar_state, ctx, layout, &self.toolbar_config, selected_primitive, Some(&toolbar_theme), Some(&dropdown_theme), clock_time, presets, &self.active_preset_id, self.autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, active_symbol, active_timeframe, sidebar_w)
+        chart_toolbar_render_toolbars(&self.toolbar_state, ctx, layout, &self.toolbar_config, selected_primitive, Some(&toolbar_theme), Some(&dropdown_theme), clock_time, presets, &self.active_preset_id, self.autosave_enabled, active_sync_flags, is_expanded, split_without_group, active_is_mono_group, active_symbol, active_timeframe, sidebar_w)
     }
 
     /// Render all chart-owned modals in a single call.
@@ -1834,7 +1830,8 @@ impl ChartPanelApp {
         toolbar_state: &crate::layout::toolbar_state::ToolbarState,
         current_time_ms: u64,
         input_coordinator: &mut uzor::input::InputCoordinator,
-        bubble_store: &mlc_core::tag_manager::BubbleStore,
+        groups: &[mlc_core::GroupView],
+        selected_group: Option<&mlc_core::GroupView>,
         template_manager: &TemplateManager,
         presets: &std::collections::HashMap<String, mlc_core::preset::preset::ChartPreset>,
     ) -> ChartModalRenderResult {
@@ -1966,7 +1963,8 @@ impl ChartPanelApp {
                 frame_theme,
                 toolbar_theme,
                 &self.panel_grid,
-                bubble_store,
+                groups,
+                selected_group,
                 &self.leaf_color_tags,
                 modal_layout.prim_screen_w,
                 modal_layout.prim_screen_h,
@@ -2186,7 +2184,9 @@ impl ChartPanelApp {
         modal_layout: &ChartModalLayout,
         toolbar_theme: &crate::ui::toolbar_render::ToolbarTheme,
         input_coordinator: &mut uzor::input::InputCoordinator,
-        bubble_store: &mlc_core::tag_manager::BubbleStore,
+        // Pre-resolved color of sync_color_grid.target_panel's non-auto group
+        // (caller does the bubble_store lookup so render stays bubble-free).
+        target_panel_group_color: Option<[f32; 4]>,
     ) -> ChartModalRenderResult {
         let mut result = ChartModalRenderResult::default();
 
@@ -2248,14 +2248,8 @@ impl ChartPanelApp {
 
             let current_color = if let Some(lid) = self.sync_color_grid.target_leaf {
                 self.leaf_color_tags.get(&lid).copied()
-            } else if let Some(panel_id) = self.sync_color_grid.target_panel {
-                use mlc_core::tag_manager::SyncMemberId;
-                let member = SyncMemberId::Panel(panel_id);
-                bubble_store
-                    .group_for_member(member)
-                    .and_then(|gid| bubble_store.bubble(gid))
-                    .filter(|g| !g.auto_created)
-                    .map(|g| g.color)
+            } else if self.sync_color_grid.target_panel.is_some() {
+                target_panel_group_color
             } else {
                 None
             };

@@ -13,7 +13,7 @@ use mlc_core::engine::render::RenderContext;
 use mlc_core::engine::render::draw_svg_icon;
 use crate::layout::render_chart::FrameTheme;
 use mlc_core::render::{TextAlign, TextBaseline};
-use mlc_core::tag_manager::BubbleStore;
+use mlc_core::GroupView;
 use mlc_core::theme::ThemeManager;
 use crate::ui::modal_settings::{OverlaySettingsState, TagsTabsState, TagsTabsSidebar, TagsTabsTagsTab};
 use crate::ui::scroll_state::ScrollState;
@@ -90,7 +90,8 @@ pub fn render_tags_tabs_modal(
     frame_theme: &FrameTheme,
     toolbar_theme: &ToolbarTheme,
     panel_grid: &ChartPanelGrid,
-    tag_manager: &BubbleStore,
+    groups: &[GroupView],
+    selected_group: Option<&GroupView>,
     _leaf_color_tags: &HashMap<LeafId, [f32; 4]>,
     screen_w: f64,
     screen_h: f64,
@@ -322,7 +323,8 @@ pub fn render_tags_tabs_modal(
                 frame_theme,
                 toolbar_theme,
                 theme_manager,
-                tag_manager,
+                groups,
+                selected_group,
                 content_x,
                 content_y,
                 content_width,
@@ -346,7 +348,7 @@ pub fn render_tags_tabs_modal(
                 toolbar_theme,
                 theme_manager,
                 panel_grid,
-                tag_manager,
+                groups,
                 _leaf_color_tags,
                 chart_area_w,
                 chart_area_h,
@@ -914,7 +916,7 @@ fn render_map_section(
     toolbar_theme: &ToolbarTheme,
     theme_manager: &ThemeManager,
     panel_grid: &ChartPanelGrid,
-    tag_manager: &BubbleStore,
+    groups: &[GroupView],
     leaf_color_tags: &HashMap<LeafId, [f32; 4]>,
     chart_area_w: f64,
     chart_area_h: f64,
@@ -1080,14 +1082,14 @@ fn render_map_section(
         row_y += minimap_h + MODAL_PADDING;
 
         // ── Legend — show group colors ────────────────────────────────────
-        let mut groups: Vec<_> = tag_manager.bubbles().collect();
-        groups.sort_by_key(|g| g.id.0);
-        if !groups.is_empty() {
+        let mut sorted_groups: Vec<&GroupView> = groups.iter().collect();
+        sorted_groups.sort_by_key(|g| g.id.0);
+        if !sorted_groups.is_empty() {
             ctx.set_font("11px sans-serif");
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
             let mut legend_x = content_left;
-            for group in &groups {
+            for group in &sorted_groups {
                 let [r, g, b, a] = group.color;
                 let color_str = format!("rgba({},{},{},{:.2})", (r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8, a);
                 // Swatch
@@ -1095,7 +1097,7 @@ fn render_map_section(
                 ctx.fill_rounded_rect(legend_x, row_y, 10.0, 10.0, 2.0);
                 // Label
                 ctx.set_fill_color(&toolbar_theme.item_text_muted);
-                let label = format!("G{} ({})", group.id.0, group.members.len());
+                let label = format!("G{} ({})", group.id.0, group.members_count);
                 ctx.fill_text(&label, legend_x + 13.0, row_y + 5.0);
                 let label_w = ctx.measure_text(&label);
                 legend_x += label_w + 22.0;
@@ -1439,7 +1441,8 @@ fn render_tags_section(
     frame_theme: &FrameTheme,
     toolbar_theme: &ToolbarTheme,
     theme_manager: &ThemeManager,
-    tag_manager: &BubbleStore,
+    groups: &[GroupView],
+    selected_group: Option<&GroupView>,
     content_x: f64,
     content_y: f64,
     content_width: f64,
@@ -1521,11 +1524,12 @@ fn render_tags_section(
         // Groups tab
         // ------------------------------------------------------------------ //
         TagsTabsTagsTab::Groups => {
-            // Collect groups — sort by id for stable ordering
-            let mut groups: Vec<_> = tag_manager.bubbles().collect();
-            groups.sort_by_key(|g| g.id.0);
+            // Sort groups by id for stable ordering.  Caller built the
+            // GroupView slice; the layer only renders.
+            let mut sorted_groups: Vec<&GroupView> = groups.iter().collect();
+            sorted_groups.sort_by_key(|g| g.id.0);
 
-            if groups.is_empty() {
+            if sorted_groups.is_empty() {
                 ctx.set_font("12px sans-serif");
                 ctx.set_fill_color(&toolbar_theme.item_text_muted);
                 ctx.set_text_align(TextAlign::Left);
@@ -1537,36 +1541,12 @@ fn render_tags_section(
                 );
             } else {
 
-                for group in &groups {
+                for group in &sorted_groups {
                     let gid = group.id.0;
-                    let member_count = group.members.len();
+                    let member_count = group.members_count;
 
-                    // Group indicators AND primitives by symbol
-                    let symbol_counts: Vec<(String, usize, usize)> = {
-                        // (symbol) -> (ind_count, prim_count)
-                        let mut map: std::collections::HashMap<String, (usize, usize)> = std::collections::HashMap::new();
-                        // Always include current group symbol
-                        if !group.symbol.is_empty() {
-                            map.insert(group.symbol.clone(), (0, 0));
-                        }
-                        for cfg in &group.indicator_configs {
-                            map.entry(cfg.symbol.clone()).or_insert((0, 0)).0 += 1;
-                        }
-                        for prim in &group.primitives {
-                            let sym = &prim.data().symbol;
-                            map.entry(sym.clone()).or_insert((0, 0)).1 += 1;
-                        }
-                        let mut pairs: Vec<_> = map.into_iter()
-                            .map(|(sym, (ic, pc))| (sym, ic, pc))
-                            .collect();
-                        // Current symbol first, then alphabetical
-                        pairs.sort_by(|a, b| {
-                            let a_current = a.0 == group.symbol;
-                            let b_current = b.0 == group.symbol;
-                            b_current.cmp(&a_current).then(a.0.cmp(&b.0))
-                        });
-                        pairs
-                    };
+                    // Per-symbol breakdown was built by the caller.
+                    let symbol_counts: &[(String, usize, usize)] = &group.per_symbol_counts;
 
                     let row_h = ROW_HEIGHT * 2.0 + 4.0; // Two-line row
                     let row_rect = WidgetRect::new(content_x, row_y, content_width, row_h);
@@ -1657,8 +1637,8 @@ fn render_tags_section(
         // Details tab
         // ------------------------------------------------------------------ //
         TagsTabsTagsTab::Details => {
-            if let Some(group_id) = state.selected_group_id {
-                if let Some(group) = tag_manager.bubble(group_id) {
+            if state.selected_group_id.is_some() {
+                if let Some(group) = selected_group {
 
                     // Group title + color swatch
                     let [r, g, b, a] = group.color;
@@ -1678,13 +1658,13 @@ fn render_tags_section(
                     ctx.stroke_rounded_rect(swatch_x, swatch_y, SWATCH_SIZE, SWATCH_SIZE, 2.0);
 
                     let symbol_str_det = if group.symbol.is_empty() { "-" } else { &group.symbol };
-                    let tf_name = &group.timeframe.name;
+                    let tf_name = &group.timeframe_name;
                     ctx.set_font("bold 12px sans-serif");
                     ctx.set_fill_color(&toolbar_theme.item_text);
                     ctx.set_text_align(TextAlign::Left);
                     ctx.set_text_baseline(TextBaseline::Middle);
                     ctx.fill_text(
-                        &format!("Group {}  [{}]  {}  ({} members)", group.id.0, symbol_str_det, tf_name, group.members.len()),
+                        &format!("Group {}  [{}]  {}  ({} members)", group.id.0, symbol_str_det, tf_name, group.members_count),
                         swatch_x + SWATCH_SIZE + 6.0,
                         row_y + ROW_HEIGHT / 2.0,
                     );

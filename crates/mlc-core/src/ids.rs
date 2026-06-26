@@ -127,3 +127,29 @@ pub struct MemberSyncOverride {
     pub sync_symbol: Option<bool>,
     pub sync_crosshair: Option<bool>,
 }
+
+// =============================================================================
+// GroupView
+// =============================================================================
+
+/// Lightweight view of a sync-group used by render layers
+/// (`mlc-layout`).  Built by the caller (`mlc-app`) from
+/// `BubbleStore` + `TagStore` and passed in by value/slice.
+///
+/// Render layers MUST NOT depend on `DataBubble` or `BubbleStore` as
+/// types — they accept this view instead.  That keeps `mlc-layout` in
+/// the `mlc-core` dep-graph (no upward dep on `mlc-backend-core`).
+#[derive(Clone, Debug)]
+pub struct GroupView {
+    pub id: BubbleId,
+    pub color: [f32; 4],
+    pub auto_created: bool,
+    pub symbol: String,
+    pub timeframe_name: String,
+    pub members_count: usize,
+    pub sync_flags: SyncFlags,
+    /// Per-symbol aggregation: `(symbol, indicator_count, primitive_count)`.
+    /// Built by the caller (`mlc-app`) so the render layer doesn't need
+    /// to know the shape of `IndicatorGroupConfig` / `Primitive`.
+    pub per_symbol_counts: Vec<(String, usize, usize)>,
+}
