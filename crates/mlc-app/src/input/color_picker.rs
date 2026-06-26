@@ -568,18 +568,20 @@ impl ChartApp {
                             && (oc[2] - new_color[2]).abs() < 0.01
                         );
                         if !same_color {
-                            self.core.bubble_mut().bubble.disconnect(member);
-                            let target_gid = self.core.bubble().bubble
-                                .find_group_by_color(new_color)
+                            self.disconnect_member(member);
+                            let target_gid = self
+                                .tag_store
+                                .find_tag_by_color(new_color)
                                 .unwrap_or_else(|| {
-                                    self.core.bubble_mut().bubble.create_group(
+                                    self.create_tagged_bubble(
                                         new_color,
                                         String::new(),
                                         mlc_core::state::Timeframe::m1(),
                                     )
                                 });
-                            let _ = self.core.bubble_mut().bubble.connect(member, target_gid);
+                            self.connect_member(member, target_gid);
                             self.core.bubble_mut().bubble.synced_panels_remove(member);
+                            self.tag_store.synced_panels_mut().remove(&member);
                             eprintln!(
                                 "[ChartApp] Panel {} → color group [{:.2},{:.2},{:.2}]",
                                 panel_id, new_color[0], new_color[1], new_color[2]

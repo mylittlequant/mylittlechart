@@ -7123,12 +7123,12 @@ impl ChartApp {
                     eprintln!("[sync_group] new_pane: container_for_leaf({:?}) returned None — skipping auto group", active_leaf);
                     return;
                 }
-                let group_id = self.core.bubble_mut().bubble.create_group_auto(
+                let group_id = self.create_auto_bubble(
                     [0.0, 0.0, 0.0, 0.0],
                     default_symbol.clone(),
                     default_timeframe.clone(),
                 );
-                let _ = self.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, group_id);
+                self.attach_chart_to_tag(chart_id, group_id);
                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     // Mirrors seed_default_chart: react.rs writes BarsLoaded /
                     // *BarAppended events into `window.current_bubble_id`.

@@ -152,15 +152,44 @@ impl TagStore {
     // Color / auto_created helpers
     // =========================================================================
 
-    /// Find the first tag with the given color (within a small epsilon).
+    /// Find the first user-tagged (non-auto-created) tag with the given
+    /// color (within a small epsilon).
     pub fn find_tag_by_color(&self, color: [f32; 4]) -> Option<TagId> {
-        const EPS: f32 = 1.0e-3;
+        const EPS: f32 = 1.0e-2;
         self.tags
             .iter()
             .find(|(_, t)| {
-                (0..4).all(|i| (t.color[i] - color[i]).abs() < EPS)
+                !t.auto_created
+                    && (t.color[0] - color[0]).abs() < EPS
+                    && (t.color[1] - color[1]).abs() < EPS
+                    && (t.color[2] - color[2]).abs() < EPS
             })
             .map(|(id, _)| *id)
+    }
+
+    /// Pick the next preset palette color that is not already used by
+    /// a user-tagged (non-auto-created) tag.  Falls back to the first
+    /// preset color if all are taken.
+    pub fn next_unused_color(&self) -> [f32; 4] {
+        use mlc_core::state::toolbar_geometry::PRESET_COLORS;
+        const EPS: f32 = 1.0e-2;
+        let used: Vec<[f32; 4]> = self
+            .tags
+            .values()
+            .filter(|t| !t.auto_created)
+            .map(|t| t.color)
+            .collect();
+        for &preset in PRESET_COLORS.iter() {
+            let is_used = used.iter().any(|uc| {
+                (uc[0] - preset[0]).abs() < EPS
+                    && (uc[1] - preset[1]).abs() < EPS
+                    && (uc[2] - preset[2]).abs() < EPS
+            });
+            if !is_used {
+                return preset;
+            }
+        }
+        PRESET_COLORS[0]
     }
 
     /// Read color out of the tag for a given bubble id.
