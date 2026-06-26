@@ -456,6 +456,17 @@ pub struct ChartApp {
     /// (more fields move here in subsequent passes).
     pub core: std::sync::Arc<mlc_backend_core::BackendCore>,
 
+    /// App-level tag registry.  Holds color / auto_created / members /
+    /// member_overrides + the `member_to_tag` routing table that used to
+    /// live on `BubbleStore`.  Paired 1:1 with bubbles in `core.bubble`:
+    /// `Tag.id == data_bubble_id` by invariant.
+    ///
+    /// All tag lifecycle goes through [`Self::create_tagged_bubble`] /
+    /// [`Self::create_auto_bubble`] / [`Self::remove_tag`] /
+    /// [`Self::connect_member`] / [`Self::disconnect_member`] so that
+    /// the bubble + tag pair stays in sync.
+    pub tag_store: tag::TagStore,
+
     /// Currently active exchange.
     pub active_exchange: digdigdig3::ExchangeId,
 
@@ -1060,6 +1071,101 @@ pub struct RenderOutput {
 
 impl ChartApp {
     // -------------------------------------------------------------------------
+    // Tag lifecycle facade (Phase 2B-2 of the Tag/Bubble/UiContainer cutover).
+    //
+    // Every operation that creates / removes a `DataBubble` or connects /
+    // disconnects a member must go through these helpers so that the paired
+    // `TagStore` entry stays in sync with the bubble.
+    //
+    // Today's helpers DUAL-WRITE: they update `core.bubble` AND `tag_store`
+    // so the legacy `bubble.color` / `bubble.members` / `bubble.auto_created`
+    // / `bubble.member_overrides` fields stay consistent during the
+    // call-site migration.  Phase 2B-8 deletes the bubble-side dupes once
+    // every reader has been switched to the tag-side.
+    // -------------------------------------------------------------------------
+
+    /// Create a user-tagged bubble + paired tag and return its id.
+    pub fn create_tagged_bubble(
+        &mut self,
+        color: [f32; 4],
+        symbol: String,
+        timeframe: mlc_core::state::Timeframe,
+    ) -> mlc_core::tag_manager::BubbleId {
+        let bid = self
+            .core
+            .bubble_mut()
+            .bubble
+            .create_group(color, symbol, timeframe);
+        self.tag_store.insert(tag::Tag::new(bid, color));
+        bid
+    }
+
+    /// Create an invisible (auto-created) bubble + paired tag.
+    pub fn create_auto_bubble(
+        &mut self,
+        color: [f32; 4],
+        symbol: String,
+        timeframe: mlc_core::state::Timeframe,
+    ) -> mlc_core::tag_manager::BubbleId {
+        let bid = self
+            .core
+            .bubble_mut()
+            .bubble
+            .create_group_auto(color, symbol, timeframe);
+        self.tag_store.insert(tag::Tag::new_auto(bid, color));
+        bid
+    }
+
+    /// Remove a bubble + its paired tag.
+    pub fn remove_tag(&mut self, bid: mlc_core::tag_manager::BubbleId) {
+        self.core.bubble_mut().bubble.remove_group(bid);
+        self.tag_store.remove(bid);
+    }
+
+    /// Connect any sync member to a bubble's paired tag.  If the member
+    /// is already in another tag it is disconnected first.
+    pub fn connect_member(
+        &mut self,
+        member: mlc_core::tag_manager::SyncMemberId,
+        bid: mlc_core::tag_manager::BubbleId,
+    ) {
+        let _ = self.core.bubble_mut().bubble.connect(member, bid);
+        let _ = self.tag_store.connect(member, bid);
+    }
+
+    /// Disconnect a member from its current tag (and from the matching
+    /// bubble).  Returns the tag id it was in, if any.
+    pub fn disconnect_member(
+        &mut self,
+        member: mlc_core::tag_manager::SyncMemberId,
+    ) -> Option<mlc_core::tag_manager::BubbleId> {
+        let from_bubble = self.core.bubble_mut().bubble.disconnect(member);
+        let from_tag = self.tag_store.disconnect(member);
+        // Both stores agree by invariant; prefer the tag-side reading.
+        from_tag.or(from_bubble)
+    }
+
+    /// Attach a chart window to a bubble's paired tag.
+    pub fn attach_chart_to_tag(
+        &mut self,
+        chart_id: mlc_core::state::ChartId,
+        bid: mlc_core::tag_manager::BubbleId,
+    ) {
+        self.connect_member(
+            mlc_core::tag_manager::SyncMemberId::Chart(chart_id.0),
+            bid,
+        );
+    }
+
+    /// Detach a chart window from its current tag.
+    pub fn detach_chart_from_tag(
+        &mut self,
+        chart_id: mlc_core::state::ChartId,
+    ) -> Option<mlc_core::tag_manager::BubbleId> {
+        self.disconnect_member(mlc_core::tag_manager::SyncMemberId::Chart(chart_id.0))
+    }
+
+    // -------------------------------------------------------------------------
     // BackendCore-backed accessor helpers (Session 2 of the cutover).
     //
     // These return owned values (`String` / `Option<BubbleId>` etc) instead of
@@ -1283,6 +1389,7 @@ impl ChartApp {
             last_wl_group_name_result: None,
             needs_initial_viewport_fit: false,
             core,
+            tag_store: tag::TagStore::new(),
             active_exchange: digdigdig3::ExchangeId::Binance,
             window_id: format!("win_{}", web_time::SystemTime::now()
                 .duration_since(web_time::UNIX_EPOCH)
@@ -1625,6 +1732,7 @@ impl ChartApp {
             last_wl_group_name_result: None,
             needs_initial_viewport_fit: false,
             core,
+            tag_store: tag::TagStore::new(),
             active_exchange: digdigdig3::ExchangeId::Binance,
             window_id: format!(
                 "win_{}",
@@ -2168,6 +2276,7 @@ impl ChartApp {
             last_wl_group_name_result: None,
             needs_initial_viewport_fit: false,
             core,
+            tag_store: tag::TagStore::new(),
             active_exchange: digdigdig3::ExchangeId::Binance,
             window_id,
             window_x: None,
