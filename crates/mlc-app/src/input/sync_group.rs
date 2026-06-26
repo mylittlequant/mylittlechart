@@ -49,13 +49,13 @@ impl ChartApp {
     pub(super) fn perform_panel_desync(&mut self, panel_id: u64) {
         use mlc_core::tag_manager::SyncMemberId;
         let member = SyncMemberId::Panel(panel_id);
-        self.core.bubble_mut().bubble.disconnect(member);
-        let gid = self.core.bubble_mut().bubble.create_group_auto(
+        self.disconnect_member(member);
+        let gid = self.create_auto_bubble(
             [0.5, 0.5, 0.5, 1.0],
             String::new(),
             mlc_core::state::Timeframe::m1(),
         );
-        self.core.bubble_mut().bubble.set_auto_group(member, gid);
+        self.set_panel_auto(member, gid);
         eprintln!("[ChartApp] Panel {} desynced → auto group {:?}", panel_id, gid);
         self.sidebar_data_dirty = true;
         self.autosave_snapshot();
@@ -111,7 +111,7 @@ impl ChartApp {
         // binding the Option to a local first, then take the read guard in a
         // fresh scope.
         let detached_group: Option<mlc_core::tag_manager::BubbleId> = {
-            self.core.bubble_mut().bubble.detach_chart_from_bubble(chart_id)
+            self.detach_chart_from_tag(chart_id)
         };
         if let Some(old_group_id) = detached_group {
             let remaining = {
@@ -132,7 +132,7 @@ impl ChartApp {
 
         if let Some(auto_bid) = auto_bubble_id {
             // Re-attach to home auto-bubble.
-            let _ = self.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, auto_bid);
+            self.attach_chart_to_tag(chart_id, auto_bid);
 
             if had_group_id {
                 // Restore drawing_manager from auto_bubble.primitives (the home drawings
@@ -305,7 +305,7 @@ impl ChartApp {
         // Find-or-create the group so TagManager stays consistent regardless of
         // whether this is the first leaf in the group or a later joiner.
         if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(joining_leaf) {
-            let existing_group = self.core.bubble_mut().bubble.find_group_by_color(color);
+            let existing_group = self.tag_store.find_tag_by_color(color);
             let is_new_group = existing_group.is_none();
             let group_id = if let Some(gid) = existing_group {
                 gid
@@ -351,7 +351,7 @@ impl ChartApp {
                     "[sync_join_color_group] new color group: read from auto_bid={:?} (fallback chart_id={:?}) sym='{}' exch='{}' at='{}' tf={:?}",
                     auto_bid, chart_id, sym, exch_join, at_join, tf
                 );
-                let new_gid = self.core.bubble_mut().bubble.create_group(color, sym.clone(), tf.clone());
+                let new_gid = self.create_tagged_bubble(color, sym.clone(), tf.clone());
                 // create_group only takes (color, symbol, timeframe) — fill exchange + account_type explicitly.
                 {
                     let mut bm = self.core.bubble_mut();
@@ -367,7 +367,7 @@ impl ChartApp {
                 );
                 new_gid
             };
-            let _ = self.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, group_id);
+            self.attach_chart_to_tag(chart_id, group_id);
             eprintln!(
                 "[BubbleStore] Connected chart {:?} to group {:?} (new={})",
                 chart_id, group_id, is_new_group
@@ -893,7 +893,7 @@ impl ChartApp {
                     .unwrap_or_default();
                 let tf = self.timeframe_for_chart(cid)
                     .unwrap_or_else(mlc_core::state::Timeframe::h1);
-                let auto_bid = self.core.bubble_mut().bubble.create_group_auto(
+                let auto_bid = self.create_auto_bubble(
                     [0.0, 0.0, 0.0, 0.0], sym, tf,
                 );
                 // Seed bars from the source bubble so the new chart paints
@@ -917,11 +917,7 @@ impl ChartApp {
                         window.current_bubble_id = auto_bid;
                     }
                 }
-                {
-                    let mut bm = self.core.bubble_mut();
-                    let _ = bm.bubble.attach_chart_to_bubble(cid, auto_bid);
-                    drop(bm);
-                }
+                self.attach_chart_to_tag(cid, auto_bid);
                 eprintln!("[BubbleStore] do_split: created auto-bubble {:?} for chart {:?} (seeded {} bars)",
                     auto_bid, cid, source_bars.len());
             }
@@ -1024,7 +1020,7 @@ impl ChartApp {
                     if let Some(new_cid) = self.panel_app.panel_grid.container_id_for_leaf(mother_leaf) {
                         if new_cid != old_cid {
                             // The chart got a new ID after the split — connect the new one.
-                            let _ = self.core.bubble_mut().bubble.attach_chart_to_bubble(new_cid, old_gid);
+                            self.attach_chart_to_tag(new_cid, old_gid);
                             eprintln!("[BubbleStore] (SplitUntagged) Mother re-connected new cid {:?} → group {:?}", new_cid, old_gid);
                         }
                         // else: same chart_id survived the split, TagManager link is intact.
@@ -1069,7 +1065,7 @@ impl ChartApp {
                     eprintln!("[sync_group] split untagged: container_for_leaf({:?}) returned None — skipping new leaf", leaf_id);
                     continue;
                 }
-                let gid = self.core.bubble_mut().bubble.create_group_auto(
+                let gid = self.create_auto_bubble(
                     [0.0, 0.0, 0.0, 0.0],
                     split_untagged_sym.clone(),
                     split_untagged_tf.clone(),
@@ -1088,7 +1084,7 @@ impl ChartApp {
                     drop(bm);
                 }
                 if let Some(chart_id) = new_chart_id {
-                    let _ = self.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, gid);
+                    self.attach_chart_to_tag(chart_id, gid);
                 }
                 // Seed bars from the source bubble so the new untagged sibling
                 // paints immediately instead of waiting for a live tick.
@@ -1129,7 +1125,7 @@ impl ChartApp {
                 // via window.auto_bubble_id (which persists across detach).
                 let old_cid_auto_home = self.panel_app.panel_grid.containers().get(&old_cid)
                     .map(|w| w.auto_bubble_id);
-                let _ = self.core.bubble_mut().bubble.detach_chart_from_bubble(old_cid);
+                let _ = self.detach_chart_from_tag(old_cid);
                 sglog!("[BubbleStore] Disconnected destroyed chart {:?} from group {:?} (home auto_bid={:?})", old_cid, old_gid, old_cid_auto_home);
                 // Bug C fix: remove the old group if it became empty and was
                 // auto-created.  Scoped to keep wasm32 RwLock contract.
@@ -1142,7 +1138,7 @@ impl ChartApp {
                         .unwrap_or(false)
                 } && old_cid_auto_home != Some(old_gid);
                 if should_remove {
-                    self.core.bubble_mut().bubble.remove_group(old_gid);
+                    self.remove_tag(old_gid);
                     sglog!("[BubbleStore] Removed empty auto group {:?} after split", old_gid);
                 } else if old_cid_auto_home == Some(old_gid) {
                     sglog!("[BubbleStore] PRESERVED home auto_bubble {:?} after split-detach", old_gid);
@@ -1169,8 +1165,8 @@ impl ChartApp {
                 if pre_split_is_auto {
                     // Was untagged (auto group) — split promotes to a real color tag.
                     // Create a NEW visible group with the first free color.
-                    let color = self.core.bubble_mut().bubble.next_unused_color();
-                    let gid = self.core.bubble_mut().bubble.create_group(color, first_leaf_symbol, first_leaf_timeframe);
+                    let color = self.tag_store.next_unused_color();
+                    let gid = self.create_tagged_bubble(color, first_leaf_symbol, first_leaf_timeframe);
                     created_fresh_group = true;
                     eprintln!("[BubbleStore] Split promoted auto group to visible tag {:?}", gid);
                     gid
@@ -1181,9 +1177,9 @@ impl ChartApp {
             } else {
                 // No existing group — pick color from TagManager's palette.
                 let color = pre_split_color
-                    .unwrap_or_else(|| self.core.bubble_mut().bubble.next_unused_color());
+                    .unwrap_or_else(|| self.tag_store.next_unused_color());
                 created_fresh_group = true;
-                self.core.bubble_mut().bubble.create_group(color, first_leaf_symbol, first_leaf_timeframe)
+                self.create_tagged_bubble(color, first_leaf_symbol, first_leaf_timeframe)
             };
 
             // create_group leaves exchange/account_type empty — complete the
@@ -1230,7 +1226,7 @@ impl ChartApp {
                 })
                 .collect();
             for &(_, chart_id) in &leaf_chart_ids {
-                let _ = self.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, group_id);
+                self.attach_chart_to_tag(chart_id, group_id);
             }
             // Point every leaf's `window.current_bubble_id` at the shared
             // group bubble.  Without this, sibling leaves born by the split
@@ -2244,7 +2240,7 @@ impl ChartApp {
             "[disconnect_from_current_group] leaf={:?} cid={:?} old_gid={:?} auto_bid_home={:?}",
             leaf_id, chart_id, old_gid, auto_bid_home
         );
-        let _ = self.core.bubble_mut().bubble.detach_chart_from_bubble(chart_id);
+        let _ = self.detach_chart_from_tag(chart_id);
         // Remove the old group if it is now empty and was auto-created — but
         // NEVER remove the chart's permanent home auto_bubble.
         let should_remove = {
@@ -2254,7 +2250,7 @@ impl ChartApp {
                 .unwrap_or(false)
         } && auto_bid_home != Some(old_gid);
         if should_remove {
-            self.core.bubble_mut().bubble.remove_group(old_gid);
+            self.remove_tag(old_gid);
             sglog!("[disconnect_from_current_group] removed empty auto group {:?}", old_gid);
         } else if auto_bid_home == Some(old_gid) {
             sglog!(

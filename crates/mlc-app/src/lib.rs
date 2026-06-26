@@ -1165,6 +1165,67 @@ impl ChartApp {
         self.disconnect_member(mlc_core::tag_manager::SyncMemberId::Chart(chart_id.0))
     }
 
+    /// Move a panel out of the Synced set and into its own private
+    /// auto-created bubble.
+    pub fn set_panel_auto(
+        &mut self,
+        panel_member: mlc_core::tag_manager::SyncMemberId,
+        private_bubble_id: mlc_core::tag_manager::BubbleId,
+    ) {
+        self.core
+            .bubble_mut()
+            .bubble
+            .set_auto_group(panel_member, private_bubble_id);
+        self.tag_store.synced_panels_mut().remove(&panel_member);
+        let _ = self.tag_store.connect(panel_member, private_bubble_id);
+    }
+
+    /// Put a panel in Synced state and connect to a bubble's paired tag.
+    pub fn set_panel_synced(
+        &mut self,
+        panel_member: mlc_core::tag_manager::SyncMemberId,
+        bid: mlc_core::tag_manager::BubbleId,
+    ) {
+        self.core.bubble_mut().bubble.set_synced(panel_member, bid);
+        self.tag_store.synced_panels_mut().insert(panel_member);
+        let _ = self.tag_store.connect(panel_member, bid);
+    }
+
+    /// Fully deregister a panel: disconnect from its tag and remove
+    /// from the synced set.  Use when permanently destroying a panel
+    /// (closed by user).
+    pub fn remove_panel_completely(
+        &mut self,
+        panel_member: mlc_core::tag_manager::SyncMemberId,
+    ) {
+        self.core.bubble_mut().bubble.disconnect(panel_member);
+        self.core
+            .bubble_mut()
+            .bubble
+            .synced_panels_remove(panel_member);
+        let _ = self.tag_store.disconnect(panel_member);
+        self.tag_store.synced_panels_mut().remove(&panel_member);
+    }
+
+    /// Promote an auto-created tag to a user-visible (color-tagged) one.
+    /// Returns the newly assigned color, or `None` if the tag does not
+    /// exist or was already user-tagged.
+    pub fn promote_to_tagged(
+        &mut self,
+        bid: mlc_core::tag_manager::BubbleId,
+    ) -> Option<[f32; 4]> {
+        let color = self
+            .core
+            .bubble_mut()
+            .bubble
+            .promote_to_tagged(bid)?;
+        if let Some(tag) = self.tag_store.get_mut(bid) {
+            tag.auto_created = false;
+            tag.color = color;
+        }
+        Some(color)
+    }
+
     // -------------------------------------------------------------------------
     // BackendCore-backed accessor helpers (Session 2 of the cutover).
     //

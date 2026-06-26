@@ -1540,7 +1540,7 @@ impl ChartApp {
                                                 .map(|g| g.auto_created)
                                                 .unwrap_or(false);
                                             if was_auto {
-                                                if let Some(new_color) = self.core.bubble_mut().bubble.promote_to_tagged(gid) {
+                                                if let Some(new_color) = self.promote_to_tagged(gid) {
                                                     // Mirror color into leaf_color_tags for every
                                                     // chart member of this group so chart leaf
                                                     // headers also show the new color marker.
@@ -1555,7 +1555,7 @@ impl ChartApp {
                                                     }
                                                 }
                                             }
-                                            self.core.bubble_mut().bubble.set_synced(member, gid);
+                                            self.set_panel_synced(member, gid);
                                         }
                                     }
                                     mlc_sidebar_content::state::SlotSourceMode::Untagged => {
@@ -1564,12 +1564,12 @@ impl ChartApp {
                                         let tf = spawn_active_cid
                                             .and_then(|cid| self.timeframe_for_chart(cid))
                                             .unwrap_or_else(mlc_core::state::Timeframe::h1);
-                                        let solo_gid = self.core.bubble_mut().bubble.create_group_auto(
+                                        let solo_gid = self.create_auto_bubble(
                                             [0.0, 0.0, 0.0, 0.0],
                                             symbol.clone(),
                                             tf,
                                         );
-                                        self.core.bubble_mut().bubble.set_auto_group(member, solo_gid);
+                                        self.set_panel_auto(member, solo_gid);
                                         // Seed exchange/account_type on the new group so apply_key
                                         // picks them up next frame.
                                         if let Some(g) = self.core.bubble_mut().bubble.bubble_mut(solo_gid) {
@@ -1813,8 +1813,7 @@ impl ChartApp {
                                         if let Some(item) = item_opt {
                                             // Deregister from TagManager before removing state.
                                             let member = mlc_core::tag_manager::SyncMemberId::Panel(item.panel_id().0);
-                                            self.core.bubble_mut().bubble.disconnect(member);
-                                            self.core.bubble_mut().bubble.synced_panels_remove(member);
+                                            self.remove_panel_completely(member);
                                             // Unsubscribe panels from shared data streams
                                             // before dropping their state.
                                             if let mlc_core::state::Panel::Dom(pid) = &item {
@@ -1995,8 +1994,7 @@ impl ChartApp {
                             if let Some(item) = item_opt {
                                 // Deregister from TagManager before removing state.
                                 let member = mlc_core::tag_manager::SyncMemberId::Panel(item.panel_id().0);
-                                self.core.bubble_mut().bubble.disconnect(member);
-                                self.core.bubble_mut().bubble.synced_panels_remove(member);
+                                self.remove_panel_completely(member);
                                 // Unsubscribe panels from shared data streams before
                                 // dropping their state.
                                 if let mlc_core::state::Panel::Dom(pid) = &item {
@@ -2126,9 +2124,9 @@ impl ChartApp {
                                     let src_was_synced = self.core.bubble().bubble.is_synced(src_member);
                                     if let Some(gid) = src_gid {
                                         if src_was_synced {
-                                            self.core.bubble_mut().bubble.set_synced(new_member, gid);
+                                            self.set_panel_synced(new_member, gid);
                                         } else {
-                                            self.core.bubble_mut().bubble.set_auto_group(new_member, gid);
+                                            self.set_panel_auto(new_member, gid);
                                         }
                                     }
                                 }
@@ -3570,7 +3568,7 @@ impl ChartApp {
                 id if id.starts_with("tags:delete_group:") => {
                     if let Ok(gid_val) = id["tags:delete_group:".len()..].parse::<u64>() {
                         let gid = BubbleId(gid_val);
-                        self.core.bubble_mut().bubble.remove_group(gid);
+                        self.remove_tag(gid);
                         // Clear selection if we deleted the selected group.
                         if self.panel_app.tags_tabs_state.selected_group_id == Some(gid) {
                             self.panel_app.tags_tabs_state.selected_group_id = None;
