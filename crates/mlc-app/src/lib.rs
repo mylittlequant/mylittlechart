@@ -2025,12 +2025,12 @@ impl ChartApp {
         }
 
         if let Some(chart_id) = active_chart_id {
-            let auto_bid = self.core.bubble_mut().bubble.create_group_auto(
+            let auto_bid = self.create_auto_bubble(
                 [0.0, 0.0, 0.0, 0.0],
                 symbol.to_string(),
                 timeframe.clone(),
             );
-            let _ = self.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, auto_bid);
+            self.attach_chart_to_tag(chart_id, auto_bid);
             if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                 window.auto_bubble_id = auto_bid;
                 window.current_bubble_id = auto_bid;
@@ -2654,12 +2654,12 @@ impl ChartApp {
                 }
                 // Create auto-bubble for the initial chart and assign instrument.
                 if let Some(chart_id) = active_chart_id {
-                    let auto_bid = app.core.bubble_mut().bubble.create_group_auto(
+                    let auto_bid = app.create_auto_bubble(
                         [0.0, 0.0, 0.0, 0.0],
                         "BTCUSDT".to_string(),
                         mlc_core::state::Timeframe::h1(),
                     );
-                    let _ = app.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, auto_bid);
+                    app.attach_chart_to_tag(chart_id, auto_bid);
                     if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
                         window.auto_bubble_id = auto_bid;
                         window.current_bubble_id = auto_bid;

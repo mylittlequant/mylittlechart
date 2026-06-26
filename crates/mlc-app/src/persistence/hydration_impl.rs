@@ -183,7 +183,7 @@ impl ChartApp {
                                     // Create a fresh auto-bubble for this chart and restore
                                     // stashed state (pre-tag primitives, pre_tag_indicator_ids,
                                     // stashed command_history) into it.
-                                    let auto_bid = self.core.bubble_mut().bubble.create_group_auto(
+                                    let auto_bid = self.create_auto_bubble(
                                         [0.0, 0.0, 0.0, 0.0],
                                         snap.symbol.clone(),
                                         snap.timeframe.clone(),
@@ -192,7 +192,7 @@ impl ChartApp {
                                     // current_bubble_id is set later when we attach to the
                                     // color-bubble (Step 5); default to auto_bid for now.
                                     window.current_bubble_id = auto_bid;
-                                    let _ = self.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, auto_bid);
+                                    self.attach_chart_to_tag(chart_id, auto_bid);
 
                                     // Restore stashed primitives into auto_bubble.primitives.
                                     if let Some(auto_bub) = self.core.bubble_mut().bubble.bubble_mut(auto_bid) {
@@ -384,21 +384,13 @@ impl ChartApp {
                                     }
 
                                     // Pre-auto-bubble presets serialised no auto_bubble_id —
-                                    // mint one now so stashed primitives have a home.
-                                    let existing_auto_bid = window.auto_bubble_id;
-                                    let auto_bid_for_window = if existing_auto_bid == mlc_core::tag_manager::BubbleId(0) {
-                                        let fresh = self.core.bubble_mut().bubble.create_group_auto(
-                                            [0.0, 0.0, 0.0, 0.0],
-                                            snap.symbol.clone(),
-                                            snap.timeframe.clone(),
-                                        );
-                                        window.auto_bubble_id = fresh;
-                                        window.current_bubble_id = fresh;
-                                        let _ = self.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, fresh);
-                                        fresh
-                                    } else {
-                                        existing_auto_bid
-                                    };
+                                    // a placeholder of BubbleId(0) is patched up by the
+                                    // post-loop pass below.  Use whatever the window
+                                    // currently knows; if it is BubbleId(0) the
+                                    // `bubble_mut` lookup misses and stashed_primitives
+                                    // restoration is deferred until the post-loop pass
+                                    // re-runs the same body with a real auto_bid.
+                                    let auto_bid_for_window = window.auto_bubble_id;
                                     if let Some(auto_bub) = self.core.bubble_mut().bubble.bubble_mut(auto_bid_for_window) {
                                         auto_bub.primitives.clear();
                                         if !snap.stashed_primitives.is_empty() {
@@ -515,6 +507,27 @@ impl ChartApp {
                         for (chart_panel_id, ps) in panel_patches {
                             self.panels_store.chart_panel.insert(chart_panel_id, ps);
                         }
+                        // Post-loop pass: mint auto-bubbles for any windows whose
+                        // preset carried no auto_bubble_id (legacy presets).  Done
+                        // here instead of inside the windows-mut loop because
+                        // create_auto_bubble + attach_chart_to_tag take &mut self
+                        // and would conflict with the live windows borrow.
+                        let needs_auto: Vec<(mlc_core::ChartId, String, mlc_core::state::Timeframe)> =
+                            preset.windows.iter().filter_map(|snap| {
+                                let chart_id = mlc_core::state::chart_container::ChartId(snap.window_id);
+                                let win = self.panel_app.panel_grid.containers().get(&chart_id)?;
+                                if win.auto_bubble_id == mlc_core::tag_manager::BubbleId(0) {
+                                    Some((chart_id, snap.symbol.clone(), snap.timeframe.clone()))
+                                } else { None }
+                            }).collect();
+                        for (chart_id, sym, tf) in needs_auto {
+                            let fresh = self.create_auto_bubble([0.0, 0.0, 0.0, 0.0], sym, tf);
+                            if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&chart_id) {
+                                window.auto_bubble_id = fresh;
+                                window.current_bubble_id = fresh;
+                            }
+                            self.attach_chart_to_tag(chart_id, fresh);
+                        }
                     }
                     let layout_us = _t_layout.elapsed().as_micros();
 
@@ -553,7 +566,7 @@ impl ChartApp {
                         let gid = mlc_core::tag_manager::BubbleId(sg_snap.id);
                         for &pid in &sg_snap.synced_panel_ids {
                             let member = mlc_core::tag_manager::SyncMemberId::Panel(pid);
-                            self.core.bubble_mut().bubble.set_synced(member, gid);
+                            self.set_panel_synced(member, gid);
                         }
                     }
                     eprintln!("[ChartApp] restored {} sync groups", preset.bubbles.len());
@@ -705,7 +718,7 @@ impl ChartApp {
                         let symbol = self.symbol_for_chart(first_cid)
                             .map(String::from).unwrap_or_default();
                         let timeframe = self.timeframe_for_chart(first_cid).unwrap_or_else(mlc_core::state::Timeframe::h1);
-                        let group_id = self.core.bubble_mut().bubble.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
+                        let group_id = self.create_auto_bubble([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
                         let leaf_chart_ids: Vec<(mlc_core::LeafId, mlc_core::ChartId)> =
                             self.panel_app.panel_grid.iter_containers()
                                 .map(|(leaf_id, w)| (leaf_id, w.id))
@@ -714,7 +727,7 @@ impl ChartApp {
                             .bubble(group_id)
                             .map(|g| g.last_used_style.clone());
                         for &(leaf_id, chart_id) in &leaf_chart_ids {
-                            let _ = self.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, group_id);
+                            self.attach_chart_to_tag(chart_id, group_id);
                             // Sync the window-side bubble pointer so the renderer's
                             // `window.current_bubble_id` lookup matches the writer's
                             // `bubble_for_chart` lookup. Without this, the BubbleStore
@@ -764,7 +777,7 @@ impl ChartApp {
                                     "S".to_string(),
                                     mlc_core::state::Timeframe::h1(),
                                 ));
-                            let group_id = self.core.bubble_mut().bubble.create_group_auto(
+                            let group_id = self.create_auto_bubble(
                                 [0.0, 0.0, 0.0, 0.0],
                                 sym.clone(),
                                 tf,
@@ -773,7 +786,7 @@ impl ChartApp {
                                 bubble.exchange = exch.clone();
                                 bubble.account_type = if at.is_empty() { "S".to_string() } else { at };
                             }
-                            let _ = self.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, group_id);
+                            self.attach_chart_to_tag(chart_id, group_id);
                             // Sync window-side bubble pointer (see Step 5b for rationale).
                             if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&chart_id) {
                                 window.auto_bubble_id = group_id;
@@ -1458,8 +1471,7 @@ impl ChartApp {
                         }
                         let pruned = orphans.len();
                         for member in orphans {
-                            self.core.bubble_mut().bubble.disconnect(member);
-                            self.core.bubble_mut().bubble.synced_panels_remove(member);
+                            self.remove_panel_completely(member);
                         }
                         if pruned > 0 {
                             eprintln!("[ChartApp] preset restore: pruned {} orphan panel members from sync groups", pruned);
