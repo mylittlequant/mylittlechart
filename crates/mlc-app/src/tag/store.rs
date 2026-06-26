@@ -1,32 +1,75 @@
 //! `TagStore` — registry of `Tag`s keyed by `TagId`.  Paired 1:1 with
 //! `BubbleStore` (every bubble has a paired tag with the same id).
 //!
-//! Phase 1 stub: empty store + minimal CRUD.  Phase 2 wires
-//! `BubbleStore::create_group` / `create_group_auto` / `remove_group`
-//! to mirror into here.
+//! Also owns the routing table from individual chart / panel members
+//! to the tag (and therefore the bubble) they belong to.  This used
+//! to live as `BubbleStore::member_to_bubble`; routing is a tag
+//! concern, not a bubble concern, so it moves here in Phase 2B.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use mlc_core::tag_manager::BubbleId;
+use mlc_core::tag_manager::{BubbleId, SyncMemberId};
 
 use super::tag::{Tag, TagId};
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct TagStore {
     tags: HashMap<TagId, Tag>,
+
+    /// Reverse index: member → tag.  A member can be in at most one
+    /// tag at a time.
+    member_to_tag: HashMap<SyncMemberId, TagId>,
+
+    /// The tag whose member is the currently-active chart.  Updated
+    /// when the active chart changes.  (Was `BubbleStore::active_chart_bubble`.)
+    pub active_chart_tag: Option<TagId>,
+
+    /// Panel members currently in Synced state.  Their tag membership
+    /// is dynamic — reassigned when the active chart changes.
+    /// (Was `BubbleStore::synced_panels`.)
+    synced_panels: HashSet<SyncMemberId>,
 }
+
+#[derive(Debug)]
+pub enum TagStoreError {
+    MemberNotInTag(SyncMemberId),
+    TagNotFound(TagId),
+}
+
+impl std::fmt::Display for TagStoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MemberNotInTag(id) => write!(f, "member {:?} is not in any tag", id),
+            Self::TagNotFound(id) => write!(f, "tag {:?} does not exist", id),
+        }
+    }
+}
+
+impl std::error::Error for TagStoreError {}
 
 impl TagStore {
     pub fn new() -> Self {
         Self::default()
     }
 
+    // =========================================================================
+    // CRUD
+    // =========================================================================
+
     pub fn insert(&mut self, tag: Tag) {
         self.tags.insert(tag.id, tag);
     }
 
+    /// Remove a tag and unmap all its members.
     pub fn remove(&mut self, id: TagId) -> Option<Tag> {
-        self.tags.remove(&id)
+        if let Some(tag) = self.tags.remove(&id) {
+            for member_id in &tag.members {
+                self.member_to_tag.remove(member_id);
+            }
+            Some(tag)
+        } else {
+            None
+        }
     }
 
     pub fn get(&self, id: TagId) -> Option<&Tag> {
@@ -41,6 +84,10 @@ impl TagStore {
         self.tags.iter()
     }
 
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&TagId, &mut Tag)> {
+        self.tags.iter_mut()
+    }
+
     pub fn len(&self) -> usize {
         self.tags.len()
     }
@@ -53,10 +100,88 @@ impl TagStore {
         self.tags.contains_key(&id)
     }
 
-    /// Look up the tag paired with a given bubble.  Today Tag.id ==
-    /// data_bubble_id so this is identity; kept as a named accessor so
-    /// Phase 8 rename doesn't churn callers.
+    /// Tag.id == data_bubble_id by invariant, so this is identity.
+    /// Kept as a named accessor so the Phase 8 rename doesn't churn
+    /// callers.
     pub fn tag_for_bubble(&self, bid: BubbleId) -> Option<&Tag> {
         self.get(bid)
+    }
+
+    pub fn tag_for_bubble_mut(&mut self, bid: BubbleId) -> Option<&mut Tag> {
+        self.get_mut(bid)
+    }
+
+    // =========================================================================
+    // Membership
+    // =========================================================================
+
+    /// Connect a member to a tag.  If already in another tag, the
+    /// member is disconnected first.
+    pub fn connect(
+        &mut self,
+        member: SyncMemberId,
+        tag_id: TagId,
+    ) -> Result<(), TagStoreError> {
+        self.disconnect(member);
+        let tag = self
+            .tags
+            .get_mut(&tag_id)
+            .ok_or(TagStoreError::TagNotFound(tag_id))?;
+        tag.members.insert(member);
+        self.member_to_tag.insert(member, tag_id);
+        Ok(())
+    }
+
+    /// Disconnect a member.  Returns the tag id it was in, or `None`.
+    pub fn disconnect(&mut self, member: SyncMemberId) -> Option<TagId> {
+        if let Some(tag_id) = self.member_to_tag.remove(&member) {
+            if let Some(tag) = self.tags.get_mut(&tag_id) {
+                tag.members.remove(&member);
+            }
+            Some(tag_id)
+        } else {
+            None
+        }
+    }
+
+    pub fn tag_for_member(&self, member: SyncMemberId) -> Option<TagId> {
+        self.member_to_tag.get(&member).copied()
+    }
+
+    // =========================================================================
+    // Color / auto_created helpers
+    // =========================================================================
+
+    /// Find the first tag with the given color (within a small epsilon).
+    pub fn find_tag_by_color(&self, color: [f32; 4]) -> Option<TagId> {
+        const EPS: f32 = 1.0e-3;
+        self.tags
+            .iter()
+            .find(|(_, t)| {
+                (0..4).all(|i| (t.color[i] - color[i]).abs() < EPS)
+            })
+            .map(|(id, _)| *id)
+    }
+
+    /// Read color out of the tag for a given bubble id.
+    pub fn color_for_bubble(&self, bid: BubbleId) -> Option<[f32; 4]> {
+        self.get(bid).map(|t| t.color)
+    }
+
+    /// Read `auto_created` for a given bubble id.
+    pub fn auto_created_for_bubble(&self, bid: BubbleId) -> bool {
+        self.get(bid).map(|t| t.auto_created).unwrap_or(false)
+    }
+
+    // =========================================================================
+    // Synced-panel set
+    // =========================================================================
+
+    pub fn synced_panels(&self) -> &HashSet<SyncMemberId> {
+        &self.synced_panels
+    }
+
+    pub fn synced_panels_mut(&mut self) -> &mut HashSet<SyncMemberId> {
+        &mut self.synced_panels
     }
 }
