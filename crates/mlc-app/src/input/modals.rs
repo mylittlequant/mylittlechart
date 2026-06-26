@@ -642,7 +642,11 @@ impl ChartApp {
             if let Some(new_id) = new_id_opt {
                 if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
                     if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(active_leaf) {
-                        self.core.indicators_mut().assign_window(new_id, Some(chart_id.0));
+                        // Indicator lives in the chart's CURRENT bubble.
+                        let bid = self.panel_app.panel_grid.containers()
+                            .get(&chart_id)
+                            .map(|w| w.current_bubble_id.0);
+                        self.core.indicators_mut().assign_bubble(new_id, bid);
                     }
                 }
                 // Apply saved params, output styles, and visibility from the template
@@ -1071,9 +1075,16 @@ impl ChartApp {
                                     }
                                 }
                             }
-                            // Bind to the active window so it is scoped correctly.
+                            // Bind to the active chart's CURRENT bubble.
                             if let (Some(active_leaf), Some(chart_id)) = (active_leaf, active_container_id) {
-                                self.core.indicators_mut().assign_window(new_id, Some(chart_id.0));
+                                let bid = self.panel_app.panel_grid.containers()
+                                    .get(&chart_id)
+                                    .map(|w| w.current_bubble_id.0);
+                                crate::sglog!(
+                                    "[indicator-create] type='{}' new_id={} chart_id={:?} current_bubble_id={:?}",
+                                    item_id, new_id, chart_id, bid
+                                );
+                                self.core.indicators_mut().assign_bubble(new_id, bid);
                                 // If this window is in a sync group and indicators are synced,
                                 // track the config in the group and push to peers.
                                 if let Some(group_id) = self.panel_app.panel_grid

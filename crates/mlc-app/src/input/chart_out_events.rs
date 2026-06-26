@@ -2001,18 +2001,20 @@ impl ChartApp {
                         return;
                     };
 
-                    let pre_tag_ids: Vec<u64> = {
-                        let auto_bid = self.panel_app.panel_grid.containers()
-                            .get(&chart_id)
-                            .map(|w| w.auto_bubble_id);
-                        auto_bid
-                            .and_then(|bid| self.with_bubble(bid, |bub| bub.pre_tag_indicator_ids.clone()))
-                            .unwrap_or_default()
-                    };
+                    let auto_bid_raw: Option<u64> = self.panel_app.panel_grid.containers()
+                        .get(&chart_id)
+                        .map(|w| w.auto_bubble_id.0);
+                    let pre_tag_ids: Vec<u64> = auto_bid_raw
+                        .and_then(|bid| self.with_bubble(
+                            mlc_core::tag_manager::BubbleId(bid),
+                            |bub| bub.pre_tag_indicator_ids.clone(),
+                        ))
+                        .unwrap_or_default();
 
                     if new_sync {
-                        // OFF  ->  ON: hide window-local indicators (in pre_tag_indicator_ids
-                        // but not yet in the group's indicator_configs).
+                        // OFF  ->  ON: hide home (auto-bubble) indicators that
+                        // are listed in pre_tag_indicator_ids but not yet
+                        // mirrored into the active group's indicator_configs.
                         let group_indicator_ids: std::collections::HashSet<u64> = self
                             .core.bubble().bubble
                             .bubble(gid)
@@ -2021,7 +2023,7 @@ impl ChartApp {
 
                         let to_hide: Vec<u64> = self.core.indicators().instances_iter()
                             .filter(|i| {
-                                i.window_id == Some(chart_id.0)
+                                i.bubble_id == auto_bid_raw
                                     && pre_tag_ids.contains(&i.id)
                                     && !group_indicator_ids.contains(&i.id)
                             })
@@ -2034,14 +2036,15 @@ impl ChartApp {
                             }
                         }
                         eprintln!(
-                            "[BubbleStore] sync_indicators ON: hid {} window-local indicators",
+                            "[BubbleStore] sync_indicators ON: hid {} home indicators",
                             to_hide.len()
                         );
                     } else {
-                        // ON  ->  OFF: unhide window-local (pre_tag) indicators.
+                        // ON  ->  OFF: unhide home (auto-bubble) indicators
+                        // that were tucked away on tag join.
                         let to_show: Vec<u64> = self.core.indicators().instances_iter()
                             .filter(|i| {
-                                i.window_id == Some(chart_id.0)
+                                i.bubble_id == auto_bid_raw
                                     && pre_tag_ids.contains(&i.id)
                                     && !i.visible
                             })

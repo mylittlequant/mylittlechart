@@ -525,9 +525,16 @@ impl ChartApp {
                             else { "tag-from-untagged(disconnect+join)" }
                         );
                         if !same_color {
-                            // Desync from old group (purge cloned primitives/indicators).
-                            if old_color.is_some() {
-                                self.perform_desync(leaf_id);
+                            let is_retag = old_color.is_some();
+                            if is_retag {
+                                // RE-TAG (was already in a color tag): detach
+                                // without restoring the home stash into
+                                // drawing_manager / indicators.  The previous
+                                // tag's primitives + indicators stay with it;
+                                // the new tag is a fresh empty bucket (or, if
+                                // the color is already used by another chart,
+                                // a standard peer-join into that group).
+                                self.disconnect_from_current_group(leaf_id);
                             } else {
                                 // Bug D fix: window was in an invisible auto group — clean it up
                                 // before joining a color tag, so the old auto group doesn't
@@ -537,11 +544,15 @@ impl ChartApp {
                             // Assign new color.
                             self.panel_app.leaf_color_tags.insert(leaf_id, new_color);
                             sglog!(
-                                "[swatch-leaf] assigned color to leaf {:?}, calling sync_join_color_group",
-                                leaf_id
+                                "[swatch-leaf] assigned color to leaf {:?}, calling sync_join_color_group (is_retag={})",
+                                leaf_id, is_retag
                             );
                             // Sync with new group — clone primitives/indicators from peers.
-                            self.sync_join_color_group(leaf_id, new_color);
+                            if is_retag {
+                                self.sync_join_color_group_retag(leaf_id, new_color);
+                            } else {
+                                self.sync_join_color_group(leaf_id, new_color);
+                            }
                             self.sidebar_data_dirty = true;
                             // Persist tag assignment immediately.
                             self.autosave_snapshot();

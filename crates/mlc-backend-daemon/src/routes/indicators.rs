@@ -44,7 +44,8 @@ struct IndicatorSummaryOut {
     visible: bool,
     locked: bool,
     pane: usize,
-    window_id: Option<u64>,
+    #[serde(alias = "window_id")]
+    bubble_id: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -64,7 +65,8 @@ struct CreateIndicatorIn {
     type_id: String,
     #[serde(default)]
     params: HashMap<String, serde_json::Value>,
-    window_id: Option<u64>,
+    #[serde(alias = "window_id")]
+    bubble_id: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -84,7 +86,8 @@ struct IndicatorUpdatedOut {
     visible: bool,
     locked: bool,
     pane: usize,
-    window_id: Option<u64>,
+    #[serde(alias = "window_id")]
+    bubble_id: Option<u64>,
 }
 
 /// Catalog DTO for one indicator definition.
@@ -143,7 +146,7 @@ async fn list_indicators(State(s): State<AppState>) -> impl IntoResponse {
             visible: inst.visible,
             locked: inst.locked,
             pane: inst.pane,
-            window_id: inst.window_id,
+            bubble_id: inst.bubble_id,
         })
         .collect();
     Json(IndicatorsOut { indicators })
@@ -191,9 +194,9 @@ async fn create_indicator(
         }
     }
 
-    // Assign to window if requested.
-    if let Some(wid) = body.window_id {
-        guard.assign_window(id, Some(wid));
+    // Assign to bubble if requested.
+    if let Some(bid) = body.bubble_id {
+        guard.assign_bubble(id, Some(bid));
     }
 
     let (type_id, name) = guard
@@ -239,7 +242,7 @@ async fn patch_indicator(
             visible: inst.visible,
             locked: inst.locked,
             pane: inst.pane,
-            window_id: inst.window_id,
+            bubble_id: inst.bubble_id,
         });
     match out {
         Some(dto) => Json(dto).into_response(),

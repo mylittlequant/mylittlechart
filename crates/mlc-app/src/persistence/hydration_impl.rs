@@ -807,10 +807,12 @@ impl ChartApp {
                             ind_snap.id,
                             &ind_snap.type_id,
                         ) {
-                            // Bind to the persisted window_id via the index  -  direct
+                            // Bind to the persisted bubble_id via the index — direct
                             // field assignment would leak the instance into the
-                            // wrong by_window_id bucket.
-                            self.core.indicators_mut().assign_window(ind_snap.id, ind_snap.window_id);
+                            // wrong by_bubble_id bucket.  Old preset files used
+                            // `window_id` for the same slot; the snapshot type
+                            // keeps a serde alias so they still load.
+                            self.core.indicators_mut().assign_bubble(ind_snap.id, ind_snap.bubble_id);
                             if let Some(inst) = self.core.indicators_mut().get_instance_mut(ind_snap.id) {
                                 inst.name = ind_snap.name.clone();
                                 inst.pane = ind_snap.pane;

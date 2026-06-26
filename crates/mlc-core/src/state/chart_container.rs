@@ -328,6 +328,17 @@ pub struct ChartContainer {
     /// so mode is tightly coupled to viewport sync state.
     pub stashed_scale_mode: Option<ScaleMode>,
 
+    /// Whether the chart's home stash (auto_bubble.primitives +
+    /// pre_tag_indicator_ids) should be rendered as a "Memory" overlay in the
+    /// Object Tree while the chart is in its current color tag.  Set to
+    /// `true` only on flows that legitimately carry the chart's home content
+    /// forward into the new tag (first untagged -> tag, or split sibling
+    /// inheriting from a parent that had it).  Re-tag (tag -> tag) sets it
+    /// to `false`: the new tag is a fresh bucket and must not display the
+    /// home stash as memory in its tree.  Reset to `false` on
+    /// `perform_desync` so the next tag entry decides afresh.
+    pub tag_inherits_home_overlay: bool,
+
     /// Last data-fetch error for this window, if any.
     ///
     /// Set by the `LiveUpdate::Error` handler when an error is matched to this
@@ -500,6 +511,7 @@ impl ChartContainer {
             needs_auto_scale_after_bars: false,
             restore_scale_mode: None,
             stashed_scale_mode: None,
+            tag_inherits_home_overlay: false,
             needs_snap_after_backfill: false,
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
@@ -852,6 +864,12 @@ impl ChartContainer {
             restore_scale_mode: None,
             // Split child has no stashed scale mode — it joins the group fresh.
             stashed_scale_mode: None,
+            // Split child inherits the source's home-overlay flag verbatim:
+            // do_split's caller patches this to mirror the source window
+            // after construction (clone_for_split_shell can't reach the
+            // source's tag state).  Default to `false`; the patch happens
+            // in do_split right after `clone_for_split_shell`.
+            tag_inherits_home_overlay: false,
             // Split child does not need a post-backfill snap.
             needs_snap_after_backfill: false,
             // Split child has no in-flight scroll fetch.
@@ -1276,6 +1294,7 @@ impl ChartContainer {
             needs_auto_scale_after_bars: false,
             restore_scale_mode: None,
             stashed_scale_mode: None,
+            tag_inherits_home_overlay: false,
             // Pair with `pending_symbol_load: true` above — when the deferred
             // REST sweep lands as BarsLoaded the reconcile path will fresh-snap
             // the viewport to the right edge with the standard padding, same

@@ -210,17 +210,19 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                             };
                             inst.set_param(k, iv);
                         }
-                        (true, inst.window_id)
+                        (true, inst.bubble_id)
                     } else {
                         (false, None)
                     }
                 };
                 if found {
+                    // Indicator ownership is by bubble — bars live on the
+                    // bubble directly, no chart lookup needed.
                     let bars: Vec<mlc_core::Bar> = wid_opt
-                        .and_then(|win| chart.panel_app.panel_grid.containers()
-                            .values().find(|cw| cw.id.0 == win)
-                            .map(|cw| cw.current_bubble_id))
-                        .and_then(|bid| chart.with_bubble(bid, |b| b.bars.clone()))
+                        .and_then(|bid_raw| chart.with_bubble(
+                            mlc_core::tag_manager::BubbleId(bid_raw),
+                            |b| b.bars.clone(),
+                        ))
                         .unwrap_or_default();
                     chart.core.indicators_mut().calculate(indicator_id, &bars);
                     eprintln!("[AgentCommand] UpdateIndicator: id={}", indicator_id);

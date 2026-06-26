@@ -180,9 +180,13 @@ impl ChartApp {
                     }
                 }
 
-                // Update current_bubble_id on the window.
+                // Update current_bubble_id on the window.  Also clear the
+                // home-overlay flag — the chart is back in its untagged home
+                // state; the next tag entry decides afresh whether to surface
+                // the overlay.
                 if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
                     window.current_bubble_id = auto_bid;
+                    window.tag_inherits_home_overlay = false;
                 }
 
                 // Rebind drawing_manager to the auto-bubble's style store.
@@ -211,28 +215,14 @@ impl ChartApp {
                     }
                 }
 
-                // Remove tag indicators; unhide pre-tag indicators.
-                let to_remove: Vec<u64> = self.core.indicators()
-                                .instances_iter()
-                    .filter(|i| {
-                        i.window_id == Some(chart_id.0)
-                            && !pre_tag_ids.contains(&i.id)
-                    })
-                    .map(|i| i.id)
-                    .collect();
-                let remove_count = to_remove.len();
-                for id in &to_remove {
-                    self.core.indicators_mut().remove_instance(*id);
-                }
-                for &id in &pre_tag_ids {
-                    if let Some(inst) = self.core.indicators_mut().get_instance_mut(id) {
-                        inst.visible = true;
-                    }
-                }
-                eprintln!(
-                    "[BubbleStore] Desync: removed {} tag indicators, unhid {} pre-tag",
-                    remove_count, pre_tag_ids.len()
-                );
+                // Untag = pure detach + attach to home auto-bubble.  No
+                // instance reassignment: indicators in the detached tag
+                // bubble stay with that tag (peer charts still see them);
+                // indicators in the home auto-bubble were there all along.
+                // Owner UX: "untag is just a pointer flip from the tag
+                // bubble to the chart's auto-bubble; nothing moves".
+                let _ = &pre_tag_ids;
+                eprintln!("[BubbleStore] Desync: pointer-flip to home auto_bubble {:?}", auto_bid);
 
                 // Sync drawing_manager primitives back into the auto-bubble so they
                 // are the authoritative home-state for future join cycles.
@@ -273,6 +263,29 @@ impl ChartApp {
     /// Join an existing color group: clone primitives and indicators from a peer
     /// that already belongs to this color group into the joining leaf.
     pub(super) fn sync_join_color_group(&mut self, joining_leaf: mlc_core::LeafId, color: [f32; 4]) {
+        self.sync_join_color_group_inner(joining_leaf, color, false);
+    }
+
+    /// Join a color group as a re-tag (chart was already in some color group).
+    /// Differences from a fresh join:
+    ///   - When the target group is NEW: do NOT seed primitives / indicator
+    ///     configs from drawing_manager + home indicators.  The target tag is
+    ///     a brand-new empty bucket and must NOT inherit the chart's home
+    ///     stash (drawings + indicators that lived ungrouped before the very
+    ///     first tag).  Owner UX: re-tag (tag1 -> tag2) is just a membership
+    ///     flip; only split / untag-then-tag carry home content forward.
+    ///   - Do NOT overwrite auto_bubble.command_history /
+    ///     auto_bubble.pre_tag_indicator_ids — they were set on the first
+    ///     tag entry and must be preserved across re-tags so the eventual
+    ///     untag still restores the original home state.
+    ///   - When the target group is EXISTING: peer-join works the same as a
+    ///     fresh join (chart inherits the existing group's content; that is
+    ///     the user-requested "join an existing tag" semantics).
+    pub(super) fn sync_join_color_group_retag(&mut self, joining_leaf: mlc_core::LeafId, color: [f32; 4]) {
+        self.sync_join_color_group_inner(joining_leaf, color, true);
+    }
+
+    fn sync_join_color_group_inner(&mut self, joining_leaf: mlc_core::LeafId, color: [f32; 4], is_retag: bool) {
         {
             let cid_dbg = self.panel_app.panel_grid.container_id_for_leaf(joining_leaf);
             let auto_bid_dbg = cid_dbg
@@ -373,9 +386,14 @@ impl ChartApp {
             }
 
             // Snapshot pre-tag indicator ids (these survive desync).
+            // Indicators owned by the chart's home auto-bubble are the
+            // pre-tag set under the bubble-ownership model.
+            let auto_bid_raw_pre = self.panel_app.panel_grid.containers()
+                .get(&chart_id)
+                .map(|w| w.auto_bubble_id.0);
             let pre_tag_ids: Vec<u64> = self.core.indicators()
                                 .instances_iter()
-                .filter(|i| i.window_id == Some(chart_id.0) && i.origin_id.is_none())
+                .filter(|i| auto_bid_raw_pre.map_or(false, |b| i.bubble_id == Some(b)) && i.origin_id.is_none())
                 .map(|i| i.id)
                 .collect();
 
@@ -401,7 +419,22 @@ impl ChartApp {
 
                 // Stash command_history and pre_tag_ids into auto_bubble.
                 // Replace window.command_history with a fresh one so group ops are independent.
-                if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(joining_leaf) {
+                //
+                // On RE-TAG (was already in some color group) the stash already
+                // holds the original home state from the very first tag entry —
+                // do NOT overwrite it, and do NOT replace window.command_history
+                // (window.command_history at this point is already the empty
+                // tag-scoped history left by the disconnect step; stashing it
+                // back into auto_bubble would clobber the home history).
+                if is_retag {
+                    if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(joining_leaf) {
+                        window.current_bubble_id = group_id;
+                        // Re-tag: this chart did NOT bring home content into
+                        // the new tag (the previous tag owned it).  Do not
+                        // render home stash as a Memory overlay in this tag.
+                        window.tag_inherits_home_overlay = false;
+                    }
+                } else if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(joining_leaf) {
                     let old_history = std::mem::replace(
                         &mut window.command_history,
                         mlc_core::CommandHistory::new(250),
@@ -414,10 +447,50 @@ impl ChartApp {
                     }
                     // Update current_bubble_id to the new color group.
                     window.current_bubble_id = group_id;
+                    // First tag entry from untagged: the chart's home stash
+                    // does flow into this tag's Memory overlay.
+                    window.tag_inherits_home_overlay = true;
+                }
+
+                // First tag entry (not re-tag): CLONE the chart's home
+                // indicators into the new tag bubble.  Owner UX: "new tag
+                // bubble clones the contents of the source auto-bubble".
+                // Home originals stay in auto_bubble untouched; clones live
+                // in the tag bubble.
+                if !is_retag {
+                    let clones = {
+                        let im = self.core.indicators();
+                        pre_tag_ids.iter().filter_map(|iid| {
+                            im.get_instance(*iid).cloned()
+                        }).collect::<Vec<_>>()
+                    };
+                    for src in clones {
+                        let mut im = self.core.indicators_mut();
+                        if let Some(new_id) = im.create_instance(&src.type_id) {
+                            im.assign_bubble(new_id, Some(group_id.0));
+                            if let Some(inst) = im.get_instance_mut(new_id) {
+                                inst.params = src.params;
+                                inst.outputs = src.outputs;
+                                inst.visible = src.visible;
+                                inst.locked = src.locked;
+                                inst.pane = src.pane;
+                                inst.order = src.order;
+                                inst.timeframe_visibility = src.timeframe_visibility;
+                                inst.origin_id = Some(src.id);
+                            }
+                        }
+                    }
                 }
 
                 // Seed group.primitives from auto_bubble.primitives (clone + re-ID).
                 // auto_bubble.primitives already holds the chart's home drawings.
+                //
+                // RE-TAG note: on a tag-to-tag transition the source home
+                // drawings already lived inside the previous tag group.  The
+                // new group must NOT inherit them — owner UX is "re-tag is a
+                // bare membership flip, not a stash carry-forward".  Skip the
+                // whole seed + auto_bubble.primitives re-stash block.
+                if !is_retag {
                 let (prim_symbol, prim_exchange, prim_account_type) = {
                     let sym = self.symbol_for_chart(chart_id)
                         .map(String::from)
@@ -498,6 +571,7 @@ impl ChartApp {
                         home_count, bid
                     );
                 }
+                } // end if !is_retag
                 // Clear drawing_manager — per-frame forward sync from
                 // group.primitives will repopulate it with the re-ID'd group
                 // copies so we render the group view, not the home view.
@@ -552,6 +626,11 @@ impl ChartApp {
                 }
 
                 // Seed indicator configs from the creating window's indicators.
+                //
+                // RE-TAG note: same rationale as the primitives skip above —
+                // the previous tag already owned these indicators, the new
+                // tag must start empty.
+                if !is_retag {
                 let (seed_symbol, seed_exchange, seed_account_type) = {
                     let sym = self.symbol_for_chart(chart_id)
                         .map(String::from)
@@ -564,8 +643,11 @@ impl ChartApp {
                         .unwrap_or_else(|| "S".to_string());
                     (sym, exch, at)
                 };
+                let auto_bid_raw_cfg = self.panel_app.panel_grid.containers()
+                    .get(&chart_id)
+                    .map(|w| w.auto_bubble_id.0);
                 let mut configs: Vec<mlc_core::tag_manager::IndicatorGroupConfig> = self.core.indicators().instances_iter()
-                    .filter(|i| i.origin_id.is_none() && i.window_id == Some(chart_id.0))
+                    .filter(|i| i.origin_id.is_none() && auto_bid_raw_cfg.map_or(false, |b| i.bubble_id == Some(b)))
                     .map(|i| mlc_core::tag_manager::IndicatorGroupConfig {
                         id: i.id,
                         type_id: i.type_id.clone(),
@@ -586,6 +668,7 @@ impl ChartApp {
                         group_id, group.primitives.len(), configs.len()
                     );
                     group.indicator_configs = configs;
+                }
                 }
                 return;
             }
@@ -676,7 +759,16 @@ impl ChartApp {
                 .map(|w| w.auto_bubble_id);
 
             // Stash command_history and pre_tag_ids into auto_bubble.
-            if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(joining_leaf) {
+            //
+            // RE-TAG: same rationale as the new-group branch above — the
+            // home stash already lives in auto_bubble from the very first
+            // tag entry; preserve it and do not overwrite command_history.
+            if is_retag {
+                if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(joining_leaf) {
+                    window.current_bubble_id = group_id;
+                    window.tag_inherits_home_overlay = false;
+                }
+            } else if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(joining_leaf) {
                 let old_history = std::mem::replace(
                     &mut window.command_history,
                     mlc_core::CommandHistory::new(250),
@@ -693,17 +785,41 @@ impl ChartApp {
                 }
                 // Update current_bubble_id to the existing color group.
                 window.current_bubble_id = group_id;
+                window.tag_inherits_home_overlay = true;
             }
 
-            // Hide pre-tag indicators by setting visible=false.
-            for &id in &pre_tag_ids {
-                if let Some(inst) = self.core.indicators_mut().get_instance_mut(id) {
-                    inst.visible = false;
+            // First tag entry into an EXISTING group: CLONE the chart's
+            // home indicators into the group bubble.  Same model as the
+            // new-group branch above — home stays intact, tag gets copies.
+            if !is_retag {
+                let clones = {
+                    let im = self.core.indicators();
+                    pre_tag_ids.iter().filter_map(|iid| im.get_instance(*iid).cloned()).collect::<Vec<_>>()
+                };
+                for src in clones {
+                    let mut im = self.core.indicators_mut();
+                    if let Some(new_id) = im.create_instance(&src.type_id) {
+                        im.assign_bubble(new_id, Some(group_id.0));
+                        if let Some(inst) = im.get_instance_mut(new_id) {
+                            inst.params = src.params;
+                            inst.outputs = src.outputs;
+                            inst.visible = src.visible;
+                            inst.locked = src.locked;
+                            inst.pane = src.pane;
+                            inst.order = src.order;
+                            inst.timeframe_visibility = src.timeframe_visibility;
+                            inst.origin_id = Some(src.id);
+                        }
+                    }
                 }
             }
-            eprintln!("[BubbleStore] Hid {} pre-tag indicators", pre_tag_ids.len());
 
-            // Sync tag indicators to joining window.
+            // Sync tag indicators to joining window — clones any extra
+            // indicator_configs the group already had from other peers
+            // (e.g. peer chart added something while this chart was
+            // untagged).  Under bubble ownership the join doesn't need a
+            // per-chart clone, but keep the call so config-driven seeding
+            // still runs for any group that pre-existed without instances.
             let leaf_chart_ids = vec![(joining_leaf, chart_id)];
             self.sync_group_indicators_to_new_members(group_id, &leaf_chart_ids);
             self.sync_sub_panes_from_manager();
@@ -1116,6 +1232,25 @@ impl ChartApp {
             for &(_, chart_id) in &leaf_chart_ids {
                 let _ = self.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, group_id);
             }
+            // Point every leaf's `window.current_bubble_id` at the shared
+            // group bubble.  Without this, sibling leaves born by the split
+            // keep their freshly-created auto_bubble as `current_bubble_id`
+            // while `BubbleStore.bubble_for_chart` (= reverse map) returns
+            // group_id — the two paths get out of sync and the renderer +
+            // sub_pane geometry read the wrong bucket, so the sibling shows
+            // no group indicators / drawings while the Object Tree shows
+            // them (Object Tree uses bubble_for_chart, canvas uses
+            // window.current_bubble_id via the atomic).
+            for &(leaf_id, _) in &leaf_chart_ids {
+                if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
+                    window.current_bubble_id = group_id;
+                }
+            }
+            for &(leaf_id, _) in &leaf_chart_ids {
+                if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
+                    window.tag_inherits_home_overlay = true;
+                }
+            }
             // Rebind every new window's DM to the group's shared style store.
             let style_arc = self.core.bubble().bubble
                 .bubble(group_id)
@@ -1133,9 +1268,12 @@ impl ChartApp {
             // into its auto_bubble so desync can restore them.
             if is_new_group {
                 if let Some(&(source_leaf, source_cid)) = leaf_chart_ids.first() {
+                    let source_auto_bid_raw = self.panel_app.panel_grid.containers()
+                        .get(&source_cid)
+                        .map(|w| w.auto_bubble_id.0);
                     let pre_tag_ids: Vec<u64> = self.core.indicators()
                                 .instances_iter()
-                        .filter(|i| i.window_id == Some(source_cid.0) && i.origin_id.is_none())
+                        .filter(|i| source_auto_bid_raw.map_or(false, |b| i.bubble_id == Some(b)) && i.origin_id.is_none())
                         .map(|i| i.id)
                         .collect();
 
@@ -1154,7 +1292,7 @@ impl ChartApp {
                         if let Some(bid) = source_auto_bid {
                             if let Some(auto_bub) = self.core.bubble_mut().bubble.bubble_mut(bid) {
                                 auto_bub.command_history = old_history;
-                                auto_bub.pre_tag_indicator_ids = pre_tag_ids;
+                                auto_bub.pre_tag_indicator_ids = pre_tag_ids.clone();
                             }
                         }
                         // Update current_bubble_id to the new group.
@@ -1162,6 +1300,30 @@ impl ChartApp {
                     }
                     // auto_bubble.primitives already holds the source's home drawings —
                     // no explicit stash needed.
+
+                    // Clone source's home indicators into the new tag bubble.
+                    // Owner UX: split-from-untagged creates a new tag bubble
+                    // whose contents are a clone of the source auto-bubble.
+                    let clones = {
+                        let im = self.core.indicators();
+                        pre_tag_ids.iter().filter_map(|iid| im.get_instance(*iid).cloned()).collect::<Vec<_>>()
+                    };
+                    for src in clones {
+                        let mut im = self.core.indicators_mut();
+                        if let Some(new_id) = im.create_instance(&src.type_id) {
+                            im.assign_bubble(new_id, Some(group_id.0));
+                            if let Some(inst) = im.get_instance_mut(new_id) {
+                                inst.params = src.params;
+                                inst.outputs = src.outputs;
+                                inst.visible = src.visible;
+                                inst.locked = src.locked;
+                                inst.pane = src.pane;
+                                inst.order = src.order;
+                                inst.timeframe_visibility = src.timeframe_visibility;
+                                inst.origin_id = Some(src.id);
+                            }
+                        }
+                    }
                 }
             }
             eprintln!(
@@ -1256,9 +1418,13 @@ impl ChartApp {
                             .unwrap_or_else(|| "S".to_string());
                         (sym, exch, at)
                     };
+                    let source_chart_auto_bid_raw = self.panel_app.panel_grid.containers()
+                        .get(&source_chart_id)
+                        .map(|w| w.auto_bubble_id.0);
                     let mut configs: Vec<mlc_core::tag_manager::IndicatorGroupConfig> = self.core.indicators().instances_iter()
                         .filter(|i| {
-                            i.origin_id.is_none() && i.window_id == Some(source_chart_id.0)
+                            i.origin_id.is_none()
+                                && source_chart_auto_bid_raw.map_or(false, |b| i.bubble_id == Some(b))
                         })
                         .map(|i| mlc_core::tag_manager::IndicatorGroupConfig {
                             id: i.id,
@@ -1888,8 +2054,10 @@ impl ChartApp {
         let source_cid = self.panel_app.panel_grid.container_id_for_leaf(source_leaf);
         let src_pane_type_ord: Option<(String, usize)> = src_pane_id.and_then(|pid| {
             let cid = source_cid?;
+            let bid = self.panel_app.panel_grid.containers()
+                .get(&cid).map(|w| w.current_bubble_id.0).unwrap_or(0);
             let mut sub_pane_insts: Vec<(u64, String, usize, u64)> = self.core.indicators()
-                                .get_instances_for_window(cid.0)
+                                .get_instances_for_bubble(bid)
                 .into_iter()
                 .filter(|i| i.pane > 0)
                 .map(|i| (i.id, i.type_id.clone(), i.pane, i.id))
@@ -1913,8 +2081,10 @@ impl ChartApp {
             // Remap source pane_id to the peer's corresponding instance_id.
             let peer_pane_id: Option<u64> = src_pane_type_ord.as_ref().and_then(|(type_id, ord)| {
                 let cid = peer_cid?;
+                let pbid = self.panel_app.panel_grid.containers()
+                    .get(&cid).map(|w| w.current_bubble_id.0).unwrap_or(0);
                 let mut sub_pane_insts: Vec<(u64, String, usize, u64)> = self.core.indicators()
-                                .get_instances_for_window(cid.0)
+                                .get_instances_for_bubble(pbid)
                     .into_iter()
                     .filter(|i| i.pane > 0)
                     .map(|i| (i.id, i.type_id.clone(), i.pane, i.id))
@@ -2166,16 +2336,13 @@ impl ChartApp {
             return;
         }
 
+        let group_bid_raw = group_id.0;
         for &(_leaf_id, chart_id) in new_leaf_chart_ids {
-            // Snapshot the already-present type_ids under a SHORT read guard,
-            // then drop it before any `indicators_mut()`. Doing `.iter()` and
-            // `indicators_mut()` in the same statement self-deadlocks the
-            // std::sync::RwLock — exactly the bug that froze the UI on every
-            // chart split (owner repro 2026-06-20).
+            // Already-present type_ids in this group (= bubble).
             let existing_types: std::collections::HashSet<String> = {
                 let im = self.core.indicators();
                 im.instances_iter()
-                    .filter(|i| i.window_id == Some(chart_id.0))
+                    .filter(|i| i.bubble_id == Some(group_bid_raw))
                     .map(|i| i.type_id.clone())
                     .collect()
             };
@@ -2188,21 +2355,21 @@ impl ChartApp {
                     let mut im = self.core.indicators_mut();
                     let nid = im.create_instance(type_id);
                     if let Some(new_id) = nid {
-                        im.assign_window(new_id, Some(chart_id.0));
+                        im.assign_bubble(new_id, Some(group_bid_raw));
                     }
                     nid
                 };
                 if let Some(new_id) = new_id_opt {
                     eprintln!(
-                        "[BubbleStore] Split sync: created indicator '{}' (id={}) for chart {:?}",
-                        name, new_id, chart_id
+                        "[BubbleStore] Split sync: created indicator '{}' (id={}) on bubble {} (chart {:?})",
+                        name, new_id, group_bid_raw, chart_id
                     );
                 }
             }
 
-            // Calculate indicators with this window's bars.
+            // Calculate indicators on the shared bubble using this chart's bars.
             let bars = self.bars_for_chart(chart_id);
-            self.core.indicators_mut().calculate_all_for_window(chart_id.0, &bars);
+            self.core.indicators_mut().calculate_all_for_bubble(group_bid_raw, &bars);
         }
         self.sync_sub_panes_from_manager();
         eprintln!(
@@ -2250,7 +2417,9 @@ impl ChartApp {
                 let mut im = self.core.indicators_mut();
                 let nid = im.create_instance(type_id);
                 if let Some(new_id) = nid {
-                    im.assign_window(new_id, Some(peer_cid.0));
+                    // All peers share the same group bubble; the indicator
+                    // lives once on the bubble, not per-chart.
+                    im.assign_bubble(new_id, Some(group_id.0));
                     if let Some(inst) = im.get_instance_mut(new_id) {
                         inst.origin_id = None;
                     }
@@ -2264,7 +2433,7 @@ impl ChartApp {
                     .map(|w| w.current_bubble_id)
                     .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()));
                 if let Some(bars) = bars {
-                    self.core.indicators_mut().calculate_all_for_window(peer_cid.0, &bars);
+                    self.core.indicators_mut().calculate_all_for_bubble(group_id.0, &bars);
                 }
                 eprintln!(
                     "[BubbleStore] Synced indicator '{}' (id={}) to peer chart {:?}",

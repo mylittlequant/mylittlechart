@@ -2539,7 +2539,10 @@ impl ChartApp {
                 // This is the default-on state for brand-new charts that have no saved preset.
                 if let Some(chart_id) = active_chart_id {
                     if let Some(new_vol_id) = app.core.indicators_mut().create_instance("builtin_volume") {
-                        app.core.indicators_mut().assign_window(new_vol_id, Some(chart_id.0));
+                        let bid = app.panel_app.panel_grid.containers()
+                            .get(&chart_id)
+                            .map(|w| w.current_bubble_id.0);
+                        app.core.indicators_mut().assign_bubble(new_vol_id, bid);
                     }
                 }
 
@@ -3677,10 +3680,16 @@ impl ChartApp {
                     ..ChartRenderConfig::default()
                 };
 
-                // Scope indicator queries to this window so each split pane only
-                // renders the indicators that belong to it.
+                // Scope indicator queries to this chart's CURRENT bubble so
+                // each split pane only renders the indicators owned by the
+                // tag / home-bubble this chart is currently displaying.
+                // Indicator ownership is by bubble, not by chart window.
                 if let Some(chart_id) = leaf_chart_id {
-                    self.core.indicators().current_render_window_id.store(chart_id.0 + 1, AtomicOrdering::Relaxed);
+                    let cur_bid = self.panel_app.panel_grid.containers()
+                        .get(&chart_id)
+                        .map(|w| w.current_bubble_id.0)
+                        .unwrap_or(0);
+                    self.core.indicators().current_render_bubble_id.store(cur_bid + 1, AtomicOrdering::Relaxed);
                 }
 
                 let alert_current_bar = 0usize.saturating_sub(1) as f64;
@@ -3766,8 +3775,10 @@ impl ChartApp {
                     // indicator_manager visibility is a filter applied on top.
                     // S2.7.1: use split_symbol (from branch_meta) for indicator lookup.
                     let visible_set: std::collections::HashSet<u64> = if let Some(chart_id) = leaf_chart_id {
+                        let bid = self.panel_app.panel_grid.containers()
+                            .get(&chart_id).map(|w| w.current_bubble_id.0).unwrap_or(0);
                         self.core.indicators()
-                                .get_instances_for_symbol_in_window(&split_symbol, chart_id.0)
+                                .get_instances_for_symbol_in_bubble(&split_symbol, bid)
                             .into_iter()
                             .filter(|i| i.visible && i.pane > 0)
                             .map(|i| i.id)
@@ -3820,7 +3831,10 @@ impl ChartApp {
                     corrected_vp.chart_width = main.chart.width;
                     corrected_vp.chart_height = main.chart.height;
 
-                    let window_id = leaf_chart_id.map(|cid| cid.0);
+                    // alert-bell filter is by bubble (indicator ownership)
+                    let window_id = leaf_chart_id.and_then(|cid|
+                        self.panel_app.panel_grid.containers()
+                            .get(&cid).map(|w| w.current_bubble_id.0));
 
                     // S2.7.1: pass split_symbol/exchange/account_type from branch_meta.
                     // Skip chart-anchored bells when the main chart is collapsed
@@ -3866,7 +3880,7 @@ impl ChartApp {
                 }
 
                 // Reset render scope after this leaf is done.
-                self.core.indicators().current_render_window_id.store(0, AtomicOrdering::Relaxed);
+                self.core.indicators().current_render_bubble_id.store(0, AtomicOrdering::Relaxed);
 
                 // Render overlay tab header at the top-left of this leaf.
                 let is_active_leaf = self.panel_app.panel_grid.docking()
@@ -3946,7 +3960,9 @@ impl ChartApp {
                         .map(|s| (s.symbol.clone(), s.visible, s.color.clone()))
                         .collect();
                     let instances_empty = if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
-                        self.core.indicators().get_instances_for_symbol_in_window(&symbol, chart_id.0).is_empty()
+                        let bid = self.panel_app.panel_grid.containers()
+                            .get(&chart_id).map(|w| w.current_bubble_id.0).unwrap_or(0);
+                        self.core.indicators().get_instances_for_symbol_in_bubble(&symbol, bid).is_empty()
                     } else {
                         self.core.indicators().get_instances_for_symbol(&symbol).is_empty()
                     };
@@ -3963,10 +3979,13 @@ impl ChartApp {
                     // leaf_tab_visible: hidden while a maximized sub-pane covers
                     // the container (chevron belongs to the chart layer).
                     if leaf_tab_visible && (overlay_state.visible || overlay_state.is_open) {
+                        let chart_bid = self.panel_app.panel_grid.container_id_for_leaf(leaf_id)
+                            .and_then(|cid| self.panel_app.panel_grid.containers()
+                                .get(&cid).map(|w| w.current_bubble_id.0));
                         let mut indicators: Vec<IndicatorOverlayInfo> = {
                             let im = self.core.indicators();
-                            let instances = if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
-                                im.get_instances_for_symbol_in_window(&symbol, chart_id.0)
+                            let instances = if let Some(bid) = chart_bid {
+                                im.get_instances_for_symbol_in_bubble(&symbol, bid)
                             } else {
                                 im.get_instances_for_symbol(&symbol)
                             };
@@ -4183,9 +4202,14 @@ impl ChartApp {
                 .and_then(|cid| self.timeframe_for_chart(cid))
                 .map(|tf| tf.interval_ms);
 
-            // Scope indicator queries to the active window for single-window mode.
+            // Scope indicator queries to the active chart's CURRENT bubble
+            // (single-window mode).  Indicator ownership is by bubble.
             if let Some(chart_id) = self.panel_app.panel_grid.active_container_id() {
-                self.core.indicators().current_render_window_id.store(chart_id.0 + 1, AtomicOrdering::Relaxed);
+                let cur_bid = self.panel_app.panel_grid.containers()
+                    .get(&chart_id)
+                    .map(|w| w.current_bubble_id.0)
+                    .unwrap_or(0);
+                self.core.indicators().current_render_bubble_id.store(cur_bid + 1, AtomicOrdering::Relaxed);
             }
 
             // Hold the indicator manager read guard for the duration of the
@@ -4348,8 +4372,10 @@ impl ChartApp {
                     // render_full_chart_panel's internal ExtendedFrameLayout).
                     // S2.7.1: use single_sym from branch_meta for indicator lookup.
                     let visible_set: std::collections::HashSet<u64> = if let Some(chart_id) = self.panel_app.panel_grid.active_container_id() {
+                        let bid = self.panel_app.panel_grid.containers()
+                            .get(&chart_id).map(|w| w.current_bubble_id.0).unwrap_or(0);
                         self.core.indicators()
-                                .get_instances_for_symbol_in_window(single_sym, chart_id.0)
+                                .get_instances_for_symbol_in_bubble(single_sym, bid)
                             .into_iter()
                             .filter(|i| i.visible && i.pane > 0)
                             .map(|i| i.id)
@@ -4402,9 +4428,11 @@ impl ChartApp {
                     corrected_vp.chart_width = main.chart.width;
                     corrected_vp.chart_height = main.chart.height;
 
+                    // alert-bell filter is by bubble
                     let window_id = self.panel_app.panel_grid
                         .active_container_id()
-                        .map(|cid| cid.0);
+                        .and_then(|cid| self.panel_app.panel_grid.containers()
+                            .get(&cid).map(|w| w.current_bubble_id.0));
 
                     // S2.7.1: use single_sym/exch/at from branch_meta.
                     // Skip chart-anchored bells when the main chart is collapsed
@@ -4497,7 +4525,7 @@ impl ChartApp {
             }
 
             // Reset render scope after single-window render is complete.
-            self.core.indicators().current_render_window_id.store(0, AtomicOrdering::Relaxed);
+            self.core.indicators().current_render_bubble_id.store(0, AtomicOrdering::Relaxed);
 
             // Render overlay tab header (single mode) — skipped while a
             // maximized sub-pane covers the container.
@@ -4637,10 +4665,13 @@ impl ChartApp {
                             .collect())
                         .unwrap_or_default();
 
+                let ind_overlay_chart_bid = ind_overlay_chart_id
+                    .and_then(|cid| self.panel_app.panel_grid.containers()
+                        .get(&cid).map(|w| w.current_bubble_id.0));
                 let mut indicators: Vec<IndicatorOverlayInfo> = {
                     let im = self.core.indicators();
-                    let instances = if let Some(chart_id) = ind_overlay_chart_id {
-                        im.get_instances_for_symbol_in_window(&symbol, chart_id.0)
+                    let instances = if let Some(bid) = ind_overlay_chart_bid {
+                        im.get_instances_for_symbol_in_bubble(&symbol, bid)
                     } else {
                         im.get_instances_for_symbol(&symbol)
                     };
@@ -6916,32 +6947,21 @@ impl ChartApp {
             .iter_containers()
             .map(|(leaf_id, window)| {
                 let chart_id = self.panel_app.panel_grid.container_id_for_leaf(leaf_id);
-                let chart_id_val = chart_id.map(|cid| cid.0).unwrap_or(0);
+                // Indicators are scoped by bubble — pass current_bubble_id.
+                let bubble_id_val = window.current_bubble_id.0;
                 let symbol = chart_id
                     .and_then(|cid| self.symbol_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_default();
-                // `ve.min(0usize)` here was a cutover-sweep bug that pinned ve=0
-                // on every call — `calculate_pane_range(id, vs, 0)` then sliced
-                // `&values[vs..0]` and panicked the moment a sub-pane separator
-                // was dragged (owner repro 2026-06-20, hit at indicator drag).
                 let (vs, ve) = window.viewport.visible_range();
-                (leaf_id, chart_id_val, symbol, vs, ve)
+                (leaf_id, bubble_id_val, symbol, vs, ve)
             })
             .collect();
 
         // Step 2: for each window, collect desired instance_ids from indicator_manager.
-        for (leaf_id, chart_id_val, symbol, visible_start, visible_end) in &window_data {
-            // Pre-cutover this was a single chain that took `indicators()` then
-            // `indicators_mut()` from inside the map. After lifting IndicatorManager
-            // behind `RwLock` that chain self-deadlocks: the read guard held by
-            // the iterator survives through the map body, and `indicators_mut()`
-            // tries to upgrade it in the SAME thread — std::sync::RwLock isn't
-            // reentrant, so the write wait never resolves. Pull the instance ids
-            // out under a short read guard first, drop it, then run the range
-            // calc under separate write guards.
+        for (leaf_id, bubble_id_val, symbol, visible_start, visible_end) in &window_data {
             let pane_ids: Vec<u64> = self.core.indicators()
-                .get_instances_for_symbol_in_window(symbol, *chart_id_val)
+                .get_instances_for_symbol_in_bubble(symbol, *bubble_id_val)
                 .into_iter()
                 .filter(|i| i.pane > 0)
                 .map(|i| i.id)

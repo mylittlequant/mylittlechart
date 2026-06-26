@@ -374,8 +374,11 @@ pub struct IndicatorSnapshot {
     /// ignored at restore time.
     #[serde(default, skip_serializing)]
     pub symbol: String,
-    /// Window ID (for multi-window support).
-    pub window_id: Option<u64>,
+    /// Bubble id the indicator lives in (color tag / sync group / home auto-bubble).
+    /// Older preset files persist this under the legacy `window_id` JSON key;
+    /// the serde alias keeps them loading transparently.
+    #[serde(alias = "window_id")]
+    pub bubble_id: Option<u64>,
     /// Origin instance ID (set when this instance was cloned for a sync group).
     pub origin_id: Option<u64>,
     /// Whether signal generation is enabled.

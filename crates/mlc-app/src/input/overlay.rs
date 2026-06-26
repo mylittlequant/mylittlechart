@@ -793,13 +793,14 @@ impl ChartApp {
         });
         eprintln!("[ChartApp] Recorded RemoveIndicator {} id={}", type_id, id);
 
-        // Collect group members for the active window (empty vec if no group).
-        let group_members: Vec<u64> = self.panel_app.panel_grid.docking()
+        // Resolve the bubble the active chart points at — indicator ownership
+        // is by bubble, so peer instances live with the same `bubble_id`,
+        // regardless of which chart originally created them.
+        let active_bubble_id: Option<u64> = self.panel_app.panel_grid.docking()
             .active_leaf()
             .and_then(|leaf| self.panel_app.panel_grid.container_id_for_leaf(leaf))
             .and_then(|cid| self.bubble_for_chart(cid))
-            .map(|gid| self.with_bubble(gid, |g| g.members.iter().filter_map(|m| m.as_chart()).collect::<Vec<u64>>()).unwrap_or_default())
-            .unwrap_or_default();
+            .map(|b| b.0);
 
         // Remove at most ONE indicator_config with this type_id from the group.
         // Using retain-all would incorrectly delete configs for duplicate indicators
@@ -821,23 +822,23 @@ impl ChartApp {
             }
         }
 
-        // Find the window that owns the specific instance being deleted.
-        let origin_window_id = self.core.indicators().instances_iter()
-            .find(|inst| inst.id == id)
-            .and_then(|inst| inst.window_id);
-
-        // Sweep only PEER windows (same type_id, same group, but NOT the originating window).
-        // This prevents deleting a second "ac" indicator on the same window when only one
-        // was requested to be removed.
-        let peer_instances: Vec<u64> = self.core.indicators().instances_iter()
-            .filter(|inst| {
-                inst.type_id == type_id
-                    && inst.id != id
-                    && inst.window_id.map(|wid| group_members.contains(&wid)).unwrap_or(false)
-                    && inst.window_id != origin_window_id
+        // Indicator clones live in the same bubble as their origin under the
+        // bubble-ownership model, so peer instances are simply other entries
+        // of the same `type_id` sharing the active chart's bubble.  The
+        // `id != id` guard keeps the primary instance from being listed
+        // twice in `all_to_remove`.
+        let peer_instances: Vec<u64> = active_bubble_id
+            .map(|bid| {
+                self.core.indicators().instances_iter()
+                    .filter(|inst| {
+                        inst.type_id == type_id
+                            && inst.id != id
+                            && inst.bubble_id == Some(bid)
+                    })
+                    .map(|inst| inst.id)
+                    .collect()
             })
-            .map(|inst| inst.id)
-            .collect();
+            .unwrap_or_default();
 
         // Build the full removal list: the specific instance + its peers on other windows.
         let mut all_to_remove = vec![id];

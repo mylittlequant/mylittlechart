@@ -2470,11 +2470,15 @@ impl ChartApp {
                 .map(|w| mlc_core::state::chart_container::collect_inner_instance_ids(&w.inner_docking))
                 .unwrap_or_default();
             let inst_dump: Vec<String> = active_cid
-                .map(|cid| self.core.indicators()
-                                .get_instances_for_symbol_in_window("", cid.0)
-                    .into_iter()
-                    .map(|i| format!("inst(id={},win={:?},pane={},vis={})", i.id, i.window_id, i.pane, i.visible))
-                    .collect())
+                .map(|cid| {
+                    let bid = self.panel_app.panel_grid.containers()
+                        .get(&cid).map(|w| w.current_bubble_id.0).unwrap_or(0);
+                    self.core.indicators()
+                                .get_instances_for_symbol_in_bubble("", bid)
+                        .into_iter()
+                        .map(|i| format!("inst(id={},bub={:?},pane={},vis={})", i.id, i.bubble_id, i.pane, i.visible))
+                        .collect()
+                })
                 .unwrap_or_default();
             eprintln!(
                 "[TEMP-DIAG drag-start] x={:.1} y={:.1} main_chart(x={:.1},y={:.1},w={:.1},h={:.1}) sub_panes={} {} | active_cid={:?} inner_ids={:?} {}",
@@ -6404,7 +6408,10 @@ impl ChartApp {
                     None => return,
                 };
                 if self.core.indicators_mut().create_instance_with_id(*instance_id, type_id) {
-                    self.core.indicators_mut().assign_window(*instance_id, Some(chart_id_val.0));
+                    let bid = self.panel_app.panel_grid.containers()
+                        .get(&chart_id_val)
+                        .map(|w| w.current_bubble_id.0);
+                    self.core.indicators_mut().assign_bubble(*instance_id, bid);
                     let bars_snapshot = self.bars_for_chart(chart_id_val);
                     self.core.indicators_mut().calculate(*instance_id, &bars_snapshot);
                     // Re-add to auto_bubble.pre_tag_indicator_ids for Object Tree visibility.
@@ -6525,10 +6532,12 @@ impl ChartApp {
                 .and_then(|cid| self.symbol_for_chart(cid))
                 .map(String::from)
                 .unwrap_or_default();
-            let chart_id = active_chart_id.map(|cid| cid.0);
-            if let Some(cid) = chart_id {
+            let active_bid = active_chart_id
+                .and_then(|cid| self.panel_app.panel_grid.containers()
+                    .get(&cid).map(|w| w.current_bubble_id.0));
+            if let Some(bid) = active_bid {
                 self.core.indicators()
-                                .get_instances_for_symbol_in_window(&symbol, cid)
+                                .get_instances_for_symbol_in_bubble(&symbol, bid)
                     .into_iter()
                     .filter(|i| i.visible && i.pane > 0)
                     .map(|i| i.id)
@@ -6629,8 +6638,10 @@ impl ChartApp {
                 .map(String::from)
                 .unwrap_or_default();
             if let Some(cid) = chart_id {
+                let bid = window.current_bubble_id.0;
+                let _ = cid;
                 self.core.indicators()
-                                .get_instances_for_symbol_in_window(&symbol, cid.0)
+                                .get_instances_for_symbol_in_bubble(&symbol, bid)
                     .into_iter()
                     .filter(|i| i.visible && i.pane > 0)
                     .map(|i| i.id)
@@ -7339,7 +7350,7 @@ impl ChartApp {
                     visible: inst.visible,
                     locked: inst.locked,
                     symbol: String::new(),
-                    window_id: inst.window_id,
+                    bubble_id: inst.bubble_id,
                     origin_id: inst.origin_id,
                     signals_enabled: inst.signals_enabled,
                     timeframe_visibility: inst.timeframe_visibility.clone(),

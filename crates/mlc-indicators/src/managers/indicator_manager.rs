@@ -369,8 +369,17 @@ pub struct IndicatorInstance {
     /// holding an old `Arc` clone see a stable snapshot while new data arrives.
     #[serde(skip)]
     pub values: Arc<HashMap<String, Vec<f64>>>,
-    /// Window ID (for multi-window support)
-    pub window_id: Option<u64>,
+    /// Bubble id the indicator lives in (i.e. the color tag / sync group /
+    /// home auto-bubble).  Indicator ownership is by bubble, NOT by chart
+    /// window — every chart whose `current_bubble_id` matches this value
+    /// renders this indicator with its own per-chart render rules
+    /// (overlay vs sub-pane).  When a chart switches tags, its render set
+    /// switches with it without touching indicator state.
+    ///
+    /// Persisted form keeps the legacy `window_id` JSON key as a serde
+    /// alias so older preset files still deserialize during the cutover.
+    #[serde(alias = "window_id")]
+    pub bubble_id: Option<u64>,
     /// Origin instance ID — set when this instance was cloned for a sync group peer.
     /// None means this is an original (not a clone).
     pub origin_id: Option<u64>,
@@ -427,7 +436,7 @@ impl IndicatorInstance {
             pane: if definition.overlay { 0 } else { 1 },
             order: 0,
             values: Arc::new(HashMap::new()),
-            window_id: None,
+            bubble_id: None,
             origin_id: None,
             signals: Vec::new(),
             signals_enabled: true, // Enabled by default
@@ -533,21 +542,22 @@ pub struct IndicatorManager {
     definitions: HashMap<String, IndicatorDefinition>,
     /// Active indicator instances
     instances: HashMap<u64, IndicatorInstance>,
-    /// Instances by window_id. Instances with `window_id = None` (legacy/unscoped)
-    /// are indexed under window_id key 0 — they only show up when the manager is
-    /// queried in legacy mode (current_render_window_id = None).
-    by_window_id: HashMap<u64, Vec<u64>>,
+    /// Instances by bubble_id (= color tag / sync group id / home auto-bubble id).
+    /// Instances with `bubble_id = None` (legacy/unscoped) are indexed under key 0 —
+    /// they only show up when the manager is queried in legacy mode
+    /// (`current_render_bubble_id = None`).
+    by_bubble_id: HashMap<u64, Vec<u64>>,
     /// Next instance ID
     next_id: u64,
-    /// Transient: set before a render call to scope queries to a specific window.
-    /// When Some(x), get_instances_for_symbol and get_render_instances_for_symbol
-    /// only return instances where window_id == Some(x).
-    /// When None, all instances are returned (legacy single-window behavior).
+    /// Transient: set before a render call to scope queries to a specific bubble.
+    /// When Some(x), `get_instances_for_symbol` and `get_render_instances_for_symbol`
+    /// only return instances where `bubble_id == Some(x)`.
+    /// When None, all instances are returned (legacy single-bubble behaviour).
     ///
     /// Encoded as `AtomicU64` using the `0 = None, n+1 = Some(n)` convention so
     /// that `IndicatorManager` is naturally `Sync` and can live inside
     /// `Arc<RwLock<IndicatorManager>>` on `BackendCore`.
-    pub current_render_window_id: AtomicU64,
+    pub current_render_bubble_id: AtomicU64,
 
     // ── Recalculation scheduling ──────────────────────────────────────────────
 
@@ -567,13 +577,13 @@ pub struct IndicatorManager {
     /// its params change, or bar history resets.
     compute_caches: HashMap<u64, ComputeCache>,
 
-    // ── Profiling counters (updated each calculate_for_window call) ───────────
+    // ── Profiling counters (updated each calculate_for_bubble call) ───────────
 
     /// Number of indicator instances that used the O(1) incremental path
-    /// in the most recent `calculate_for_window` call.
+    /// in the most recent `calculate_for_bubble` call.
     pub last_incremental_count: u32,
     /// Number of indicator instances that used the O(N) full-recalc path
-    /// in the most recent `calculate_for_window` call.
+    /// in the most recent `calculate_for_bubble` call.
     pub last_full_count: u32,
 }
 
@@ -583,9 +593,9 @@ impl IndicatorManager {
         let mut manager = Self {
             definitions: HashMap::new(),
             instances: HashMap::new(),
-            by_window_id: HashMap::new(),
+            by_bubble_id: HashMap::new(),
             next_id: 1,
-            current_render_window_id: AtomicU64::new(0),
+            current_render_bubble_id: AtomicU64::new(0),
             recalc_mode: RecalcMode::default(),
             dirty_symbols: HashSet::new(),
             new_bar_symbols: HashSet::new(),
@@ -605,9 +615,9 @@ impl IndicatorManager {
     /// to be rebuilt after a clear.
     pub fn clear_all(&mut self) {
         self.instances.clear();
-        self.by_window_id.clear();
+        self.by_bubble_id.clear();
         self.next_id = 1;
-        self.current_render_window_id.store(0, Ordering::Relaxed);
+        self.current_render_bubble_id.store(0, Ordering::Relaxed);
         self.dirty_symbols.clear();
         self.new_bar_symbols.clear();
         self.compute_caches.clear();
@@ -678,10 +688,10 @@ impl IndicatorManager {
             .collect()
     }
 
-    /// Create a new indicator instance. `window_id = None` keeps the instance
-    /// unscoped (legacy / single-window).  Caller usually follows up with
-    /// `assign_window` to bind it to a window — until then it lives in the
-    /// "no-window" bucket (key 0).
+    /// Create a new indicator instance. `bubble_id = None` keeps the instance
+    /// unscoped (legacy / unbound).  Caller usually follows up with
+    /// `assign_bubble` to bind it to a bubble — until then it lives in the
+    /// "no-bubble" bucket (key 0).
     pub fn create_instance(&mut self, type_id: &str) -> Option<u64> {
         let definition = self.definitions.get(type_id)?.clone();
         let id = self.next_id;
@@ -690,7 +700,7 @@ impl IndicatorManager {
         let instance = IndicatorInstance::new(id, &definition);
 
         self.instances.insert(id, instance);
-        self.by_window_id.entry(0).or_default().push(id);
+        self.by_bubble_id.entry(0).or_default().push(id);
 
         Some(id)
     }
@@ -711,7 +721,7 @@ impl IndicatorManager {
         let instance = IndicatorInstance::new(id, &definition);
 
         self.instances.insert(id, instance);
-        self.by_window_id.entry(0).or_default().push(id);
+        self.by_bubble_id.entry(0).or_default().push(id);
 
         // Update next_id if needed
         if id >= self.next_id {
@@ -721,37 +731,45 @@ impl IndicatorManager {
         true
     }
 
-    /// Bind / rebind an existing indicator instance to a window.
-    /// Updates `instance.window_id` and the `by_window_id` index so future
+    /// Legacy alias for `assign_bubble` — semantics changed under the
+    /// bubble-ownership migration: callers must pass a `BubbleId.0`, not a
+    /// `ChartId.0`.  Kept temporarily so call sites can be migrated one at a
+    /// time without breaking compilation.
+    pub fn assign_window(&mut self, id: u64, bubble_id: Option<u64>) {
+        self.assign_bubble(id, bubble_id)
+    }
+
+    /// Bind / rebind an existing indicator instance to a bubble.
+    /// Updates `instance.bubble_id` and the `by_bubble_id` index so future
     /// queries route the instance to the correct bucket.
-    pub fn assign_window(&mut self, id: u64, window_id: Option<u64>) {
+    pub fn assign_bubble(&mut self, id: u64, bubble_id: Option<u64>) {
         let prev = match self.instances.get(&id) {
-            Some(inst) => inst.window_id,
+            Some(inst) => inst.bubble_id,
             None => return,
         };
         let prev_key = prev.unwrap_or(0);
-        let new_key = window_id.unwrap_or(0);
+        let new_key = bubble_id.unwrap_or(0);
         if prev_key == new_key {
-            // Still update the field in case window_id changed Some↔None at same numeric value (rare).
+            // Still update the field in case bubble_id changed Some↔None at same numeric value (rare).
             if let Some(inst) = self.instances.get_mut(&id) {
-                inst.window_id = window_id;
+                inst.bubble_id = bubble_id;
             }
             return;
         }
-        if let Some(ids) = self.by_window_id.get_mut(&prev_key) {
+        if let Some(ids) = self.by_bubble_id.get_mut(&prev_key) {
             ids.retain(|&i| i != id);
         }
-        self.by_window_id.entry(new_key).or_default().push(id);
+        self.by_bubble_id.entry(new_key).or_default().push(id);
         if let Some(inst) = self.instances.get_mut(&id) {
-            inst.window_id = window_id;
+            inst.bubble_id = bubble_id;
         }
     }
 
     /// Remove an instance
     pub fn remove_instance(&mut self, id: u64) -> Option<IndicatorInstance> {
         if let Some(instance) = self.instances.remove(&id) {
-            let key = instance.window_id.unwrap_or(0);
-            if let Some(ids) = self.by_window_id.get_mut(&key) {
+            let key = instance.bubble_id.unwrap_or(0);
+            if let Some(ids) = self.by_bubble_id.get_mut(&key) {
                 ids.retain(|&i| i != id);
             }
             self.compute_caches.remove(&id);
@@ -766,19 +784,24 @@ impl IndicatorManager {
         self.remove_instance(id)
     }
 
-    /// Remove all cloned indicator instances for a specific window (used on desync).
+    /// Legacy alias for `purge_synced_instances_for_bubble`.
+    pub fn purge_synced_instances_for_window(&mut self, target_bubble_id: u64) {
+        self.purge_synced_instances_for_bubble(target_bubble_id)
+    }
+
+    /// Remove all cloned indicator instances for a specific bubble (used on desync).
     /// DEPRECATED: Only used by legacy origin_id-based sync. TagManager uses
     /// pre_tag_indicator_ids filtering instead.
-    pub fn purge_synced_instances_for_window(&mut self, target_window_id: u64) {
+    pub fn purge_synced_instances_for_bubble(&mut self, target_bubble_id: u64) {
         let to_remove: Vec<u64> = self.instances.values()
-            .filter(|inst| inst.origin_id.is_some() && inst.window_id == Some(target_window_id))
+            .filter(|inst| inst.origin_id.is_some() && inst.bubble_id == Some(target_bubble_id))
             .map(|inst| inst.id)
             .collect();
 
         for id in to_remove {
             if let Some(inst) = self.instances.remove(&id) {
-                let key = inst.window_id.unwrap_or(0);
-                if let Some(ids) = self.by_window_id.get_mut(&key) {
+                let key = inst.bubble_id.unwrap_or(0);
+                if let Some(ids) = self.by_bubble_id.get_mut(&key) {
                     ids.retain(|&i| i != id);
                 }
             }
@@ -786,13 +809,18 @@ impl IndicatorManager {
         }
     }
 
-    /// Remove only indicator instances whose type_id is in `group_type_ids` for the given window.
+    /// Legacy alias for `purge_group_indicators_for_bubble`.
+    pub fn purge_group_indicators_for_window(&mut self, target_bubble_id: u64, group_type_ids: &[String]) {
+        self.purge_group_indicators_for_bubble(target_bubble_id, group_type_ids)
+    }
+
+    /// Remove only indicator instances whose type_id is in `group_type_ids` for the given bubble.
     /// Used when disconnecting from a TagManager group — removes group-owned indicators
-    /// but keeps any pre-existing indicators the window had before joining.
-    pub fn purge_group_indicators_for_window(&mut self, target_window_id: u64, group_type_ids: &[String]) {
+    /// but keeps any pre-existing indicators the bubble had before joining.
+    pub fn purge_group_indicators_for_bubble(&mut self, target_bubble_id: u64, group_type_ids: &[String]) {
         let to_remove: Vec<u64> = self.instances.values()
             .filter(|inst| {
-                inst.window_id == Some(target_window_id)
+                inst.bubble_id == Some(target_bubble_id)
                     && group_type_ids.contains(&inst.type_id)
             })
             .map(|inst| inst.id)
@@ -801,38 +829,43 @@ impl IndicatorManager {
         let count = to_remove.len();
         for id in to_remove {
             if let Some(inst) = self.instances.remove(&id) {
-                let key = inst.window_id.unwrap_or(0);
-                if let Some(ids) = self.by_window_id.get_mut(&key) {
+                let key = inst.bubble_id.unwrap_or(0);
+                if let Some(ids) = self.by_bubble_id.get_mut(&key) {
                     ids.retain(|&i| i != id);
                 }
             }
             self.compute_caches.remove(&id);
         }
         if count > 0 {
-            eprintln!("[IndicatorManager] Purged {} group indicators for window {}", count, target_window_id);
+            eprintln!("[IndicatorManager] Purged {} group indicators for bubble {}", count, target_bubble_id);
         }
     }
 
-    /// Remove ALL indicator instances belonging to a window (regardless of origin_id).
+    /// Legacy alias for `purge_all_instances_for_bubble`.
+    pub fn purge_all_instances_for_window(&mut self, target_bubble_id: u64) {
+        self.purge_all_instances_for_bubble(target_bubble_id)
+    }
+
+    /// Remove ALL indicator instances belonging to a bubble (regardless of origin_id).
     /// Used when disconnecting from a TagManager group — the group owns the indicators.
-    pub fn purge_all_instances_for_window(&mut self, target_window_id: u64) {
+    pub fn purge_all_instances_for_bubble(&mut self, target_bubble_id: u64) {
         let to_remove: Vec<u64> = self.instances.values()
-            .filter(|inst| inst.window_id == Some(target_window_id))
+            .filter(|inst| inst.bubble_id == Some(target_bubble_id))
             .map(|inst| inst.id)
             .collect();
 
         let count = to_remove.len();
         for id in to_remove {
             if let Some(inst) = self.instances.remove(&id) {
-                let key = inst.window_id.unwrap_or(0);
-                if let Some(ids) = self.by_window_id.get_mut(&key) {
+                let key = inst.bubble_id.unwrap_or(0);
+                if let Some(ids) = self.by_bubble_id.get_mut(&key) {
                     ids.retain(|&i| i != id);
                 }
             }
             self.compute_caches.remove(&id);
         }
         if count > 0 {
-            eprintln!("[IndicatorManager] Purged all {} instances for window {}", count, target_window_id);
+            eprintln!("[IndicatorManager] Purged all {} instances for bubble {}", count, target_bubble_id);
         }
     }
 
@@ -864,32 +897,38 @@ impl IndicatorManager {
         self.instances.get_mut(&id)
     }
 
-    /// Decode the `current_render_window_id` atomic using the `0 = None, n+1 = Some(n)` convention.
-    fn current_render_window_id_get(&self) -> Option<u64> {
-        match self.current_render_window_id.load(Ordering::Relaxed) {
+    /// Decode the `current_render_bubble_id` atomic using the `0 = None, n+1 = Some(n)` convention.
+    fn current_render_bubble_id_get(&self) -> Option<u64> {
+        match self.current_render_bubble_id.load(Ordering::Relaxed) {
             0 => None,
             n => Some(n - 1),
         }
     }
 
-    /// Get all instances scoped to the current render window
-    /// (`current_render_window_id`). The `symbol` parameter is ignored — indicators
-    /// are bound to a *window*, not an instrument, and follow whatever the
-    /// window happens to display at any moment. In legacy mode
-    /// (`current_render_window_id = None`) all instances are returned.
+    /// Get all instances scoped to the current render bubble
+    /// (`current_render_bubble_id`). The `symbol` parameter is ignored — indicators
+    /// are bound to a *bubble*, not an instrument, and follow whatever the
+    /// chart that points at this bubble happens to display at any moment.
+    /// In legacy mode (`current_render_bubble_id = None`) all instances are returned.
     pub fn get_instances_for_symbol(&self, _symbol: &str) -> Vec<&IndicatorInstance> {
-        match self.current_render_window_id_get() {
-            Some(wid) => self.get_instances_for_window(wid),
+        match self.current_render_bubble_id_get() {
+            Some(bid) => self.get_instances_for_bubble(bid),
             None => self.instances.values().collect(),
         }
     }
 
-    /// Get indicator instances bound to a specific window.
-    /// Only returns instances whose `window_id` exactly matches `window_id`.
-    /// Instances with `window_id = None` are NOT included to prevent cross-tab leakage.
-    pub fn get_instances_for_window(&self, window_id: u64) -> Vec<&IndicatorInstance> {
-        self.by_window_id
-            .get(&window_id)
+    /// Legacy alias for `get_instances_for_bubble` — semantics changed under
+    /// the bubble-ownership migration: callers must pass a `BubbleId.0`.
+    pub fn get_instances_for_window(&self, bubble_id: u64) -> Vec<&IndicatorInstance> {
+        self.get_instances_for_bubble(bubble_id)
+    }
+
+    /// Get indicator instances bound to a specific bubble.
+    /// Only returns instances whose `bubble_id` exactly matches `bubble_id`.
+    /// Instances with `bubble_id = None` are NOT included to prevent cross-tab leakage.
+    pub fn get_instances_for_bubble(&self, bubble_id: u64) -> Vec<&IndicatorInstance> {
+        self.by_bubble_id
+            .get(&bubble_id)
             .map(|ids| {
                 ids.iter()
                     .filter_map(|id| self.instances.get(id))
@@ -899,21 +938,22 @@ impl IndicatorManager {
     }
 
     /// Legacy adapter — `symbol` is ignored, kept for call sites that still
-    /// pass it. Use [`get_instances_for_window`] in new code.
-    pub fn get_instances_for_symbol_in_window(&self, _symbol: &str, window_id: u64) -> Vec<&IndicatorInstance> {
-        self.get_instances_for_window(window_id)
+    /// pass it. Use [`get_instances_for_bubble`] in new code.
+    pub fn get_instances_for_symbol_in_bubble(&self, _symbol: &str, bubble_id: u64) -> Vec<&IndicatorInstance> {
+        self.get_instances_for_bubble(bubble_id)
     }
 
-    /// Swap the display order of two sub-pane indicator instances within a window.
+
+    /// Swap the display order of two sub-pane indicator instances within a bubble.
     ///
-    /// Finds the positions of `id_a` and `id_b` in the `by_window_id[window_id]`
+    /// Finds the positions of `id_a` and `id_b` in the `by_bubble_id[bubble_id]`
     /// insertion-order Vec and swaps them.  `sync_sub_panes_from_manager` reads
     /// that Vec as `desired_ids` on every tick, so the swap persists across
     /// re-syncs without reverting.
     ///
     /// Returns `true` if both ids were found and swapped, `false` otherwise.
-    pub fn swap_pane_order(&mut self, window_id: u64, id_a: u64, id_b: u64) -> bool {
-        let ids = match self.by_window_id.get_mut(&window_id) {
+    pub fn swap_pane_order(&mut self, bubble_id: u64, id_a: u64, id_b: u64) -> bool {
+        let ids = match self.by_bubble_id.get_mut(&bubble_id) {
             Some(v) => v,
             None => return false,
         };
@@ -932,16 +972,16 @@ impl IndicatorManager {
     ///
     /// Returns `Some(color)` when:
     /// - The indicator type is an overlay (`definition.overlay == true`)
-    /// - At least one instance of the same `type_id` already exists in `window_id`
+    /// - At least one instance of the same `type_id` already exists in `bubble_id`
     ///
     /// The returned color is the first entry from the fixed palette that is not
-    /// already in use by existing same-type instances in that window.  The
+    /// already in use by existing same-type instances in that bubble.  The
     /// definition's own default output colors are also counted as "in use" so
     /// the very first (default-colored) instance is never given a duplicate color.
     ///
     /// Returns `None` when no auto-color is needed (non-overlay, no existing
     /// instances of the same type, or the palette is exhausted).
-    pub fn pick_overlay_color(&self, type_id: &str, window_id: u64) -> Option<String> {
+    pub fn pick_overlay_color(&self, type_id: &str, bubble_id: u64) -> Option<String> {
         /// Colors evenly spread across the visible spectrum, ordered so that
         /// successive duplicates contrast clearly with each other and with the
         /// typical default blue (#2196F3).
@@ -970,7 +1010,7 @@ impl IndicatorManager {
         }
 
         let existing_same_type: Vec<&IndicatorInstance> = self
-            .get_instances_for_window(window_id)
+            .get_instances_for_bubble(bubble_id)
             .into_iter()
             .filter(|i| i.type_id == type_id)
             .collect();
@@ -1086,16 +1126,21 @@ impl IndicatorManager {
     /// Each indicator computation is independent (reads params, writes values),
     /// so all instances can be computed concurrently on the rayon thread pool.
     /// Results are written back sequentially after the parallel phase.
-    pub fn calculate_all_for_window(&mut self, window_id: u64, bars: &[mlc_core::Bar]) {
+    /// Legacy alias for `calculate_all_for_bubble`.
+    pub fn calculate_all_for_window(&mut self, bubble_id: u64, bars: &[mlc_core::Bar]) {
+        self.calculate_all_for_bubble(bubble_id, bars);
+    }
+
+    pub fn calculate_all_for_bubble(&mut self, bubble_id: u64, bars: &[mlc_core::Bar]) {
         use rayon::prelude::*;
         use super::indicator_calculator::IndicatorCalculator;
 
         // Built-ins are handled separately (direct bar-data copy, no mli catalog).
-        self.calculate_builtins_for_window(window_id, bars);
+        self.calculate_builtins_for_bubble(bubble_id, bars);
 
         let ids: Vec<u64> = self
-            .by_window_id
-            .get(&window_id)
+            .by_bubble_id
+            .get(&bubble_id)
             .cloned()
             .unwrap_or_default();
 
@@ -1160,15 +1205,15 @@ impl IndicatorManager {
     }
 
     /// Compute built-in indicators (those with `machine_id == None`) for a
-    /// window.  Currently the only built-in is `builtin_volume`, which copies
+    /// bubble.  Currently the only built-in is `builtin_volume`, which copies
     /// `bar.volume` directly into its output Vec — no mli catalog needed.
     ///
-    /// Called from both `calculate_all_for_window` and `calculate_for_window`
+    /// Called from both `calculate_all_for_bubble` and `calculate_for_bubble`
     /// so that built-ins always run regardless of which recalc path is active.
-    fn calculate_builtins_for_window(&mut self, window_id: u64, bars: &[mlc_core::Bar]) {
+    fn calculate_builtins_for_bubble(&mut self, bubble_id: u64, bars: &[mlc_core::Bar]) {
         let ids: Vec<u64> = self
-            .by_window_id
-            .get(&window_id)
+            .by_bubble_id
+            .get(&bubble_id)
             .cloned()
             .unwrap_or_default();
 
@@ -1198,18 +1243,23 @@ impl IndicatorManager {
     /// Falls back to a **full recalc** (rayon parallel, O(N)) for all other
     /// cases: first call, parameter changes, scroll prepend, last-bar update.
     ///
-    /// Instances whose `window_id` is `None` (unscoped / legacy) are skipped;
-    /// they should be handled by `calculate_all_for_window(0, …)` when appropriate.
-    pub fn calculate_for_window(&mut self, window_id: u64, bars: &[mlc_core::Bar]) {
+    /// Instances whose `bubble_id` is `None` (unscoped / legacy) are skipped;
+    /// they should be handled by `calculate_all_for_bubble(0, …)` when appropriate.
+    /// Legacy alias for `calculate_for_bubble`.
+    pub fn calculate_for_window(&mut self, bubble_id: u64, bars: &[mlc_core::Bar]) {
+        self.calculate_for_bubble(bubble_id, bars);
+    }
+
+    pub fn calculate_for_bubble(&mut self, bubble_id: u64, bars: &[mlc_core::Bar]) {
         use rayon::prelude::*;
         use super::indicator_calculator::IndicatorCalculator;
 
         // Built-ins are handled separately (direct bar-data copy, no mli catalog).
-        self.calculate_builtins_for_window(window_id, bars);
+        self.calculate_builtins_for_bubble(bubble_id, bars);
 
         let ids: Vec<u64> = self
-            .by_window_id
-            .get(&window_id)
+            .by_bubble_id
+            .get(&bubble_id)
             .cloned()
             .unwrap_or_default();
 
@@ -1242,7 +1292,7 @@ impl IndicatorManager {
                 Some(i) => i,
                 None => continue,
             };
-            if inst.window_id != Some(window_id) {
+            if inst.bubble_id != Some(bubble_id) {
                 continue;
             }
             let def = match self.definitions.get(&inst.type_id) {

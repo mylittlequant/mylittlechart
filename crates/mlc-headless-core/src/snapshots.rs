@@ -98,9 +98,10 @@ pub fn update_terminal_snapshot<H: AgentHost>(host: &H, agent_state: &AgentState
                 let tf_name = chart.timeframe_for_chart(*chart_id)
                     .map(|tf| tf.name.clone()).unwrap_or_default();
 
+                let cw_bid_raw = cw.current_bubble_id.0;
                 let indicators: Vec<IndicatorSummary> = chart.core.indicators()
                     .instances_iter()
-                    .filter(|inst| inst.window_id == Some(cw.id.0))
+                    .filter(|inst| inst.bubble_id == Some(cw_bid_raw))
                     .map(|inst| IndicatorSummary {
                         id: inst.id,
                         type_id: inst.type_id.clone(),
@@ -195,16 +196,15 @@ pub fn update_indicator_snapshot<H: AgentHost>(host: &H, agent_state: &AgentStat
 
     for w in host.windows() {
         let chart = w.chart;
-        let chart_symbols: std::collections::HashMap<u64, String> = chart
-            .panel_app
-            .panel_grid
-            .containers()
-            .keys()
-            .map(|cid| {
-                let sym = chart.symbol_for_chart(*cid)
-                    .map(String::from).unwrap_or_default();
-                (cid.0, sym)
-            })
+        // Indicators are keyed by bubble; resolve the symbol per bubble via the
+        // bubble's own `symbol` field so the snapshot is correct under the
+        // bubble-ownership model even when no chart currently points at it.
+        let bubble_symbols: std::collections::HashMap<u64, String> = chart
+            .core
+            .bubble()
+            .bubble
+            .bubbles()
+            .map(|b| (b.id.0, b.symbol.clone()))
             .collect();
 
         let im = chart.core.indicators();
@@ -236,15 +236,15 @@ pub fn update_indicator_snapshot<H: AgentHost>(host: &H, agent_state: &AgentStat
                 .collect();
 
             let resolved_symbol = inst
-                .window_id
-                .and_then(|w| chart_symbols.get(&w).cloned())
+                .bubble_id
+                .and_then(|b| bubble_symbols.get(&b).cloned())
                 .unwrap_or_default();
             let instance_snap = IndicatorInstanceSnapshot {
                 id: inst.id,
                 type_id: inst.type_id.clone(),
                 type_name: inst.name.clone(),
                 symbol: resolved_symbol.clone(),
-                window_id: inst.window_id,
+                bubble_id: inst.bubble_id,
                 params,
                 outputs,
             };

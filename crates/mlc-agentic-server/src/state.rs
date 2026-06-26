@@ -453,8 +453,9 @@ pub struct IndicatorInstanceSnapshot {
     pub type_name: String,
     /// Symbol the indicator is attached to (e.g. `"BTCUSDT"`).
     pub symbol: String,
-    /// Window/panel id this indicator lives in, if applicable.
-    pub window_id: Option<u64>,
+    /// Bubble id (color tag / sync group / home auto-bubble) this indicator
+    /// lives in, if applicable.  Indicator ownership is by bubble.
+    pub bubble_id: Option<u64>,
     /// Parameter map (key → JSON value).
     pub params: HashMap<String, serde_json::Value>,
     /// Computed output series.

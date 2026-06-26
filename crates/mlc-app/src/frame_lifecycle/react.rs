@@ -55,13 +55,28 @@ impl ChartApp {
                 let prev_bars_for_anchor: &[mlc_core::Bar] = prev_bars;
 
                 // Collect matched windows + anchor info.
+                //
+                // Match by `window.current_bubble_id == *bid` (NOT by instrument).
+                // tick_writers emits one BarsLoaded per matching bubble; if we
+                // matched by instrument key (sym/exch/tf/at) here, every BarsLoaded
+                // would touch EVERY chart on the same instrument — N charts × M
+                // bubbles = N×M autoscale calls per cure REST.  The visible
+                // symptom: any tag op (which enqueues a cure for the joining
+                // bubble) triggers a `calc_auto_scale` on unrelated charts of
+                // the same symbol; their Y axes drift even though their X is
+                // untouched and they have nothing to do with the tag op.
+                //
+                // The bid carried by the event is the bubble whose `bars` was
+                // overwritten in tick_writers — only charts pointing at THAT
+                // bubble should reconcile.
                 let mut matched_windows: Vec<(mlc_core::state::ChartId, bool, Option<(i64, f64)>)> = Vec::new();
                 for (chart_id_key, window) in self.panel_app.panel_grid.containers().iter() {
                     let (win_sym, win_tf, win_exch, win_at) = match instrument_by_cid.get(chart_id_key) {
                         Some(t) => t,
                         None => continue,
                     };
-                    let matched = win_sym.as_str() == symbol.as_str()
+                    let matched = window.current_bubble_id == *bid
+                        && win_sym.as_str() == symbol.as_str()
                         && win_exch.as_str() == exchange_id.as_str()
                         && win_tf.name == *tf_name
                         && win_at.as_str() == account_type.as_str();
@@ -230,19 +245,11 @@ impl ChartApp {
                     }
                 }
 
-                // Indicator recalc.
-                let matched_ids: Vec<u64> = self.panel_app.panel_grid.containers().iter()
-                    .filter(|(cid, _)| {
-                        self.symbol_for_chart(**cid).map_or(false, |s| s == *symbol)
-                            && self.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
-                            && self.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == *tf_name)
-                            && self.account_type_for_chart(**cid).map_or(false, |at| at == account_type.as_str())
-                    })
-                    .map(|(cid, _)| cid.0)
-                    .collect();
-                for wid in &matched_ids {
-                    self.core.indicators_mut().calculate_for_window(*wid, new_bars);
-                }
+                // Indicator recalc — keyed by the bubble whose bars just changed.
+                // `calculate_for_bubble` looks up instances via `by_bubble_id`;
+                // passing chart_id here found nothing because indicators are
+                // bubble-bound, not chart-bound.
+                self.core.indicators_mut().calculate_for_bubble(bid.0, new_bars);
 
                 // Subscribe trades for matched windows.
                 if any_matched {
@@ -343,7 +350,7 @@ impl ChartApp {
             }
 
             // ── BackfillCompleted ───────────────────────────────────────────────
-            BubbleEvent::BackfillCompleted { bid: _, exchange_id, symbol, account_type, timeframe: tf_name, bars, prev_bars } => {
+            BubbleEvent::BackfillCompleted { bid, exchange_id, symbol, account_type, timeframe: tf_name, bars, prev_bars } => {
                 let new_bars = bars;
                 let mut prev_close_mirrors: Vec<(mlc_core::state::ChartId, Option<f64>)> = Vec::new();
 
@@ -371,7 +378,12 @@ impl ChartApp {
                         Some(t) => t,
                         None => continue,
                     };
-                    if !(win_sym.as_str() == symbol.as_str()
+                    // Match by current_bubble_id == *bid (see BarsLoaded branch
+                    // for the rationale — broadcasting backfill events across
+                    // unrelated charts of the same instrument was leaking Y-axis
+                    // moves on any tag op).
+                    if !(window.current_bubble_id == *bid
+                        && win_sym.as_str() == symbol.as_str()
                         && win_exch.as_str() == exchange_id.as_str()
                         && win_tf.name == *tf_name
                         && win_at.as_str() == account_type.as_str())

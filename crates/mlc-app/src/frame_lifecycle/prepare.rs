@@ -244,6 +244,54 @@ impl ChartApp {
             .map(|b| (b.id, (b.bars.clone(),)))
             .collect();
 
+        // Diagnostic: dump per-container bubble pointers + bar counts ONCE per
+        // dirty render so we can see whether `window.current_bubble_id` lines
+        // up with the bubble that actually has bars.  Owner repro: split or
+        // new-preset sibling chart renders empty even though
+        // `[do_split-key]` shows the auto_bubble was seeded with the source's
+        // identity.  Suspicion: window.current_bubble_id points at a stale
+        // bubble id while the data lands in a different bubble.
+        {
+            let mut dump: Vec<String> = Vec::new();
+            for (cid, w) in self.panel_app.panel_grid.containers().iter() {
+                let cur_bid = w.current_bubble_id;
+                let auto_bid = w.auto_bubble_id;
+                let bid_via_chart = self.core.bubble().bubble.bubble_for_chart(*cid);
+                let cur_bars = self.core.bubble().bubble.bubble(cur_bid).map(|b| b.bars.len()).unwrap_or(usize::MAX);
+                let cur_sym  = self.core.bubble().bubble.bubble(cur_bid).map(|b| b.symbol.clone()).unwrap_or_default();
+                let cur_exch = self.core.bubble().bubble.bubble(cur_bid).map(|b| b.exchange.clone()).unwrap_or_default();
+                let auto_bars = self.core.bubble().bubble.bubble(auto_bid).map(|b| b.bars.len()).unwrap_or(usize::MAX);
+                let auto_sym  = self.core.bubble().bubble.bubble(auto_bid).map(|b| b.symbol.clone()).unwrap_or_default();
+                dump.push(format!(
+                    "cid={:?} cur={:?}(sym='{}' exch='{}' bars={}) auto={:?}(sym='{}' bars={}) via_chart={:?}",
+                    cid, cur_bid, cur_sym, cur_exch, cur_bars, auto_bid, auto_sym, auto_bars, bid_via_chart
+                ));
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                std::thread_local! {
+                    static LAST_DUMP: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
+                    static FRAME_COUNT: std::cell::Cell<u32> = std::cell::Cell::new(0);
+                }
+                let joined = dump.join(" | ");
+                LAST_DUMP.with(|cell| {
+                    let mut last = cell.borrow_mut();
+                    let changed = last.as_ref().map_or(true, |s| s != &joined);
+                    FRAME_COUNT.with(|f| f.set(f.get().wrapping_add(1)));
+                    let every_sec = FRAME_COUNT.with(|f| f.get() % 120 == 0);
+                    if changed || every_sec {
+                        ::web_sys::console::log_1(&format!(
+                            "[prepare-bubble-map] containers={} {}",
+                            dump.len(), joined
+                        ).into());
+                        *last = Some(joined);
+                    }
+                });
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            { let _ = dump; }
+        }
+
         for (_cid, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
             if window.viewport.is_time_axis() {
                 window.viewport.disable_time_axis();
@@ -424,68 +472,86 @@ impl ChartApp {
                     }
                 }
 
-                // --- Section "Group": indicators from group.indicator_configs ---
-                if group.sync_flags.sync_indicators {
-                    let active_window_id = active_cid.map(|cid| cid.0);
-                    for cfg in group.indicator_configs.iter() {
-                        // Resolve to the active window's own instance so that widget
-                        // actions (visibility, delete, settings) use the correct ID.
-                        let local: Option<(u64, String, String, bool, bool)> = active_window_id.and_then(|wid| {
-                            self.core.indicators().instances_iter()
-                                .find(|i| i.window_id == Some(wid) && i.type_id == cfg.type_id)
-                                .map(|i| (i.id, i.name.clone(), i.type_id.clone(), i.visible, i.locked))
-                        });
-                        let (id, name, type_id, visible, locked) = match local {
-                            Some(t) => t,
-                            None => (cfg.id, cfg.name.clone(), cfg.type_id.clone(), cfg.visible, false),
-                        };
-                        // Group indicators are shared across all windows in the group.
-                        // The active window is always in this group (tagged_group is its group),
-                        // so group indicators are always "Active" — no per-key comparison needed.
-                        let item = mlc_sidebar_content::types::ObjectTreeItem::new(
-                            id, &name, mlc_core::ObjectCategory::Indicator, &type_id,
-                        )
-                        .with_visible(visible)
-                        .with_locked(locked)
-                        .with_section("Group")
-                        .with_key(&active_window_sym, &active_window_exchange, &active_window_account_type)
-                        .with_item_state(mlc_sidebar_content::types::ObjectItemState::Active)
-                        .with_memory_kind(mlc_sidebar_content::types::MemoryKind::None);
-                        self.sidebar_state.object_tree_items.push(item);
-                    }
+                // --- Section "Group": indicators that LIVE in this bubble ---
+                // Read instances directly from the indicator manager filtered
+                // by `bubble_id == group_id`.  Group = tag = bubble — there is
+                // no separate "indicator_configs" list; the bubble's own
+                // instance set IS the indicator list.
+                let active_bubble_id = active_cid
+                    .and_then(|cid| self.bubble_for_chart(cid))
+                    .map(|b| b.0);
+                let group_indicator_data: Vec<(u64, String, String, bool, bool)> = active_bubble_id
+                    .map(|bid| {
+                        self.core.indicators().instances_iter()
+                            .filter(|i| i.bubble_id == Some(bid))
+                            .map(|i| (i.id, i.name.clone(), i.type_id.clone(), i.visible, i.locked))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                for (id, name, type_id, visible, locked) in group_indicator_data {
+                    let item = mlc_sidebar_content::types::ObjectTreeItem::new(
+                        id, &name, mlc_core::ObjectCategory::Indicator, &type_id,
+                    )
+                    .with_visible(visible)
+                    .with_locked(locked)
+                    .with_section("Group")
+                    .with_key(&active_window_sym, &active_window_exchange, &active_window_account_type)
+                    .with_item_state(mlc_sidebar_content::types::ObjectItemState::Active)
+                    .with_memory_kind(mlc_sidebar_content::types::MemoryKind::None);
+                    self.sidebar_state.object_tree_items.push(item);
                 }
 
-                // --- Section "Window": window-local stashed primitives ---
-                // Collect stashed primitive data first so we don't hold an active_container borrow
-                // while also needing indicator_manager (which is not behind the same ref).
-                // Stashed primitives are always shown regardless of sync_drawings state —
-                // they represent objects that were on the window before joining the tag group.
-                // Read home primitives from auto_bubble (chart's pre-tag / home drawings).
-                let stashed_prim_data: Vec<_> = active_cid
-                    .and_then(|cid| {
-                        let auto_bid = self.panel_app.panel_grid.containers().get(&cid)?.auto_bubble_id;
-                        Some(auto_bid)
-                    })
-                    .and_then(|auto_bid| self.with_bubble(auto_bid, |auto_bub| {
-                        auto_bub.primitives.iter()
-                            .map(|p| {
-                                let data = p.data();
-                                let kind = p.kind();
-                                let display = localize_primitive_name(&data.type_id, p.display_name());
-                                (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone(), data.symbol.clone())
-                            })
-                            .collect()
-                    }))
-                    .unwrap_or_default();
+                // --- Section "Window": chart's auto-bubble stash ---
+                // Show the home stash (auto_bubble.primitives + indicators
+                // whose `bubble_id == auto_bubble_id`) whenever the active
+                // chart is in a tagged bubble distinct from its home auto.
+                // Owner rule: Window section reflects the chart's own
+                // stash; current Group section reflects the bubble the
+                // chart is currently pointing at.  When both equal
+                // (untagged), only the Group section is shown.
+                let (active_auto_bid, active_cur_bid) = active_cid
+                    .and_then(|cid| self.panel_app.panel_grid.containers().get(&cid))
+                    .map(|w| (Some(w.auto_bubble_id), Some(w.current_bubble_id)))
+                    .unwrap_or((None, None));
+                let show_home_overlay = match (active_auto_bid, active_cur_bid) {
+                    (Some(a), Some(c)) => a != c,
+                    _ => false,
+                };
 
-                // Read pre_tag_indicator_ids from auto_bubble.
-                let pre_tag_ids: Vec<u64> = active_cid
-                    .and_then(|cid| {
-                        let auto_bid = self.panel_app.panel_grid.containers().get(&cid)?.auto_bubble_id;
-                        Some(auto_bid)
-                    })
-                    .and_then(|auto_bid| self.with_bubble(auto_bid, |auto_bub| auto_bub.pre_tag_indicator_ids.clone()))
-                    .unwrap_or_default();
+                let stashed_prim_data: Vec<_> = if show_home_overlay {
+                    active_auto_bid
+                        .and_then(|auto_bid| self.with_bubble(auto_bid, |auto_bub| {
+                            auto_bub.primitives.iter()
+                                .map(|p| {
+                                    let data = p.data();
+                                    let kind = p.kind();
+                                    let display = localize_primitive_name(&data.type_id, p.display_name());
+                                    (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone(), data.symbol.clone())
+                                })
+                                .collect()
+                        }))
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+
+                // Home indicators live IN the auto-bubble: their bubble_id
+                // matches auto_bubble_id.  Collect them live from the
+                // indicator manager, not from the stale pre_tag_indicator_ids
+                // list which the bubble-cutover obsoleted.
+                let pre_tag_ids: Vec<u64> = if show_home_overlay {
+                    active_auto_bid
+                        .map(|auto_bid| {
+                            let bid_raw = auto_bid.0;
+                            self.core.indicators().instances_iter()
+                                .filter(|i| i.bubble_id == Some(bid_raw))
+                                .map(|i| i.id)
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
 
                 let has_window_section = !stashed_prim_data.is_empty() || !pre_tag_ids.is_empty();
 
@@ -519,7 +585,13 @@ impl ChartApp {
                             .with_locked(inst.locked)
                             .with_section("Window")
                             .with_key(&active_window_sym, &active_window_exchange, &active_window_account_type)
-                            .with_item_state(mlc_sidebar_content::types::ObjectItemState::Active);
+                            // Home-stash indicators are memory-overlay only:
+                            // they appear under the Memory divider in the
+                            // "Window" section and behave the same as the
+                            // stashed primitives above (no live mutation
+                            // mirror; delete is suppressed by the UI).
+                            .with_item_state(mlc_sidebar_content::types::ObjectItemState::Memory)
+                            .with_memory_kind(mlc_sidebar_content::types::MemoryKind::WindowStash);
                             self.sidebar_state.object_tree_items.push(item);
                         }
                     }
@@ -579,13 +651,22 @@ impl ChartApp {
                     self.sidebar_state.object_tree_items.push(item);
                 }
 
-                // Indicators bound to this window — always Active, regardless of
-                // the symbol the window currently displays. Indicators follow the
-                // window, not the instrument.
-                let window_id = active_cid.map(|cid| cid.0);
-                if let Some(wid) = window_id {
+                // Indicators bound to this chart's CURRENT bubble — always
+                // Active.  Indicators follow the bubble, not the window.
+                let active_bubble_id = active_cid
+                    .and_then(|cid| self.bubble_for_chart(cid))
+                    .map(|b| b.0);
+                let total_insts = self.core.indicators().instances_iter().count();
+                let inst_dump: Vec<(u64, Option<u64>, String)> = self.core.indicators().instances_iter()
+                    .map(|i| (i.id, i.bubble_id, i.type_id.clone()))
+                    .collect();
+                crate::sglog!(
+                    "[obj-tree-untagged] active_cid={:?} active_bubble_id={:?} total_insts={} dump={:?}",
+                    active_cid, active_bubble_id, total_insts, inst_dump
+                );
+                if let Some(bid) = active_bubble_id {
                     let insts: Vec<_> = self.core.indicators().instances_iter()
-                        .filter(|i| i.window_id == Some(wid))
+                        .filter(|i| i.bubble_id == Some(bid))
                         .map(|i| (i.id, i.name.clone(), i.type_id.clone(), i.visible, i.locked))
                         .collect();
                     for (id, name, type_id, visible, locked) in &insts {
@@ -637,13 +718,16 @@ impl ChartApp {
             // --- Signals panel: collect per-instance SignalEvents ---
             use mlc_sidebar_content::types::{IndicatorsTabData, IndicatorSignalGroup, IndicatorSignalRow};
 
-            // Only show signals for indicator instances that belong to the active window.
-            let active_window_id_for_signals = active_cid.map(|cid| cid.0);
+            // Only show signals for indicator instances that belong to the
+            // active chart's bubble (indicator ownership = bubble).
+            let active_bubble_id_for_signals = active_cid
+                .and_then(|cid| self.bubble_for_chart(cid))
+                .map(|b| b.0);
             let signal_groups: Vec<IndicatorSignalGroup> = self.core.indicators().instances_iter()
                 .filter(|inst| {
                     !inst.signals.is_empty()
-                        && active_window_id_for_signals
-                            .map(|wid| inst.window_id == Some(wid))
+                        && active_bubble_id_for_signals
+                            .map(|bid| inst.bubble_id == Some(bid))
                             .unwrap_or(false)
                 })
                 .map(|inst| {
@@ -1050,9 +1134,11 @@ impl ChartApp {
                 for leaf_entry in &leaf_rects {
                     let lid = leaf_entry.0;
                     if let Some(cid) = self.panel_app.panel_grid.container_id_for_leaf(lid) {
+                        let bid = self.panel_app.panel_grid.containers()
+                            .get(&cid).map(|w| w.current_bubble_id.0).unwrap_or(0);
                         let mut sub_pane_insts: Vec<(u64, String, usize, u64)> =
                             self.core.indicators()
-                                .get_instances_for_window(cid.0)
+                                .get_instances_for_bubble(bid)
                                 .into_iter()
                                 .filter(|i| i.pane > 0)
                                 .map(|i| (i.id, i.type_id.clone(), i.pane, i.id))
@@ -1097,9 +1183,11 @@ impl ChartApp {
                                     // peer_type_ord_to_id[(type_id, ordinal)] = peer_instance_id
                                     let peer_type_ord: std::collections::HashMap<(String, usize), u64> = {
                                         let mut m = std::collections::HashMap::new();
+                                        let peer_bid = self.panel_app.panel_grid.containers()
+                                            .get(&chart_id).map(|w| w.current_bubble_id.0).unwrap_or(0);
                                         let mut sub_pane_insts: Vec<(u64, String, usize, u64)> =
                                             self.core.indicators()
-                                .get_instances_for_window(chart_id.0)
+                                                .get_instances_for_bubble(peer_bid)
                                                 .into_iter()
                                                 .filter(|i| i.pane > 0)
                                                 .map(|i| (i.id, i.type_id.clone(), i.pane, i.id))
@@ -1189,7 +1277,9 @@ impl ChartApp {
                     .map(|w| !w.compare_overlay.series.is_empty())
                     .unwrap_or(false);
                 let has_indicators = if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
-                    !self.core.indicators().get_instances_for_symbol_in_window(&symbol, chart_id.0).is_empty()
+                    let bid = self.panel_app.panel_grid.containers()
+                        .get(&chart_id).map(|w| w.current_bubble_id.0).unwrap_or(0);
+                    !self.core.indicators().get_instances_for_symbol_in_bubble(&symbol, bid).is_empty()
                 } else {
                     !self.core.indicators().get_instances_for_symbol(&symbol).is_empty()
                 };
@@ -1255,7 +1345,9 @@ impl ChartApp {
                 .map(|w| !w.compare_overlay.series.is_empty())
                 .unwrap_or(false);
             let has_indicators = if let Some(chart_id) = self.panel_app.panel_grid.active_container_id() {
-                !self.core.indicators().get_instances_for_symbol_in_window(&symbol, chart_id.0).is_empty()
+                let bid = self.panel_app.panel_grid.containers()
+                    .get(&chart_id).map(|w| w.current_bubble_id.0).unwrap_or(0);
+                !self.core.indicators().get_instances_for_symbol_in_bubble(&symbol, bid).is_empty()
             } else {
                 !self.core.indicators().get_instances_for_symbol(&symbol).is_empty()
             };

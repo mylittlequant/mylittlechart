@@ -216,7 +216,7 @@ impl ChartApp {
 
                     // Check that indicator belongs to this symbol and window.
                     let symbol_instances = match window_id {
-                        Some(wid) => indicator_manager.get_instances_for_symbol_in_window(symbol, wid),
+                        Some(wid) => indicator_manager.get_instances_for_symbol_in_bubble(symbol, wid),
                         None => indicator_manager.get_instances_for_symbol(symbol),
                     };
                     if !symbol_instances.iter().any(|i| i.id == *indicator_id) {
@@ -300,7 +300,7 @@ impl ChartApp {
 
                     // Check that indicator belongs to this symbol and window.
                     let symbol_instances = match window_id {
-                        Some(wid) => indicator_manager.get_instances_for_symbol_in_window(symbol, wid),
+                        Some(wid) => indicator_manager.get_instances_for_symbol_in_bubble(symbol, wid),
                         None => indicator_manager.get_instances_for_symbol(symbol),
                     };
                     if !symbol_instances.iter().any(|i| i.id == *indicator_id) {

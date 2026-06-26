@@ -686,7 +686,7 @@ impl ChartApp {
             let attempted = &self.indicator_heal_attempted;
             let im = self.core.indicators();
             self.panel_app.panel_grid.iter_containers().any(|(_, w)| {
-                im.get_instances_for_window(w.id.0)
+                im.get_instances_for_bubble(w.current_bubble_id.0)
                     .iter()
                     .any(|i| i.values.is_empty() && !attempted.contains(&i.id))
             })
@@ -696,10 +696,10 @@ impl ChartApp {
                 .panel_app
                 .panel_grid
                 .iter_containers()
-                .map(|(_, w)| (w.id.0, w.id))
+                .map(|(_, w)| (w.current_bubble_id.0, w.id))
                 .collect();
-            for (wid, cid) in window_ids {
-                let needs_heal: Vec<u64> = self.core.indicators().get_instances_for_window(wid)
+            for (bid, cid) in window_ids {
+                let needs_heal: Vec<u64> = self.core.indicators().get_instances_for_bubble(bid)
                     .iter()
                     .filter(|i| i.values.is_empty() && !self.indicator_heal_attempted.contains(&i.id))
                     .map(|i| i.id)
@@ -710,10 +710,10 @@ impl ChartApp {
                         self.indicator_heal_attempted.insert(*id);
                     }
                     eprintln!(
-                        "[ChartApp] indicator heal: window {} has {} bars, {} never-computed instance(s) {:?} — recalculating",
-                        wid, bars.len(), needs_heal.len(), needs_heal
+                        "[ChartApp] indicator heal: bubble {} has {} bars, {} never-computed instance(s) {:?} — recalculating",
+                        bid, bars.len(), needs_heal.len(), needs_heal
                     );
-                    self.core.indicators_mut().calculate_for_window(wid, &bars);
+                    self.core.indicators_mut().calculate_for_bubble(bid, &bars);
                 }
             }
         }

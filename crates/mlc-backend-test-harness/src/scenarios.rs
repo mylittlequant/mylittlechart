@@ -344,30 +344,30 @@ pub fn indicator_atomic_window_id() -> HarnessResult<()> {
     let h = BackendHarness::fresh();
     {
         let im = h.core.indicators();
-        let raw = im.current_render_window_id.load(Ordering::Relaxed);
+        let raw = im.current_render_bubble_id.load(Ordering::Relaxed);
         if decode(raw).is_some() {
-            return Err(err("indicator-atomic", format!("fresh manager has current_render_window_id raw={raw}")));
+            return Err(err("indicator-atomic", format!("fresh manager has current_render_bubble_id raw={raw}")));
         }
     }
     {
         let im = h.core.indicators();
         // store: encode Some(7) as 8
-        im.current_render_window_id.store(7 + 1, Ordering::Relaxed);
+        im.current_render_bubble_id.store(7 + 1, Ordering::Relaxed);
     }
     {
         let im = h.core.indicators();
-        let raw = im.current_render_window_id.load(Ordering::Relaxed);
+        let raw = im.current_render_bubble_id.load(Ordering::Relaxed);
         if decode(raw) != Some(7) {
             return Err(err("indicator-atomic", format!("after store Some(7): raw={raw} decoded={:?}", decode(raw))));
         }
     }
     {
         let im = h.core.indicators();
-        im.current_render_window_id.store(0, Ordering::Relaxed);
+        im.current_render_bubble_id.store(0, Ordering::Relaxed);
     }
     {
         let im = h.core.indicators();
-        if im.current_render_window_id.load(Ordering::Relaxed) != 0 {
+        if im.current_render_bubble_id.load(Ordering::Relaxed) != 0 {
             return Err(err("indicator-atomic", "after store(0): still nonzero"));
         }
     }
@@ -404,7 +404,7 @@ pub fn lock_discipline_concurrent_reads() -> HarnessResult<()> {
             while !stop_r.load(Ordering::Relaxed) {
                 let _snap = core_r.sessions_snapshot();
                 let _bubbles_n = core_r.bubble().bubble.bubbles().count();
-                let _ind_w = core_r.indicators().current_render_window_id.load(std::sync::atomic::Ordering::Relaxed);
+                let _ind_w = core_r.indicators().current_render_bubble_id.load(std::sync::atomic::Ordering::Relaxed);
                 read_count_r.fetch_add(1, Ordering::Relaxed);
             }
         }));
