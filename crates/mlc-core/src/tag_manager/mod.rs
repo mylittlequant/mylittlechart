@@ -4,7 +4,11 @@
 //! share primitives, indicator configs, symbol, timeframe, and crosshair state.
 
 pub mod member_id;
-pub use member_id::{MemberSyncOverride, SyncMemberId};
+// Re-export shared types out of the canonical `mlc-core::ids` location
+// so existing `use mlc_core::tag_manager::{BubbleId, SyncFlags, ...}`
+// imports keep working until Phase A-3 sweeps them.  Single source of
+// truth is `mlc-core::ids`.
+pub use crate::ids::{BubbleId, MemberSyncOverride, SyncFlags, SyncMemberId};
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -18,60 +22,6 @@ use crate::drawing::primitives_v2::{SystemSignal, StrategySignalConfig};
 use crate::drawing::Trade;
 use crate::state::chart_container::{ChartId, ConnectionStatus};
 use crate::state::{CommandHistory, Timeframe};
-
-// =============================================================================
-// BubbleId
-// =============================================================================
-
-/// Unique identifier for a data bubble (synchronization group).
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct BubbleId(pub u64);
-
-static NEXT_BUBBLE_ID: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(1);
-
-impl BubbleId {
-    /// Generate a new unique `BubbleId`.
-    pub fn generate() -> Self {
-        BubbleId(NEXT_BUBBLE_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst))
-    }
-
-    /// Advance the counter past `raw` so future `generate()` calls never
-    /// collide with restored preset IDs.
-    pub fn bump_past(raw: u64) {
-        let next = raw + 1;
-        NEXT_BUBBLE_ID.fetch_max(next, std::sync::atomic::Ordering::SeqCst);
-    }
-}
-
-
-// =============================================================================
-// SyncFlags
-// =============================================================================
-
-/// Controls which properties are synchronized across windows in a `DataBubble`.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SyncFlags {
-    pub sync_crosshair: bool,
-    pub sync_viewport: bool,
-    pub sync_symbol: bool,
-    pub sync_timeframe: bool,
-    pub sync_drawings: bool,
-    pub sync_indicators: bool,
-}
-
-impl Default for SyncFlags {
-    fn default() -> Self {
-        Self {
-            sync_crosshair: true,
-            sync_viewport: true,
-            sync_symbol: true,
-            sync_timeframe: true,
-            sync_drawings: true,
-            sync_indicators: true,
-        }
-    }
-}
 
 // =============================================================================
 // IndicatorGroupConfig

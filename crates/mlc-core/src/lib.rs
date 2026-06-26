@@ -97,7 +97,14 @@ pub mod toolbar;
 // Chart-local modal state
 pub mod modal;
 
-// Tag / sync-group manager (Step 1–2 of the TagManager architecture)
+// Shared identifier + sync types — vocabulary used by both backend
+// (mlc-backend-core::bubble) and app (mlc-app::tag).
+pub mod ids;
+pub use ids::{BubbleId, SyncFlags, SyncMemberId, MemberSyncOverride};
+
+// Tag / sync-group manager (Step 1–2 of the TagManager architecture).
+// Holds DataBubble + BubbleStore — physically moves to mlc-backend-core
+// in Phase A-2.
 pub mod tag_manager;
 
 // Chart preset system (snapshot types for persistence)
