@@ -47,22 +47,20 @@ pub struct Managers {
     /// Global signal annotation service (lifted from `DataBubble.signal_manager` in K2.3).
     ///
     /// Stateless dispatcher — all signal data lives on the bubble data slice
-    /// (`bubble.signals`, `bubble.signal_next_id`, `bubble.signal_strategies`,
-    /// `bubble.signals_visible`).
+    /// (`bubble.signals`, `bubble.signal_next_id`, `bubble.signal_strategies`).
     pub signal: SignalManager,
 
     /// Global trade visualization service (lifted from `DataBubble.trade_manager` in K2.4).
     ///
     /// Stateless dispatcher — all trade data lives on the bubble data slice
-    /// (`bubble.trades`, `bubble.trade_next_id`, `bubble.trades_visible`,
-    /// `bubble.trade_show_lines`).
+    /// (`bubble.trades`, `bubble.trade_next_id`).
     pub trade: TradeManager,
 
     /// Global marker annotation service (lifted from `DataBubble.marker_manager` in K2.5).
     ///
     /// Stateless dispatcher — all marker data lives on the bubble data slice
-    /// (`bubble.markers`, `bubble.marker_recalculation_required`,
-    /// `bubble.marker_base_size`, `bubble.marker_padding`).
+    /// (`bubble.markers`, `bubble.marker_recalculation_required`).
+    /// Sizing constants are inlined in [`crate::chart::annotations::markers`].
     pub marker: MarkerManager,
 
     /// Global alert service (moved from `ChartApp.alert_manager` in K2.7).

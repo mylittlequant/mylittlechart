@@ -188,9 +188,6 @@ pub struct DataBubble {
     /// Per-strategy rendering configuration (color, size, visibility).
     pub signal_strategies: std::collections::HashMap<String, StrategySignalConfig>,
 
-    /// Global on/off toggle for all signals on this bubble. Default: `false`.
-    pub signals_visible: bool,
-
     /// Trade fill / position overlays keyed by trade ID.
     ///
     /// Written exclusively by [`crate::managers::Managers::trade`].
@@ -200,12 +197,6 @@ pub struct DataBubble {
     /// Starts at 1; repaired after snapshot restore.
     pub trade_next_id: u64,
 
-    /// Global on/off toggle for all trades on this bubble. Default: `true`.
-    pub trades_visible: bool,
-
-    /// Show trade connector lines on chart. Default: `true`.
-    pub trade_show_lines: bool,
-
     /// Price / time marker annotations rendered on every member chart.
     ///
     /// Written exclusively by [`crate::managers::Managers::marker`].
@@ -213,12 +204,6 @@ pub struct DataBubble {
 
     /// Flag: marker bar-indices need recalculation (set after add/set, cleared after recalc).
     pub marker_recalculation_required: bool,
-
-    /// Base marker size in pixels. Default: 10.0.
-    pub marker_base_size: f64,
-
-    /// Padding between marker and bar in pixels. Default: 3.0.
-    pub marker_padding: f64,
 
     // =========================================================================
     // === Per-Kind series storage (Phase X0, 2026-06-19) ======================
@@ -413,15 +398,10 @@ impl Clone for DataBubble {
             signals: self.signals.clone(),
             signal_next_id: self.signal_next_id,
             signal_strategies: self.signal_strategies.clone(),
-            signals_visible: self.signals_visible,
             trades: self.trades.clone(),
             trade_next_id: self.trade_next_id,
-            trades_visible: self.trades_visible,
-            trade_show_lines: self.trade_show_lines,
             markers: self.markers.clone(),
             marker_recalculation_required: self.marker_recalculation_required,
-            marker_base_size: self.marker_base_size,
-            marker_padding: self.marker_padding,
             // === Per-Kind storage (Phase X0) ===
             bars: self.bars.clone(),
             footprint_bars: self.footprint_bars.clone(),
@@ -552,15 +532,10 @@ impl BubbleStore {
             signals: std::collections::HashMap::new(),
             signal_next_id: 1,
             signal_strategies: std::collections::HashMap::new(),
-            signals_visible: false,
             trades: std::collections::HashMap::new(),
             trade_next_id: 1,
-            trades_visible: true,
-            trade_show_lines: true,
             markers: Vec::new(),
             marker_recalculation_required: false,
-            marker_base_size: 10.0,
-            marker_padding: 3.0,
             // === Per-Kind storage (Phase X0) ===
             bars: Vec::new(),
             footprint_bars: None,
@@ -611,15 +586,10 @@ impl BubbleStore {
             signals: std::collections::HashMap::new(),
             signal_next_id: 1,
             signal_strategies: std::collections::HashMap::new(),
-            signals_visible: false,
             trades: std::collections::HashMap::new(),
             trade_next_id: 1,
-            trades_visible: true,
-            trade_show_lines: true,
             markers: Vec::new(),
             marker_recalculation_required: false,
-            marker_base_size: 10.0,
-            marker_padding: 3.0,
             // === Per-Kind storage (Phase X0) ===
             bars: Vec::new(),
             footprint_bars: None,
@@ -1260,15 +1230,10 @@ impl BubbleStore {
             signals: snap.signals.clone(),
             signal_next_id: 1,
             signal_strategies: snap.signal_strategies.clone(),
-            signals_visible: snap.signals_visible,
             trades: snap.trades.clone(),
             trade_next_id: 1,
-            trades_visible: snap.trades_visible,
-            trade_show_lines: snap.trade_show_lines,
             markers: snap.markers.clone(),
             marker_recalculation_required: !snap.markers.is_empty(),
-            marker_base_size: 10.0,
-            marker_padding: 3.0,
             // === Per-Kind storage (Phase X0) ===
             // Not persisted in snapshot; bubble starts empty and fills from
             // the next bridge tick after restore.

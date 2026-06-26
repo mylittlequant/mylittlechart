@@ -478,29 +478,13 @@ pub struct DataBubbleSnapshot {
     #[serde(default)]
     pub signal_strategies: std::collections::HashMap<String, StrategySignalConfig>,
 
-    /// Global signal visibility toggle. Absent in old presets → false (hidden by default).
-    #[serde(default)]
-    pub signals_visible: bool,
-
     /// Persisted trade annotations. Absent in old presets → empty map.
     #[serde(default)]
     pub trades: std::collections::HashMap<u64, Trade>,
 
-    /// Global trade visibility toggle. Absent in old presets → true (visible by default).
-    #[serde(default = "default_true")]
-    pub trades_visible: bool,
-
-    /// Show trade connector lines. Absent in old presets → true.
-    #[serde(default = "default_true")]
-    pub trade_show_lines: bool,
-
     /// Persisted marker annotations. Absent in old presets → empty vec.
     #[serde(default)]
     pub markers: Vec<Marker>,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 impl DataBubbleSnapshot {
@@ -587,10 +571,7 @@ impl DataBubbleSnapshot {
             last_used_style,
             signals: group.signals.clone(),
             signal_strategies: group.signal_strategies.clone(),
-            signals_visible: group.signals_visible,
             trades: group.trades.clone(),
-            trades_visible: group.trades_visible,
-            trade_show_lines: group.trade_show_lines,
             markers: group.markers.clone(),
         }
     }

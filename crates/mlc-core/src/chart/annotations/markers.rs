@@ -1,10 +1,15 @@
 //! Marker system for zengeld-chart.
 //!
 //! After K2.5 `MarkerManager` is a **stateless dispatcher** that lives in
-//! `Managers.marker`.  All marker data (`markers` vec, `recalculation_required`,
-//! `base_size`, `padding`) now lives on the `DataBubble` data slice
-//! (`bubble.markers`, `bubble.marker_recalculation_required`,
-//! `bubble.marker_base_size`, `bubble.marker_padding`).
+//! `Managers.marker`.  All marker data (`markers` vec,
+//! `recalculation_required`) lives on the `DataBubble` data slice
+//! (`bubble.markers`, `bubble.marker_recalculation_required`).
+//!
+//! Sizing constants (`MARKER_BASE_SIZE`, `MARKER_PADDING`) are inlined
+//! here — they were once per-bubble fields, but UI write-count was zero,
+//! they never persisted, and the constants are immutable across the
+//! whole app.  Phase 2A of the Tag/Bubble/UiContainer cutover removed
+//! the bubble fields.
 //!
 //! Every mutating method accepts `&mut DataBubble` (or `&DataBubble` for
 //! reads) and writes directly to the bubble.  No method reaches back to a
@@ -19,6 +24,14 @@
 
 use crate::{Bar, PriceScale, Viewport};
 use std::collections::HashMap;
+
+/// Base marker size in pixels.  Was once `DataBubble.marker_base_size`,
+/// inlined in Phase 2A (UI write-count was zero, never persisted).
+pub const MARKER_BASE_SIZE: f64 = 10.0;
+
+/// Padding between marker and bar in pixels.  Was once
+/// `DataBubble.marker_padding`, inlined in Phase 2A.
+pub const MARKER_PADDING: f64 = 3.0;
 
 // =============================================================================
 // Marker Shape
@@ -302,8 +315,8 @@ pub struct MarkerCoordinates {
 /// Global service for chart marker annotations.
 ///
 /// Stateless: all marker data lives on the [`crate::tag_manager::DataBubble`]
-/// data slice (`bubble.markers`, `bubble.marker_recalculation_required`,
-/// `bubble.marker_base_size`, `bubble.marker_padding`).
+/// data slice (`bubble.markers`, `bubble.marker_recalculation_required`).
+/// Sizing uses module-level constants `MARKER_BASE_SIZE` / `MARKER_PADDING`.
 /// Lives in [`crate::managers::Managers::marker`].
 ///
 /// NOTE: `crate::state::chart::Chart` has its own `marker_manager:
@@ -447,7 +460,6 @@ impl MarkerManager {
     /// off-screen or `bar_idx` not found.
     pub fn calc_marker_coords(
         &self,
-        bubble: &crate::tag_manager::DataBubble,
         marker: &Marker,
         bars: &[Bar],
         viewport: &Viewport,
@@ -460,7 +472,7 @@ impl MarkerManager {
 
         let bar = &bars[bar_idx];
         let x = viewport.bar_to_x(bar_idx);
-        let marker_size = marker.calc_final_size(bubble.marker_base_size);
+        let marker_size = marker.calc_final_size(MARKER_BASE_SIZE);
 
         let y = match marker.position {
             MarkerPosition::AboveBar => {
@@ -469,7 +481,7 @@ impl MarkerManager {
                     price_scale.price_min,
                     price_scale.price_max,
                 );
-                price_y - marker_size - bubble.marker_padding
+                price_y - marker_size - MARKER_PADDING
             }
 
             MarkerPosition::BelowBar => {
@@ -478,7 +490,7 @@ impl MarkerManager {
                     price_scale.price_min,
                     price_scale.price_max,
                 );
-                price_y + marker_size + bubble.marker_padding
+                price_y + marker_size + MARKER_PADDING
             }
 
             MarkerPosition::InBar => {

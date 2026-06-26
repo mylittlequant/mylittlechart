@@ -2,9 +2,8 @@
 //!
 //! After K2.3 `SignalManager` is a **stateless dispatcher** that lives in
 //! `Managers.signal`.  All signal data (the `signals` map, the ID counter,
-//! strategy configs, and the visibility toggle) now live on the `DataBubble`
-//! data slice (`bubble.signals`, `bubble.signal_next_id`,
-//! `bubble.signal_strategies`, `bubble.signals_visible`).
+//! strategy configs) now live on the `DataBubble` data slice
+//! (`bubble.signals`, `bubble.signal_next_id`, `bubble.signal_strategies`).
 //!
 //! Every mutating method accepts `&mut DataBubble` (or the specific sub-slice)
 //! and writes directly to the bubble.  No method reaches back to a
@@ -13,10 +12,13 @@
 //! Separate from DrawingManager which handles user primitives.
 //! System signals cannot be dragged, edited, or interacted with
 //! through normal primitive UI.
+//!
+//! Phase 2A of the Tag/Bubble/UiContainer cutover removed the
+//! `signals_visible` flag + the orphaned `render()` body — neither was
+//! reachable from any UI toggle or render pipeline.
 
 use std::collections::HashMap;
 use crate::drawing::primitives_v2::{SystemSignal, SignalType, StrategySignalConfig};
-use crate::render::RenderContext;
 use crate::tag_manager::DataBubble;
 
 /// Global service for strategy-generated signal annotations.
@@ -206,42 +208,6 @@ impl SignalManager {
         for signal in bubble.signals.values_mut() {
             if signal.strategy_tag == tag {
                 signal.set_size(size_ms);
-            }
-        }
-    }
-
-    // =========================================================================
-    // Visibility
-    // =========================================================================
-
-    /// Get the global visibility flag for a bubble's signals.
-    pub fn is_visible(&self, bubble: &DataBubble) -> bool {
-        bubble.signals_visible
-    }
-
-    /// Set the global visibility flag for a bubble's signals.
-    pub fn set_visible(&self, bubble: &mut DataBubble, visible: bool) {
-        bubble.signals_visible = visible;
-    }
-
-    // =========================================================================
-    // Rendering
-    // =========================================================================
-
-    /// Render all visible signals for a bubble.
-    pub fn render(&self, bubble: &DataBubble, ctx: &mut dyn RenderContext) {
-        if !bubble.signals_visible {
-            return;
-        }
-
-        for signal in bubble.signals.values() {
-            let strategy_visible = bubble.signal_strategies
-                .get(&signal.strategy_tag)
-                .map(|c| c.visible)
-                .unwrap_or(true);
-
-            if strategy_visible && signal.visible {
-                signal.render(ctx);
             }
         }
     }

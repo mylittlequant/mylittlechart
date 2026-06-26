@@ -1,13 +1,17 @@
 //! Trade visualization — displays completed trades on chart.
 //!
 //! After K2.4 `TradeManager` is a **stateless dispatcher** that lives in
-//! `Managers.trade`.  All trade data (`trades` map, `trade_next_id`,
-//! `trades_visible`, `trade_show_lines`) now lives on the `DataBubble`
-//! data slice.
+//! `Managers.trade`.  All trade data (`trades` map, `trade_next_id`)
+//! lives on the `DataBubble` data slice.
 //!
 //! Every mutating method accepts `&mut DataBubble` (or `&DataBubble` for
 //! reads) and writes directly to the bubble.  No method reaches back to a
 //! `trade_manager` field — that field is gone.
+//!
+//! Phase 2A of the Tag/Bubble/UiContainer cutover removed the
+//! `trades_visible` + `trade_show_lines` flags + the dead-end
+//! `is_visible/set_visible/show_lines/set_show_lines` wrappers — there
+//! was no `render()` and no UI toggle wired to them.
 
 use serde::{Deserialize, Serialize};
 
@@ -116,8 +120,7 @@ impl Trade {
 /// Global service for trade visualization annotations.
 ///
 /// Stateless: all trade data lives on the [`crate::tag_manager::DataBubble`]
-/// data slice (`bubble.trades`, `bubble.trade_next_id`,
-/// `bubble.trades_visible`, `bubble.trade_show_lines`).
+/// data slice (`bubble.trades`, `bubble.trade_next_id`).
 /// Lives in [`crate::managers::Managers::trade`].
 #[derive(Clone, Debug, Default)]
 pub struct TradeManager;
@@ -226,30 +229,6 @@ impl TradeManager {
             return 0.0;
         }
         self.win_count(bubble) as f64 / total as f64
-    }
-
-    // =========================================================================
-    // Visibility
-    // =========================================================================
-
-    /// Get global visibility for a bubble.
-    pub fn is_visible(&self, bubble: &crate::tag_manager::DataBubble) -> bool {
-        bubble.trades_visible
-    }
-
-    /// Set global visibility for a bubble.
-    pub fn set_visible(&self, bubble: &mut crate::tag_manager::DataBubble, visible: bool) {
-        bubble.trades_visible = visible;
-    }
-
-    /// Get show-lines setting for a bubble.
-    pub fn show_lines(&self, bubble: &crate::tag_manager::DataBubble) -> bool {
-        bubble.trade_show_lines
-    }
-
-    /// Set show-lines setting for a bubble.
-    pub fn set_show_lines(&self, bubble: &mut crate::tag_manager::DataBubble, show: bool) {
-        bubble.trade_show_lines = show;
     }
 
     // =========================================================================
