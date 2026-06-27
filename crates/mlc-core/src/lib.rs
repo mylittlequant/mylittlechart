@@ -291,8 +291,7 @@ pub use scale_settings::{
 
 // State Management - Base chart and layout types
 pub use state::{
-    // Base chart struct
-    Chart,
+    // (Legacy single-window `Chart` struct deleted — use `ChartContainer`.)
     // Visibility (standalone manager)
     VisibilityManager,
     // Lock (standalone manager)

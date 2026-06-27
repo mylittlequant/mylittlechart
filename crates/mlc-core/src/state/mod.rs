@@ -3,17 +3,15 @@
 //! Core state types for the standalone chart library.
 //!
 //! This module provides:
-//! - `Chart` - base chart struct with data, viewport, scales, and display options
+//! - `ChartContainer` - the main chart state aggregate (multi-window)
 //! - `SubPane` - sub-pane layout for indicator panels
 //! - `Timeframe` - timeframe representation
-//! - `VisibilityManager` - visibility tracking
-//! - `LockManager` - lock state management
+//! - `VisibilityManager` / `LockManager`
 //! - `Command` / `CommandHistory` - undo/redo command pattern
 //!
-//! Terminal-specific features (indicators, alerts, signals, trades,
-//! multi-window management) are NOT included here - they belong in the terminal crate.
+//! The legacy single-window `Chart` struct was deleted — all consumers
+//! flow through `ChartContainer`.
 
-mod chart;
 mod pane;
 mod timeframe;
 mod visibility;
@@ -40,9 +38,6 @@ pub mod scroll_state;
 pub mod modal_state;
 pub mod modal_data;
 pub mod toolbar_geometry;
-
-// Core chart struct
-pub use chart::*;
 
 // Unified panel taxonomy (K1 — supersedes PanelLeaf + FreeItem)
 pub use panel::{Panel, PanelId, PanelKind};
