@@ -15,7 +15,6 @@ fn default_account_type_spot() -> String {
 use crate::chart::types::price_scale::ScaleMode;
 use crate::drawing::primitives_v2::{Primitive, StrategySignalConfig, SystemSignal};
 use crate::drawing::primitives_v2::config::TimeframeVisibilityConfig;
-use crate::chart::annotations::markers::Marker;
 use crate::drawing::Trade;
 use crate::drawing::DrawingManager;
 use crate::state::chart_container::ChartContainer;
@@ -459,10 +458,6 @@ pub struct DataBubbleSnapshot {
     /// Persisted trade annotations. Absent in old presets → empty map.
     #[serde(default)]
     pub trades: std::collections::HashMap<u64, Trade>,
-
-    /// Persisted marker annotations. Absent in old presets → empty vec.
-    #[serde(default)]
-    pub markers: Vec<Marker>,
 }
 
 impl DataBubbleSnapshot {
@@ -550,7 +545,6 @@ impl DataBubbleSnapshot {
             signals: group.signals.clone(),
             signal_strategies: group.signal_strategies.clone(),
             trades: group.trades.clone(),
-            markers: group.markers.clone(),
         }
     }
 }

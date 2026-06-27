@@ -34,7 +34,6 @@
 
 use mlc_alerts::AlertManager;
 
-use crate::chart::annotations::markers::MarkerManager;
 use crate::drawing::SignalManager;
 use crate::drawing::TradeManager;
 use crate::tag_manager::BubbleStore;
@@ -55,13 +54,6 @@ pub struct Managers {
     /// Stateless dispatcher — all trade data lives on the bubble data slice
     /// (`bubble.trades`, `bubble.trade_next_id`).
     pub trade: TradeManager,
-
-    /// Global marker annotation service (lifted from `DataBubble.marker_manager` in K2.5).
-    ///
-    /// Stateless dispatcher — all marker data lives on the bubble data slice
-    /// (`bubble.markers`, `bubble.marker_recalculation_required`).
-    /// Sizing constants are inlined in [`crate::chart::annotations::markers`].
-    pub marker: MarkerManager,
 
     /// Global alert service (moved from `ChartApp.alert_manager` in K2.7).
     ///
@@ -85,7 +77,6 @@ impl Managers {
         Self {
             signal: SignalManager::new(),
             trade: TradeManager::new(),
-            marker: MarkerManager::new(),
             alert: AlertManager::new(),
             bubble: BubbleStore::new(),
         }

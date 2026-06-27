@@ -336,7 +336,7 @@ pub fn execute_chart_action(
         }
 
         // =====================================================================
-        // Price Lines / Markers
+        // Price Lines
         // =====================================================================
         ChartAction::AddPriceLine => {
             // Price line creation needs user-supplied price — no-op here, terminal handles
@@ -348,18 +348,6 @@ pub fn execute_chart_action(
             eprintln!("[Chart] Cleared all price lines");
             vec![]
         }
-        ChartAction::AddMarker => {
-            // Marker creation needs user interaction — terminal handles
-            eprintln!("[Chart] AddMarker - delegating to terminal");
-            vec![ChartExternalEvent::NotHandled]
-        }
-        ChartAction::ClearMarkers => {
-            // marker_manager lives on DataBubble; this action is dead until a
-            // routing layer can resolve the chart's current bubble here.
-            let _ = window;
-            vec![]
-        }
-
         // =====================================================================
         // Data
         // =====================================================================

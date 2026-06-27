@@ -484,16 +484,6 @@ impl DefaultStyles {
         }
     }
 
-    /// Default style for markers
-    pub fn marker() -> StyleSet {
-        StyleSet {
-            fill_color: Some("#4caf50".to_string()),
-            text_color: Some("#b2b5be".to_string()),
-            font_size: Some(11.0),
-            ..Default::default()
-        }
-    }
-
     /// Default style for trend lines
     pub fn trend_line() -> StyleSet {
         StyleSet {

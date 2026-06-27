@@ -15,7 +15,6 @@ use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
 
-use crate::chart::annotations::markers::Marker;
 use crate::chart::types::price_scale::ScaleMode;
 use crate::drawing::primitives_v2::config::TemplateStyle;
 use crate::drawing::primitives_v2::{SystemSignal, StrategySignalConfig};
@@ -146,14 +145,6 @@ pub struct DataBubble {
     /// Next trade ID. Advanced by `TradeManager::add_trade`.
     /// Starts at 1; repaired after snapshot restore.
     pub trade_next_id: u64,
-
-    /// Price / time marker annotations rendered on every member chart.
-    ///
-    /// Written exclusively by [`crate::managers::Managers::marker`].
-    pub markers: Vec<Marker>,
-
-    /// Flag: marker bar-indices need recalculation (set after add/set, cleared after recalc).
-    pub marker_recalculation_required: bool,
 
     // =========================================================================
     // === Per-Kind series storage (Phase X0, 2026-06-19) ======================
@@ -350,8 +341,6 @@ impl Clone for DataBubble {
             signal_strategies: self.signal_strategies.clone(),
             trades: self.trades.clone(),
             trade_next_id: self.trade_next_id,
-            markers: self.markers.clone(),
-            marker_recalculation_required: self.marker_recalculation_required,
             // === Per-Kind storage (Phase X0) ===
             bars: self.bars.clone(),
             footprint_bars: self.footprint_bars.clone(),
@@ -484,8 +473,6 @@ impl BubbleStore {
             signal_strategies: std::collections::HashMap::new(),
             trades: std::collections::HashMap::new(),
             trade_next_id: 1,
-            markers: Vec::new(),
-            marker_recalculation_required: false,
             // === Per-Kind storage (Phase X0) ===
             bars: Vec::new(),
             footprint_bars: None,
@@ -538,8 +525,6 @@ impl BubbleStore {
             signal_strategies: std::collections::HashMap::new(),
             trades: std::collections::HashMap::new(),
             trade_next_id: 1,
-            markers: Vec::new(),
-            marker_recalculation_required: false,
             // === Per-Kind storage (Phase X0) ===
             bars: Vec::new(),
             footprint_bars: None,
@@ -1176,8 +1161,6 @@ impl BubbleStore {
             signal_strategies: snap.signal_strategies.clone(),
             trades: snap.trades.clone(),
             trade_next_id: 1,
-            markers: snap.markers.clone(),
-            marker_recalculation_required: !snap.markers.is_empty(),
             bars: Vec::new(),
             footprint_bars: None,
             renko_bars: None,

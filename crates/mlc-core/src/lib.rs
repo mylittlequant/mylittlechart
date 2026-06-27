@@ -239,11 +239,9 @@ pub use chart::{
 // DOM Heatmap types (C12)
 pub use chart::dom_heatmap::{DomHeatmapBuffer, DomHeatmapCell, DomTradeDot};
 
-// Annotations (from chart module)
-pub use chart::annotations::{
-    LineStyle, Marker, MarkerCoordinates, MarkerManager, MarkerPosition, MarkerShape, PriceLine,
-    PriceLineOptions,
-};
+// Annotations (from chart module) — Marker family deleted; only price
+// lines remain.
+pub use chart::annotations::{LineStyle, PriceLine, PriceLineOptions};
 
 // Series (from chart module)
 pub use chart::series::{

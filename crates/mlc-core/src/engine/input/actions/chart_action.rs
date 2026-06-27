@@ -56,10 +56,6 @@ pub enum ChartAction {
     AddPriceLine,
     ClearPriceLines,
 
-    // === Markers ===
-    AddMarker,
-    ClearMarkers,
-
     // === Data ===
     RegenerateData,
 
@@ -197,11 +193,9 @@ impl ChartAction {
             Self::ToggleCrosshairVertLabel => "toggle_crosshair_vert_label",
             Self::ToggleCrosshairHorzLabel => "toggle_crosshair_horz_label",
 
-            // Price lines / Markers
+            // Price lines
             Self::AddPriceLine => "add_priceline",
             Self::ClearPriceLines => "clear_pricelines",
-            Self::AddMarker => "add_marker",
-            Self::ClearMarkers => "clear_markers",
 
             // Data
             Self::RegenerateData => "regenerate_data",
@@ -320,11 +314,9 @@ impl ChartAction {
             "toggle_crosshair_vert_label" => Self::ToggleCrosshairVertLabel,
             "toggle_crosshair_horz_label" => Self::ToggleCrosshairHorzLabel,
 
-            // Price lines / Markers
+            // Price lines
             "add_priceline" => Self::AddPriceLine,
             "clear_pricelines" => Self::ClearPriceLines,
-            "add_marker" => Self::AddMarker,
-            "clear_markers" => Self::ClearMarkers,
 
             // Data
             "regenerate_data" => Self::RegenerateData,

@@ -39,7 +39,6 @@ use std::any::Any;
 /// - Series: Data display, no drag
 /// - Overlay: UI elements, position-only (no drag)
 /// - Primitive: Drawing tools, can drag
-/// - Marker: Data annotations, can drag
 /// - PriceLine: Horizontal price levels, can drag
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ObjectType {
@@ -49,8 +48,6 @@ pub enum ObjectType {
     Overlay,
     /// Primitive (trend line, rectangle, etc.) - configure + drag
     Primitive,
-    /// Marker (data annotation) - configure + drag
-    Marker,
     /// Price Line (horizontal level) - configure + drag
     PriceLine,
 }
@@ -60,7 +57,7 @@ impl ObjectType {
     pub fn supports_drag(&self) -> bool {
         matches!(
             self,
-            ObjectType::Primitive | ObjectType::Marker | ObjectType::PriceLine
+            ObjectType::Primitive | ObjectType::PriceLine
         )
     }
 
@@ -133,18 +130,6 @@ impl ObjectCapabilities {
         }
     }
 
-    /// Capabilities for markers
-    pub fn marker() -> Self {
-        Self {
-            styleable: true,
-            draggable: true,
-            positionable: false,
-            selectable: true,
-            deletable: true,
-            resizable: false,
-        }
-    }
-
     /// Capabilities for price lines
     pub fn price_line() -> Self {
         Self {
@@ -164,7 +149,6 @@ impl From<ObjectType> for ObjectCapabilities {
             ObjectType::Series => ObjectCapabilities::series(),
             ObjectType::Overlay => ObjectCapabilities::overlay(),
             ObjectType::Primitive => ObjectCapabilities::primitive(),
-            ObjectType::Marker => ObjectCapabilities::marker(),
             ObjectType::PriceLine => ObjectCapabilities::price_line(),
         }
     }
@@ -242,7 +226,6 @@ pub trait ChartObject: Send + Sync {
             ObjectType::Series => ObjectCapabilities::series(),
             ObjectType::Overlay => ObjectCapabilities::overlay(),
             ObjectType::Primitive => ObjectCapabilities::primitive(),
-            ObjectType::Marker => ObjectCapabilities::marker(),
             ObjectType::PriceLine => ObjectCapabilities::price_line(),
         }
     }
@@ -573,7 +556,6 @@ mod tests {
         assert!(!ObjectType::Series.supports_drag());
         assert!(!ObjectType::Overlay.supports_drag());
         assert!(ObjectType::Primitive.supports_drag());
-        assert!(ObjectType::Marker.supports_drag());
         assert!(ObjectType::PriceLine.supports_drag());
 
         assert!(ObjectType::Overlay.supports_position());
