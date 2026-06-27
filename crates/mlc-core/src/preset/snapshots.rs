@@ -13,9 +13,8 @@ fn default_account_type_spot() -> String {
 }
 
 use crate::chart::types::price_scale::ScaleMode;
-use crate::drawing::primitives_v2::{Primitive, StrategySignalConfig, SystemSignal};
+use crate::drawing::primitives_v2::Primitive;
 use crate::drawing::primitives_v2::config::TimeframeVisibilityConfig;
-use crate::drawing::Trade;
 use crate::drawing::DrawingManager;
 use crate::state::chart_container::ChartContainer;
 use crate::state::chart_panel_state::ChartPanelState;
@@ -447,17 +446,6 @@ pub struct DataBubbleSnapshot {
     #[serde(default)]
     pub scale_mode: ScaleMode,
 
-    /// Persisted signal annotations. Absent in old presets → empty map.
-    #[serde(default)]
-    pub signals: std::collections::HashMap<u64, SystemSignal>,
-
-    /// Persisted per-strategy signal rendering configuration. Absent in old presets → empty map.
-    #[serde(default)]
-    pub signal_strategies: std::collections::HashMap<String, StrategySignalConfig>,
-
-    /// Persisted trade annotations. Absent in old presets → empty map.
-    #[serde(default)]
-    pub trades: std::collections::HashMap<u64, Trade>,
 }
 
 impl DataBubbleSnapshot {
@@ -542,9 +530,6 @@ impl DataBubbleSnapshot {
             command_history: Some(group.command_history.clone()),
             auto_created: group.auto_created,
             last_used_style,
-            signals: group.signals.clone(),
-            signal_strategies: group.signal_strategies.clone(),
-            trades: group.trades.clone(),
         }
     }
 }

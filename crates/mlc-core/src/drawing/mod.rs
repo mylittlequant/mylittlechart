@@ -81,8 +81,6 @@ pub fn reassign_primitive_id(prim: &mut Box<dyn primitives_v2::Primitive>) {
 
 mod manager;
 mod primitive_snapshot;
-mod signal_manager;
-mod trades;
 
 // Trait-based primitive system
 pub mod primitives_v2;
@@ -91,9 +89,11 @@ pub mod primitives_v2;
 pub use manager::{DrawingManager, DrawingState, DragType, PrimitiveListItem};
 pub use primitive_snapshot::PrimitiveSnapshot;
 
-// Signal and trade managers
-pub use signal_manager::SignalManager;
-pub use trades::{Trade, TradeDirection, TradeManager};
+// `SignalManager` + `TradeManager` (with `Trade`, `TradeDirection`) were
+// stateless scaffold dispatchers over `bubble.signals` / `bubble.trades`
+// with zero live writers — deleted.  Strategy-driven signal rendering
+// happens through primitives_v2::SignalPrimitive instead.  Trades will
+// be reintroduced from scratch when the daemon HFT path needs them.
 
 // Re-export v2 primitive types
 pub use primitives_v2::{

@@ -17,8 +17,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::chart::types::price_scale::ScaleMode;
 use crate::drawing::primitives_v2::config::TemplateStyle;
-use crate::drawing::primitives_v2::{SystemSignal, StrategySignalConfig};
-use crate::drawing::Trade;
 use crate::state::chart_container::{ChartId, ConnectionStatus};
 use crate::state::{CommandHistory, Timeframe};
 
@@ -124,27 +122,6 @@ pub struct DataBubble {
 
     /// Live / Delayed / Disconnected indicator for this bubble's data feed.
     pub connection_status: ConnectionStatus,
-
-    /// Strategy-generated signal annotations keyed by signal ID.
-    ///
-    /// Written exclusively by [`crate::managers::Managers::signal`].
-    pub signals: std::collections::HashMap<u64, SystemSignal>,
-
-    /// Next signal ID. Advanced by `SignalManager::add_signal`.
-    /// Starts at 1; repaired after snapshot restore via `SignalManager::repair_next_id`.
-    pub signal_next_id: u64,
-
-    /// Per-strategy rendering configuration (color, size, visibility).
-    pub signal_strategies: std::collections::HashMap<String, StrategySignalConfig>,
-
-    /// Trade fill / position overlays keyed by trade ID.
-    ///
-    /// Written exclusively by [`crate::managers::Managers::trade`].
-    pub trades: std::collections::HashMap<u64, Trade>,
-
-    /// Next trade ID. Advanced by `TradeManager::add_trade`.
-    /// Starts at 1; repaired after snapshot restore.
-    pub trade_next_id: u64,
 
     // =========================================================================
     // === Per-Kind series storage (Phase X0, 2026-06-19) ======================
@@ -336,11 +313,6 @@ impl Clone for DataBubble {
             last_used_style: Arc::clone(&self.last_used_style),
             prev_close_price: self.prev_close_price,
             connection_status: self.connection_status,
-            signals: self.signals.clone(),
-            signal_next_id: self.signal_next_id,
-            signal_strategies: self.signal_strategies.clone(),
-            trades: self.trades.clone(),
-            trade_next_id: self.trade_next_id,
             // === Per-Kind storage (Phase X0) ===
             bars: self.bars.clone(),
             footprint_bars: self.footprint_bars.clone(),
@@ -468,11 +440,6 @@ impl BubbleStore {
             last_used_style: Arc::new(RwLock::new(HashMap::new())),
             prev_close_price: None,
             connection_status: ConnectionStatus::default(),
-            signals: std::collections::HashMap::new(),
-            signal_next_id: 1,
-            signal_strategies: std::collections::HashMap::new(),
-            trades: std::collections::HashMap::new(),
-            trade_next_id: 1,
             // === Per-Kind storage (Phase X0) ===
             bars: Vec::new(),
             footprint_bars: None,
@@ -520,11 +487,6 @@ impl BubbleStore {
             last_used_style: Arc::new(RwLock::new(HashMap::new())),
             prev_close_price: None,
             connection_status: ConnectionStatus::default(),
-            signals: std::collections::HashMap::new(),
-            signal_next_id: 1,
-            signal_strategies: std::collections::HashMap::new(),
-            trades: std::collections::HashMap::new(),
-            trade_next_id: 1,
             // === Per-Kind storage (Phase X0) ===
             bars: Vec::new(),
             footprint_bars: None,
@@ -1137,7 +1099,7 @@ impl BubbleStore {
             }
         }
 
-        let mut bubble = DataBubble {
+        let bubble = DataBubble {
             id: BubbleId(snap.id),
             color: snap.color,
             primitives: Vec::new(),
@@ -1156,11 +1118,6 @@ impl BubbleStore {
             last_used_style: Arc::new(RwLock::new(style_map)),
             prev_close_price: None,
             connection_status: ConnectionStatus::default(),
-            signals: snap.signals.clone(),
-            signal_next_id: 1,
-            signal_strategies: snap.signal_strategies.clone(),
-            trades: snap.trades.clone(),
-            trade_next_id: 1,
             bars: Vec::new(),
             footprint_bars: None,
             renko_bars: None,
@@ -1176,13 +1133,6 @@ impl BubbleStore {
             liq_heatmap: None,
             liq_dots: None,
         };
-
-        if let Some(&max_id) = bubble.signals.keys().max() {
-            bubble.signal_next_id = max_id + 1;
-        }
-        if let Some(&max_id) = bubble.trades.keys().max() {
-            bubble.trade_next_id = max_id + 1;
-        }
 
         bubble
     }

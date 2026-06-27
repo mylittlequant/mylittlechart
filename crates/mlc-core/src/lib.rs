@@ -362,8 +362,8 @@ pub use drawing::{
     SystemSignal, SignalType, SignalPrimitive, StrategySignalConfig,
     // Level configuration
     FibLevelConfig,
-    // Signal and trade managers
-    SignalManager, Trade, TradeDirection, TradeManager,
+    // (SignalManager / TradeManager / Trade / TradeDirection deleted — see
+    // `mlc-core::drawing` for the rationale.)
 };
 
 // Indicator Source (abstraction for indicator data access)

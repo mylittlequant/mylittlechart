@@ -256,7 +256,7 @@ pub enum Command {
         primitives: Vec<(String, Vec<(i64, f64)>, PrimitiveData)>, // (type_id, points, data)
     },
 
-    /// Set strategy visibility (delegates to SignalManager.set_strategy_visible)
+    /// Set strategy visibility.
     SetStrategyVisibility {
         strategy_tag: String,
         visible: bool,
