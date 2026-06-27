@@ -7310,8 +7310,9 @@ impl ChartApp {
                 let snap_default_dm = mlc_core::drawing::DrawingManager::default();
                 let dreg_snap = self.core.drawings();
                 let snap_dm = dreg_snap.get(snap_panel_id).unwrap_or(&snap_default_dm);
+                let snap_prims = snap_dm.primitives();
                 preset.windows.push(ChartWindowSnapshot::from_window(
-                    window, snap_panel_state, snap_dm, leaf_id.0, gid, ptids, stashed_ch, stashed_prims_snap,
+                    window, snap_panel_state, snap_prims, leaf_id.0, gid, ptids, stashed_ch, stashed_prims_snap,
                     snap_symbol, snap_timeframe, snap_exchange, snap_account_type,
                 ));
             }

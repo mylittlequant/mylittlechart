@@ -370,7 +370,7 @@ impl ChartApp {
                                 {
                                     let guard = self.core.drawings();
                                     if let Some(dm) = guard.get(pid) {
-                                        window.snapshot_drawings_for_symbol(&old_sym_pc, &old_exch_pc, &old_at_pc, dm);
+                                        window.snapshot_drawings_for_symbol(&old_sym_pc, &old_exch_pc, &old_at_pc, dm.primitives());
                                     }
                                 }
                                 {
@@ -378,7 +378,9 @@ impl ChartApp {
                                     let dm = guard.entry_or_default(pid);
                                     dm.set_current_symbol_key(&symbol, &item_exchange, &item_account_type);
                                     dm.clear_all_primitives();
-                                    window.restore_drawings_for_symbol(&symbol, &item_exchange, &item_account_type, dm);
+                                    if let Some(snaps) = window.take_drawings_snapshot_for_symbol(&symbol, &item_exchange, &item_account_type) {
+                                        crate::persistence::restore_drawings_into_manager(&snaps, dm);
+                                    }
                                 }
                             }
                             {};

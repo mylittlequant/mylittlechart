@@ -1605,10 +1605,12 @@ impl ChartApp {
                 if let Some(pid) = pid_opt {
                     let mut guard = self.core.drawings_mut();
                     let dm = guard.entry_or_default(pid);
-                    window.snapshot_drawings_for_symbol(old_symbol, old_exchange, old_account_type, dm);
+                    window.snapshot_drawings_for_symbol(old_symbol, old_exchange, old_account_type, dm.primitives());
                     dm.set_current_symbol_key(&symbol_owned, &exchange_owned, &account_type_owned);
                     dm.clear_all_primitives();
-                    window.restore_drawings_for_symbol(&symbol_owned, &exchange_owned, &account_type_owned, dm);
+                    if let Some(snaps) = window.take_drawings_snapshot_for_symbol(&symbol_owned, &exchange_owned, &account_type_owned) {
+                        crate::persistence::restore_drawings_into_manager(&snaps, dm);
+                    }
                 }
                 window.viewport.bar_count = 0;
                 window.viewport.view_start = 0.0;

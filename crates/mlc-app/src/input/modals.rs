@@ -383,10 +383,12 @@ impl ChartApp {
                     if let Some(pid) = active_pid_wl {
                         let mut guard = self.core.drawings_mut();
                         let dm = guard.entry_or_default(pid);
-                        window.snapshot_drawings_for_symbol(&old_sym, &old_exchange, &old_account_type, dm);
+                        window.snapshot_drawings_for_symbol(&old_sym, &old_exchange, &old_account_type, dm.primitives());
                         dm.set_current_symbol_key(sym_part, exchange_part, &wl_at_label);
                         dm.clear_all_primitives();
-                        window.restore_drawings_for_symbol(sym_part, exchange_part, &wl_at_label, dm);
+                        if let Some(snaps) = window.take_drawings_snapshot_for_symbol(sym_part, exchange_part, &wl_at_label) {
+                            crate::persistence::restore_drawings_into_manager(&snaps, dm);
+                        }
                     }
                     window.viewport.bar_count = 0;
                     window.pending_symbol_load = true;
@@ -879,10 +881,12 @@ impl ChartApp {
                             if let Some(pid) = active_pid_srch {
                                 let mut guard = self.core.drawings_mut();
                                 let dm = guard.entry_or_default(pid);
-                                window.snapshot_drawings_for_symbol(&old_sym_search, &old_exch_search, &old_at_search, dm);
+                                window.snapshot_drawings_for_symbol(&old_sym_search, &old_exch_search, &old_at_search, dm.primitives());
                                 dm.set_current_symbol_key(symbol_part, resolved_exchange.as_str(), &search_at_label);
                                 dm.clear_all_primitives();
-                                window.restore_drawings_for_symbol(symbol_part, resolved_exchange.as_str(), &search_at_label, dm);
+                                if let Some(snaps) = window.take_drawings_snapshot_for_symbol(symbol_part, resolved_exchange.as_str(), &search_at_label) {
+                                    crate::persistence::restore_drawings_into_manager(&snaps, dm);
+                                }
                             }
                             window.viewport.bar_count = 0;
                             window.viewport.view_start = 0.0;

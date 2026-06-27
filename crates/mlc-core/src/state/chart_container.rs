@@ -658,22 +658,21 @@ impl ChartContainer {
         )
     }
 
-    /// Snapshot current drawings into the per-symbol cache for the given symbol.
+    /// Snapshot the supplied primitives into the per-symbol cache.
     ///
     /// The cache key is `"symbol:exchange:account_type"` (e.g. `"BTCUSDT:binance:S"`).
-    /// If there are no drawings, any existing cache entry for the key is removed.
-    ///
-    /// `drawing_manager` is taken from `BackendCore::DrawingRegistry` by the caller.
+    /// Caller extracts the live primitives from the `DrawingManager`
+    /// (which lives backend-side) and hands the slice in — this keeps
+    /// `ChartContainer` free of the manager type.
     pub fn snapshot_drawings_for_symbol(
         &mut self,
         symbol: &str,
         exchange: &str,
         account_type: &str,
-        drawing_manager: &crate::drawing::DrawingManager,
+        primitives: &[Box<dyn crate::drawing::primitives_v2::Primitive>],
     ) {
         let key = format!("{}:{}:{}", symbol, exchange, account_type);
-        let snapshots: Vec<crate::drawing::PrimitiveSnapshot> = drawing_manager
-            .primitives()
+        let snapshots: Vec<crate::drawing::PrimitiveSnapshot> = primitives
             .iter()
             .map(|p| crate::drawing::PrimitiveSnapshot::from_primitive(p.as_ref()))
             .collect();
@@ -684,32 +683,20 @@ impl ChartContainer {
         }
     }
 
-    /// Restore drawings from the per-symbol cache for the given symbol.
+    /// Look up cached primitive snapshots for the given symbol.
     ///
-    /// The cache key is `"symbol:exchange:account_type"` (e.g. `"BTCUSDT:binance:S"`).
-    /// Returns `true` if drawings were restored, `false` if no cache entry exists.
-    ///
-    /// `drawing_manager` is taken from `BackendCore::DrawingRegistry` by the caller.
-    pub fn restore_drawings_for_symbol(
-        &mut self,
+    /// Returns a clone of the saved snapshots so the caller can rebuild
+    /// concrete `Box<dyn Primitive>` instances through the
+    /// `PrimitiveRegistry` and push them back into the live
+    /// `DrawingManager`.  Returns `None` when nothing is cached.
+    pub fn take_drawings_snapshot_for_symbol(
+        &self,
         symbol: &str,
         exchange: &str,
         account_type: &str,
-        drawing_manager: &mut crate::drawing::DrawingManager,
-    ) -> bool {
+    ) -> Option<Vec<crate::drawing::PrimitiveSnapshot>> {
         let key = format!("{}:{}:{}", symbol, exchange, account_type);
-        if let Some(snapshots) = self.symbol_drawings.get(&key).cloned() {
-            if let Ok(reg) = crate::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
-                for snap in &snapshots {
-                    if let Some(prim) = reg.from_json(&snap.type_id, &snap.json) {
-                        drawing_manager.add_external_primitive(prim);
-                    }
-                }
-            }
-            true
-        } else {
-            false
-        }
+        self.symbol_drawings.get(&key).cloned()
     }
 
     /// Store the active chart type in the panel state.
@@ -717,175 +704,10 @@ impl ChartContainer {
         panel.chart_type = chart_type;
     }
 
-    /// Create a clone of this chart window for split operation.
-    ///
-    /// Copies viewport settings, scale settings, indicators.
-    /// Gets a fresh ChartId.
-    ///
-    /// `symbol`, `exchange`, `account_type` and `timeframe` are now owned by
-    /// `branch_meta` in chart-app; callers pass them in from `read_*` helpers.
-    ///
-    /// `src_drawing_manager` is the source window's `DrawingManager` (from
-    /// `BackendCore::DrawingRegistry` after the backend-cutover).
-    ///
-    /// When `sync_drawings` is `true`, all existing primitives are cloned into the
-    /// new window as synced copies (`origin_id` is set to the original's id).
-    /// When `false`, the new window starts with an empty drawing manager.
-    ///
-    /// Returns a `(ChartContainer, ChartPanelState, DrawingManager)` tuple.
-    /// The caller must:
-    ///   1. Insert `ChartPanelState` into `TradingPanelsStore.chart_panel` under
-    ///      the new `chart_panel_id` (`new_container.chart_panel_id`).
-    ///   2. Insert `DrawingManager` into `BackendCore::DrawingRegistry` under
-    ///      the same `chart_panel_id`.
-    pub fn clone_for_split(
-        &self,
-        new_chart_id: ChartId,
-        sync_drawings: bool,
-        symbol: &str,
-        exchange: &str,
-        account_type: &str,
-        src_drawing_manager: &crate::drawing::DrawingManager,
-        src_panel: &ChartPanelState,
-    ) -> (Self, ChartPanelState, crate::drawing::DrawingManager) {
-        let new_panel_id = crate::state::chart_container_leaf::generate_chart_panel_id();
-        let mut drawing_manager = crate::drawing::DrawingManager::new();
-        drawing_manager.set_current_window(Some(new_chart_id.0));
-        drawing_manager.set_current_symbol_key(symbol, exchange, account_type);
-        if sync_drawings {
-            let synced = src_drawing_manager.clone_primitives_for_sync(new_chart_id.0);
-            drawing_manager.add_synced_primitives(synced);
-        }
-
-        // Build ChartPanelState for the new window, inheriting display options
-        // from the source panel.
-        let mut new_panel = ChartPanelState::new(new_panel_id);
-        new_panel.show_candles = src_panel.show_candles;
-        new_panel.show_bars = src_panel.show_bars;
-        new_panel.show_hollow_candles = src_panel.show_hollow_candles;
-        new_panel.show_heikin_ashi = src_panel.show_heikin_ashi;
-        new_panel.show_line = src_panel.show_line;
-        new_panel.show_step_line = src_panel.show_step_line;
-        new_panel.show_line_markers = src_panel.show_line_markers;
-        new_panel.show_area = src_panel.show_area;
-        new_panel.show_hlc_area = src_panel.show_hlc_area;
-        new_panel.show_histogram = src_panel.show_histogram;
-        new_panel.show_columns = src_panel.show_columns;
-        new_panel.show_baseline = src_panel.show_baseline;
-        new_panel.chart_type = src_panel.chart_type;
-        new_panel.grid_options = src_panel.grid_options.clone();
-        new_panel.crosshair_options = src_panel.crosshair_options.clone();
-        new_panel.legend = src_panel.legend.clone();
-        new_panel.watermark = src_panel.watermark.clone();
-        new_panel.tooltip = src_panel.tooltip.clone();
-
-        let new_container = Self {
-            // New chart ID
-            id: new_chart_id,
-            // Fresh canvas-leaf id for the split; the source's stays put.
-            chart_panel_id: new_panel_id,
-            // Sentinel — do_split must detect BubbleId(0) and create a fresh
-            // auto-bubble for every chart that clone_for_split produces.
-            auto_bubble_id: BubbleId(0),
-            current_bubble_id: BubbleId(0),
-
-            // === Data ===
-            // Phase X0 / C5c: per-Kind series live on the bubble. Split-child
-            // gets a fresh sentinel bubble (BubbleId(0)) and will attach to
-            // the correct bubble at split time — series are inherited via the
-            // bridge subscription on the matching instrument coordinates.
-            ha_cache: None,
-            ha_cache_stamp: None,
-            vp_overlay: None,
-            vp_overlay_stamp: None,
-            vp_mode: self.vp_mode,
-            vp_show: self.vp_show,
-            oi_show: self.oi_show,
-            funding_show: self.funding_show,
-
-            // === Viewport & Scales (cloned) ===
-            viewport: self.viewport.clone(),
-            price_scale: self.price_scale.clone(),
-            time_scale: self.time_scale.clone(),
-
-            // === Sub-panes ===
-            // Y-state not inherited — sync_sub_panes_from_manager seeds it on next tick.
-            sub_pane_y_state: HashMap::new(),
-            // Overlay state is not inherited — the split child starts with no hover state.
-            sub_pane_overlay_states: Vec::new(),
-            // Overlay results are frame-local; the split child starts empty.
-            sub_pane_overlay_results: Vec::new(),
-
-            // === Interaction State (reset) ===
-            crosshair: {
-                let mut ch = self.crosshair;
-                ch.visible = false;
-                ch
-            },
-            kinetic: KineticState::new(),
-            drag_mode: DragMode::None,
-            last_mouse_pos: None,
-            drag_start_x: 0.0,
-            drag_start_y: 0.0,
-            drag_start_view: 0.0,
-            drag_start_spacing: 0.0,
-            drag_start_price_min: 0.0,
-            drag_start_price_max: 0.0,
-
-            // === Object Managers (DrawingManager lives in BackendCore::DrawingRegistry) ===
-            price_lines: self.price_lines.clone(),
-
-            // === Compare Overlay (reset) ===
-            compare_overlay: CompareOverlay::new(),
-
-            // === Command History (reset) ===
-            command_history: CommandHistory::new(250),
-
-            // === Data Provider (shared) ===
-            data_provider: self.data_provider.clone(),
-
-            // === Scale Settings (cloned) ===
-            scale_settings: self.scale_settings.clone(),
-
-            // === Toolbar State (reset for new panel) ===
-            chart_toolbar: ChartToolbarState::default(),
-
-            // === Toolbar Config (sub-windows have no toolbar — parent owns it) ===
-            toolbar_config: ToolbarConfig::minimal(),
-
-            // Split child does not inherit per-symbol drawing cache.
-            symbol_drawings: HashMap::new(),
-            // Split child has no pending viewport restore.
-            // Split child has no pending symbol load.
-            pending_symbol_load: false,
-            // Split child has no deferred auto-scale pending.
-            needs_auto_scale_after_bars: false,
-            // Split child has no scale mode to restore.
-            restore_scale_mode: None,
-            // Split child has no stashed scale mode — it joins the group fresh.
-            stashed_scale_mode: None,
-            // Split child inherits the source's home-overlay flag verbatim:
-            // do_split's caller patches this to mirror the source window
-            // after construction (clone_for_split_shell can't reach the
-            // source's tag state).  Default to `false`; the patch happens
-            // in do_split right after `clone_for_split_shell`.
-            tag_inherits_home_overlay: false,
-            // Split child does not need a post-backfill snap.
-            needs_snap_after_backfill: false,
-            // Split child has no in-flight scroll fetch.
-            scroll_fetch_in_flight: false,
-            scroll_fetch_started: None,
-            // Split child inherits no data error — it will get its own on failure.
-            data_error: None,
-            // Clone starts with only MainChart leaf; sync_sub_panes_from_manager
-            // re-adds indicator leaves on the next tick.
-            inner_docking: make_inner_docking_with_main_chart(new_panel_id),
-            // Split child inherits the above-main set from the source so MoveUp
-            // state survives a split operation.
-            sub_pane_above_main: self.sub_pane_above_main.clone(),
-        };
-        (new_container, new_panel, drawing_manager)
-    }
+    // `clone_for_split` was deleted — every split path uses
+    // `clone_for_split_shell` instead, which never touched DrawingManager.
+    // The DM-aware clone path was dead code blocking the manager's
+    // backend-side relocation.
 
     /// Crosshair state for rendering (respects render flag).
     pub fn crosshair_for_render(&self, render_crosshair: bool) -> Crosshair {
@@ -1007,35 +829,9 @@ impl ChartContainer {
         bars.get(clamped_idx).map(|b| (b.timestamp, frac))
     }
 
-    /// Clone data from another window (bars, viewport settings).
-    ///
-    /// Instrument fields (symbol/timeframe/exchange/account_type) live in
-    /// `branch_meta` in chart-app; the caller is responsible for mirroring
-    /// the source window's instrument into branch_meta for the dest chart_id.
-    ///
-    /// `dst_dm` is the destination window's `DrawingManager` (from
-    /// `BackendCore::DrawingRegistry` after the backend-cutover); this method
-    /// calls `dst_dm.set_current_symbol_key` on it.
-    /// Phase X0 / C5c: bars storage lives on the bubble — only view state
-    /// is copied. Caller is responsible for ensuring the destination's
-    /// bubble has the same instrument coordinates as the source's bubble
-    /// (so the same bridge subscription fills both).
-    pub fn clone_data_from(
-        &mut self,
-        source: &ChartContainer,
-        symbol: &str,
-        exchange: &str,
-        account_type: &str,
-        dst_dm: &mut crate::drawing::DrawingManager,
-    ) {
-        dst_dm.set_current_symbol_key(symbol, exchange, account_type);
-
-        self.viewport = source.viewport.clone();
-        self.price_scale = source.price_scale.clone();
-
-        self.scale_settings = source.scale_settings.clone();
-        self.price_scale.user_precision = self.scale_settings.user_precision;
-    }
+    // `clone_data_from` was unused (mirrors viewport + scales between
+    // windows) and forced ChartContainer to know about DrawingManager —
+    // deleted alongside the other DM-bound methods.
 
     /// Create ChartRenderState from this window's view state + bubble's series storage.
     ///
@@ -2029,68 +1825,10 @@ impl ChartContainer {
     // Action Dispatch
     // =========================================================================
 
-    /// Execute a chart action, mutating chart state and panel display state.
-    ///
-    /// `drawing_manager` is the per-panel `DrawingManager` from
-    /// `BackendCore::DrawingRegistry` (backend-cutover).
-    ///
-    /// Returns `true` if the action was handled by this window, `false` if it
-    /// requires app-level handling.
-    pub fn execute_chart_action(&mut self, panel: &mut ChartPanelState, drawing_manager: &mut crate::drawing::DrawingManager, action: &crate::ChartAction, bars: &[Bar]) -> bool {
-        use crate::ChartAction;
-        match action {
-            // === Series / Chart Type ===
-            ChartAction::SetChartType(ct) => {
-                self.set_chart_type_with_undo(panel, ct);
-                true
-            }
-
-            // === Toggles ===
-            ChartAction::ToggleLegend => { self.toggle_legend(panel); true }
-            ChartAction::ToggleGrid => { self.toggle_grid(panel); true }
-            ChartAction::ToggleCrosshair => { self.toggle_crosshair(); true }
-            ChartAction::ToggleMagnet => { self.crosshair.toggle_magnet(); true }
-            ChartAction::ToggleWatermark => { self.toggle_watermark(panel); true }
-            ChartAction::ToggleGridVertical => { self.toggle_grid_vertical(panel); true }
-            ChartAction::ToggleGridHorizontal => { self.toggle_grid_horizontal(panel); true }
-            ChartAction::ToggleTooltip => { self.toggle_tooltip(panel); true }
-            ChartAction::ToggleTooltipFollow => { self.toggle_tooltip_follow(panel); true }
-            ChartAction::ToggleCrosshairVertLine => { self.toggle_crosshair_vert_line(panel); true }
-            ChartAction::ToggleCrosshairHorzLine => { self.toggle_crosshair_horz_line(panel); true }
-            ChartAction::ToggleLegendOHLC => { self.toggle_legend_ohlc(panel); true }
-            ChartAction::ToggleLegendChange => { self.toggle_legend_change(panel); true }
-            ChartAction::ToggleLegendPercent => { self.toggle_legend_percent(panel); true }
-
-            // === Setters ===
-            ChartAction::SetGridStyle(s) => { self.set_grid_style(panel, *s); true }
-            ChartAction::SetCrosshairMode(m) => { self.set_crosshair_mode(panel, *m); true }
-            ChartAction::SetCrosshairStyle(s) => { self.set_crosshair_style(panel, *s); true }
-            ChartAction::SetLegendPosition(p) => { self.set_legend_position(panel, *p); true }
-            ChartAction::SetWatermarkPosition(h, v) => { self.set_watermark_position(panel, *h, *v); true }
-            ChartAction::SetWatermarkColor(c) => { self.set_watermark_color(panel, c); true }
-            ChartAction::SetWatermarkText(t) => { self.set_watermark_text(panel, t); true }
-
-            // === Zoom ===
-            ChartAction::ZoomIn => { self.zoom_in(bars); true }
-            ChartAction::ZoomOut => { self.zoom_out(bars); true }
-            ChartAction::FitContent => { self.fit_content(bars); true }
-            ChartAction::ResetZoom => { self.reset_zoom(bars); true }
-
-            // === Drawing (drawing_manager comes from BackendCore::DrawingRegistry) ===
-            ChartAction::SelectTool(tool) => { drawing_manager.set_tool(Some(tool)); true }
-            ChartAction::ToggleLockDrawings => { drawing_manager.toggle_lock(); true }
-            ChartAction::ToggleDrawingsVisible => { drawing_manager.toggle_visible(); true }
-            ChartAction::DeleteSelected => { drawing_manager.delete_selected(); true }
-            ChartAction::DeleteAll => { drawing_manager.clear(); true }
-
-            // === Undo / Redo ===
-            ChartAction::Undo => self.command_history.can_undo(),
-            ChartAction::Redo => self.command_history.can_redo(),
-
-            // === Actions not handled at window level (app-level, dialogs, etc.) ===
-            _ => false,
-        }
-    }
+    // The unused method-level `execute_chart_action` was deleted — every
+    // caller goes through the free function in `state::action_executor`.
+    // Keeping the method-flavoured version forced ChartContainer to take a
+    // `&mut DrawingManager`, blocking the manager's backend relocation.
 }
 
 impl Default for ChartContainer {

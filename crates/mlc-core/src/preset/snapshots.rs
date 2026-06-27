@@ -15,7 +15,6 @@ fn default_account_type_spot() -> String {
 use crate::chart::types::price_scale::ScaleMode;
 use crate::drawing::primitives_v2::Primitive;
 use crate::drawing::primitives_v2::config::TimeframeVisibilityConfig;
-use crate::drawing::DrawingManager;
 use crate::state::chart_container::ChartContainer;
 use crate::state::chart_panel_state::ChartPanelState;
 use crate::state::history::CommandHistory;
@@ -42,14 +41,15 @@ pub struct DrawingSnapshot {
 }
 
 impl DrawingSnapshot {
-    /// Capture a snapshot from a [`DrawingManager`] for the given window.
-    pub fn from_manager(window_id: u64, mgr: &DrawingManager) -> Self {
-        let primitives = mgr
-            .primitives()
+    /// Capture a snapshot from a slice of primitives for the given window.
+    ///
+    /// Decoupled from `DrawingManager` so `mlc-core::preset` does not need
+    /// to mention the backend manager that owns those primitives.
+    pub fn from_primitives(window_id: u64, primitives: &[Box<dyn Primitive>]) -> Self {
+        let primitives = primitives
             .iter()
             .map(|p| PrimitiveSnapshot::from_primitive(p.as_ref()))
             .collect();
-
         Self {
             window_id,
             primitives,
@@ -198,7 +198,7 @@ impl ChartWindowSnapshot {
     pub fn from_window(
         window: &ChartContainer,
         panel: &ChartPanelState,
-        drawing_manager: &crate::drawing::DrawingManager,
+        primitives: &[Box<dyn Primitive>],
         leaf_id: u64,
         bubble_id: Option<u64>,
         pre_tag_indicator_ids: Vec<u64>,
@@ -209,7 +209,7 @@ impl ChartWindowSnapshot {
         exchange: String,
         account_type: String,
     ) -> Self {
-        let drawings = DrawingSnapshot::from_manager(window.id.0, drawing_manager);
+        let drawings = DrawingSnapshot::from_primitives(window.id.0, primitives);
 
         // Save full viewport — chart_width, bar_spacing, bar_count are all valid
         // and needed for immediate snap in set_bars(). If app window was resized,

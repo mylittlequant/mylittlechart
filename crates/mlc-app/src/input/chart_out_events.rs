@@ -723,10 +723,12 @@ impl ChartApp {
                     if let Some(pid) = target_pid {
                         let mut guard = self.core.drawings_mut();
                         let dm = guard.entry_or_default(pid);
-                        window.snapshot_drawings_for_symbol(&old_sym_search, &old_exch_search, &old_at_search, dm);
+                        window.snapshot_drawings_for_symbol(&old_sym_search, &old_exch_search, &old_at_search, dm.primitives());
                         dm.set_current_symbol_key(&symbol, resolved_exchange.as_str(), &account_type);
                         dm.clear_all_primitives();
-                        window.restore_drawings_for_symbol(&symbol, resolved_exchange.as_str(), &account_type, dm);
+                        if let Some(snaps) = window.take_drawings_snapshot_for_symbol(&symbol, resolved_exchange.as_str(), &account_type) {
+                            crate::persistence::restore_drawings_into_manager(&snaps, dm);
+                        }
                     }
                     window.viewport.bar_count = 0;
                     window.viewport.view_start = 0.0;
