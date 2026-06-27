@@ -80,6 +80,7 @@ pub fn reassign_primitive_id(prim: &mut Box<dyn primitives_v2::Primitive>) {
 }
 
 mod manager;
+mod primitive_snapshot;
 mod signal_manager;
 mod trades;
 
@@ -88,6 +89,7 @@ pub mod primitives_v2;
 
 // Re-export manager types
 pub use manager::{DrawingManager, DrawingState, DragType, PrimitiveListItem};
+pub use primitive_snapshot::PrimitiveSnapshot;
 
 // Signal and trade managers
 pub use signal_manager::SignalManager;

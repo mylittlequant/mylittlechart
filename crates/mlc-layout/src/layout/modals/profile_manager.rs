@@ -643,13 +643,13 @@ fn render_page_create_passphrase(
     cy += 22.0;
 
     // Minimum length hint
-    if state.new_passphrase_render.text.len() < mlc_core::user_manager::profile_manager::MIN_PASSPHRASE_LENGTH {
+    if state.new_passphrase_render.text.len() < mlc_core::MIN_PASSPHRASE_LENGTH {
         ctx.set_font("11px sans-serif");
         ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Top);
         ctx.fill_text(
-            &format!("Minimum {} characters", mlc_core::user_manager::profile_manager::MIN_PASSPHRASE_LENGTH),
+            &format!("Minimum {} characters", mlc_core::MIN_PASSPHRASE_LENGTH),
             inner_x,
             cy,
         );
@@ -728,7 +728,7 @@ fn render_page_create_passphrase(
 
     // Encrypt button (disabled until passphrase meets minimum length AND confirm matches)
     let confirm_matches_create = state.confirm_passphrase_render.text == state.new_passphrase_render.text;
-    let encrypt_disabled = state.new_passphrase_render.text.len() < mlc_core::user_manager::profile_manager::MIN_PASSPHRASE_LENGTH
+    let encrypt_disabled = state.new_passphrase_render.text.len() < mlc_core::MIN_PASSPHRASE_LENGTH
         || !confirm_matches_create;
     let is_encrypt_hovered = !encrypt_disabled && hovered == Some("profile_mgr:create_passphrase");
     let btn_bg = if is_encrypt_hovered {
@@ -1265,8 +1265,8 @@ fn render_page_set_new_passphrase(
     // ── Save button ───────────────────────────────────────────────────────────
     let new_text = &state.new_passphrase_render.text;
     let confirm_text = &state.confirm_passphrase_render.text;
-    let save_disabled = new_text.len() < mlc_core::user_manager::profile_manager::MIN_PASSPHRASE_LENGTH
-        || confirm_text.len() < mlc_core::user_manager::profile_manager::MIN_PASSPHRASE_LENGTH
+    let save_disabled = new_text.len() < mlc_core::MIN_PASSPHRASE_LENGTH
+        || confirm_text.len() < mlc_core::MIN_PASSPHRASE_LENGTH
         || new_text != confirm_text;
 
     let is_save_hovered = !save_disabled && hovered == Some("profile_mgr:save_new_passphrase");

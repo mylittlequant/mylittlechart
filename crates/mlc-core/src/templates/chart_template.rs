@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::state::chart_settings_data::ChartSettingsData;
-use crate::preset::preset::unix_timestamp_parts;
+use crate::utils::unix_timestamp_parts;
 use crate::scale_settings::TimeFormatSettings;
 
 // =============================================================================

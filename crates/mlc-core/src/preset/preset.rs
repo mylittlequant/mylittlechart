@@ -109,7 +109,7 @@ impl Default for PersistedSymbolSource {
     }
 }
 
-/// Mirror of `mlc_core::state::Panel` kept in the preset module for JSON
+/// Mirror of `crate::state::Panel` kept in the preset module for JSON
 /// persistence — schema has no runtime dependency on `sidebar-content`.
 ///
 /// Each variant stores the minimal fields needed to recreate the matching

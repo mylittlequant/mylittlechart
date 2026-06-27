@@ -276,7 +276,7 @@ pub struct ChartContainer {
     /// Per-symbol drawing cache. When the user switches symbols, the current
     /// drawings are snapshotted here keyed by the old symbol, and drawings
     /// for the new symbol are restored (if any).
-    pub symbol_drawings: std::collections::HashMap<String, Vec<crate::preset::snapshots::PrimitiveSnapshot>>,
+    pub symbol_drawings: std::collections::HashMap<String, Vec<crate::drawing::PrimitiveSnapshot>>,
 
     /// Deferred viewport / price-scale position to apply once `BarsLoaded` fires.
     /// Set to `true` when a symbol switch is initiated (bars cleared, new request sent).
@@ -672,10 +672,10 @@ impl ChartContainer {
         drawing_manager: &crate::drawing::DrawingManager,
     ) {
         let key = format!("{}:{}:{}", symbol, exchange, account_type);
-        let snapshots: Vec<crate::preset::snapshots::PrimitiveSnapshot> = drawing_manager
+        let snapshots: Vec<crate::drawing::PrimitiveSnapshot> = drawing_manager
             .primitives()
             .iter()
-            .map(|p| crate::preset::snapshots::PrimitiveSnapshot::from_primitive(p.as_ref()))
+            .map(|p| crate::drawing::PrimitiveSnapshot::from_primitive(p.as_ref()))
             .collect();
         if !snapshots.is_empty() {
             self.symbol_drawings.insert(key, snapshots);

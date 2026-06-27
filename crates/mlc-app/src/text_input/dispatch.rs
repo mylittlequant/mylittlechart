@@ -450,7 +450,7 @@ impl ChartApp {
                             let ic = self.input_coordinator.borrow();
                             ic.text_fields().text(&cp_wid).to_string()
                         };
-                        use mlc_core::user_manager::profile_manager::MIN_PASSPHRASE_LENGTH;
+                        use crate::user_manager::profile_manager::MIN_PASSPHRASE_LENGTH;
                         let uss = &mut self.panel_app.user_settings_state;
                         if passphrase_text.len() >= MIN_PASSPHRASE_LENGTH
                             && confirm_text == passphrase_text

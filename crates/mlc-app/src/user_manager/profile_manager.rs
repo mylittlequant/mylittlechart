@@ -10,11 +10,11 @@ use std::path::{Path, PathBuf};
 
 use mlc_crypto::crypto;
 use mlc_crypto::global_storage;
-use crate::preset::preset::ChartPreset;
-use crate::preset::storage::{list_presets, load_preset};
-use crate::templates::TemplateManager;
-use crate::user_profile::profile::{ProfileIndex, ProfileMeta, UserProfile, VaultSecrets};
-use crate::user_profile::storage::{
+use mlc_core::preset::preset::ChartPreset;
+use mlc_core::preset::storage::{list_presets, load_preset};
+use mlc_core::templates::TemplateManager;
+use mlc_core::user_profile::profile::{ProfileIndex, ProfileMeta, UserProfile, VaultSecrets};
+use mlc_core::user_profile::storage::{
     active_profile_data_dir, app_data_dir, create_profile, delete_profile, load_json,
     load_profile, load_profile_index, profiles_dir, save_profile, save_profile_index,
 };
@@ -73,7 +73,7 @@ pub struct ProfileInfo {
 #[derive(Debug)]
 pub struct SwitchData {
     /// Window states from the profile that was just loaded (the new profile).
-    pub saved_windows: Vec<crate::user_profile::profile::WindowState>,
+    pub saved_windows: Vec<mlc_core::user_profile::profile::WindowState>,
     /// Whether the new profile has an existing vault that needs to be unlocked
     /// (i.e. the user must enter their passphrase).
     pub needs_vault_unlock: bool,
@@ -589,7 +589,7 @@ impl ProfileManager {
     pub fn prepare_switch(
         &mut self,
         target_id: &str,
-        current_windows: &[crate::user_profile::profile::WindowState],
+        current_windows: &[mlc_core::user_profile::profile::WindowState],
     ) -> Result<SwitchData, String> {
         // Persist current window state into the active profile before saving.
         if !current_windows.is_empty() {

@@ -476,7 +476,7 @@ fn render_page2_profile(
     // ── Complete Setup button ─────────────────────────────────────────────────
     let profile_name = state.new_profile_name_render.text.trim().to_string();
     let profile_name_ok = !profile_name.is_empty();
-    let passphrase_ok = state.new_passphrase_render.text.len() >= mlc_core::user_manager::MIN_PASSPHRASE_LENGTH;
+    let passphrase_ok = state.new_passphrase_render.text.len() >= mlc_core::MIN_PASSPHRASE_LENGTH;
     let confirm_matches = state.confirm_passphrase_render.text == state.new_passphrase_render.text;
     let finish_disabled = !passphrase_ok || !profile_name_ok || !confirm_matches;
 

@@ -16,7 +16,7 @@ use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::layout::render_chart::FrameTheme;
 use crate::ui::z_order::ZLayer;
 use crate::ui::Icon;
-use mlc_core::preset::preset::ChartPreset;
+use mlc_core::PresetSummary;
 use mlc_core::i18n::{ModalKey, t_modal};
 
 // =============================================================================
@@ -61,7 +61,7 @@ pub fn render_chart_browser(
     screen_w: f64,
     screen_h: f64,
     state: &ChartBrowserState,
-    presets: &std::collections::HashMap<String, ChartPreset>,
+    presets: &[PresetSummary],
     active_preset_id: &str,
     frame_theme: &FrameTheme,
     toolbar_theme: &ToolbarTheme,
@@ -258,8 +258,8 @@ pub fn render_chart_browser(
 
     // --- Filter and sort presets ---
     let query = state.search_query.to_lowercase();
-    let mut sorted_presets: Vec<&ChartPreset> = presets
-        .values()
+    let mut sorted_presets: Vec<&PresetSummary> = presets
+        .iter()
         .filter(|p| p.id != "__default__")
         .filter(|p| {
             if query.is_empty() {
@@ -502,10 +502,11 @@ pub fn render_chart_browser(
 ///
 /// Format: "SYMBOL, TF (DD MMM YYYY, HH:MM)" when window data is available,
 /// otherwise just the creation date.
-fn build_preset_subtitle(preset: &ChartPreset) -> String {
-    // Try to extract symbol and timeframe from the first window snapshot
-    let (symbol, tf) = preset.windows.first()
-        .map(|w| (w.symbol.as_str(), w.timeframe.name.as_str()))
+fn build_preset_subtitle(preset: &PresetSummary) -> String {
+    let (symbol, tf) = preset
+        .first_window
+        .as_ref()
+        .map(|(s, t)| (s.as_str(), t.as_str()))
         .unwrap_or(("", ""));
 
     let date_str = format_unix_timestamp(preset.created_at);

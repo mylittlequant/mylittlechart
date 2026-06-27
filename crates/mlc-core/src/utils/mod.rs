@@ -9,8 +9,10 @@
 pub mod color;
 pub mod format;
 pub mod math;
+pub mod time_utils;
 
 // Re-export main functions
 pub use color::{parse_css_color, apply_opacity, rgba_to_hex};
 pub use format::format_indicator_value;
 pub use math::catmull_rom_spline;
+pub use time_utils::{unix_now_secs, unix_timestamp_parts};

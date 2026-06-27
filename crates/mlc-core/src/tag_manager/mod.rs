@@ -1120,17 +1120,14 @@ impl BubbleStore {
     pub fn group_from_snapshot(
         snap: &crate::preset::snapshots::DataBubbleSnapshot,
     ) -> DataBubble {
-        // Restore chart members (backward compat — stored as bare u64)
         let mut members = std::collections::HashSet::new();
         for &raw in &snap.members {
             members.insert(SyncMemberId::Chart(raw));
         }
-        // Restore panel members (new field — defaults to empty in old presets)
         for &raw in &snap.panel_members {
             members.insert(SyncMemberId::Panel(raw));
         }
 
-        // Restore per-member overrides
         let member_overrides: std::collections::HashMap<SyncMemberId, MemberSyncOverride> = snap
             .member_overrides
             .iter()
@@ -1148,9 +1145,6 @@ impl BubbleStore {
             })
             .collect();
 
-        // Restore per-tool last-used styles from the snapshot.
-        // Old presets have no `last_used_style` field → start empty; the first
-        // style change after load will populate it.
         let mut style_map = HashMap::new();
         for (type_id, raw) in &snap.last_used_style {
             if let Ok(style) = serde_json::from_value::<TemplateStyle>(raw.clone()) {
@@ -1184,9 +1178,6 @@ impl BubbleStore {
             trade_next_id: 1,
             markers: snap.markers.clone(),
             marker_recalculation_required: !snap.markers.is_empty(),
-            // === Per-Kind storage (Phase X0) ===
-            // Not persisted in snapshot; bubble starts empty and fills from
-            // the next bridge tick after restore.
             bars: Vec::new(),
             footprint_bars: None,
             renko_bars: None,
@@ -1203,8 +1194,6 @@ impl BubbleStore {
             liq_dots: None,
         };
 
-        // Advance ID counters past any restored IDs so new entries never
-        // collide with persisted ones.
         if let Some(&max_id) = bubble.signals.keys().max() {
             bubble.signal_next_id = max_id + 1;
         }

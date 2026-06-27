@@ -4228,7 +4228,7 @@ impl ChartApp {
                     let cp_wid = uzor::WidgetId::from(crate::text_input::CONFIRM_PASSPHRASE);
                     let passphrase = self.input_coordinator.borrow().text_fields().text(&np_wid).to_string();
                     let profile_name = self.input_coordinator.borrow().text_fields().text(&npn_wid).trim().to_string();
-                    if passphrase.len() >= mlc_core::MIN_PASSPHRASE_LENGTH && !profile_name.is_empty() {
+                    if passphrase.len() >= crate::user_manager::MIN_PASSPHRASE_LENGTH && !profile_name.is_empty() {
                         eprintln!("[ChartApp] wizard: profile name = {:?}", profile_name);
                         let profile_name_final = if profile_name.is_empty() { "Default".to_string() } else { profile_name.clone() };
                         self.pending_updater_cmd = Some(format!("wizard_complete:{}:{}", profile_name_final, passphrase));
@@ -4365,7 +4365,7 @@ impl ChartApp {
                     let cp_wid = uzor::WidgetId::from(crate::text_input::CONFIRM_PASSPHRASE);
                     let passphrase = self.input_coordinator.borrow().text_fields().text(&np_wid).to_string();
                     let confirm = self.input_coordinator.borrow().text_fields().text(&cp_wid).to_string();
-                    if passphrase.len() >= mlc_core::MIN_PASSPHRASE_LENGTH && passphrase == confirm {
+                    if passphrase.len() >= crate::user_manager::MIN_PASSPHRASE_LENGTH && passphrase == confirm {
                         self.input_coordinator.borrow_mut().text_fields_mut().clear(&cp_wid);
                         self.input_coordinator.borrow_mut().text_fields_mut().blur();
                         self.panel_app.user_settings_state.confirm_passphrase_focused = false;
@@ -4506,7 +4506,7 @@ impl ChartApp {
                     let cp_wid = uzor::WidgetId::from(crate::text_input::CONFIRM_PASSPHRASE);
                     let passphrase_text = self.input_coordinator.borrow().text_fields().text(&np_wid).to_string();
                     let confirm_text = self.input_coordinator.borrow().text_fields().text(&cp_wid).to_string();
-                    use mlc_core::user_manager::profile_manager::MIN_PASSPHRASE_LENGTH;
+                    use crate::user_manager::profile_manager::MIN_PASSPHRASE_LENGTH;
                     if passphrase_text.len() >= MIN_PASSPHRASE_LENGTH && passphrase_text == confirm_text {
                         self.panel_app.user_settings_state.set_passphrase_error.clear();
                         self.panel_app.user_settings_state.new_passphrase_focused = false;

@@ -25,32 +25,10 @@ use crate::state::Timeframe;
 use crate::tag_manager::{DataBubble, IndicatorGroupConfig, SyncFlags, SyncMemberId};
 use crate::{CompareOverlay, CrosshairOptions, GridOptions, Legend, PriceScale, Tooltip, Viewport, Watermark};
 
-// =============================================================================
-// PrimitiveSnapshot
-// =============================================================================
-
-/// Serialized form of a single drawing primitive.
-///
-/// Because `Box<dyn Primitive>` cannot derive `Serialize`, each primitive is
-/// captured via its `type_id()` (for factory reconstruction) and `to_json()`
-/// (the full state in JSON form).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PrimitiveSnapshot {
-    /// Primitive type identifier (e.g. `"trend_line"`, `"fib_retracement"`).
-    pub type_id: String,
-    /// Full primitive state serialized to JSON by the primitive itself.
-    pub json: String,
-}
-
-impl PrimitiveSnapshot {
-    /// Capture a snapshot from any [`Primitive`] trait object.
-    pub fn from_primitive(prim: &dyn Primitive) -> Self {
-        Self {
-            type_id: prim.type_id().to_string(),
-            json: prim.to_json(),
-        }
-    }
-}
+// `PrimitiveSnapshot` lives in `mlc-core::drawing::PrimitiveSnapshot`
+// (next to the `Primitive` trait) so both runtime caches and the preset
+// system can speak about it without one depending on the other.
+pub use crate::drawing::PrimitiveSnapshot;
 
 // =============================================================================
 // DrawingSnapshot

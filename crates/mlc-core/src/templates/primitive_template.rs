@@ -17,7 +17,7 @@ use crate::drawing::primitives_v2::{
     PrimitiveColor, PrimitiveText, TextAlign, LineStyle,
     PrimitiveData,
 };
-use crate::preset::preset::unix_timestamp_parts;
+use crate::utils::unix_timestamp_parts;
 
 // =============================================================================
 // PrimitiveTemplate

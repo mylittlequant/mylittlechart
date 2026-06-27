@@ -110,14 +110,23 @@ pub mod tag_manager;
 // Chart preset system (snapshot types for persistence)
 pub mod preset;
 
+// `MIN_PASSPHRASE_LENGTH` declared at the crate root so the layout layer can
+// validate the passphrase form without depending on `mlc-app::user_manager`.
+//
+// `PresetSummary` projection — also for the layout layer (preset-browser
+// modal); the app builds these from `ChartPreset` and hands a slice down.
+
+/// Minimum profile-passphrase length (UI form validation).
+pub const MIN_PASSPHRASE_LENGTH: usize = 8;
+
+pub mod preset_view;
+pub use preset_view::PresetSummary;
+
 // Template system (reusable style configurations for primitives, indicators, compare)
 pub mod templates;
 
 // User profile system (aggregate persistent state — active selections, UI state)
 pub mod user_profile;
-
-// Unified user state manager (single entry point for all user persistence)
-pub mod user_manager;
 
 // Indicator source trait (abstraction for indicator data access)
 pub mod indicator_source;
@@ -446,9 +455,8 @@ pub use user_profile::{
     PersistedInstanceMode,
 };
 
-// Unified user state manager
-pub use user_manager::UserManager;
-pub use user_manager::{ProfileInfo, ProfileManager, SwitchData, MIN_PASSPHRASE_LENGTH};
+// `UserManager`, `ProfileInfo`, `ProfileManager`, `SwitchData`,
+// `MIN_PASSPHRASE_LENGTH` moved to `mlc-app::user_manager`.
 
 // =============================================================================
 // Tests

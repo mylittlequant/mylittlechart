@@ -27,12 +27,14 @@ pub mod chart_panel_state;
 pub mod chart_state;
 pub mod frame_lifecycle;
 pub mod input;
+pub mod chart_panel_app;
 pub mod panels_render;
 pub mod panels_store;
 pub mod scroll_dispatch;
 pub mod tag;
 pub mod text_input;
 pub mod ui_container;
+pub mod user_manager;
 use uzor::input::TextFieldConfig;
 use uzor::WidgetId;
 pub mod persistence;
@@ -117,7 +119,7 @@ use mlc_layout::layout::modals::watchlist_modal::{render_watchlist_modal, Watchl
 use mlc_layout::layout::modals::clock_popup::render_clock_popup;
 use mlc_live_data::{DataBridge, LiveDataProvider};
 
-use mlc_layout::panel_app::ChartPanelApp;
+use crate::chart_panel_app::ChartPanelApp;
 use uzor::input::{InputCoordinator, InputState};
 
 /// Every exchange whose connector is warmed up at startup (in small batches from
@@ -2284,7 +2286,7 @@ impl ChartApp {
         window_id: String,
         restore: Option<&mlc_core::WindowState>,
         profile: &mlc_core::UserProfile,
-        user_manager: &mlc_core::ProfileManager,
+        user_manager: &crate::user_manager::ProfileManager,
         skeleton: bool,
     ) -> Self {
         let exchange_symbols_seed = bridge.symbols_snapshot();

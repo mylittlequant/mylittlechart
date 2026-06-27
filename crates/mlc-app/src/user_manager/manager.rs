@@ -4,13 +4,13 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::preset::preset::ChartPreset;
-use crate::preset::storage::{list_presets, load_preset};
-use crate::templates::TemplateManager;
-use crate::user_profile::storage::{
+use mlc_core::preset::preset::ChartPreset;
+use mlc_core::preset::storage::{list_presets, load_preset};
+use mlc_core::templates::TemplateManager;
+use mlc_core::user_profile::storage::{
     active_profile_data_dir, load_json, load_profile, save_profile,
 };
-use crate::user_profile::UserProfile;
+use mlc_core::user_profile::UserProfile;
 use mlc_crypto::vault::VaultKey;
 
 // =============================================================================

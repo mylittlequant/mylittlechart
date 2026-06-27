@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::preset::preset::unix_timestamp_parts;
+use crate::utils::unix_timestamp_parts;
 
 // =============================================================================
 // OutputStyleConfig

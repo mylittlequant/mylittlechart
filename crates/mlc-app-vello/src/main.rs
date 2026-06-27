@@ -284,7 +284,7 @@ struct App<'s> {
     /// snapshots, vault key). Loaded once at startup and shared across all windows.
     /// Each `new_window()` call clones the relevant fields instead of re-reading
     /// from disk, eliminating redundant disk I/O when multiple windows are opened.
-    profile_manager: mlc_core::ProfileManager,
+    profile_manager: mlc_app::user_manager::ProfileManager,
     /// Window that last received focus — used by save_all() to pick a deterministic
     /// source for sidebar/toolbar/preset state instead of relying on HashMap iteration order.
     last_focused: Option<WindowId>,
@@ -572,7 +572,7 @@ impl App<'_> {
         live_data_handle: tokio::runtime::Handle,
         saved_windows: Vec<mlc_core::WindowState>,
         profile: mlc_core::UserProfile,
-        profile_manager: mlc_core::ProfileManager,
+        profile_manager: mlc_app::user_manager::ProfileManager,
         app_connector_ready_rx: mlc_live_data::ConnectorReadyReceiver,
         is_first_run: bool,
         needs_vault_unlock: bool,
@@ -1354,7 +1354,7 @@ impl App<'_> {
         // 5. Load the new profile from disk.
         //    active_profile_data_dir() reads the index we just updated, so it
         //    will resolve to target_id's directory.
-        self.profile_manager = mlc_core::ProfileManager::load(None);
+        self.profile_manager = mlc_app::user_manager::ProfileManager::load(None);
         let profile = self.profile_manager.profile.clone();
         let saved_windows = profile.windows.clone();
 
@@ -3158,7 +3158,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             }
                             // Reload ProfileManager so active_profile_data_dir()
                             // resolves to the real directory.
-                            self.profile_manager = mlc_core::ProfileManager::load(None);
+                            self.profile_manager = mlc_app::user_manager::ProfileManager::load(None);
                             self.profile = self.profile_manager.profile.clone();
                             if !self.is_first_run {
                                 // Adding a second profile — clear stale presets/templates.
@@ -3727,7 +3727,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             }
                             // Reload ProfileManager from the new empty profile directory.
                             // No key — no encrypted data yet.
-                            self.profile_manager = mlc_core::ProfileManager::load(None);
+                            self.profile_manager = mlc_app::user_manager::ProfileManager::load(None);
                             self.profile = self.profile_manager.profile.clone();
                             // Reset shared app state from the old profile.
                             self.app_state.vault_key = None;
@@ -4847,7 +4847,7 @@ fn main() {
 
     // Load ProfileManager (profile + templates + presets + snapshots) once at startup.
     // All windows share this loaded state — no per-window disk reads.
-    let mut profile_manager = mlc_core::ProfileManager::load(None);
+    let mut profile_manager = mlc_app::user_manager::ProfileManager::load(None);
 
     // Record this launch (was previously done per-window
     // in load_user_state(); now done once here at the application level).

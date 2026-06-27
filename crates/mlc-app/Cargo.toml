@@ -17,6 +17,8 @@ mlc-sidebar-content = { path = "../mlc-sidebar-content", package = "mylittlechar
 mlc-panels = { path = "../mlc-panels", package = "mylittlechart-panels" }
 mlc-alerts = { path = "../mlc-alerts", package = "mylittlechart-alerts" }
 mlc-alert-delivery = { path = "../mlc-alert-delivery", package = "mylittlechart-alert-delivery" }
+mlc-crypto = { path = "../mlc-crypto", package = "mylittlechart-crypto" }
+uuid = { version = "1", features = ["v4"] }
 mlc-live-data = { path = "../mlc-live-data", package = "mylittlechart-live-data" }
 mlc-trading-manager = { path = "../mlc-trading-manager", package = "mylittlechart-trading-manager" }
 digdigdig3 = "=0.3.24"
