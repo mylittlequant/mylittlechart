@@ -152,7 +152,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                     .panel_grid
                     .iter_containers()
                     .any(|(_, w)| {
-                        pw.chart.core.bubble().bubble.bubble(w.current_bubble_id)
+                        pw.chart.core.bubble().bubble(w.current_bubble_id)
                             .map(|b| !b.bars.is_empty())
                             .unwrap_or(false)
                     });
@@ -716,7 +716,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 .panel_grid
                 .iter_containers()
                 .any(|(_, w)| {
-                    pw.chart.core.bubble().bubble.bubble(w.current_bubble_id)
+                    pw.chart.core.bubble().bubble(w.current_bubble_id)
                         .map(|b| !b.bars.is_empty())
                         .unwrap_or(false)
                 });

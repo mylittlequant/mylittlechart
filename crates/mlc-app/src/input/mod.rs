@@ -435,7 +435,7 @@ impl ChartApp {
                                 .container_id_for_leaf(leaf_id)
                                 .and_then(|cid| self.bubble_for_chart(cid))
                                 .and_then(|gid| {
-                                    self.core.bubble_mut().bubble.bubble_mut(gid).map(|g| {
+                                    self.core.bubble_mut().bubble_mut(gid).map(|g| {
                                         g.scale_mode = next_mode;
                                         g.sync_flags.sync_viewport
                                     })
@@ -6131,7 +6131,7 @@ impl ChartApp {
                     if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
                         if let Some(mut prim) = reg.create(type_id, points, Some(&data.color.stroke)) {
                             *prim.data_mut() = data.clone();
-                            if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(gid) {
+                            if let Some(group) = self.core.bubble_mut().bubble_mut(gid) {
                                 let insert_pos = (*index).min(group.primitives.len());
                                 group.primitives.insert(insert_pos, prim);
                             }
@@ -6143,7 +6143,7 @@ impl ChartApp {
             }
             Command::DeletePrimitive { index, .. } => {
                 if let Some(gid) = group_id {
-                    if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(gid) {
+                    if let Some(group) = self.core.bubble_mut().bubble_mut(gid) {
                         if *index < group.primitives.len() {
                             group.primitives.remove(*index);
                         }
@@ -6154,7 +6154,7 @@ impl ChartApp {
             }
             Command::DeleteAllPrimitives { .. } => {
                 if let Some(gid) = group_id {
-                    if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(gid) {
+                    if let Some(group) = self.core.bubble_mut().bubble_mut(gid) {
                         group.primitives.clear();
                     }
                 } else if let Some(pid) = active_pid_cmd {
@@ -6164,7 +6164,7 @@ impl ChartApp {
             Command::RestoreAllPrimitives { primitives } => {
                 if let Some(gid) = group_id {
                     if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
-                        if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(gid) {
+                        if let Some(group) = self.core.bubble_mut().bubble_mut(gid) {
                             group.primitives.clear();
                             for (type_id, points, data) in primitives {
                                 if let Some(mut prim) = reg.create(type_id, points, Some(&data.color.stroke)) {
@@ -6185,7 +6185,7 @@ impl ChartApp {
             }
             Command::MovePrimitive { index, new_points, .. } => {
                 if let Some(gid) = group_id {
-                    if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(gid) {
+                    if let Some(group) = self.core.bubble_mut().bubble_mut(gid) {
                         if let Some(prim) = group.primitives.get_mut(*index) {
                             prim.set_points(new_points);
                         }
@@ -6196,7 +6196,7 @@ impl ChartApp {
             }
             Command::SetPrimitiveVisibility { index, visible, .. } => {
                 if let Some(gid) = group_id {
-                    if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(gid) {
+                    if let Some(group) = self.core.bubble_mut().bubble_mut(gid) {
                         if let Some(prim) = group.primitives.get_mut(*index) {
                             prim.data_mut().visible = *visible;
                         }
@@ -6207,7 +6207,7 @@ impl ChartApp {
             }
             Command::SetPrimitiveLock { index, locked, .. } => {
                 if let Some(gid) = group_id {
-                    if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(gid) {
+                    if let Some(group) = self.core.bubble_mut().bubble_mut(gid) {
                         if let Some(prim) = group.primitives.get_mut(*index) {
                             prim.data_mut().locked = *locked;
                         }
@@ -6218,7 +6218,7 @@ impl ChartApp {
             }
             Command::ModifyPrimitiveData { index, new_data, .. } => {
                 if let Some(gid) = group_id {
-                    if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(gid) {
+                    if let Some(group) = self.core.bubble_mut().bubble_mut(gid) {
                         if let Some(prim) = group.primitives.get_mut(*index) {
                             *prim.data_mut() = new_data.clone();
                         }
@@ -6230,7 +6230,7 @@ impl ChartApp {
             }
             Command::ReorderPrimitive { old_index, new_index } => {
                 if let Some(gid) = group_id {
-                    if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(gid) {
+                    if let Some(group) = self.core.bubble_mut().bubble_mut(gid) {
                         if *old_index < group.primitives.len() {
                             let prim = group.primitives.remove(*old_index);
                             let insert_pos = (*new_index).min(group.primitives.len());
@@ -6288,7 +6288,7 @@ impl ChartApp {
                 }
                 if let (Some(chart_id), Some(exch)) = (active_chart_id, new_exch) {
                     if let Some(bid) = self.bubble_for_chart(chart_id) {
-                        if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(bid) {
+                        if let Some(bubble) = self.core.bubble_mut().bubble_mut(bid) {
                             bubble.symbol = new_symbol.to_string();
                             bubble.timeframe = cur_tf;
                             bubble.exchange = exch;
@@ -6321,7 +6321,7 @@ impl ChartApp {
                 if changed {
                     if let Some(chart_id) = active_chart_id {
                         if let Some(bid) = self.bubble_for_chart(chart_id) {
-                            if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(bid) {
+                            if let Some(bubble) = self.core.bubble_mut().bubble_mut(bid) {
                                 bubble.timeframe = new_timeframe.clone();
                                 // Phase X0 / C4: mirror bars into bubble storage.
                                 if let Some(b) = bars_for_bubble {
@@ -6419,7 +6419,7 @@ impl ChartApp {
                         .get(&chart_id_val)
                         .map(|w| w.auto_bubble_id);
                     if let Some(bid) = auto_bid {
-                        if let Some(auto_bub) = self.core.bubble_mut().bubble.bubble_mut(bid) {
+                        if let Some(auto_bub) = self.core.bubble_mut().bubble_mut(bid) {
                             if !auto_bub.pre_tag_indicator_ids.contains(instance_id) {
                                 auto_bub.pre_tag_indicator_ids.push(*instance_id);
                             }
@@ -6442,7 +6442,7 @@ impl ChartApp {
                         .filter(|&bid| bid != mlc_core::tag_manager::BubbleId(0))
                         .collect();
                     for bid in auto_bids {
-                        if let Some(auto_bub) = self.core.bubble_mut().bubble.bubble_mut(bid) {
+                        if let Some(auto_bub) = self.core.bubble_mut().bubble_mut(bid) {
                             auto_bub.pre_tag_indicator_ids.retain(|iid| *iid != removed_id);
                         }
                     }
@@ -6456,8 +6456,8 @@ impl ChartApp {
                 // Restore a previously deleted (or redo-add) alert from its snapshot.
                 // If an alert with this ID already exists, skip to keep state consistent.
                 let alert_id = snapshot.id;
-                if self.core.bubble_mut().alert.get(alert_id).is_none() {
-                    self.core.bubble_mut().alert.restore_one(snapshot.clone());
+                if self.core.alert().get(alert_id).is_none() {
+                    self.core.alert_mut().restore_one(snapshot.clone());
                     self.sidebar_data_dirty = true;
                     eprintln!("[Undo/Redo] Restored alert id={}", alert_id);
                 } else {
@@ -6467,7 +6467,7 @@ impl ChartApp {
             Command::DeleteAlert { snapshot } => {
                 // Remove the alert identified by the snapshot's ID.
                 let alert_id = snapshot.id;
-                if self.core.bubble_mut().alert.remove(alert_id) {
+                if self.core.alert_mut().remove(alert_id) {
                     self.sidebar_data_dirty = true;
                     eprintln!("[Undo/Redo] Deleted alert id={}", alert_id);
                 } else {
@@ -6762,7 +6762,7 @@ impl ChartApp {
 
         if let Some(gid) = group_id {
             // Try group history first (shared: primitives, indicators).
-            let group_cmd = self.core.bubble_mut().bubble
+            let group_cmd = self.core.bubble_mut()
                 .bubble_mut(gid)
                 .and_then(|g| g.command_history.undo());
             if let Some(cmd) = group_cmd {
@@ -6800,7 +6800,7 @@ impl ChartApp {
 
         if let Some(gid) = group_id {
             // Try group history first (shared: primitives, indicators).
-            let group_cmd = self.core.bubble_mut().bubble
+            let group_cmd = self.core.bubble_mut()
                 .bubble_mut(gid)
                 .and_then(|g| g.command_history.redo());
             if let Some(cmd) = group_cmd {
@@ -6951,7 +6951,7 @@ impl ChartApp {
         };
 
         if let Some(gid) = group_id {
-            if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(gid) {
+            if let Some(group) = self.core.bubble_mut().bubble_mut(gid) {
                 group.command_history.push(cmd);
                 return;
             }
@@ -7139,7 +7139,7 @@ impl ChartApp {
                     window.auto_bubble_id = group_id;
                     window.current_bubble_id = group_id;
                 }
-                if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(group_id) {
+                if let Some(bubble) = self.core.bubble_mut().bubble_mut(group_id) {
                     bubble.symbol = default_symbol.clone();
                     bubble.timeframe = default_timeframe.clone();
                     bubble.exchange = digdigdig3::ExchangeId::Binance.as_str().to_string();
@@ -7147,7 +7147,7 @@ impl ChartApp {
                 }
                 let exchange_name = digdigdig3::ExchangeId::Binance.as_str().to_string();
                 if let Some(pid) = self.panel_app.panel_grid.container_for_leaf(active_leaf).map(|w| w.chart_panel_id) {
-                    if let Some(style_arc) = self.core.bubble().bubble.bubble(group_id).map(|g| g.last_used_style.clone()) {
+                    if let Some(style_arc) = self.core.bubble().bubble(group_id).map(|g| g.last_used_style.clone()) {
                         let mut guard = self.core.drawings_mut();
                         let dm = guard.entry_or_default(pid);
                         dm.bind_style_store(style_arc);
@@ -7272,7 +7272,7 @@ impl ChartApp {
                 // Read stash data from the chart's permanent auto-bubble.
                 let auto_bid = window.auto_bubble_id;
                 let (ptids, stashed_ch, stashed_prims_snap) =
-                    if let Some(auto_bub) = self.core.bubble().bubble.bubble(auto_bid) {
+                    if let Some(auto_bub) = self.core.bubble().bubble(auto_bid) {
                         let ptids = auto_bub.pre_tag_indicator_ids.clone();
                         // The auto_bubble holds the stashed command_history only while
                         // the chart is IN a color group (joined). When ungrouped the
@@ -7320,8 +7320,8 @@ impl ChartApp {
 
         // Snapshot sync groups (with synced_panels cross-reference so each
         // group's persisted synced_panel_ids list survives restore).
-        let synced_snapshot = self.core.bubble().bubble.synced_panels_snapshot();
-        for group in self.core.bubble().bubble.bubbles() {
+        let synced_snapshot = self.core.bubble().synced_panels_snapshot();
+        for group in self.core.bubble().bubbles() {
             preset.bubbles.push(DataBubbleSnapshot::from_group(group, &synced_snapshot));
         }
 
@@ -7361,7 +7361,7 @@ impl ChartApp {
         }
 
         // Snapshot alerts
-        preset.alerts = self.core.bubble().alert.snapshot();
+        preset.alerts = self.core.alert().snapshot();
 
         // Snapshot leaf_color_tags
         preset.leaf_color_tags = self.panel_app.leaf_color_tags

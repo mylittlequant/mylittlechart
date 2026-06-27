@@ -390,7 +390,7 @@ impl ChartApp {
                         }
                         if let Some(chart_id) = active_chart_id {
                             if let Some(bid) = self.bubble_for_chart(chart_id) {
-                                if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(bid) {
+                                if let Some(bubble) = self.core.bubble_mut().bubble_mut(bid) {
                                     bubble.symbol = symbol.clone();
                                     bubble.timeframe = timeframe.clone();
                                     bubble.exchange = item_exchange.clone();
@@ -1530,7 +1530,7 @@ impl ChartApp {
                                         // visible color tag so the panel-chart pair shows a
                                         // shared color marker — this is the moment a 1-member
                                         // untagged group becomes a 2+-member tagged one.
-                                        let group_id = self.core.bubble().bubble.active_chart_bubble
+                                        let group_id = self.core.bubble().active_chart_bubble
                                             .or_else(|| {
                                                 self.panel_app.panel_grid
                                                     .active_container_id()
@@ -1538,7 +1538,7 @@ impl ChartApp {
                                             });
                                         if let Some(gid) = group_id {
                                             // Promote if currently auto-created.
-                                            let was_auto = self.core.bubble().bubble.bubble(gid)
+                                            let was_auto = self.core.bubble().bubble(gid)
                                                 .map(|g| g.auto_created)
                                                 .unwrap_or(false);
                                             if was_auto {
@@ -1547,7 +1547,7 @@ impl ChartApp {
                                                     // chart member of this group so chart leaf
                                                     // headers also show the new color marker.
                                                     let chart_member_ids: Vec<mlc_core::ChartId> =
-                                                        self.core.bubble().bubble.chart_member_ids(gid)
+                                                        self.core.bubble().chart_member_ids(gid)
                                                             .into_iter()
                                                             .collect();
                                                     for cid in chart_member_ids {
@@ -1574,7 +1574,7 @@ impl ChartApp {
                                         self.set_panel_auto(member, solo_gid);
                                         // Seed exchange/account_type on the new group so apply_key
                                         // picks them up next frame.
-                                        if let Some(g) = self.core.bubble_mut().bubble.bubble_mut(solo_gid) {
+                                        if let Some(g) = self.core.bubble_mut().bubble_mut(solo_gid) {
                                             g.exchange = exchange_str.clone();
                                             g.account_type = account_type_str.clone();
                                         }
@@ -1953,7 +1953,7 @@ impl ChartApp {
                                 );
                                 if is_market_data {
                                     let member = SyncMemberId::Panel(item.panel_id().0);
-                                    let is_untagged = self.core.bubble().bubble
+                                    let is_untagged = self.core.bubble()
                                         .group_for_member(member)
                                         .and_then(|gid| self.with_bubble(gid, |g| g.auto_created))
                                         .unwrap_or(true);
@@ -2123,7 +2123,7 @@ impl ChartApp {
                                     let src_member = mlc_core::tag_manager::SyncMemberId::Panel(src_item.panel_id().0);
                                     let new_member = mlc_core::tag_manager::SyncMemberId::Panel(new_item.panel_id().0);
                                     let src_gid = self.group_for_member(src_member);
-                                    let src_was_synced = self.core.bubble().bubble.is_synced(src_member);
+                                    let src_was_synced = self.core.bubble().is_synced(src_member);
                                     if let Some(gid) = src_gid {
                                         if src_was_synced {
                                             self.set_panel_synced(new_member, gid);
@@ -2586,7 +2586,7 @@ impl ChartApp {
                                     );
                                     if is_market_data {
                                         let member = SyncMemberId::Panel(item.panel_id().0);
-                                        let is_untagged = self.core.bubble().bubble
+                                        let is_untagged = self.core.bubble()
                                             .group_for_member(member)
                                             .and_then(|gid| self.with_bubble(gid, |g| g.auto_created))
                                             .unwrap_or(true);
@@ -2623,8 +2623,8 @@ impl ChartApp {
         // Pattern: "alert_delete_{id}"
         if widget_id.starts_with("alert_delete_") {
             if let Some(id) = widget_id.strip_prefix("alert_delete_").and_then(|s| s.parse::<u64>().ok()) {
-                let snapshot = self.core.bubble_mut().alert.get(id).cloned();
-                self.core.bubble_mut().alert.remove(id);
+                let snapshot = self.core.alert().get(id).cloned();
+                self.core.alert_mut().remove(id);
                 if let Some(snap) = snapshot {
                     self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot: snap });
                 }
@@ -2656,7 +2656,7 @@ impl ChartApp {
         // Pattern: "alert_{id}" (row click — navigate to alert's window, then open edit modal)
         if let Some(id) = widget_id.strip_prefix("alert_").and_then(|s| s.parse::<u64>().ok()) {
             // Clone alert data we need before taking any mutable borrows.
-            let alert_nav = self.core.bubble().alert.get(id).map(|a| (a.window_id_hint, id));
+            let alert_nav = self.core.alert().get(id).map(|a| (a.window_id_hint, id));
             if let Some((window_id_hint, alert_id)) = alert_nav {
                 // Navigate to the window that created this alert, if known.
                 if let Some(wid) = window_id_hint {
@@ -2667,7 +2667,7 @@ impl ChartApp {
                     }
                 }
                 // Open the edit modal.
-                if let Some(alert) = self.core.bubble().alert.get(alert_id) {
+                if let Some(alert) = self.core.alert().get(alert_id) {
                     self.panel_app.alert_settings_state.open_edit(alert);
                     self.panel_app.alert_settings_state.pin_initial_position(
                         self.content_rect.width, self.content_rect.height,
@@ -2721,7 +2721,7 @@ impl ChartApp {
                         .get(&cid)
                         .map(|w| w.auto_bubble_id);
                     if let Some(bid) = auto_bid {
-                        if let Some(auto_bub) = self.core.bubble_mut().bubble.bubble_mut(bid) {
+                        if let Some(auto_bub) = self.core.bubble_mut().bubble_mut(bid) {
                             let before = auto_bub.primitives.len();
                             auto_bub.primitives.retain(|p| p.data().id != id);
                             auto_bub.primitives.len() < before
@@ -2749,7 +2749,7 @@ impl ChartApp {
                 if let Some(gid) = group_id {
                     let deleted = {
                         let mut mgr = self.core.bubble_mut();
-                        if let Some(group) = mgr.bubble.bubble_mut(gid) {
+                        if let Some(group) = mgr.bubble_mut(gid) {
                             let before = group.primitives.len();
                             group.primitives.retain(|p| p.data().id != id);
                             group.primitives.len() < before
@@ -2785,7 +2785,7 @@ impl ChartApp {
                 if let Some(gid) = group_id {
                     let deleted = {
                         let mut mgr = self.core.bubble_mut();
-                        if let Some(group) = mgr.bubble.bubble_mut(gid) {
+                        if let Some(group) = mgr.bubble_mut(gid) {
                             let before = group.indicator_configs.len();
                             group.indicator_configs.retain(|cfg| cfg.id != id);
                             group.indicator_configs.len() < before
@@ -3030,7 +3030,7 @@ impl ChartApp {
         if widget_id.starts_with("alert_bell_drw_") {
             if let Some(prim_id) = widget_id.strip_prefix("alert_bell_drw_").and_then(|s| s.parse::<u64>().ok()) {
                 // Find the first Active alert bound to this primitive.
-                let alert = self.core.bubble().alert.items()
+                let alert = self.core.alert().items()
                     .iter()
                     .find(|a| matches!(
                         &a.source,
@@ -3051,7 +3051,7 @@ impl ChartApp {
         // Widget ID: "alert_bell_ind_{indicator_id}"
         if widget_id.starts_with("alert_bell_ind_") {
             if let Some(ind_id) = widget_id.strip_prefix("alert_bell_ind_").and_then(|s| s.parse::<u64>().ok()) {
-                let alert = self.core.bubble().alert.items()
+                let alert = self.core.alert().items()
                     .iter()
                     .find(|a| matches!(
                         &a.source,
@@ -3157,7 +3157,7 @@ impl ChartApp {
                                     .container_id_for_leaf(active_leaf)
                                     .and_then(|cid| self.bubble_for_chart(cid))
                                 {
-                                    if let Some(g) = self.core.bubble_mut().bubble.bubble_mut(gid) {
+                                    if let Some(g) = self.core.bubble_mut().bubble_mut(gid) {
                                         g.scale_mode = ScaleMode::Auto;
                                     }
                                 }
@@ -3587,7 +3587,7 @@ impl ChartApp {
                         let flag_str = &suffix[colon_pos + 1..];
                         if let Ok(gid_val) = gid_str.parse::<u64>() {
                             let gid = BubbleId(gid_val);
-                            if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(gid) {
+                            if let Some(group) = self.core.bubble_mut().bubble_mut(gid) {
                                 match flag_str {
                                     "sync_crosshair"  => group.sync_flags.sync_crosshair  = !group.sync_flags.sync_crosshair,
                                     "sync_viewport"   => group.sync_flags.sync_viewport   = !group.sync_flags.sync_viewport,

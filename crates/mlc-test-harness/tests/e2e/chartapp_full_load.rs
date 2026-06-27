@@ -38,14 +38,14 @@ fn add_charts(app: &mut ChartApp, count: usize, symbol: &str, exchange: &str, tf
     let mut out = Vec::new();
     for _ in 0..count {
         let chart_id = generate_chart_id();
-        let bid = app.core.bubble_mut().bubble.create_group_auto(
+        let bid = app.core.bubble_mut().create_group_auto(
             [0.0; 4], symbol.to_string(), tf.clone(),
         );
-        if let Some(b) = app.core.bubble_mut().bubble.bubble_mut(bid) {
+        if let Some(b) = app.core.bubble_mut().bubble_mut(bid) {
             b.exchange = exchange.to_string();
             b.account_type = "S".to_string();
         }
-        let _ = app.core.bubble_mut().bubble.attach_chart_to_bubble(chart_id, bid);
+        let _ = app.core.bubble_mut().attach_chart_to_bubble(chart_id, bid);
 
         let mut chart = ChartContainer::new(symbol, tf.clone());
         chart.id = chart_id;
@@ -69,10 +69,10 @@ fn add_chart_plus_phantom(
     tf: Timeframe,
 ) -> mlc_core::state::ChartId {
     // Phantom — no chart attached.
-    let phantom_bid = app.core.bubble_mut().bubble.create_group_auto(
+    let phantom_bid = app.core.bubble_mut().create_group_auto(
         [0.0; 4], symbol.to_string(), tf.clone(),
     );
-    if let Some(b) = app.core.bubble_mut().bubble.bubble_mut(phantom_bid) {
+    if let Some(b) = app.core.bubble_mut().bubble_mut(phantom_bid) {
         b.exchange = exchange.to_string();
         b.account_type = "S".to_string();
     }
@@ -124,7 +124,7 @@ fn four_tabs_same_instrument_all_bubbles_get_bars_after_tick() {
     let mut filled = 0;
     for cid in &chart_ids {
         let win = app.panel_app.panel_grid.containers().get(cid).expect("chart");
-        let bubble_bars = app.core.bubble_mut().bubble.bubble(win.current_bubble_id)
+        let bubble_bars = app.core.bubble_mut().bubble(win.current_bubble_id)
             .map(|b| b.bars.len())
             .unwrap_or(0);
         if bubble_bars == 300 { filled += 1; } else { empty.push(*cid); }
@@ -163,7 +163,7 @@ fn live_bug_repro_chart_with_phantom_bubble_still_gets_bars() {
     app.tick(0);
 
     let win = app.panel_app.panel_grid.containers().get(&chart_id).expect("chart");
-    let renderer_bars = app.core.bubble_mut().bubble.bubble(win.current_bubble_id)
+    let renderer_bars = app.core.bubble_mut().bubble(win.current_bubble_id)
         .map(|b| b.bars.len())
         .unwrap_or(0);
     assert_eq!(renderer_bars, 300,

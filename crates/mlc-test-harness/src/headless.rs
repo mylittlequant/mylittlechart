@@ -131,21 +131,21 @@ impl HeadlessChartApp {
     /// `(bubble_id, exchange, account_type, symbol, tf, bars.len, attached_charts)`
     /// for every bubble in the store.
     pub fn dump_all_bubbles(&self) -> Vec<BubbleSummary> {
-        let store = &self.app.core.bubble().bubble;
-        store.bubbles().map(|b| BubbleSummary {
+        let guard = self.app.core.bubble();
+        guard.bubbles().map(|b| BubbleSummary {
             id: b.id,
             exchange: b.exchange.clone(),
             account_type: b.account_type.clone(),
             symbol: b.symbol.clone(),
             timeframe: b.timeframe.name.clone(),
             bars_len: b.bars.len(),
-            attached_charts: store.chart_member_ids(b.id),
+            attached_charts: guard.chart_member_ids(b.id),
         }).collect()
     }
 
     /// Resolve the bubble `bubble_for_instrument` would pick for this triplet.
     pub fn bubble_for_instrument(&self, exchange: &str, account_type: &str, symbol: &str) -> Option<BubbleId> {
-        (&self.app.core.bubble().bubble)
+        self.app.core.bubble()
             .bubble_for_instrument(exchange, account_type, symbol)
     }
 

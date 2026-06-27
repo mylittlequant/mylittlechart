@@ -65,7 +65,7 @@ fn headless_btcusdt_loads_bars_into_active_chart_bubble() {
     // path (via window.current_bubble_id). They are the same authoritative
     // bubble per the apply_preset_cold sync sweep.
     for (cid, win_bid, win_bars) in h.dump_chart_bubbles() {
-        let auth_bid = h.app.core.bubble().bubble.bubble_for_chart(cid);
+        let auth_bid = h.app.core.bubble().bubble_for_chart(cid);
         if let Some(auth_bid) = auth_bid {
             assert_eq!(
                 win_bid, auth_bid,
@@ -73,7 +73,7 @@ fn headless_btcusdt_loads_bars_into_active_chart_bubble() {
                  BubbleStore.bubble_for_chart ({:?}) after sync sweep",
                 cid, win_bid, auth_bid
             );
-            let auth_bars = h.app.core.bubble().bubble.bubble(auth_bid)
+            let auth_bars = h.app.core.bubble().bubble(auth_bid)
                 .map(|b| b.bars.len())
                 .unwrap_or(0);
             assert_eq!(

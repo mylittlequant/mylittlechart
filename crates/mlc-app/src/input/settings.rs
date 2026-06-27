@@ -2245,29 +2245,32 @@ impl ChartApp {
                     .active_container().map(|w| w.id.0);
 
                 let alert_id = if let Some(existing_id) = editing_id {
-                    self.core.bubble_mut().alert.update_full(
+                    self.core.alert_mut().update_full(
                         existing_id, source, &name, price, price2, percentage,
                         condition, trigger_mode, transports,
                     );
                     existing_id
                 } else {
-                    let mut bubble = self.core.bubble_mut();
-                    let id = bubble.alert.create(source.clone(), &name, price, condition);
-                    // Set extra fields on the newly created alert — all using
-                    // only `bubble` (the live write-guard) and the values
-                    // already resolved into local variables above.
-                    if let Some(alert) = bubble.alert.get_mut(id) {
-                        alert.price2 = price2;
-                        alert.percentage = percentage;
-                        alert.trigger_mode = trigger_mode;
-                        alert.transports = transports;
-                        if active_window_id.is_some() {
-                            alert.exchange = active_exchange;
-                            alert.timeframe = active_tf_name;
-                            alert.window_id_hint = active_window_id;
-                            alert.group_id = active_group_id;
-                            if !matches!(alert.source, mlc_alerts::AlertSource::Price { .. }) {
-                                alert.set_symbol(active_sym);
+                    let id = {
+                        let mut am = self.core.alert_mut();
+                        am.create(source.clone(), &name, price, condition)
+                    };
+                    // Set extra fields on the newly created alert.
+                    {
+                        let mut am = self.core.alert_mut();
+                        if let Some(alert) = am.get_mut(id) {
+                            alert.price2 = price2;
+                            alert.percentage = percentage;
+                            alert.trigger_mode = trigger_mode;
+                            alert.transports = transports;
+                            if active_window_id.is_some() {
+                                alert.exchange = active_exchange;
+                                alert.timeframe = active_tf_name;
+                                alert.window_id_hint = active_window_id;
+                                alert.group_id = active_group_id;
+                                if !matches!(alert.source, mlc_alerts::AlertSource::Price { .. }) {
+                                    alert.set_symbol(active_sym);
+                                }
                             }
                         }
                     }
@@ -2279,8 +2282,8 @@ impl ChartApp {
                 // command_history via bubble_mut() too).
                 if editing_id.is_none() {
                     let snapshot = {
-                        let bubble = self.core.bubble();
-                        bubble.alert.get(alert_id).cloned()
+                        let am = self.core.alert();
+                        am.get(alert_id).cloned()
                     };
                     if let Some(snap) = snapshot {
                         self.push_undo_command(mlc_core::Command::AddAlert { snapshot: snap });
@@ -2327,7 +2330,7 @@ impl ChartApp {
                     // Refresh alerts list when switching to list tab
                     if t == mlc_layout::ui::modal_settings::AlertSettingsTab::AlertsList {
                         self.panel_app.alert_settings_state.all_alerts =
-                            self.core.bubble().alert.items().to_vec();
+                            self.core.alert().items().to_vec();
                     }
                 }
             }
@@ -2482,7 +2485,7 @@ impl ChartApp {
             _ if rest.starts_with("list_item:") => {
                 if let Some(id_str) = rest.strip_prefix("list_item:") {
                     if let Ok(id) = id_str.parse::<u64>() {
-                        if let Some(alert) = self.core.bubble().alert.get(id) {
+                        if let Some(alert) = self.core.alert().get(id) {
                             self.panel_app.alert_settings_state.open_edit(alert);
                             self.panel_app.alert_settings_state.pin_initial_position(
                                 self.content_rect.width, self.content_rect.height,
@@ -2495,14 +2498,14 @@ impl ChartApp {
             _ if rest.starts_with("list_delete:") => {
                 if let Some(id_str) = rest.strip_prefix("list_delete:") {
                     if let Ok(id) = id_str.parse::<u64>() {
-                        let snapshot = self.core.bubble_mut().alert.get(id).cloned();
-                        self.core.bubble_mut().alert.remove(id);
+                        let snapshot = self.core.alert().get(id).cloned();
+                        self.core.alert_mut().remove(id);
                         if let Some(snap) = snapshot {
                             self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot: snap });
                         }
                         // Refresh the list
                         self.panel_app.alert_settings_state.all_alerts =
-                            self.core.bubble().alert.items().to_vec();
+                            self.core.alert().items().to_vec();
                         self.sidebar_data_dirty = true;
                         self.autosave_snapshot();
                     }
@@ -2512,7 +2515,7 @@ impl ChartApp {
             _ if rest.starts_with("list_pause:") => {
                 if let Some(id_str) = rest.strip_prefix("list_pause:") {
                     if let Ok(id) = id_str.parse::<u64>() {
-                        if let Some(alert) = self.core.bubble_mut().alert.get_mut(id) {
+                        if let Some(alert) = self.core.alert_mut().get_mut(id) {
                             alert.status = match alert.status {
                                 mlc_alerts::AlertStatus::Active => mlc_alerts::AlertStatus::Paused,
                                 mlc_alerts::AlertStatus::Paused => mlc_alerts::AlertStatus::Active,
@@ -2520,7 +2523,7 @@ impl ChartApp {
                             };
                         }
                         self.panel_app.alert_settings_state.all_alerts =
-                            self.core.bubble().alert.items().to_vec();
+                            self.core.alert().items().to_vec();
                         self.sidebar_data_dirty = true;
                         self.autosave_snapshot();
                     }

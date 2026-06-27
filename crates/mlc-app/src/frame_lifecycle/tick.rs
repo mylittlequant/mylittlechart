@@ -384,13 +384,13 @@ impl ChartApp {
                 .collect();
 
             let indicator_values = Self::build_indicator_values_for_alerts(
-                &self.core.bubble().alert,
+                &self.core.alert(),
                 &self.core.indicators(),
             );
 
             let mut all_triggered_ids: Vec<u64> = Vec::new();
             for wd in &window_data {
-                let triggered = self.core.bubble_mut().alert.check_crossings_dynamic(
+                let triggered = self.core.alert_mut().check_crossings_dynamic(
                     wd.current_price,
                     wd.current_bar,
                     &wd.symbol,
@@ -421,7 +421,7 @@ impl ChartApp {
                     .collect();
 
                 for wd in &window_data {
-                    let triggered = self.core.bubble_mut().alert.check_signal_alerts(
+                    let triggered = self.core.alert_mut().check_signal_alerts(
                         &wd.symbol,
                         &wd.exchange,
                         &wd.account_type,
@@ -454,7 +454,7 @@ impl ChartApp {
                     .unwrap_or(0);
 
                 for id in &triggered_ids {
-                    if let Some(alert) = self.core.bubble().alert.get(*id) {
+                    if let Some(alert) = self.core.alert().get(*id) {
                         self.pending_delivery_events.push(mlc_alert_delivery::DeliveryEvent {
                             alert_name: alert.name.clone(),
                             symbol: symbol.clone(),
@@ -543,7 +543,7 @@ impl ChartApp {
             let bar_counts_by_chart: std::collections::HashMap<mlc_core::state::ChartId, usize> =
                 self.panel_app.panel_grid.containers().iter()
                     .map(|(cid, w)| {
-                        let n = self.core.bubble().bubble.bubble(w.current_bubble_id)
+                        let n = self.core.bubble().bubble(w.current_bubble_id)
                             .map(|b| b.bars.len())
                             .unwrap_or(0);
                         (*cid, n)
@@ -595,7 +595,7 @@ impl ChartApp {
                 // EVERY scroll-fetch — left/scroll backfill silently no-op'd.
                 let oldest_ts = self.panel_app.panel_grid.containers()
                     .get(&cid_req)
-                    .and_then(|w| self.core.bubble().bubble.bubble(w.current_bubble_id)
+                    .and_then(|w| self.core.bubble().bubble(w.current_bubble_id)
                         .and_then(|b| b.bars.first().map(|bar| bar.timestamp)))
                     .unwrap_or(0);
 

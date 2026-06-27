@@ -5,8 +5,8 @@
 //! - `PATCH  /v1/alerts/:id`   — update name / price / condition
 //! - `DELETE /v1/alerts/:id`   — remove alert
 //!
-//! Alerts live in `BackendCore.managers` (the `Managers` struct) under the
-//! field `alert: AlertManager`. Accessed via `core.bubble_mut().alert`.
+//! Alerts live in `BackendCore` as a direct `RwLock<AlertManager>` field.
+//! Accessed via `core.alert()` / `core.alert_mut()`.
 //!
 //! The create body uses `AlertManager::create_price_alert` (simplest public
 //! constructor). For Drawing/Indicator/Signal alert sources, callers can use
@@ -131,9 +131,8 @@ fn status_str(s: AlertStatus) -> &'static str {
 // ---------------------------------------------------------------------------
 
 async fn list_alerts(State(s): State<AppState>) -> impl IntoResponse {
-    let guard = s.core.bubble();
+    let guard = s.core.alert();
     let alerts: Vec<AlertOut> = guard
-        .alert
         .items()
         .iter()
         .map(|a| AlertOut {
@@ -167,8 +166,7 @@ async fn create_alert(
     };
     let id = s
         .core
-        .bubble_mut()
-        .alert
+        .alert_mut()
         .create_price_alert(&body.symbol, &body.name, body.price, condition);
     (StatusCode::CREATED, Json(AlertCreatedOut { id })).into_response()
 }
@@ -178,8 +176,8 @@ async fn patch_alert(
     State(s): State<AppState>,
     Json(body): Json<PatchAlertIn>,
 ) -> impl IntoResponse {
-    let mut guard = s.core.bubble_mut();
-    let alert = match guard.alert.get_mut(id) {
+    let mut guard = s.core.alert_mut();
+    let alert = match guard.get_mut(id) {
         Some(a) => a,
         None => return StatusCode::NOT_FOUND.into_response(),
     };
@@ -201,7 +199,7 @@ async fn patch_alert(
         }
     }
     // Re-borrow for output.
-    let out = guard.alert.get(id).map(|a| AlertOut {
+    let out = guard.get(id).map(|a| AlertOut {
         id: a.id,
         name: a.name.clone(),
         symbol: a.symbol().to_string(),
@@ -222,7 +220,7 @@ async fn delete_alert(
     Path(id): Path<u64>,
     State(s): State<AppState>,
 ) -> impl IntoResponse {
-    let removed = s.core.bubble_mut().alert.remove(id);
+    let removed = s.core.alert_mut().remove(id);
     if removed {
         StatusCode::NO_CONTENT
     } else {

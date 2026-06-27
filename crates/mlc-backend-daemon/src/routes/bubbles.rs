@@ -137,7 +137,7 @@ struct BarsCountOut {
 
 async fn list_bubbles(State(s): State<AppState>) -> impl IntoResponse {
     let guard = s.core.bubble();
-    let bubble_ids: Vec<u64> = guard.bubble.bubbles().map(|b| b.id.0).collect();
+    let bubble_ids: Vec<u64> = guard.bubbles().map(|b| b.id.0).collect();
     Json(BubbleListOut { bubble_ids })
 }
 
@@ -149,12 +149,12 @@ async fn create_bubble(
     let tf = Timeframe::new(&body.timeframe, ms as i64);
     let bid = {
         let mut mgr = s.core.bubble_mut();
-        mgr.bubble.create_group_auto(body.color, body.symbol, tf)
+        mgr.create_group_auto(body.color, body.symbol, tf)
     };
     // Set exchange + account_type on the newly created bubble.
     {
         let mut mgr = s.core.bubble_mut();
-        if let Some(bubble) = mgr.bubble.bubble_mut(bid) {
+        if let Some(bubble) = mgr.bubble_mut(bid) {
             bubble.exchange = body.exchange;
             bubble.account_type = body.account_type;
         }
@@ -168,7 +168,7 @@ async fn get_bubble(
 ) -> impl IntoResponse {
     let bid_typed = BubbleId(bid);
     let guard = s.core.bubble();
-    match guard.bubble.bubble(bid_typed) {
+    match guard.bubble(bid_typed) {
         None => StatusCode::NOT_FOUND.into_response(),
         Some(b) => {
             let out = BubbleSnapshotOut {
@@ -194,11 +194,11 @@ async fn delete_bubble(
     State(s): State<AppState>,
 ) -> impl IntoResponse {
     let bid_typed = BubbleId(bid);
-    let exists = s.core.bubble().bubble.bubble(bid_typed).is_some();
+    let exists = s.core.bubble().bubble(bid_typed).is_some();
     if !exists {
         return StatusCode::NOT_FOUND;
     }
-    s.core.bubble_mut().bubble.remove_group(bid_typed);
+    s.core.bubble_mut().remove_group(bid_typed);
     StatusCode::NO_CONTENT
 }
 
@@ -209,7 +209,7 @@ async fn get_bubble_bars(
 ) -> impl IntoResponse {
     let bid_typed = BubbleId(bid);
     let guard = s.core.bubble();
-    match guard.bubble.bubble(bid_typed) {
+    match guard.bubble(bid_typed) {
         None => StatusCode::NOT_FOUND.into_response(),
         Some(b) => {
             const DEFAULT_LIMIT: usize = 200;
@@ -244,7 +244,6 @@ async fn bubble_bars_count(
     let bid_typed = BubbleId(bid);
     let guard = s.core.bubble();
     let count = guard
-        .bubble
         .bubbles()
         .find(|b| b.id == bid_typed)
         .map(|b| b.bars.len())

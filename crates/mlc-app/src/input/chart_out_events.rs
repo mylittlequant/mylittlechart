@@ -234,7 +234,7 @@ impl ChartApp {
                     }
                     if let Some(chart_id) = active_chart_id {
                         if let Some(bid) = self.bubble_for_chart(chart_id) {
-                            if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(bid) {
+                            if let Some(bubble) = self.core.bubble_mut().bubble_mut(bid) {
                                 bubble.timeframe = tf.clone();
                             }
                         }
@@ -736,7 +736,7 @@ impl ChartApp {
                 }
 
                 if let Some(bid) = self.bubble_for_chart(target_cid) {
-                    if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(bid) {
+                    if let Some(bubble) = self.core.bubble_mut().bubble_mut(bid) {
                         bubble.symbol = symbol.clone();
                         bubble.timeframe = timeframe.clone();
                         bubble.exchange = resolved_exchange.as_str().to_string();
@@ -882,7 +882,7 @@ impl ChartApp {
                                 };
                                 // Phase X0 / C5c: oi_delta storage lives on bubble.
                                 if let Some(bid) = self.bubble_for_chart(cid) {
-                                    if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(bid) {
+                                    if let Some(bubble) = self.core.bubble_mut().bubble_mut(bid) {
                                         bubble.clear_oi();
                                     }
                                 }
@@ -919,7 +919,7 @@ impl ChartApp {
                                 };
                                 // Phase X0 / C5c: funding_rate storage lives on bubble.
                                 if let Some(bid) = self.bubble_for_chart(cid) {
-                                    if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(bid) {
+                                    if let Some(bubble) = self.core.bubble_mut().bubble_mut(bid) {
                                         bubble.clear_funding();
                                     }
                                 }
@@ -1749,7 +1749,7 @@ impl ChartApp {
                 let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| self.bubble_for_chart(cid));
                 let mut newly_enabled = false;
                 if let Some(gid) = gid {
-                    if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(gid) {
+                    if let Some(group) = self.core.bubble_mut().bubble_mut(gid) {
                         group.sync_flags.sync_symbol = !group.sync_flags.sync_symbol;
                         newly_enabled = group.sync_flags.sync_symbol;
                         eprintln!("[ChartApp] InternalToggleSyncSymbol: group={:?} sync_symbol={}", gid, group.sync_flags.sync_symbol);
@@ -1786,7 +1786,7 @@ impl ChartApp {
                 let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| self.bubble_for_chart(cid));
                 let mut newly_enabled = false;
                 if let Some(gid) = gid {
-                    if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(gid) {
+                    if let Some(group) = self.core.bubble_mut().bubble_mut(gid) {
                         group.sync_flags.sync_timeframe = !group.sync_flags.sync_timeframe;
                         newly_enabled = group.sync_flags.sync_timeframe;
                         eprintln!("[ChartApp] InternalToggleSyncTimeframe: group={:?} sync_timeframe={}", gid, group.sync_flags.sync_timeframe);
@@ -1812,7 +1812,7 @@ impl ChartApp {
                 let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| self.bubble_for_chart(cid));
                 let mut newly_enabled = false;
                 if let Some(gid) = gid {
-                    if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(gid) {
+                    if let Some(group) = self.core.bubble_mut().bubble_mut(gid) {
                         group.sync_flags.sync_crosshair = !group.sync_flags.sync_crosshair;
                         newly_enabled = group.sync_flags.sync_crosshair;
                         eprintln!("[ChartApp] InternalToggleSyncCrosshair: group={:?} sync_crosshair={}", gid, group.sync_flags.sync_crosshair);
@@ -1845,7 +1845,7 @@ impl ChartApp {
                 let mut newly_enabled = false;
                 let mut newly_disabled = false;
                 if let Some(gid) = gid {
-                    if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(gid) {
+                    if let Some(group) = self.core.bubble_mut().bubble_mut(gid) {
                         let was_on = group.sync_flags.sync_viewport;
                         group.sync_flags.sync_viewport = !was_on;
                         newly_enabled = !was_on;
@@ -1866,7 +1866,7 @@ impl ChartApp {
                             .map(|w| w.price_scale.scale_mode);
                         if let Some(mode) = active_mode {
                             if let Some(gid) = gid {
-                                if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(gid) {
+                                if let Some(group) = self.core.bubble_mut().bubble_mut(gid) {
                                     group.scale_mode = mode;
                                 }
                             }
@@ -1876,7 +1876,7 @@ impl ChartApp {
                         // scale_mode argument; stash happens here before the call.
                         if let Some(gid) = gid {
                             let peer_leaves: Vec<mlc_core::LeafId> =
-                                self.core.bubble().bubble.chart_member_ids(gid)
+                                self.core.bubble().chart_member_ids(gid)
                                     .into_iter()
                                     .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
                                     .filter(|&lid| lid != active_leaf)
@@ -1908,7 +1908,7 @@ impl ChartApp {
                 if newly_disabled {
                     if let Some(gid) = gid {
                         let all_leaves: Vec<mlc_core::LeafId> =
-                            self.core.bubble().bubble.chart_member_ids(gid)
+                            self.core.bubble().chart_member_ids(gid)
                                 .into_iter()
                                 .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
                                 .collect();
@@ -1927,7 +1927,7 @@ impl ChartApp {
                 let chart_id = self.panel_app.panel_grid.active_container().map(|w| w.id);
                 if let Some(gid) = gid {
                     // Toggle the flag and capture the new value.
-                    let new_sync = if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(gid) {
+                    let new_sync = if let Some(group) = self.core.bubble_mut().bubble_mut(gid) {
                         group.sync_flags.sync_drawings = !group.sync_flags.sync_drawings;
                         eprintln!("[BubbleStore] sync_drawings toggled to {}", group.sync_flags.sync_drawings);
                         group.sync_flags.sync_drawings
@@ -1955,7 +1955,7 @@ impl ChartApp {
                                         .collect())
                                     .unwrap_or_default();
                             let stash_count = local.len();
-                            if let Some(auto_bub) = self.core.bubble_mut().bubble.bubble_mut(bid) {
+                            if let Some(auto_bub) = self.core.bubble_mut().bubble_mut(bid) {
                                 auto_bub.primitives = local;
                             }
                             self.core.drawings_mut().entry_or_default(pid).clear_all_primitives();
@@ -1969,7 +1969,7 @@ impl ChartApp {
                         // drawing_manager so the chart shows its own drawings again.
                         if let (Some(bid), Some(pid)) = (auto_bid, active_pid) {
                             let restored: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
-                                self.core.bubble().bubble.bubble(bid)
+                                self.core.bubble().bubble(bid)
                                     .map(|bub| bub.primitives.iter().map(|p| p.clone_box()).collect())
                                     .unwrap_or_default();
                             let count = restored.len();
@@ -1995,7 +1995,7 @@ impl ChartApp {
                 let chart_id = self.panel_app.panel_grid.active_container().map(|w| w.id);
                 if let (Some(gid), Some(chart_id)) = (gid, chart_id) {
                     // Toggle the flag and capture the new value.
-                    let new_sync = if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(gid) {
+                    let new_sync = if let Some(group) = self.core.bubble_mut().bubble_mut(gid) {
                         group.sync_flags.sync_indicators = !group.sync_flags.sync_indicators;
                         eprintln!("[BubbleStore] sync_indicators toggled to {}", group.sync_flags.sync_indicators);
                         group.sync_flags.sync_indicators
@@ -2018,7 +2018,7 @@ impl ChartApp {
                         // are listed in pre_tag_indicator_ids but not yet
                         // mirrored into the active group's indicator_configs.
                         let group_indicator_ids: std::collections::HashSet<u64> = self
-                            .core.bubble().bubble
+                            .core.bubble()
                             .bubble(gid)
                             .map(|g| g.indicator_configs.iter().map(|c| c.id).collect())
                             .unwrap_or_default();

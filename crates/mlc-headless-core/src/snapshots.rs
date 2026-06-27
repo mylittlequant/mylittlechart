@@ -202,7 +202,6 @@ pub fn update_indicator_snapshot<H: AgentHost>(host: &H, agent_state: &AgentStat
         let bubble_symbols: std::collections::HashMap<u64, String> = chart
             .core
             .bubble()
-            .bubble
             .bubbles()
             .map(|b| (b.id.0, b.symbol.clone()))
             .collect();

@@ -4012,7 +4012,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 if let Some((active_cid, group_id)) = group_info {
                     let sync_symbol_on = pw.chart.with_bubble(group_id, |g| g.sync_flags.sync_symbol).unwrap_or(false);
                     if sync_symbol_on {
-                        let peer_ids: Vec<mlc_core::ChartId> = pw.chart.core.bubble().bubble
+                        let peer_ids: Vec<mlc_core::ChartId> = pw.chart.core.bubble()
                             .chart_member_ids(group_id)
                             .into_iter()
                             .filter(|&m| m != active_cid)
@@ -4119,7 +4119,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             for pw in self.windows.values_mut() {
                 let total_bars: usize = pw.chart.panel_app.panel_grid.containers()
                     .values()
-                    .map(|w| pw.chart.core.bubble().bubble.bubble(w.current_bubble_id)
+                    .map(|w| pw.chart.core.bubble().bubble(w.current_bubble_id)
                         .map(|b| b.bars.len())
                         .unwrap_or(0))
                     .sum();

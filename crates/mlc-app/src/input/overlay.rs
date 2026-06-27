@@ -808,7 +808,7 @@ impl ChartApp {
         if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
             if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(active_leaf) {
                 if let Some(group_id) = self.bubble_for_chart(chart_id) {
-                    if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(group_id) {
+                    if let Some(group) = self.core.bubble_mut().bubble_mut(group_id) {
                         if let Some(pos) = group.indicator_configs.iter().position(|c| c.type_id == type_id) {
                             group.indicator_configs.remove(pos);
                             eprintln!(
@@ -846,7 +846,7 @@ impl ChartApp {
 
         for inst_id in &all_to_remove {
             self.core.indicators_mut().remove_instance(*inst_id);
-            self.core.bubble_mut().alert.remove_alerts_for_indicator(*inst_id);
+            self.core.alert_mut().remove_alerts_for_indicator(*inst_id);
         }
 
         // Remove stale entries from auto_bubble.pre_tag_indicator_ids for every window
@@ -859,7 +859,7 @@ impl ChartApp {
                 .filter(|&bid| bid != mlc_core::tag_manager::BubbleId(0))
                 .collect();
             for bid in auto_bids {
-                if let Some(auto_bub) = self.core.bubble_mut().bubble.bubble_mut(bid) {
+                if let Some(auto_bub) = self.core.bubble_mut().bubble_mut(bid) {
                     auto_bub.pre_tag_indicator_ids.retain(|iid| !all_to_remove.contains(iid));
                 }
             }

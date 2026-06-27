@@ -112,8 +112,8 @@ impl ChartApp {
                 }
                 self.sync_drawing_back_to_group();
                 if let Some(pid) = prim_id {
-                    let removed_alerts = self.core.bubble_mut().alert.alerts_for_drawing(pid);
-                    self.core.bubble_mut().alert.remove_alerts_for_drawing(pid);
+                    let removed_alerts = self.core.alert_mut().alerts_for_drawing(pid);
+                    self.core.alert_mut().remove_alerts_for_drawing(pid);
                     for alert_snapshot in removed_alerts {
                         self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot: alert_snapshot });
                     }
@@ -395,7 +395,7 @@ impl ChartApp {
                 }
                 if let Some(chart_id) = active_chart_id {
                     if let Some(bid) = self.bubble_for_chart(chart_id) {
-                        if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(bid) {
+                        if let Some(bubble) = self.core.bubble_mut().bubble_mut(bid) {
                             bubble.symbol = sym_part.to_string();
                             bubble.timeframe = timeframe.clone();
                             bubble.exchange = exchange_part.to_string();
@@ -629,7 +629,7 @@ impl ChartApp {
                 .filter(|&bid| bid != mlc_core::tag_manager::BubbleId(0))
                 .collect();
             for bid in auto_bids {
-                if let Some(auto_bub) = self.core.bubble_mut().bubble.bubble_mut(bid) {
+                if let Some(auto_bub) = self.core.bubble_mut().bubble_mut(bid) {
                     auto_bub.pre_tag_indicator_ids.retain(|iid| !existing_ids.contains(iid));
                 }
             }
@@ -895,7 +895,7 @@ impl ChartApp {
                         // Phase 1.2: dual-write instrument into branch_meta + bubble.
                         if let Some(chart_id) = active_chart_id {
                             if let Some(bid) = self.bubble_for_chart(chart_id) {
-                                if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(bid) {
+                                if let Some(bubble) = self.core.bubble_mut().bubble_mut(bid) {
                                     bubble.symbol = symbol_part.to_string();
                                     bubble.timeframe = timeframe.clone();
                                     bubble.exchange = resolved_exchange.as_str().to_string();
@@ -1107,7 +1107,7 @@ impl ChartApp {
                                                 .unwrap_or_else(|| item_id.to_string());
                                             (inst_pane, inst_name)
                                         };
-                                        if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(group_id) {
+                                        if let Some(group) = self.core.bubble_mut().bubble_mut(group_id) {
                                             group.indicator_configs.push(
                                                 mlc_core::tag_manager::IndicatorGroupConfig {
                                                     id: new_id,
@@ -1139,7 +1139,7 @@ impl ChartApp {
                                                 .get(&cid)
                                                 .map(|w| w.auto_bubble_id);
                                             if let Some(bid) = auto_bid {
-                                                if let Some(auto_bub) = self.core.bubble_mut().bubble.bubble_mut(bid) {
+                                                if let Some(auto_bub) = self.core.bubble_mut().bubble_mut(bid) {
                                                     auto_bub.pre_tag_indicator_ids.push(new_id);
                                                 }
                                             }
@@ -1241,7 +1241,7 @@ impl ChartApp {
                         .container_id_for_leaf(hit_leaf_id)
                         .and_then(|cid| self.bubble_for_chart(cid))
                         .and_then(|gid| {
-                            self.core.bubble_mut().bubble.bubble_mut(gid).map(|g| {
+                            self.core.bubble_mut().bubble_mut(gid).map(|g| {
                                 g.scale_mode = next_mode;
                                 g.sync_flags.sync_viewport
                             })
@@ -2255,8 +2255,8 @@ impl ChartApp {
                                 self.core.drawings_mut().entry_or_default(pid).remove(idx);
                                 eprintln!("[ChartApp] Deleted primitive #{}", idx);
                             }
-                            let removed_alerts = self.core.bubble_mut().alert.alerts_for_drawing(prim_id);
-                            self.core.bubble_mut().alert.remove_alerts_for_drawing(prim_id);
+                            let removed_alerts = self.core.alert_mut().alerts_for_drawing(prim_id);
+                            self.core.alert_mut().remove_alerts_for_drawing(prim_id);
                             for alert_snapshot in removed_alerts {
                                 self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot: alert_snapshot });
                             }
@@ -2272,8 +2272,8 @@ impl ChartApp {
                                 eprintln!("[ChartApp] Deleted primitive #{} (no undo snapshot)", idx);
                             }
                             if let Some(pid) = prim_id {
-                                let removed_alerts = self.core.bubble_mut().alert.alerts_for_drawing(pid);
-                                self.core.bubble_mut().alert.remove_alerts_for_drawing(pid);
+                                let removed_alerts = self.core.alert_mut().alerts_for_drawing(pid);
+                                self.core.alert_mut().remove_alerts_for_drawing(pid);
                                 for alert_snapshot in removed_alerts {
                                     self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot: alert_snapshot });
                                 }

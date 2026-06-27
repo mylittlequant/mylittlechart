@@ -116,7 +116,7 @@ impl ChartApp {
         if let Some(old_group_id) = detached_group {
             let remaining = {
                 let bm = self.core.bubble();
-                bm.bubble.members(old_group_id).map_or(0, |m| m.len())
+                bm.members(old_group_id).map_or(0, |m| m.len())
             };
             eprintln!(
                 "[BubbleStore] Disconnected chart {:?} from group {:?} ({} remaining)",
@@ -141,7 +141,7 @@ impl ChartApp {
                 // we can do the indicator cleanup step below.
                 let (pre_tag_ids, restored_prims, old_history) = {
                     let mut mgr = self.core.bubble_mut();
-                    if let Some(bub) = mgr.bubble.bubble_mut(auto_bid) {
+                    if let Some(bub) = mgr.bubble_mut(auto_bid) {
                         let pre_tag = bub.pre_tag_indicator_ids.clone();
                         bub.pre_tag_indicator_ids.clear();
                         let prims: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
@@ -191,7 +191,7 @@ impl ChartApp {
 
                 // Rebind drawing_manager to the auto-bubble's style store.
                 if let Some(pid) = pid_desync {
-                    if let Some(style_arc) = self.core.bubble().bubble
+                    if let Some(style_arc) = self.core.bubble()
                         .bubble(auto_bid)
                         .map(|g| g.last_used_style.clone())
                     {
@@ -230,7 +230,7 @@ impl ChartApp {
                     pid_desync
                         .and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.primitives().iter().map(|p| p.clone_box()).collect::<Vec<_>>()))
                         .unwrap_or_default();
-                if let Some(auto_bub) = self.core.bubble_mut().bubble.bubble_mut(auto_bid) {
+                if let Some(auto_bub) = self.core.bubble_mut().bubble_mut(auto_bid) {
                     auto_bub.primitives = dm_prims;
                 }
             } else {
@@ -355,7 +355,7 @@ impl ChartApp {
                 // create_group only takes (color, symbol, timeframe) — fill exchange + account_type explicitly.
                 {
                     let mut bm = self.core.bubble_mut();
-                    if let Some(b) = bm.bubble.bubble_mut(new_gid) {
+                    if let Some(b) = bm.bubble_mut(new_gid) {
                         b.exchange = exch_join.clone();
                         b.account_type = at_join.clone();
                     }
@@ -376,7 +376,7 @@ impl ChartApp {
             // Rebind the joining window's DM to the group's shared style store so
             // last-used style changes are immediately visible to all group peers.
             let pid_join = self.panel_app.panel_grid.container_for_leaf(joining_leaf).map(|w| w.chart_panel_id);
-            if let Some(style_arc) = self.core.bubble().bubble
+            if let Some(style_arc) = self.core.bubble()
                 .bubble(group_id)
                 .map(|g| g.last_used_style.clone())
             {
@@ -407,7 +407,7 @@ impl ChartApp {
                 let seed_mode = self.panel_app.panel_grid
                     .container_for_leaf(joining_leaf)
                     .map(|w| w.price_scale.scale_mode);
-                if let (Some(mode), Some(group)) = (seed_mode, self.core.bubble_mut().bubble.bubble_mut(group_id)) {
+                if let (Some(mode), Some(group)) = (seed_mode, self.core.bubble_mut().bubble_mut(group_id)) {
                     group.scale_mode = mode;
                 }
 
@@ -440,7 +440,7 @@ impl ChartApp {
                         mlc_core::CommandHistory::new(250),
                     );
                     if let Some(bid) = auto_bid {
-                        if let Some(auto_bub) = self.core.bubble_mut().bubble.bubble_mut(bid) {
+                        if let Some(auto_bub) = self.core.bubble_mut().bubble_mut(bid) {
                             auto_bub.command_history = old_history;
                             auto_bub.pre_tag_indicator_ids = pre_tag_ids.clone();
                         }
@@ -521,7 +521,7 @@ impl ChartApp {
                         .unwrap_or_default();
                 let auto_prims: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
                     if let Some(bid) = auto_bid {
-                        self.core.bubble().bubble.bubble(bid)
+                        self.core.bubble().bubble(bid)
                             .map(|bub| bub.primitives.iter().map(|p| p.clone_box()).collect())
                             .unwrap_or_default()
                     } else { Vec::new() };
@@ -539,7 +539,7 @@ impl ChartApp {
                     // Re-ID group copies so they are globally unique; auto_bubble keeps originals.
                     d.id = mlc_core::drawing::alloc_primitive_id();
                 }
-                if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(group_id) {
+                if let Some(group) = self.core.bubble_mut().bubble_mut(group_id) {
                     group.primitives = group_prims;
                 }
                 // Stash a copy of the home drawings into `auto_bubble.primitives`
@@ -561,7 +561,7 @@ impl ChartApp {
                     let home_count = home_copy.len();
                     {
                         let mut bm = self.core.bubble_mut();
-                        if let Some(auto_bub) = bm.bubble.bubble_mut(bid) {
+                        if let Some(auto_bub) = bm.bubble_mut(bid) {
                             auto_bub.primitives = home_copy;
                         }
                         drop(bm);
@@ -598,7 +598,7 @@ impl ChartApp {
                     let n = auto_bars.len();
                     {
                         let mut bm = self.core.bubble_mut();
-                        if let Some(group) = bm.bubble.bubble_mut(group_id) {
+                        if let Some(group) = bm.bubble_mut(group_id) {
                             group.bars = auto_bars;
                         }
                         drop(bm);
@@ -662,7 +662,7 @@ impl ChartApp {
                     .collect();
                 // Sort by id to preserve original creation order (HashMap iteration is random).
                 configs.sort_by_key(|c| c.id);
-                if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(group_id) {
+                if let Some(group) = self.core.bubble_mut().bubble_mut(group_id) {
                     eprintln!(
                         "[BubbleStore] Seeded new tag {:?} with {} primitives, {} indicators",
                         group_id, group.primitives.len(), configs.len()
@@ -679,11 +679,11 @@ impl ChartApp {
             // When sync_viewport is ON for this group, stash the window's current
             // scale mode and apply the group mode. F (Focus) implies a pinned viewport,
             // so A/M/F must follow the group while viewport sync is active.
-            let viewport_sync_on = self.core.bubble().bubble.bubble(group_id)
+            let viewport_sync_on = self.core.bubble().bubble(group_id)
                 .map(|g| g.sync_flags.sync_viewport)
                 .unwrap_or(false);
             if viewport_sync_on {
-                let group_mode = self.core.bubble().bubble.bubble(group_id)
+                let group_mode = self.core.bubble().bubble(group_id)
                     .map(|g| g.scale_mode);
                 let joining_bars: Vec<mlc_core::Bar> = self.bars_for_leaf(joining_leaf);
                 if let (Some(group_mode), Some(window)) = (
@@ -725,7 +725,7 @@ impl ChartApp {
                     let n = auto_bars.len();
                     {
                         let mut bm = self.core.bubble_mut();
-                        if let Some(g) = bm.bubble.bubble_mut(group_id) {
+                        if let Some(g) = bm.bubble_mut(group_id) {
                             g.bars = auto_bars;
                         }
                         drop(bm);
@@ -774,7 +774,7 @@ impl ChartApp {
                     mlc_core::CommandHistory::new(250),
                 );
                 if let Some(bid) = auto_bid_existing {
-                    if let Some(auto_bub) = self.core.bubble_mut().bubble.bubble_mut(bid) {
+                    if let Some(auto_bub) = self.core.bubble_mut().bubble_mut(bid) {
                         auto_bub.command_history = old_history;
                         auto_bub.pre_tag_indicator_ids = pre_tag_ids.clone();
                         eprintln!(
@@ -866,7 +866,7 @@ impl ChartApp {
         let source_bars: Vec<mlc_core::Bar> = {
             let bm = self.core.bubble();
             pre_split_group_id
-                .and_then(|bid| bm.bubble.bubble(bid))
+                .and_then(|bid| bm.bubble(bid))
                 .map(|b| b.bars.clone())
                 .unwrap_or_default()
         };
@@ -906,7 +906,7 @@ impl ChartApp {
                 // first lives inside a method-chain temporary).
                 if !source_bars.is_empty() {
                     let mut bm = self.core.bubble_mut();
-                    if let Some(b) = bm.bubble.bubble_mut(auto_bid) {
+                    if let Some(b) = bm.bubble_mut(auto_bid) {
                         b.bars = source_bars.clone();
                     }
                     drop(bm);
@@ -961,7 +961,7 @@ impl ChartApp {
         for chart_id in new_chart_ids {
             let pre_bid = self.bubble_for_chart(chart_id);
             if let Some(bid) = pre_bid {
-                if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(bid) {
+                if let Some(bubble) = self.core.bubble_mut().bubble_mut(bid) {
                     bubble.symbol = source_sym.clone();
                     bubble.timeframe = source_tf.clone();
                     bubble.exchange = source_exch.clone();
@@ -1077,7 +1077,7 @@ impl ChartApp {
                 // which then breaks bridge routing and panel sym:exch:AT keys.
                 {
                     let mut bm = self.core.bubble_mut();
-                    if let Some(b) = bm.bubble.bubble_mut(gid) {
+                    if let Some(b) = bm.bubble_mut(gid) {
                         b.exchange = split_untagged_exch.clone();
                         b.account_type = split_untagged_at.clone();
                     }
@@ -1090,7 +1090,7 @@ impl ChartApp {
                 // paints immediately instead of waiting for a live tick.
                 if !source_bars.is_empty() {
                     let mut bm = self.core.bubble_mut();
-                    if let Some(b) = bm.bubble.bubble_mut(gid) {
+                    if let Some(b) = bm.bubble_mut(gid) {
                         b.bars = source_bars.clone();
                     }
                     drop(bm);
@@ -1133,7 +1133,7 @@ impl ChartApp {
                 // `disconnect_from_current_group` for full reasoning.
                 let should_remove = {
                     let bm = self.core.bubble();
-                    bm.bubble.bubble(old_gid)
+                    bm.bubble(old_gid)
                         .map(|g| g.auto_created && g.members.is_empty())
                         .unwrap_or(false)
                 } && old_cid_auto_home != Some(old_gid);
@@ -1190,7 +1190,7 @@ impl ChartApp {
             // loop above for why this matters.
             if created_fresh_group {
                 let mut bm = self.core.bubble_mut();
-                if let Some(bubble) = bm.bubble.bubble_mut(group_id) {
+                if let Some(bubble) = bm.bubble_mut(group_id) {
                     bubble.exchange = source_exch.clone();
                     bubble.account_type = source_at.clone();
                     // Phase X0 / C5c regression fix: seed bars from the source
@@ -1208,14 +1208,15 @@ impl ChartApp {
             // --- Shared group path (user-tagged groups or brand-new groups) ---
 
             // Assign the group's color to leaf_color_tags for UI display.
-            let group_color = self.core.bubble().bubble.bubble(group_id)
+            let group_color = self.core.bubble()
+                .bubble(group_id)
                 .map(|g| g.color)
                 .unwrap_or([0.5, 0.5, 0.5, 0.9]);
             for &leaf_id in &new_leaves {
                 self.panel_app.leaf_color_tags.insert(leaf_id, group_color);
             }
             // Determine if this is a truly new group (just created, has no state yet).
-            let is_new_group = self.core.bubble().bubble.bubble(group_id)
+            let is_new_group = self.core.bubble().bubble(group_id)
                 .is_none_or(|g| g.members.is_empty() && g.indicator_configs.is_empty() && g.primitives.is_empty());
             // Collect (leaf_id, chart_id) first to avoid mixed borrow when setting group_id.
             let leaf_chart_ids: Vec<(mlc_core::LeafId, mlc_core::ChartId)> = new_leaves
@@ -1248,7 +1249,7 @@ impl ChartApp {
                 }
             }
             // Rebind every new window's DM to the group's shared style store.
-            let style_arc = self.core.bubble().bubble
+            let style_arc = self.core.bubble()
                 .bubble(group_id)
                 .map(|g| g.last_used_style.clone());
             for &(leaf_id, _) in &leaf_chart_ids {
@@ -1286,7 +1287,7 @@ impl ChartApp {
                             mlc_core::CommandHistory::new(250),
                         );
                         if let Some(bid) = source_auto_bid {
-                            if let Some(auto_bub) = self.core.bubble_mut().bubble.bubble_mut(bid) {
+                            if let Some(auto_bub) = self.core.bubble_mut().bubble_mut(bid) {
                                 auto_bub.command_history = old_history;
                                 auto_bub.pre_tag_indicator_ids = pre_tag_ids.clone();
                             }
@@ -1389,7 +1390,7 @@ impl ChartApp {
                     p.data_mut().id = mlc_core::drawing::alloc_primitive_id();
                 }
                 if !source_prims.is_empty() {
-                    if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(group_id) {
+                    if let Some(group) = self.core.bubble_mut().bubble_mut(group_id) {
                         group.primitives = source_prims;
                         eprintln!(
                             "[BubbleStore] Seeded group {:?} with {} primitives",
@@ -1436,7 +1437,7 @@ impl ChartApp {
                         .collect();
                     // Sort by id to preserve original creation order (HashMap iteration is random).
                     configs.sort_by_key(|c| c.id);
-                    if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(group_id) {
+                    if let Some(group) = self.core.bubble_mut().bubble_mut(group_id) {
                         let count = configs.len();
                         group.indicator_configs = configs;
                         eprintln!(
@@ -1548,7 +1549,7 @@ impl ChartApp {
         let group_id_for_peers = source_chart_id_for_peers
             .and_then(|cid| self.bubble_for_chart(cid));
         let sync_leaves: Vec<mlc_core::LeafId> = if let Some(gid) = group_id_for_peers {
-            self.core.bubble().bubble
+            self.core.bubble()
                 .chart_member_ids(gid)
                 .into_iter()
                 .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
@@ -1621,7 +1622,7 @@ impl ChartApp {
         for ((_, chart_id_opt), (_, _, _, peer_tf)) in peer_chart_ids.iter().zip(peer_info.iter()) {
             if let Some(chart_id) = chart_id_opt {
                 if let Some(bid) = self.bubble_for_chart(*chart_id) {
-                    if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(bid) {
+                    if let Some(bubble) = self.core.bubble_mut().bubble_mut(bid) {
                         bubble.symbol = symbol_owned.clone();
                         bubble.timeframe = peer_tf.clone();
                         bubble.exchange = exchange_owned.clone();
@@ -1673,7 +1674,7 @@ impl ChartApp {
                 .and_then(|cid| self.bubble_for_chart(cid));
 
             let member = mlc_core::tag_manager::SyncMemberId::Chart(chart_id.0);
-            self.core.bubble_mut().bubble.set_instrument(
+            self.core.bubble_mut().set_instrument(
                 member,
                 symbol.to_string(),
                 source_exchange,
@@ -1710,7 +1711,7 @@ impl ChartApp {
         let group_id_for_tf = source_chart_id_for_tf
             .and_then(|cid| self.bubble_for_chart(cid));
         let sync_leaves: Vec<mlc_core::LeafId> = if let Some(gid) = group_id_for_tf {
-            self.core.bubble().bubble
+            self.core.bubble()
                 .chart_member_ids(gid)
                 .into_iter()
                 .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
@@ -1766,7 +1767,7 @@ impl ChartApp {
         for (_, chart_id_opt) in &peer_chart_ids {
             if let Some(chart_id) = chart_id_opt {
                 if let Some(bid) = self.bubble_for_chart(*chart_id) {
-                    if let Some(bubble) = self.core.bubble_mut().bubble.bubble_mut(bid) {
+                    if let Some(bubble) = self.core.bubble_mut().bubble_mut(bid) {
                         bubble.timeframe = tf.clone();
                     }
                 }
@@ -1810,7 +1811,7 @@ impl ChartApp {
         // Also update the TagManager group's canonical timeframe so the group
         // state stays consistent with the displayed windows.
         if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(source_leaf) {
-            self.core.bubble_mut().bubble.set_timeframe(chart_id, tf.clone());
+            self.core.bubble_mut().set_timeframe(chart_id, tf.clone());
             eprintln!(
                 "[BubbleStore] Updated group timeframe to {:?} via chart {:?}",
                 tf, chart_id
@@ -1913,7 +1914,7 @@ impl ChartApp {
         // not receive updates even when the group default is enabled.
         // Use TagManager membership so untagged groups propagate too.
         let sync_leaves: Vec<mlc_core::LeafId> = if let Some(gid) = group_id {
-            self.core.bubble().bubble
+            self.core.bubble()
                 .chart_member_ids(gid)
                 .into_iter()
                 .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
@@ -1925,7 +1926,7 @@ impl ChartApp {
                     let peer_should_sync = group_id
                         .zip(peer_chart_id)
                         .and_then(|(gid2, cid)| {
-                            self.core.bubble().bubble.bubble(gid2).map(|g| {
+                            self.core.bubble().bubble(gid2).map(|g| {
                                 g.effective_sync_crosshair(
                                     mlc_core::tag_manager::SyncMemberId::Chart(cid.0),
                                 )
@@ -1953,7 +1954,7 @@ impl ChartApp {
 
         // Propagate crosshair price to all order-flow panels that belong to the same sync group.
         if let Some(gid) = group_id {
-            let panel_ids = self.core.bubble().bubble.panel_members(gid);
+            let panel_ids = self.core.bubble().panel_members(gid);
             let crosshair_price = if visible { Some(price) } else { None };
             for pid in panel_ids {
                 let panel_id = mlc_sidebar_content::free_slot::PanelId(pid);
@@ -2005,7 +2006,7 @@ impl ChartApp {
         // Collect peer leaf IDs using the TagManager group boundary.
         let peer_leaves: Vec<mlc_core::LeafId> = if let Some(gid) = group_id {
             // Every chart member of the group except the source leaf itself.
-            self.core.bubble().bubble
+            self.core.bubble()
                 .chart_member_ids(gid)
                 .into_iter()
                 .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
@@ -2138,7 +2139,7 @@ impl ChartApp {
         // If sync_drawings is OFF for this group, leave the primitive in the
         // drawing_manager for this window only — forward sync is blocked anyway,
         // so moving it to the group would cause it to disappear visually.
-        let (sync_drawings_on, is_auto_mono) = self.core.bubble().bubble
+        let (sync_drawings_on, is_auto_mono) = self.core.bubble()
             .bubble(group_id)
             .map(|g| (g.sync_flags.sync_drawings, g.auto_created && g.members.len() <= 1))
             .unwrap_or((true, false));
@@ -2196,7 +2197,7 @@ impl ChartApp {
         }
 
         // Add the primitive to the TagManager group so all members share it.
-        if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(group_id) {
+        if let Some(group) = self.core.bubble_mut().bubble_mut(group_id) {
             group.primitives.push(prim);
             eprintln!(
                 "[BubbleStore] Moved completed primitive into group {:?} (now {} primitives)",
@@ -2247,7 +2248,7 @@ impl ChartApp {
         // NEVER remove the chart's permanent home auto_bubble.
         let should_remove = {
             let bm = self.core.bubble();
-            bm.bubble.bubble(old_gid)
+            bm.bubble(old_gid)
                 .map(|g| g.auto_created && g.members.is_empty())
                 .unwrap_or(false)
         } && auto_bid_home != Some(old_gid);
@@ -2279,7 +2280,7 @@ impl ChartApp {
             None => return,
         };
         // Respect the sync_drawings flag — if disabled, do not write back to group.
-        if let Some(group) = self.core.bubble().bubble.bubble(group_id) {
+        if let Some(group) = self.core.bubble().bubble(group_id) {
             if !group.sync_flags.sync_drawings {
                 return;
             }
@@ -2289,7 +2290,7 @@ impl ChartApp {
                 .map(|w| w.chart_panel_id)
                 .and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.primitives().iter().map(|p| p.clone_box()).collect::<Vec<_>>()))
                 .unwrap_or_default();
-        if let Some(group) = self.core.bubble_mut().bubble.bubble_mut(group_id) {
+        if let Some(group) = self.core.bubble_mut().bubble_mut(group_id) {
             group.primitives = new_prims;
         }
         self.sidebar_data_dirty = true;
@@ -2314,14 +2315,14 @@ impl ChartApp {
         new_leaf_chart_ids: &[(mlc_core::LeafId, mlc_core::ChartId)],
     ) {
         // Respect the sync_indicators flag — if disabled, skip indicator sync.
-        if let Some(group) = self.core.bubble().bubble.bubble(group_id) {
+        if let Some(group) = self.core.bubble().bubble(group_id) {
             if !group.sync_flags.sync_indicators {
                 return;
             }
         }
 
         // Collect indicator configs from the group.
-        let configs: Vec<(String, String)> = self.core.bubble().bubble
+        let configs: Vec<(String, String)> = self.core.bubble()
             .bubble(group_id)
             .map(|g| {
                 g.indicator_configs.iter()
@@ -2385,7 +2386,7 @@ impl ChartApp {
         source_leaf: mlc_core::LeafId,
     ) {
         // Respect the sync_indicators flag — if disabled, skip peer sync.
-        if let Some(group) = self.core.bubble().bubble.bubble(group_id) {
+        if let Some(group) = self.core.bubble().bubble(group_id) {
             if !group.sync_flags.sync_indicators {
                 return;
             }
@@ -2394,7 +2395,7 @@ impl ChartApp {
         // Collect peer chart_ids (excluding source). Symbol no longer matters
         // — each peer recalculates indicators against its own bars.
         let source_chart_id = self.panel_app.panel_grid.container_id_for_leaf(source_leaf);
-        let peer_cids: Vec<mlc_core::ChartId> = self.core.bubble().bubble
+        let peer_cids: Vec<mlc_core::ChartId> = self.core.bubble()
             .chart_member_ids(group_id)
             .into_iter()
             .filter(|&cid| Some(cid) != source_chart_id)

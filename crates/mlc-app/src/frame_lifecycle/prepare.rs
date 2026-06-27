@@ -171,7 +171,7 @@ impl ChartApp {
             let bars_by_chart_pre: std::collections::HashMap<ChartId, Vec<mlc_core::Bar>> =
                 self.panel_app.panel_grid.containers().iter()
                     .map(|(cid, w)| {
-                        let bars = self.core.bubble().bubble.bubble(w.current_bubble_id)
+                        let bars = self.core.bubble().bubble(w.current_bubble_id)
                             .map(|b| b.bars.clone())
                             .unwrap_or_default();
                         (*cid, bars)
@@ -240,7 +240,7 @@ impl ChartApp {
         let bubble_snapshot: std::collections::HashMap<
             mlc_core::tag_manager::BubbleId,
             (Vec<mlc_core::Bar>,)
-        > = self.core.bubble().bubble.bubbles()
+        > = self.core.bubble().bubbles()
             .map(|b| (b.id, (b.bars.clone(),)))
             .collect();
 
@@ -256,12 +256,12 @@ impl ChartApp {
             for (cid, w) in self.panel_app.panel_grid.containers().iter() {
                 let cur_bid = w.current_bubble_id;
                 let auto_bid = w.auto_bubble_id;
-                let bid_via_chart = self.core.bubble().bubble.bubble_for_chart(*cid);
-                let cur_bars = self.core.bubble().bubble.bubble(cur_bid).map(|b| b.bars.len()).unwrap_or(usize::MAX);
-                let cur_sym  = self.core.bubble().bubble.bubble(cur_bid).map(|b| b.symbol.clone()).unwrap_or_default();
-                let cur_exch = self.core.bubble().bubble.bubble(cur_bid).map(|b| b.exchange.clone()).unwrap_or_default();
-                let auto_bars = self.core.bubble().bubble.bubble(auto_bid).map(|b| b.bars.len()).unwrap_or(usize::MAX);
-                let auto_sym  = self.core.bubble().bubble.bubble(auto_bid).map(|b| b.symbol.clone()).unwrap_or_default();
+                let bid_via_chart = self.core.bubble().bubble_for_chart(*cid);
+                let cur_bars = self.core.bubble().bubble(cur_bid).map(|b| b.bars.len()).unwrap_or(usize::MAX);
+                let cur_sym  = self.core.bubble().bubble(cur_bid).map(|b| b.symbol.clone()).unwrap_or_default();
+                let cur_exch = self.core.bubble().bubble(cur_bid).map(|b| b.exchange.clone()).unwrap_or_default();
+                let auto_bars = self.core.bubble().bubble(auto_bid).map(|b| b.bars.len()).unwrap_or(usize::MAX);
+                let auto_sym  = self.core.bubble().bubble(auto_bid).map(|b| b.symbol.clone()).unwrap_or_default();
                 dump.push(format!(
                     "cid={:?} cur={:?}(sym='{}' exch='{}' bars={}) auto={:?}(sym='{}' bars={}) via_chart={:?}",
                     cid, cur_bid, cur_sym, cur_exch, cur_bars, auto_bid, auto_sym, auto_bars, bid_via_chart
@@ -331,7 +331,7 @@ impl ChartApp {
         // Keep the alert-settings modal's alerts list always in sync.
         if self.panel_app.alert_settings_state.is_open() {
             self.panel_app.alert_settings_state.all_alerts =
-                self.core.bubble().alert.items().to_vec();
+                self.core.alert().items().to_vec();
         }
 
         // Auto-dirty sidebar when active leaf changes (for object tree refresh).
@@ -358,13 +358,13 @@ impl ChartApp {
                         .map(String::from).unwrap_or_default();
                     let at = self.account_type_for_chart(active_cid_sync)
                         .map(String::from).unwrap_or_else(|| "S".to_string());
-                    if let Some(g) = self.core.bubble_mut().bubble.bubble_mut(new_active_group) {
+                    if let Some(g) = self.core.bubble_mut().bubble_mut(new_active_group) {
                         g.symbol = sym;
                         g.exchange = exch;
                         g.account_type = at;
                     }
                 }
-                self.core.bubble_mut().bubble.reassign_synced_panels(new_active_group);
+                self.core.bubble_mut().reassign_synced_panels(new_active_group);
                 self.apply_key_to_panels_in_group(new_active_group);
             }
         }
@@ -963,11 +963,11 @@ impl ChartApp {
             }
 
             // --- Alerts: copy from alert manager ---
-            self.sidebar_state.alert_items = self.core.bubble().alert.items().to_vec();
+            self.sidebar_state.alert_items = self.core.alert().items().to_vec();
 
             // --- ObjectTree: mark items that have bound alerts ---
             {
-                let alert_items = self.core.bubble().alert.items().to_vec();
+                let alert_items = self.core.alert().items().to_vec();
                 let alert_items = alert_items.as_slice();
                 for tree_item in &mut self.sidebar_state.object_tree_items {
                     tree_item.has_alert = alert_items.iter().any(|a| match &a.source {
@@ -1082,7 +1082,7 @@ impl ChartApp {
                 let bars_by_chart_split: std::collections::HashMap<ChartId, Vec<mlc_core::Bar>> =
                     self.panel_app.panel_grid.containers().iter()
                         .map(|(cid, w)| {
-                            let bars = self.core.bubble().bubble.bubble(w.current_bubble_id)
+                            let bars = self.core.bubble().bubble(w.current_bubble_id)
                                 .map(|b| b.bars.clone())
                                 .unwrap_or_default();
                             (*cid, bars)
@@ -1172,7 +1172,7 @@ impl ChartApp {
                             .container_id_for_leaf(leaf_id)
                             .and_then(|cid| self.bubble_for_chart(cid))
                         {
-                            if let Some(group) = self.core.bubble().bubble.bubble(group_id) {
+                            if let Some(group) = self.core.bubble().bubble(group_id) {
                                 // Skip sync only for auto-created solo groups — their primitives
                                 // live directly in drawing_manager (intercept returns false for them).
                                 // Non-auto tagged groups with a single member still need the forward
@@ -1303,7 +1303,7 @@ impl ChartApp {
                         // directly in drawing_manager. Non-auto tagged groups with ≤1 member
                         // still need the forward sync (group.primitives → drawing_manager) so
                         // drawings loaded from a preset are visible on the canvas.
-                        let (drawings_on, is_auto_mono) = self.core.bubble().bubble
+                        let (drawings_on, is_auto_mono) = self.core.bubble()
                             .bubble(group_id)
                             .map(|g| (g.sync_flags.sync_drawings, g.auto_created && g.members.len() <= 1))
                             .unwrap_or((true, false));
@@ -1315,7 +1315,7 @@ impl ChartApp {
                                 .map(String::from)
                                 .unwrap_or_default();
                             let cloned: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
-                                self.core.bubble().bubble
+                                self.core.bubble()
                                     .bubble(group_id)
                                     .map(|g| g.primitives.iter()
                                         .filter(|p| {

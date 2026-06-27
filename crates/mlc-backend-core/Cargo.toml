@@ -9,6 +9,7 @@ name = "mlc_backend_core"
 
 [dependencies]
 web-time = "1"
+mlc-alerts = { path = "../mlc-alerts", package = "mylittlechart-alerts" }
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 mlc-indicators = { path = "../mlc-indicators", package = "mylittlechart-indicators" }
 mlc-live-data = { path = "../mlc-live-data", package = "mylittlechart-live-data" }
