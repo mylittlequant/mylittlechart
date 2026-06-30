@@ -220,7 +220,7 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     // bubble directly, no chart lookup needed.
                     let bars: Vec<mlc_core::Bar> = wid_opt
                         .and_then(|bid_raw| chart.with_bubble(
-                            mlc_core::tag_manager::BubbleId(bid_raw),
+                            mlc_core::ids::BubbleId(bid_raw),
                             |b| b.bars.clone(),
                         ))
                         .unwrap_or_default();

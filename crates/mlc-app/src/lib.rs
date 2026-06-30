@@ -1092,7 +1092,7 @@ impl ChartApp {
         color: [f32; 4],
         symbol: String,
         timeframe: mlc_core::state::Timeframe,
-    ) -> mlc_core::tag_manager::BubbleId {
+    ) -> mlc_core::ids::BubbleId {
         let bid = self
             .core
             .bubble_mut()
@@ -1107,7 +1107,7 @@ impl ChartApp {
         color: [f32; 4],
         symbol: String,
         timeframe: mlc_core::state::Timeframe,
-    ) -> mlc_core::tag_manager::BubbleId {
+    ) -> mlc_core::ids::BubbleId {
         let bid = self
             .core
             .bubble_mut()
@@ -1117,7 +1117,7 @@ impl ChartApp {
     }
 
     /// Remove a bubble + its paired tag.
-    pub fn remove_tag(&mut self, bid: mlc_core::tag_manager::BubbleId) {
+    pub fn remove_tag(&mut self, bid: mlc_core::ids::BubbleId) {
         self.core.bubble_mut().remove_group(bid);
         self.tag_store.remove(bid);
     }
@@ -1126,8 +1126,8 @@ impl ChartApp {
     /// is already in another tag it is disconnected first.
     pub fn connect_member(
         &mut self,
-        member: mlc_core::tag_manager::SyncMemberId,
-        bid: mlc_core::tag_manager::BubbleId,
+        member: mlc_core::ids::SyncMemberId,
+        bid: mlc_core::ids::BubbleId,
     ) {
         let _ = self.core.bubble_mut().connect(member, bid);
         let _ = self.tag_store.connect(member, bid);
@@ -1137,8 +1137,8 @@ impl ChartApp {
     /// bubble).  Returns the tag id it was in, if any.
     pub fn disconnect_member(
         &mut self,
-        member: mlc_core::tag_manager::SyncMemberId,
-    ) -> Option<mlc_core::tag_manager::BubbleId> {
+        member: mlc_core::ids::SyncMemberId,
+    ) -> Option<mlc_core::ids::BubbleId> {
         let from_bubble = self.core.bubble_mut().disconnect(member);
         let from_tag = self.tag_store.disconnect(member);
         // Both stores agree by invariant; prefer the tag-side reading.
@@ -1149,10 +1149,10 @@ impl ChartApp {
     pub fn attach_chart_to_tag(
         &mut self,
         chart_id: mlc_core::state::ChartId,
-        bid: mlc_core::tag_manager::BubbleId,
+        bid: mlc_core::ids::BubbleId,
     ) {
         self.connect_member(
-            mlc_core::tag_manager::SyncMemberId::Chart(chart_id.0),
+            mlc_core::ids::SyncMemberId::Chart(chart_id.0),
             bid,
         );
     }
@@ -1161,16 +1161,16 @@ impl ChartApp {
     pub fn detach_chart_from_tag(
         &mut self,
         chart_id: mlc_core::state::ChartId,
-    ) -> Option<mlc_core::tag_manager::BubbleId> {
-        self.disconnect_member(mlc_core::tag_manager::SyncMemberId::Chart(chart_id.0))
+    ) -> Option<mlc_core::ids::BubbleId> {
+        self.disconnect_member(mlc_core::ids::SyncMemberId::Chart(chart_id.0))
     }
 
     /// Move a panel out of the Synced set and into its own private
     /// auto-created bubble.
     pub fn set_panel_auto(
         &mut self,
-        panel_member: mlc_core::tag_manager::SyncMemberId,
-        private_bubble_id: mlc_core::tag_manager::BubbleId,
+        panel_member: mlc_core::ids::SyncMemberId,
+        private_bubble_id: mlc_core::ids::BubbleId,
     ) {
         self.core
             .bubble_mut()
@@ -1182,8 +1182,8 @@ impl ChartApp {
     /// Put a panel in Synced state and connect to a bubble's paired tag.
     pub fn set_panel_synced(
         &mut self,
-        panel_member: mlc_core::tag_manager::SyncMemberId,
-        bid: mlc_core::tag_manager::BubbleId,
+        panel_member: mlc_core::ids::SyncMemberId,
+        bid: mlc_core::ids::BubbleId,
     ) {
         self.core.bubble_mut().set_synced(panel_member, bid);
         self.tag_store.synced_panels_mut().insert(panel_member);
@@ -1195,7 +1195,7 @@ impl ChartApp {
     /// (closed by user).
     pub fn remove_panel_completely(
         &mut self,
-        panel_member: mlc_core::tag_manager::SyncMemberId,
+        panel_member: mlc_core::ids::SyncMemberId,
     ) {
         self.core.bubble_mut().disconnect(panel_member);
         self.core
@@ -1210,7 +1210,7 @@ impl ChartApp {
     /// exist or was already user-tagged.
     pub fn promote_to_tagged(
         &mut self,
-        bid: mlc_core::tag_manager::BubbleId,
+        bid: mlc_core::ids::BubbleId,
     ) -> Option<[f32; 4]> {
         let color = self
             .core
@@ -1238,7 +1238,7 @@ impl ChartApp {
 
     /// Resolve the `BubbleId` attached to this chart, if any.
     #[inline]
-    pub fn bubble_for_chart(&self, chart_id: mlc_core::state::ChartId) -> Option<mlc_core::tag_manager::BubbleId> {
+    pub fn bubble_for_chart(&self, chart_id: mlc_core::state::ChartId) -> Option<mlc_core::ids::BubbleId> {
         self.core.bubble().bubble_for_chart(chart_id)
     }
 
@@ -1258,7 +1258,7 @@ impl ChartApp {
     pub fn shared_group_for_chart(
         &self,
         chart_id: mlc_core::state::ChartId,
-    ) -> Option<mlc_core::tag_manager::BubbleId> {
+    ) -> Option<mlc_core::ids::BubbleId> {
         let gid = self.bubble_for_chart(chart_id)?;
         let is_auto_mono = self
             .core
@@ -1295,7 +1295,7 @@ impl ChartApp {
 
     /// Resolve the group/bubble id for any sync member id.
     #[inline]
-    pub fn group_for_member(&self, member: mlc_core::tag_manager::SyncMemberId) -> Option<mlc_core::tag_manager::BubbleId> {
+    pub fn group_for_member(&self, member: mlc_core::ids::SyncMemberId) -> Option<mlc_core::ids::BubbleId> {
         self.core.bubble().group_for_member(member)
     }
 
@@ -1314,8 +1314,8 @@ impl ChartApp {
     #[inline]
     pub fn with_bubble<R>(
         &self,
-        bid: mlc_core::tag_manager::BubbleId,
-        f: impl FnOnce(&mlc_core::tag_manager::DataBubble) -> R,
+        bid: mlc_core::ids::BubbleId,
+        f: impl FnOnce(&mlc_backend_core::bubble::DataBubble) -> R,
     ) -> Option<R> {
         self.core.bubble().bubble(bid).map(f)
     }
@@ -1325,7 +1325,7 @@ impl ChartApp {
     pub fn with_chart_bubble<R>(
         &self,
         cid: mlc_core::state::ChartId,
-        f: impl FnOnce(&mlc_core::tag_manager::DataBubble) -> R,
+        f: impl FnOnce(&mlc_backend_core::bubble::DataBubble) -> R,
     ) -> Option<R> {
         let m = self.core.bubble();
         m.bubble_for_chart(cid).and_then(|bid| m.bubble(bid)).map(f)
@@ -3487,7 +3487,8 @@ impl ChartApp {
                     .get(&overlay_panel_id)
                     .unwrap_or(&overlay_default_panel);
                 if let Some(overlay_bubble) = self.core.bubble().bubble(window.current_bubble_id) {
-                    let render_state = window.to_render_state(
+                    let render_state = mlc_backend_core::bubble::build_chart_render_state(
+                        window,
                         overlay_bubble,
                         chart_rect,
                         &chart_theme,
@@ -3562,7 +3563,8 @@ impl ChartApp {
                 .get(&single_pid)
                 .unwrap_or(&single_default_panel);
             if let Some(single_overlay_bubble) = self.core.bubble().bubble(window.current_bubble_id) {
-                let render_state = window.to_render_state(
+                let render_state = mlc_backend_core::bubble::build_chart_render_state(
+                    window,
                     single_overlay_bubble,
                     chart_rect,
                     &chart_theme,
@@ -3826,7 +3828,8 @@ impl ChartApp {
                     Some(b) => b,
                     None => continue,  // window not yet attached to a bubble
                 };
-                let render_state = window.to_render_state(
+                let render_state = mlc_backend_core::bubble::build_chart_render_state(
+                    window,
                     split_bubble,
                     chart_rect,
                     &chart_theme,
@@ -4475,7 +4478,8 @@ impl ChartApp {
                 let single_window_bubble_mgr = self.core.bubble();
                 let single_window_bubble = single_window_bubble_mgr.bubble(window.current_bubble_id)
                     .expect("checked by filter above");
-                let render_state = window.to_render_state(
+                let render_state = mlc_backend_core::bubble::build_chart_render_state(
+                    window,
                     single_window_bubble,
                     chart_rect,
                     &chart_theme,
@@ -5238,7 +5242,7 @@ impl ChartApp {
                 std::collections::HashMap<u64, [f32; 4]>,
                 std::collections::HashMap<u64, mlc_sidebar_content::render::PanelSyncFlagsSnapshot>,
             ) = {
-                use mlc_core::tag_manager::SyncMemberId;
+                use mlc_core::ids::SyncMemberId;
                 let mgr = self.core.bubble();
                 let mut colors = std::collections::HashMap::new();
                 let mut flags = std::collections::HashMap::new();
@@ -5762,7 +5766,7 @@ impl ChartApp {
             std::collections::HashMap<u64, [f32; 4]>,
             std::collections::HashMap<u64, mlc_sidebar_content::render::PanelSyncFlagsSnapshot>,
         ) = {
-            use mlc_core::tag_manager::SyncMemberId;
+            use mlc_core::ids::SyncMemberId;
             let mgr = self.core.bubble();
             let mut colors = std::collections::HashMap::new();
             let mut flags = std::collections::HashMap::new();
@@ -6696,7 +6700,7 @@ impl ChartApp {
     /// when a chart changes its symbol (from `propagate_symbol_to_sync_group`).
     pub(crate) fn apply_key_to_panels_in_group(
         &mut self,
-        group_id: mlc_core::tag_manager::BubbleId,
+        group_id: mlc_core::ids::BubbleId,
     ) {
         let (symbol, exchange, account_type, panel_ids) = {
             let mgr = self.core.bubble();

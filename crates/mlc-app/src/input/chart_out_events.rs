@@ -2008,7 +2008,7 @@ impl ChartApp {
                         .map(|w| w.auto_bubble_id.0);
                     let pre_tag_ids: Vec<u64> = auto_bid_raw
                         .and_then(|bid| self.with_bubble(
-                            mlc_core::tag_manager::BubbleId(bid),
+                            mlc_core::ids::BubbleId(bid),
                             |bub| bub.pre_tag_indicator_ids.clone(),
                         ))
                         .unwrap_or_default();

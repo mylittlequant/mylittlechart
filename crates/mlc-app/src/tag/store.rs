@@ -8,7 +8,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use mlc_core::tag_manager::{BubbleId, SyncMemberId};
+use mlc_core::ids::{BubbleId, SyncMemberId};
 
 use super::tag::{Tag, TagId};
 

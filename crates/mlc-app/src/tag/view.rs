@@ -8,7 +8,7 @@
 //! This helper does the aggregation work (per-symbol indicator +
 //! primitive counts) that used to live inside the modal renderer.
 
-use mlc_core::tag_manager::DataBubble;
+use mlc_backend_core::bubble::DataBubble;
 use mlc_core::GroupView;
 use std::collections::HashMap;
 

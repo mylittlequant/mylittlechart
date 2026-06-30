@@ -101,10 +101,8 @@ pub mod modal;
 pub mod ids;
 pub use ids::{BubbleId, GroupView, MemberSyncOverride, SyncFlags, SyncMemberId};
 
-// Tag / sync-group manager (Step 1–2 of the TagManager architecture).
-// Holds DataBubble + BubbleStore — physically moves to mlc-backend-core
-// in Phase A-2.
-pub mod tag_manager;
+// Pure value-types for indicators shared between backend and app.
+pub mod indicator_types;
 
 // Chart preset system (snapshot types for persistence)
 pub mod preset;

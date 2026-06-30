@@ -516,7 +516,7 @@ impl ChartApp {
                             preset.windows.iter().filter_map(|snap| {
                                 let chart_id = mlc_core::state::chart_container::ChartId(snap.window_id);
                                 let win = self.panel_app.panel_grid.containers().get(&chart_id)?;
-                                if win.auto_bubble_id == mlc_core::tag_manager::BubbleId(0) {
+                                if win.auto_bubble_id == mlc_core::ids::BubbleId(0) {
                                     Some((chart_id, snap.symbol.clone(), snap.timeframe.clone()))
                                 } else { None }
                             }).collect();
@@ -537,7 +537,7 @@ impl ChartApp {
                     let _t_bubbles = web_time::Instant::now();
                     self.core.bubble_mut().clear();
                     for sg_snap in &preset.bubbles {
-                        let mut group = mlc_core::tag_manager::BubbleStore::group_from_snapshot(sg_snap);
+                        let mut group = mlc_backend_core::bubble::BubbleStore::group_from_snapshot(sg_snap);
                         if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
                             for ps in &sg_snap.primitives {
                                 if let Some(mut prim) = reg.from_json(&ps.type_id, &ps.json) {
@@ -563,9 +563,9 @@ impl ChartApp {
                         // in synced_panel_ids was Synced (= follows active chart) at
                         // save time; re-register via set_synced so that next active
                         // chart change re-attaches the panel correctly.
-                        let gid = mlc_core::tag_manager::BubbleId(sg_snap.id);
+                        let gid = mlc_core::ids::BubbleId(sg_snap.id);
                         for &pid in &sg_snap.synced_panel_ids {
-                            let member = mlc_core::tag_manager::SyncMemberId::Panel(pid);
+                            let member = mlc_core::ids::SyncMemberId::Panel(pid);
                             self.set_panel_synced(member, gid);
                         }
                     }
@@ -579,7 +579,7 @@ impl ChartApp {
                     let _t_rebind = web_time::Instant::now();
                     {
                         // Collect (chart_id, group_id) pairs without holding borrow.
-                        let rebind_info: Vec<(mlc_core::ChartId, mlc_core::tag_manager::BubbleId)> =
+                        let rebind_info: Vec<(mlc_core::ChartId, mlc_core::ids::BubbleId)> =
                             self.panel_app.panel_grid.containers().keys()
                                 .copied()
                                 .filter_map(|cid| {
@@ -607,7 +607,7 @@ impl ChartApp {
                     // future create_group / create_group_auto calls never collide.
                     let _t_seed_ids = web_time::Instant::now();
                     for sg_snap in &preset.bubbles {
-                        mlc_core::tag_manager::BubbleId::bump_past(sg_snap.id);
+                        mlc_core::ids::BubbleId::bump_past(sg_snap.id);
                     }
 
                     // Seed the global primitive ID counter so future allocations
@@ -645,7 +645,7 @@ impl ChartApp {
                         // using immutable borrows only.
                         let container_ids: Vec<mlc_core::ChartId> =
                             self.panel_app.panel_grid.containers().keys().copied().collect();
-                        let collision_info: Vec<(mlc_core::ChartId, mlc_core::tag_manager::BubbleId, std::collections::HashSet<u64>)> =
+                        let collision_info: Vec<(mlc_core::ChartId, mlc_core::ids::BubbleId, std::collections::HashSet<u64>)> =
                             container_ids.into_iter()
                                 .filter_map(|cid| {
                                     let gid = self.bubble_for_chart(cid)?;
@@ -1438,7 +1438,7 @@ impl ChartApp {
                     // that mis-route propagate_* / apply_key_to_panels_in_group.
                     let _t_orphan_prune = web_time::Instant::now();
                     {
-                        use mlc_core::tag_manager::SyncMemberId;
+                        use mlc_core::ids::SyncMemberId;
                         use mlc_core::state::PanelId;
                         // Collect live PanelIds across every panel-state map.
                         let live_panel_ids: std::collections::HashSet<u64> = {
@@ -1493,7 +1493,7 @@ impl ChartApp {
         // then write the result onto each window's two bubble pointers.
         // Cheap (one HashMap lookup per chart) and idempotent.
         {
-            let bid_by_chart: std::collections::HashMap<mlc_core::ChartId, mlc_core::tag_manager::BubbleId> =
+            let bid_by_chart: std::collections::HashMap<mlc_core::ChartId, mlc_core::ids::BubbleId> =
                 self.panel_app.panel_grid.containers().keys()
                     .filter_map(|cid| self.bubble_for_chart(*cid).map(|bid| (*cid, bid)))
                     .collect();
@@ -1502,7 +1502,7 @@ impl ChartApp {
                     if window.current_bubble_id != *bid {
                         window.current_bubble_id = *bid;
                     }
-                    if window.auto_bubble_id != *bid && window.auto_bubble_id == mlc_core::tag_manager::BubbleId(0) {
+                    if window.auto_bubble_id != *bid && window.auto_bubble_id == mlc_core::ids::BubbleId(0) {
                         window.auto_bubble_id = *bid;
                     }
                 }

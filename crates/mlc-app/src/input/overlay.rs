@@ -852,11 +852,11 @@ impl ChartApp {
         // Remove stale entries from auto_bubble.pre_tag_indicator_ids for every window
         // so the Object Tree does not show phantom items for deleted indicators.
         {
-            let auto_bids: Vec<mlc_core::tag_manager::BubbleId> = self.panel_app.panel_grid
+            let auto_bids: Vec<mlc_core::ids::BubbleId> = self.panel_app.panel_grid
                 .containers()
                 .values()
                 .map(|w| w.auto_bubble_id)
-                .filter(|&bid| bid != mlc_core::tag_manager::BubbleId(0))
+                .filter(|&bid| bid != mlc_core::ids::BubbleId(0))
                 .collect();
             for bid in auto_bids {
                 if let Some(auto_bub) = self.core.bubble_mut().bubble_mut(bid) {

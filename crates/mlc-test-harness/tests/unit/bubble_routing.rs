@@ -4,7 +4,7 @@
 //! its bubble.bars is empty after BarsLoaded) at the level of the routing
 //! decision alone — no ChartApp, no tick(), no bridge.
 
-use mlc_core::tag_manager::BubbleId;
+use mlc_core::ids::BubbleId;
 use mlc_core::state::Timeframe;
 use mlc_test_harness::fixtures::{n_charts_same_instrument, mk_bars, chart_with_phantom_instrument_bubble};
 

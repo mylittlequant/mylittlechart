@@ -19,7 +19,8 @@ use crate::state::chart_container::ChartContainer;
 use crate::state::chart_panel_state::ChartPanelState;
 use crate::state::history::CommandHistory;
 use crate::state::Timeframe;
-use crate::tag_manager::{DataBubble, IndicatorGroupConfig, SyncFlags, SyncMemberId};
+use crate::indicator_types::IndicatorGroupConfig;
+use crate::ids::SyncFlags;
 use crate::{CompareOverlay, CrosshairOptions, GridOptions, Legend, PriceScale, Tooltip, Viewport, Watermark};
 
 // `PrimitiveSnapshot` lives in `mlc-core::drawing::PrimitiveSnapshot`
@@ -448,88 +449,3 @@ pub struct DataBubbleSnapshot {
 
 }
 
-impl DataBubbleSnapshot {
-    /// Capture a snapshot from a live [`DataBubble`].
-    ///
-    /// `synced_panels` is the global BubbleStore.synced_panels set (panel ids
-    /// flagged "follow active chart"). We persist only those panel ids that
-    /// are also members of THIS bubble so that on restore each bubble recovers
-    /// its own follow-list.
-    pub fn from_group(group: &DataBubble, synced_panels: &[SyncMemberId]) -> Self {
-        let primitives = group
-            .primitives
-            .iter()
-            .map(|p| PrimitiveSnapshot::from_primitive(p.as_ref()))
-            .collect();
-
-        // Separate chart and panel members
-        let mut members: Vec<u64> = Vec::new();
-        let mut panel_members: Vec<u64> = Vec::new();
-        for member in &group.members {
-            match member {
-                SyncMemberId::Chart(id) => members.push(*id),
-                SyncMemberId::Panel(id) => panel_members.push(*id),
-            }
-        }
-
-        // Cross-reference synced_panels with this group's panel members so
-        // we save only the panels that BELONG to this group.
-        let synced_panel_ids: Vec<u64> = synced_panels
-            .iter()
-            .filter_map(|m| match m {
-                SyncMemberId::Panel(id) if group.members.contains(m) => Some(*id),
-                _ => None,
-            })
-            .collect();
-
-        // Serialize per-member overrides
-        let member_overrides: Vec<MemberOverrideSnapshot> = group
-            .member_overrides
-            .iter()
-            .map(|(member, ovr)| {
-                let (kind, id) = match member {
-                    SyncMemberId::Chart(id) => (0u8, *id),
-                    SyncMemberId::Panel(id) => (1u8, *id),
-                };
-                MemberOverrideSnapshot {
-                    kind,
-                    id,
-                    sync_symbol: ovr.sync_symbol,
-                    sync_crosshair: ovr.sync_crosshair,
-                }
-            })
-            .collect();
-
-        // Serialize per-tool last-used style from the shared store.
-        let last_used_style: std::collections::HashMap<String, serde_json::Value> = group
-            .last_used_style
-            .read()
-            .map(|store| {
-                store
-                    .iter()
-                    .filter_map(|(k, v)| serde_json::to_value(v).ok().map(|val| (k.clone(), val)))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        Self {
-            id: group.id.0,
-            color: group.color,
-            symbol: group.symbol.clone(),
-            exchange: group.exchange.clone(),
-            account_type: group.account_type.clone(),
-            timeframe: group.timeframe.clone(),
-            sync_flags: group.sync_flags.clone(),
-            scale_mode: group.scale_mode,
-            indicator_configs: group.indicator_configs.clone(),
-            members,
-            panel_members,
-            member_overrides,
-            synced_panel_ids,
-            primitives,
-            command_history: Some(group.command_history.clone()),
-            auto_created: group.auto_created,
-            last_used_style,
-        }
-    }
-}

@@ -180,7 +180,7 @@ impl ChartApp {
         let t0 = web_time::Instant::now();
         let tag_manager = std::mem::replace(
             &mut *self.core.bubble_mut(),
-            mlc_core::tag_manager::BubbleStore::new(),
+            mlc_backend_core::bubble::BubbleStore::new(),
         );
         let pk_bubble_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();

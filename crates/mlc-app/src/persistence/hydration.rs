@@ -22,7 +22,7 @@
 use std::collections::{HashMap, HashSet};
 
 use mlc_core::state::panel_grid::ChartPanelGrid;
-use mlc_core::tag_manager::BubbleStore;
+use mlc_backend_core::bubble::BubbleStore;
 use mlc_core::LeafId;
 use mlc_indicators::IndicatorManager;
 

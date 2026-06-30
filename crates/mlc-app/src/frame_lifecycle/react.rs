@@ -204,7 +204,7 @@ impl ChartApp {
 
                     for (preset_key, cids) in matching_parked {
                         if let Some(parked) = self.live_preset_cache.get_mut(&preset_key) {
-                            let parked_bubble_ids: Vec<mlc_core::tag_manager::BubbleId> = cids.iter()
+                            let parked_bubble_ids: Vec<mlc_core::ids::BubbleId> = cids.iter()
                                 .filter_map(|cid| parked.tag_manager.bubble_for_chart(*cid))
                                 .collect::<std::collections::HashSet<_>>()
                                 .into_iter()
@@ -550,7 +550,7 @@ impl ChartApp {
 
                 // Bubble writes for derived windows.
                 let bar_at_str = bar_at_label;
-                let target_bubbles_bu: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
+                let target_bubbles_bu: std::collections::HashSet<mlc_core::ids::BubbleId> =
                     instrument_by_cid_bu.iter()
                         .filter(|(_, (sym, at, is_derived))| *is_derived && sym == bar_symbol && at == bar_at_str)
                         .filter_map(|(cid, _)| self.bubble_for_chart(*cid))
@@ -666,7 +666,7 @@ impl ChartApp {
                         .collect()
                 };
 
-                let mut bubble_periods: std::collections::HashMap<mlc_core::tag_manager::BubbleId, i64> = std::collections::HashMap::new();
+                let mut bubble_periods: std::collections::HashMap<mlc_core::ids::BubbleId, i64> = std::collections::HashMap::new();
                 for (cid_tu, _window) in self.panel_app.panel_grid.containers().iter() {
                     if derived_cids_tu.contains(cid_tu) { continue; }
                     let (win_sym_tu, win_tf_tu, _win_exch_tu, win_at_tu) = match instrument_by_cid_tu.get(cid_tu) {
@@ -910,7 +910,7 @@ impl ChartApp {
                             if s != *symbol || a != at_label { return None; }
                             Some(*cid)
                         }).collect();
-                let bids: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
+                let bids: std::collections::HashSet<mlc_core::ids::BubbleId> =
                     target_cids.iter().filter_map(|cid| self.bubble_for_chart(*cid)).collect();
                 for b in bids {
                     if let Some(bubble) = self.core.bubble_mut().bubble_mut(b) {
@@ -930,7 +930,7 @@ impl ChartApp {
                             if s != *symbol || a != at_label { return None; }
                             Some(*cid)
                         }).collect();
-                let bids: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
+                let bids: std::collections::HashSet<mlc_core::ids::BubbleId> =
                     target_cids.iter().filter_map(|cid| self.bubble_for_chart(*cid)).collect();
                 for b in bids {
                     if let Some(bubble) = self.core.bubble_mut().bubble_mut(b) {
@@ -955,7 +955,7 @@ impl ChartApp {
                             Some(*cid)
                         }).collect()
                 };
-                let bubble_ids: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
+                let bubble_ids: std::collections::HashSet<mlc_core::ids::BubbleId> =
                     target_cids.iter().filter_map(|cid| self.bubble_for_chart(*cid)).collect();
                 for b in &bubble_ids {
                     if let Some(bubble) = self.core.bubble_mut().bubble_mut(*b) {
@@ -996,7 +996,7 @@ impl ChartApp {
                             Some(*cid)
                         }).collect()
                 };
-                let bids: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
+                let bids: std::collections::HashSet<mlc_core::ids::BubbleId> =
                     target_cids.iter().filter_map(|cid| self.bubble_for_chart(*cid)).collect();
                 for b in bids {
                     if let Some(bubble) = self.core.bubble_mut().bubble_mut(b) {
@@ -1024,7 +1024,7 @@ impl ChartApp {
                             Some(*cid)
                         }).collect()
                 };
-                let bubble_ids: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
+                let bubble_ids: std::collections::HashSet<mlc_core::ids::BubbleId> =
                     target_cids.iter().filter_map(|cid| self.bubble_for_chart(*cid)).collect();
                 for b in &bubble_ids {
                     if let Some(bubble) = self.core.bubble_mut().bubble_mut(*b) {
@@ -1075,7 +1075,7 @@ impl ChartApp {
                 };
                 let ticker_key = format!("{}:{}:{}", symbol, exchange_id.as_str(), at_label);
                 let mark_price_opt = self.core.mini_ticker.get(&ticker_key).map(|t| t.last_price);
-                let bubble_ids: std::collections::HashSet<mlc_core::tag_manager::BubbleId> =
+                let bubble_ids: std::collections::HashSet<mlc_core::ids::BubbleId> =
                     target_cids.iter().filter_map(|cid| self.bubble_for_chart(*cid)).collect();
                 for b in bubble_ids {
                     if let Some(bubble) = self.core.bubble_mut().bubble_mut(b) {

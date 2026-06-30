@@ -238,7 +238,7 @@ impl ChartApp {
         // managers.bubble) so the mut-loop over containers can pass `&bubble`
         // into the per-window helpers without re-borrowing the store.
         let bubble_snapshot: std::collections::HashMap<
-            mlc_core::tag_manager::BubbleId,
+            mlc_core::ids::BubbleId,
             (Vec<mlc_core::Bar>,)
         > = self.core.bubble().bubbles()
             .map(|b| (b.id, (b.bars.clone(),)))
@@ -380,9 +380,9 @@ impl ChartApp {
             // Snapshot the fields we need (sync flags, primitives, indicator configs) so
             // the RwLock guard can drop before iterating them.
             struct TaggedGroupSnapshot {
-                sync_flags: mlc_core::tag_manager::SyncFlags,
+                sync_flags: mlc_core::ids::SyncFlags,
                 primitives: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>>,
-                indicator_configs: Vec<mlc_core::tag_manager::IndicatorGroupConfig>,
+                indicator_configs: Vec<mlc_core::indicator_types::IndicatorGroupConfig>,
             }
             let tagged_group: Option<TaggedGroupSnapshot> = active_cid
                 .and_then(|cid| self.bubble_for_chart(cid))

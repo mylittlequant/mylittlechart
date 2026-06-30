@@ -558,7 +558,7 @@ impl ChartApp {
                             self.autosave_snapshot();
                         }
                     } else if let Some(panel_id) = self.panel_app.sync_color_grid.target_panel {
-                        use mlc_core::tag_manager::SyncMemberId;
+                        use mlc_core::ids::SyncMemberId;
                         let member = SyncMemberId::Panel(panel_id);
                         let old_color = self.group_for_member(member)
                             .and_then(|gid| self.with_bubble(gid, |g| if g.auto_created { None } else { Some(g.color) }).flatten());

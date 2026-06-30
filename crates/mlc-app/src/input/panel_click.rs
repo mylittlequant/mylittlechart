@@ -1522,7 +1522,7 @@ impl ChartApp {
                         if is_market_data {
                             if let Some(ref item) = item_opt {
                                 let pid = mlc_sidebar_content::free_slot::PanelId(item.panel_id().0);
-                                let member = mlc_core::tag_manager::SyncMemberId::Panel(pid.0);
+                                let member = mlc_core::ids::SyncMemberId::Panel(pid.0);
                                 match self.sidebar_state.slot_source_mode {
                                     mlc_sidebar_content::state::SlotSourceMode::Tagged => {
                                         // Attach to active chart's sync group. If that group is
@@ -1814,7 +1814,7 @@ impl ChartApp {
                                             .remove_leaf(leaf_id);
                                         if let Some(item) = item_opt {
                                             // Deregister from TagManager before removing state.
-                                            let member = mlc_core::tag_manager::SyncMemberId::Panel(item.panel_id().0);
+                                            let member = mlc_core::ids::SyncMemberId::Panel(item.panel_id().0);
                                             self.remove_panel_completely(member);
                                             // Unsubscribe panels from shared data streams
                                             // before dropping their state.
@@ -1940,7 +1940,7 @@ impl ChartApp {
                                 use mlc_panels::trading::SymbolSource;
                                 use mlc_core::state::Panel;
                                 use mlc_sidebar_content::state::SlotSourceMode;
-                                use mlc_core::tag_manager::SyncMemberId;
+                                use mlc_core::ids::SyncMemberId;
                                 // For market-data panels: mode reflects the panel's actual
                                 // group state (auto_created = Untagged, else Tagged).
                                 // For account-bound panels: mode reflects their SymbolSource.
@@ -1995,7 +1995,7 @@ impl ChartApp {
                             self.sidebar_state.slot_dockings[idx].inner_mut().tree_mut().remove_leaf(leaf_id);
                             if let Some(item) = item_opt {
                                 // Deregister from TagManager before removing state.
-                                let member = mlc_core::tag_manager::SyncMemberId::Panel(item.panel_id().0);
+                                let member = mlc_core::ids::SyncMemberId::Panel(item.panel_id().0);
                                 self.remove_panel_completely(member);
                                 // Unsubscribe panels from shared data streams before
                                 // dropping their state.
@@ -2120,8 +2120,8 @@ impl ChartApp {
                                 // Without this the new PanelId has no group → no color tag,
                                 // doesn't follow active chart, leaks defaults.
                                 if let Some(src_item) = source_item.as_ref() {
-                                    let src_member = mlc_core::tag_manager::SyncMemberId::Panel(src_item.panel_id().0);
-                                    let new_member = mlc_core::tag_manager::SyncMemberId::Panel(new_item.panel_id().0);
+                                    let src_member = mlc_core::ids::SyncMemberId::Panel(src_item.panel_id().0);
+                                    let new_member = mlc_core::ids::SyncMemberId::Panel(new_item.panel_id().0);
                                     let src_gid = self.group_for_member(src_member);
                                     let src_was_synced = self.core.bubble().is_synced(src_member);
                                     if let Some(gid) = src_gid {
@@ -2576,7 +2576,7 @@ impl ChartApp {
                                     use mlc_panels::trading::SymbolSource;
                                     use mlc_core::state::Panel;
                                     use mlc_sidebar_content::state::SlotSourceMode;
-                                    use mlc_core::tag_manager::SyncMemberId;
+                                    use mlc_core::ids::SyncMemberId;
                                     let is_market_data = matches!(
                                         &item,
                                         Panel::Dom(_) | Panel::Footprint(_)
@@ -3523,7 +3523,7 @@ impl ChartApp {
         // === Tags & Tabs modal clicks ===
         if let Some(rest) = widget_id.strip_prefix("tags_tabs:") {
             use mlc_layout::ui::modal_settings::{TagsTabsSidebar, TagsTabsTagsTab};
-            use mlc_core::tag_manager::BubbleId;
+            use mlc_core::ids::BubbleId;
             match rest {
                 "close" => {
                     self.panel_app.close_tags_tabs();

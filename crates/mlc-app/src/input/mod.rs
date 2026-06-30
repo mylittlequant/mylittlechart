@@ -6435,11 +6435,11 @@ impl ChartApp {
                 if self.core.indicators_mut().remove_instance(*instance_id).is_some() {
                     // Remove stale entries from auto_bubble.pre_tag_indicator_ids.
                     let removed_id = *instance_id;
-                    let auto_bids: Vec<mlc_core::tag_manager::BubbleId> = self.panel_app.panel_grid
+                    let auto_bids: Vec<mlc_core::ids::BubbleId> = self.panel_app.panel_grid
                         .containers()
                         .values()
                         .map(|w| w.auto_bubble_id)
-                        .filter(|&bid| bid != mlc_core::tag_manager::BubbleId(0))
+                        .filter(|&bid| bid != mlc_core::ids::BubbleId(0))
                         .collect();
                     for bid in auto_bids {
                         if let Some(auto_bub) = self.core.bubble_mut().bubble_mut(bid) {
@@ -7322,7 +7322,7 @@ impl ChartApp {
         // group's persisted synced_panel_ids list survives restore).
         let synced_snapshot = self.core.bubble().synced_panels_snapshot();
         for group in self.core.bubble().bubbles() {
-            preset.bubbles.push(DataBubbleSnapshot::from_group(group, &synced_snapshot));
+            preset.bubbles.push(group.to_snapshot(&synced_snapshot));
         }
 
         // Snapshot indicators (sorted by display order so restore preserves sequence).

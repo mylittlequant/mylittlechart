@@ -14,7 +14,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use mlc_core::tag_manager::{BubbleId, MemberSyncOverride, SyncMemberId};
+use mlc_core::ids::{BubbleId, MemberSyncOverride, SyncMemberId};
 use serde::{Deserialize, Serialize};
 
 use crate::ui_container::UiContainerId;

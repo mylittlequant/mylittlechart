@@ -15,12 +15,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::tag_manager::BubbleId;
+use crate::ids::BubbleId;
 use crate::{Bar, Viewport, PriceScale, TimeScale};
 use crate::chart::types::price_scale::ScaleMode;
 use crate::state::Timeframe;
 use crate::{Crosshair, KineticState, DragMode};
-use crate::{GridOptions, Legend, Watermark, PriceLine};
+use crate::{Legend, Watermark, PriceLine};
 use crate::state::chart_panel_state::ChartPanelState;
 use crate::chart::{CompareOverlay, CompareSeries, get_compare_color};
 use crate::state::{CommandHistory, Command};
@@ -832,72 +832,6 @@ impl ChartContainer {
     // `clone_data_from` was unused (mirrors viewport + scales between
     // windows) and forced ChartContainer to know about DrawingManager —
     // deleted alongside the other DM-bound methods.
-
-    /// Create ChartRenderState from this window's view state + bubble's series storage.
-    ///
-    /// Phase X0 / C3 (2026-06-19): per-Kind series fields (bars + 13 derived)
-    /// are sourced from `bubble` when supplied. Bubble is the storage hub;
-    /// ChartContainer owns viewport / scales / crosshair / per-window
-    /// derived caches (ha_cache, vp_overlay).
-    ///
-    /// Phase X0 / C5a (2026-06-19): `bubble` is now required. The renderer
-    /// reads per-Kind series exclusively from bubble storage. Window's
-    /// (legacy) `self.bars`/`self.footprint_bars`/... fields are no longer
-    /// referenced here.
-    ///
-    /// `grid` and `legend` are supplied by the caller from `ChartPanelState`.
-    /// `timeframe_interval_ms` is provided by the caller from `branch_meta`.
-    pub fn to_render_state<'a>(
-        &'a self,
-        bubble: &'a crate::tag_manager::DataBubble,
-        chart_rect: crate::chart::render_data::ChartRect,
-        theme: &'a crate::chart::render_data::ChartTheme,
-        current_timeframe: Option<&'a str>,
-        time_format_settings: Option<&'a crate::TimeFormatSettings>,
-        timeframe_interval_ms: Option<i64>,
-        grid: &'a GridOptions,
-        legend: &'a Legend,
-    ) -> crate::chart::render_data::ChartRenderState<'a> {
-        crate::chart::render_data::ChartRenderState {
-            viewport: &self.viewport,
-            price_scale: &self.price_scale,
-            time_scale: &self.time_scale,
-            bars: &bubble.bars,
-            grid,
-            crosshair: &self.crosshair,
-            legend,
-            chart_rect,
-            theme,
-            time_ticks: None,
-            current_timeframe,
-            disable_clip: false,
-            time_format_settings,
-            timeframe_interval_ms,
-            scale_settings: Some(&self.scale_settings),
-            body_enabled: true,
-            border_enabled: true,
-            wick_enabled: true,
-            use_prev_close: false,
-            footprint_bars: bubble.footprint_bars.as_deref(),
-            renko_bars: bubble.renko_bars.as_deref(),
-            three_line_break: bubble.three_line_break.as_deref(),
-            pnf_columns: bubble.pnf_columns.as_deref(),
-            kagi_segments: bubble.kagi_segments.as_deref(),
-            cvd_line: bubble.cvd_line.as_deref(),
-            tpo_sessions: bubble.tpo_sessions.as_deref(),
-            // ha_cache + vp_overlay are window-local derived caches (viewport-coupled).
-            ha_cache: self.ha_cache.as_deref(),
-            vp_overlay: if self.vp_show { self.vp_overlay.as_ref() } else { None },
-            // Display gates (oi_show / funding_show) are per-window view state;
-            // storage is unconditional on bubble.
-            oi_delta_ref: if self.oi_show { bubble.oi_delta.as_deref() } else { None },
-            funding_rate_ref: if self.funding_show { bubble.funding_rate.as_deref() } else { None },
-            dom_heatmap_ref: bubble.dom_heatmap.as_ref(),
-            dom_trade_dots_ref: bubble.dom_trade_dots.as_deref(),
-            liq_heatmap_ref: bubble.liq_heatmap.as_ref(),
-            liq_dots_ref: bubble.liq_dots.as_deref(),
-        }
-    }
 
     /// Recompute the Heikin Ashi memo if the supplied bars slice has changed
     /// since the last build. Phase X0 / C5b (2026-06-19): caller passes the

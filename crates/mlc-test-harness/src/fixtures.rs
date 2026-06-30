@@ -1,6 +1,7 @@
 //! Shared fixtures: bar synthesis, BubbleStore setup, chart factories.
 
-use mlc_core::tag_manager::{BubbleStore, BubbleId};
+use mlc_backend_core::bubble::{BubbleStore};
+use mlc_core::ids::BubbleId;
 use mlc_core::state::{ChartId, generate_chart_id, Timeframe};
 use mlc_core::Bar;
 

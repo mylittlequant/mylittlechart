@@ -24,6 +24,8 @@
 //!   Smaller scope, similar lock discipline.
 //! - **Final** — lift module into `mlc-backend-core` crate.
 
+pub mod bubble;
+
 use std::sync::Arc;
 use std::collections::HashMap;
 
@@ -34,7 +36,8 @@ use digdigdig3::ExchangeId;
 use mlc_alerts::AlertManager;
 use mlc_core::preset::preset::ChartPreset;
 use mlc_core::templates::manager::TemplateManager;
-use mlc_core::tag_manager::{BubbleId, BubbleStore};
+use mlc_core::ids::BubbleId;
+use crate::bubble::BubbleStore;
 use mlc_core::Bar;
 use mlc_core::drawing::DrawingManager;
 use mlc_core::state::chart_container_leaf::ChartPanelId;

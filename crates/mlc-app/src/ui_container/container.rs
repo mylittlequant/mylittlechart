@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use mlc_core::tag_manager::BubbleId;
+use mlc_core::ids::BubbleId;
 
 use super::chart::ChartView;
 

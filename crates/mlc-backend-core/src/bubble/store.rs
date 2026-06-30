@@ -1,354 +1,14 @@
-//! BubbleStore — synchronization group manager for chart panels.
-//!
-//! Manages `DataBubble`s that bind multiple `ChartContainer`s together so they
-//! share primitives, indicator configs, symbol, timeframe, and crosshair state.
-
-pub mod member_id;
-// Re-export shared types out of the canonical `mlc-core::ids` location
-// so existing `use mlc_core::tag_manager::{BubbleId, SyncFlags, ...}`
-// imports keep working until Phase A-3 sweeps them.  Single source of
-// truth is `mlc-core::ids`.
-pub use crate::ids::{BubbleId, MemberSyncOverride, SyncFlags, SyncMemberId};
-
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use serde::{Deserialize, Serialize};
+use mlc_core::chart::types::price_scale::ScaleMode;
+use mlc_core::drawing::primitives_v2::config::TemplateStyle;
+use mlc_core::ids::{BubbleId, MemberSyncOverride, SyncFlags, SyncMemberId};
+use mlc_core::indicator_types::IndicatorGroupConfig;
+use mlc_core::state::chart_container::{ChartId, ConnectionStatus};
+use mlc_core::state::{CommandHistory, Timeframe};
 
-use crate::chart::types::price_scale::ScaleMode;
-use crate::drawing::primitives_v2::config::TemplateStyle;
-use crate::state::chart_container::{ChartId, ConnectionStatus};
-use crate::state::{CommandHistory, Timeframe};
-
-// =============================================================================
-// IndicatorGroupConfig
-// =============================================================================
-
-/// Configuration for an indicator that belongs to a data bubble.
-///
-/// Bound to the *bubble* (its windows), NOT to an instrument. Each peer window
-/// recalculates the indicator against whatever bars its current symbol
-/// produces — switching symbol/exchange/account_type does not migrate the
-/// indicator.
-///
-/// Legacy `symbol` / `exchange` / `account_type` fields are kept on disk via
-/// `#[serde(default)]` for backwards-compatible profile loading, but they are
-/// never read by runtime code.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct IndicatorGroupConfig {
-    pub id: u64,
-    pub type_id: String,
-    pub name: String,
-    /// Simplified string parameters — typed params can be added later.
-    pub params: std::collections::HashMap<String, String>,
-    pub pane: u32,
-    pub visible: bool,
-    /// Legacy: symbol this indicator was created for. Unused at runtime —
-    /// indicators are window-scoped, not symbol-scoped.
-    #[serde(default, skip_serializing)]
-    pub symbol: String,
-    /// Legacy: exchange. Unused at runtime.
-    #[serde(default, skip_serializing)]
-    pub exchange: String,
-    /// Legacy: account type. Unused at runtime.
-    #[serde(default, skip_serializing)]
-    pub account_type: String,
-}
-
-// =============================================================================
-// DataBubble
-// =============================================================================
-
-/// A group of chart windows and trading panels that synchronize shared state.
-pub struct DataBubble {
-    pub id: BubbleId,
-    /// Display color used in the UI to identify this bubble.
-    pub color: [f32; 4],
-
-    // Owned state shared across all member windows
-    pub primitives: Vec<Box<dyn crate::drawing::primitives_v2::Primitive>>,
-    pub indicator_configs: Vec<IndicatorGroupConfig>,
-    pub symbol: String,
-    /// Exchange name (e.g. `"binance"`).
-    pub exchange: String,
-    /// Account type short label (e.g. `"S"` for Spot, `"F"` for Futures).
-    pub account_type: String,
-    pub timeframe: Timeframe,
-
-    /// Which properties are synchronized.
-    pub sync_flags: SyncFlags,
-
-    /// Bubble-persisted price-scale corner mode (Auto / Manual / Focus).
-    ///
-    /// Authoritative when `sync_flags.sync_viewport = true`. All members
-    /// display this mode; clicking A/M/F on any peer updates it here and
-    /// pushes to all peers via `propagate_viewport_to_sync_group`.
-    /// When `sync_viewport = false` each window manages its own mode independently.
-    pub scale_mode: ScaleMode,
-
-    /// All members of this bubble: charts AND trading panels.
-    pub members: std::collections::HashSet<SyncMemberId>,
-
-    /// Per-member flag overrides. Absent = use bubble defaults.
-    pub member_overrides: std::collections::HashMap<SyncMemberId, MemberSyncOverride>,
-
-    /// Shared undo/redo history for operations that affect all members
-    /// (primitives, indicator configs). Window-local operations (viewport,
-    /// symbol, timeframe, chart type) are stored on the individual window's
-    /// `command_history` instead.
-    pub command_history: CommandHistory,
-
-    /// Indicator instance ids that were active on the chart BEFORE it joined a
-    /// color-tag sync group.  Populated at join time so desync can restore and
-    /// unhide them.  Cleared after desync.
-    pub pre_tag_indicator_ids: Vec<u64>,
-
-    /// Invisible default bubble — auto-created so every window has a bubble.
-    /// No color tag shown in UI. Set to false when user manually tags.
-    pub auto_created: bool,
-
-    /// Bubble-level last-used drawing style per tool type.
-    ///
-    /// Shared via `Arc` with every member window's `DrawingManager` so that a
-    /// style change in *any* window of the bubble is immediately visible in all
-    /// peers (fixes bugs B1 + D1).  The `Arc` handle in the DM is rebounded
-    /// whenever a window joins or leaves this bubble.
-    pub last_used_style: Arc<RwLock<HashMap<String, TemplateStyle>>>,
-
-    /// Previous session close price for this bubble's instrument (`bars[0].open`).
-    /// Populated by `BarsLoaded` handlers; read by the renderer for the
-    /// price-change badge.
-    pub prev_close_price: Option<f64>,
-
-    /// Live / Delayed / Disconnected indicator for this bubble's data feed.
-    pub connection_status: ConnectionStatus,
-
-    // =========================================================================
-    // === Per-Kind series storage (Phase X0, 2026-06-19) ======================
-    // =========================================================================
-    // Owner mandate: the bubble is a storage hub. Bridge writes raw via the
-    // append_*/replace_*/clear_* methods below. Methods mutate ONLY the
-    // storage — no viewport calls, no derived recompute, no callbacks.
-    // Consumers (ChartContainer) PULL state during their own frame prepare.
-    // See nemo/docs/mlc/plans/xaxis-phase-x0-ownership-refactor-2026-06-19.md
-    // =========================================================================
-
-    /// OHLC bars for the bubble's instrument. Written by `BarsLoaded`,
-    /// `BackfillComplete`, `ScrollBarsLoaded`, `BarUpdate`, `TradeUpdate`.
-    pub bars: Vec<crate::Bar>,
-
-    /// Footprint cluster bars. Written by `FootprintUpdate`.
-    pub footprint_bars: Option<Vec<crate::types::FootprintBar>>,
-
-    /// Renko bricks. Written by `RenkoBarUpdate`.
-    pub renko_bars: Option<Vec<crate::types::RenkoBrick>>,
-
-    /// Three Line Break lines. Written by `ThreeLineBreakUpdate`.
-    pub three_line_break: Option<Vec<crate::types::ThreeLineBreakLine>>,
-
-    /// Point-and-Figure columns. Written by `PnfBarUpdate`.
-    pub pnf_columns: Option<Vec<crate::types::PnfColumn>>,
-
-    /// Kagi segments. Written by `KagiBarUpdate`.
-    pub kagi_segments: Option<Vec<crate::types::KagiSegment>>,
-
-    /// Cumulative Volume Delta samples. Written by `CvdLineUpdate`.
-    pub cvd_line: Option<Vec<crate::types::CvdSample>>,
-
-    /// TPO Market Profile session snapshots. Written by `TpoProfileUpdate`.
-    pub tpo_sessions: Option<Vec<crate::types::TpoSession>>,
-
-    /// Open Interest Δ bars. Written by `OpenInterestUpdate`.
-    pub oi_delta: Option<Vec<crate::types::OiDeltaBar>>,
-
-    /// Funding Rate cells. Written by `FundingRateUpdate`.
-    pub funding_rate: Option<Vec<crate::types::FundingRateCell>>,
-
-    /// DOM heatmap ring buffer. Written by `DomHeatmapSnapshot`.
-    pub dom_heatmap: Option<crate::chart::dom_heatmap::DomHeatmapBuffer>,
-
-    /// DOM trade-circle ring overlay. Written by `DomTradeDot`.
-    pub dom_trade_dots: Option<Vec<crate::chart::dom_heatmap::DomTradeDot>>,
-
-    /// Liquidation heatmap ring buffer. Written by `LiquidationBucketUpdate`
-    /// (and aggregated from `LiquidationEvent`).
-    pub liq_heatmap: Option<crate::chart::liquidation_heatmap::LiquidationHeatmapBuffer>,
-
-    /// Liquidation dot overlay. Written by `LiquidationEvent`.
-    pub liq_dots: Option<Vec<crate::chart::liquidation_heatmap::LiquidationDot>>,
-}
-
-
-impl DataBubble {
-    /// Effective `sync_symbol` for a specific member.
-    ///
-    /// The per-member override (if present) wins over the bubble-level flag.
-    pub fn effective_sync_symbol(&self, member: SyncMemberId) -> bool {
-        self.member_overrides
-            .get(&member)
-            .and_then(|o| o.sync_symbol)
-            .unwrap_or(self.sync_flags.sync_symbol)
-    }
-
-    /// Effective `sync_crosshair` for a specific member.
-    pub fn effective_sync_crosshair(&self, member: SyncMemberId) -> bool {
-        self.member_overrides
-            .get(&member)
-            .and_then(|o| o.sync_crosshair)
-            .unwrap_or(self.sync_flags.sync_crosshair)
-    }
-
-    // =========================================================================
-    // === Per-Kind storage mutators (Phase X0) ================================
-    // =========================================================================
-    // Mutate ONLY the storage field. No viewport calls, no derived recompute,
-    // no callbacks. Consumers pull state and run their own reconcile.
-    // =========================================================================
-
-    pub fn replace_bars(&mut self, bars: Vec<crate::Bar>) { self.bars = bars; }
-    pub fn append_bar(&mut self, bar: crate::Bar) { self.bars.push(bar); }
-    pub fn last_bar_mut(&mut self) -> Option<&mut crate::Bar> { self.bars.last_mut() }
-    pub fn clear_bars(&mut self) { self.bars.clear(); }
-
-    pub fn append_footprint(&mut self, bar: crate::types::FootprintBar) {
-        self.footprint_bars.get_or_insert_with(Vec::new).push(bar);
-    }
-    pub fn last_footprint_mut(&mut self) -> Option<&mut crate::types::FootprintBar> {
-        self.footprint_bars.as_mut().and_then(|v| v.last_mut())
-    }
-    pub fn clear_footprint(&mut self) { self.footprint_bars = None; }
-
-    pub fn append_renko(&mut self, brick: crate::types::RenkoBrick) {
-        self.renko_bars.get_or_insert_with(Vec::new).push(brick);
-    }
-    pub fn clear_renko(&mut self) { self.renko_bars = None; }
-
-    pub fn append_three_line_break(&mut self, line: crate::types::ThreeLineBreakLine) {
-        self.three_line_break.get_or_insert_with(Vec::new).push(line);
-    }
-    pub fn clear_three_line_break(&mut self) { self.three_line_break = None; }
-
-    pub fn append_pnf(&mut self, col: crate::types::PnfColumn) {
-        self.pnf_columns.get_or_insert_with(Vec::new).push(col);
-    }
-    pub fn last_pnf_mut(&mut self) -> Option<&mut crate::types::PnfColumn> {
-        self.pnf_columns.as_mut().and_then(|v| v.last_mut())
-    }
-    pub fn clear_pnf(&mut self) { self.pnf_columns = None; }
-
-    pub fn append_kagi(&mut self, seg: crate::types::KagiSegment) {
-        self.kagi_segments.get_or_insert_with(Vec::new).push(seg);
-    }
-    pub fn clear_kagi(&mut self) { self.kagi_segments = None; }
-
-    pub fn append_cvd(&mut self, sample: crate::types::CvdSample) {
-        self.cvd_line.get_or_insert_with(Vec::new).push(sample);
-    }
-    pub fn clear_cvd(&mut self) { self.cvd_line = None; }
-
-    pub fn append_tpo(&mut self, sess: crate::types::TpoSession) {
-        self.tpo_sessions.get_or_insert_with(Vec::new).push(sess);
-    }
-    pub fn last_tpo_mut(&mut self) -> Option<&mut crate::types::TpoSession> {
-        self.tpo_sessions.as_mut().and_then(|v| v.last_mut())
-    }
-    pub fn clear_tpo(&mut self) { self.tpo_sessions = None; }
-
-    pub fn append_oi(&mut self, point: crate::types::OiDeltaBar) {
-        self.oi_delta.get_or_insert_with(Vec::new).push(point);
-    }
-    pub fn clear_oi(&mut self) { self.oi_delta = None; }
-
-    pub fn append_funding(&mut self, point: crate::types::FundingRateCell) {
-        self.funding_rate.get_or_insert_with(Vec::new).push(point);
-    }
-    pub fn clear_funding(&mut self) { self.funding_rate = None; }
-
-    pub fn dom_heatmap_mut(&mut self) -> &mut Option<crate::chart::dom_heatmap::DomHeatmapBuffer> {
-        &mut self.dom_heatmap
-    }
-    pub fn clear_dom_heatmap(&mut self) { self.dom_heatmap = None; }
-
-    pub fn append_dom_trade_dot(&mut self, dot: crate::chart::dom_heatmap::DomTradeDot) {
-        self.dom_trade_dots.get_or_insert_with(Vec::new).push(dot);
-    }
-    pub fn dom_trade_dots_mut(&mut self) -> Option<&mut Vec<crate::chart::dom_heatmap::DomTradeDot>> {
-        self.dom_trade_dots.as_mut()
-    }
-    pub fn clear_dom_trade_dots(&mut self) { self.dom_trade_dots = None; }
-
-    pub fn liq_heatmap_mut(&mut self) -> &mut Option<crate::chart::liquidation_heatmap::LiquidationHeatmapBuffer> {
-        &mut self.liq_heatmap
-    }
-    pub fn clear_liq_heatmap(&mut self) { self.liq_heatmap = None; }
-
-    pub fn append_liq_dot(&mut self, dot: crate::chart::liquidation_heatmap::LiquidationDot) {
-        self.liq_dots.get_or_insert_with(Vec::new).push(dot);
-    }
-    pub fn liq_dots_mut(&mut self) -> Option<&mut Vec<crate::chart::liquidation_heatmap::LiquidationDot>> {
-        self.liq_dots.as_mut()
-    }
-    pub fn clear_liq_dots(&mut self) { self.liq_dots = None; }
-}
-
-impl Clone for DataBubble {
-    fn clone(&self) -> Self {
-        Self {
-            id: self.id,
-            color: self.color,
-            primitives: self.primitives.iter().map(|p| p.clone_box()).collect(),
-            indicator_configs: self.indicator_configs.clone(),
-            symbol: self.symbol.clone(),
-            exchange: self.exchange.clone(),
-            account_type: self.account_type.clone(),
-            timeframe: self.timeframe.clone(),
-            sync_flags: self.sync_flags.clone(),
-            scale_mode: self.scale_mode,
-            members: self.members.clone(),
-            member_overrides: self.member_overrides.clone(),
-            command_history: CommandHistory::new(250),
-            pre_tag_indicator_ids: self.pre_tag_indicator_ids.clone(),
-            auto_created: self.auto_created,
-            // Clone the Arc — both copies point to the same shared store.
-            last_used_style: Arc::clone(&self.last_used_style),
-            prev_close_price: self.prev_close_price,
-            connection_status: self.connection_status,
-            // === Per-Kind storage (Phase X0) ===
-            bars: self.bars.clone(),
-            footprint_bars: self.footprint_bars.clone(),
-            renko_bars: self.renko_bars.clone(),
-            three_line_break: self.three_line_break.clone(),
-            pnf_columns: self.pnf_columns.clone(),
-            kagi_segments: self.kagi_segments.clone(),
-            cvd_line: self.cvd_line.clone(),
-            tpo_sessions: self.tpo_sessions.clone(),
-            oi_delta: self.oi_delta.clone(),
-            funding_rate: self.funding_rate.clone(),
-            dom_heatmap: self.dom_heatmap.clone(),
-            dom_trade_dots: self.dom_trade_dots.clone(),
-            liq_heatmap: self.liq_heatmap.clone(),
-            liq_dots: self.liq_dots.clone(),
-        }
-    }
-}
-
-impl std::fmt::Debug for DataBubble {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DataBubble")
-            .field("id", &self.id)
-            .field("color", &self.color)
-            .field("primitives_count", &self.primitives.len())
-            .field("indicator_configs", &self.indicator_configs)
-            .field("symbol", &self.symbol)
-            .field("exchange", &self.exchange)
-            .field("account_type", &self.account_type)
-            .field("timeframe", &self.timeframe)
-            .field("sync_flags", &self.sync_flags)
-            .field("members", &self.members)
-            .field("command_history_size", &self.command_history.size())
-            .finish()
-    }
-}
+use super::data_bubble::DataBubble;
 
 // =============================================================================
 // BubbleStoreError
@@ -795,7 +455,7 @@ impl BubbleStore {
     pub fn primitives_for_window(
         &self,
         chart_id: ChartId,
-    ) -> Option<&[Box<dyn crate::drawing::primitives_v2::Primitive>]> {
+    ) -> Option<&[Box<dyn mlc_core::drawing::primitives_v2::Primitive>]> {
         let member = SyncMemberId::Chart(chart_id.0);
         let bubble_id = self.member_to_bubble.get(&member)?;
         let bubble = self.bubbles.get(bubble_id)?;
@@ -806,7 +466,7 @@ impl BubbleStore {
     pub fn add_primitive(
         &mut self,
         chart_id: ChartId,
-        prim: Box<dyn crate::drawing::primitives_v2::Primitive>,
+        prim: Box<dyn mlc_core::drawing::primitives_v2::Primitive>,
     ) -> Result<(), BubbleStoreError> {
         let member = SyncMemberId::Chart(chart_id.0);
         let bubble_id = self
@@ -1009,7 +669,7 @@ impl BubbleStore {
     ///
     /// Falls back to the first preset color if all are taken.
     pub fn next_unused_color(&self) -> [f32; 4] {
-        use crate::state::toolbar_geometry::PRESET_COLORS;
+        use mlc_core::state::toolbar_geometry::PRESET_COLORS;
         // Only visible (non-auto) bubbles occupy palette colors
         let used_colors: Vec<[f32; 4]> = self.bubbles.values()
             .filter(|b| !b.auto_created)
@@ -1065,7 +725,7 @@ impl BubbleStore {
     /// are restored separately via the `PrimitiveRegistry` and pushed in
     /// afterwards.
     pub fn group_from_snapshot(
-        snap: &crate::preset::snapshots::DataBubbleSnapshot,
+        snap: &mlc_core::preset::snapshots::DataBubbleSnapshot,
     ) -> DataBubble {
         let mut members = std::collections::HashSet::new();
         for &raw in &snap.members {
@@ -1099,7 +759,7 @@ impl BubbleStore {
             }
         }
 
-        let bubble = DataBubble {
+        DataBubble {
             id: BubbleId(snap.id),
             color: snap.color,
             primitives: Vec::new(),
@@ -1132,9 +792,7 @@ impl BubbleStore {
             dom_trade_dots: None,
             liq_heatmap: None,
             liq_dots: None,
-        };
-
-        bubble
+        }
     }
 }
 

@@ -23,7 +23,7 @@ use web_time::Instant;
 
 use mlc_app::ChartApp;
 use mlc_core::state::ChartId;
-use mlc_core::tag_manager::BubbleId;
+use mlc_core::ids::BubbleId;
 use mlc_live_data::DataBridge;
 
 /// Headless wrapper over `mlc_app::ChartApp`.

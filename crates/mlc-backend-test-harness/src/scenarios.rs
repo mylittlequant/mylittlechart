@@ -11,7 +11,7 @@
 use digdigdig3::{AccountType, ExchangeId};
 use mlc_backend_core::BubbleEvent;
 use mlc_core::state::Timeframe;
-use mlc_core::tag_manager::BubbleId;
+use mlc_core::ids::BubbleId;
 use mlc_core::types::Bar;
 use mlc_live_data::LiveUpdate;
 

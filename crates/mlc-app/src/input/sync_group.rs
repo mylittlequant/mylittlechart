@@ -47,7 +47,7 @@ impl ChartApp {
     /// Disconnect a trading panel from its color sync group and move it to a private
     /// auto-created group so it is no longer visually tagged.
     pub(super) fn perform_panel_desync(&mut self, panel_id: u64) {
-        use mlc_core::tag_manager::SyncMemberId;
+        use mlc_core::ids::SyncMemberId;
         let member = SyncMemberId::Panel(panel_id);
         self.disconnect_member(member);
         let gid = self.create_auto_bubble(
@@ -110,7 +110,7 @@ impl ChartApp {
         // `MLC_FRAMES` stops advancing).  Drop the write guard explicitly by
         // binding the Option to a local first, then take the read guard in a
         // fresh scope.
-        let detached_group: Option<mlc_core::tag_manager::BubbleId> = {
+        let detached_group: Option<mlc_core::ids::BubbleId> = {
             self.detach_chart_from_tag(chart_id)
         };
         if let Some(old_group_id) = detached_group {
@@ -646,9 +646,9 @@ impl ChartApp {
                 let auto_bid_raw_cfg = self.panel_app.panel_grid.containers()
                     .get(&chart_id)
                     .map(|w| w.auto_bubble_id.0);
-                let mut configs: Vec<mlc_core::tag_manager::IndicatorGroupConfig> = self.core.indicators().instances_iter()
+                let mut configs: Vec<mlc_core::indicator_types::IndicatorGroupConfig> = self.core.indicators().instances_iter()
                     .filter(|i| i.origin_id.is_none() && auto_bid_raw_cfg.map_or(false, |b| i.bubble_id == Some(b)))
-                    .map(|i| mlc_core::tag_manager::IndicatorGroupConfig {
+                    .map(|i| mlc_core::indicator_types::IndicatorGroupConfig {
                         id: i.id,
                         type_id: i.type_id.clone(),
                         name: i.name.clone(),
@@ -883,7 +883,7 @@ impl ChartApp {
                 .filter(|&cid| {
                     self.panel_app.panel_grid.containers()
                         .get(&cid)
-                        .map(|w| w.auto_bubble_id == mlc_core::tag_manager::BubbleId(0))
+                        .map(|w| w.auto_bubble_id == mlc_core::ids::BubbleId(0))
                         .unwrap_or(false)
                 })
                 .collect();
@@ -1418,12 +1418,12 @@ impl ChartApp {
                     let source_chart_auto_bid_raw = self.panel_app.panel_grid.containers()
                         .get(&source_chart_id)
                         .map(|w| w.auto_bubble_id.0);
-                    let mut configs: Vec<mlc_core::tag_manager::IndicatorGroupConfig> = self.core.indicators().instances_iter()
+                    let mut configs: Vec<mlc_core::indicator_types::IndicatorGroupConfig> = self.core.indicators().instances_iter()
                         .filter(|i| {
                             i.origin_id.is_none()
                                 && source_chart_auto_bid_raw.map_or(false, |b| i.bubble_id == Some(b))
                         })
-                        .map(|i| mlc_core::tag_manager::IndicatorGroupConfig {
+                        .map(|i| mlc_core::indicator_types::IndicatorGroupConfig {
                             id: i.id,
                             type_id: i.type_id.clone(),
                             name: i.name.clone(),
@@ -1673,7 +1673,7 @@ impl ChartApp {
             let group_id = self.panel_app.panel_grid.container_id_for_leaf(source_leaf)
                 .and_then(|cid| self.bubble_for_chart(cid));
 
-            let member = mlc_core::tag_manager::SyncMemberId::Chart(chart_id.0);
+            let member = mlc_core::ids::SyncMemberId::Chart(chart_id.0);
             self.core.bubble_mut().set_instrument(
                 member,
                 symbol.to_string(),
@@ -1928,7 +1928,7 @@ impl ChartApp {
                         .and_then(|(gid2, cid)| {
                             self.core.bubble().bubble(gid2).map(|g| {
                                 g.effective_sync_crosshair(
-                                    mlc_core::tag_manager::SyncMemberId::Chart(cid.0),
+                                    mlc_core::ids::SyncMemberId::Chart(cid.0),
                                 )
                             })
                         })
@@ -2311,7 +2311,7 @@ impl ChartApp {
     /// new windows for each indicator config already in the group.
     pub(super) fn sync_group_indicators_to_new_members(
         &mut self,
-        group_id: mlc_core::tag_manager::BubbleId,
+        group_id: mlc_core::ids::BubbleId,
         new_leaf_chart_ids: &[(mlc_core::LeafId, mlc_core::ChartId)],
     ) {
         // Respect the sync_indicators flag — if disabled, skip indicator sync.
@@ -2381,7 +2381,7 @@ impl ChartApp {
     /// on all peer windows in the same group.
     pub(super) fn sync_group_indicator_to_peers(
         &mut self,
-        group_id: mlc_core::tag_manager::BubbleId,
+        group_id: mlc_core::ids::BubbleId,
         type_id: &str,
         source_leaf: mlc_core::LeafId,
     ) {
