@@ -72,10 +72,10 @@ impl ChartApp {
         if field_id == "stroke_width" {
             let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
             if let Some(pid) = active_pid {
-                let data_opt = self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx))
+                let data_opt = self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx))
                     .map(|mut d| { d.width = value; d });
                 if let Some(data) = data_opt {
-                    self.core.drawings_mut().entry_or_default(pid).set_data_at(idx, &data);
+                    self.core.drawings_svc_mut().entry_or_default(pid).set_data_at(idx, &data);
                 }
             }
             self.sync_drawing_back_to_group();
@@ -89,7 +89,7 @@ impl ChartApp {
             let new_val = PropertyValue::Number(value);
             let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
             if let Some(pid) = active_pid {
-                self.core.drawings_mut().entry_or_default(pid).apply_style_property(idx, prop_id, new_val);
+                self.core.drawings_svc_mut().entry_or_default(pid).apply_style_property(idx, prop_id, new_val);
             }
             self.sync_drawing_back_to_group();
             self.autosave_snapshot();
@@ -101,7 +101,7 @@ impl ChartApp {
             let new_val = PropertyValue::Number(value);
             let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
             if let Some(pid) = active_pid {
-                self.core.drawings_mut().entry_or_default(pid).apply_text_property(idx, prop_id, new_val);
+                self.core.drawings_svc_mut().entry_or_default(pid).apply_text_property(idx, prop_id, new_val);
             }
             self.autosave_snapshot();
             return;
@@ -116,7 +116,7 @@ impl ChartApp {
 
         let Some(data) = self.panel_app.panel_grid.active_container()
             .map(|w| w.chart_panel_id)
-            .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx))) else { return; };
+            .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx))) else { return; };
 
         if let Some(tf_idx) = field_id.strip_prefix("tf_")
             .and_then(|s| s.strip_suffix("_slider"))
@@ -154,7 +154,7 @@ impl ChartApp {
             new_data.timeframe_visibility = Some(tf_config);
             let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
             if let Some(pid) = active_pid {
-                self.core.drawings_mut().entry_or_default(pid).set_data_at(idx, &new_data);
+                self.core.drawings_svc_mut().entry_or_default(pid).set_data_at(idx, &new_data);
             }
             self.sync_drawing_back_to_group();
 
@@ -421,7 +421,7 @@ impl ChartApp {
         use mlc_core::drawing::TimeframeVisibilityConfig;
         let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
         if let Some(pid) = active_pid {
-            let data_opt = self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(prim_idx));
+            let data_opt = self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(prim_idx));
             if let Some(mut data) = data_opt {
                 let mut tf = data.timeframe_visibility.clone()
                     .unwrap_or_else(TimeframeVisibilityConfig::all);
@@ -435,7 +435,7 @@ impl ChartApp {
                     _ => {}
                 }
                 data.timeframe_visibility = Some(tf);
-                self.core.drawings_mut().entry_or_default(pid).set_data_at(prim_idx, &data);
+                self.core.drawings_svc_mut().entry_or_default(pid).set_data_at(prim_idx, &data);
                 eprintln!("[ChartApp] prim_settings tf_{}_min committed: {}", tf_idx, val);
             }
         }
@@ -446,7 +446,7 @@ impl ChartApp {
         use mlc_core::drawing::TimeframeVisibilityConfig;
         let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
         if let Some(pid) = active_pid {
-            let data_opt = self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(prim_idx));
+            let data_opt = self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(prim_idx));
             if let Some(mut data) = data_opt {
                 let mut tf = data.timeframe_visibility.clone()
                     .unwrap_or_else(TimeframeVisibilityConfig::all);
@@ -460,7 +460,7 @@ impl ChartApp {
                     _ => {}
                 }
                 data.timeframe_visibility = Some(tf);
-                self.core.drawings_mut().entry_or_default(pid).set_data_at(prim_idx, &data);
+                self.core.drawings_svc_mut().entry_or_default(pid).set_data_at(prim_idx, &data);
                 eprintln!("[ChartApp] prim_settings tf_{}_max committed: {}", tf_idx, val);
             }
         }

@@ -29,7 +29,7 @@ impl ChartApp {
         // modal yet.
         let active_pid_inline = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
         let selected_idx = active_pid_inline
-            .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.selected()));
+            .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.selected()));
 
         let idx = match selected_idx {
             Some(i) => i,
@@ -59,7 +59,7 @@ impl ChartApp {
             // ── Stroke color ─────────────────────────────────────────────────
             "inline:color" => {
                 let current_color = active_pid_inline
-                    .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
+                    .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)))
                     .map(|d| d.color.stroke.clone());
 
                 // Look up the button rect from the input coordinator so the
@@ -82,7 +82,7 @@ impl ChartApp {
             // ── Text color ───────────────────────────────────────────────────
             "inline:text_color" => {
                 let current_color = active_pid_inline
-                    .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
+                    .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)))
                     .and_then(|d| d.text.and_then(|t| t.color));
 
                 let widget_id_str = "ilb:inline:text_color".to_string();
@@ -104,10 +104,10 @@ impl ChartApp {
             "inline:delete" => {
                 // Capture the primitive ID before deletion so alerts can be cleaned up.
                 let prim_id = active_pid_inline
-                    .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
+                    .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)))
                     .map(|d| d.id);
                 if let Some(pid) = active_pid_inline {
-                    self.core.drawings_mut().entry_or_default(pid).delete_selected();
+                    self.core.drawings_svc_mut().entry_or_default(pid).delete_selected();
                     eprintln!("[ChartApp] inline: deleted selected primitive");
                 }
                 self.sync_drawing_back_to_group();
@@ -141,7 +141,7 @@ impl ChartApp {
             // ── Lock toggle ──────────────────────────────────────────────────
             "inline:lock" => {
                 if let Some(pid) = active_pid_inline {
-                    self.core.drawings_mut().entry_or_default(pid).toggle_selected_lock();
+                    self.core.drawings_svc_mut().entry_or_default(pid).toggle_selected_lock();
                     eprintln!("[ChartApp] inline: toggled lock on selected primitive");
                 }
                 self.sync_drawing_back_to_group();
@@ -150,7 +150,7 @@ impl ChartApp {
             // ── Line style cycle ─────────────────────────────────────────────
             "inline:style" => {
                 let data_opt = active_pid_inline
-                    .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)));
+                    .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)));
 
                 if let Some(mut data) = data_opt {
                     data.style = match data.style {
@@ -162,7 +162,7 @@ impl ChartApp {
                     };
                     let style_str = data.style.as_str().to_string();
                     if let Some(pid) = active_pid_inline {
-                        self.core.drawings_mut().entry_or_default(pid).set_data_at(idx, &data);
+                        self.core.drawings_svc_mut().entry_or_default(pid).set_data_at(idx, &data);
                     }
                     self.sync_drawing_back_to_group();
                     eprintln!("[ChartApp] inline: cycled line style to {}", style_str);
@@ -173,7 +173,7 @@ impl ChartApp {
             // ── Width cycle ──────────────────────────────────────────────────
             "inline:width" => {
                 if let Some(pid) = active_pid_inline {
-                    self.core.drawings_mut().entry_or_default(pid).increase_selected_width();
+                    self.core.drawings_svc_mut().entry_or_default(pid).increase_selected_width();
                     eprintln!("[ChartApp] inline: increased line width");
                 }
                 self.sync_drawing_back_to_group();
@@ -197,7 +197,7 @@ impl ChartApp {
                     .map(|b| b.close)
                     .unwrap_or(0.0);
                 if let Some(pid) = active_pid_inline {
-                    let guard = self.core.drawings();
+                    let guard = self.core.drawings_svc();
                     if let Some(prim) = guard.get(pid).and_then(|dm| dm.selected_primitive()) {
                         let prim_id = prim.data().id;
                         let label = localize_primitive_name(prim.type_id(), prim.display_name());
@@ -265,12 +265,12 @@ impl ChartApp {
                 };
                 if let Some(style) = new_style {
                     if let Some(mut data) = active_pid_inline
-                        .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
+                        .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)))
                     {
                         data.style = style;
                         let style_str = data.style.as_str().to_string();
                         if let Some(pid) = active_pid_inline {
-                            self.core.drawings_mut().entry_or_default(pid).set_data_at(idx, &data);
+                            self.core.drawings_svc_mut().entry_or_default(pid).set_data_at(idx, &data);
                         }
                         self.sync_drawing_back_to_group();
                         eprintln!("[ChartApp] inline: set line style to {}", style_str);
@@ -286,11 +286,11 @@ impl ChartApp {
                 let value = action.strip_prefix("inline:width_option:").unwrap_or_default();
                 if let Ok(new_width) = value.parse::<f64>() {
                     if let Some(mut data) = active_pid_inline
-                        .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
+                        .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)))
                     {
                         data.width = new_width;
                         if let Some(pid) = active_pid_inline {
-                            self.core.drawings_mut().entry_or_default(pid).set_data_at(idx, &data);
+                            self.core.drawings_svc_mut().entry_or_default(pid).set_data_at(idx, &data);
                         }
                         self.sync_drawing_back_to_group();
                         eprintln!("[ChartApp] inline: set line width to {}", new_width);
@@ -398,13 +398,15 @@ impl ChartApp {
                 let active_pid_wl = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     if let Some(pid) = active_pid_wl {
-                        let mut guard = self.core.drawings_mut();
-                        let dm = guard.entry_or_default(pid);
-                        window.snapshot_drawings_for_symbol(&old_sym, &old_exchange, &old_account_type, dm.primitives());
-                        dm.set_current_symbol_key(sym_part, exchange_part, &wl_at_label);
-                        dm.clear_all_primitives();
-                        if let Some(snaps) = window.take_drawings_snapshot_for_symbol(sym_part, exchange_part, &wl_at_label) {
-                            crate::persistence::restore_drawings_into_manager(&snaps, dm);
+                        let restore_snaps = window.take_drawings_snapshot_for_symbol(sym_part, exchange_part, &wl_at_label);
+                        let result = self.core.drawings_svc_mut().swap_symbol(
+                            pid, sym_part, exchange_part, &wl_at_label, restore_snaps.as_deref(),
+                        );
+                        let old_key = format!("{}:{}:{}", old_sym, old_exchange, old_account_type);
+                        if result.old_primitives.is_empty() {
+                            window.symbol_drawings.remove(&old_key);
+                        } else {
+                            window.symbol_drawings.insert(old_key, result.old_primitives);
                         }
                     }
                     window.viewport.bar_count = 0;
@@ -896,13 +898,15 @@ impl ChartApp {
                         let active_pid_srch = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                             if let Some(pid) = active_pid_srch {
-                                let mut guard = self.core.drawings_mut();
-                                let dm = guard.entry_or_default(pid);
-                                window.snapshot_drawings_for_symbol(&old_sym_search, &old_exch_search, &old_at_search, dm.primitives());
-                                dm.set_current_symbol_key(symbol_part, resolved_exchange.as_str(), &search_at_label);
-                                dm.clear_all_primitives();
-                                if let Some(snaps) = window.take_drawings_snapshot_for_symbol(symbol_part, resolved_exchange.as_str(), &search_at_label) {
-                                    crate::persistence::restore_drawings_into_manager(&snaps, dm);
+                                let restore_snaps = window.take_drawings_snapshot_for_symbol(symbol_part, resolved_exchange.as_str(), &search_at_label);
+                                let result = self.core.drawings_svc_mut().swap_symbol(
+                                    pid, symbol_part, resolved_exchange.as_str(), &search_at_label, restore_snaps.as_deref(),
+                                );
+                                let old_key = format!("{}:{}:{}", old_sym_search, old_exch_search, old_at_search);
+                                if result.old_primitives.is_empty() {
+                                    window.symbol_drawings.remove(&old_key);
+                                } else {
+                                    window.symbol_drawings.insert(old_key, result.old_primitives);
                                 }
                             }
                             window.viewport.bar_count = 0;
@@ -1577,7 +1581,7 @@ impl ChartApp {
 
             let active_pid_tool = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
             let is_freehand = active_pid_tool
-                .and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.is_freehand_tool()))
+                .and_then(|pid| self.core.drawings_svc().get(pid).map(|dm| dm.is_freehand_tool()))
                 .unwrap_or(false);
 
             // Freehand tools (brush/highlighter) only work on drag — skip click.
@@ -1652,7 +1656,7 @@ impl ChartApp {
 
                 // Reset pane context to main chart.
                 if let Some(pid) = active_pid_tool {
-                    let mut guard = self.core.drawings_mut();
+                    let mut guard = self.core.drawings_svc_mut();
                     let dm = guard.entry_or_default(pid);
                     dm.set_current_pane(None);
                     if dm.current_tool().map(|t| t != _tool_id).unwrap_or(true) {
@@ -1667,12 +1671,12 @@ impl ChartApp {
                     .map(|_w| mlc_core::bar_f64_to_timestamp_ms(&click_bars_main[..], bar))
                     .unwrap_or(0);
                 let primitive_created = active_pid_tool
-                    .map(|pid| self.core.drawings_mut().entry_or_default(pid).on_click(ts_ms, price))
+                    .map(|pid| self.core.drawings_svc_mut().entry_or_default(pid).on_click(ts_ms, price))
                     .unwrap_or(false);
 
                 if primitive_created {
                     let prim_count = active_pid_tool
-                        .and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.primitives().len())).unwrap_or(0);
+                        .and_then(|pid| self.core.drawings_svc().get(pid).map(|dm| dm.primitives().len())).unwrap_or(0);
                     eprintln!("[ChartApp] Primitive created (main) at bar={:.2}, price={:.12e}, total_primitives={}", bar, price, prim_count);
                     // For grouped windows: move the completed primitive to TagManager so
                     // all group members see it via the per-frame render-cache sync.
@@ -1682,7 +1686,7 @@ impl ChartApp {
                         // Extract snapshot before mutable borrow for push_undo_command.
                         let create_snapshot = active_pid_tool
                             .and_then(|pid| {
-                                let guard = self.core.drawings();
+                                let guard = self.core.drawings_svc();
                                 guard.get(pid).and_then(|dm| {
                                     let idx = dm.last_index()?;
                                     let type_id = dm.get_type_id_at(idx)?;
@@ -1734,7 +1738,7 @@ impl ChartApp {
                     self.sidebar_data_dirty = true;
                     self.autosave_snapshot();
                 } else if active_pid_tool
-                    .and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.is_drawing()))
+                    .and_then(|pid| self.core.drawings_svc().get(pid).map(|dm| dm.is_drawing()))
                     .unwrap_or(false)
                 {
                     eprintln!("[ChartApp] Drawing point added (main) at bar={:.2}, price={:.2}", bar, price);
@@ -1746,7 +1750,7 @@ impl ChartApp {
 
                 // Re-check if tool was completed (primed tools deactivate after creation).
                 let tool_cleared = active_pid_tool
-                    .and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.current_tool().is_none()))
+                    .and_then(|pid| self.core.drawings_svc().get(pid).map(|dm| dm.current_tool().is_none()))
                     .unwrap_or(false);
                 if tool_cleared {
                     self.panel_app.toolbar_state.active_tool_id = None;
@@ -1788,7 +1792,7 @@ impl ChartApp {
 
                 // Set pane context so the new primitive is tagged to this sub-pane.
                 if let Some(pid) = active_pid_tool {
-                    let mut guard = self.core.drawings_mut();
+                    let mut guard = self.core.drawings_svc_mut();
                     let dm = guard.entry_or_default(pid);
                     dm.set_current_pane(Some(instance_id));
                     if dm.current_tool().map(|t| t != _tool_id).unwrap_or(true) {
@@ -1802,7 +1806,7 @@ impl ChartApp {
                     .map(|_w| mlc_core::bar_f64_to_timestamp_ms(&click_bars_sub[..], bar))
                     .unwrap_or(0);
                 let primitive_created = active_pid_tool
-                    .map(|pid| self.core.drawings_mut().entry_or_default(pid).on_click(sub_ts_ms, price))
+                    .map(|pid| self.core.drawings_svc_mut().entry_or_default(pid).on_click(sub_ts_ms, price))
                     .unwrap_or(false);
 
                 if primitive_created {
@@ -1813,7 +1817,7 @@ impl ChartApp {
                         // Standalone path — extract snapshot then push undo command.
                         let create_snapshot = active_pid_tool
                             .and_then(|pid| {
-                                let guard = self.core.drawings();
+                                let guard = self.core.drawings_svc();
                                 guard.get(pid).and_then(|dm| {
                                     let idx = dm.last_index()?;
                                     let type_id = dm.get_type_id_at(idx)?;
@@ -1865,7 +1869,7 @@ impl ChartApp {
                     self.sidebar_data_dirty = true;
                     self.autosave_snapshot();
                 } else if active_pid_tool
-                    .and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.is_drawing()))
+                    .and_then(|pid| self.core.drawings_svc().get(pid).map(|dm| dm.is_drawing()))
                     .unwrap_or(false)
                 {
                     eprintln!("[ChartApp] Drawing point added (sub-pane #{}) at bar={:.2}, price={:.2}", pane_idx, bar, price);
@@ -1877,7 +1881,7 @@ impl ChartApp {
 
                 // Sync toolbar if tool completed.
                 let tool_cleared = active_pid_tool
-                    .and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.current_tool().is_none()))
+                    .and_then(|pid| self.core.drawings_svc().get(pid).map(|dm| dm.current_tool().is_none()))
                     .unwrap_or(false);
                 if tool_cleared {
                     self.panel_app.toolbar_state.active_tool_id = None;
@@ -1918,7 +1922,7 @@ impl ChartApp {
                     corrected_vp.chart_width = chart_rect.width;
                     corrected_vp.chart_height = chart_rect.height;
                     let prim_idx = active_pid_hit
-                        .and_then(|pid| self.core.drawings().get(pid)
+                        .and_then(|pid| self.core.drawings_svc().get(pid)
                             .and_then(|dm| dm.hit_test(local_x, local_y, &hit_bars_main[..], &corrected_vp, &window.price_scale)));
                     if let Some(prim_idx) = prim_idx {
                         // Select the primitive, clear indicator selection, and return.
@@ -1929,12 +1933,12 @@ impl ChartApp {
                         for cid in all_cids {
                             if Some(cid) != active_cid {
                                 if let Some(pid) = self.panel_app.panel_grid.containers().get(&cid).map(|w| w.chart_panel_id) {
-                                    self.core.drawings_mut().entry_or_default(pid).deselect();
+                                    self.core.drawings_svc_mut().entry_or_default(pid).deselect();
                                 }
                             }
                         }
                         if let Some(pid) = active_pid_hit {
-                            let mut guard = self.core.drawings_mut();
+                            let mut guard = self.core.drawings_svc_mut();
                             let dm = guard.entry_or_default(pid);
                             dm.set_current_pane(None);
                             dm.select_by_index(prim_idx);
@@ -1973,7 +1977,7 @@ impl ChartApp {
                 let hit_bars_sub: Vec<mlc_core::Bar> = self.active_chart_bars();
                 if let (Some(sub_viewport), Some(_window)) = (sub_viewport, self.panel_app.panel_grid.active_container()) {
                     let sub_prim_idx = active_pid_hit
-                        .and_then(|pid| self.core.drawings().get(pid)
+                        .and_then(|pid| self.core.drawings_svc().get(pid)
                             .and_then(|dm| dm.hit_test_in_pane(plx, ply, instance_id, &hit_bars_sub[..], &sub_viewport, &sub_price_scale)));
                     if let Some(prim_idx) = sub_prim_idx {
                         // Select the primitive, clear indicator selection, and return.
@@ -1984,12 +1988,12 @@ impl ChartApp {
                         for cid in all_cids2 {
                             if Some(cid) != active_cid {
                                 if let Some(pid) = self.panel_app.panel_grid.containers().get(&cid).map(|w| w.chart_panel_id) {
-                                    self.core.drawings_mut().entry_or_default(pid).deselect();
+                                    self.core.drawings_svc_mut().entry_or_default(pid).deselect();
                                 }
                             }
                         }
                         if let Some(pid) = active_pid_hit {
-                            let mut guard = self.core.drawings_mut();
+                            let mut guard = self.core.drawings_svc_mut();
                             let dm = guard.entry_or_default(pid);
                             dm.set_current_pane(Some(instance_id));
                             dm.select_by_index(prim_idx);
@@ -2035,7 +2039,7 @@ impl ChartApp {
                         self.selected_indicator_id = Some(instance_id);
                         let all_pids: Vec<_> = self.panels_store.chart_panel.keys().copied().collect();
                         for pid in all_pids {
-                            self.core.drawings_mut().entry_or_default(pid).deselect();
+                            self.core.drawings_svc_mut().entry_or_default(pid).deselect();
                         }
                     }
                     eprintln!("[ChartApp] Sub-pane indicator hit: id={}", instance_id);
@@ -2069,7 +2073,7 @@ impl ChartApp {
                     // Deselect any drawing primitive across ALL panels when an indicator is selected.
                     let all_pids: Vec<_> = self.panels_store.chart_panel.keys().copied().collect();
                     for pid in all_pids {
-                        self.core.drawings_mut().entry_or_default(pid).deselect();
+                        self.core.drawings_svc_mut().entry_or_default(pid).deselect();
                     }
                     eprintln!("[ChartApp] Indicator selected: id={}", ind_id);
                     return;
@@ -2081,7 +2085,7 @@ impl ChartApp {
         self.selected_indicator_id = None;
         let all_pids2: Vec<_> = self.panels_store.chart_panel.keys().copied().collect();
         for pid in all_pids2 {
-            self.core.drawings_mut().entry_or_default(pid).deselect();
+            self.core.drawings_svc_mut().entry_or_default(pid).deselect();
         }
 
         let _fallback_cc3;
@@ -2253,7 +2257,7 @@ impl ChartApp {
                     "delete" => {
                         // Capture state BEFORE deletion so undo can recreate.
                         let snapshot = active_pid_ctx
-                            .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| {
+                            .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| {
                                 let type_id = dm.get_type_id_at(idx)?;
                                 let points = dm.get_points_at(idx)?;
                                 let data = dm.get_data_at(idx)?;
@@ -2269,7 +2273,7 @@ impl ChartApp {
                             });
                             eprintln!("[ChartApp] Recorded DeletePrimitive at index {}", idx);
                             if let Some(pid) = active_pid_ctx {
-                                self.core.drawings_mut().entry_or_default(pid).remove(idx);
+                                self.core.drawings_svc_mut().entry_or_default(pid).remove(idx);
                                 eprintln!("[ChartApp] Deleted primitive #{}", idx);
                             }
                             {
@@ -2301,10 +2305,10 @@ impl ChartApp {
                         } else {
                             // No undo snapshot — still get the ID for alert cleanup before removing.
                             let prim_id_noundo = active_pid_ctx
-                                .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
+                                .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)))
                                 .map(|d| d.id);
                             if let Some(pid) = active_pid_ctx {
-                                self.core.drawings_mut().entry_or_default(pid).remove(idx);
+                                self.core.drawings_svc_mut().entry_or_default(pid).remove(idx);
                                 eprintln!("[ChartApp] Deleted primitive #{} (no undo snapshot)", idx);
                             }
                             if let Some(prim_id_inner) = prim_id_noundo {
@@ -2338,7 +2342,7 @@ impl ChartApp {
                     "clone" => {
                         // clone_primitive returns Option<usize> (new index).
                         let cloned_idx = active_pid_ctx
-                            .and_then(|pid| self.core.drawings_mut().entry_or_default(pid).clone_primitive(idx));
+                            .and_then(|pid| self.core.drawings_svc_mut().entry_or_default(pid).clone_primitive(idx));
                         if let Some(new_idx) = cloned_idx {
                             // Apply +20px right, -20px up offset to the cloned primitive.
                             // Convert screen pixels to bar/price coordinates using the viewport.
@@ -2358,7 +2362,7 @@ impl ChartApp {
                                     0.0
                                 };
                                 if let Some(pid) = active_pid_ctx {
-                                    let mut guard = self.core.drawings_mut();
+                                    let mut guard = self.core.drawings_svc_mut();
                                     let dm = guard.entry_or_default(pid);
                                     dm.translate_at(new_idx, ts_delta_ms, price_delta);
                                     dm.select_by_index(new_idx);
@@ -2366,7 +2370,7 @@ impl ChartApp {
                             }
                             // Capture the NEW primitive's data for undo.
                             let snapshot = active_pid_ctx
-                                .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| {
+                                .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| {
                                     let type_id = dm.get_type_id_at(new_idx)?;
                                     let points = dm.get_points_at(new_idx)?;
                                     let data = dm.get_data_at(new_idx)?;
@@ -2391,7 +2395,7 @@ impl ChartApp {
                     "toggle_lock" => {
                         // Read current state BEFORE mutating.
                         let previous = active_pid_ctx
-                            .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
+                            .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)))
                             .map(|d| d.locked)
                             .unwrap_or(false);
                         self.push_undo_command(mlc_core::Command::SetPrimitiveLock {
@@ -2401,14 +2405,14 @@ impl ChartApp {
                         });
                         eprintln!("[ChartApp] Recorded SetPrimitiveLock at index {} locked={}", idx, !previous);
                         if let Some(pid) = active_pid_ctx {
-                            self.core.drawings_mut().entry_or_default(pid).toggle_lock_primitive(idx);
+                            self.core.drawings_svc_mut().entry_or_default(pid).toggle_lock_primitive(idx);
                         }
                         self.sidebar_data_dirty = true;
                     }
                     "toggle_visibility" => {
                         // Read current state BEFORE mutating.
                         let previous = active_pid_ctx
-                            .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
+                            .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)))
                             .map(|d| d.visible)
                             .unwrap_or(true);
                         self.push_undo_command(mlc_core::Command::SetPrimitiveVisibility {
@@ -2418,7 +2422,7 @@ impl ChartApp {
                         });
                         eprintln!("[ChartApp] Recorded SetPrimitiveVisibility at index {} visible={}", idx, !previous);
                         if let Some(pid) = active_pid_ctx {
-                            self.core.drawings_mut().entry_or_default(pid).toggle_visibility(idx);
+                            self.core.drawings_svc_mut().entry_or_default(pid).toggle_visibility(idx);
                         }
                         self.sidebar_data_dirty = true;
                     }

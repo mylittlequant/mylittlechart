@@ -2016,7 +2016,7 @@ impl ChartApp {
         }
 
         if let Some(pid) = active_pid_init {
-            self.core.drawings_mut().entry_or_default(pid)
+            self.core.drawings_svc_mut().entry_or_default(pid)
                 .set_current_symbol_key(symbol, &exchange_name, &at_label);
         }
 
@@ -2042,7 +2042,7 @@ impl ChartApp {
                     .bubble(auto_bid)
                     .map(|g| g.last_used_style.clone())
                 {
-                    self.core.drawings_mut().entry_or_default(pid)
+                    self.core.drawings_svc_mut().entry_or_default(pid)
                         .bind_style_store(style_arc);
                 }
             }
@@ -2645,7 +2645,7 @@ impl ChartApp {
                     window.toolbar_config = ToolbarConfig::standalone();
                 }
                 if let Some(pid) = active_pid_init3 {
-                    app.core.drawings_mut().entry_or_default(pid)
+                    app.core.drawings_svc_mut().entry_or_default(pid)
                         .set_current_symbol_key("BTCUSDT", &exchange_name, "S");
                 }
                 // Create auto-bubble for the initial chart and assign instrument.
@@ -2671,7 +2671,7 @@ impl ChartApp {
                             .bubble(auto_bid)
                             .map(|g| g.last_used_style.clone())
                         {
-                            app.core.drawings_mut().entry_or_default(pid)
+                            app.core.drawings_svc_mut().entry_or_default(pid)
                                 .bind_style_store(style_arc);
                         }
                     }
@@ -3506,7 +3506,7 @@ impl ChartApp {
                         ..ChartRenderConfig::default()
                     };
 
-                    let overlay_drawings_guard = self.core.drawings();
+                    let overlay_drawings_guard = self.core.drawings_svc();
                     let overlay_dm = overlay_drawings_guard.get(overlay_panel_id);
                     render_chart_overlay(
                         ctx,
@@ -3582,7 +3582,7 @@ impl ChartApp {
                     ..ChartRenderConfig::default()
                 };
 
-                let single_drawings_guard = self.core.drawings();
+                let single_drawings_guard = self.core.drawings_svc();
                 let single_dm = single_drawings_guard.get(single_pid);
                 render_chart_overlay(
                     ctx,
@@ -3744,7 +3744,7 @@ impl ChartApp {
                 mlc_core::ChartId,
                 Vec<(u64, Vec<(f64, f64)>, mlc_core::alert::DrawingExtendMode)>,
             > = {
-                let drawings_guard = self.core.drawings();
+                let drawings_guard = self.core.drawings_svc();
                 self.panel_app.panel_grid.containers()
                     .iter()
                     .map(|(&chart_id, w)| {
@@ -3897,7 +3897,7 @@ impl ChartApp {
 
                 let inner_proportions_vec = mlc_core::state::chart_container::collect_inner_proportions(&window.inner_docking);
                 let inner_sub_ids_vec = mlc_core::state::chart_container::collect_inner_instance_ids(&window.inner_docking);
-                let split_drawings_guard = self.core.drawings();
+                let split_drawings_guard = self.core.drawings_svc();
                 let split_dm = split_drawings_guard.get(split_pid);
                 let panel_data = ChartPanelRenderData {
                     state: &render_state,
@@ -4399,7 +4399,7 @@ impl ChartApp {
                 let cb = single_bars_vec.len().saturating_sub(1) as f64;
                 let bars = &single_bars_vec[..];
                 let empty_prims2: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> = Vec::new();
-                let single_drawings_alert_guard = self.core.drawings();
+                let single_drawings_alert_guard = self.core.drawings_svc();
                 let prims2_iter = single_active_pid
                     .and_then(|pid| single_drawings_alert_guard.get(pid))
                     .map(|dm| dm.primitives())
@@ -4496,7 +4496,7 @@ impl ChartApp {
 
                 let inner_proportions_vec = mlc_core::state::chart_container::collect_inner_proportions(&window.inner_docking);
                 let inner_sub_ids_vec = mlc_core::state::chart_container::collect_inner_instance_ids(&window.inner_docking);
-                let single_window_drawings_guard = self.core.drawings();
+                let single_window_drawings_guard = self.core.drawings_svc();
                 let single_window_dm = single_window_pid.and_then(|pid| single_window_drawings_guard.get(pid));
                 let panel_data = ChartPanelRenderData {
                     state: &render_state,
@@ -4789,7 +4789,7 @@ impl ChartApp {
         // is selected.  The result is a cheap owned value so no borrow escapes.
         let selected_config: Option<mlc_core::state::selected_config::SelectedPrimitiveConfig> = {
             let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-            let drawings_guard = self.core.drawings();
+            let drawings_guard = self.core.drawings_svc();
             pid.and_then(|pid| drawings_guard.get(pid))
                 .and_then(|dm| dm.get_selected_config())
         };
@@ -5633,7 +5633,7 @@ impl ChartApp {
 
         let selected_config: Option<mlc_core::state::selected_config::SelectedPrimitiveConfig> = {
             let pid2 = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-            let drawings_guard2 = self.core.drawings();
+            let drawings_guard2 = self.core.drawings_svc();
             pid2.and_then(|pid| drawings_guard2.get(pid))
                 .and_then(|dm| dm.get_selected_config())
         };
@@ -6146,7 +6146,7 @@ impl ChartApp {
         let active_dm_pid = self.panel_app.panel_grid
             .active_container()
             .map(|w| w.chart_panel_id);
-        let drawings_guard_modals = self.core.drawings();
+        let drawings_guard_modals = self.core.drawings_svc();
         let dm_ref: Option<&mlc_core::drawing::DrawingManager> = active_dm_pid
             .and_then(|pid| drawings_guard_modals.get(pid));
         let chart_settings_data = self.build_chart_settings_data();
@@ -7868,7 +7868,7 @@ impl ChartApp {
                             // Extract it before mutably borrowing the window.
                             let active_pid_oa = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                             let snapshot = {
-                                let drawings_oa = self.core.drawings();
+                                let drawings_oa = self.core.drawings_svc();
                                 active_pid_oa
                                     .and_then(|pid| drawings_oa.get(pid))
                                     .and_then(|dm| {
@@ -7902,7 +7902,7 @@ impl ChartApp {
                 ChartOutputAction::SelectPrimitive { id } => {
                     let active_pid_sp = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                     if let Some(pid) = active_pid_sp {
-                        let mut drawings_sp = self.core.drawings_mut();
+                        let mut drawings_sp = self.core.drawings_svc_mut();
                         let dm = drawings_sp.entry_or_default(pid);
                         match id {
                             Some(primitive_id) => {
@@ -7921,7 +7921,7 @@ impl ChartApp {
                     // `bar` and `price` from DefaultChartInputHandler are raw screen (x, y).
                     // Look up the primitive's pane_id to choose the right coordinate system.
                     let primitive_pane_id = active_pid_pd
-                        .and_then(|pid| self.core.drawings().get(pid)
+                        .and_then(|pid| self.core.drawings_svc().get(pid)
                             .and_then(|dm| {
                                 let idx = dm.find_index_by_id(id)?;
                                 dm.get_data_at(idx).map(|d| d.pane_id)
@@ -7959,7 +7959,7 @@ impl ChartApp {
                     // Capture the primitive's points BEFORE drag.
                     let pre_drag = active_pid_pd
                         .and_then(|pid| {
-                            let guard = self.core.drawings();
+                            let guard = self.core.drawings_svc();
                             guard.get(pid).and_then(|dm| {
                                 let idx = dm.find_index_by_id(id)?;
                                 let pts = dm.get_points_at(idx)?;
@@ -7970,7 +7970,7 @@ impl ChartApp {
 
                     if let Some(pid) = active_pid_pd {
                         let drag_ts_ms = mlc_core::bar_f64_to_timestamp_ms(&active_bars[..], data_bar);
-                        let mut drawings_pd = self.core.drawings_mut();
+                        let mut drawings_pd = self.core.drawings_svc_mut();
                         let dm = drawings_pd.entry_or_default(pid);
                         if let Some(idx) = dm.find_index_by_id(id) {
                             dm.start_drag(idx, drag_ts_ms, data_price);
@@ -7982,7 +7982,7 @@ impl ChartApp {
                     // Look up the primitive's pane_id to choose the right coordinate system.
                     let primitive_pane_id = active_pid_cpd
                         .and_then(|pid| {
-                            let guard = self.core.drawings();
+                            let guard = self.core.drawings_svc();
                             guard.get(pid).and_then(|dm| {
                                 let idx = dm.find_index_by_id(primitive_id)?;
                                 dm.get_data_at(idx).map(|d| d.pane_id)
@@ -8022,7 +8022,7 @@ impl ChartApp {
                     // Capture points before control-point reshape too.
                     let pre_drag = active_pid_cpd
                         .and_then(|pid| {
-                            let guard = self.core.drawings();
+                            let guard = self.core.drawings_svc();
                             guard.get(pid).and_then(|dm| {
                                 let idx = dm.find_index_by_id(primitive_id)?;
                                 let pts = dm.get_points_at(idx)?;
@@ -8034,7 +8034,7 @@ impl ChartApp {
                     // Use start_control_point_drag (not start_drag) so DragType is ControlPoint.
                     if let Some(pid) = active_pid_cpd {
                         let cp_ts_ms = mlc_core::bar_f64_to_timestamp_ms(&active_bars[..], data_bar);
-                        let mut drawings_cpd = self.core.drawings_mut();
+                        let mut drawings_cpd = self.core.drawings_svc_mut();
                         let dm = drawings_cpd.entry_or_default(pid);
                         if let Some(idx) = dm.find_index_by_id(primitive_id) {
                             dm.start_control_point_drag(idx, control_point, cp_ts_ms, data_price);
@@ -8046,7 +8046,7 @@ impl ChartApp {
                     // Use the dragging primitive's pane_id for coordinate conversion.
                     let primitive_pane_id = active_pid_ud
                         .and_then(|pid| {
-                            let guard = self.core.drawings();
+                            let guard = self.core.drawings_svc();
                             guard.get(pid).and_then(|dm| {
                                 let idx = dm.dragging()?;
                                 dm.get_data_at(idx).map(|d| d.pane_id)
@@ -8086,13 +8086,13 @@ impl ChartApp {
                     // Get the dragged primitive id BEFORE update_drag (id doesn't change).
                     let dragged_id = active_pid_ud
                         .and_then(|pid| {
-                            let guard = self.core.drawings();
+                            let guard = self.core.drawings_svc();
                             guard.get(pid).and_then(|dm| dm.dragging_primitive_id())
                         });
 
                     if let Some(pid) = active_pid_ud {
                         let drag_ts_ms = mlc_core::bar_f64_to_timestamp_ms(&active_bars[..], data_bar);
-                        self.core.drawings_mut().entry_or_default(pid).update_drag(drag_ts_ms, data_price);
+                        self.core.drawings_svc_mut().entry_or_default(pid).update_drag(drag_ts_ms, data_price);
                     }
                     // Propagate live drag position to sync-group peer leaves.
                     if let Some(prim_id) = dragged_id {
@@ -8110,7 +8110,7 @@ impl ChartApp {
                     // Snapshot the dragged primitive's id BEFORE end_drag() clears it.
                     let dragged_prim_id = active_pid_ed
                         .and_then(|pid| {
-                            let guard = self.core.drawings();
+                            let guard = self.core.drawings_svc();
                             guard.get(pid).and_then(|dm| dm.dragging_primitive_id())
                         });
 
@@ -8118,7 +8118,7 @@ impl ChartApp {
                     let move_cmd = if let Some((idx, ref previous_points)) = self.drag_start_points {
                         active_pid_ed
                             .and_then(|pid| {
-                                let guard = self.core.drawings();
+                                let guard = self.core.drawings_svc();
                                 guard.get(pid).and_then(|dm| dm.get_points_at(idx))
                             })
                             .and_then(|new_points| {
@@ -8138,7 +8138,7 @@ impl ChartApp {
                     self.drag_start_points = None;
 
                     if let Some(pid) = active_pid_ed {
-                        self.core.drawings_mut().entry_or_default(pid).end_drag();
+                        self.core.drawings_svc_mut().entry_or_default(pid).end_drag();
                     }
                     if let Some(cmd) = move_cmd {
                         self.push_undo_command(cmd);
@@ -8160,21 +8160,21 @@ impl ChartApp {
                     let active_pid_fm = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                     // Record CreatePrimitive if finish_multipoint creates a new primitive.
                     let prev_count = active_pid_fm
-                        .and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.count()))
+                        .and_then(|pid| self.core.drawings_svc().get(pid).map(|dm| dm.count()))
                         .unwrap_or(0);
 
                     if let Some(pid) = active_pid_fm {
-                        self.core.drawings_mut().entry_or_default(pid).finish_multipoint();
+                        self.core.drawings_svc_mut().entry_or_default(pid).finish_multipoint();
                     }
 
                     let new_count = active_pid_fm
-                        .and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.count()))
+                        .and_then(|pid| self.core.drawings_svc().get(pid).map(|dm| dm.count()))
                         .unwrap_or(0);
 
                     if new_count > prev_count {
                         let snapshot = active_pid_fm
                             .and_then(|pid| {
-                                let guard = self.core.drawings();
+                                let guard = self.core.drawings_svc();
                                 guard.get(pid).and_then(|dm| {
                                     let idx = dm.last_index()?;
                                     let type_id = dm.get_type_id_at(idx)?;
@@ -8198,24 +8198,24 @@ impl ChartApp {
                     let active_pid_dc = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                     // Record CreatePrimitive if the click completes a new primitive.
                     let prev_count = active_pid_dc
-                        .and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.count()))
+                        .and_then(|pid| self.core.drawings_svc().get(pid).map(|dm| dm.count()))
                         .unwrap_or(0);
 
                     let click_ts_ms = self.panel_app.panel_grid.active_container()
                         .map(|_w| mlc_core::bar_f64_to_timestamp_ms(&active_bars[..], bar))
                         .unwrap_or(0);
                     if let Some(pid) = active_pid_dc {
-                        self.core.drawings_mut().entry_or_default(pid).on_click(click_ts_ms, price);
+                        self.core.drawings_svc_mut().entry_or_default(pid).on_click(click_ts_ms, price);
                     }
 
                     let new_count = active_pid_dc
-                        .and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.count()))
+                        .and_then(|pid| self.core.drawings_svc().get(pid).map(|dm| dm.count()))
                         .unwrap_or(0);
 
                     if new_count > prev_count {
                         let snapshot = active_pid_dc
                             .and_then(|pid| {
-                                let guard = self.core.drawings();
+                                let guard = self.core.drawings_svc();
                                 guard.get(pid).and_then(|dm| {
                                     let idx = dm.last_index()?;
                                     let type_id = dm.get_type_id_at(idx)?;
@@ -8329,7 +8329,7 @@ impl ChartApp {
             .containers()
             .get(&chart_id)
             .and_then(|w| {
-                let guard = self.core.drawings();
+                let guard = self.core.drawings_svc();
                 guard.get(w.chart_panel_id).and_then(|dm| {
                     dm.primitives().iter()
                         .find(|p| p.data().id == primitive_id)
@@ -8383,7 +8383,7 @@ impl ChartApp {
         let src_pid_pp = self.panel_app.panel_grid.containers().get(&source_chart_id).map(|w| w.chart_panel_id);
         let new_points: Vec<(i64, f64)> = match src_pid_pp
             .and_then(|pid| {
-                let guard = self.core.drawings();
+                let guard = self.core.drawings_svc();
                 guard.get(pid).and_then(|dm| dm.get_points_by_id(primitive_id))
             })
         {
@@ -8398,7 +8398,7 @@ impl ChartApp {
                 None => continue,
             };
             if let Some(peer_pid) = self.panel_app.panel_grid.containers().get(&peer_chart_id).map(|w| w.chart_panel_id) {
-                self.core.drawings_mut().entry_or_default(peer_pid)
+                self.core.drawings_svc_mut().entry_or_default(peer_pid)
                     .update_synced_primitive_points(primitive_id, &new_points);
             }
         }
@@ -8753,7 +8753,7 @@ impl ChartApp {
         let active_pid_snap = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
         let data_opt = active_pid_snap
             .and_then(|pid| {
-                let guard = self.core.drawings();
+                let guard = self.core.drawings_svc();
                 guard.get(pid).and_then(|dm| dm.get_data_at(idx))
             });
         if let Some(data) = data_opt {
@@ -8767,7 +8767,7 @@ impl ChartApp {
             // Remember this style (including extended style_properties) so the next
             // primitive of the same type is pre-populated with these settings.
             if let Some(pid) = active_pid_snap {
-                let mut drawings_snap = self.core.drawings_mut();
+                let mut drawings_snap = self.core.drawings_svc_mut();
                 let dm = drawings_snap.entry_or_default(pid);
                 dm.save_last_style_at_index(idx);
                 // Persist the last-used style globally so it survives app restarts.

@@ -357,7 +357,7 @@ impl ChartApp {
                     let current_bar = bubble_bars_alert.len().saturating_sub(1) as f64;
                     let drawing_points: Vec<(u64, Vec<(f64, f64)>, mlc_core::alert::DrawingExtendMode)> = {
                         let pid = window.chart_panel_id;
-                        let guard = self.core.drawings();
+                        let guard = self.core.drawings_svc();
                         guard.get(pid).map(|dm| dm.primitives().iter()
                             .map(|p| {
                                 let pts_bar: Vec<(f64, f64)> = p.points()

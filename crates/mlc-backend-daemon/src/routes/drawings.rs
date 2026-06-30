@@ -111,7 +111,7 @@ fn encode_points(pts: &[(i64, f64)]) -> Vec<[f64; 2]> {
 // ---------------------------------------------------------------------------
 
 async fn list_drawings(State(s): State<AppState>) -> impl IntoResponse {
-    let guard = s.core.drawings();
+    let guard = s.core.drawings_svc();
     let drawings: Vec<DrawingRowOut> = guard
         .iter()
         .map(|(panel_id, dm)| DrawingRowOut {
@@ -148,7 +148,7 @@ async fn create_drawing_primitive(
 ) -> impl IntoResponse {
     let points = decode_points(&body.points);
     let pid = ChartPanelId(panel_id);
-    let mut guard = s.core.drawings_mut();
+    let mut guard = s.core.drawings_svc_mut();
     let dm = guard.entry_or_default(pid);
     match dm.add_primitive_from(&body.type_id, points) {
         None => (
@@ -179,7 +179,7 @@ async fn patch_drawing_primitive(
     Json(body): Json<PatchPrimitiveIn>,
 ) -> impl IntoResponse {
     let pid = ChartPanelId(panel_id);
-    let mut guard = s.core.drawings_mut();
+    let mut guard = s.core.drawings_svc_mut();
     let dm = match guard.get_mut(pid) {
         Some(dm) => dm,
         None => return StatusCode::NOT_FOUND.into_response(),
@@ -223,7 +223,7 @@ async fn delete_drawing_primitive(
     State(s): State<AppState>,
 ) -> impl IntoResponse {
     let pid = ChartPanelId(panel_id);
-    let mut guard = s.core.drawings_mut();
+    let mut guard = s.core.drawings_svc_mut();
     let dm = match guard.get_mut(pid) {
         Some(dm) => dm,
         None => return StatusCode::NOT_FOUND,

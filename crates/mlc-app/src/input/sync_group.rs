@@ -160,7 +160,7 @@ impl ChartApp {
 
                 // Apply restored state to window and drawing_manager.
                 if let Some(pid) = pid_desync {
-                    let mut guard = self.core.drawings_mut();
+                    let mut guard = self.core.drawings_svc_mut();
                     let dm = guard.entry_or_default(pid);
                     dm.clear_all_primitives();
                     if !restored_prims.is_empty() {
@@ -195,7 +195,7 @@ impl ChartApp {
                         .bubble(auto_bid)
                         .map(|g| g.last_used_style.clone())
                     {
-                        self.core.drawings_mut().entry_or_default(pid).bind_style_store(style_arc);
+                        self.core.drawings_svc_mut().entry_or_default(pid).bind_style_store(style_arc);
                     }
                 }
 
@@ -228,7 +228,7 @@ impl ChartApp {
                 // are the authoritative home-state for future join cycles.
                 let dm_prims: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
                     pid_desync
-                        .and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.primitives().iter().map(|p| p.clone_box()).collect::<Vec<_>>()))
+                        .and_then(|pid| self.core.drawings_svc().get(pid).map(|dm| dm.primitives().iter().map(|p| p.clone_box()).collect::<Vec<_>>()))
                         .unwrap_or_default();
                 if let Some(auto_bub) = self.core.bubble_mut().bubble_mut(auto_bid) {
                     auto_bub.primitives = dm_prims;
@@ -236,7 +236,7 @@ impl ChartApp {
             } else {
                 // Was not in a color group — just purge synced primitives and update ids.
                 if let Some(pid) = pid_desync {
-                    self.core.drawings_mut().entry_or_default(pid).purge_synced_primitives();
+                    self.core.drawings_svc_mut().entry_or_default(pid).purge_synced_primitives();
                 }
                 self.core.indicators_mut().purge_synced_instances_for_window(chart_id.0);
                 if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
@@ -381,7 +381,7 @@ impl ChartApp {
                 .map(|g| g.last_used_style.clone())
             {
                 if let Some(pid) = pid_join {
-                    self.core.drawings_mut().entry_or_default(pid).bind_style_store(style_arc);
+                    self.core.drawings_svc_mut().entry_or_default(pid).bind_style_store(style_arc);
                 }
             }
 
@@ -514,7 +514,7 @@ impl ChartApp {
                 // drawing_manager first; fall back to auto_bubble.primitives if
                 // drawing_manager has nothing (e.g. cold-load presets).
                 let dm_prims: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
-                    pid_join.and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.primitives().iter()
+                    pid_join.and_then(|pid| self.core.drawings_svc().get(pid).map(|dm| dm.primitives().iter()
                             .filter(|p| p.data().origin_id.is_none())
                             .map(|p| p.clone_box())
                             .collect::<Vec<_>>()))
@@ -553,7 +553,7 @@ impl ChartApp {
                     // Re-read drawing_manager since source_prims was moved into
                     // group_prims.  drawing_manager still holds the originals.
                     let home_copy: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
-                        pid_join.and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.primitives().iter()
+                        pid_join.and_then(|pid| self.core.drawings_svc().get(pid).map(|dm| dm.primitives().iter()
                                 .filter(|p| p.data().origin_id.is_none())
                                 .map(|p| p.clone_box())
                                 .collect::<Vec<_>>()))
@@ -576,7 +576,7 @@ impl ChartApp {
                 // group.primitives will repopulate it with the re-ID'd group
                 // copies so we render the group view, not the home view.
                 if let Some(pid) = pid_join {
-                    self.core.drawings_mut().entry_or_default(pid).clear_all_primitives();
+                    self.core.drawings_svc_mut().entry_or_default(pid).clear_all_primitives();
                     sglog!("[sync_join_color_group] cleared drawing_manager pid={:?} (group view will repopulate)", pid);
                 }
 
@@ -706,7 +706,7 @@ impl ChartApp {
 
             // Clear drawing_manager; group prims arrive via per-frame sync.
             if let Some(pid) = pid_join {
-                self.core.drawings_mut().entry_or_default(pid).clear_all_primitives();
+                self.core.drawings_svc_mut().entry_or_default(pid).clear_all_primitives();
             }
 
             // If the existing color group's `bars` is empty (cold-load preset
@@ -998,7 +998,7 @@ impl ChartApp {
                     pid,
                 );
                 {
-                    let mut guard = self.core.drawings_mut();
+                    let mut guard = self.core.drawings_svc_mut();
                     let dm = guard.entry_or_default(pid);
                     dm.set_current_symbol_key(&source_sym, &source_exch, &source_at);
                     if let Some(arc) = style_arc {
@@ -1255,7 +1255,7 @@ impl ChartApp {
             for &(leaf_id, _) in &leaf_chart_ids {
                 if let Some(pid) = self.panel_app.panel_grid.container_for_leaf(leaf_id).map(|w| w.chart_panel_id) {
                     if let Some(ref arc) = style_arc {
-                        self.core.drawings_mut().entry_or_default(pid).bind_style_store(arc.clone());
+                        self.core.drawings_svc_mut().entry_or_default(pid).bind_style_store(arc.clone());
                     }
                 }
             }
@@ -1336,7 +1336,7 @@ impl ChartApp {
             // from the group each frame.
             for &(leaf_id, _) in leaf_chart_ids.iter().skip(1) {
                 if let Some(pid) = self.panel_app.panel_grid.container_for_leaf(leaf_id).map(|w| w.chart_panel_id) {
-                    self.core.drawings_mut().entry_or_default(pid).clear_all_primitives();
+                    self.core.drawings_svc_mut().entry_or_default(pid).clear_all_primitives();
                 }
             }
 
@@ -1370,7 +1370,7 @@ impl ChartApp {
                         .container_for_leaf(new_leaves[0])
                         .map(|w| w.chart_panel_id)
                         .and_then(|pid| {
-                            self.core.drawings().get(pid).map(|dm| {
+                            self.core.drawings_svc().get(pid).map(|dm| {
                                 dm.primitives().iter()
                                     .filter(|p| p.data().origin_id.is_none())
                                     .map(|p| p.clone_box())
@@ -1604,13 +1604,15 @@ impl ChartApp {
             let pid_opt = self.panel_app.panel_grid.container_for_leaf(*leaf_id).map(|w| w.chart_panel_id);
             if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(*leaf_id) {
                 if let Some(pid) = pid_opt {
-                    let mut guard = self.core.drawings_mut();
-                    let dm = guard.entry_or_default(pid);
-                    window.snapshot_drawings_for_symbol(old_symbol, old_exchange, old_account_type, dm.primitives());
-                    dm.set_current_symbol_key(&symbol_owned, &exchange_owned, &account_type_owned);
-                    dm.clear_all_primitives();
-                    if let Some(snaps) = window.take_drawings_snapshot_for_symbol(&symbol_owned, &exchange_owned, &account_type_owned) {
-                        crate::persistence::restore_drawings_into_manager(&snaps, dm);
+                    let restore_snaps = window.take_drawings_snapshot_for_symbol(&symbol_owned, &exchange_owned, &account_type_owned);
+                    let result = self.core.drawings_svc_mut().swap_symbol(
+                        pid, &symbol_owned, &exchange_owned, &account_type_owned, restore_snaps.as_deref(),
+                    );
+                    let old_key = format!("{}:{}:{}", old_symbol, old_exchange, old_account_type);
+                    if result.old_primitives.is_empty() {
+                        window.symbol_drawings.remove(&old_key);
+                    } else {
+                        window.symbol_drawings.insert(old_key, result.old_primitives);
                     }
                 }
                 window.viewport.bar_count = 0;
@@ -1856,7 +1858,7 @@ impl ChartApp {
         }
 
         let src_pid = self.panel_app.panel_grid.containers().get(&source_chart_id).map(|w| w.chart_panel_id);
-        let prim_id = match src_pid.and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.last_original_id()))
+        let prim_id = match src_pid.and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.last_original_id()))
         {
             Some(id) => id,
             None => return,
@@ -1870,7 +1872,7 @@ impl ChartApp {
             };
 
             // Clone the primitive from the source window.
-            let cloned = match src_pid.and_then(|pid| self.core.drawings().get(pid)
+            let cloned = match src_pid.and_then(|pid| self.core.drawings_svc().get(pid)
                 .and_then(|dm| dm.clone_primitive_for_sync(prim_id, peer_chart_id.0)))
             {
                 Some(c) => c,
@@ -1879,7 +1881,7 @@ impl ChartApp {
 
             // Insert the clone into the peer window.
             if let Some(peer_pid) = self.panel_app.panel_grid.containers().get(&peer_chart_id).map(|w| w.chart_panel_id) {
-                self.core.drawings_mut().entry_or_default(peer_pid).add_synced_primitives(vec![cloned]);
+                self.core.drawings_svc_mut().entry_or_default(peer_pid).add_synced_primitives(vec![cloned]);
                 eprintln!("[ChartApp] Synced primitive {} to peer chart {:?}", prim_id, peer_chart_id);
             }
         }
@@ -2032,7 +2034,7 @@ impl ChartApp {
         // Extracted before taking mutable borrows on peer windows.
         let src_pid_ds = self.panel_app.panel_grid.container_for_leaf(source_leaf).map(|w| w.chart_panel_id);
         let (tool_id, points, src_pane_id) = {
-            let guard = self.core.drawings();
+            let guard = self.core.drawings_svc();
             match src_pid_ds.and_then(|pid| guard.get(pid)) {
                 Some(dm) => {
                     let pane = dm.current_pane();
@@ -2101,7 +2103,7 @@ impl ChartApp {
             });
 
             if let Some(peer_pid) = self.panel_app.panel_grid.container_for_leaf(*peer_leaf).map(|w| w.chart_panel_id) {
-                let mut guard = self.core.drawings_mut();
+                let mut guard = self.core.drawings_svc_mut();
                 let peer_dm = guard.entry_or_default(peer_pid);
                 peer_dm.set_synced_drawing_state(tool_id.clone(), points.clone());
                 // Sync the pane context so the preview renders in the correct sub-pane
@@ -2162,7 +2164,7 @@ impl ChartApp {
                 Some(p) => p,
                 None => return false,
             };
-            let mut guard = self.core.drawings_mut();
+            let mut guard = self.core.drawings_svc_mut();
             let dm = guard.entry_or_default(pid);
             let idx = match dm.last_index() {
                 Some(i) => i,
@@ -2208,7 +2210,7 @@ impl ChartApp {
         } else {
             // Group disappeared — put the primitive back into drawing_manager.
             if let Some(pid) = active_pid_intercept {
-                self.core.drawings_mut().entry_or_default(pid).add_synced_primitives(vec![prim]);
+                self.core.drawings_svc_mut().entry_or_default(pid).add_synced_primitives(vec![prim]);
             }
             false
         }
@@ -2288,7 +2290,7 @@ impl ChartApp {
         let new_prims: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
             self.panel_app.panel_grid.containers().get(&chart_id)
                 .map(|w| w.chart_panel_id)
-                .and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.primitives().iter().map(|p| p.clone_box()).collect::<Vec<_>>()))
+                .and_then(|pid| self.core.drawings_svc().get(pid).map(|dm| dm.primitives().iter().map(|p| p.clone_box()).collect::<Vec<_>>()))
                 .unwrap_or_default();
         if let Some(group) = self.core.bubble_mut().bubble_mut(group_id) {
             group.primitives = new_prims;

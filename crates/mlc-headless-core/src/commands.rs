@@ -267,7 +267,7 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                         .find(|cw| cw.id.0 == chart_id)
                         .map(|cw| cw.chart_panel_id);
                     if let Some(pid) = cw_pid {
-                        chart.core.drawings_mut().entry_or_default(pid).add_external_primitive(prim);
+                        chart.core.drawings_svc_mut().entry_or_default(pid).add_external_primitive(prim);
                         eprintln!("[AgentCommand] AddPrimitive: type={}, chart={}", type_id, chart_id);
                     } else {
                         eprintln!("[AgentCommand] AddPrimitive: chart not found: {}", chart_id);
@@ -289,7 +289,7 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     .find(|cw| cw.id.0 == chart_id)
                     .map(|cw| cw.chart_panel_id);
                 if let Some(pid) = cw_pid {
-                    let mut dreg = chart.core.drawings_mut();
+                    let mut dreg = chart.core.drawings_svc_mut();
                     let dm = dreg.entry_or_default(pid);
                     let prim = dm.primitives_mut()
                         .iter_mut().find(|p| p.data().id == primitive_id);
@@ -325,7 +325,7 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     .find(|cw| cw.id.0 == chart_id)
                     .map(|cw| cw.chart_panel_id);
                 let removed = if let Some(pid) = cw_pid {
-                    let mut dreg = chart.core.drawings_mut();
+                    let mut dreg = chart.core.drawings_svc_mut();
                     let dm = dreg.entry_or_default(pid);
                     let idx = dm.primitives()
                         .iter().position(|p| p.data().id == primitive_id);

@@ -111,7 +111,7 @@ pub fn update_terminal_snapshot<H: AgentHost>(host: &H, agent_state: &AgentState
 
                 let pid_snap = cw.chart_panel_id;
                 let primitives: Vec<PrimitiveSummary> = {
-                    let dreg_snap = chart.core.drawings();
+                    let dreg_snap = chart.core.drawings_svc();
                     dreg_snap.get(pid_snap)
                         .map(|dm| dm.primitives().iter()
                             .map(|p| {

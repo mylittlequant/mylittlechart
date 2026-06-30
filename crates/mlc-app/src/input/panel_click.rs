@@ -366,24 +366,17 @@ impl ChartApp {
                         let active_pid_pc = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                             if let Some(pid) = active_pid_pc {
-                                // snapshot then clear+restore via registry
-                                {
-                                    let guard = self.core.drawings();
-                                    if let Some(dm) = guard.get(pid) {
-                                        window.snapshot_drawings_for_symbol(&old_sym_pc, &old_exch_pc, &old_at_pc, dm.primitives());
-                                    }
-                                }
-                                {
-                                    let mut guard = self.core.drawings_mut();
-                                    let dm = guard.entry_or_default(pid);
-                                    dm.set_current_symbol_key(&symbol, &item_exchange, &item_account_type);
-                                    dm.clear_all_primitives();
-                                    if let Some(snaps) = window.take_drawings_snapshot_for_symbol(&symbol, &item_exchange, &item_account_type) {
-                                        crate::persistence::restore_drawings_into_manager(&snaps, dm);
-                                    }
+                                let restore_snaps = window.take_drawings_snapshot_for_symbol(&symbol, &item_exchange, &item_account_type);
+                                let result = self.core.drawings_svc_mut().swap_symbol(
+                                    pid, &symbol, &item_exchange, &item_account_type, restore_snaps.as_deref(),
+                                );
+                                let old_key = format!("{}:{}:{}", old_sym_pc, old_exch_pc, old_at_pc);
+                                if result.old_primitives.is_empty() {
+                                    window.symbol_drawings.remove(&old_key);
+                                } else {
+                                    window.symbol_drawings.insert(old_key, result.old_primitives);
                                 }
                             }
-                            {};
                             window.viewport.bar_count = 0;
                             window.viewport.view_start = 0.0;
                             window.pending_symbol_load = true;
@@ -2712,7 +2705,7 @@ impl ChartApp {
                 let active_pid_del = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                 let removed_from_dm = active_pid_del
                     .and_then(|pid| {
-                        let mut guard = self.core.drawings_mut();
+                        let mut guard = self.core.drawings_svc_mut();
                         let dm = guard.entry_or_default(pid);
                         dm.find_index_by_id(id).map(|idx| {
                             dm.remove(idx);
@@ -2822,7 +2815,7 @@ impl ChartApp {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 let active_pid_settings = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                 if let Some(pid) = active_pid_settings {
-                    let guard = self.core.drawings();
+                    let guard = self.core.drawings_svc();
                     if let Some(idx) = guard.get(pid).and_then(|dm| dm.find_index_by_id(id)) {
                         self.panel_app.primitive_settings_state.open(idx);
                         eprintln!("[Sidebar] Primitive settings opened: {} (idx={})", id, idx);
@@ -2844,7 +2837,7 @@ impl ChartApp {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 let active_pid_vis = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                 if let Some(pid) = active_pid_vis {
-                    let mut guard = self.core.drawings_mut();
+                    let mut guard = self.core.drawings_svc_mut();
                     let dm = guard.entry_or_default(pid);
                     if let Some(idx) = dm.find_index_by_id(id) {
                         let v = dm.primitives_mut()[idx].data().visible;
@@ -2870,7 +2863,7 @@ impl ChartApp {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 let active_pid_lock = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                 if let Some(pid) = active_pid_lock {
-                    let mut guard = self.core.drawings_mut();
+                    let mut guard = self.core.drawings_svc_mut();
                     let dm = guard.entry_or_default(pid);
                     if let Some(idx) = dm.find_index_by_id(id) {
                         let l = dm.primitives_mut()[idx].data().locked;
@@ -2984,7 +2977,7 @@ impl ChartApp {
                 let mut source_name = format!("Drawing {}", id);
                 let active_pid_alert = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                 if let Some(pid) = active_pid_alert {
-                    let guard = self.core.drawings();
+                    let guard = self.core.drawings_svc();
                     if let Some(dm) = guard.get(pid) {
                         if let Some(idx) = dm.find_index_by_id(id) {
                             let prim = &dm.primitives()[idx];
@@ -3124,7 +3117,7 @@ impl ChartApp {
                         // handles Y — so sentinel (0.0) prices are irrelevant here.
                         let mid_bar = active_pid_center
                             .and_then(|pid| {
-                                let guard = self.core.drawings();
+                                let guard = self.core.drawings_svc();
                                 guard.get(pid).and_then(|dm| {
                                     dm.primitives().iter()
                                         .find(|p| p.data().id == id)
@@ -3327,7 +3320,7 @@ impl ChartApp {
                 // SAFETY: toolbar_state does not access panel_grid.
                 let window = unsafe { &mut *window_ptr };
                 if let Some(pid) = active_pid_tb {
-                    let mut guard = self.core.drawings_mut();
+                    let mut guard = self.core.drawings_svc_mut();
                     let dm = guard.entry_or_default(pid);
                     let events = self.panel_app.toolbar_state.handle_toolbar_click_with_chart(
                         &item_id,
@@ -3380,7 +3373,7 @@ impl ChartApp {
                     // SAFETY: toolbar_state does not access panel_grid.
                     let window = unsafe { &mut *window_ptr };
                     if let Some(pid) = active_pid_dd {
-                        let mut guard = self.core.drawings_mut();
+                        let mut guard = self.core.drawings_svc_mut();
                         let dm = guard.entry_or_default(pid);
                         let autosave = self.panel_app.autosave_enabled;
                         let events = self.panel_app.toolbar_state.handle_dropdown_select_with_chart(

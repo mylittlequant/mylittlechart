@@ -278,13 +278,13 @@ pub fn drawing_registry_basic() -> HarnessResult<()> {
     let panel_b = ChartPanelId(202);
 
     {
-        let mut reg = h.core.drawings_mut();
+        let mut reg = h.core.drawings_svc_mut();
         let _ = reg.entry_or_default(panel_a);
         let _ = reg.entry_or_default(panel_b);
     }
 
     {
-        let reg = h.core.drawings();
+        let reg = h.core.drawings_svc();
         if reg.get(panel_a).is_none() {
             return Err(err("drawing-reg", "panel_a entry missing after entry_or_default"));
         }
@@ -299,14 +299,14 @@ pub fn drawing_registry_basic() -> HarnessResult<()> {
 
     // Remove panel_a only.
     {
-        let mut reg = h.core.drawings_mut();
+        let mut reg = h.core.drawings_svc_mut();
         let removed = reg.remove(panel_a);
         if removed.is_none() {
             return Err(err("drawing-reg", "remove returned None on present key"));
         }
     }
     {
-        let reg = h.core.drawings();
+        let reg = h.core.drawings_svc();
         if reg.get(panel_a).is_some() {
             return Err(err("drawing-reg", "panel_a still present after remove"));
         }
@@ -317,7 +317,7 @@ pub fn drawing_registry_basic() -> HarnessResult<()> {
 
     // drain_matching — drop everything whose id > 200.
     {
-        let mut reg = h.core.drawings_mut();
+        let mut reg = h.core.drawings_svc_mut();
         reg.drain_matching(|pid| pid.0 > 200);
         if reg.get(panel_b).is_some() {
             return Err(err("drawing-reg", "drain_matching did not drop panel_b (id=202)"));

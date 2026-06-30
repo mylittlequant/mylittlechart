@@ -75,7 +75,7 @@ pub fn with_drawing_manager<R, F>(
 where
     F: FnOnce(&DrawingManager) -> R,
 {
-    let guard = core.drawings();
+    let guard = core.drawings_svc();
     guard.get(chart_panel_id).map(f)
 }
 
@@ -90,7 +90,7 @@ pub fn with_drawing_manager_mut<R, F>(
 where
     F: FnOnce(&mut DrawingManager) -> R,
 {
-    let mut guard = core.drawings_mut();
+    let mut guard = core.drawings_svc_mut();
     let dm = guard.entry_or_default(chart_panel_id);
     f(dm)
 }

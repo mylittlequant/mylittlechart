@@ -612,7 +612,7 @@ impl ChartApp {
         };
         let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
         if let Some(pid) = active_pid {
-            let data_opt = self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx));
+            let data_opt = self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx));
             if let Some(mut data) = data_opt {
                 let style_prop_change = if field.starts_with("style_prop:") {
                     let prop_id = field["style_prop:".len()..].to_string();
@@ -638,7 +638,7 @@ impl ChartApp {
                     }
                     _ => {}
                 }
-                let mut guard = self.core.drawings_mut();
+                let mut guard = self.core.drawings_svc_mut();
                 let dm = guard.entry_or_default(pid);
                 if let Some((prop_id, value)) = style_prop_change {
                     dm.apply_style_property(idx, &prop_id, value);

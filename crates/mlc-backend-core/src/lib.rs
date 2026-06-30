@@ -26,6 +26,9 @@
 
 pub mod bubble;
 pub mod alert;
+pub mod service;
+
+pub use service::{DrawingService, DrawingServiceMut, SwapSymbolResult};
 
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -965,15 +968,31 @@ impl BackendCore {
     }
 
     /// Read guard for the drawing registry.
+    #[deprecated(note = "use drawings_svc; Step 7 removes this")]
     #[inline]
     pub fn drawings(&self) -> std::sync::RwLockReadGuard<'_, DrawingRegistry> {
         self.drawings.read().expect("BackendCore.drawings poisoned (read)")
     }
 
     /// Write guard for the drawing registry.
+    #[deprecated(note = "use drawings_svc_mut; Step 7 removes this")]
     #[inline]
     pub fn drawings_mut(&self) -> std::sync::RwLockWriteGuard<'_, DrawingRegistry> {
         self.drawings.write().expect("BackendCore.drawings poisoned (write)")
+    }
+
+    /// Typed read-only service over the drawing registry. The ONLY
+    /// doctrinally-sanctioned access path going forward (Step 3,
+    /// `docs/mlc/plans/doctrine-cutover-2026-06-27.md`).
+    #[inline]
+    pub fn drawings_svc(&self) -> DrawingService<'_> {
+        DrawingService::new(self.drawings.read().expect("BackendCore.drawings poisoned (read)"))
+    }
+
+    /// Typed mutable service over the drawing registry.
+    #[inline]
+    pub fn drawings_svc_mut(&self) -> DrawingServiceMut<'_> {
+        DrawingServiceMut::new(self.drawings.write().expect("BackendCore.drawings poisoned (write)"))
     }
 
     /// Drain the live-data broadcast channel, write incoming updates into

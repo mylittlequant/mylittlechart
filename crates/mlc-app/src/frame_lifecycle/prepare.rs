@@ -605,7 +605,7 @@ impl ChartApp {
                 let local_prims: Vec<_> = self.panel_app.panel_grid.active_container()
                     .map(|w| w.chart_panel_id)
                     .and_then(|pid| {
-                        let guard = self.core.drawings();
+                        let guard = self.core.drawings_svc();
                         guard.get(pid).map(|dm| dm.primitives().iter()
                             .map(|p| {
                                 let data = p.data();
@@ -1265,7 +1265,7 @@ impl ChartApp {
             for (chart_id, cloned_prims) in group_prim_sync {
                 if let Some(window) = self.panel_app.panel_grid.containers().get(&chart_id) {
                     let panel_id = window.chart_panel_id;
-                    let mut guard = self.core.drawings_mut();
+                    let mut guard = self.core.drawings_svc_mut();
                     let dm = guard.entry_or_default(panel_id);
                     if !dm.is_dragging() {
                         dm.sync_from_group_primitives(&cloned_prims);
@@ -1296,7 +1296,7 @@ impl ChartApp {
             // Single pane: sync group primitives.
             if let Some(active_container) = self.panel_app.panel_grid.active_container() {
                 let active_pid = active_container.chart_panel_id;
-                let is_dragging = self.core.drawings().get(active_pid)
+                let is_dragging = self.core.drawings_svc().get(active_pid)
                     .map(|dm| dm.is_dragging())
                     .unwrap_or(false);
                 let chart_id_opt = self.panel_app.panel_grid.active_container_id();
@@ -1333,7 +1333,7 @@ impl ChartApp {
                                     .unwrap_or_default();
                             if let Some(window) = self.panel_app.panel_grid.containers().get(&chart_id) {
                                 let pid = window.chart_panel_id;
-                                let mut guard = self.core.drawings_mut();
+                                let mut guard = self.core.drawings_svc_mut();
                                 guard.entry_or_default(pid).sync_from_group_primitives(&cloned);
                             }
                         }

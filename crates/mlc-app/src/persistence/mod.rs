@@ -20,13 +20,11 @@
 //!   `load_user_profile`, etc.) — unchanged signatures, just relocated.
 
 pub mod autosave;
-pub mod drawings;
 pub mod hydration;
 pub mod hydration_impl;
 pub mod live_cache;
 pub mod load_state;
 pub mod profile;
 
-pub use drawings::restore_drawings_into_manager;
 pub use live_cache::LivePresetState;
 pub use load_state::LoadState;

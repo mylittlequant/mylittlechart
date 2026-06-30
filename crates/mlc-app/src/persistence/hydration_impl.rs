@@ -158,7 +158,7 @@ impl ChartApp {
                                         // S2.8: restore drawings into DrawingRegistry
                                         {
                                             let pid = window.chart_panel_id;
-                                            let mut guard = self.core.drawings_mut();
+                                            let mut guard = self.core.drawings_svc_mut();
                                             let dm = guard.entry_or_default(pid);
                                             dm.set_current_symbol_key(
                                                 &snap.symbol, &snap.exchange, &snap.account_type,
@@ -467,7 +467,7 @@ impl ChartApp {
                                     // S2.8: restore drawings into DrawingRegistry
                                     {
                                         let pid = window.chart_panel_id;
-                                        let mut guard = self.core.drawings_mut();
+                                        let mut guard = self.core.drawings_svc_mut();
                                         let dm = guard.entry_or_default(pid);
                                         dm.set_current_symbol_key(
                                             &snap.symbol, &snap.exchange, &snap.account_type,
@@ -596,7 +596,7 @@ impl ChartApp {
                                     .get(&chart_id)
                                 {
                                     let pid = window.chart_panel_id;
-                                    self.core.drawings_mut().entry_or_default(pid).bind_style_store(style_arc);
+                                    self.core.drawings_svc_mut().entry_or_default(pid).bind_style_store(style_arc);
                                 }
                             }
                         }
@@ -614,7 +614,7 @@ impl ChartApp {
                     // never collide with any ID loaded from disk.
                     {
                         let panel_prim_ids: Vec<u64> = {
-                            let dreg = self.core.drawings();
+                            let dreg = self.core.drawings_svc();
                             self.panel_app.panel_grid.containers().values()
                                 .flat_map(|w| {
                                     let pid = w.chart_panel_id;
@@ -741,7 +741,7 @@ impl ChartApp {
                             }
                             if let Some(pid) = self.panel_app.panel_grid.container_for_leaf(leaf_id).map(|w| w.chart_panel_id) {
                                 if let Some(ref arc) = style_arc {
-                                    self.core.drawings_mut().entry_or_default(pid).bind_style_store(arc.clone());
+                                    self.core.drawings_svc_mut().entry_or_default(pid).bind_style_store(arc.clone());
                                 }
                             }
                         }
@@ -797,7 +797,7 @@ impl ChartApp {
                                     &mut self.panels_store,
                                     pid,
                                 );
-                                self.core.drawings_mut().entry_or_default(pid).set_current_symbol_key(&sym, &exch, "S");
+                                self.core.drawings_svc_mut().entry_or_default(pid).set_current_symbol_key(&sym, &exch, "S");
                             }
                             eprintln!(
                                 "[ChartApp] Step 5c: re-membered orphaned window {:?} into auto group {:?} ({})",

@@ -600,7 +600,7 @@ impl ChartApp {
             .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()))
             .unwrap_or_default();
         let hit = if let Some(pid) = active_pid_rc {
-            let mut dreg = self.core.drawings_mut();
+            let mut dreg = self.core.drawings_svc_mut();
             let dm = dreg.entry_or_default(pid);
             self.panel_app.panel_grid.handle_right_click(
                 x as f64, y as f64, extended,
@@ -618,7 +618,7 @@ impl ChartApp {
                 // Right-clicked on a primitive — look up info via primitive_list.
                 let (display_name, is_locked, is_visible) = active_pid_rc
                     .and_then(|pid| {
-                        self.core.drawings().get(pid).and_then(|dm| {
+                        self.core.drawings_svc().get(pid).and_then(|dm| {
                             dm.primitive_list()
                                 .into_iter()
                                 .find(|item| item.index == prim_idx)
@@ -634,7 +634,7 @@ impl ChartApp {
 
                 // Select the primitive so it highlights.
                 if let Some(pid) = active_pid_rc {
-                    self.core.drawings_mut().entry_or_default(pid).select_by_index(prim_idx);
+                    self.core.drawings_svc_mut().entry_or_default(pid).select_by_index(prim_idx);
                 }
 
                 self.panel_app.context_menu_state.open_smart(
@@ -1694,7 +1694,7 @@ impl ChartApp {
                         let active_pid_tf = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                         let handle = if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
                             if let Some(data) = active_pid_tf
-                                .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
+                                .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)))
                             {
                                 if let Some(tf_idx) = fid.strip_prefix("tf_")
                                     .and_then(|s| s.strip_suffix("_slider"))
@@ -2492,7 +2492,7 @@ impl ChartApp {
         let active_pid_ds = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
         let ds_bars = self.active_chart_bars();
         let drag_start_hit = if let Some(pid) = active_pid_ds {
-            let mut dreg = self.core.drawings_mut();
+            let mut dreg = self.core.drawings_svc_mut();
             let dm = dreg.entry_or_default(pid);
             self.panel_app.panel_grid.handle_drag_start(x, y, extended, dm, &ds_bars)
         } else {
@@ -3408,7 +3408,7 @@ impl ChartApp {
             let active_pid_fh = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
             let fh_bars: Vec<mlc_core::Bar> = self.active_chart_bars();
             let freehand_extended = if let Some(pid) = active_pid_fh {
-                let mut dreg = self.core.drawings_mut();
+                let mut dreg = self.core.drawings_svc_mut();
                 let dm = dreg.entry_or_default(pid);
                 self.panel_app.panel_grid.extend_freehand(x, y, extended, dm, &fh_bars)
             } else { false };
@@ -3447,7 +3447,7 @@ impl ChartApp {
                             ExtendedLayoutHitTester::new(extended).hit_test(x, y),
                             mlc_core::engine::input::HitResult::PaneSeparator { .. }
                         );
-                        let dreg = self.core.drawings();
+                        let dreg = self.core.drawings_svc();
                         if let Some(dm) = dreg.get(pid) {
                             self.panel_app.panel_grid.update_crosshair(
                                 x, y, drag_mode, /* drawing_active */ true, extended, is_over_separator, dm, &fh_bars,
@@ -3535,7 +3535,7 @@ impl ChartApp {
             let active_bars_ch2: Vec<mlc_core::Bar> = self.active_chart_bars();
             active_pid_ch2
                 .and_then(|pid| {
-                    let dreg = self.core.drawings();
+                    let dreg = self.core.drawings_svc();
                     dreg.get(pid).and_then(|dm| self.panel_app.panel_grid
                         .update_crosshair(x, y, drag_mode, false, extended2, is_over_separator2, dm, &active_bars_ch2))
                 })
@@ -4017,7 +4017,7 @@ impl ChartApp {
         // Freehand drawing (brush/highlighter) — complete stroke on drag end
         let active_pid_cf = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
         if let Some(freehand) = active_pid_cf.and_then(|pid| {
-            let mut dreg = self.core.drawings_mut();
+            let mut dreg = self.core.drawings_svc_mut();
             let dm = dreg.entry_or_default(pid);
             self.panel_app.panel_grid.complete_freehand(dm)
         })
@@ -4476,12 +4476,12 @@ impl ChartApp {
             let is_drawing = if let Some(hovered) = split_hovered_leaf {
                 // Split mode: read from hovered leaf's window.
                 self.panel_app.panel_grid.container_for_leaf(hovered)
-                    .and_then(|w| self.core.drawings().get(w.chart_panel_id).map(|dm| dm.is_drawing()))
+                    .and_then(|w| self.core.drawings_svc().get(w.chart_panel_id).map(|dm| dm.is_drawing()))
                     .unwrap_or(false)
             } else {
                 // Single-window mode: active leaf == hovered leaf.
                 self.panel_app.panel_grid.active_container()
-                    .and_then(|w| self.core.drawings().get(w.chart_panel_id).map(|dm| dm.is_drawing()))
+                    .and_then(|w| self.core.drawings_svc().get(w.chart_panel_id).map(|dm| dm.is_drawing()))
                     .unwrap_or(false)
             };
 
@@ -4598,11 +4598,11 @@ impl ChartApp {
         // not, the split crosshair block should still run for the hovered leaf (F9).
         let is_drawing_skip = if let Some(hovered) = split_hovered_leaf {
             self.panel_app.panel_grid.container_for_leaf(hovered)
-                .and_then(|w| self.core.drawings().get(w.chart_panel_id).map(|dm| dm.is_drawing()))
+                .and_then(|w| self.core.drawings_svc().get(w.chart_panel_id).map(|dm| dm.is_drawing()))
                 .unwrap_or(false)
         } else {
             self.panel_app.panel_grid.active_container()
-                .and_then(|w| self.core.drawings().get(w.chart_panel_id).map(|dm| dm.is_drawing()))
+                .and_then(|w| self.core.drawings_svc().get(w.chart_panel_id).map(|dm| dm.is_drawing()))
                 .unwrap_or(false)
         };
         if self.panel_app.panel_grid.is_split() && !is_drawing_skip {
@@ -4740,7 +4740,7 @@ impl ChartApp {
         // Read from the frame-cached layout — no need to rebuild on every mouse event.
         let active_pid_is_drawing = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
         let is_drawing = active_pid_is_drawing
-            .and_then(|pid| self.core.drawings().get(pid).map(|dm| dm.is_drawing()))
+            .and_then(|pid| self.core.drawings_svc().get(pid).map(|dm| dm.is_drawing()))
             .unwrap_or(false);
 
         // Hide crosshair during sub-pane separator drag — resize cursor is enough.
@@ -4762,7 +4762,7 @@ impl ChartApp {
             let active_bars_ch3: Vec<mlc_core::Bar> = self.active_chart_bars();
             active_pid_ch3
                 .and_then(|pid| {
-                    let dreg = self.core.drawings();
+                    let dreg = self.core.drawings_svc();
                     dreg.get(pid).and_then(|dm| self.panel_app.panel_grid
                         .update_crosshair(x, y, drag_mode, is_drawing, &extended, is_over_separator_mm, dm, &active_bars_ch3))
                 })
@@ -4829,12 +4829,12 @@ impl ChartApp {
                 .collect();
             leaf_ids.iter().any(|&lid| {
                 self.panel_app.panel_grid.container_for_leaf(lid)
-                    .and_then(|w| self.core.drawings().get(w.chart_panel_id).map(|dm| dm.is_drawing()))
+                    .and_then(|w| self.core.drawings_svc().get(w.chart_panel_id).map(|dm| dm.is_drawing()))
                     .unwrap_or(false)
             })
         } else {
             self.panel_app.panel_grid.active_container()
-                .and_then(|w| self.core.drawings().get(w.chart_panel_id).map(|dm| dm.is_drawing()))
+                .and_then(|w| self.core.drawings_svc().get(w.chart_panel_id).map(|dm| dm.is_drawing()))
                 .unwrap_or(false)
         };
         if !is_drawing {
@@ -5304,7 +5304,7 @@ impl ChartApp {
                                 if field_id == "stroke_width" {
                                     if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
                                         if let Some(data) = active_pid_sl
-                                            .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
+                                            .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)))
                                         {
                                             let new_value = (data.width + delta).clamp(min_val, max_val);
                                             self.apply_slider_value(&field_id, new_value);
@@ -5314,7 +5314,7 @@ impl ChartApp {
                                     if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
                                         if let Some(pid) = active_pid_sl {
                                             let new_value_opt = {
-                                                let dreg = self.core.drawings();
+                                                let dreg = self.core.drawings_svc();
                                                 dreg.get(pid).and_then(|dm| {
                                                     let prims = dm.primitives();
                                                     if idx < prims.len() {
@@ -5339,7 +5339,7 @@ impl ChartApp {
                                     {
                                         if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
                                             if let Some(data) = active_pid_sl
-                                                .and_then(|pid| self.core.drawings().get(pid).and_then(|dm| dm.get_data_at(idx)))
+                                                .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)))
                                             {
                                                 let mut new_data = data.clone();
                                                 let mut tf_config = new_data.timeframe_visibility.clone()
@@ -5385,7 +5385,7 @@ impl ChartApp {
                                                 }
                                                 new_data.timeframe_visibility = Some(tf_config);
                                                 if let Some(pid) = active_pid_sl {
-                                                    self.core.drawings_mut().entry_or_default(pid).set_data_at(idx, &new_data);
+                                                    self.core.drawings_svc_mut().entry_or_default(pid).set_data_at(idx, &new_data);
                                                 }
                                                 self.sync_drawing_back_to_group();
                                             }
@@ -5933,7 +5933,7 @@ impl ChartApp {
         self.panel_app.toolbar_state.deselect_tool();
         let active_pid_key = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
         if let Some(pid) = active_pid_key {
-            self.core.drawings_mut().entry_or_default(pid).set_tool(None);
+            self.core.drawings_svc_mut().entry_or_default(pid).set_tool(None);
         }
         // Clear any in-progress preview on sync peers (state is now Idle).
         if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
@@ -6138,7 +6138,7 @@ impl ChartApp {
                         }
                     }
                 } else if let Some(pid) = active_pid_cmd {
-                    self.core.drawings_mut().entry_or_default(pid).insert_at(*index, type_id, points, data);
+                    self.core.drawings_svc_mut().entry_or_default(pid).insert_at(*index, type_id, points, data);
                 }
             }
             Command::DeletePrimitive { index, .. } => {
@@ -6149,7 +6149,7 @@ impl ChartApp {
                         }
                     }
                 } else if let Some(pid) = active_pid_cmd {
-                    self.core.drawings_mut().entry_or_default(pid).delete_at(*index);
+                    self.core.drawings_svc_mut().entry_or_default(pid).delete_at(*index);
                 }
             }
             Command::DeleteAllPrimitives { .. } => {
@@ -6158,7 +6158,7 @@ impl ChartApp {
                         group.primitives.clear();
                     }
                 } else if let Some(pid) = active_pid_cmd {
-                    self.core.drawings_mut().entry_or_default(pid).clear();
+                    self.core.drawings_svc_mut().entry_or_default(pid).clear();
                 }
             }
             Command::RestoreAllPrimitives { primitives } => {
@@ -6175,7 +6175,7 @@ impl ChartApp {
                         }
                     }
                 } else if let Some(pid) = active_pid_cmd {
-                    let mut guard = self.core.drawings_mut();
+                    let mut guard = self.core.drawings_svc_mut();
                     let dm = guard.entry_or_default(pid);
                     dm.clear();
                     for (i, (type_id, points, data)) in primitives.iter().enumerate() {
@@ -6191,7 +6191,7 @@ impl ChartApp {
                         }
                     }
                 } else if let Some(pid) = active_pid_cmd {
-                    self.core.drawings_mut().entry_or_default(pid).set_points_at(*index, new_points);
+                    self.core.drawings_svc_mut().entry_or_default(pid).set_points_at(*index, new_points);
                 }
             }
             Command::SetPrimitiveVisibility { index, visible, .. } => {
@@ -6202,7 +6202,7 @@ impl ChartApp {
                         }
                     }
                 } else if let Some(pid) = active_pid_cmd {
-                    self.core.drawings_mut().entry_or_default(pid).set_visibility_at(*index, *visible);
+                    self.core.drawings_svc_mut().entry_or_default(pid).set_visibility_at(*index, *visible);
                 }
             }
             Command::SetPrimitiveLock { index, locked, .. } => {
@@ -6213,7 +6213,7 @@ impl ChartApp {
                         }
                     }
                 } else if let Some(pid) = active_pid_cmd {
-                    self.core.drawings_mut().entry_or_default(pid).set_lock_at(*index, *locked);
+                    self.core.drawings_svc_mut().entry_or_default(pid).set_lock_at(*index, *locked);
                 }
             }
             Command::ModifyPrimitiveData { index, new_data, .. } => {
@@ -6224,7 +6224,7 @@ impl ChartApp {
                         }
                     }
                 } else if let Some(pid) = active_pid_cmd {
-                    self.core.drawings_mut().entry_or_default(pid).set_data_at(*index, new_data);
+                    self.core.drawings_svc_mut().entry_or_default(pid).set_data_at(*index, new_data);
                     self.sync_drawing_back_to_group();
                 }
             }
@@ -6238,7 +6238,7 @@ impl ChartApp {
                         }
                     }
                 } else if let Some(pid) = active_pid_cmd {
-                    self.core.drawings_mut().entry_or_default(pid).move_to_index(*old_index, *new_index);
+                    self.core.drawings_svc_mut().entry_or_default(pid).move_to_index(*old_index, *new_index);
                 }
             }
             // Non-primitive commands: viewport, symbol, timeframe, chart type, indicators.
@@ -6278,7 +6278,7 @@ impl ChartApp {
                     let exch = window.data_provider.exchange_name(new_symbol);
                     if let Some(bars) = window.data_provider.get_bars(new_symbol, &cur_tf) {
                         if let Some(pid) = active_pid_cmd {
-                            self.core.drawings_mut().entry_or_default(pid).set_current_symbol_key(new_symbol, &exch, &cur_at_label);
+                            self.core.drawings_svc_mut().entry_or_default(pid).set_current_symbol_key(new_symbol, &exch, &cur_at_label);
                         }
                         bars_for_bubble = Some(bars.clone());
                         window.reconcile_view_fresh(&bars);
@@ -7175,7 +7175,7 @@ impl ChartApp {
                 let exchange_name = digdigdig3::ExchangeId::Binance.as_str().to_string();
                 if let Some(pid) = self.panel_app.panel_grid.container_for_leaf(active_leaf).map(|w| w.chart_panel_id) {
                     if let Some(style_arc) = self.core.bubble().bubble(group_id).map(|g| g.last_used_style.clone()) {
-                        let mut guard = self.core.drawings_mut();
+                        let mut guard = self.core.drawings_svc_mut();
                         let dm = guard.entry_or_default(pid);
                         dm.bind_style_store(style_arc);
                         dm.set_current_symbol_key("BTCUSDT", &exchange_name, "S");
@@ -7335,7 +7335,7 @@ impl ChartApp {
                     .get(&snap_panel_id)
                     .unwrap_or(&snap_default_panel);
                 let snap_default_dm = mlc_core::drawing::DrawingManager::default();
-                let dreg_snap = self.core.drawings();
+                let dreg_snap = self.core.drawings_svc();
                 let snap_dm = dreg_snap.get(snap_panel_id).unwrap_or(&snap_default_dm);
                 let snap_prims = snap_dm.primitives();
                 preset.windows.push(ChartWindowSnapshot::from_window(
