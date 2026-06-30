@@ -15,7 +15,6 @@ mlc-indicators = { path = "../mlc-indicators", package = "mylittlechart-indicato
 uzor = "=1.4.15"
 mlc-sidebar-content = { path = "../mlc-sidebar-content", package = "mylittlechart-sidebar-content" }
 mlc-panels = { path = "../mlc-panels", package = "mylittlechart-panels" }
-mlc-alerts = { path = "../mlc-alerts", package = "mylittlechart-alerts" }
 mlc-alert-delivery = { path = "../mlc-alert-delivery", package = "mylittlechart-alert-delivery" }
 mlc-crypto = { path = "../mlc-crypto", package = "mylittlechart-crypto" }
 uuid = { version = "1", features = ["v4"] }

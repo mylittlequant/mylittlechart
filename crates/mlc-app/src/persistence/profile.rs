@@ -192,7 +192,7 @@ impl ChartApp {
         let t0 = web_time::Instant::now();
         let alert_manager = std::mem::replace(
             &mut *self.core.alert_mut(),
-            mlc_alerts::AlertManager::new(),
+            mlc_backend_core::alert::AlertManager::new(),
         );
         let pk_alert_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();

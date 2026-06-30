@@ -22,7 +22,7 @@ use serde::{Serialize, Deserialize};
 use crate::drawing::PrimitiveData;
 use crate::chart::CompareSeries;
 use crate::state::Timeframe;
-use mlc_alerts::AlertItem;
+use crate::alert::AlertItem;
 
 // =============================================================================
 // TimeframeVisibility - controls on which timeframes an object is shown

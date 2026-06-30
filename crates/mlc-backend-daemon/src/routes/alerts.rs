@@ -22,7 +22,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use mlc_alerts::{AlertCondition, AlertStatus};
+use mlc_core::alert::{AlertCondition, AlertStatus};
 
 use crate::AppState;
 

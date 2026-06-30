@@ -36,7 +36,7 @@ pub struct HydratedPresetState {
     pub panel_grid: ChartPanelGrid,
     pub tag_manager: BubbleStore,
     pub indicator_manager: IndicatorManager,
-    pub alert_manager: mlc_alerts::AlertManager,
+    pub alert_manager: mlc_backend_core::alert::AlertManager,
     pub leaf_color_tags: HashMap<LeafId, [f32; 4]>,
     pub indicator_overlay_states: HashMap<LeafId, mlc_layout::ui::modal_settings::IndicatorOverlayState>,
     pub pending_sub_pane_ratios: HashMap<u64, HashMap<u64, f32>>,

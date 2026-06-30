@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use web_time::SystemTime;
 
 use super::snapshots::{ChartWindowSnapshot, DataBubbleSnapshot, IndicatorSnapshot};
-use mlc_alerts::AlertItem;
+use crate::alert::AlertItem;
 
 // =============================================================================
 // ChartPreset

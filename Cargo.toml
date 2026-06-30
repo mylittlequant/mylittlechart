@@ -9,7 +9,6 @@ members = [
     "crates/mlc-indicators",
     "crates/mlc-sidebar-content",
     "crates/mlc-panels",
-    "crates/mlc-alerts",
     "crates/mlc-alert-delivery",
     "crates/mlc-live-data",
     "crates/mlc-agentic-server",

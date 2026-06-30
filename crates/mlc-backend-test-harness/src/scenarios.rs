@@ -1596,7 +1596,7 @@ pub fn stream_dom_trade_dot_passthrough() -> HarnessResult<()> {
 }
 
 pub fn body_alerts_straddle_fires_on_cross(h: &mut BackendHarness) -> HarnessResult<()> {
-    use mlc_alerts::{AlertCondition, AlertSource};
+    use mlc_core::alert::{AlertCondition, AlertSource};
     let pivot: f64 = 50_000.0;
     let target_up = pivot * 1.0025;   // +0.25 %
     let target_dn = pivot * 0.9975;   // -0.25 %
@@ -1651,7 +1651,7 @@ pub fn alerts_straddle_fires_on_cross() -> HarnessResult<()> {
 }
 
 pub fn body_alerts_straddle_fires_on_drop(h: &mut BackendHarness) -> HarnessResult<()> {
-    use mlc_alerts::{AlertCondition, AlertSource};
+    use mlc_core::alert::{AlertCondition, AlertSource};
     let pivot: f64 = 50_000.0;
     let target_up = pivot * 1.0025;
     let target_dn = pivot * 0.9975;

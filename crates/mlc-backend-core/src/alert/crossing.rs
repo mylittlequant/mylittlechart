@@ -3,7 +3,7 @@
 //! For most use cases, prefer `AlertManager::check_crossings()` which
 //! tracks `last_price` internally.
 
-use crate::types::{AlertCondition, AlertStatus, AlertItem};
+use mlc_core::alert::{AlertCondition, AlertStatus, AlertItem};
 
 /// Check a single alert against prev/current price. Returns true if triggered.
 pub fn check_crossings(alert: &AlertItem, prev_price: f64, current_price: f64) -> bool {

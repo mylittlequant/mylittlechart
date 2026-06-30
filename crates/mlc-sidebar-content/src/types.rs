@@ -197,7 +197,7 @@ impl ObjectTreeItem {
 ///
 /// Re-exported from the `alerts` crate so chart-level renderers
 /// can use this type without depending on core.
-pub use mlc_alerts::AlertItem;
+pub use mlc_core::alert::AlertItem;
 
 // =============================================================================
 // Signals

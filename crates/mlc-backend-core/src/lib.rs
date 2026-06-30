@@ -25,6 +25,7 @@
 //! - **Final** — lift module into `mlc-backend-core` crate.
 
 pub mod bubble;
+pub mod alert;
 
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -33,7 +34,7 @@ use dashmap::DashMap;
 use serde::{Serialize, Serializer};
 
 use digdigdig3::ExchangeId;
-use mlc_alerts::AlertManager;
+use crate::alert::AlertManager;
 use mlc_core::preset::preset::ChartPreset;
 use mlc_core::templates::manager::TemplateManager;
 use mlc_core::ids::BubbleId;

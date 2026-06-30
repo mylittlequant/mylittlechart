@@ -104,6 +104,9 @@ pub use ids::{BubbleId, GroupView, MemberSyncOverride, SyncFlags, SyncMemberId};
 // Pure value-types for indicators shared between backend and app.
 pub mod indicator_types;
 
+// Pure value-types for alerts shared between backend and app.
+pub mod alert;
+
 // Chart preset system (snapshot types for persistence)
 pub mod preset;
 

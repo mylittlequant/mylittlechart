@@ -8,7 +8,8 @@ use mlc_core::{
 };
 use mlc_core::indicator_source::IndicatorSource;
 use mlc_indicators::IndicatorManager;
-use mlc_alerts::{AlertManager, AlertStatus, AlertSource};
+use mlc_backend_core::alert::AlertManager;
+use mlc_core::alert::{AlertStatus, AlertSource};
 
 impl ChartApp {
     // -------------------------------------------------------------------------

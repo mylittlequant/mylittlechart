@@ -3739,7 +3739,7 @@ impl ChartApp {
             // and reusing avoids redundant Vec allocations per leaf.
             let drawing_points_cache: std::collections::HashMap<
                 mlc_core::ChartId,
-                Vec<(u64, Vec<(f64, f64)>, mlc_alerts::DrawingExtendMode)>,
+                Vec<(u64, Vec<(f64, f64)>, mlc_core::alert::DrawingExtendMode)>,
             > = {
                 let drawings_guard = self.core.drawings();
                 self.panel_app.panel_grid.containers()
@@ -3753,14 +3753,14 @@ impl ChartApp {
                         let prims_iter = drawings_guard.get(w.chart_panel_id)
                             .map(|dm| dm.primitives())
                             .unwrap_or(&empty_prims);
-                        let pts: Vec<(u64, Vec<(f64, f64)>, mlc_alerts::DrawingExtendMode)> = prims_iter
+                        let pts: Vec<(u64, Vec<(f64, f64)>, mlc_core::alert::DrawingExtendMode)> = prims_iter
                             .iter()
                             .map(|p| {
                                 let pts_bar: Vec<(f64, f64)> = p.points()
                                     .into_iter()
                                     .map(|(ts_ms, price)| (mlc_core::timestamp_ms_to_bar_f64(bars, ts_ms), price))
                                     .collect();
-                                (p.data().id, pts_bar, mlc_alerts::DrawingExtendMode::from_u8(p.extend_mode_raw()))
+                                (p.data().id, pts_bar, mlc_core::alert::DrawingExtendMode::from_u8(p.extend_mode_raw()))
                             })
                             .collect();
                         (chart_id, pts)
@@ -3866,9 +3866,9 @@ impl ChartApp {
                 let alert_current_bar = 0usize.saturating_sub(1) as f64;
                 // Look up pre-built drawing points from cache (computed once per
                 // chart window before this loop to avoid per-leaf reallocation).
-                let empty_pts: Vec<(u64, Vec<(f64, f64)>, mlc_alerts::DrawingExtendMode)> = Vec::new();
+                let empty_pts: Vec<(u64, Vec<(f64, f64)>, mlc_core::alert::DrawingExtendMode)> = Vec::new();
                 let chart_id_for_cache = leaf_chart_id;
-                let alert_drawing_points: &Vec<(u64, Vec<(f64, f64)>, mlc_alerts::DrawingExtendMode)> =
+                let alert_drawing_points: &Vec<(u64, Vec<(f64, f64)>, mlc_core::alert::DrawingExtendMode)> =
                     chart_id_for_cache
                         .and_then(|cid| drawing_points_cache.get(&cid))
                         .unwrap_or(&empty_pts);
@@ -3876,11 +3876,11 @@ impl ChartApp {
                 let alert_indicator_values = &alert_indicator_values_cache;
                 let alert_render_data: Vec<AlertRenderData> = self.core.alert().items()
                     .iter()
-                    .filter(|a| a.status == mlc_alerts::AlertStatus::Active)
-                    .filter(|a| matches!(a.source, mlc_alerts::AlertSource::Price { .. }))
+                    .filter(|a| a.status == mlc_core::alert::AlertStatus::Active)
+                    .filter(|a| matches!(a.source, mlc_core::alert::AlertSource::Price { .. }))
                     .filter(|a| a.matches_window(&split_symbol, &split_exchange, &split_account_type))
                     .filter_map(|alert| {
-                        let price = mlc_alerts::AlertManager::resolve_price_static(
+                        let price = mlc_backend_core::alert::AlertManager::resolve_price_static(
                             alert,
                             alert_current_bar,
                             alert_drawing_points,
@@ -4402,14 +4402,14 @@ impl ChartApp {
                     .and_then(|pid| single_drawings_alert_guard.get(pid))
                     .map(|dm| dm.primitives())
                     .unwrap_or(&empty_prims2);
-                let pts: Vec<(u64, Vec<(f64, f64)>, mlc_alerts::DrawingExtendMode)> = prims2_iter
+                let pts: Vec<(u64, Vec<(f64, f64)>, mlc_core::alert::DrawingExtendMode)> = prims2_iter
                     .iter()
                     .map(|p| {
                         let pts_bar: Vec<(f64, f64)> = p.points()
                             .into_iter()
                             .map(|(ts_ms, price)| (mlc_core::timestamp_ms_to_bar_f64(bars, ts_ms), price))
                             .collect();
-                        (p.data().id, pts_bar, mlc_alerts::DrawingExtendMode::from_u8(p.extend_mode_raw()))
+                        (p.data().id, pts_bar, mlc_core::alert::DrawingExtendMode::from_u8(p.extend_mode_raw()))
                     })
                     .collect();
                 (cb, pts)
@@ -4428,11 +4428,11 @@ impl ChartApp {
                     .unwrap_or(("", "", "", ""));
                 self.core.alert().items()
                     .iter()
-                    .filter(|a| a.status == mlc_alerts::AlertStatus::Active)
-                    .filter(|a| matches!(a.source, mlc_alerts::AlertSource::Price { .. }))
+                    .filter(|a| a.status == mlc_core::alert::AlertStatus::Active)
+                    .filter(|a| matches!(a.source, mlc_core::alert::AlertSource::Price { .. }))
                     .filter(|a| a.matches_window(single_sym, single_exch, single_at))
                     .filter_map(|alert| {
-                        let price = mlc_alerts::AlertManager::resolve_price_static(
+                        let price = mlc_backend_core::alert::AlertManager::resolve_price_static(
                             alert,
                             single_alert_current_bar,
                             &single_alert_drawing_points,

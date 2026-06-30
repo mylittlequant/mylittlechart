@@ -12,6 +12,5 @@ path = "src/lib.rs"
 [dependencies]
 web-time = "1"
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
-mlc-alerts = { path = "../mlc-alerts", package = "mylittlechart-alerts" }
 mlc-alert-delivery = { path = "../mlc-alert-delivery", package = "mylittlechart-alert-delivery" }
 uzor = "=1.4.15"

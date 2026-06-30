@@ -190,7 +190,7 @@ impl ChartApp {
                         } else {
                             inline_alert_price_fallback
                         };
-                        let source = mlc_alerts::AlertSource::Drawing { primitive_id: prim_id, label };
+                        let source = mlc_core::alert::AlertSource::Drawing { primitive_id: prim_id, label };
                         drop(guard);
                         self.panel_app.alert_settings_state.open_new(source, &inline_alert_symbol, price);
                         self.panel_app.alert_settings_state.pin_initial_position(
@@ -1518,7 +1518,7 @@ impl ChartApp {
                                 .get_instance(instance_id)
                             .map(|inst| inst.name.clone())
                             .unwrap_or_else(|| format!("Indicator #{}", instance_id));
-                        let source = mlc_alerts::AlertSource::Indicator {
+                        let source = mlc_core::alert::AlertSource::Indicator {
                             indicator_id: instance_id,
                             output_index: 0,
                             label,

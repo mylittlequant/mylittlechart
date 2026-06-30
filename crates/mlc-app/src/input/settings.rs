@@ -2268,7 +2268,7 @@ impl ChartApp {
                                 alert.timeframe = active_tf_name;
                                 alert.window_id_hint = active_window_id;
                                 alert.group_id = active_group_id;
-                                if !matches!(alert.source, mlc_alerts::AlertSource::Price { .. }) {
+                                if !matches!(alert.source, mlc_core::alert::AlertSource::Price { .. }) {
                                     alert.set_symbol(active_sym);
                                 }
                             }
@@ -2343,10 +2343,10 @@ impl ChartApp {
                 if let Some(idx_str) = rest.strip_prefix("tmode:") {
                     if let Ok(idx) = idx_str.parse::<usize>() {
                         let mode = match idx {
-                            0 => Some(mlc_alerts::AlertTriggerMode::OneShot),
-                            1 => Some(mlc_alerts::AlertTriggerMode::EveryTime),
-                            2 => Some(mlc_alerts::AlertTriggerMode::OncePerBar),
-                            3 => Some(mlc_alerts::AlertTriggerMode::TimesN(
+                            0 => Some(mlc_core::alert::AlertTriggerMode::OneShot),
+                            1 => Some(mlc_core::alert::AlertTriggerMode::EveryTime),
+                            2 => Some(mlc_core::alert::AlertTriggerMode::OncePerBar),
+                            3 => Some(mlc_core::alert::AlertTriggerMode::TimesN(
                                 self.panel_app.alert_settings_state.times_n,
                             )),
                             _ => None,
@@ -2517,8 +2517,8 @@ impl ChartApp {
                     if let Ok(id) = id_str.parse::<u64>() {
                         if let Some(alert) = self.core.alert_mut().get_mut(id) {
                             alert.status = match alert.status {
-                                mlc_alerts::AlertStatus::Active => mlc_alerts::AlertStatus::Paused,
-                                mlc_alerts::AlertStatus::Paused => mlc_alerts::AlertStatus::Active,
+                                mlc_core::alert::AlertStatus::Active => mlc_core::alert::AlertStatus::Paused,
+                                mlc_core::alert::AlertStatus::Paused => mlc_core::alert::AlertStatus::Active,
                                 other => other,
                             };
                         }

@@ -14,7 +14,6 @@ mlc-backend-core = { path = "../mlc-backend-core", package = "mylittlechart-back
 mlc-live-data = { path = "../mlc-live-data", package = "mylittlechart-live-data" }
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 mlc-indicators = { path = "../mlc-indicators", package = "mylittlechart-indicators" }
-mlc-alerts = { path = "../mlc-alerts", package = "mylittlechart-alerts" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "sync"] }
 axum = { version = "0.7", features = ["http1", "json"] }
 tower = "0.4"

@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use crate::types::{AlertCondition, AlertItem, AlertSource, AlertStatus, AlertTriggerMode, DrawingExtendMode, SignalBarState, SignalDirection};
+use mlc_core::alert::{AlertCondition, AlertItem, AlertSource, AlertStatus, AlertTriggerMode, DrawingExtendMode, SignalBarState, SignalDirection, AlertTransport};
 
 /// Central alert manager. Owns all alert items and the ID counter.
 ///
@@ -152,7 +152,7 @@ impl AlertManager {
         percentage: f64,
         condition: AlertCondition,
         trigger_mode: AlertTriggerMode,
-        transports: Vec<crate::types::AlertTransport>,
+        transports: Vec<AlertTransport>,
     ) -> bool {
         if let Some(alert) = self.get_mut(id) {
             alert.source = source;
@@ -294,7 +294,7 @@ impl AlertManager {
                     .map(|(_, _, v)| v)?;
                 vals.last().copied()
             }
-            AlertSource::CrossingPair { .. } => None, // TODO
+            AlertSource::CrossingPair { .. } => None,
             AlertSource::Signal { .. } => {
                 // Signal alerts don't have a price level to resolve —
                 // they fire based on signal events, not price crossing.

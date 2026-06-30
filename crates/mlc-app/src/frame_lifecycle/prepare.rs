@@ -971,13 +971,13 @@ impl ChartApp {
                 let alert_items = alert_items.as_slice();
                 for tree_item in &mut self.sidebar_state.object_tree_items {
                     tree_item.has_alert = alert_items.iter().any(|a| match &a.source {
-                        mlc_alerts::AlertSource::Drawing { primitive_id, .. } => {
+                        mlc_core::alert::AlertSource::Drawing { primitive_id, .. } => {
                             *primitive_id == tree_item.id
                         }
-                        mlc_alerts::AlertSource::Indicator { indicator_id, .. } => {
+                        mlc_core::alert::AlertSource::Indicator { indicator_id, .. } => {
                             *indicator_id == tree_item.id
                         }
-                        mlc_alerts::AlertSource::Signal { indicator_id, .. } => {
+                        mlc_core::alert::AlertSource::Signal { indicator_id, .. } => {
                             *indicator_id == tree_item.id
                         }
                         _ => false,

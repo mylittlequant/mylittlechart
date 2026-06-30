@@ -1843,8 +1843,8 @@ fn render_alert_items(
     result: &mut RightSidebarResult,
     input_coordinator: &mut InputCoordinator,
 ) -> f64 {
-    use mlc_alerts::AlertSource;
-    use mlc_alerts::AlertStatus;
+    use mlc_core::alert::AlertSource;
+    use mlc_core::alert::AlertStatus;
 
     if state.alert_items.is_empty() {
         ctx.set_font("12px sans-serif");
@@ -1867,9 +1867,9 @@ fn render_alert_items(
     // -------------------------------------------------------------------------
     // Group alerts by source category.
     // -------------------------------------------------------------------------
-    let mut price_alerts: Vec<&mlc_alerts::AlertItem> = Vec::new();
-    let mut drawing_alerts: Vec<&mlc_alerts::AlertItem> = Vec::new();
-    let mut indicator_alerts: Vec<&mlc_alerts::AlertItem> = Vec::new();
+    let mut price_alerts: Vec<&mlc_core::alert::AlertItem> = Vec::new();
+    let mut drawing_alerts: Vec<&mlc_core::alert::AlertItem> = Vec::new();
+    let mut indicator_alerts: Vec<&mlc_core::alert::AlertItem> = Vec::new();
 
     for item in &state.alert_items {
         match &item.source {
@@ -1882,7 +1882,7 @@ fn render_alert_items(
     }
 
     // Groups to render in display order: (widget_id_suffix, header_label, items).
-    let groups: &[(&str, &str, &[&mlc_alerts::AlertItem])] = &[
+    let groups: &[(&str, &str, &[&mlc_core::alert::AlertItem])] = &[
         ("price",     "Price Alerts",     &price_alerts),
         ("drawing",   "Drawing Alerts",   &drawing_alerts),
         ("indicator", "Indicator Alerts", &indicator_alerts),

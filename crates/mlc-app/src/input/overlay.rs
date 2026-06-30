@@ -101,7 +101,7 @@ impl ChartApp {
                         .and_then(|w| w.compare_overlay.series.get(idx))
                         .map(|s| format!("Compare: {}", s.symbol))
                         .unwrap_or_else(|| format!("Compare series {}", idx));
-                    let source = mlc_alerts::AlertSource::Price { symbol: symbol.clone() };
+                    let source = mlc_core::alert::AlertSource::Price { symbol: symbol.clone() };
                     self.panel_app.alert_settings_state.open_new(source, &symbol, price);
                     self.panel_app.alert_settings_state.source_name = source_name;
                     self.panel_app.alert_settings_state.pin_initial_position(
@@ -180,7 +180,7 @@ impl ChartApp {
                         .and_then(|w| w.compare_overlay.series.get(idx))
                         .map(|s| format!("Compare: {}", s.symbol))
                         .unwrap_or_else(|| format!("Compare series {}", idx));
-                    let source = mlc_alerts::AlertSource::Price { symbol: symbol.clone() };
+                    let source = mlc_core::alert::AlertSource::Price { symbol: symbol.clone() };
                     self.panel_app.alert_settings_state.open_new(source, &symbol, price);
                     self.panel_app.alert_settings_state.source_name = source_name;
                     self.panel_app.alert_settings_state.pin_initial_position(
@@ -686,11 +686,11 @@ impl ChartApp {
                             .and_then(|cid| self.symbol_for_chart(cid))
                             .map(String::from)
                             .unwrap_or_else(|| "BTCUSD".to_string());
-                        let source = mlc_alerts::AlertSource::Signal {
+                        let source = mlc_core::alert::AlertSource::Signal {
                             indicator_id: id,
                             label: label.clone(),
-                            direction_filter: mlc_alerts::SignalDirection::Any,
-                            bar_state: mlc_alerts::SignalBarState::Forming,
+                            direction_filter: mlc_core::alert::SignalDirection::Any,
+                            bar_state: mlc_core::alert::SignalBarState::Forming,
                             kind_filter: None,
                         };
                         self.panel_app.alert_settings_state.open_new(source, &symbol, price);
@@ -751,11 +751,11 @@ impl ChartApp {
                             .and_then(|cid| self.symbol_for_chart(cid))
                             .map(String::from)
                             .unwrap_or_else(|| "BTCUSD".to_string());
-                        let source = mlc_alerts::AlertSource::Signal {
+                        let source = mlc_core::alert::AlertSource::Signal {
                             indicator_id: id,
                             label: label.clone(),
-                            direction_filter: mlc_alerts::SignalDirection::Any,
-                            bar_state: mlc_alerts::SignalBarState::Forming,
+                            direction_filter: mlc_core::alert::SignalDirection::Any,
+                            bar_state: mlc_core::alert::SignalBarState::Forming,
                             kind_filter: None,
                         };
                         self.panel_app.alert_settings_state.open_new(source, &symbol, price);

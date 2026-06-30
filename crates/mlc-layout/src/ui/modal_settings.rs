@@ -1975,7 +1975,7 @@ impl CompareSettingsState {
 // Alert types — re-exported from the `alerts` crate
 // =============================================================================
 
-pub use mlc_alerts::{AlertStatus, AlertCondition, AlertItem, AlertSource, AlertTriggerMode, AlertTransport, SignalBarState, SignalDirection};
+pub use mlc_core::alert::{AlertStatus, AlertCondition, AlertItem, AlertSource, AlertTriggerMode, AlertTransport, SignalBarState, SignalDirection};
 
 // =============================================================================
 // Alert Settings Modal State
