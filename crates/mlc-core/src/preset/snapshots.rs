@@ -447,5 +447,8 @@ pub struct DataBubbleSnapshot {
     #[serde(default)]
     pub scale_mode: ScaleMode,
 
+    /// Alerts attached to this bubble.  Absent in old presets → empty vec.
+    #[serde(default)]
+    pub alerts: Vec<crate::alert::AlertItem>,
 }
 

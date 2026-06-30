@@ -34,7 +34,6 @@ use dashmap::DashMap;
 use serde::{Serialize, Serializer};
 
 use digdigdig3::ExchangeId;
-use crate::alert::AlertManager;
 use mlc_core::preset::preset::ChartPreset;
 use mlc_core::templates::manager::TemplateManager;
 use mlc_core::ids::BubbleId;
@@ -658,11 +657,6 @@ pub struct BackendCore {
     /// taken and dropped each tick frame, no waits.
     pub bubble: std::sync::RwLock<BubbleStore>,
 
-    /// Global alert service.  Owns alert items, the ID counter, and
-    /// per-symbol crossing state.  Separate lock from `bubble` so alert reads
-    /// do not block bubble writes and vice versa.
-    pub alert: std::sync::RwLock<AlertManager>,
-
     /// Indicator manager — owns all indicator instances + recalc state +
     /// per-window assignment + global definitions catalog. Cannot live inside
     /// `Managers` (mlc-core) because mlc-indicators is above mlc-core in the
@@ -784,7 +778,6 @@ impl BackendCore {
         let broadcast_rx = bridge.add_listener();
         Arc::new(Self {
             bubble: std::sync::RwLock::new(BubbleStore::new()),
-            alert: std::sync::RwLock::new(AlertManager::new()),
             indicators: std::sync::RwLock::new(IndicatorManager::new()),
             broadcast_rx: std::sync::Mutex::new(broadcast_rx),
             bridge,
@@ -915,18 +908,6 @@ impl BackendCore {
     #[inline]
     pub fn bubble_mut(&self) -> std::sync::RwLockWriteGuard<'_, BubbleStore> {
         self.bubble.write().expect("BackendCore.bubble poisoned (write)")
-    }
-
-    /// Read guard for the alert manager.
-    #[inline]
-    pub fn alert(&self) -> std::sync::RwLockReadGuard<'_, AlertManager> {
-        self.alert.read().expect("BackendCore.alert poisoned (read)")
-    }
-
-    /// Write guard for the alert manager.
-    #[inline]
-    pub fn alert_mut(&self) -> std::sync::RwLockWriteGuard<'_, AlertManager> {
-        self.alert.write().expect("BackendCore.alert poisoned (write)")
     }
 
     /// Lock the trading manager for mutation. Returns `None` if trading is

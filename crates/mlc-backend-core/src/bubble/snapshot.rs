@@ -86,6 +86,7 @@ impl DataBubble {
             command_history: Some(self.command_history.clone()),
             auto_created: self.auto_created,
             last_used_style,
+            alerts: self.alerts.clone(),
         }
     }
 }

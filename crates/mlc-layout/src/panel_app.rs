@@ -9,9 +9,7 @@ use uzor::panel_api::{
 };
 use uzor::render::{RenderContext, draw_svg_icon};
 use crate::layout::LayoutRect;
-use crate::layout::{ExtendedFrameLayout, FrameTheme};
-use crate::chart_render::{ScaleTheme, ChartTheme};
-use mlc_core::state::{ChartPanelGrid, ChartContainer, Timeframe};
+use crate::layout::ExtendedFrameLayout;
 use mlc_core::scale_settings::ScaleSettings;
 use crate::ui::toolbar_render::{
     ToolbarRect, ToolbarRenderResult,
@@ -25,24 +23,7 @@ use crate::ui::toolbar_core::{
     draw_toolbar_with_icons, calculate_section_width,
     apply_active_states, apply_toggle_icons, apply_quick_select_icons,
 };
-use mlc_core::modal::ChartOpenModal;
 use mlc_core::state::selected_config::SelectedPrimitiveConfig;
-use crate::ui::modal_settings::{PrimitiveSettingsState, IndicatorSettingsState, ChartSettingsState, IndicatorOverlayState, OverlaySettingsState, TagsTabsState, PresetNameInputState, ChartBrowserState, AlertSettingsState, CompareSettingsState};
-use mlc_core::templates::TemplateManager;
-use crate::ui::context_menu::ContextMenuState;
-use crate::layout::render_frame::{ChartModalRenderResult, ChartModalLayout};
-use mlc_core::indicator_source::IndicatorSource;
-use crate::layout::modals::{
-    render_primitive_settings_modal,
-    render_primitive_color_picker_popup,
-    render_indicator_settings_modal,
-    render_indicator_color_picker_popup,
-    render_chart_settings_color_picker_popup,
-    render_settings_modal, ChartSettingsData,
-    render_overlay_settings_modal,
-    render_panel_color_tag_picker_popup,
-    render_tags_tabs_modal,
-};
 
 // Types moved to state/toolbar_state.rs (Phase X.4 back-edge removal).
 // Re-exported here so any `crate::panel_app::*` paths remain valid.

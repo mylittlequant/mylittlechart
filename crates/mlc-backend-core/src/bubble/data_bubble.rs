@@ -126,6 +126,26 @@ pub struct DataBubble {
 
     /// Liquidation dot overlay. Written by `LiquidationEvent`.
     pub liq_dots: Option<Vec<mlc_core::chart::liquidation_heatmap::LiquidationDot>>,
+
+    // =========================================================================
+    // === Alert storage (Step 2c doctrine cutover) ============================
+    // =========================================================================
+    // Alerts are now owned by the bubble they target.  AlertManager is a
+    // stateless namespace whose methods receive `&mut DataBubble` instead of
+    // operating on internal fields.
+    // =========================================================================
+
+    /// Alerts attached to this bubble.  Each alert targets data inside this
+    /// bubble (price levels, drawings, indicators).  Persisted with the bubble.
+    pub alerts: Vec<mlc_core::alert::AlertItem>,
+
+    /// Per-bubble next-id counter for alerts.
+    pub alert_next_id: u64,
+
+    /// Per-symbol last-tick price cache used for crossing detection.
+    /// Key: `"exchange:symbol:account_type"`.  Not persisted — rebuilt
+    /// from live ticks.
+    pub alert_last_price: std::collections::HashMap<String, f64>,
 }
 
 
@@ -278,6 +298,9 @@ impl Clone for DataBubble {
             dom_trade_dots: self.dom_trade_dots.clone(),
             liq_heatmap: self.liq_heatmap.clone(),
             liq_dots: self.liq_dots.clone(),
+            alerts: self.alerts.clone(),
+            alert_next_id: self.alert_next_id,
+            alert_last_price: self.alert_last_price.clone(),
         }
     }
 }

@@ -2623,8 +2623,19 @@ impl ChartApp {
         // Pattern: "alert_delete_{id}"
         if widget_id.starts_with("alert_delete_") {
             if let Some(id) = widget_id.strip_prefix("alert_delete_").and_then(|s| s.parse::<u64>().ok()) {
-                let snapshot = self.core.alert().get(id).cloned();
-                self.core.alert_mut().remove(id);
+                use mlc_backend_core::alert::AlertManager;
+                let (snapshot, bid_opt) = {
+                    let bm = self.core.bubble();
+                    let found = bm.bubbles()
+                        .find_map(|b| AlertManager::get(b, id).map(|a| (a.clone(), b.id)));
+                    found.map(|(a, bid)| (Some(a), Some(bid))).unwrap_or((None, None))
+                };
+                if let Some(bid) = bid_opt {
+                    let mut bm = self.core.bubble_mut();
+                    if let Some(b) = bm.bubble_mut(bid) {
+                        AlertManager::remove(b, id);
+                    }
+                }
                 if let Some(snap) = snapshot {
                     self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot: snap });
                 }
@@ -2655,9 +2666,15 @@ impl ChartApp {
         }
         // Pattern: "alert_{id}" (row click — navigate to alert's window, then open edit modal)
         if let Some(id) = widget_id.strip_prefix("alert_").and_then(|s| s.parse::<u64>().ok()) {
-            // Clone alert data we need before taking any mutable borrows.
-            let alert_nav = self.core.alert().get(id).map(|a| (a.window_id_hint, id));
-            if let Some((window_id_hint, alert_id)) = alert_nav {
+            use mlc_backend_core::alert::AlertManager;
+            let alert_data = {
+                let bm = self.core.bubble();
+                let v = bm.bubbles().find_map(|b| AlertManager::get(b, id).cloned());
+                v
+            };
+            if let Some(alert) = alert_data {
+                let alert_id = alert.id;
+                let window_id_hint = alert.window_id_hint;
                 // Navigate to the window that created this alert, if known.
                 if let Some(wid) = window_id_hint {
                     let chart_id = mlc_core::ChartId(wid);
@@ -2667,13 +2684,11 @@ impl ChartApp {
                     }
                 }
                 // Open the edit modal.
-                if let Some(alert) = self.core.alert().get(alert_id) {
-                    self.panel_app.alert_settings_state.open_edit(alert);
-                    self.panel_app.alert_settings_state.pin_initial_position(
-                        self.content_rect.width, self.content_rect.height,
-                    );
-                    eprintln!("[Sidebar] Alert edit opened: id={}", alert_id);
-                }
+                self.panel_app.alert_settings_state.open_edit(&alert);
+                self.panel_app.alert_settings_state.pin_initial_position(
+                    self.content_rect.width, self.content_rect.height,
+                );
+                eprintln!("[Sidebar] Alert edit opened: id={}", alert_id);
             }
             return;
         }
@@ -3029,14 +3044,14 @@ impl ChartApp {
         // Widget ID: "alert_bell_drw_{primitive_id}"
         if widget_id.starts_with("alert_bell_drw_") {
             if let Some(prim_id) = widget_id.strip_prefix("alert_bell_drw_").and_then(|s| s.parse::<u64>().ok()) {
-                // Find the first Active alert bound to this primitive.
-                let alert = self.core.alert().items()
-                    .iter()
-                    .find(|a| matches!(
+                let alert = {
+                    let bm = self.core.bubble();
+                    let v = bm.bubbles().find_map(|b| b.alerts.iter().find(|a| matches!(
                         &a.source,
                         mlc_core::alert::AlertSource::Drawing { primitive_id, .. } if *primitive_id == prim_id
-                    ) && a.status == mlc_core::alert::AlertStatus::Active)
-                    .cloned();
+                    ) && a.status == mlc_core::alert::AlertStatus::Active).cloned());
+                    v
+                };
                 if let Some(alert) = alert {
                     self.panel_app.alert_settings_state.open_edit(&alert);
                     self.panel_app.alert_settings_state.pin_initial_position(
@@ -3051,13 +3066,14 @@ impl ChartApp {
         // Widget ID: "alert_bell_ind_{indicator_id}"
         if widget_id.starts_with("alert_bell_ind_") {
             if let Some(ind_id) = widget_id.strip_prefix("alert_bell_ind_").and_then(|s| s.parse::<u64>().ok()) {
-                let alert = self.core.alert().items()
-                    .iter()
-                    .find(|a| matches!(
+                let alert = {
+                    let bm = self.core.bubble();
+                    let v = bm.bubbles().find_map(|b| b.alerts.iter().find(|a| matches!(
                         &a.source,
                         mlc_core::alert::AlertSource::Signal { indicator_id, .. } if *indicator_id == ind_id
-                    ) && a.status == mlc_core::alert::AlertStatus::Active)
-                    .cloned();
+                    ) && a.status == mlc_core::alert::AlertStatus::Active).cloned());
+                    v
+                };
                 if let Some(alert) = alert {
                     self.panel_app.alert_settings_state.open_edit(&alert);
                     self.panel_app.alert_settings_state.pin_initial_position(

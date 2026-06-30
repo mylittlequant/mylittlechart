@@ -943,8 +943,31 @@ impl ChartApp {
                     // Step 8: Restore alerts
                     // ----------------------------------------------------------------
                     let _t_alerts = web_time::Instant::now();
-                    self.core.alert_mut().restore(preset.alerts.clone());
-                    eprintln!("[ChartApp] restored {} alerts", self.core.alert().len());
+                    // Alerts are now stored per-bubble via DataBubbleSnapshot.alerts.
+                    // The legacy flat preset.alerts list is distributed to the appropriate
+                    // bubble by group_id, or to the active bubble as a fallback.
+                    {
+                        use mlc_backend_core::alert::AlertManager;
+                        let mut total_restored = 0usize;
+                        for alert in preset.alerts.clone() {
+                            let target_bid = alert.group_id
+                                .map(mlc_core::ids::BubbleId)
+                                .or_else(|| {
+                                    // Fall back to the first available bubble.
+                                    let bm = self.core.bubble();
+                                    let v = bm.bubbles().next().map(|b| b.id);
+                                    v
+                                });
+                            if let Some(bid) = target_bid {
+                                let mut bm = self.core.bubble_mut();
+                                if let Some(b) = bm.bubble_mut(bid) {
+                                    AlertManager::restore_one(b, alert);
+                                    total_restored += 1;
+                                }
+                            }
+                        }
+                        eprintln!("[ChartApp] restored {} alerts (per-bubble)", total_restored);
+                    }
                     let alerts_us = _t_alerts.elapsed().as_micros();
 
                     // Step 8b: Restore per-slot Panel docking layouts.

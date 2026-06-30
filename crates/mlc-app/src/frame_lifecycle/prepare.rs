@@ -330,8 +330,10 @@ impl ChartApp {
 
         // Keep the alert-settings modal's alerts list always in sync.
         if self.panel_app.alert_settings_state.is_open() {
-            self.panel_app.alert_settings_state.all_alerts =
-                self.core.alert().items().to_vec();
+            self.panel_app.alert_settings_state.all_alerts = {
+                let bm = self.core.bubble();
+                bm.bubbles().flat_map(|b| b.alerts.iter().cloned()).collect()
+            };
         }
 
         // Auto-dirty sidebar when active leaf changes (for object tree refresh).
@@ -382,7 +384,6 @@ impl ChartApp {
             struct TaggedGroupSnapshot {
                 sync_flags: mlc_core::ids::SyncFlags,
                 primitives: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>>,
-                indicator_configs: Vec<mlc_core::indicator_types::IndicatorGroupConfig>,
             }
             let tagged_group: Option<TaggedGroupSnapshot> = active_cid
                 .and_then(|cid| self.bubble_for_chart(cid))
@@ -393,7 +394,6 @@ impl ChartApp {
                         Some(TaggedGroupSnapshot {
                             sync_flags: g.sync_flags.clone(),
                             primitives: g.primitives.iter().map(|p| p.clone_box()).collect(),
-                            indicator_configs: g.indicator_configs.clone(),
                         })
                     }
                 }).flatten());
@@ -963,11 +963,17 @@ impl ChartApp {
             }
 
             // --- Alerts: copy from alert manager ---
-            self.sidebar_state.alert_items = self.core.alert().items().to_vec();
+            self.sidebar_state.alert_items = {
+                let bm = self.core.bubble();
+                bm.bubbles().flat_map(|b| b.alerts.iter().cloned()).collect()
+            };
 
             // --- ObjectTree: mark items that have bound alerts ---
             {
-                let alert_items = self.core.alert().items().to_vec();
+                let alert_items: Vec<mlc_core::alert::AlertItem> = {
+                    let bm = self.core.bubble();
+                    bm.bubbles().flat_map(|b| b.alerts.iter().cloned()).collect()
+                };
                 let alert_items = alert_items.as_slice();
                 for tree_item in &mut self.sidebar_state.object_tree_items {
                     tree_item.has_alert = alert_items.iter().any(|a| match &a.source {

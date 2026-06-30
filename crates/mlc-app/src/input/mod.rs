@@ -6455,9 +6455,26 @@ impl ChartApp {
             Command::AddAlert { snapshot } => {
                 // Restore a previously deleted (or redo-add) alert from its snapshot.
                 // If an alert with this ID already exists, skip to keep state consistent.
+                use mlc_backend_core::alert::AlertManager;
                 let alert_id = snapshot.id;
-                if self.core.alert().get(alert_id).is_none() {
-                    self.core.alert_mut().restore_one(snapshot.clone());
+                // Find which bubble owns this alert (by group_id hint or active bubble).
+                let already_exists = {
+                    let bm = self.core.bubble();
+                    let v = bm.bubbles().any(|b| AlertManager::get(b, alert_id).is_some());
+                    v
+                };
+                if !already_exists {
+                    // Try to restore to the bubble identified by group_id in the snapshot.
+                    let target_bid = snapshot.group_id
+                        .map(mlc_core::ids::BubbleId)
+                        .or_else(|| self.panel_app.panel_grid.active_container_id()
+                            .and_then(|cid| self.bubble_for_chart(cid)));
+                    if let Some(bid) = target_bid {
+                        let mut bm = self.core.bubble_mut();
+                        if let Some(b) = bm.bubble_mut(bid) {
+                            AlertManager::restore_one(b, snapshot.clone());
+                        }
+                    }
                     self.sidebar_data_dirty = true;
                     eprintln!("[Undo/Redo] Restored alert id={}", alert_id);
                 } else {
@@ -6466,8 +6483,18 @@ impl ChartApp {
             }
             Command::DeleteAlert { snapshot } => {
                 // Remove the alert identified by the snapshot's ID.
+                use mlc_backend_core::alert::AlertManager;
                 let alert_id = snapshot.id;
-                if self.core.alert_mut().remove(alert_id) {
+                let bid_opt = {
+                    let bm = self.core.bubble();
+                    let v = bm.bubbles().find_map(|b| AlertManager::get(b, alert_id).map(|_| b.id));
+                    v
+                };
+                if let Some(bid) = bid_opt {
+                    let mut bm = self.core.bubble_mut();
+                    if let Some(b) = bm.bubble_mut(bid) {
+                        AlertManager::remove(b, alert_id);
+                    }
                     self.sidebar_data_dirty = true;
                     eprintln!("[Undo/Redo] Deleted alert id={}", alert_id);
                 } else {
@@ -7360,8 +7387,11 @@ impl ChartApp {
             }
         }
 
-        // Snapshot alerts
-        preset.alerts = self.core.alert().snapshot();
+        // Snapshot alerts — flatten across all bubbles for the legacy flat-list preset field.
+        preset.alerts = {
+            let bm = self.core.bubble();
+            bm.bubbles().flat_map(|b| b.alerts.iter().cloned()).collect()
+        };
 
         // Snapshot leaf_color_tags
         preset.leaf_color_tags = self.panel_app.leaf_color_tags

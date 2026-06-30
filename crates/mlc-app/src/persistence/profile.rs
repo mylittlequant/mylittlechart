@@ -190,10 +190,7 @@ impl ChartApp {
         );
         let pk_ind_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
-        let alert_manager = std::mem::replace(
-            &mut *self.core.alert_mut(),
-            mlc_backend_core::alert::AlertManager::new(),
-        );
+        let alert_manager = mlc_backend_core::alert::AlertManager::new();
         let pk_alert_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
         let leaf_color_tags = std::mem::take(&mut self.panel_app.leaf_color_tags);
@@ -258,7 +255,7 @@ impl ChartApp {
         *self.core.indicators_mut() = state.indicator_manager;
         let up_ind_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
-        *self.core.alert_mut() = state.alert_manager;
+        let _ = state.alert_manager; // AlertManager is now a unit struct; alerts live on bubbles
         let up_alert_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
         self.panel_app.leaf_color_tags = state.leaf_color_tags;

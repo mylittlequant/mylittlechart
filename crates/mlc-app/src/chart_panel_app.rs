@@ -8,37 +8,17 @@
 //! `chart_toolbar_render_toolbars`, `render_toolbars_with_theme`) stay
 //! in `mlc-layout::panel_app`.
 
-use uzor::panel_api::{
-    PanelToolbarDef, DropdownItemDef, ToolbarItemDef, SectionAlign,
-    ToolbarIconId,
-};
-use uzor::render::{RenderContext, draw_svg_icon};
+use uzor::render::RenderContext;
 
 use mlc_core::state::{ChartPanelGrid, ChartContainer, Timeframe};
-use mlc_core::scale_settings::ScaleSettings;
 use mlc_core::modal::ChartOpenModal;
 use mlc_core::state::selected_config::SelectedPrimitiveConfig;
 use mlc_core::templates::TemplateManager;
 use mlc_core::indicator_source::IndicatorSource;
 use mlc_core::preset::preset::ChartPreset;
-use mlc_core::preset::snapshots::{IndicatorSnapshot, OutputConfigSnapshot};
 
-use mlc_layout::layout::LayoutRect;
-use mlc_layout::layout::{ExtendedFrameLayout, FrameTheme};
+use mlc_layout::layout::FrameTheme;
 use mlc_layout::chart_render::{ScaleTheme, ChartTheme};
-use mlc_layout::ui::toolbar_render::{ToolbarRect, ToolbarRenderResult, ToolbarTheme};
-use mlc_layout::ui::dropdown::{
-    DropdownItem, DropdownConfig, DropdownTheme, draw_dropdown,
-    GridDropdownConfig, draw_grid_dropdown,
-};
-use mlc_layout::ui::toolbar_core::{
-    WidgetRect, IconId,
-    ToolbarConfig as TcConfig, ToolbarSection, ToolbarItem as TcToolbarItem,
-    ToolbarTheme as TcToolbarTheme, ToolbarOrientation as TcOrientation,
-    SectionAlign as TcSectionAlign, ToolbarResult as TcToolbarResult,
-    draw_toolbar_with_icons, calculate_section_width,
-    apply_active_states, apply_toggle_icons, apply_quick_select_icons,
-};
 use mlc_layout::ui::modal_settings::{
     PrimitiveSettingsState, IndicatorSettingsState, ChartSettingsState,
     IndicatorOverlayState, OverlaySettingsState, TagsTabsState,
@@ -59,10 +39,8 @@ use mlc_layout::layout::modals::{
     render_tags_tabs_modal,
 };
 use mlc_layout::panel_app::{
-    ChartPanelLayout, ChartInternalLayout, compute_chart_internal_layout,
+    ChartPanelLayout,
     ChartToolbarState, ToolbarConfig, ChartToolbarRenderResult,
-    FloatingInlineBar, InlineDockEdge, InlineSlideContainer,
-    DropdownRenderInfo, InlineDropdownResult, InlineConfigResult,
     chart_toolbar_render_toolbars,
 };
 

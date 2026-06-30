@@ -8,8 +8,7 @@ use mlc_core::{
 };
 use mlc_core::indicator_source::IndicatorSource;
 use mlc_indicators::IndicatorManager;
-use mlc_backend_core::alert::AlertManager;
-use mlc_core::alert::{AlertStatus, AlertSource};
+use mlc_core::alert::{AlertItem, AlertStatus, AlertSource};
 
 impl ChartApp {
     // -------------------------------------------------------------------------
@@ -17,22 +16,22 @@ impl ChartApp {
     // -------------------------------------------------------------------------
 
     /// Build the `indicator_values` slice required by
-    /// [`AlertManager::check_crossings_dynamic`] and
-    /// [`AlertManager::resolve_price_static`].
+    /// `AlertManager::check_crossings_dynamic` and
+    /// `AlertManager::resolve_price_static`.
     ///
     /// Iterates all active `AlertSource::Indicator` alerts, de-duplicates
     /// `(indicator_id, output_index)` pairs, looks up the corresponding
     /// `IndicatorRenderInstance` from `indicator_manager`, and returns the
     /// output's value buffer.
     pub(crate) fn build_indicator_values_for_alerts(
-        alert_manager: &AlertManager,
+        alerts: &[AlertItem],
         indicator_manager: &IndicatorManager,
     ) -> Vec<(u64, usize, Vec<f64>)> {
         use std::collections::HashSet;
         let mut result: Vec<(u64, usize, Vec<f64>)> = Vec::new();
         let mut seen: HashSet<(u64, usize)> = HashSet::new();
 
-        for alert in alert_manager.items() {
+        for alert in alerts {
             if alert.status != AlertStatus::Active {
                 continue;
             }
@@ -81,7 +80,7 @@ impl ChartApp {
         bars: &[Bar],
         drawing_manager: &mlc_core::DrawingManager,
         indicator_manager: &IndicatorManager,
-        alert_manager: &AlertManager,
+        alerts: &[AlertItem],
         window_id: Option<u64>,
         symbol: &str,
         exchange: &str,
@@ -107,7 +106,7 @@ impl ChartApp {
              .max(chart_y + BELL_SIZE / 2.0)
         };
 
-        for alert in alert_manager.items() {
+        for alert in alerts {
             if alert.status != AlertStatus::Active {
                 continue;
             }

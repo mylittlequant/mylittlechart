@@ -1,38 +1,20 @@
-//! AlertManager — central owner of all alerts.
+//! AlertManager — stateless namespace for alert operations on a DataBubble.
 //!
-//! Provides CRUD operations, snapshot/restore for presets, and crossing detection.
-
-use std::collections::HashMap;
+//! All mutable methods take `b: &mut DataBubble` as their first argument.
+//! All read-only methods take `b: &DataBubble`.
+//! No fields — alert state lives in `DataBubble.alerts` / `alert_next_id` / `alert_last_price`.
 
 use mlc_core::alert::{AlertCondition, AlertItem, AlertSource, AlertStatus, AlertTriggerMode, DrawingExtendMode, SignalBarState, SignalDirection, AlertTransport};
 
-/// Central alert manager. Owns all alert items and the ID counter.
-///
-/// Chart-app creates one instance. Sidebar reads `items()` for display.
-/// Preset save/restore uses `snapshot()` / `restore()`.
-#[derive(Clone, Debug)]
-pub struct AlertManager {
-    items: Vec<AlertItem>,
-    next_id: u64,
-    /// Per-symbol previous price for crossing detection.
-    /// Key: `"exchange:symbol:account_type"` (or just `"symbol"` for old alerts without exchange).
-    /// Not serialized — rebuilt from live ticks.
-    last_prices: HashMap<String, f64>,
-}
+use crate::bubble::DataBubble;
 
-impl Default for AlertManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+/// Stateless alert namespace.  All operations read/write `DataBubble` fields.
+#[derive(Clone, Debug, Default)]
+pub struct AlertManager;
 
 impl AlertManager {
     pub fn new() -> Self {
-        Self {
-            items: Vec::new(),
-            next_id: 1,
-            last_prices: HashMap::new(),
-        }
+        Self
     }
 
     // =========================================================================
@@ -40,32 +22,27 @@ impl AlertManager {
     // =========================================================================
 
     /// All alert items (for sidebar display, preset snapshot, etc.).
-    pub fn items(&self) -> &[AlertItem] {
-        &self.items
+    pub fn items(b: &DataBubble) -> &[AlertItem] {
+        &b.alerts
     }
 
     /// Find an alert by ID.
-    pub fn get(&self, id: u64) -> Option<&AlertItem> {
-        self.items.iter().find(|a| a.id == id)
+    pub fn get(b: &DataBubble, id: u64) -> Option<&AlertItem> {
+        b.alerts.iter().find(|a| a.id == id)
     }
 
     /// Find a mutable alert by ID.
-    pub fn get_mut(&mut self, id: u64) -> Option<&mut AlertItem> {
-        self.items.iter_mut().find(|a| a.id == id)
+    pub fn get_mut(b: &mut DataBubble, id: u64) -> Option<&mut AlertItem> {
+        b.alerts.iter_mut().find(|a| a.id == id)
     }
 
     /// Number of alerts.
-    pub fn len(&self) -> usize {
-        self.items.len()
+    pub fn len(b: &DataBubble) -> usize {
+        b.alerts.len()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.items.is_empty()
-    }
-
-    /// Current next_id (for diagnostics).
-    pub fn next_id(&self) -> u64 {
-        self.next_id
+    pub fn is_empty(b: &DataBubble) -> bool {
+        b.alerts.is_empty()
     }
 
     // =========================================================================
@@ -74,31 +51,29 @@ impl AlertManager {
 
     /// Create a new alert from an `AlertSource` and return its ID.
     pub fn create(
-        &mut self,
+        b: &mut DataBubble,
         source: AlertSource,
         name: &str,
         price: f64,
         condition: AlertCondition,
     ) -> u64 {
-        let id = self.next_id;
-        self.next_id += 1;
+        let id = b.alert_next_id;
+        b.alert_next_id += 1;
         let alert = AlertItem::new(id, source, name, price, condition, AlertStatus::Active);
-        self.items.push(alert);
+        b.alerts.push(alert);
         id
     }
 
     /// Convenience wrapper: create a horizontal price alert for a symbol.
-    ///
-    /// This keeps backward compatibility for call sites that previously called
-    /// `create(&symbol, name, price, condition)` before the `AlertSource` refactor.
     pub fn create_price_alert(
-        &mut self,
+        b: &mut DataBubble,
         symbol: &str,
         name: &str,
         price: f64,
         condition: AlertCondition,
     ) -> u64 {
-        self.create(
+        Self::create(
+            b,
             AlertSource::Price {
                 symbol: symbol.to_string(),
             },
@@ -109,14 +84,11 @@ impl AlertManager {
     }
 
     /// Insert a single alert item verbatim (for undo/redo restore).
-    ///
-    /// The item is inserted with its existing `id`. If `next_id` is not already
-    /// past this id, it is bumped so that future `create()` calls never collide.
-    pub fn restore_one(&mut self, item: AlertItem) {
-        if item.id >= self.next_id {
-            self.next_id = item.id + 1;
+    pub fn restore_one(b: &mut DataBubble, item: AlertItem) {
+        if item.id >= b.alert_next_id {
+            b.alert_next_id = item.id + 1;
         }
-        self.items.push(item);
+        b.alerts.push(item);
     }
 
     // =========================================================================
@@ -125,13 +97,13 @@ impl AlertManager {
 
     /// Update an existing alert's core fields. Returns true if found.
     pub fn update(
-        &mut self,
+        b: &mut DataBubble,
         id: u64,
         name: &str,
         price: f64,
         condition: AlertCondition,
     ) -> bool {
-        if let Some(alert) = self.get_mut(id) {
+        if let Some(alert) = Self::get_mut(b, id) {
             alert.name = name.to_string();
             alert.price = price;
             alert.condition = condition;
@@ -143,7 +115,7 @@ impl AlertManager {
 
     /// Update all fields of an existing alert. Returns true if found.
     pub fn update_full(
-        &mut self,
+        b: &mut DataBubble,
         id: u64,
         source: AlertSource,
         name: &str,
@@ -154,7 +126,7 @@ impl AlertManager {
         trigger_mode: AlertTriggerMode,
         transports: Vec<AlertTransport>,
     ) -> bool {
-        if let Some(alert) = self.get_mut(id) {
+        if let Some(alert) = Self::get_mut(b, id) {
             alert.source = source;
             alert.name = name.to_string();
             alert.price = price;
@@ -174,22 +146,22 @@ impl AlertManager {
     // =========================================================================
 
     /// Remove an alert by ID. Returns true if found and removed.
-    pub fn remove(&mut self, id: u64) -> bool {
-        let before = self.items.len();
-        self.items.retain(|a| a.id != id);
-        self.items.len() != before
+    pub fn remove(b: &mut DataBubble, id: u64) -> bool {
+        let before = b.alerts.len();
+        b.alerts.retain(|a| a.id != id);
+        b.alerts.len() != before
     }
 
     /// Remove all alerts.
-    pub fn clear(&mut self) {
-        self.items.clear();
-        self.next_id = 1;
-        self.last_prices.clear();
+    pub fn clear(b: &mut DataBubble) {
+        b.alerts.clear();
+        b.alert_next_id = 1;
+        b.alert_last_price.clear();
     }
 
     /// Snapshot all alerts attached to a specific drawing primitive (for undo).
-    pub fn alerts_for_drawing(&self, primitive_id: u64) -> Vec<AlertItem> {
-        self.items
+    pub fn alerts_for_drawing(b: &DataBubble, primitive_id: u64) -> Vec<AlertItem> {
+        b.alerts
             .iter()
             .filter(|a| matches!(&a.source, AlertSource::Drawing { primitive_id: pid, .. } if *pid == primitive_id))
             .cloned()
@@ -197,21 +169,15 @@ impl AlertManager {
     }
 
     /// Remove all alerts attached to a specific drawing primitive.
-    ///
-    /// Called automatically when a drawing primitive is deleted so that no
-    /// orphaned `AlertSource::Drawing` entries remain in the manager.
-    pub fn remove_alerts_for_drawing(&mut self, primitive_id: u64) {
-        self.items.retain(|a| {
+    pub fn remove_alerts_for_drawing(b: &mut DataBubble, primitive_id: u64) {
+        b.alerts.retain(|a| {
             !matches!(&a.source, AlertSource::Drawing { primitive_id: pid, .. } if *pid == primitive_id)
         });
     }
 
     /// Remove all alerts attached to a specific indicator instance.
-    ///
-    /// Called automatically when an indicator is removed so that no orphaned
-    /// `AlertSource::Indicator` or `AlertSource::Signal` entries remain.
-    pub fn remove_alerts_for_indicator(&mut self, indicator_id: u64) {
-        self.items.retain(|a| {
+    pub fn remove_alerts_for_indicator(b: &mut DataBubble, indicator_id: u64) {
+        b.alerts.retain(|a| {
             match &a.source {
                 AlertSource::Indicator { indicator_id: iid, .. } if *iid == indicator_id => false,
                 AlertSource::Signal { indicator_id: iid, .. } if *iid == indicator_id => false,
@@ -226,13 +192,7 @@ impl AlertManager {
 
     /// Resolve the effective price level for an alert at the given bar.
     ///
-    /// - `Price` alerts: returns `alert.price` (fixed horizontal line).
-    /// - `Drawing` alerts: linearly interpolates the primitive's price at `current_bar`,
-    ///   respecting `DrawingExtendMode` so alerts only fire within the visible segment.
-    /// - `Indicator` alerts: returns the last value in the provided values slice.
-    /// - `CrossingPair`: returns `None` (not yet supported).
-    ///
-    /// The `drawing_points` tuple is `(primitive_id, points, extend_mode)`.
+    /// Static method — no bubble reference needed, operates on a single alert.
     pub fn resolve_price_static(
         alert: &AlertItem,
         current_bar: f64,
@@ -258,7 +218,6 @@ impl AlertManager {
                 let min_bar = bar1.min(bar2);
                 let max_bar = bar1.max(bar2);
 
-                // Respect the extend mode: only extrapolate in the allowed direction(s).
                 match extend_mode {
                     DrawingExtendMode::None => {
                         if current_bar < min_bar || current_bar > max_bar {
@@ -275,9 +234,7 @@ impl AlertManager {
                             return None;
                         }
                     }
-                    DrawingExtendMode::Both => {
-                        // Infinite line — always extrapolate, no bounds check.
-                    }
+                    DrawingExtendMode::Both => {}
                 }
 
                 let t = (current_bar - bar1) / (bar2 - bar1);
@@ -295,47 +252,40 @@ impl AlertManager {
                 vals.last().copied()
             }
             AlertSource::CrossingPair { .. } => None,
-            AlertSource::Signal { .. } => {
-                // Signal alerts don't have a price level to resolve —
-                // they fire based on signal events, not price crossing.
-                // Return None so no horizontal line is drawn.
-                None
-            }
+            AlertSource::Signal { .. } => None,
         }
     }
 
     /// Check all active alerts using dynamic price resolution.
     ///
-    /// For `Price` alerts this behaves identically to the old `check_crossings`.
-    /// For `Drawing` and `Indicator` alerts the level is resolved dynamically
-    /// from the provided external data so the alert line tracks the object shape.
-    /// Drawing alerts respect `DrawingExtendMode` — they will not fire outside
-    /// the allowed extent of the primitive.
-    ///
-    /// Only alerts that `matches_window(symbol, exchange, account_type)` are processed —
-    /// alerts bound to a different symbol, exchange, or account type are skipped entirely.
-    ///
-    /// The `drawing_points` tuple is `(primitive_id, points, extend_mode)`.
+    /// Symbol/exchange/account_type are read from `b` directly — alerts are
+    /// now owned by the bubble they target, so `matches_window` is always true
+    /// within a given bubble.
     ///
     /// Returns list of triggered alert IDs.
     pub fn check_crossings_dynamic(
-        &mut self,
+        b: &mut DataBubble,
         current_price: f64,
         current_bar: f64,
-        symbol: &str,
-        exchange: &str,
-        account_type: &str,
         drawing_points: &[(u64, Vec<(f64, f64)>, DrawingExtendMode)],
         indicator_values: &[(u64, usize, Vec<f64>)],
     ) -> Vec<u64> {
+        let symbol = b.symbol.clone();
+        let exchange = b.exchange.clone();
+        let account_type = b.account_type.clone();
+
+        let tick_key = if exchange.is_empty() {
+            symbol.clone()
+        } else {
+            format!("{}:{}:{}", exchange, symbol, account_type)
+        };
+
+        let prev_price = b.alert_last_price.get(&tick_key).copied().unwrap_or(0.0);
+
         let mut triggered_ids = Vec::new();
 
-        for alert in &mut self.items {
+        for alert in &mut b.alerts {
             if alert.status != AlertStatus::Active {
-                continue;
-            }
-
-            if !alert.matches_window(symbol, exchange, account_type) {
                 continue;
             }
 
@@ -349,19 +299,10 @@ impl AlertManager {
                 None => continue,
             };
 
-            // Use the tick's symbol:exchange:account_type as the lookup key — not the alert's
-            // routing_key, which may be empty for legacy alerts without symbol.
-            let tick_key = if exchange.is_empty() {
-                symbol.to_string()
-            } else {
-                format!("{}:{}:{}", exchange, symbol, account_type)
-            };
             let prev_level = alert.prev_dynamic_price;
-            let prev_price = self.last_prices.get(&tick_key).copied().unwrap_or(0.0);
 
             let triggered = match alert.condition {
                 AlertCondition::CrossingUp => {
-                    // Skip first tick when prev state is uninitialised.
                     prev_price != 0.0 && prev_level != 0.0
                         && prev_price < prev_level
                         && current_price >= level
@@ -382,8 +323,6 @@ impl AlertManager {
                 _ => false,
             };
 
-            // Always update the previous dynamic price so the next tick has
-            // a valid reference even when no crossing occurred.
             alert.prev_dynamic_price = level;
 
             if triggered {
@@ -403,12 +342,7 @@ impl AlertManager {
             }
         }
 
-        let routing_key = if exchange.is_empty() {
-            symbol.to_string()
-        } else {
-            format!("{}:{}:{}", exchange, symbol, account_type)
-        };
-        self.last_prices.insert(routing_key, current_price);
+        b.alert_last_price.insert(tick_key, current_price);
         triggered_ids
     }
 
@@ -418,30 +352,15 @@ impl AlertManager {
 
     /// Check all active `AlertSource::Signal` alerts against a batch of newly-emitted signals.
     ///
-    /// Each entry in `new_signals` is a tuple of:
-    /// - `indicator_id`: which indicator emitted the signal
-    /// - `bar_index`: bar index of the signal
-    /// - `direction`: signal direction as `i8` (-1 = bearish, 0 = neutral, +1 = bullish)
-    /// - `bar_confirmation`: 0 = Pending (forming), 1 = Closed (formed), 2 = WickOnly (formed)
-    /// - `kind_name`: `SignalKind::description()` string for optional kind filtering
-    ///
-    /// Only processes alerts that `matches_window(symbol, exchange, account_type)`.
     /// Returns the list of triggered alert IDs.
     pub fn check_signal_alerts(
-        &mut self,
-        symbol: &str,
-        exchange: &str,
-        account_type: &str,
+        b: &mut DataBubble,
         new_signals: &[(u64, usize, i8, u8, String)],
     ) -> Vec<u64> {
         let mut triggered_ids = Vec::new();
 
-        for alert in &mut self.items {
+        for alert in &mut b.alerts {
             if alert.status != AlertStatus::Active {
-                continue;
-            }
-
-            if !alert.matches_window(symbol, exchange, account_type) {
                 continue;
             }
 
@@ -457,14 +376,11 @@ impl AlertManager {
                     _ => continue,
                 };
 
-            // Check if any signal in the batch matches all filters.
             let matched = new_signals.iter().any(|(sig_ind_id, _bar_idx, sig_dir, sig_conf, sig_kind)| {
-                // Indicator must match.
                 if *sig_ind_id != indicator_id {
                     return false;
                 }
 
-                // Direction filter.
                 let dir_ok = match direction_filter {
                     SignalDirection::Any => true,
                     SignalDirection::Bullish => *sig_dir > 0,
@@ -474,9 +390,6 @@ impl AlertManager {
                     return false;
                 }
 
-                // Bar state filter:
-                // Forming = accepts Pending (0), Closed (1), WickOnly (2) — any state
-                // Formed  = accepts only Closed (1) or WickOnly (2)
                 let bar_ok = match bar_state {
                     SignalBarState::Forming => true,
                     SignalBarState::Formed => *sig_conf >= 1,
@@ -485,7 +398,6 @@ impl AlertManager {
                     return false;
                 }
 
-                // Kind filter: None = any kind; Some(k) = only matching kind name.
                 if let Some(ref filter_kind) = kind_filter {
                     if sig_kind != filter_kind {
                         return false;
@@ -516,18 +428,18 @@ impl AlertManager {
     }
 
     // =========================================================================
-    // Preset snapshot / restore
+    // Preset snapshot / restore (legacy flat-list path)
     // =========================================================================
 
-    /// Take a snapshot of all alerts (for preset save).
-    pub fn snapshot(&self) -> Vec<AlertItem> {
-        self.items.clone()
+    /// Take a snapshot of all alerts from a single bubble (for preset save).
+    pub fn snapshot(b: &DataBubble) -> Vec<AlertItem> {
+        b.alerts.clone()
     }
 
-    /// Restore alerts from a preset snapshot.
-    pub fn restore(&mut self, alerts: Vec<AlertItem>) {
-        self.next_id = alerts.iter().map(|a| a.id).max().unwrap_or(0) + 1;
-        self.items = alerts;
-        self.last_prices.clear();
+    /// Restore alerts from a preset snapshot into a bubble.
+    pub fn restore(b: &mut DataBubble, alerts: Vec<AlertItem>) {
+        b.alert_next_id = alerts.iter().map(|a| a.id).max().unwrap_or(0) + 1;
+        b.alerts = alerts;
+        b.alert_last_price.clear();
     }
 }

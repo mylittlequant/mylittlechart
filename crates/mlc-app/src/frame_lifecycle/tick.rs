@@ -331,31 +331,28 @@ impl ChartApp {
             }
         }
 
-        // ── Alert checker: detect price crossings for every visible symbol ────
+        // ── Alert checker: detect price crossings for every visible bubble ────
         // Skip entirely when no trade arrived this tick — nothing changed.
         if had_trade_update {
-            // Collect one entry per unique (symbol, exchange, account_type) triple across all windows.
-            let mut seen_pairs: std::collections::HashSet<(String, String, String)> = std::collections::HashSet::new();
-            struct WindowAlertData {
-                symbol: String,
-                exchange: String,
-                account_type: String,
+            use mlc_backend_core::alert::AlertManager;
+
+            // Collect per-bubble alert data: bubble_id, current_price, current_bar, drawing_points.
+            // De-duplicate by bubble_id so shared bubbles are only checked once.
+            let mut seen_bids: std::collections::HashSet<mlc_core::ids::BubbleId> = std::collections::HashSet::new();
+            struct BubbleAlertData {
+                bid: mlc_core::ids::BubbleId,
                 current_price: f64,
                 current_bar: f64,
                 drawing_points: Vec<(u64, Vec<(f64, f64)>, mlc_core::alert::DrawingExtendMode)>,
             }
-            let window_data: Vec<WindowAlertData> = self.panel_app.panel_grid.containers()
+            let bubble_data: Vec<BubbleAlertData> = self.panel_app.panel_grid.containers()
                 .iter()
-                .filter_map(|(cid, window)| {
-                    let sym = self.symbol_for_chart(*cid).unwrap_or_default();
-                    let exch = self.exchange_for_chart(*cid).unwrap_or_default();
-                    let at = self.account_type_for_chart(*cid).unwrap_or_default();
-                    let triple = (sym.clone(), exch.clone(), at.clone());
-                    if seen_pairs.contains(&triple) {
+                .filter_map(|(_cid, window)| {
+                    let bid = window.current_bubble_id;
+                    if !seen_bids.insert(bid) {
                         return None;
                     }
-                    seen_pairs.insert(triple);
-                    let bubble_bars_alert: Vec<mlc_core::Bar> = self.with_bubble(window.current_bubble_id, |b| b.bars.clone()).unwrap_or_default();
+                    let bubble_bars_alert: Vec<mlc_core::Bar> = self.with_bubble(bid, |b| b.bars.clone()).unwrap_or_default();
                     let current_price = bubble_bars_alert.last().map(|b| b.close).unwrap_or(0.0);
                     let current_bar = bubble_bars_alert.len().saturating_sub(1) as f64;
                     let drawing_points: Vec<(u64, Vec<(f64, f64)>, mlc_core::alert::DrawingExtendMode)> = {
@@ -372,10 +369,8 @@ impl ChartApp {
                             .collect())
                         .unwrap_or_default()
                     };
-                    Some(WindowAlertData {
-                        symbol: sym,
-                        exchange: exch,
-                        account_type: at,
+                    Some(BubbleAlertData {
+                        bid,
                         current_price,
                         current_bar,
                         drawing_points,
@@ -383,23 +378,31 @@ impl ChartApp {
                 })
                 .collect();
 
+            // Build indicator values from all bubbles' alerts combined.
+            let all_alerts_snapshot: Vec<mlc_core::alert::AlertItem> = {
+                let bm = self.core.bubble();
+                bm.bubbles().flat_map(|b| b.alerts.iter().cloned()).collect()
+            };
             let indicator_values = Self::build_indicator_values_for_alerts(
-                &self.core.alert(),
+                &all_alerts_snapshot,
                 &self.core.indicators(),
             );
 
-            let mut all_triggered_ids: Vec<u64> = Vec::new();
-            for wd in &window_data {
-                let triggered = self.core.alert_mut().check_crossings_dynamic(
-                    wd.current_price,
-                    wd.current_bar,
-                    &wd.symbol,
-                    &wd.exchange,
-                    &wd.account_type,
-                    &wd.drawing_points,
-                    &indicator_values,
-                );
-                all_triggered_ids.extend(triggered);
+            let mut all_triggered: Vec<(u64, mlc_core::ids::BubbleId)> = Vec::new();
+            for bd in &bubble_data {
+                let mut bm = self.core.bubble_mut();
+                if let Some(b) = bm.bubble_mut(bd.bid) {
+                    let triggered = AlertManager::check_crossings_dynamic(
+                        b,
+                        bd.current_price,
+                        bd.current_bar,
+                        &bd.drawing_points,
+                        &indicator_values,
+                    );
+                    for id in triggered {
+                        all_triggered.push((id, bd.bid));
+                    }
+                }
             }
 
             // ── Signal alert checker ───────────────────────────────────────────────
@@ -420,21 +423,23 @@ impl ChartApp {
                     })
                     .collect();
 
-                for wd in &window_data {
-                    let triggered = self.core.alert_mut().check_signal_alerts(
-                        &wd.symbol,
-                        &wd.exchange,
-                        &wd.account_type,
-                        &signal_batch,
-                    );
-                    all_triggered_ids.extend(triggered);
+                for bd in &bubble_data {
+                    let mut bm = self.core.bubble_mut();
+                    if let Some(b) = bm.bubble_mut(bd.bid) {
+                        let triggered = AlertManager::check_signal_alerts(b, &signal_batch);
+                        for id in triggered {
+                            all_triggered.push((id, bd.bid));
+                        }
+                    }
                 }
             }
 
-            // Deduplicate in case the same alert matched multiple windows.
-            all_triggered_ids.sort_unstable();
-            all_triggered_ids.dedup();
-            let triggered_ids = all_triggered_ids;
+            // Deduplicate by alert id.
+            let mut seen_alert_ids: std::collections::HashSet<u64> = std::collections::HashSet::new();
+            let triggered_ids: Vec<u64> = all_triggered.into_iter()
+                .filter(|(id, _)| seen_alert_ids.insert(*id))
+                .map(|(id, _)| id)
+                .collect();
 
             // Use the active window's price for delivery event messages.
             let current_price = self.panel_app.panel_grid.active_container()
@@ -453,20 +458,25 @@ impl ChartApp {
                     .map(|d| d.as_millis() as u64)
                     .unwrap_or(0);
 
-                for id in &triggered_ids {
-                    if let Some(alert) = self.core.alert().get(*id) {
-                        self.pending_delivery_events.push(mlc_alert_delivery::DeliveryEvent {
-                            alert_name: alert.name.clone(),
-                            symbol: symbol.clone(),
-                            message: format!("{} {} @ {:.8}",
-                                alert.source.display_name(),
-                                alert.condition.display_name(),
-                                current_price),
-                            price: current_price,
-                            timestamp: now,
-                            screenshot: None,
-                        });
-                    }
+                // Snapshot triggered alerts from all bubbles for delivery.
+                let triggered_alerts: Vec<mlc_core::alert::AlertItem> = {
+                    let bm = self.core.bubble();
+                    triggered_ids.iter().filter_map(|&id| {
+                        bm.bubbles().find_map(|b| AlertManager::get(b, id).cloned())
+                    }).collect()
+                };
+                for alert in &triggered_alerts {
+                    self.pending_delivery_events.push(mlc_alert_delivery::DeliveryEvent {
+                        alert_name: alert.name.clone(),
+                        symbol: symbol.clone(),
+                        message: format!("{} {} @ {:.8}",
+                            alert.source.display_name(),
+                            alert.condition.display_name(),
+                            current_price),
+                        price: current_price,
+                        timestamp: now,
+                        screenshot: None,
+                    });
                 }
 
                 self.pending_alert_screenshot = true;

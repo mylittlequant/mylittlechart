@@ -2238,52 +2238,68 @@ impl ChartApp {
                 let active_sym = active_cid
                     .and_then(|cid| self.symbol_for_chart(cid))
                     .unwrap_or_default();
-                let active_group_id = active_cid
-                    .and_then(|cid| self.bubble_for_chart(cid))
-                    .map(|g| g.0);
+                let active_bid = active_cid.and_then(|cid| self.bubble_for_chart(cid));
+                let active_group_id = active_bid.map(|g| g.0);
                 let active_window_id = self.panel_app.panel_grid
                     .active_container().map(|w| w.id.0);
 
+                use mlc_backend_core::alert::AlertManager;
                 let alert_id = if let Some(existing_id) = editing_id {
-                    self.core.alert_mut().update_full(
-                        existing_id, source, &name, price, price2, percentage,
-                        condition, trigger_mode, transports,
-                    );
-                    existing_id
-                } else {
-                    let id = {
-                        let mut am = self.core.alert_mut();
-                        am.create(source.clone(), &name, price, condition)
-                    };
-                    // Set extra fields on the newly created alert.
-                    {
-                        let mut am = self.core.alert_mut();
-                        if let Some(alert) = am.get_mut(id) {
-                            alert.price2 = price2;
-                            alert.percentage = percentage;
-                            alert.trigger_mode = trigger_mode;
-                            alert.transports = transports;
-                            if active_window_id.is_some() {
-                                alert.exchange = active_exchange;
-                                alert.timeframe = active_tf_name;
-                                alert.window_id_hint = active_window_id;
-                                alert.group_id = active_group_id;
-                                if !matches!(alert.source, mlc_core::alert::AlertSource::Price { .. }) {
-                                    alert.set_symbol(active_sym);
-                                }
-                            }
+                    // Find which bubble owns this alert and update it.
+                    let bid_for_existing = active_bid.or_else(|| {
+                        let bm = self.core.bubble();
+                        let found = bm.bubbles()
+                            .find(|b| AlertManager::get(b, existing_id).is_some())
+                            .map(|b| b.id);
+                        found
+                    });
+                    if let Some(bid) = bid_for_existing {
+                        let mut bm = self.core.bubble_mut();
+                        if let Some(b) = bm.bubble_mut(bid) {
+                            AlertManager::update_full(
+                                b, existing_id, source, &name, price, price2, percentage,
+                                condition, trigger_mode, transports,
+                            );
                         }
                     }
+                    existing_id
+                } else {
+                    // Create new alert on the active bubble.
+                    let id = if let Some(bid) = active_bid {
+                        let mut bm = self.core.bubble_mut();
+                        if let Some(b) = bm.bubble_mut(bid) {
+                            let id = AlertManager::create(b, source.clone(), &name, price, condition);
+                            if let Some(alert) = AlertManager::get_mut(b, id) {
+                                alert.price2 = price2;
+                                alert.percentage = percentage;
+                                alert.trigger_mode = trigger_mode;
+                                alert.transports = transports;
+                                if active_window_id.is_some() {
+                                    alert.exchange = active_exchange;
+                                    alert.timeframe = active_tf_name;
+                                    alert.window_id_hint = active_window_id;
+                                    alert.group_id = active_group_id;
+                                    if !matches!(alert.source, mlc_core::alert::AlertSource::Price { .. }) {
+                                        alert.set_symbol(active_sym);
+                                    }
+                                }
+                            }
+                            id
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    };
                     id
                 };
-                // Snapshot for undo — taken in its own borrow scope so the
-                // write guard is dropped before `push_undo_command` re-acquires
-                // a write lock on bubble (push routes into group's
-                // command_history via bubble_mut() too).
-                if editing_id.is_none() {
-                    let snapshot = {
-                        let am = self.core.alert();
-                        am.get(alert_id).cloned()
+                // Snapshot for undo.
+                if editing_id.is_none() && alert_id != 0 {
+                    let snapshot = if let Some(bid) = active_bid {
+                        let bm = self.core.bubble();
+                        bm.bubble(bid).and_then(|b| AlertManager::get(b, alert_id).cloned())
+                    } else {
+                        None
                     };
                     if let Some(snap) = snapshot {
                         self.push_undo_command(mlc_core::Command::AddAlert { snapshot: snap });
@@ -2329,8 +2345,10 @@ impl ChartApp {
                     self.panel_app.alert_settings_state.trigger_mode_dropdown_open = false;
                     // Refresh alerts list when switching to list tab
                     if t == mlc_layout::ui::modal_settings::AlertSettingsTab::AlertsList {
-                        self.panel_app.alert_settings_state.all_alerts =
-                            self.core.alert().items().to_vec();
+                        self.panel_app.alert_settings_state.all_alerts = {
+                            let bm = self.core.bubble();
+                            bm.bubbles().flat_map(|b| b.alerts.iter().cloned()).collect()
+                        };
                     }
                 }
             }
@@ -2485,8 +2503,14 @@ impl ChartApp {
             _ if rest.starts_with("list_item:") => {
                 if let Some(id_str) = rest.strip_prefix("list_item:") {
                     if let Ok(id) = id_str.parse::<u64>() {
-                        if let Some(alert) = self.core.alert().get(id) {
-                            self.panel_app.alert_settings_state.open_edit(alert);
+                        use mlc_backend_core::alert::AlertManager;
+                        let alert_clone = {
+                            let bm = self.core.bubble();
+                            let v = bm.bubbles().find_map(|b| AlertManager::get(b, id).cloned());
+                            v
+                        };
+                        if let Some(alert) = alert_clone {
+                            self.panel_app.alert_settings_state.open_edit(&alert);
                             self.panel_app.alert_settings_state.pin_initial_position(
                                 self.content_rect.width, self.content_rect.height,
                             );
@@ -2498,14 +2522,27 @@ impl ChartApp {
             _ if rest.starts_with("list_delete:") => {
                 if let Some(id_str) = rest.strip_prefix("list_delete:") {
                     if let Ok(id) = id_str.parse::<u64>() {
-                        let snapshot = self.core.alert().get(id).cloned();
-                        self.core.alert_mut().remove(id);
+                        use mlc_backend_core::alert::AlertManager;
+                        let (snapshot, bid_opt) = {
+                            let bm = self.core.bubble();
+                            let found = bm.bubbles()
+                                .find_map(|b| AlertManager::get(b, id).map(|a| (a.clone(), b.id)));
+                            found.map(|(a, bid)| (Some(a), Some(bid))).unwrap_or((None, None))
+                        };
+                        if let Some(bid) = bid_opt {
+                            let mut bm = self.core.bubble_mut();
+                            if let Some(b) = bm.bubble_mut(bid) {
+                                AlertManager::remove(b, id);
+                            }
+                        }
                         if let Some(snap) = snapshot {
                             self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot: snap });
                         }
                         // Refresh the list
-                        self.panel_app.alert_settings_state.all_alerts =
-                            self.core.alert().items().to_vec();
+                        self.panel_app.alert_settings_state.all_alerts = {
+                            let bm = self.core.bubble();
+                            bm.bubbles().flat_map(|b| b.alerts.iter().cloned()).collect()
+                        };
                         self.sidebar_data_dirty = true;
                         self.autosave_snapshot();
                     }
@@ -2515,15 +2552,28 @@ impl ChartApp {
             _ if rest.starts_with("list_pause:") => {
                 if let Some(id_str) = rest.strip_prefix("list_pause:") {
                     if let Ok(id) = id_str.parse::<u64>() {
-                        if let Some(alert) = self.core.alert_mut().get_mut(id) {
-                            alert.status = match alert.status {
-                                mlc_core::alert::AlertStatus::Active => mlc_core::alert::AlertStatus::Paused,
-                                mlc_core::alert::AlertStatus::Paused => mlc_core::alert::AlertStatus::Active,
-                                other => other,
-                            };
+                        use mlc_backend_core::alert::AlertManager;
+                        let bid_opt = {
+                            let bm = self.core.bubble();
+                            let v = bm.bubbles().find_map(|b| AlertManager::get(b, id).map(|_| b.id));
+                            v
+                        };
+                        if let Some(bid) = bid_opt {
+                            let mut bm = self.core.bubble_mut();
+                            if let Some(b) = bm.bubble_mut(bid) {
+                                if let Some(alert) = AlertManager::get_mut(b, id) {
+                                    alert.status = match alert.status {
+                                        mlc_core::alert::AlertStatus::Active => mlc_core::alert::AlertStatus::Paused,
+                                        mlc_core::alert::AlertStatus::Paused => mlc_core::alert::AlertStatus::Active,
+                                        other => other,
+                                    };
+                                }
+                            }
                         }
-                        self.panel_app.alert_settings_state.all_alerts =
-                            self.core.alert().items().to_vec();
+                        self.panel_app.alert_settings_state.all_alerts = {
+                            let bm = self.core.bubble();
+                            bm.bubbles().flat_map(|b| b.alerts.iter().cloned()).collect()
+                        };
                         self.sidebar_data_dirty = true;
                         self.autosave_snapshot();
                     }

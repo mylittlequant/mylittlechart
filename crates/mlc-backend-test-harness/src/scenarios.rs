@@ -1597,19 +1597,25 @@ pub fn stream_dom_trade_dot_passthrough() -> HarnessResult<()> {
 
 pub fn body_alerts_straddle_fires_on_cross(h: &mut BackendHarness) -> HarnessResult<()> {
     use mlc_core::alert::{AlertCondition, AlertSource};
+    use mlc_backend_core::alert::AlertManager;
     let pivot: f64 = 50_000.0;
     let target_up = pivot * 1.0025;   // +0.25 %
     let target_dn = pivot * 0.9975;   // -0.25 %
 
+    let bid = register_bubble(h, ExchangeId::Binance, AccountType::Spot, "BTCUSDT", Timeframe::h1());
+
     let (id_up, id_dn) = {
-        let mut mgr = h.core.alert_mut();
-        let id_up = mgr.create(
+        let mut bm = h.core.bubble_mut();
+        let b = bm.bubble_mut(bid).expect("bubble exists");
+        let id_up = AlertManager::create(
+            b,
             AlertSource::Price { symbol: "BTCUSDT".to_string() },
             "+0.25 BTC",
             target_up,
             AlertCondition::CrossingUp,
         );
-        let id_dn = mgr.create(
+        let id_dn = AlertManager::create(
+            b,
             AlertSource::Price { symbol: "BTCUSDT".to_string() },
             "-0.25 BTC",
             target_dn,
@@ -1618,21 +1624,16 @@ pub fn body_alerts_straddle_fires_on_cross(h: &mut BackendHarness) -> HarnessRes
         (id_up, id_dn)
     };
 
-    // Seed prior price = pivot so the FIRST tick establishes a baseline.
-    // Then push a price that crosses the upper target.
     let prior_tick: f64 = pivot;
     let new_tick: f64 = pivot * 1.0050; // jumps past target_up
 
     let triggered_up;
     let triggered_dn;
     {
-        let mut mgr = h.core.alert_mut();
-        let _ = mgr.check_crossings_dynamic(
-            prior_tick, 0.0, "BTCUSDT", "binance", "S", &[], &[],
-        );
-        let fired = mgr.check_crossings_dynamic(
-            new_tick, 1.0, "BTCUSDT", "binance", "S", &[], &[],
-        );
+        let mut bm = h.core.bubble_mut();
+        let b = bm.bubble_mut(bid).expect("bubble exists");
+        let _ = AlertManager::check_crossings_dynamic(b, prior_tick, 0.0, &[], &[]);
+        let fired = AlertManager::check_crossings_dynamic(b, new_tick, 1.0, &[], &[]);
         triggered_up = fired.contains(&id_up);
         triggered_dn = fired.contains(&id_dn);
     }
@@ -1652,18 +1653,25 @@ pub fn alerts_straddle_fires_on_cross() -> HarnessResult<()> {
 
 pub fn body_alerts_straddle_fires_on_drop(h: &mut BackendHarness) -> HarnessResult<()> {
     use mlc_core::alert::{AlertCondition, AlertSource};
+    use mlc_backend_core::alert::AlertManager;
     let pivot: f64 = 50_000.0;
     let target_up = pivot * 1.0025;
     let target_dn = pivot * 0.9975;
+
+    let bid = register_bubble(h, ExchangeId::Binance, AccountType::Spot, "BTCUSDT", Timeframe::h1());
+
     let (id_up, id_dn) = {
-        let mut mgr = h.core.alert_mut();
-        let id_up = mgr.create(
+        let mut bm = h.core.bubble_mut();
+        let b = bm.bubble_mut(bid).expect("bubble exists");
+        let id_up = AlertManager::create(
+            b,
             AlertSource::Price { symbol: "BTCUSDT".to_string() },
             "+0.25 BTC",
             target_up,
             AlertCondition::CrossingUp,
         );
-        let id_dn = mgr.create(
+        let id_dn = AlertManager::create(
+            b,
             AlertSource::Price { symbol: "BTCUSDT".to_string() },
             "-0.25 BTC",
             target_dn,
@@ -1677,13 +1685,10 @@ pub fn body_alerts_straddle_fires_on_drop(h: &mut BackendHarness) -> HarnessResu
     let triggered_up;
     let triggered_dn;
     {
-        let mut mgr = h.core.alert_mut();
-        let _ = mgr.check_crossings_dynamic(
-            prior_tick, 0.0, "BTCUSDT", "binance", "S", &[], &[],
-        );
-        let fired = mgr.check_crossings_dynamic(
-            new_tick, 1.0, "BTCUSDT", "binance", "S", &[], &[],
-        );
+        let mut bm = h.core.bubble_mut();
+        let b = bm.bubble_mut(bid).expect("bubble exists");
+        let _ = AlertManager::check_crossings_dynamic(b, prior_tick, 0.0, &[], &[]);
+        let fired = AlertManager::check_crossings_dynamic(b, new_tick, 1.0, &[], &[]);
         triggered_up = fired.contains(&id_up);
         triggered_dn = fired.contains(&id_dn);
     }

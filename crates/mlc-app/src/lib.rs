@@ -3727,10 +3727,13 @@ impl ChartApp {
             let no_toolbar = mlc_core::ToolbarConfig::minimal();
 
             // Compute alert indicator values ONCE per render — they are
-            // window-independent (only depend on alert_manager + indicator_manager)
-            // and can be reused across all split-pane leaves.
+            // window-independent and can be reused across all split-pane leaves.
+            let all_alerts_for_render: Vec<mlc_core::alert::AlertItem> = {
+                let bm = self.core.bubble();
+                bm.bubbles().flat_map(|b| b.alerts.iter().cloned()).collect()
+            };
             let alert_indicator_values_cache = Self::build_indicator_values_for_alerts(
-                &self.core.alert(),
+                &all_alerts_for_render,
                 &self.core.indicators(),
             );
 
@@ -3874,8 +3877,7 @@ impl ChartApp {
                         .unwrap_or(&empty_pts);
                 // Reuse the indicator values computed once before this loop.
                 let alert_indicator_values = &alert_indicator_values_cache;
-                let alert_render_data: Vec<AlertRenderData> = self.core.alert().items()
-                    .iter()
+                let alert_render_data: Vec<AlertRenderData> = all_alerts_for_render.iter()
                     .filter(|a| a.status == mlc_core::alert::AlertStatus::Active)
                     .filter(|a| matches!(a.source, mlc_core::alert::AlertSource::Price { .. }))
                     .filter(|a| a.matches_window(&split_symbol, &split_exchange, &split_account_type))
@@ -4025,7 +4027,7 @@ impl ChartApp {
                             &split_bars_vec[..],
                             split_bell_dm,
                             &self.core.indicators(),
-                            &self.core.alert(),
+                            &all_alerts_for_render,
                             window_id,
                             &split_symbol,
                             &split_exchange,
@@ -4416,18 +4418,20 @@ impl ChartApp {
             } else {
                 (0.0, Vec::new())
             };
+            let single_all_alerts: Vec<mlc_core::alert::AlertItem> = {
+                let bm = self.core.bubble();
+                bm.bubbles().flat_map(|b| b.alerts.iter().cloned()).collect()
+            };
             let single_alert_indicator_values = Self::build_indicator_values_for_alerts(
-                &self.core.alert(),
+                &single_all_alerts,
                 &self.core.indicators(),
             );
             let single_alert_render_data: Vec<AlertRenderData> = {
-                // single_window_info = (symbol, timeframe, exchange, account_type) captured above.
                 let (single_sym, _, single_exch, single_at) = single_window_info
                     .as_ref()
                     .map(|(s, tf, e, at)| (s.as_str(), tf.as_str(), e.as_str(), at.as_str()))
                     .unwrap_or(("", "", "", ""));
-                self.core.alert().items()
-                    .iter()
+                single_all_alerts.iter()
                     .filter(|a| a.status == mlc_core::alert::AlertStatus::Active)
                     .filter(|a| matches!(a.source, mlc_core::alert::AlertSource::Price { .. }))
                     .filter(|a| a.matches_window(single_sym, single_exch, single_at))
@@ -4624,7 +4628,7 @@ impl ChartApp {
                             &single_bars_vec2[..],
                             single_bell_dm2,
                             &self.core.indicators(),
-                            &self.core.alert(),
+                            &single_all_alerts,
                             window_id,
                             single_sym,
                             single_exch,

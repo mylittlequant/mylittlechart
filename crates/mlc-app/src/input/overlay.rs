@@ -846,7 +846,19 @@ impl ChartApp {
 
         for inst_id in &all_to_remove {
             self.core.indicators_mut().remove_instance(*inst_id);
-            self.core.alert_mut().remove_alerts_for_indicator(*inst_id);
+            {
+                use mlc_backend_core::alert::AlertManager;
+                let bubble_ids: Vec<mlc_core::ids::BubbleId> = {
+                    let bm = self.core.bubble();
+                    bm.bubbles().map(|b| b.id).collect()
+                };
+                for bid in bubble_ids {
+                    let mut bm = self.core.bubble_mut();
+                    if let Some(b) = bm.bubble_mut(bid) {
+                        AlertManager::remove_alerts_for_indicator(b, *inst_id);
+                    }
+                }
+            }
         }
 
         // Remove stale entries from auto_bubble.pre_tag_indicator_ids for every window
