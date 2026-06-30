@@ -1,7 +1,7 @@
 //! Standalone crossing detection utility (stateless).
 //!
-//! For most use cases, prefer `AlertManager::check_crossings()` which
-//! tracks `last_price` internally.
+//! For most use cases, prefer `AlertManager::on_tick()` (via the
+//! `core.alerts_mut()` facade) which tracks `last_price` internally.
 
 use mlc_core::alert::{AlertCondition, AlertStatus, AlertItem};
 

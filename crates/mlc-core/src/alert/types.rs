@@ -417,6 +417,56 @@ pub struct AlertItem {
 }
 
 impl AlertItem {
+    /// Create a new alert from an [`AlertSpec`](super::spec::AlertSpec).
+    ///
+    /// Replaces the manual `create` + `get_mut` + field-patch sequence the
+    /// create flow used to perform by hand (`settings.rs` save branch,
+    /// daemon `create_price_alert`). Mirrors `AlertManager::create`'s
+    /// defaults (`status = Active`, `trigger_count = 0`,
+    /// `prev_dynamic_price = 0.0`) plus the full `AlertSpec` field set.
+    ///
+    /// Non-`Price` sources never carry a symbol inside `AlertSource` — the
+    /// symbol is not part of `AlertSpec` either (it's resolved by the
+    /// caller from the active window before constructing the spec, same as
+    /// today; price-source symbol lives inside `AlertSource::Price`
+    /// itself).
+    pub fn from_spec(id: u64, spec: super::spec::AlertSpec) -> Self {
+        // Price-source alerts carry their symbol inside `AlertSource::Price`
+        // itself — the legacy field stays blank for that case (matches the
+        // `if !matches!(alert.source, AlertSource::Price { .. })` guard the
+        // create flow used to apply manually before this factory existed).
+        let symbol = if matches!(spec.source, AlertSource::Price { .. }) {
+            String::new()
+        } else {
+            spec.symbol
+        };
+        Self {
+            id,
+            name: spec.name,
+            source: spec.source,
+            condition: spec.condition,
+            price: spec.price,
+            price2: spec.price2,
+            percentage: spec.percentage,
+            trigger_mode: spec.trigger_mode,
+            max_triggers: 0,
+            trigger_count: 0,
+            transports: spec.transports,
+            status: AlertStatus::Active,
+            created_at: 0,
+            last_triggered_at: None,
+            expires_at: None,
+            symbol,
+            last_triggered: None,
+            prev_dynamic_price: 0.0,
+            group_id: spec.group_id,
+            exchange: spec.exchange,
+            window_id_hint: spec.window_id_hint,
+            timeframe: spec.timeframe,
+            account_type: default_account_type(),
+        }
+    }
+
     /// Create a new alert from an `AlertSource`.
     pub fn new(
         id: u64,

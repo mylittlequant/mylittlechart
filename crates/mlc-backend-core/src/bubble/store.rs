@@ -117,7 +117,6 @@ impl BubbleStore {
             liq_dots: None,
             alerts: Vec::new(),
             alert_next_id: 1,
-            alert_last_price: std::collections::HashMap::new(),
         };
         self.bubbles.insert(id, bubble);
         id
@@ -167,7 +166,6 @@ impl BubbleStore {
             liq_dots: None,
             alerts: Vec::new(),
             alert_next_id: 1,
-            alert_last_price: std::collections::HashMap::new(),
         };
         self.bubbles.insert(id, bubble);
         id
@@ -800,7 +798,6 @@ impl BubbleStore {
             liq_dots: None,
             alerts: snap.alerts.clone(),
             alert_next_id: snap.alerts.iter().map(|a| a.id).max().unwrap_or(0) + 1,
-            alert_last_price: std::collections::HashMap::new(),
         }
     }
 }

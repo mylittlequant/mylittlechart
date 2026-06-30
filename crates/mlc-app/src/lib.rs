@@ -3728,10 +3728,7 @@ impl ChartApp {
 
             // Compute alert indicator values ONCE per render — they are
             // window-independent and can be reused across all split-pane leaves.
-            let all_alerts_for_render: Vec<mlc_core::alert::AlertItem> = {
-                let bm = self.core.bubble();
-                bm.bubbles().flat_map(|b| b.alerts.iter().cloned()).collect()
-            };
+            let all_alerts_for_render: Vec<mlc_core::alert::AlertItem> = self.core.alerts().items_all();
             let alert_indicator_values_cache = Self::build_indicator_values_for_alerts(
                 &all_alerts_for_render,
                 &self.core.indicators(),
@@ -4418,10 +4415,7 @@ impl ChartApp {
             } else {
                 (0.0, Vec::new())
             };
-            let single_all_alerts: Vec<mlc_core::alert::AlertItem> = {
-                let bm = self.core.bubble();
-                bm.bubbles().flat_map(|b| b.alerts.iter().cloned()).collect()
-            };
+            let single_all_alerts: Vec<mlc_core::alert::AlertItem> = self.core.alerts().items_all();
             let single_alert_indicator_values = Self::build_indicator_values_for_alerts(
                 &single_all_alerts,
                 &self.core.indicators(),

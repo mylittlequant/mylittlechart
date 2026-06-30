@@ -334,8 +334,6 @@ impl ChartApp {
         // ── Alert checker: detect price crossings for every visible bubble ────
         // Skip entirely when no trade arrived this tick — nothing changed.
         if had_trade_update {
-            use mlc_backend_core::alert::AlertManager;
-
             // Collect per-bubble alert data: bubble_id, current_price, current_bar, drawing_points.
             // De-duplicate by bubble_id so shared bubbles are only checked once.
             let mut seen_bids: std::collections::HashSet<mlc_core::ids::BubbleId> = std::collections::HashSet::new();
@@ -379,10 +377,7 @@ impl ChartApp {
                 .collect();
 
             // Build indicator values from all bubbles' alerts combined.
-            let all_alerts_snapshot: Vec<mlc_core::alert::AlertItem> = {
-                let bm = self.core.bubble();
-                bm.bubbles().flat_map(|b| b.alerts.iter().cloned()).collect()
-            };
+            let all_alerts_snapshot: Vec<mlc_core::alert::AlertItem> = self.core.alerts().items_all();
             let indicator_values = Self::build_indicator_values_for_alerts(
                 &all_alerts_snapshot,
                 &self.core.indicators(),
@@ -390,18 +385,15 @@ impl ChartApp {
 
             let mut all_triggered: Vec<(u64, mlc_core::ids::BubbleId)> = Vec::new();
             for bd in &bubble_data {
-                let mut bm = self.core.bubble_mut();
-                if let Some(b) = bm.bubble_mut(bd.bid) {
-                    let triggered = AlertManager::check_crossings_dynamic(
-                        b,
-                        bd.current_price,
-                        bd.current_bar,
-                        &bd.drawing_points,
-                        &indicator_values,
-                    );
-                    for id in triggered {
-                        all_triggered.push((id, bd.bid));
-                    }
+                let triggered = self.core.alerts_mut().on_tick(
+                    bd.bid,
+                    bd.current_price,
+                    bd.current_bar,
+                    &bd.drawing_points,
+                    &indicator_values,
+                );
+                for id in triggered {
+                    all_triggered.push((id, bd.bid));
                 }
             }
 
@@ -424,12 +416,9 @@ impl ChartApp {
                     .collect();
 
                 for bd in &bubble_data {
-                    let mut bm = self.core.bubble_mut();
-                    if let Some(b) = bm.bubble_mut(bd.bid) {
-                        let triggered = AlertManager::check_signal_alerts(b, &signal_batch);
-                        for id in triggered {
-                            all_triggered.push((id, bd.bid));
-                        }
+                    let triggered = self.core.alerts_mut().on_signals(bd.bid, &signal_batch);
+                    for id in triggered {
+                        all_triggered.push((id, bd.bid));
                     }
                 }
             }
@@ -460,9 +449,9 @@ impl ChartApp {
 
                 // Snapshot triggered alerts from all bubbles for delivery.
                 let triggered_alerts: Vec<mlc_core::alert::AlertItem> = {
-                    let bm = self.core.bubble();
+                    let alerts = self.core.alerts();
                     triggered_ids.iter().filter_map(|&id| {
-                        bm.bubbles().find_map(|b| AlertManager::get(b, id).cloned())
+                        alerts.find_owner(id).map(|(_, a)| a)
                     }).collect()
                 };
                 for alert in &triggered_alerts {

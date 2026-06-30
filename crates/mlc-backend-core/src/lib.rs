@@ -28,6 +28,7 @@ pub mod bubble;
 pub mod alert;
 pub mod service;
 
+pub use alert::{Alerts, AlertsMut};
 pub use service::{DrawingService, DrawingServiceMut, SwapSymbolResult};
 
 use std::sync::Arc;
@@ -40,6 +41,7 @@ use digdigdig3::ExchangeId;
 use mlc_core::preset::preset::ChartPreset;
 use mlc_core::templates::manager::TemplateManager;
 use mlc_core::ids::BubbleId;
+use crate::alert::AlertManager;
 use crate::bubble::BubbleStore;
 use mlc_core::Bar;
 use mlc_core::drawing::DrawingManager;
@@ -660,6 +662,17 @@ pub struct BackendCore {
     /// taken and dropped each tick frame, no waits.
     pub bubble: std::sync::RwLock<BubbleStore>,
 
+    /// Alert manager — owns the per-bubble last-tick-price cache used for
+    /// crossing detection (`AlertManager::on_tick`). Alert *data*
+    /// (`alerts`, `alert_next_id`) lives on `DataBubble`, mutated through
+    /// this manager via the `Alerts` / `AlertsMut` facade
+    /// (`BackendCore::alerts` / `alerts_mut`).
+    ///
+    /// LOCK ORDER: every facade/accessor that takes both `bubble` and
+    /// `alert` MUST acquire `bubble` first, then `alert` — see
+    /// `docs/mlc/plans/doctrine-cutover-2026-06-27.md` §1A.
+    pub alert: std::sync::RwLock<AlertManager>,
+
     /// Indicator manager — owns all indicator instances + recalc state +
     /// per-window assignment + global definitions catalog. Cannot live inside
     /// `Managers` (mlc-core) because mlc-indicators is above mlc-core in the
@@ -781,6 +794,7 @@ impl BackendCore {
         let broadcast_rx = bridge.add_listener();
         Arc::new(Self {
             bubble: std::sync::RwLock::new(BubbleStore::new()),
+            alert: std::sync::RwLock::new(AlertManager::default()),
             indicators: std::sync::RwLock::new(IndicatorManager::new()),
             broadcast_rx: std::sync::Mutex::new(broadcast_rx),
             bridge,
@@ -911,6 +925,26 @@ impl BackendCore {
     #[inline]
     pub fn bubble_mut(&self) -> std::sync::RwLockWriteGuard<'_, BubbleStore> {
         self.bubble.write().expect("BackendCore.bubble poisoned (write)")
+    }
+
+    /// Read-only facade over the alert manager + bubble store. The ONLY
+    /// doctrinally-sanctioned access path to alert data
+    /// (`docs/mlc/plans/doctrine-cutover-2026-06-27.md` §1A, Step 3.0).
+    #[inline]
+    pub fn alerts(&self) -> Alerts<'_> {
+        // LOCK ORDER: bubble first, then alert.
+        let bubbles = self.bubble.read().expect("BackendCore.bubble poisoned (read)");
+        let mgr = self.alert.read().expect("BackendCore.alert poisoned (read)");
+        Alerts::new(mgr, bubbles)
+    }
+
+    /// Mutable facade over the alert manager + bubble store.
+    #[inline]
+    pub fn alerts_mut(&self) -> AlertsMut<'_> {
+        // LOCK ORDER: bubble first, then alert.
+        let bubbles = self.bubble.write().expect("BackendCore.bubble poisoned (write)");
+        let mgr = self.alert.write().expect("BackendCore.alert poisoned (write)");
+        AlertsMut::new(mgr, bubbles)
     }
 
     /// Lock the trading manager for mutation. Returns `None` if trading is

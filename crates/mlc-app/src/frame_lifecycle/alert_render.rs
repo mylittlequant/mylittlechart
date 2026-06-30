@@ -16,8 +16,7 @@ impl ChartApp {
     // -------------------------------------------------------------------------
 
     /// Build the `indicator_values` slice required by
-    /// `AlertManager::check_crossings_dynamic` and
-    /// `AlertManager::resolve_price_static`.
+    /// `AlertManager::on_tick` and `AlertManager::resolve_price_static`.
     ///
     /// Iterates all active `AlertSource::Indicator` alerts, de-duplicates
     /// `(indicator_id, output_index)` pairs, looks up the corresponding

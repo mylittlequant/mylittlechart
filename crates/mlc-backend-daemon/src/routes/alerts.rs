@@ -1,18 +1,24 @@
 //! Alert CRUD endpoints.
 //!
-//! - `GET    /v1/alerts`              — list all alerts across all bubbles
-//! - `POST   /v1/alerts`              — create a price alert on the first bubble
-//! - `PATCH  /v1/alerts/:id`          — update name / price / condition
-//! - `DELETE /v1/alerts/:id`          — remove alert
+//! - `GET    /v1/alerts[?bubble_id=]`     — list alerts; folds across all
+//!   bubbles when `bubble_id` is absent, scopes to one bubble when present.
+//! - `POST   /v1/alerts[?bubble_id=]`     — create a price alert; targets
+//!   the given bubble when `bubble_id` is present, falls back to the first
+//!   bubble (today's behavior) when absent.
+//! - `PATCH  /v1/alerts/:id`              — update name / price / condition
+//! - `DELETE /v1/alerts/:id`              — remove alert
 //!
-//! Alerts live per-bubble in `DataBubble.alerts`.
-//! For list/create/patch/delete the daemon folds across all bubbles.
+//! Alerts live per-bubble in `DataBubble.alerts`, accessed exclusively
+//! through `core.alerts()` / `core.alerts_mut()` (Step 3.0). PATCH/DELETE
+//! resolve their owning bubble via `find_owner` since the route does not
+//! carry it directly.
 //!
-//! NOTE: the daemon API does not carry a bubble_id param yet (Step 2d).
-//! create/patch/delete operate on the first bubble or by searching all bubbles.
+//! `mlc-backend-daemon` HTTP/WS service surface is out of scope for the
+//! doctrine cutover wave (full REST bubble-scoping is deferred) — see
+//! `docs/mlc/plans/step-3.0-alert-manager-design.md` §5.
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::get,
@@ -20,8 +26,8 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use mlc_core::alert::{AlertCondition, AlertStatus};
-use mlc_backend_core::alert::AlertManager;
+use mlc_core::alert::{AlertCondition, AlertPatch, AlertSpec, AlertStatus};
+use mlc_core::ids::BubbleId;
 
 use crate::AppState;
 
@@ -45,6 +51,11 @@ struct AlertOut {
 #[derive(Serialize)]
 struct AlertsOut {
     alerts: Vec<AlertOut>,
+}
+
+#[derive(Deserialize)]
+struct BubbleScopeQuery {
+    bubble_id: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -125,30 +136,38 @@ fn status_str(s: AlertStatus) -> &'static str {
     }
 }
 
+fn to_out(a: &mlc_core::alert::AlertItem) -> AlertOut {
+    AlertOut {
+        id: a.id,
+        name: a.name.clone(),
+        symbol: a.symbol().to_string(),
+        exchange: a.exchange.clone(),
+        account_type: a.account_type.clone(),
+        price: a.price,
+        condition: condition_str(a.condition).to_string(),
+        status: status_str(a.status).to_string(),
+        trigger_count: a.trigger_count,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
 
-async fn list_alerts(State(s): State<AppState>) -> impl IntoResponse {
-    let bm = s.core.bubble();
-    let alerts: Vec<AlertOut> = bm.bubbles()
-        .flat_map(|b| AlertManager::items(b).iter().map(|a| AlertOut {
-            id: a.id,
-            name: a.name.clone(),
-            symbol: a.symbol().to_string(),
-            exchange: a.exchange.clone(),
-            account_type: a.account_type.clone(),
-            price: a.price,
-            condition: condition_str(a.condition).to_string(),
-            status: status_str(a.status).to_string(),
-            trigger_count: a.trigger_count,
-        }))
-        .collect();
+async fn list_alerts(
+    State(s): State<AppState>,
+    Query(q): Query<BubbleScopeQuery>,
+) -> impl IntoResponse {
+    let alerts: Vec<AlertOut> = match q.bubble_id {
+        Some(raw) => s.core.alerts().items(BubbleId(raw)).iter().map(to_out).collect(),
+        None => s.core.alerts().items_all().iter().map(to_out).collect(),
+    };
     Json(AlertsOut { alerts })
 }
 
 async fn create_alert(
     State(s): State<AppState>,
+    Query(q): Query<BubbleScopeQuery>,
     Json(body): Json<CreateAlertIn>,
 ) -> impl IntoResponse {
     let condition = match parse_condition(&body.condition) {
@@ -161,20 +180,14 @@ async fn create_alert(
                 .into_response();
         }
     };
-    // Create on the first available bubble (daemon has no active-window context).
-    let first_bid = s.core.bubble().bubbles().next().map(|b| b.id);
-    let id = match first_bid {
-        Some(bid) => {
-            let mut bm = s.core.bubble_mut();
-            if let Some(b) = bm.bubble_mut(bid) {
-                AlertManager::create_price_alert(b, &body.symbol, &body.name, body.price, condition)
-            } else {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({"error": "bubble not found"})),
-                ).into_response();
-            }
-        }
+    let target_bid = match q.bubble_id {
+        Some(raw) => Some(BubbleId(raw)),
+        // Fall back to the first available bubble (today's behavior) when
+        // the caller does not know its bubble.
+        None => s.core.bubble().bubbles().next().map(|b| b.id),
+    };
+    let bid = match target_bid {
+        Some(bid) => bid,
         None => {
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -182,6 +195,20 @@ async fn create_alert(
             ).into_response();
         }
     };
+    let spec = AlertSpec {
+        source: mlc_core::alert::AlertSource::Price { symbol: body.symbol },
+        name: body.name,
+        price: body.price,
+        condition,
+        ..AlertSpec::price_default()
+    };
+    let id = s.core.alerts_mut().add(bid, spec);
+    if id == 0 {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "bubble not found"})),
+        ).into_response();
+    }
     (StatusCode::CREATED, Json(AlertCreatedOut { id })).into_response()
 }
 
@@ -191,58 +218,35 @@ async fn patch_alert(
     Json(body): Json<PatchAlertIn>,
 ) -> impl IntoResponse {
     // Find the bubble owning this alert.
-    let bid_opt = s.core.bubble().bubbles()
-        .find_map(|b| AlertManager::get(b, id).map(|_| b.id));
-    let bid = match bid_opt {
-        Some(b) => b,
+    let bid = match s.core.alerts().find_owner(id) {
+        Some((bid, _)) => bid,
         None => return StatusCode::NOT_FOUND.into_response(),
     };
-    {
-        let mut bm = s.core.bubble_mut();
-        let b = match bm.bubble_mut(bid) {
-            Some(b) => b,
-            None => return StatusCode::NOT_FOUND.into_response(),
-        };
-        let alert = match AlertManager::get_mut(b, id) {
-            Some(a) => a,
-            None => return StatusCode::NOT_FOUND.into_response(),
-        };
-        if let Some(ref n) = body.name {
-            alert.name = n.clone();
-        }
-        if let Some(p) = body.price {
-            alert.price = p;
-        }
-        if let Some(ref cond_str) = body.condition {
-            if let Some(c) = parse_condition(cond_str) {
-                alert.condition = c;
-            } else {
+    let condition = match body.condition {
+        Some(ref cond_str) => match parse_condition(cond_str) {
+            Some(c) => Some(c),
+            None => {
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(serde_json::json!({"error": "unknown condition"})),
                 )
                     .into_response();
             }
-        }
+        },
+        None => None,
+    };
+    let patch = AlertPatch {
+        name: body.name,
+        price: body.price,
+        condition,
+        ..AlertPatch::default()
+    };
+    if !s.core.alerts_mut().update(bid, id, patch) {
+        return StatusCode::NOT_FOUND.into_response();
     }
     // Return the updated alert.
-    let out = {
-        let bm = s.core.bubble();
-        let dto = bm.bubbles().find_map(|b| AlertManager::get(b, id).map(|a| AlertOut {
-            id: a.id,
-            name: a.name.clone(),
-            symbol: a.symbol().to_string(),
-            exchange: a.exchange.clone(),
-            account_type: a.account_type.clone(),
-            price: a.price,
-            condition: condition_str(a.condition).to_string(),
-            status: status_str(a.status).to_string(),
-            trigger_count: a.trigger_count,
-        }));
-        dto
-    };
-    match out {
-        Some(dto) => Json(dto).into_response(),
+    match s.core.alerts().get(bid, id) {
+        Some(a) => Json(to_out(a)).into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -251,17 +255,9 @@ async fn delete_alert(
     Path(id): Path<u64>,
     State(s): State<AppState>,
 ) -> impl IntoResponse {
-    let bid_opt = s.core.bubble().bubbles()
-        .find_map(|b| AlertManager::get(b, id).map(|_| b.id));
+    let bid_opt = s.core.alerts().find_owner(id).map(|(bid, _)| bid);
     let removed = match bid_opt {
-        Some(bid) => {
-            let mut bm = s.core.bubble_mut();
-            if let Some(b) = bm.bubble_mut(bid) {
-                AlertManager::remove(b, id)
-            } else {
-                false
-            }
-        }
+        Some(bid) => s.core.alerts_mut().remove(bid, id),
         None => false,
     };
     if removed {

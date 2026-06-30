@@ -1,90 +1,125 @@
-//! AlertManager — stateless namespace for alert operations on a DataBubble.
+//! `AlertManager` — stateful backend manager for alerts.
 //!
-//! All mutable methods take `b: &mut DataBubble` as their first argument.
-//! All read-only methods take `b: &DataBubble`.
-//! No fields — alert state lives in `DataBubble.alerts` / `alert_next_id` / `alert_last_price`.
+//! Holds the per-bubble last-tick-price cache used for crossing detection.
+//! The alert *data* (`alerts: Vec<AlertItem>`, `alert_next_id`) stays on
+//! `DataBubble` — only the tick-to-tick scratch cache lives here. All
+//! methods are `pub(crate)`: app code never calls `AlertManager` directly,
+//! it goes through the `Alerts` / `AlertsMut` facade on `BackendCore`
+//! (`crates/mlc-backend-core/src/alert/facade.rs`).
+//!
+//! See `docs/mlc/plans/doctrine-cutover-2026-06-27.md` §1A and
+//! `docs/mlc/plans/step-3.0-alert-manager-design.md`.
 
-use mlc_core::alert::{AlertCondition, AlertItem, AlertSource, AlertStatus, AlertTriggerMode, DrawingExtendMode, SignalBarState, SignalDirection, AlertTransport};
+use std::collections::HashMap;
 
-use crate::bubble::DataBubble;
+use mlc_core::alert::{
+    AlertCondition, AlertItem, AlertPatch, AlertSpec, AlertStatus, AlertTriggerMode,
+    DrawingExtendMode,
+};
+use mlc_core::ids::BubbleId;
 
-/// Stateless alert namespace.  All operations read/write `DataBubble` fields.
+use crate::bubble::BubbleStore;
+
+/// Stateful alert manager. Owns the tick-to-tick last-price cache used by
+/// [`AlertManager::on_tick`] to detect crossings; everything else (the
+/// alert rows themselves, the id allocator) is bubble data.
 #[derive(Clone, Debug, Default)]
-pub struct AlertManager;
+pub struct AlertManager {
+    /// Per-bubble last-tick price, used to diff against the current tick in
+    /// `on_tick`. Not persisted — rebuilt from live data. Absent for a
+    /// bubble until its first tick after construction/restore: that first
+    /// call seeds the cache and skips crossing detection, same as the
+    /// legacy `unwrap_or(0.0)` sentinel behaved before the reset.
+    last_price: HashMap<BubbleId, f64>,
+}
 
 impl AlertManager {
-    pub fn new() -> Self {
-        Self
-    }
-
     // =========================================================================
     // Read
     // =========================================================================
 
-    /// All alert items (for sidebar display, preset snapshot, etc.).
-    pub fn items(b: &DataBubble) -> &[AlertItem] {
-        &b.alerts
+    /// All alert items on one bubble (for sidebar display, preset snapshot, etc.).
+    pub(crate) fn items<'a>(&self, bubbles: &'a BubbleStore, bid: BubbleId) -> &'a [AlertItem] {
+        bubbles.bubble(bid).map(|b| b.alerts.as_slice()).unwrap_or(&[])
     }
 
-    /// Find an alert by ID.
-    pub fn get(b: &DataBubble, id: u64) -> Option<&AlertItem> {
-        b.alerts.iter().find(|a| a.id == id)
+    /// All alert items across every bubble (sidebar global list, daemon fold).
+    pub(crate) fn items_all(&self, bubbles: &BubbleStore) -> Vec<AlertItem> {
+        bubbles.bubbles().flat_map(|b| b.alerts.iter().cloned()).collect()
     }
 
-    /// Find a mutable alert by ID.
-    pub fn get_mut(b: &mut DataBubble, id: u64) -> Option<&mut AlertItem> {
-        b.alerts.iter_mut().find(|a| a.id == id)
+    /// Find an alert by ID on a known bubble.
+    pub(crate) fn get<'a>(&self, bubbles: &'a BubbleStore, bid: BubbleId, id: u64) -> Option<&'a AlertItem> {
+        bubbles.bubble(bid).and_then(|b| b.alerts.iter().find(|a| a.id == id))
     }
 
-    /// Number of alerts.
-    pub fn len(b: &DataBubble) -> usize {
-        b.alerts.len()
+    /// Search every bubble for an alert id; returns the owning bubble plus a
+    /// clone of the alert. Replaces the recurring
+    /// `bm.bubbles().find_map(|b| AlertManager::get(b, id)...)` pattern.
+    pub(crate) fn find_owner(&self, bubbles: &BubbleStore, id: u64) -> Option<(BubbleId, AlertItem)> {
+        bubbles.bubbles().find_map(|b| {
+            b.alerts.iter().find(|a| a.id == id).map(|a| (b.id, a.clone()))
+        })
     }
 
-    pub fn is_empty(b: &DataBubble) -> bool {
-        b.alerts.is_empty()
+    /// Clone of all alerts on one bubble (for preset save).
+    pub(crate) fn snapshot_for_bid(&self, bubbles: &BubbleStore, bid: BubbleId) -> Vec<AlertItem> {
+        bubbles.bubble(bid).map(|b| b.alerts.clone()).unwrap_or_default()
+    }
+
+    /// Total alert count across every bubble (diagnostics).
+    pub(crate) fn len_total(&self, bubbles: &BubbleStore) -> usize {
+        bubbles.bubbles().map(|b| b.alerts.len()).sum()
     }
 
     // =========================================================================
-    // Create
+    // Create / Update / Delete
     // =========================================================================
 
-    /// Create a new alert from an `AlertSource` and return its ID.
-    pub fn create(
-        b: &mut DataBubble,
-        source: AlertSource,
-        name: &str,
-        price: f64,
-        condition: AlertCondition,
-    ) -> u64 {
+    /// Create a new alert on `bid` from an [`AlertSpec`]. Returns the new
+    /// alert's id, or 0 if `bid` does not resolve to a bubble.
+    pub(crate) fn add(&mut self, bubbles: &mut BubbleStore, bid: BubbleId, spec: AlertSpec) -> u64 {
+        let Some(b) = bubbles.bubble_mut(bid) else { return 0 };
         let id = b.alert_next_id;
         b.alert_next_id += 1;
-        let alert = AlertItem::new(id, source, name, price, condition, AlertStatus::Active);
-        b.alerts.push(alert);
+        b.alerts.push(AlertItem::from_spec(id, spec));
         id
     }
 
-    /// Convenience wrapper: create a horizontal price alert for a symbol.
-    pub fn create_price_alert(
-        b: &mut DataBubble,
-        symbol: &str,
-        name: &str,
-        price: f64,
-        condition: AlertCondition,
-    ) -> u64 {
-        Self::create(
-            b,
-            AlertSource::Price {
-                symbol: symbol.to_string(),
-            },
-            name,
-            price,
-            condition,
-        )
+    /// Apply a partial update to an existing alert. Returns `true` if found.
+    pub(crate) fn update(&mut self, bubbles: &mut BubbleStore, bid: BubbleId, id: u64, patch: AlertPatch) -> bool {
+        let Some(b) = bubbles.bubble_mut(bid) else { return false };
+        let Some(alert) = b.alerts.iter_mut().find(|a| a.id == id) else { return false };
+        patch.apply(alert);
+        true
     }
 
-    /// Insert a single alert item verbatim (for undo/redo restore).
-    pub fn restore_one(b: &mut DataBubble, item: AlertItem) {
+    /// Remove an alert by ID. Returns `true` if found and removed.
+    pub(crate) fn remove(&mut self, bubbles: &mut BubbleStore, bid: BubbleId, id: u64) -> bool {
+        let Some(b) = bubbles.bubble_mut(bid) else { return false };
+        let before = b.alerts.len();
+        b.alerts.retain(|a| a.id != id);
+        b.alerts.len() != before
+    }
+
+    /// Flip `Active <-> Paused`. Returns the new status, or `None` if the
+    /// alert was not found.
+    pub(crate) fn toggle_pause(&mut self, bubbles: &mut BubbleStore, bid: BubbleId, id: u64) -> Option<AlertStatus> {
+        let b = bubbles.bubble_mut(bid)?;
+        let alert = b.alerts.iter_mut().find(|a| a.id == id)?;
+        alert.status = match alert.status {
+            AlertStatus::Active => AlertStatus::Paused,
+            AlertStatus::Paused => AlertStatus::Active,
+            other => other,
+        };
+        Some(alert.status)
+    }
+
+    /// Insert a single alert item verbatim (for undo/redo restore, preset
+    /// restore). Bumps `alert_next_id` so future `add` calls don't collide
+    /// with the restored id.
+    pub(crate) fn restore_one(&mut self, bubbles: &mut BubbleStore, bid: BubbleId, item: AlertItem) {
+        let Some(b) = bubbles.bubble_mut(bid) else { return };
         if item.id >= b.alert_next_id {
             b.alert_next_id = item.id + 1;
         }
@@ -92,107 +127,60 @@ impl AlertManager {
     }
 
     // =========================================================================
-    // Update
+    // Bulk removal — drawing / indicator cleanup
     // =========================================================================
 
-    /// Update an existing alert's core fields. Returns true if found.
-    pub fn update(
-        b: &mut DataBubble,
-        id: u64,
-        name: &str,
-        price: f64,
-        condition: AlertCondition,
-    ) -> bool {
-        if let Some(alert) = Self::get_mut(b, id) {
-            alert.name = name.to_string();
-            alert.price = price;
-            alert.condition = condition;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Update all fields of an existing alert. Returns true if found.
-    pub fn update_full(
-        b: &mut DataBubble,
-        id: u64,
-        source: AlertSource,
-        name: &str,
-        price: f64,
-        price2: f64,
-        percentage: f64,
-        condition: AlertCondition,
-        trigger_mode: AlertTriggerMode,
-        transports: Vec<AlertTransport>,
-    ) -> bool {
-        if let Some(alert) = Self::get_mut(b, id) {
-            alert.source = source;
-            alert.name = name.to_string();
-            alert.price = price;
-            alert.price2 = price2;
-            alert.percentage = percentage;
-            alert.condition = condition;
-            alert.trigger_mode = trigger_mode;
-            alert.transports = transports;
-            true
-        } else {
-            false
-        }
-    }
-
-    // =========================================================================
-    // Delete
-    // =========================================================================
-
-    /// Remove an alert by ID. Returns true if found and removed.
-    pub fn remove(b: &mut DataBubble, id: u64) -> bool {
-        let before = b.alerts.len();
-        b.alerts.retain(|a| a.id != id);
-        b.alerts.len() != before
-    }
-
-    /// Remove all alerts.
-    pub fn clear(b: &mut DataBubble) {
-        b.alerts.clear();
-        b.alert_next_id = 1;
-        b.alert_last_price.clear();
-    }
-
-    /// Snapshot all alerts attached to a specific drawing primitive (for undo).
-    pub fn alerts_for_drawing(b: &DataBubble, primitive_id: u64) -> Vec<AlertItem> {
-        b.alerts
-            .iter()
-            .filter(|a| matches!(&a.source, AlertSource::Drawing { primitive_id: pid, .. } if *pid == primitive_id))
-            .cloned()
-            .collect()
-    }
-
-    /// Remove all alerts attached to a specific drawing primitive.
-    pub fn remove_alerts_for_drawing(b: &mut DataBubble, primitive_id: u64) {
-        b.alerts.retain(|a| {
-            !matches!(&a.source, AlertSource::Drawing { primitive_id: pid, .. } if *pid == primitive_id)
-        });
-    }
-
-    /// Remove all alerts attached to a specific indicator instance.
-    pub fn remove_alerts_for_indicator(b: &mut DataBubble, indicator_id: u64) {
-        b.alerts.retain(|a| {
-            match &a.source {
-                AlertSource::Indicator { indicator_id: iid, .. } if *iid == indicator_id => false,
-                AlertSource::Signal { indicator_id: iid, .. } if *iid == indicator_id => false,
-                _ => true,
+    /// Remove every alert attached to `primitive_id`, across all bubbles.
+    /// Returns the removed items so the caller can push undo commands.
+    pub(crate) fn clear_for_drawing(&mut self, bubbles: &mut BubbleStore, primitive_id: u64) -> Vec<AlertItem> {
+        let mut removed = Vec::new();
+        for b in bubbles.bubbles_mut() {
+            let mut i = 0;
+            while i < b.alerts.len() {
+                let matches = matches!(
+                    &b.alerts[i].source,
+                    mlc_core::alert::AlertSource::Drawing { primitive_id: pid, .. } if *pid == primitive_id
+                );
+                if matches {
+                    removed.push(b.alerts.remove(i));
+                } else {
+                    i += 1;
+                }
             }
-        });
+        }
+        removed
+    }
+
+    /// Remove every alert attached to `indicator_id` (Indicator or Signal
+    /// source), across all bubbles. Returns the removed count — no undo
+    /// path exists for this callsite today.
+    pub(crate) fn clear_for_indicator(&mut self, bubbles: &mut BubbleStore, indicator_id: u64) -> usize {
+        let mut count = 0;
+        for b in bubbles.bubbles_mut() {
+            let before = b.alerts.len();
+            b.alerts.retain(|a| {
+                !matches!(
+                    &a.source,
+                    mlc_core::alert::AlertSource::Indicator { indicator_id: iid, .. } if *iid == indicator_id
+                ) && !matches!(
+                    &a.source,
+                    mlc_core::alert::AlertSource::Signal { indicator_id: iid, .. } if *iid == indicator_id
+                )
+            });
+            count += before - b.alerts.len();
+        }
+        count
     }
 
     // =========================================================================
-    // Dynamic crossing detection (Drawing / Indicator alerts)
+    // Dynamic crossing detection (Drawing / Indicator / Price alerts)
     // =========================================================================
 
     /// Resolve the effective price level for an alert at the given bar.
     ///
-    /// Static method — no bubble reference needed, operates on a single alert.
+    /// Stateless math helper — no manager/bubble state needed, operates on
+    /// a single alert. Not part of the managed surface (no bubble lookup),
+    /// stays `pub` for direct use by the render path.
     pub fn resolve_price_static(
         alert: &AlertItem,
         current_bar: f64,
@@ -200,8 +188,8 @@ impl AlertManager {
         indicator_values: &[(u64, usize, Vec<f64>)],
     ) -> Option<f64> {
         match &alert.source {
-            AlertSource::Price { .. } => Some(alert.price),
-            AlertSource::Drawing { primitive_id, .. } => {
+            mlc_core::alert::AlertSource::Price { .. } => Some(alert.price),
+            mlc_core::alert::AlertSource::Drawing { primitive_id, .. } => {
                 let (pts, extend_mode) = drawing_points
                     .iter()
                     .find(|(id, _, _)| *id == *primitive_id)
@@ -240,7 +228,7 @@ impl AlertManager {
                 let t = (current_bar - bar1) / (bar2 - bar1);
                 Some(price1 + t * (price2 - price1))
             }
-            AlertSource::Indicator {
+            mlc_core::alert::AlertSource::Indicator {
                 indicator_id,
                 output_index,
                 ..
@@ -251,36 +239,29 @@ impl AlertManager {
                     .map(|(_, _, v)| v)?;
                 vals.last().copied()
             }
-            AlertSource::CrossingPair { .. } => None,
-            AlertSource::Signal { .. } => None,
+            mlc_core::alert::AlertSource::CrossingPair { .. } => None,
+            mlc_core::alert::AlertSource::Signal { .. } => None,
         }
     }
 
-    /// Check all active alerts using dynamic price resolution.
+    /// Check all active alerts on `bid` using dynamic price resolution.
+    /// Diffs `current_price` against the manager's cached `last_price[bid]`
+    /// (seeding it on the first call for a bubble — no crossing fires on
+    /// that seed tick, matching the legacy "no previous price" behavior).
     ///
-    /// Symbol/exchange/account_type are read from `b` directly — alerts are
-    /// now owned by the bubble they target, so `matches_window` is always true
-    /// within a given bubble.
-    ///
-    /// Returns list of triggered alert IDs.
-    pub fn check_crossings_dynamic(
-        b: &mut DataBubble,
+    /// Returns the list of triggered alert IDs.
+    pub(crate) fn on_tick(
+        &mut self,
+        bubbles: &mut BubbleStore,
+        bid: BubbleId,
         current_price: f64,
         current_bar: f64,
         drawing_points: &[(u64, Vec<(f64, f64)>, DrawingExtendMode)],
         indicator_values: &[(u64, usize, Vec<f64>)],
     ) -> Vec<u64> {
-        let symbol = b.symbol.clone();
-        let exchange = b.exchange.clone();
-        let account_type = b.account_type.clone();
+        let Some(b) = bubbles.bubble_mut(bid) else { return Vec::new() };
 
-        let tick_key = if exchange.is_empty() {
-            symbol.clone()
-        } else {
-            format!("{}:{}:{}", exchange, symbol, account_type)
-        };
-
-        let prev_price = b.alert_last_price.get(&tick_key).copied().unwrap_or(0.0);
+        let prev_price = self.last_price.get(&bid).copied().unwrap_or(0.0);
 
         let mut triggered_ids = Vec::new();
 
@@ -342,7 +323,7 @@ impl AlertManager {
             }
         }
 
-        b.alert_last_price.insert(tick_key, current_price);
+        self.last_price.insert(bid, current_price);
         triggered_ids
     }
 
@@ -350,13 +331,17 @@ impl AlertManager {
     // Signal alert checker
     // =========================================================================
 
-    /// Check all active `AlertSource::Signal` alerts against a batch of newly-emitted signals.
-    ///
-    /// Returns the list of triggered alert IDs.
-    pub fn check_signal_alerts(
-        b: &mut DataBubble,
+    /// Check all active `AlertSource::Signal` alerts on `bid` against a
+    /// batch of newly-emitted signals. Returns the list of triggered alert
+    /// IDs.
+    pub(crate) fn on_signals(
+        &mut self,
+        bubbles: &mut BubbleStore,
+        bid: BubbleId,
         new_signals: &[(u64, usize, i8, u8, String)],
     ) -> Vec<u64> {
+        let Some(b) = bubbles.bubble_mut(bid) else { return Vec::new() };
+
         let mut triggered_ids = Vec::new();
 
         for alert in &mut b.alerts {
@@ -366,7 +351,7 @@ impl AlertManager {
 
             let (indicator_id, direction_filter, bar_state, kind_filter) =
                 match &alert.source {
-                    AlertSource::Signal {
+                    mlc_core::alert::AlertSource::Signal {
                         indicator_id,
                         direction_filter,
                         bar_state,
@@ -382,17 +367,17 @@ impl AlertManager {
                 }
 
                 let dir_ok = match direction_filter {
-                    SignalDirection::Any => true,
-                    SignalDirection::Bullish => *sig_dir > 0,
-                    SignalDirection::Bearish => *sig_dir < 0,
+                    mlc_core::alert::SignalDirection::Any => true,
+                    mlc_core::alert::SignalDirection::Bullish => *sig_dir > 0,
+                    mlc_core::alert::SignalDirection::Bearish => *sig_dir < 0,
                 };
                 if !dir_ok {
                     return false;
                 }
 
                 let bar_ok = match bar_state {
-                    SignalBarState::Forming => true,
-                    SignalBarState::Formed => *sig_conf >= 1,
+                    mlc_core::alert::SignalBarState::Forming => true,
+                    mlc_core::alert::SignalBarState::Formed => *sig_conf >= 1,
                 };
                 if !bar_ok {
                     return false;
@@ -425,21 +410,5 @@ impl AlertManager {
         }
 
         triggered_ids
-    }
-
-    // =========================================================================
-    // Preset snapshot / restore (legacy flat-list path)
-    // =========================================================================
-
-    /// Take a snapshot of all alerts from a single bubble (for preset save).
-    pub fn snapshot(b: &DataBubble) -> Vec<AlertItem> {
-        b.alerts.clone()
-    }
-
-    /// Restore alerts from a preset snapshot into a bubble.
-    pub fn restore(b: &mut DataBubble, alerts: Vec<AlertItem>) {
-        b.alert_next_id = alerts.iter().map(|a| a.id).max().unwrap_or(0) + 1;
-        b.alerts = alerts;
-        b.alert_last_price.clear();
     }
 }

@@ -947,7 +947,6 @@ impl ChartApp {
                     // The legacy flat preset.alerts list is distributed to the appropriate
                     // bubble by group_id, or to the active bubble as a fallback.
                     {
-                        use mlc_backend_core::alert::AlertManager;
                         let mut total_restored = 0usize;
                         for alert in preset.alerts.clone() {
                             let target_bid = alert.group_id
@@ -959,14 +958,15 @@ impl ChartApp {
                                     v
                                 });
                             if let Some(bid) = target_bid {
-                                let mut bm = self.core.bubble_mut();
-                                if let Some(b) = bm.bubble_mut(bid) {
-                                    AlertManager::restore_one(b, alert);
-                                    total_restored += 1;
-                                }
+                                self.core.alerts_mut().restore_one(bid, alert);
+                                total_restored += 1;
                             }
                         }
-                        eprintln!("[ChartApp] restored {} alerts (per-bubble)", total_restored);
+                        eprintln!(
+                            "[ChartApp] restored {} alerts (per-bubble, {} total now in store)",
+                            total_restored,
+                            self.core.alerts().len_total(),
+                        );
                     }
                     let alerts_us = _t_alerts.elapsed().as_micros();
 

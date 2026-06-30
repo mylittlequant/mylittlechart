@@ -3,4 +3,6 @@
 //! `mlc-backend-core::alert`.
 
 mod types;
+mod spec;
 pub use types::*;
+pub use spec::{AlertPatch, AlertSpec};

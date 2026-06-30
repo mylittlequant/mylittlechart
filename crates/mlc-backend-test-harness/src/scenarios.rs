@@ -1596,47 +1596,35 @@ pub fn stream_dom_trade_dot_passthrough() -> HarnessResult<()> {
 }
 
 pub fn body_alerts_straddle_fires_on_cross(h: &mut BackendHarness) -> HarnessResult<()> {
-    use mlc_core::alert::{AlertCondition, AlertSource};
-    use mlc_backend_core::alert::AlertManager;
+    use mlc_core::alert::{AlertCondition, AlertSource, AlertSpec};
     let pivot: f64 = 50_000.0;
     let target_up = pivot * 1.0025;   // +0.25 %
     let target_dn = pivot * 0.9975;   // -0.25 %
 
     let bid = register_bubble(h, ExchangeId::Binance, AccountType::Spot, "BTCUSDT", Timeframe::h1());
 
-    let (id_up, id_dn) = {
-        let mut bm = h.core.bubble_mut();
-        let b = bm.bubble_mut(bid).expect("bubble exists");
-        let id_up = AlertManager::create(
-            b,
-            AlertSource::Price { symbol: "BTCUSDT".to_string() },
-            "+0.25 BTC",
-            target_up,
-            AlertCondition::CrossingUp,
-        );
-        let id_dn = AlertManager::create(
-            b,
-            AlertSource::Price { symbol: "BTCUSDT".to_string() },
-            "-0.25 BTC",
-            target_dn,
-            AlertCondition::CrossingDown,
-        );
-        (id_up, id_dn)
-    };
+    let id_up = h.core.alerts_mut().add(bid, AlertSpec {
+        source: AlertSource::Price { symbol: "BTCUSDT".to_string() },
+        name: "+0.25 BTC".to_string(),
+        price: target_up,
+        condition: AlertCondition::CrossingUp,
+        ..AlertSpec::price_default()
+    });
+    let id_dn = h.core.alerts_mut().add(bid, AlertSpec {
+        source: AlertSource::Price { symbol: "BTCUSDT".to_string() },
+        name: "-0.25 BTC".to_string(),
+        price: target_dn,
+        condition: AlertCondition::CrossingDown,
+        ..AlertSpec::price_default()
+    });
 
     let prior_tick: f64 = pivot;
     let new_tick: f64 = pivot * 1.0050; // jumps past target_up
 
-    let triggered_up;
-    let triggered_dn;
-    {
-        let mut bm = h.core.bubble_mut();
-        let b = bm.bubble_mut(bid).expect("bubble exists");
-        let _ = AlertManager::check_crossings_dynamic(b, prior_tick, 0.0, &[], &[]);
-        let fired = AlertManager::check_crossings_dynamic(b, new_tick, 1.0, &[], &[]);
-        triggered_up = fired.contains(&id_up);
-        triggered_dn = fired.contains(&id_dn);
-    }
+    let _ = h.core.alerts_mut().on_tick(bid, prior_tick, 0.0, &[], &[]);
+    let fired = h.core.alerts_mut().on_tick(bid, new_tick, 1.0, &[], &[]);
+    let triggered_up = fired.contains(&id_up);
+    let triggered_dn = fired.contains(&id_dn);
     if !triggered_up {
         return Err(err("alert", format!("upper +0.25% alert (id={}) did NOT fire on price jump {} -> {}", id_up, prior_tick, new_tick)));
     }
@@ -1652,46 +1640,34 @@ pub fn alerts_straddle_fires_on_cross() -> HarnessResult<()> {
 }
 
 pub fn body_alerts_straddle_fires_on_drop(h: &mut BackendHarness) -> HarnessResult<()> {
-    use mlc_core::alert::{AlertCondition, AlertSource};
-    use mlc_backend_core::alert::AlertManager;
+    use mlc_core::alert::{AlertCondition, AlertSource, AlertSpec};
     let pivot: f64 = 50_000.0;
     let target_up = pivot * 1.0025;
     let target_dn = pivot * 0.9975;
 
     let bid = register_bubble(h, ExchangeId::Binance, AccountType::Spot, "BTCUSDT", Timeframe::h1());
 
-    let (id_up, id_dn) = {
-        let mut bm = h.core.bubble_mut();
-        let b = bm.bubble_mut(bid).expect("bubble exists");
-        let id_up = AlertManager::create(
-            b,
-            AlertSource::Price { symbol: "BTCUSDT".to_string() },
-            "+0.25 BTC",
-            target_up,
-            AlertCondition::CrossingUp,
-        );
-        let id_dn = AlertManager::create(
-            b,
-            AlertSource::Price { symbol: "BTCUSDT".to_string() },
-            "-0.25 BTC",
-            target_dn,
-            AlertCondition::CrossingDown,
-        );
-        (id_up, id_dn)
-    };
+    let id_up = h.core.alerts_mut().add(bid, AlertSpec {
+        source: AlertSource::Price { symbol: "BTCUSDT".to_string() },
+        name: "+0.25 BTC".to_string(),
+        price: target_up,
+        condition: AlertCondition::CrossingUp,
+        ..AlertSpec::price_default()
+    });
+    let id_dn = h.core.alerts_mut().add(bid, AlertSpec {
+        source: AlertSource::Price { symbol: "BTCUSDT".to_string() },
+        name: "-0.25 BTC".to_string(),
+        price: target_dn,
+        condition: AlertCondition::CrossingDown,
+        ..AlertSpec::price_default()
+    });
     let prior_tick: f64 = pivot;
     let new_tick: f64 = pivot * 0.9950; // drops past target_dn
 
-    let triggered_up;
-    let triggered_dn;
-    {
-        let mut bm = h.core.bubble_mut();
-        let b = bm.bubble_mut(bid).expect("bubble exists");
-        let _ = AlertManager::check_crossings_dynamic(b, prior_tick, 0.0, &[], &[]);
-        let fired = AlertManager::check_crossings_dynamic(b, new_tick, 1.0, &[], &[]);
-        triggered_up = fired.contains(&id_up);
-        triggered_dn = fired.contains(&id_dn);
-    }
+    let _ = h.core.alerts_mut().on_tick(bid, prior_tick, 0.0, &[], &[]);
+    let fired = h.core.alerts_mut().on_tick(bid, new_tick, 1.0, &[], &[]);
+    let triggered_up = fired.contains(&id_up);
+    let triggered_dn = fired.contains(&id_dn);
     if !triggered_dn {
         return Err(err("alert", format!("lower -0.25% alert (id={}) did NOT fire on drop {} -> {}", id_dn, prior_tick, new_tick)));
     }

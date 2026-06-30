@@ -112,26 +112,8 @@ impl ChartApp {
                 }
                 self.sync_drawing_back_to_group();
                 if let Some(prim_id) = prim_id {
-                    use mlc_backend_core::alert::AlertManager;
-                    let bubble_ids: Vec<mlc_core::ids::BubbleId> = {
-                        let bm = self.core.bubble();
-                        bm.bubbles().map(|b| b.id).collect()
-                    };
-                    let mut all_removed: Vec<mlc_core::alert::AlertItem> = Vec::new();
-                    for bid in bubble_ids {
-                        let removed = {
-                            let bm = self.core.bubble();
-                            bm.bubble(bid).map(|b| AlertManager::alerts_for_drawing(b, prim_id)).unwrap_or_default()
-                        };
-                        if !removed.is_empty() {
-                            let mut bm = self.core.bubble_mut();
-                            if let Some(b) = bm.bubble_mut(bid) {
-                                AlertManager::remove_alerts_for_drawing(b, prim_id);
-                            }
-                            all_removed.extend(removed);
-                        }
-                    }
-                    for alert_snapshot in all_removed {
+                    let removed = self.core.alerts_mut().clear_for_drawing(prim_id);
+                    for alert_snapshot in removed {
                         self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot: alert_snapshot });
                     }
                 }
@@ -2277,26 +2259,8 @@ impl ChartApp {
                                 eprintln!("[ChartApp] Deleted primitive #{}", idx);
                             }
                             {
-                                use mlc_backend_core::alert::AlertManager;
-                                let bubble_ids: Vec<mlc_core::ids::BubbleId> = {
-                                    let bm = self.core.bubble();
-                                    bm.bubbles().map(|b| b.id).collect()
-                                };
-                                let mut all_removed: Vec<mlc_core::alert::AlertItem> = Vec::new();
-                                for bid in bubble_ids {
-                                    let removed = {
-                                        let bm = self.core.bubble();
-                                        bm.bubble(bid).map(|b| AlertManager::alerts_for_drawing(b, prim_id)).unwrap_or_default()
-                                    };
-                                    if !removed.is_empty() {
-                                        let mut bm = self.core.bubble_mut();
-                                        if let Some(b) = bm.bubble_mut(bid) {
-                                            AlertManager::remove_alerts_for_drawing(b, prim_id);
-                                        }
-                                        all_removed.extend(removed);
-                                    }
-                                }
-                                for alert_snapshot in all_removed {
+                                let removed = self.core.alerts_mut().clear_for_drawing(prim_id);
+                                for alert_snapshot in removed {
                                     self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot: alert_snapshot });
                                 }
                             }
@@ -2312,26 +2276,8 @@ impl ChartApp {
                                 eprintln!("[ChartApp] Deleted primitive #{} (no undo snapshot)", idx);
                             }
                             if let Some(prim_id_inner) = prim_id_noundo {
-                                use mlc_backend_core::alert::AlertManager;
-                                let bubble_ids: Vec<mlc_core::ids::BubbleId> = {
-                                    let bm = self.core.bubble();
-                                    bm.bubbles().map(|b| b.id).collect()
-                                };
-                                let mut all_removed: Vec<mlc_core::alert::AlertItem> = Vec::new();
-                                for bid in bubble_ids {
-                                    let removed = {
-                                        let bm = self.core.bubble();
-                                        bm.bubble(bid).map(|b| AlertManager::alerts_for_drawing(b, prim_id_inner)).unwrap_or_default()
-                                    };
-                                    if !removed.is_empty() {
-                                        let mut bm = self.core.bubble_mut();
-                                        if let Some(b) = bm.bubble_mut(bid) {
-                                            AlertManager::remove_alerts_for_drawing(b, prim_id_inner);
-                                        }
-                                        all_removed.extend(removed);
-                                    }
-                                }
-                                for alert_snapshot in all_removed {
+                                let removed = self.core.alerts_mut().clear_for_drawing(prim_id_inner);
+                                for alert_snapshot in removed {
                                     self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot: alert_snapshot });
                                 }
                             }

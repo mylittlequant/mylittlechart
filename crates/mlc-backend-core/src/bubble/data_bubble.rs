@@ -128,11 +128,13 @@ pub struct DataBubble {
     pub liq_dots: Option<Vec<mlc_core::chart::liquidation_heatmap::LiquidationDot>>,
 
     // =========================================================================
-    // === Alert storage (Step 2c doctrine cutover) ============================
+    // === Alert storage (Step 3.0 doctrine cutover) ===========================
     // =========================================================================
-    // Alerts are now owned by the bubble they target.  AlertManager is a
-    // stateless namespace whose methods receive `&mut DataBubble` instead of
-    // operating on internal fields.
+    // Alerts are bubble data: persisted user-authored rows + the per-bubble
+    // identity allocator.  The tick-to-tick last-price cache used for
+    // crossing detection is manager state — it lives on
+    // `AlertManager.last_price`, keyed by `BubbleId` (see
+    // `crates/mlc-backend-core/src/alert/manager.rs`).
     // =========================================================================
 
     /// Alerts attached to this bubble.  Each alert targets data inside this
@@ -141,11 +143,6 @@ pub struct DataBubble {
 
     /// Per-bubble next-id counter for alerts.
     pub alert_next_id: u64,
-
-    /// Per-symbol last-tick price cache used for crossing detection.
-    /// Key: `"exchange:symbol:account_type"`.  Not persisted — rebuilt
-    /// from live ticks.
-    pub alert_last_price: std::collections::HashMap<String, f64>,
 }
 
 
@@ -300,7 +297,6 @@ impl Clone for DataBubble {
             liq_dots: self.liq_dots.clone(),
             alerts: self.alerts.clone(),
             alert_next_id: self.alert_next_id,
-            alert_last_price: self.alert_last_price.clone(),
         }
     }
 }
