@@ -354,9 +354,8 @@ impl ChartApp {
                     let current_price = bubble_bars_alert.last().map(|b| b.close).unwrap_or(0.0);
                     let current_bar = bubble_bars_alert.len().saturating_sub(1) as f64;
                     let drawing_points: Vec<(u64, Vec<(f64, f64)>, mlc_core::alert::DrawingExtendMode)> = {
-                        let pid = window.chart_panel_id;
-                        let guard = self.core.drawings_svc();
-                        guard.get(pid).map(|dm| dm.primitives().iter()
+                        let guard = self.core.drawings();
+                        guard.primitives(bid).iter()
                             .map(|p| {
                                 let pts_bar: Vec<(f64, f64)> = p.points()
                                     .into_iter()
@@ -364,8 +363,7 @@ impl ChartApp {
                                     .collect();
                                 (p.data().id, pts_bar, mlc_core::alert::DrawingExtendMode::from_u8(p.extend_mode_raw()))
                             })
-                            .collect())
-                        .unwrap_or_default()
+                            .collect()
                     };
                     Some(BubbleAlertData {
                         bid,

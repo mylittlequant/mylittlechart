@@ -24,14 +24,14 @@ impl ChartApp {
     pub(super) fn handle_inline_action(&mut self, action: &str) {
         use mlc_core::drawing::primitives_v2::LineStyle;
 
-        // The selected primitive index comes from the drawing manager, not from
+        // The selected primitive id comes from the drawing manager, not from
         // a settings-state field, because the primitive may not be open in a
         // modal yet.
-        let active_pid_inline = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-        let selected_idx = active_pid_inline
-            .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.selected()));
+        let active_bid_inline = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+        let selected_id = active_bid_inline
+            .and_then(|bid| self.core.drawings().selected(bid));
 
-        let idx = match selected_idx {
+        let prim_id = match selected_id {
             Some(i) => i,
             None => {
                 eprintln!("[ChartApp] inline action '{}' ignored — no primitive selected", action);
@@ -39,12 +39,12 @@ impl ChartApp {
             }
         };
 
-        // Sync primitive_idx into primitive_settings_state so apply_primitive_color
-        // (and other downstream handlers that read .primitive_idx) know which primitive
+        // Sync primitive_id into primitive_settings_state so apply_primitive_color
+        // (and other downstream handlers that read .primitive_id) know which primitive
         // the inline toolbar is operating on. Without this, color changes from the
-        // inline color picker silently no-op because primitive_idx stays None until
+        // inline color picker silently no-op because primitive_id stays None until
         // the full primitive_settings modal is opened.
-        self.panel_app.primitive_settings_state.primitive_idx = Some(idx);
+        self.panel_app.primitive_settings_state.primitive_id = Some(prim_id);
 
         let screen_w = self.width as f64;
         let screen_h = self.height as f64;
@@ -52,14 +52,14 @@ impl ChartApp {
         match action {
             // ── Settings ─────────────────────────────────────────────────────
             "inline:settings" => {
-                self.panel_app.primitive_settings_state.open(idx);
-                eprintln!("[ChartApp] inline: opened primitive settings for #{}", idx);
+                self.panel_app.primitive_settings_state.open(prim_id);
+                eprintln!("[ChartApp] inline: opened primitive settings for #{}", prim_id);
             }
 
             // ── Stroke color ─────────────────────────────────────────────────
             "inline:color" => {
-                let current_color = active_pid_inline
-                    .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)))
+                let current_color = active_bid_inline
+                    .and_then(|bid| self.core.drawings().get_data(bid, prim_id))
                     .map(|d| d.color.stroke.clone());
 
                 // Look up the button rect from the input coordinator so the
@@ -76,13 +76,13 @@ impl ChartApp {
                     "stroke_color", ax, ay, aw, ah, screen_w, screen_h,
                     current_color.as_deref(),
                 );
-                eprintln!("[ChartApp] inline: opened stroke color picker for #{}", idx);
+                eprintln!("[ChartApp] inline: opened stroke color picker for #{}", prim_id);
             }
 
             // ── Text color ───────────────────────────────────────────────────
             "inline:text_color" => {
-                let current_color = active_pid_inline
-                    .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)))
+                let current_color = active_bid_inline
+                    .and_then(|bid| self.core.drawings().get_data(bid, prim_id))
                     .and_then(|d| d.text.and_then(|t| t.color));
 
                 let widget_id_str = "ilb:inline:text_color".to_string();
@@ -97,21 +97,17 @@ impl ChartApp {
                     "text_color", ax, ay, aw, ah, screen_w, screen_h,
                     current_color.as_deref(),
                 );
-                eprintln!("[ChartApp] inline: opened text color picker for #{}", idx);
+                eprintln!("[ChartApp] inline: opened text color picker for #{}", prim_id);
             }
 
             // ── Delete ───────────────────────────────────────────────────────
             "inline:delete" => {
-                // Capture the primitive ID before deletion so alerts can be cleaned up.
-                let prim_id = active_pid_inline
-                    .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)))
-                    .map(|d| d.id);
-                if let Some(pid) = active_pid_inline {
-                    self.core.drawings_svc_mut().entry_or_default(pid).delete_selected();
+                if let Some(bid) = active_bid_inline {
+                    self.core.drawings_mut().delete(bid, prim_id);
                     eprintln!("[ChartApp] inline: deleted selected primitive");
                 }
                 self.sync_drawing_back_to_group();
-                if let Some(prim_id) = prim_id {
+                {
                     let removed = self.core.alerts_mut().clear_for_drawing(prim_id);
                     for alert_snapshot in removed {
                         self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot: alert_snapshot });
@@ -122,8 +118,8 @@ impl ChartApp {
 
             // ── Lock toggle ──────────────────────────────────────────────────
             "inline:lock" => {
-                if let Some(pid) = active_pid_inline {
-                    self.core.drawings_svc_mut().entry_or_default(pid).toggle_selected_lock();
+                if let Some(bid) = active_bid_inline {
+                    self.core.drawings_mut().toggle_lock_primitive(bid, prim_id);
                     eprintln!("[ChartApp] inline: toggled lock on selected primitive");
                 }
                 self.sync_drawing_back_to_group();
@@ -131,8 +127,8 @@ impl ChartApp {
 
             // ── Line style cycle ─────────────────────────────────────────────
             "inline:style" => {
-                let data_opt = active_pid_inline
-                    .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)));
+                let data_opt = active_bid_inline
+                    .and_then(|bid| self.core.drawings().get_data(bid, prim_id));
 
                 if let Some(mut data) = data_opt {
                     data.style = match data.style {
@@ -143,23 +139,26 @@ impl ChartApp {
                         LineStyle::SparseDotted => LineStyle::Solid,
                     };
                     let style_str = data.style.as_str().to_string();
-                    if let Some(pid) = active_pid_inline {
-                        self.core.drawings_svc_mut().entry_or_default(pid).set_data_at(idx, &data);
+                    if let Some(bid) = active_bid_inline {
+                        self.core.drawings_mut().set_data(bid, prim_id, &data);
                     }
                     self.sync_drawing_back_to_group();
                     eprintln!("[ChartApp] inline: cycled line style to {}", style_str);
                 }
-                self.snapshot_primitive_settings_to_user_manager(idx);
+                self.snapshot_primitive_settings_to_user_manager(prim_id);
             }
 
             // ── Width cycle ──────────────────────────────────────────────────
             "inline:width" => {
-                if let Some(pid) = active_pid_inline {
-                    self.core.drawings_svc_mut().entry_or_default(pid).increase_selected_width();
+                if let Some(bid) = active_bid_inline {
+                    if let Some(mut data) = self.core.drawings().get_data(bid, prim_id) {
+                        data.width = (data.width + 1.0).clamp(1.0, 20.0);
+                        self.core.drawings_mut().set_data(bid, prim_id, &data);
+                    }
                     eprintln!("[ChartApp] inline: increased line width");
                 }
                 self.sync_drawing_back_to_group();
-                self.snapshot_primitive_settings_to_user_manager(idx);
+                self.snapshot_primitive_settings_to_user_manager(prim_id);
             }
 
             // ── Name label — absorb, no action ──────────────────────────────
@@ -178,10 +177,9 @@ impl ChartApp {
                     .and_then(|_w| None::<&mlc_core::Bar>)
                     .map(|b| b.close)
                     .unwrap_or(0.0);
-                if let Some(pid) = active_pid_inline {
-                    let guard = self.core.drawings_svc();
-                    if let Some(prim) = guard.get(pid).and_then(|dm| dm.selected_primitive()) {
-                        let prim_id = prim.data().id;
+                if let Some(bid) = active_bid_inline {
+                    let guard = self.core.drawings();
+                    if let Some(prim) = guard.selected_primitive(bid) {
                         let label = localize_primitive_name(prim.type_id(), prim.display_name());
                         let pts = prim.points();
                         let price = if !pts.is_empty() {
@@ -246,19 +244,19 @@ impl ChartApp {
                     _ => None,
                 };
                 if let Some(style) = new_style {
-                    if let Some(mut data) = active_pid_inline
-                        .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)))
+                    if let Some(mut data) = active_bid_inline
+                        .and_then(|bid| self.core.drawings().get_data(bid, prim_id))
                     {
                         data.style = style;
                         let style_str = data.style.as_str().to_string();
-                        if let Some(pid) = active_pid_inline {
-                            self.core.drawings_svc_mut().entry_or_default(pid).set_data_at(idx, &data);
+                        if let Some(bid) = active_bid_inline {
+                            self.core.drawings_mut().set_data(bid, prim_id, &data);
                         }
                         self.sync_drawing_back_to_group();
                         eprintln!("[ChartApp] inline: set line style to {}", style_str);
                     }
                 }
-                self.snapshot_primitive_settings_to_user_manager(idx);
+                self.snapshot_primitive_settings_to_user_manager(prim_id);
                 self.panel_app.toolbar_state.open_inline_style_dropdown = false;
                 self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
             }
@@ -267,18 +265,18 @@ impl ChartApp {
                 // ── Width option selected ────────────────────────────────────
                 let value = action.strip_prefix("inline:width_option:").unwrap_or_default();
                 if let Ok(new_width) = value.parse::<f64>() {
-                    if let Some(mut data) = active_pid_inline
-                        .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)))
+                    if let Some(mut data) = active_bid_inline
+                        .and_then(|bid| self.core.drawings().get_data(bid, prim_id))
                     {
                         data.width = new_width;
-                        if let Some(pid) = active_pid_inline {
-                            self.core.drawings_svc_mut().entry_or_default(pid).set_data_at(idx, &data);
+                        if let Some(bid) = active_bid_inline {
+                            self.core.drawings_mut().set_data(bid, prim_id, &data);
                         }
                         self.sync_drawing_back_to_group();
                         eprintln!("[ChartApp] inline: set line width to {}", new_width);
                     }
                 }
-                self.snapshot_primitive_settings_to_user_manager(idx);
+                self.snapshot_primitive_settings_to_user_manager(prim_id);
                 self.panel_app.toolbar_state.open_inline_width_dropdown = false;
                 self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
             }
@@ -377,12 +375,12 @@ impl ChartApp {
                     .and_then(|cid| self.account_type_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_else(|| "S".to_string());
-                let active_pid_wl = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                let active_bid_wl = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                    if let Some(pid) = active_pid_wl {
+                    if let Some(bid) = active_bid_wl {
                         let restore_snaps = window.take_drawings_snapshot_for_symbol(sym_part, exchange_part, &wl_at_label);
-                        let result = self.core.drawings_svc_mut().swap_symbol(
-                            pid, sym_part, exchange_part, &wl_at_label, restore_snaps.as_deref(),
+                        let result = self.core.drawings_mut().swap_symbol(
+                            bid, sym_part, exchange_part, &wl_at_label, restore_snaps.as_deref(),
                         );
                         let old_key = format!("{}:{}:{}", old_sym, old_exchange, old_account_type);
                         if result.old_primitives.is_empty() {
@@ -877,12 +875,12 @@ impl ChartApp {
                             .and_then(|cid| self.account_type_for_chart(cid))
                             .map(String::from)
                             .unwrap_or_else(|| "S".to_string());
-                        let active_pid_srch = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                        let active_bid_srch = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
                         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                            if let Some(pid) = active_pid_srch {
+                            if let Some(bid) = active_bid_srch {
                                 let restore_snaps = window.take_drawings_snapshot_for_symbol(symbol_part, resolved_exchange.as_str(), &search_at_label);
-                                let result = self.core.drawings_svc_mut().swap_symbol(
-                                    pid, symbol_part, resolved_exchange.as_str(), &search_at_label, restore_snaps.as_deref(),
+                                let result = self.core.drawings_mut().swap_symbol(
+                                    bid, symbol_part, resolved_exchange.as_str(), &search_at_label, restore_snaps.as_deref(),
                                 );
                                 let old_key = format!("{}:{}:{}", old_sym_search, old_exch_search, old_at_search);
                                 if result.old_primitives.is_empty() {
@@ -1561,9 +1559,9 @@ impl ChartApp {
             };
             let chart_rect = extended.main_chart.chart;
 
-            let active_pid_tool = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-            let is_freehand = active_pid_tool
-                .and_then(|pid| self.core.drawings_svc().get(pid).map(|dm| dm.is_freehand_tool()))
+            let active_bid_tool = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+            let is_freehand = active_bid_tool
+                .map(|bid| self.core.drawings().is_freehand_tool(bid))
                 .unwrap_or(false);
 
             // Freehand tools (brush/highlighter) only work on drag — skip click.
@@ -1637,12 +1635,11 @@ impl ChartApp {
                     .unwrap_or(raw_price);
 
                 // Reset pane context to main chart.
-                if let Some(pid) = active_pid_tool {
-                    let mut guard = self.core.drawings_svc_mut();
-                    let dm = guard.entry_or_default(pid);
-                    dm.set_current_pane(None);
-                    if dm.current_tool().map(|t| t != _tool_id).unwrap_or(true) {
-                        dm.set_tool(Some(_tool_id));
+                if let Some(bid) = active_bid_tool {
+                    let mut guard = self.core.drawings_mut();
+                    guard.set_current_pane(bid, None);
+                    if guard.current_tool(bid).map(|t| t != _tool_id).unwrap_or(true) {
+                        guard.set_tool(bid, Some(_tool_id));
                     }
                 }
 
@@ -1652,75 +1649,43 @@ impl ChartApp {
                 let ts_ms = self.panel_app.panel_grid.active_container()
                     .map(|_w| mlc_core::bar_f64_to_timestamp_ms(&click_bars_main[..], bar))
                     .unwrap_or(0);
-                let primitive_created = active_pid_tool
-                    .map(|pid| self.core.drawings_svc_mut().entry_or_default(pid).on_click(ts_ms, price))
+                let primitive_created = active_bid_tool
+                    .map(|bid| self.core.drawings_mut().on_canvas_click(bid, ts_ms, price))
                     .unwrap_or(false);
 
                 if primitive_created {
-                    let prim_count = active_pid_tool
-                        .and_then(|pid| self.core.drawings_svc().get(pid).map(|dm| dm.primitives().len())).unwrap_or(0);
+                    let prim_count = active_bid_tool
+                        .map(|bid| self.core.drawings().count(bid)).unwrap_or(0);
                     eprintln!("[ChartApp] Primitive created (main) at bar={:.2}, price={:.12e}, total_primitives={}", bar, price, prim_count);
-                    // For grouped windows: move the completed primitive to TagManager so
-                    // all group members see it via the per-frame render-cache sync.
-                    // For standalone windows: keep it in drawing_manager as before.
-                    if !self.intercept_completed_primitive_to_group() {
-                        // Standalone path — record undo and propagate to color-tag peers.
-                        // Extract snapshot before mutable borrow for push_undo_command.
-                        let create_snapshot = active_pid_tool
-                            .and_then(|pid| {
-                                let guard = self.core.drawings_svc();
-                                guard.get(pid).and_then(|dm| {
-                                    let idx = dm.last_index()?;
-                                    let type_id = dm.get_type_id_at(idx)?;
-                                    let points = dm.get_points_at(idx)?;
-                                    let data = dm.get_data_at(idx)?;
-                                    Some((idx, type_id, points, data))
-                                })
-                            });
-                        if let Some((idx, type_id, points, data)) = create_snapshot {
-                            self.push_undo_command(mlc_core::Command::CreatePrimitive {
-                                index: idx,
-                                type_id,
-                                points,
-                                data,
-                            });
-                            eprintln!("[ChartApp] Recorded CreatePrimitive (main) at index {}", idx);
-                        }
-                        // Propagate the new primitive to sync group peers.
-                        if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
-                            self.propagate_new_primitive_to_sync_group(active_leaf);
-                            // Clear the in-progress preview on peers (state is now Idle).
-                            self.propagate_drawing_state_to_sync_group(active_leaf);
-                        }
-                    } else {
-                        // Grouped path — record undo for the primitive placed into the group,
-                        // then clear the in-progress preview on peers.
-                        let group_create_cmd = self.panel_app.panel_grid.active_container_id()
-                            .and_then(|cid| self.bubble_for_chart(cid))
-                            .and_then(|gid| self.with_bubble(gid, |group| {
-                                let idx = group.primitives.len().saturating_sub(1);
-                                let prim = group.primitives.get(idx)?;
-                                Some(mlc_core::Command::CreatePrimitive {
-                                    index: idx,
-                                    type_id: prim.type_id().to_string(),
-                                    points: prim.points().to_vec(),
-                                    data: prim.data().clone(),
-                                })
-                            }).flatten());
-                        if let Some(cmd) = group_create_cmd {
-                            self.push_undo_command(cmd);
-                            eprintln!("[ChartApp] Recorded CreatePrimitive (main, grouped) via group.primitives");
-                        }
-                        if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
-                            self.propagate_drawing_state_to_sync_group(active_leaf);
-                        }
+                    self.intercept_completed_primitive_to_group();
+                    // Record undo and propagate to color-tag peers.
+                    let create_snapshot = active_bid_tool
+                        .and_then(|bid| {
+                            let guard = self.core.drawings();
+                            let prim_id = guard.last_index(bid)?;
+                            let type_id = guard.get_type_id(bid, prim_id)?;
+                            let points = guard.get_points(bid, prim_id)?;
+                            let data = guard.get_data(bid, prim_id)?;
+                            Some((prim_id, type_id, points, data))
+                        });
+                    if let Some((prim_id, type_id, points, data)) = create_snapshot {
+                        self.push_undo_command(mlc_core::Command::CreatePrimitive {
+                            prim_id,
+                            type_id,
+                            points,
+                            data,
+                        });
+                        eprintln!("[ChartApp] Recorded CreatePrimitive (main) {}", prim_id);
                     }
-                    // Save after both grouped and standalone paths — intercept may have moved
-                    // the primitive to TagManager, so snapshot must be taken after transfer.
+                    if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
+                        self.propagate_new_primitive_to_sync_group(active_leaf);
+                        // Clear the in-progress preview on peers (state is now Idle).
+                        self.propagate_drawing_state_to_sync_group(active_leaf);
+                    }
                     self.sidebar_data_dirty = true;
                     self.autosave_snapshot();
-                } else if active_pid_tool
-                    .and_then(|pid| self.core.drawings_svc().get(pid).map(|dm| dm.is_drawing()))
+                } else if active_bid_tool
+                    .map(|bid| self.core.drawings().is_drawing(bid))
                     .unwrap_or(false)
                 {
                     eprintln!("[ChartApp] Drawing point added (main) at bar={:.2}, price={:.2}", bar, price);
@@ -1731,8 +1696,8 @@ impl ChartApp {
                 }
 
                 // Re-check if tool was completed (primed tools deactivate after creation).
-                let tool_cleared = active_pid_tool
-                    .and_then(|pid| self.core.drawings_svc().get(pid).map(|dm| dm.current_tool().is_none()))
+                let tool_cleared = active_bid_tool
+                    .map(|bid| self.core.drawings().current_tool(bid).is_none())
                     .unwrap_or(false);
                 if tool_cleared {
                     self.panel_app.toolbar_state.active_tool_id = None;
@@ -1773,12 +1738,11 @@ impl ChartApp {
                 };
 
                 // Set pane context so the new primitive is tagged to this sub-pane.
-                if let Some(pid) = active_pid_tool {
-                    let mut guard = self.core.drawings_svc_mut();
-                    let dm = guard.entry_or_default(pid);
-                    dm.set_current_pane(Some(instance_id));
-                    if dm.current_tool().map(|t| t != _tool_id).unwrap_or(true) {
-                        dm.set_tool(Some(_tool_id));
+                if let Some(bid) = active_bid_tool {
+                    let mut guard = self.core.drawings_mut();
+                    guard.set_current_pane(bid, Some(instance_id));
+                    if guard.current_tool(bid).map(|t| t != _tool_id).unwrap_or(true) {
+                        guard.set_tool(bid, Some(_tool_id));
                     }
                 }
 
@@ -1787,71 +1751,42 @@ impl ChartApp {
                 let sub_ts_ms = self.panel_app.panel_grid.active_container()
                     .map(|_w| mlc_core::bar_f64_to_timestamp_ms(&click_bars_sub[..], bar))
                     .unwrap_or(0);
-                let primitive_created = active_pid_tool
-                    .map(|pid| self.core.drawings_svc_mut().entry_or_default(pid).on_click(sub_ts_ms, price))
+                let primitive_created = active_bid_tool
+                    .map(|bid| self.core.drawings_mut().on_canvas_click(bid, sub_ts_ms, price))
                     .unwrap_or(false);
 
                 if primitive_created {
                     eprintln!("[ChartApp] Primitive created (sub-pane #{}) at bar={:.2}, price={:.2}", pane_idx, bar, price);
-                    // For grouped windows: move the completed primitive to TagManager.
-                    // For standalone windows: keep in drawing_manager and propagate to peers.
-                    if !self.intercept_completed_primitive_to_group() {
-                        // Standalone path — extract snapshot then push undo command.
-                        let create_snapshot = active_pid_tool
-                            .and_then(|pid| {
-                                let guard = self.core.drawings_svc();
-                                guard.get(pid).and_then(|dm| {
-                                    let idx = dm.last_index()?;
-                                    let type_id = dm.get_type_id_at(idx)?;
-                                    let points = dm.get_points_at(idx)?;
-                                    let data = dm.get_data_at(idx)?;
-                                    Some((idx, type_id, points, data))
-                                })
-                            });
-                        if let Some((idx, type_id, points, data)) = create_snapshot {
-                            self.push_undo_command(mlc_core::Command::CreatePrimitive {
-                                index: idx,
-                                type_id,
-                                points,
-                                data,
-                            });
-                            eprintln!("[ChartApp] Recorded CreatePrimitive (sub-pane #{}) at index {}", pane_idx, idx);
-                        }
-                        // Propagate the new primitive to sync group peers.
-                        if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
-                            self.propagate_new_primitive_to_sync_group(active_leaf);
-                            // Clear the in-progress preview on peers (state is now Idle).
-                            self.propagate_drawing_state_to_sync_group(active_leaf);
-                        }
-                    } else {
-                        // Grouped path — record undo for the primitive placed into the group,
-                        // then clear the in-progress preview on peers.
-                        let group_create_cmd = self.panel_app.panel_grid.active_container_id()
-                            .and_then(|cid| self.bubble_for_chart(cid))
-                            .and_then(|gid| self.with_bubble(gid, |group| {
-                                let idx = group.primitives.len().saturating_sub(1);
-                                let prim = group.primitives.get(idx)?;
-                                Some(mlc_core::Command::CreatePrimitive {
-                                    index: idx,
-                                    type_id: prim.type_id().to_string(),
-                                    points: prim.points().to_vec(),
-                                    data: prim.data().clone(),
-                                })
-                            }).flatten());
-                        if let Some(cmd) = group_create_cmd {
-                            self.push_undo_command(cmd);
-                            eprintln!("[ChartApp] Recorded CreatePrimitive (sub-pane #{}, grouped) via group.primitives", pane_idx);
-                        }
-                        if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
-                            self.propagate_drawing_state_to_sync_group(active_leaf);
-                        }
+                    self.intercept_completed_primitive_to_group();
+                    // Extract snapshot then push undo command.
+                    let create_snapshot = active_bid_tool
+                        .and_then(|bid| {
+                            let guard = self.core.drawings();
+                            let prim_id = guard.last_index(bid)?;
+                            let type_id = guard.get_type_id(bid, prim_id)?;
+                            let points = guard.get_points(bid, prim_id)?;
+                            let data = guard.get_data(bid, prim_id)?;
+                            Some((prim_id, type_id, points, data))
+                        });
+                    if let Some((prim_id, type_id, points, data)) = create_snapshot {
+                        self.push_undo_command(mlc_core::Command::CreatePrimitive {
+                            prim_id,
+                            type_id,
+                            points,
+                            data,
+                        });
+                        eprintln!("[ChartApp] Recorded CreatePrimitive (sub-pane #{}) {}", pane_idx, prim_id);
                     }
-                    // Save after both grouped and standalone paths — intercept may have moved
-                    // the primitive to TagManager, so snapshot must be taken after transfer.
+                    // Propagate the new primitive to sync group peers.
+                    if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
+                        self.propagate_new_primitive_to_sync_group(active_leaf);
+                        // Clear the in-progress preview on peers (state is now Idle).
+                        self.propagate_drawing_state_to_sync_group(active_leaf);
+                    }
                     self.sidebar_data_dirty = true;
                     self.autosave_snapshot();
-                } else if active_pid_tool
-                    .and_then(|pid| self.core.drawings_svc().get(pid).map(|dm| dm.is_drawing()))
+                } else if active_bid_tool
+                    .map(|bid| self.core.drawings().is_drawing(bid))
                     .unwrap_or(false)
                 {
                     eprintln!("[ChartApp] Drawing point added (sub-pane #{}) at bar={:.2}, price={:.2}", pane_idx, bar, price);
@@ -1862,8 +1797,8 @@ impl ChartApp {
                 }
 
                 // Sync toolbar if tool completed.
-                let tool_cleared = active_pid_tool
-                    .and_then(|pid| self.core.drawings_svc().get(pid).map(|dm| dm.current_tool().is_none()))
+                let tool_cleared = active_bid_tool
+                    .map(|bid| self.core.drawings().current_tool(bid).is_none())
                     .unwrap_or(false);
                 if tool_cleared {
                     self.panel_app.toolbar_state.active_tool_id = None;
@@ -1892,7 +1827,7 @@ impl ChartApp {
             let local_y = y - chart_rect.y;
 
             // -- Main chart primitive hit test --
-            let active_pid_hit = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+            let active_bid_hit = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
             if local_x >= 0.0 && local_x <= chart_rect.width
                 && local_y >= 0.0 && local_y <= chart_rect.height
             {
@@ -1903,28 +1838,25 @@ impl ChartApp {
                     let mut corrected_vp = window.viewport.clone();
                     corrected_vp.chart_width = chart_rect.width;
                     corrected_vp.chart_height = chart_rect.height;
-                    let prim_idx = active_pid_hit
-                        .and_then(|pid| self.core.drawings_svc().get(pid)
-                            .and_then(|dm| dm.hit_test(local_x, local_y, &hit_bars_main[..], &corrected_vp, &window.price_scale)));
-                    if let Some(prim_idx) = prim_idx {
+                    let hit_prim_id = active_bid_hit
+                        .and_then(|bid| self.core.drawings().hit_test(bid, local_x, local_y, &hit_bars_main[..], &corrected_vp, &window.price_scale));
+                    if let Some(hit_prim_id) = hit_prim_id {
                         // Select the primitive, clear indicator selection, and return.
                         self.selected_indicator_id = None;
-                        // Deselect all other windows first so control points don't accumulate.
-                        let active_cid = self.panel_app.panel_grid.active_container_id();
-                        let all_cids: Vec<_> = self.panel_app.panel_grid.containers().keys().copied().collect();
-                        for cid in all_cids {
-                            if Some(cid) != active_cid {
-                                if let Some(pid) = self.panel_app.panel_grid.containers().get(&cid).map(|w| w.chart_panel_id) {
-                                    self.core.drawings_svc_mut().entry_or_default(pid).deselect();
-                                }
+                        // Deselect all other bubbles first so control points don't accumulate.
+                        let all_bids: Vec<_> = self.panel_app.panel_grid.containers().values()
+                            .map(|w| w.current_bubble_id)
+                            .collect();
+                        for bid in all_bids {
+                            if Some(bid) != active_bid_hit {
+                                self.core.drawings_mut().deselect(bid);
                             }
                         }
-                        if let Some(pid) = active_pid_hit {
-                            let mut guard = self.core.drawings_svc_mut();
-                            let dm = guard.entry_or_default(pid);
-                            dm.set_current_pane(None);
-                            dm.select_by_index(prim_idx);
-                            eprintln!("[ChartApp] Primitive selected (main): index={}", prim_idx);
+                        if let Some(bid) = active_bid_hit {
+                            let mut guard = self.core.drawings_mut();
+                            guard.set_current_pane(bid, None);
+                            guard.select(bid, hit_prim_id);
+                            eprintln!("[ChartApp] Primitive selected (main): id={}", hit_prim_id);
                         }
                         return;
                     }
@@ -1958,28 +1890,25 @@ impl ChartApp {
                     });
                 let hit_bars_sub: Vec<mlc_core::Bar> = self.active_chart_bars();
                 if let (Some(sub_viewport), Some(_window)) = (sub_viewport, self.panel_app.panel_grid.active_container()) {
-                    let sub_prim_idx = active_pid_hit
-                        .and_then(|pid| self.core.drawings_svc().get(pid)
-                            .and_then(|dm| dm.hit_test_in_pane(plx, ply, instance_id, &hit_bars_sub[..], &sub_viewport, &sub_price_scale)));
-                    if let Some(prim_idx) = sub_prim_idx {
+                    let sub_hit_prim_id = active_bid_hit
+                        .and_then(|bid| self.core.drawings().hit_test_in_pane(bid, plx, ply, instance_id, &hit_bars_sub[..], &sub_viewport, &sub_price_scale));
+                    if let Some(hit_prim_id) = sub_hit_prim_id {
                         // Select the primitive, clear indicator selection, and return.
                         self.selected_indicator_id = None;
-                        // Deselect all other panels.
-                        let active_cid = self.panel_app.panel_grid.active_container_id();
-                        let all_cids2: Vec<_> = self.panel_app.panel_grid.containers().keys().copied().collect();
-                        for cid in all_cids2 {
-                            if Some(cid) != active_cid {
-                                if let Some(pid) = self.panel_app.panel_grid.containers().get(&cid).map(|w| w.chart_panel_id) {
-                                    self.core.drawings_svc_mut().entry_or_default(pid).deselect();
-                                }
+                        // Deselect all other bubbles.
+                        let all_bids2: Vec<_> = self.panel_app.panel_grid.containers().values()
+                            .map(|w| w.current_bubble_id)
+                            .collect();
+                        for bid in all_bids2 {
+                            if Some(bid) != active_bid_hit {
+                                self.core.drawings_mut().deselect(bid);
                             }
                         }
-                        if let Some(pid) = active_pid_hit {
-                            let mut guard = self.core.drawings_svc_mut();
-                            let dm = guard.entry_or_default(pid);
-                            dm.set_current_pane(Some(instance_id));
-                            dm.select_by_index(prim_idx);
-                            eprintln!("[ChartApp] Primitive selected (sub-pane #{}): index={}", pane_idx, prim_idx);
+                        if let Some(bid) = active_bid_hit {
+                            let mut guard = self.core.drawings_mut();
+                            guard.set_current_pane(bid, Some(instance_id));
+                            guard.select(bid, hit_prim_id);
+                            eprintln!("[ChartApp] Primitive selected (sub-pane #{}): id={}", pane_idx, hit_prim_id);
                         }
                         return;
                     }
@@ -2019,9 +1948,9 @@ impl ChartApp {
                         self.selected_indicator_id = None;
                     } else {
                         self.selected_indicator_id = Some(instance_id);
-                        let all_pids: Vec<_> = self.panels_store.chart_panel.keys().copied().collect();
-                        for pid in all_pids {
-                            self.core.drawings_svc_mut().entry_or_default(pid).deselect();
+                        let all_bids: Vec<_> = self.core.bubble().bubbles().map(|b| b.id).collect();
+                        for bid in all_bids {
+                            self.core.drawings_mut().deselect(bid);
                         }
                     }
                     eprintln!("[ChartApp] Sub-pane indicator hit: id={}", instance_id);
@@ -2052,10 +1981,10 @@ impl ChartApp {
                     });
                 if let Some(ind_id) = ind_hit {
                     self.selected_indicator_id = Some(ind_id);
-                    // Deselect any drawing primitive across ALL panels when an indicator is selected.
-                    let all_pids: Vec<_> = self.panels_store.chart_panel.keys().copied().collect();
-                    for pid in all_pids {
-                        self.core.drawings_svc_mut().entry_or_default(pid).deselect();
+                    // Deselect any drawing primitive across ALL bubbles when an indicator is selected.
+                    let all_bids: Vec<_> = self.core.bubble().bubbles().map(|b| b.id).collect();
+                    for bid in all_bids {
+                        self.core.drawings_mut().deselect(bid);
                     }
                     eprintln!("[ChartApp] Indicator selected: id={}", ind_id);
                     return;
@@ -2063,11 +1992,11 @@ impl ChartApp {
             }
         }
 
-        // No primitive or indicator hit — deselect everything across ALL panels.
+        // No primitive or indicator hit — deselect everything across ALL bubbles.
         self.selected_indicator_id = None;
-        let all_pids2: Vec<_> = self.panels_store.chart_panel.keys().copied().collect();
-        for pid in all_pids2 {
-            self.core.drawings_svc_mut().entry_or_default(pid).deselect();
+        let all_bids2: Vec<_> = self.core.bubble().bubbles().map(|b| b.id).collect();
+        for bid in all_bids2 {
+            self.core.drawings_mut().deselect(bid);
         }
 
         let _fallback_cc3;
@@ -2229,34 +2158,34 @@ impl ChartApp {
         self.panel_app.context_menu_state.close();
 
         match target {
-            ContextMenuTarget::Primitive(idx) => {
-                let active_pid_ctx = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+            ContextMenuTarget::Primitive(prim_id) => {
+                let active_bid_ctx = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
                 match action {
                     "settings" => {
-                        self.panel_app.primitive_settings_state.open(idx);
-                        eprintln!("[ChartApp] Opened primitive settings for #{}", idx);
+                        self.panel_app.primitive_settings_state.open(prim_id);
+                        eprintln!("[ChartApp] Opened primitive settings for #{}", prim_id);
                     }
                     "delete" => {
                         // Capture state BEFORE deletion so undo can recreate.
-                        let snapshot = active_pid_ctx
-                            .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| {
-                                let type_id = dm.get_type_id_at(idx)?;
-                                let points = dm.get_points_at(idx)?;
-                                let data = dm.get_data_at(idx)?;
+                        let snapshot = active_bid_ctx
+                            .and_then(|bid| {
+                                let guard = self.core.drawings();
+                                let type_id = guard.get_type_id(bid, prim_id)?;
+                                let points = guard.get_points(bid, prim_id)?;
+                                let data = guard.get_data(bid, prim_id)?;
                                 Some((type_id, points, data))
-                            }));
+                            });
                         if let Some((type_id, points, data)) = snapshot {
-                            let prim_id = data.id;
                             self.push_undo_command(mlc_core::Command::DeletePrimitive {
-                                index: idx,
+                                prim_id,
                                 type_id,
                                 points,
                                 data,
                             });
-                            eprintln!("[ChartApp] Recorded DeletePrimitive at index {}", idx);
-                            if let Some(pid) = active_pid_ctx {
-                                self.core.drawings_svc_mut().entry_or_default(pid).remove(idx);
-                                eprintln!("[ChartApp] Deleted primitive #{}", idx);
+                            eprintln!("[ChartApp] Recorded DeletePrimitive {}", prim_id);
+                            if let Some(bid) = active_bid_ctx {
+                                self.core.drawings_mut().delete(bid, prim_id);
+                                eprintln!("[ChartApp] Deleted primitive #{}", prim_id);
                             }
                             {
                                 let removed = self.core.alerts_mut().clear_for_drawing(prim_id);
@@ -2267,16 +2196,13 @@ impl ChartApp {
                             self.sync_drawing_back_to_group();
                             self.autosave_snapshot();
                         } else {
-                            // No undo snapshot — still get the ID for alert cleanup before removing.
-                            let prim_id_noundo = active_pid_ctx
-                                .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)))
-                                .map(|d| d.id);
-                            if let Some(pid) = active_pid_ctx {
-                                self.core.drawings_svc_mut().entry_or_default(pid).remove(idx);
-                                eprintln!("[ChartApp] Deleted primitive #{} (no undo snapshot)", idx);
+                            // No undo snapshot — still remove and clean up alerts.
+                            if let Some(bid) = active_bid_ctx {
+                                self.core.drawings_mut().delete(bid, prim_id);
+                                eprintln!("[ChartApp] Deleted primitive #{} (no undo snapshot)", prim_id);
                             }
-                            if let Some(prim_id_inner) = prim_id_noundo {
-                                let removed = self.core.alerts_mut().clear_for_drawing(prim_id_inner);
+                            {
+                                let removed = self.core.alerts_mut().clear_for_drawing(prim_id);
                                 for alert_snapshot in removed {
                                     self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot: alert_snapshot });
                                 }
@@ -2286,10 +2212,9 @@ impl ChartApp {
                         }
                     }
                     "clone" => {
-                        // clone_primitive returns Option<usize> (new index).
-                        let cloned_idx = active_pid_ctx
-                            .and_then(|pid| self.core.drawings_svc_mut().entry_or_default(pid).clone_primitive(idx));
-                        if let Some(new_idx) = cloned_idx {
+                        let cloned_id = active_bid_ctx
+                            .and_then(|bid| self.core.drawings_mut().clone_primitive(bid, prim_id));
+                        if let Some(new_id) = cloned_id {
                             // Apply +20px right, -20px up offset to the cloned primitive.
                             // Convert screen pixels to bar/price coordinates using the viewport.
                             let clone_bars: Vec<mlc_core::Bar> = self.active_chart_bars();
@@ -2307,68 +2232,68 @@ impl ChartApp {
                                 } else {
                                     0.0
                                 };
-                                if let Some(pid) = active_pid_ctx {
-                                    let mut guard = self.core.drawings_svc_mut();
-                                    let dm = guard.entry_or_default(pid);
-                                    dm.translate_at(new_idx, ts_delta_ms, price_delta);
-                                    dm.select_by_index(new_idx);
+                                if let Some(bid) = active_bid_ctx {
+                                    let mut guard = self.core.drawings_mut();
+                                    guard.translate(bid, new_id, ts_delta_ms, price_delta);
+                                    guard.select(bid, new_id);
                                 }
                             }
                             // Capture the NEW primitive's data for undo.
-                            let snapshot = active_pid_ctx
-                                .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| {
-                                    let type_id = dm.get_type_id_at(new_idx)?;
-                                    let points = dm.get_points_at(new_idx)?;
-                                    let data = dm.get_data_at(new_idx)?;
+                            let snapshot = active_bid_ctx
+                                .and_then(|bid| {
+                                    let guard = self.core.drawings();
+                                    let type_id = guard.get_type_id(bid, new_id)?;
+                                    let points = guard.get_points(bid, new_id)?;
+                                    let data = guard.get_data(bid, new_id)?;
                                     Some((type_id, points, data))
-                                }));
+                                });
                             if let Some((type_id, points, data)) = snapshot {
                                 self.push_undo_command(mlc_core::Command::CreatePrimitive {
-                                    index: new_idx,
+                                    prim_id: new_id,
                                     type_id,
                                     points,
                                     data,
                                 });
-                                eprintln!("[ChartApp] Recorded CreatePrimitive (clone) at index {}", new_idx);
+                                eprintln!("[ChartApp] Recorded CreatePrimitive (clone) {}", new_id);
                             }
                             self.sync_drawing_back_to_group();
                             self.autosave_snapshot();
-                            eprintln!("[ChartApp] Cloned primitive #{} -> #{}", idx, new_idx);
+                            eprintln!("[ChartApp] Cloned primitive #{} -> #{}", prim_id, new_id);
                         } else {
-                            eprintln!("[ChartApp] Clone primitive #{} returned None", idx);
+                            eprintln!("[ChartApp] Clone primitive #{} returned None", prim_id);
                         }
                     }
                     "toggle_lock" => {
                         // Read current state BEFORE mutating.
-                        let previous = active_pid_ctx
-                            .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)))
+                        let previous = active_bid_ctx
+                            .and_then(|bid| self.core.drawings().get_data(bid, prim_id))
                             .map(|d| d.locked)
                             .unwrap_or(false);
                         self.push_undo_command(mlc_core::Command::SetPrimitiveLock {
-                            index: idx,
+                            prim_id,
                             locked: !previous,
                             previous,
                         });
-                        eprintln!("[ChartApp] Recorded SetPrimitiveLock at index {} locked={}", idx, !previous);
-                        if let Some(pid) = active_pid_ctx {
-                            self.core.drawings_svc_mut().entry_or_default(pid).toggle_lock_primitive(idx);
+                        eprintln!("[ChartApp] Recorded SetPrimitiveLock {} locked={}", prim_id, !previous);
+                        if let Some(bid) = active_bid_ctx {
+                            self.core.drawings_mut().toggle_lock_primitive(bid, prim_id);
                         }
                         self.sidebar_data_dirty = true;
                     }
                     "toggle_visibility" => {
                         // Read current state BEFORE mutating.
-                        let previous = active_pid_ctx
-                            .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)))
+                        let previous = active_bid_ctx
+                            .and_then(|bid| self.core.drawings().get_data(bid, prim_id))
                             .map(|d| d.visible)
                             .unwrap_or(true);
                         self.push_undo_command(mlc_core::Command::SetPrimitiveVisibility {
-                            index: idx,
+                            prim_id,
                             visible: !previous,
                             previous,
                         });
-                        eprintln!("[ChartApp] Recorded SetPrimitiveVisibility at index {} visible={}", idx, !previous);
-                        if let Some(pid) = active_pid_ctx {
-                            self.core.drawings_svc_mut().entry_or_default(pid).toggle_visibility(idx);
+                        eprintln!("[ChartApp] Recorded SetPrimitiveVisibility {} visible={}", prim_id, !previous);
+                        if let Some(bid) = active_bid_ctx {
+                            self.core.drawings_mut().toggle_visibility(bid, prim_id);
                         }
                         self.sidebar_data_dirty = true;
                     }

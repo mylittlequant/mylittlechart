@@ -7,8 +7,10 @@
 //! [`ChartPanelId`].  Replaces the 18 duplicate display-option fields (S2.7).
 //!
 //! The `drawing_manager` field (S2.8) was previously here; it was lifted to
-//! `BackendCore::DrawingRegistry` (backend-cutover) so that all consumers
-//! access it through a single authoritative location.
+//! `BackendCore::drawing` (backend-cutover), and Step 3.1 further reset it
+//! into a per-`BubbleId` session manager (not per-panel) so that all
+//! consumers access it through a single authoritative location keyed by
+//! the data bubble rather than the chart panel.
 
 use crate::chart::{CrosshairOptions, GridOptions, Legend, Tooltip, Watermark};
 use crate::state::chart_container_leaf::ChartPanelId;

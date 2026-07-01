@@ -363,12 +363,12 @@ impl ChartApp {
                             .and_then(|cid| self.account_type_for_chart(cid))
                             .map(String::from)
                             .unwrap_or_else(|| "S".to_string());
-                        let active_pid_pc = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                        let active_bid_pc = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
                         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                            if let Some(pid) = active_pid_pc {
+                            if let Some(bid) = active_bid_pc {
                                 let restore_snaps = window.take_drawings_snapshot_for_symbol(&symbol, &item_exchange, &item_account_type);
-                                let result = self.core.drawings_svc_mut().swap_symbol(
-                                    pid, &symbol, &item_exchange, &item_account_type, restore_snaps.as_deref(),
+                                let result = self.core.drawings_mut().swap_symbol(
+                                    bid, &symbol, &item_exchange, &item_account_type, restore_snaps.as_deref(),
                                 );
                                 let old_key = format!("{}:{}:{}", old_sym_pc, old_exch_pc, old_at_pc);
                                 if result.old_primitives.is_empty() {
@@ -2690,17 +2690,10 @@ impl ChartApp {
         // --- Drawing delete ---
         if widget_id.contains("_drw_delete_") || widget_id.starts_with("drw_delete_") {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
-                // 1. Try active drawing_manager first (handles Active + WindowOtherKey).
-                let active_pid_del = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-                let removed_from_dm = active_pid_del
-                    .and_then(|pid| {
-                        let mut guard = self.core.drawings_svc_mut();
-                        let dm = guard.entry_or_default(pid);
-                        dm.find_index_by_id(id).map(|idx| {
-                            dm.remove(idx);
-                            true
-                        })
-                    })
+                // 1. Try active bubble first (handles Active + WindowOtherKey).
+                let active_bid_del = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                let removed_from_dm = active_bid_del
+                    .map(|bid| self.core.drawings_mut().delete(bid, id))
                     .unwrap_or(false);
 
                 if removed_from_dm {
@@ -2802,12 +2795,11 @@ impl ChartApp {
         // --- Drawing settings ---
         if widget_id.contains("_drw_settings_") || widget_id.starts_with("drw_settings_") {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
-                let active_pid_settings = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-                if let Some(pid) = active_pid_settings {
-                    let guard = self.core.drawings_svc();
-                    if let Some(idx) = guard.get(pid).and_then(|dm| dm.find_index_by_id(id)) {
-                        self.panel_app.primitive_settings_state.open(idx);
-                        eprintln!("[Sidebar] Primitive settings opened: {} (idx={})", id, idx);
+                let active_bid_settings = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                if let Some(bid) = active_bid_settings {
+                    if self.core.drawings().get_data(bid, id).is_some() {
+                        self.panel_app.primitive_settings_state.open(id);
+                        eprintln!("[Sidebar] Primitive settings opened: {}", id);
                     }
                 }
             }
@@ -2824,14 +2816,9 @@ impl ChartApp {
         // --- Drawing visibility ---
         if widget_id.contains("_drw_vis_") || widget_id.starts_with("drw_vis_") {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
-                let active_pid_vis = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-                if let Some(pid) = active_pid_vis {
-                    let mut guard = self.core.drawings_svc_mut();
-                    let dm = guard.entry_or_default(pid);
-                    if let Some(idx) = dm.find_index_by_id(id) {
-                        let v = dm.primitives_mut()[idx].data().visible;
-                        dm.primitives_mut()[idx].data_mut().visible = !v;
-                    }
+                let active_bid_vis = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                if let Some(bid) = active_bid_vis {
+                    self.core.drawings_mut().toggle_visibility(bid, id);
                 }
                 self.sidebar_data_dirty = true;
                 eprintln!("[Sidebar] Drawing visibility toggled: {}", id);
@@ -2850,14 +2837,9 @@ impl ChartApp {
         // --- Drawing lock ---
         if widget_id.contains("_drw_lock_") || widget_id.starts_with("drw_lock_") {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
-                let active_pid_lock = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-                if let Some(pid) = active_pid_lock {
-                    let mut guard = self.core.drawings_svc_mut();
-                    let dm = guard.entry_or_default(pid);
-                    if let Some(idx) = dm.find_index_by_id(id) {
-                        let l = dm.primitives_mut()[idx].data().locked;
-                        dm.primitives_mut()[idx].data_mut().locked = !l;
-                    }
+                let active_bid_lock = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                if let Some(bid) = active_bid_lock {
+                    self.core.drawings_mut().toggle_lock_primitive(bid, id);
                 }
                 self.sidebar_data_dirty = true;
                 eprintln!("[Sidebar] Drawing lock toggled: {}", id);
@@ -2964,17 +2946,14 @@ impl ChartApp {
                     .map(|b| b.close)
                     .unwrap_or(0.0);
                 let mut source_name = format!("Drawing {}", id);
-                let active_pid_alert = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-                if let Some(pid) = active_pid_alert {
-                    let guard = self.core.drawings_svc();
-                    if let Some(dm) = guard.get(pid) {
-                        if let Some(idx) = dm.find_index_by_id(id) {
-                            let prim = &dm.primitives()[idx];
-                            source_name = localize_primitive_name(prim.type_id(), prim.display_name());
-                            let pts = prim.points();
-                            if !pts.is_empty() {
-                                price = pts.iter().map(|p| p.1).sum::<f64>() / pts.len() as f64;
-                            }
+                let active_bid_alert = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                if let Some(bid) = active_bid_alert {
+                    let guard = self.core.drawings();
+                    if let Some(prim) = guard.primitives(bid).iter().find(|p| p.data().id == id) {
+                        source_name = localize_primitive_name(prim.type_id(), prim.display_name());
+                        let pts = prim.points();
+                        if !pts.is_empty() {
+                            price = pts.iter().map(|p| p.1).sum::<f64>() / pts.len() as f64;
                         }
                     }
                 }
@@ -3091,27 +3070,25 @@ impl ChartApp {
                     // copying a price band that would be meaningless on a peer
                     // (and without the old Manual-mode force that broke peers).
                     if is_drw_row {
-                        let active_pid_center = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                        let active_bid_center = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
                         let center_bars: Vec<mlc_core::Bar> = self.active_chart_bars();
                         // Mid timestamp from the primitive's anchor points. Price
                         // anchors (the `.1`) are no longer used for framing — Auto
                         // handles Y — so sentinel (0.0) prices are irrelevant here.
-                        let mid_bar = active_pid_center
-                            .and_then(|pid| {
-                                let guard = self.core.drawings_svc();
-                                guard.get(pid).and_then(|dm| {
-                                    dm.primitives().iter()
-                                        .find(|p| p.data().id == id)
-                                        .and_then(|prim| {
-                                            let pts = prim.points();
-                                            if pts.is_empty() {
-                                                return None;
-                                            }
-                                            let avg_ts = pts.iter().map(|p| p.0).sum::<i64>() / pts.len() as i64;
-                                            self.panel_app.panel_grid.active_container()
-                                                .map(|_w| mlc_core::timestamp_ms_to_bar_f64(&center_bars[..], avg_ts))
-                                        })
-                                })
+                        let mid_bar = active_bid_center
+                            .and_then(|bid| {
+                                let guard = self.core.drawings();
+                                guard.primitives(bid).iter()
+                                    .find(|p| p.data().id == id)
+                                    .and_then(|prim| {
+                                        let pts = prim.points();
+                                        if pts.is_empty() {
+                                            return None;
+                                        }
+                                        let avg_ts = pts.iter().map(|p| p.0).sum::<i64>() / pts.len() as i64;
+                                        self.panel_app.panel_grid.active_container()
+                                            .map(|_w| mlc_core::timestamp_ms_to_bar_f64(&center_bars[..], avg_ts))
+                                    })
                             });
                         if let Some(mid_bar) = mid_bar {
                             use mlc_core::chart::types::price_scale::ScaleMode;
@@ -3292,7 +3269,7 @@ impl ChartApp {
 
             // Split borrows: toolbar_state and panel_grid are separate fields of panel_app,
             // and panels_store is a separate field of self.
-            let active_pid_tb = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+            let active_bid_tb = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
             let window_ptr: *mut _ = self.panel_app.panel_grid.active_container_mut()
                 .map(|w| w as *mut _)
                 .unwrap_or(std::ptr::null_mut::<mlc_core::ChartContainer>());
@@ -3300,13 +3277,13 @@ impl ChartApp {
             if !window_ptr.is_null() {
                 // SAFETY: toolbar_state does not access panel_grid.
                 let window = unsafe { &mut *window_ptr };
-                if let Some(pid) = active_pid_tb {
-                    let mut guard = self.core.drawings_svc_mut();
-                    let dm = guard.entry_or_default(pid);
+                if let Some(bid) = active_bid_tb {
+                    let mut guard = self.core.drawings_mut();
+                    let mut session = crate::input::drawing_session::DrawingSessionView::new(&mut guard, bid);
                     let events = self.panel_app.toolbar_state.handle_toolbar_click_with_chart(
                         &item_id,
                         &mut window.crosshair,
-                        dm,
+                        &mut session,
                     );
                     drop(guard);
                     for event in events {
@@ -3345,7 +3322,7 @@ impl ChartApp {
                 let dropdown_id = dropdown_id.to_string();
                 let item_id = item_id.to_string();
 
-                let active_pid_dd = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                let active_bid_dd = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
                 let window_ptr: *mut _ = self.panel_app.panel_grid.active_container_mut()
                     .map(|w| w as *mut _)
                     .unwrap_or(std::ptr::null_mut::<mlc_core::ChartContainer>());
@@ -3353,15 +3330,15 @@ impl ChartApp {
                 if !window_ptr.is_null() {
                     // SAFETY: toolbar_state does not access panel_grid.
                     let window = unsafe { &mut *window_ptr };
-                    if let Some(pid) = active_pid_dd {
-                        let mut guard = self.core.drawings_svc_mut();
-                        let dm = guard.entry_or_default(pid);
+                    if let Some(bid) = active_bid_dd {
+                        let mut guard = self.core.drawings_mut();
+                        let mut session = crate::input::drawing_session::DrawingSessionView::new(&mut guard, bid);
                         let autosave = self.panel_app.autosave_enabled;
                         let events = self.panel_app.toolbar_state.handle_dropdown_select_with_chart(
                             &dropdown_id,
                             &item_id,
                             &mut window.crosshair,
-                            dm,
+                            &mut session,
                             autosave,
                         );
                         drop(guard);

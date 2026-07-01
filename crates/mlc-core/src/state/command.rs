@@ -219,23 +219,23 @@ pub enum Command {
     // New index-based commands (integrated with DrawingManager)
     // =========================================================================
 
-    /// Set primitive visibility by index (delegates to DrawingManager.set_visibility_at)
+    /// Set primitive visibility by stable id (delegates to `DrawingsMut::set_visibility`)
     SetPrimitiveVisibility {
-        index: usize,
+        prim_id: u64,
         visible: bool,
         previous: bool,
     },
 
-    /// Set primitive lock by index (delegates to DrawingManager.set_lock_at)
+    /// Set primitive lock by stable id (delegates to `DrawingsMut::set_lock`)
     SetPrimitiveLock {
-        index: usize,
+        prim_id: u64,
         locked: bool,
         previous: bool,
     },
 
-    /// Delete primitive by index (delegates to DrawingManager.delete_at)
+    /// Delete primitive by stable id (delegates to `DrawingsMut::delete`)
     DeletePrimitive {
-        index: usize,
+        prim_id: u64,
         /// Type ID for recreation via registry
         type_id: String,
         /// Coordinate points
@@ -265,8 +265,8 @@ pub enum Command {
 
     /// Create primitive (for undo of delete, or recording creation)
     CreatePrimitive {
-        /// Index where primitive was/will be inserted
-        index: usize,
+        /// Stable id of the primitive being created/restored.
+        prim_id: u64,
         /// Type ID for recreation via registry
         type_id: String,
         /// Coordinate points
@@ -277,7 +277,7 @@ pub enum Command {
 
     /// Move/reshape primitive (stores points before and after)
     MovePrimitive {
-        index: usize,
+        prim_id: u64,
         /// Points before the move
         previous_points: Vec<(i64, f64)>,
         /// Points after the move
@@ -286,10 +286,10 @@ pub enum Command {
 
     /// Reorder primitive (bring to front / send to back)
     ReorderPrimitive {
-        /// Original index before reorder
-        old_index: usize,
-        /// New index after reorder
-        new_index: usize,
+        /// Primitive being reordered.
+        prim_id: u64,
+        /// Primitive it should now sit immediately before (`None` = back of z-order).
+        before_prim_id: Option<u64>,
     },
 
     /// Viewport state change (pan, zoom)
@@ -302,7 +302,7 @@ pub enum Command {
 
     /// Modify primitive data (color, width, style, text, etc.)
     ModifyPrimitiveData {
-        index: usize,
+        prim_id: u64,
         /// Data before modification
         previous_data: PrimitiveData,
         /// Data after modification
@@ -312,7 +312,7 @@ pub enum Command {
     /// Modify full primitive (including type-specific data like Fib levels)
     /// Uses JSON serialization to capture complete state
     ModifyPrimitiveFull {
-        index: usize,
+        prim_id: u64,
         /// Type ID of the primitive
         type_id: String,
         /// Full JSON before modification
@@ -547,27 +547,27 @@ impl Command {
     /// Get the inverse command for undo
     pub fn inverse(&self) -> Command {
         match self {
-            // New index-based commands
-            Command::SetPrimitiveVisibility { index, visible, previous } => {
+            // New id-based commands
+            Command::SetPrimitiveVisibility { prim_id, visible, previous } => {
                 Command::SetPrimitiveVisibility {
-                    index: *index,
+                    prim_id: *prim_id,
                     visible: *previous,
                     previous: *visible,
                 }
             }
 
-            Command::SetPrimitiveLock { index, locked, previous } => {
+            Command::SetPrimitiveLock { prim_id, locked, previous } => {
                 Command::SetPrimitiveLock {
-                    index: *index,
+                    prim_id: *prim_id,
                     locked: *previous,
                     previous: *locked,
                 }
             }
 
-            Command::DeletePrimitive { index, type_id, points, data } => {
+            Command::DeletePrimitive { prim_id, type_id, points, data } => {
                 // Inverse of delete is create - recreate the primitive
                 Command::CreatePrimitive {
-                    index: *index,
+                    prim_id: *prim_id,
                     type_id: type_id.clone(),
                     points: points.clone(),
                     data: data.clone(),
@@ -596,29 +596,32 @@ impl Command {
                 }
             }
 
-            Command::CreatePrimitive { index, type_id, points, data } => {
+            Command::CreatePrimitive { prim_id, type_id, points, data } => {
                 // Inverse of create is delete
                 Command::DeletePrimitive {
-                    index: *index,
+                    prim_id: *prim_id,
                     type_id: type_id.clone(),
                     points: points.clone(),
                     data: data.clone(),
                 }
             }
 
-            Command::MovePrimitive { index, previous_points, new_points } => {
+            Command::MovePrimitive { prim_id, previous_points, new_points } => {
                 Command::MovePrimitive {
-                    index: *index,
+                    prim_id: *prim_id,
                     previous_points: new_points.clone(),
                     new_points: previous_points.clone(),
                 }
             }
 
-            Command::ReorderPrimitive { old_index, new_index } => {
-                // Inverse of reorder swaps old and new indices
+            Command::ReorderPrimitive { prim_id, before_prim_id } => {
+                // Reorder has no clean self-inverse under relative (before_prim_id)
+                // addressing — the caller (mlc-app) captures the pre-move
+                // neighbor itself and pushes a fresh command for undo rather
+                // than relying on `inverse()` for this variant.
                 Command::ReorderPrimitive {
-                    old_index: *new_index,
-                    new_index: *old_index,
+                    prim_id: *prim_id,
+                    before_prim_id: *before_prim_id,
                 }
             }
 
@@ -629,17 +632,17 @@ impl Command {
                 }
             }
 
-            Command::ModifyPrimitiveData { index, previous_data, new_data } => {
+            Command::ModifyPrimitiveData { prim_id, previous_data, new_data } => {
                 Command::ModifyPrimitiveData {
-                    index: *index,
+                    prim_id: *prim_id,
                     previous_data: new_data.clone(),
                     new_data: previous_data.clone(),
                 }
             }
 
-            Command::ModifyPrimitiveFull { index, type_id, previous_json, new_json } => {
+            Command::ModifyPrimitiveFull { prim_id, type_id, previous_json, new_json } => {
                 Command::ModifyPrimitiveFull {
-                    index: *index,
+                    prim_id: *prim_id,
                     type_id: type_id.clone(),
                     previous_json: new_json.clone(),
                     new_json: previous_json.clone(),
@@ -839,9 +842,7 @@ impl Command {
             }
             Command::CreatePrimitive { .. } => "Create Primitive",
             Command::MovePrimitive { .. } => "Move Primitive",
-            Command::ReorderPrimitive { new_index, old_index } => {
-                if *new_index > *old_index { "Bring to Front" } else { "Send to Back" }
-            }
+            Command::ReorderPrimitive { .. } => "Reorder Primitive",
             Command::ViewportChange { .. } => "Viewport Change",
             Command::ModifyPrimitiveData { .. } => "Modify Primitive",
             Command::ModifyPrimitiveFull { .. } => "Modify Primitive Settings",

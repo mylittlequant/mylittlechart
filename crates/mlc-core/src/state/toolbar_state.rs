@@ -310,7 +310,7 @@ use crate::state::geometry::LayoutRect;
 use crate::state::toolbar_geometry::ToolbarRenderResult;
 use crate::state::toolbar_geometry::WidgetRect;
 use crate::chart::types::crosshair::Crosshair;
-use crate::drawing::DrawingManager;
+use crate::state::panel_grid::DrawingSession;
 use crate::events::ChartOutEvent;
 
 // =============================================================================
@@ -853,12 +853,12 @@ impl ChartToolbarState {
     /// # Parameters
     /// - `item_id`: the toolbar item that was clicked
     /// - `crosshair`: mutable reference to the chart's crosshair (for magnet toggle)
-    /// - `drawing_manager`: mutable reference to the drawing manager (for lock/visible/tool)
+    /// - `drawing_manager`: the active bubble's drawing session (for lock/visible/tool)
     pub fn handle_toolbar_click_with_chart(
         &mut self,
         item_id: &str,
         crosshair: &mut Crosshair,
-        drawing_manager: &mut DrawingManager,
+        drawing_manager: &mut impl DrawingSession,
     ) -> Vec<ChartOutEvent> {
         // Close any open dropdown when clicking a different toolbar button.
         if self.open_dropdown_id.as_deref() != Some(item_id) && self.open_dropdown_id.is_some() {
@@ -1001,13 +1001,13 @@ impl ChartToolbarState {
     /// - `dropdown_id`: the dropdown that the item belongs to
     /// - `item_id`: the selected item
     /// - `crosshair`: mutable reference to the chart's crosshair
-    /// - `drawing_manager`: mutable reference to the drawing manager
+    /// - `drawing_manager`: the active bubble's drawing session
     pub fn handle_dropdown_select_with_chart(
         &mut self,
         dropdown_id: &str,
         item_id: &str,
         crosshair: &mut Crosshair,
-        drawing_manager: &mut DrawingManager,
+        drawing_manager: &mut impl DrawingSession,
         autosave_enabled: bool,
     ) -> Vec<ChartOutEvent> {
         // Close any open dropdown regardless of which path we take
@@ -1053,7 +1053,7 @@ impl ChartToolbarState {
                         vec![ChartOutEvent::Consumed]
                     }
                     "delete_all" => {
-                        drawing_manager.clear();
+                        drawing_manager.delete_all();
                         vec![ChartOutEvent::Consumed]
                     }
                     _ => vec![],

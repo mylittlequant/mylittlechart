@@ -26,10 +26,10 @@
 
 pub mod bubble;
 pub mod alert;
-pub mod service;
+pub mod drawing;
 
 pub use alert::{Alerts, AlertsMut};
-pub use service::{DrawingService, DrawingServiceMut, SwapSymbolResult};
+pub use drawing::{Drawings, DrawingsMut, SwapSymbolResult};
 
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -43,98 +43,12 @@ use mlc_core::templates::manager::TemplateManager;
 use mlc_core::ids::BubbleId;
 use crate::alert::AlertManager;
 use crate::bubble::BubbleStore;
+use crate::drawing::DrawingManager;
 use mlc_core::Bar;
-use mlc_core::drawing::DrawingManager;
-use mlc_core::state::chart_container_leaf::ChartPanelId;
 use mlc_indicators::IndicatorManager;
 use mlc_live_data::{DataBridge, LiveUpdate, LiveUpdateReceiver, OrderbookSource, SymbolInfo};
 use mlc_sidebar_content::watchlist::WatchlistManager;
 use mlc_trading_manager::TradingManager;
-
-// =============================================================================
-// DrawingRegistry
-// =============================================================================
-
-/// Registry of all `DrawingManager` instances — one per chart canvas leaf
-/// (`ChartPanelId`).
-///
-/// Ownership was previously on `ChartPanelState` (in `TradingPanelsStore`
-/// inside mlc-app).  Moving it here mirrors the same pattern used for
-/// `IndicatorManager`: the data plane lives in `BackendCore`; renderers and
-/// input handlers resolve the guard and pass a borrow down.
-///
-/// Key = `ChartPanelId` (the per-canvas-leaf id already used as the
-/// `TradingPanelsStore.chart_panel` key).  One entry per `ChartContainer`.
-/// Sub-pane indicator pane addressing uses `pane_id` fields on individual
-/// `PrimitiveData` values *inside* the single per-window `DrawingManager` —
-/// no separate per-sub-pane registry entries are needed.
-pub struct DrawingRegistry {
-    by_panel: HashMap<ChartPanelId, DrawingManager>,
-}
-
-impl Default for DrawingRegistry {
-    fn default() -> Self {
-        Self { by_panel: HashMap::new() }
-    }
-}
-
-impl DrawingRegistry {
-    /// Create an empty registry.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Immutable borrow of the manager for `panel_id`.
-    /// Returns `None` when the panel has not been registered yet.
-    pub fn get(&self, panel_id: ChartPanelId) -> Option<&DrawingManager> {
-        self.by_panel.get(&panel_id)
-    }
-
-    /// Mutable borrow of the manager for `panel_id`.
-    /// Returns `None` when the panel has not been registered yet.
-    pub fn get_mut(&mut self, panel_id: ChartPanelId) -> Option<&mut DrawingManager> {
-        self.by_panel.get_mut(&panel_id)
-    }
-
-    /// Mutable borrow, inserting a default `DrawingManager` on miss.
-    ///
-    /// Mirrors the `TradingPanelsStore::chart_panel.entry(…).or_insert_with`
-    /// pattern so callers do not need to pre-seed the registry.
-    pub fn entry_or_default(&mut self, panel_id: ChartPanelId) -> &mut DrawingManager {
-        self.by_panel.entry(panel_id).or_insert_with(DrawingManager::new)
-    }
-
-    /// Insert (or replace) a `DrawingManager` for `panel_id`.
-    pub fn insert(&mut self, panel_id: ChartPanelId, dm: DrawingManager) {
-        self.by_panel.insert(panel_id, dm);
-    }
-
-    /// Remove the `DrawingManager` for `panel_id`. Returns the removed
-    /// instance, or `None` when it was not present.
-    pub fn remove(&mut self, panel_id: ChartPanelId) -> Option<DrawingManager> {
-        self.by_panel.remove(&panel_id)
-    }
-
-    /// Remove all `DrawingManager` entries whose `ChartPanelId` satisfies
-    /// `predicate`.  Used when a whole chart window is closed to purge every
-    /// panel that belonged to it.
-    pub fn drain_matching<F>(&mut self, predicate: F)
-    where
-        F: Fn(ChartPanelId) -> bool,
-    {
-        self.by_panel.retain(|&pid, _| !predicate(pid));
-    }
-
-    /// Iterate over all `(ChartPanelId, &DrawingManager)` pairs.
-    pub fn iter(&self) -> impl Iterator<Item = (ChartPanelId, &DrawingManager)> {
-        self.by_panel.iter().map(|(&k, v)| (k, v))
-    }
-
-    /// Iterate over all `(ChartPanelId, &mut DrawingManager)` pairs.
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (ChartPanelId, &mut DrawingManager)> {
-        self.by_panel.iter_mut().map(|(&k, v)| (k, v))
-    }
-}
 
 /// Cached 24-hour ticker statistics from the WebSocket mini-ticker stream.
 ///
@@ -743,17 +657,17 @@ pub struct BackendCore {
     /// is the handle the agent server uses to scope queries.
     pub sessions: std::sync::RwLock<SessionRegistry>,
 
-    /// Registry of all drawing managers — one per chart canvas leaf
-    /// (`ChartPanelId`).
+    /// The drawing manager — one editing session per bubble
+    /// (`BubbleDrawingSession`, keyed by `BubbleId` internally).
     ///
-    /// Previously owned by `ChartPanelState` in `TradingPanelsStore` (mlc-app).
-    /// Moved here so every consumer (renderer, input handler, preset persist,
-    /// headless API) reads from a single authoritative location, same pattern
-    /// as `indicators` and `managers`.
+    /// Drawing data (`primitives`) lives on `DataBubble.primitives`; this
+    /// manager mutates it through `&mut BubbleStore`. Accessed exclusively
+    /// through the `Drawings` / `DrawingsMut` facade — see
+    /// `BackendCore::drawings` / `drawings_mut` below.
     ///
     /// In single-threaded embedded mode lock contention is zero — guards are
     /// taken and released within each logical frame / input handler arm.
-    pub drawings: std::sync::RwLock<DrawingRegistry>,
+    pub drawing: std::sync::RwLock<DrawingManager>,
 
     /// Optional tokio `Runtime` for native entry points that need to call
     /// `block_on` from sync input handlers (gate4agent PTY ops).
@@ -805,7 +719,7 @@ impl BackendCore {
             template_manager: std::sync::RwLock::new(TemplateManager::new()),
             watchlist_manager: std::sync::RwLock::new(WatchlistManager::default()),
             sessions: std::sync::RwLock::new(SessionRegistry::default()),
-            drawings: std::sync::RwLock::new(DrawingRegistry::new()),
+            drawing: std::sync::RwLock::new(DrawingManager::default()),
             #[cfg(not(target_arch = "wasm32"))]
             native_rt: std::sync::RwLock::new(None),
         })
@@ -1001,32 +915,25 @@ impl BackendCore {
         self.watchlist_manager.write().expect("BackendCore.watchlist_manager poisoned (write)")
     }
 
-    /// Read guard for the drawing registry.
-    #[deprecated(note = "use drawings_svc; Step 7 removes this")]
+    /// Read-only facade over the drawing manager. The ONLY doctrinally-
+    /// sanctioned access path (Step 3.1, `docs/mlc/plans/doctrine-cutover-2026-06-27.md` §1A).
+    ///
+    /// LOCK ORDER: bubble first, then drawing.
     #[inline]
-    pub fn drawings(&self) -> std::sync::RwLockReadGuard<'_, DrawingRegistry> {
-        self.drawings.read().expect("BackendCore.drawings poisoned (read)")
+    pub fn drawings(&self) -> Drawings<'_> {
+        let bubbles = self.bubble.read().expect("BackendCore.bubble poisoned (read)");
+        let mgr = self.drawing.read().expect("BackendCore.drawing poisoned (read)");
+        Drawings::new(mgr, bubbles)
     }
 
-    /// Write guard for the drawing registry.
-    #[deprecated(note = "use drawings_svc_mut; Step 7 removes this")]
+    /// Mutable facade over the drawing manager.
+    ///
+    /// LOCK ORDER: bubble first, then drawing.
     #[inline]
-    pub fn drawings_mut(&self) -> std::sync::RwLockWriteGuard<'_, DrawingRegistry> {
-        self.drawings.write().expect("BackendCore.drawings poisoned (write)")
-    }
-
-    /// Typed read-only service over the drawing registry. The ONLY
-    /// doctrinally-sanctioned access path going forward (Step 3,
-    /// `docs/mlc/plans/doctrine-cutover-2026-06-27.md`).
-    #[inline]
-    pub fn drawings_svc(&self) -> DrawingService<'_> {
-        DrawingService::new(self.drawings.read().expect("BackendCore.drawings poisoned (read)"))
-    }
-
-    /// Typed mutable service over the drawing registry.
-    #[inline]
-    pub fn drawings_svc_mut(&self) -> DrawingServiceMut<'_> {
-        DrawingServiceMut::new(self.drawings.write().expect("BackendCore.drawings poisoned (write)"))
+    pub fn drawings_mut(&self) -> DrawingsMut<'_> {
+        let bubbles = self.bubble.write().expect("BackendCore.bubble poisoned (write)");
+        let mgr = self.drawing.write().expect("BackendCore.drawing poisoned (write)");
+        DrawingsMut::new(mgr, bubbles)
     }
 
     /// Drain the live-data broadcast channel, write incoming updates into

@@ -42,7 +42,7 @@ use crate::chart_render::{
 };
 use mlc_core::chart::Tooltip;
 use mlc_core::chart::types::compare::CompareOverlay;
-use mlc_core::drawing::{DrawingManager, draw_control_points};
+use mlc_core::drawing::{DrawingRenderView, draw_control_points};
 use mlc_core::apply_opacity;
 use mlc_core::scale_settings::ScaleSettings;
 use mlc_core::state::chart_container::SubPaneYState;
@@ -1218,7 +1218,7 @@ pub fn render_sub_pane(
     _crosshair_config: &CrosshairConfig,
     frame_theme: &FrameTheme,
     _is_dragging: bool,
-    drawing_manager: Option<&DrawingManager>,
+    drawing_manager: Option<&dyn DrawingRenderView>,
     sub_pane_auto_scale: bool,
     sub_pane_price_min: f64,
     sub_pane_price_max: f64,
@@ -1712,7 +1712,7 @@ pub fn render_sub_pane_primitives(
     ctx: &mut dyn RenderContext,
     content: &LayoutRect,
     state: &ChartRenderState,
-    dm: &DrawingManager,
+    dm: &dyn DrawingRenderView,
     instance_id: u64,
     pane_min: f64,
     pane_max: f64,
@@ -1796,7 +1796,7 @@ pub fn render_sub_pane_primitives(
                 }
             }
 
-            let is_selected = selected_idx == Some(idx);
+            let is_selected = selected_idx == Some(data.id);
             prim.render(ctx, is_selected);
 
             // Draw control points for selected primitive
@@ -2156,7 +2156,7 @@ pub fn render_sub_pane_left_overlay(
 pub(crate) fn draw_main_chart_drawing_preview(
     ctx: &mut dyn RenderContext,
     state: &ChartRenderState,
-    dm: &DrawingManager,
+    dm: &dyn DrawingRenderView,
     chart_height: f64,
 ) {
     // Only draw when actively drawing on the main chart (not a sub-pane)
@@ -2174,9 +2174,10 @@ pub(crate) fn draw_main_chart_drawing_preview(
     let cursor_price = state.crosshair.effective_price(false);
 
     if dm.is_drawing_freehand() {
-        if let Some(points) = dm.drawing_points() {
+        {
+            let points = dm.drawing_points();
             if points.len() >= 2 {
-                let is_highlighter = dm.drawing_tool_id() == Some("highlighter");
+                let is_highlighter = dm.drawing_tool_id().as_deref() == Some("highlighter");
                 let effective_color = dm.effective_color();
                 let stroke_color = if is_highlighter {
                     apply_opacity(&effective_color, 0.4)
@@ -2233,12 +2234,13 @@ pub(crate) fn draw_main_chart_drawing_preview(
             preview_prim.render(ctx, false);
 
             // Draw anchor points for multi-click tools (not freehand)
-            if let Some(points) = dm.drawing_points() {
+            let points = dm.drawing_points();
+            if !points.is_empty() {
                 ctx.set_fill_color("#ffff00");
                 ctx.set_stroke_color("#000000");
                 ctx.set_stroke_width(1.0);
 
-                for (ts_ms, price) in points {
+                for (ts_ms, price) in &points {
                     let x = state.viewport.x_for_ts(*ts_ms, state.bars);
                     let y = state.price_scale.price_to_y(*price, chart_height);
 
@@ -2274,7 +2276,7 @@ pub(crate) fn draw_main_chart_drawing_preview(
 pub(crate) fn draw_sub_pane_drawing_preview(
     ctx: &mut dyn RenderContext,
     state: &ChartRenderState,
-    dm: &DrawingManager,
+    dm: &dyn DrawingRenderView,
     instance_id: u64,
     pane_viewport: &mlc_core::Viewport,
     pane_price_scale: &mlc_core::PriceScale,
@@ -2288,9 +2290,10 @@ pub(crate) fn draw_sub_pane_drawing_preview(
     let cursor_price = state.crosshair.price;
 
     if dm.is_drawing_freehand() {
-        if let Some(points) = dm.drawing_points() {
+        {
+            let points = dm.drawing_points();
             if points.len() >= 2 {
-                let is_highlighter = dm.drawing_tool_id() == Some("highlighter");
+                let is_highlighter = dm.drawing_tool_id().as_deref() == Some("highlighter");
                 let effective_color = dm.effective_color();
                 let stroke_color = if is_highlighter {
                     apply_opacity(&effective_color, 0.4)
@@ -2339,12 +2342,13 @@ pub(crate) fn draw_sub_pane_drawing_preview(
         if let Some(preview_prim) = dm.create_preview(cursor_ts_ms, cursor_price) {
             preview_prim.render(ctx, false);
 
-            if let Some(points) = dm.drawing_points() {
+            let points = dm.drawing_points();
+            if !points.is_empty() {
                 ctx.set_fill_color("#ffff00");
                 ctx.set_stroke_color("#000000");
                 ctx.set_stroke_width(1.0);
 
-                for (ts_ms, price) in points {
+                for (ts_ms, price) in &points {
                     let x = pane_viewport.x_for_ts(*ts_ms, state.bars);
                     let y = pane_price_scale.price_to_y(*price, content_height);
 
@@ -2375,7 +2379,7 @@ pub fn render_main_chart_primitives(
     ctx: &mut dyn RenderContext,
     chart_area: &ChartAreaLayout,
     state: &ChartRenderState,
-    dm: &DrawingManager,
+    dm: &dyn DrawingRenderView,
 ) {
     // Debug: log once when primitives exist but might be skipped
     let prim_count = dm.primitives().len();
@@ -2492,7 +2496,7 @@ pub fn render_main_chart_primitives(
                 }
             }
 
-            let is_selected = selected_idx == Some(idx);
+            let is_selected = selected_idx == Some(data.id);
             prim.render(ctx, is_selected);
 
             // Draw control points for selected primitive
@@ -2928,7 +2932,7 @@ pub struct ChartPanelRenderData<'a> {
     /// State for the scale-corner A/M and mode buttons
     pub corner_state: &'a ScaleCornerState,
     /// Drawing manager for interactive primitives (optional)
-    pub drawing_manager: Option<&'a DrawingManager>,
+    pub drawing_manager: Option<&'a dyn DrawingRenderView>,
     /// Indicator source for overlay indicators and sub-panes (optional)
     pub indicator_source: Option<&'a dyn mlc_core::indicator_source::IndicatorSource>,
     /// Symbol string used to filter indicators (optional)
@@ -3494,7 +3498,7 @@ pub fn render_chart_overlay(
     layout: &crate::layout::ExtendedFrameLayout,
     config: &ChartRenderConfig,
     sub_pane_ranges: Option<&[(usize, f64, f64)]>,
-    drawing_manager: Option<&DrawingManager>,
+    drawing_manager: Option<&dyn DrawingRenderView>,
     tooltip: Option<&mlc_core::chart::Tooltip>,
     symbol: Option<&str>,
     timeframe: &str,

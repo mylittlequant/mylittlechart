@@ -125,11 +125,6 @@ impl ChartApp {
         }
 
         // 2. Re-attach chart to its permanent home auto-bubble and restore state.
-        let pid_desync = self.panel_app.panel_grid
-            .containers()
-            .get(&chart_id)
-            .map(|w| w.chart_panel_id);
-
         if let Some(auto_bid) = auto_bubble_id {
             // Re-attach to home auto-bubble.
             self.attach_chart_to_tag(chart_id, auto_bid);
@@ -158,18 +153,16 @@ impl ChartApp {
                     }
                 };
 
-                // Apply restored state to window and drawing_manager.
-                if let Some(pid) = pid_desync {
-                    let mut guard = self.core.drawings_svc_mut();
-                    let dm = guard.entry_or_default(pid);
-                    dm.clear_all_primitives();
-                    if !restored_prims.is_empty() {
-                        let count = restored_prims.len();
-                        dm.add_synced_primitives(restored_prims);
-                        eprintln!("[BubbleStore] Desync: restored {} primitives from auto-bubble", count);
-                    } else {
-                        eprintln!("[BubbleStore] Desync: auto-bubble had no primitives (fresh chart)");
-                    }
+                // Restore state onto the auto-bubble. Under the per-bubble
+                // drawing model the auto-bubble's `primitives` ARE what the
+                // window will read once `current_bubble_id` flips below — no
+                // separate per-window DrawingManager to write into.
+                let restored_count = restored_prims.len();
+                self.core.drawings_mut().adopt(auto_bid, restored_prims);
+                if restored_count > 0 {
+                    eprintln!("[BubbleStore] Desync: restored {} primitives from auto-bubble", restored_count);
+                } else {
+                    eprintln!("[BubbleStore] Desync: auto-bubble had no primitives (fresh chart)");
                 }
 
                 // Restore command_history into the window.
@@ -187,16 +180,6 @@ impl ChartApp {
                 if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
                     window.current_bubble_id = auto_bid;
                     window.tag_inherits_home_overlay = false;
-                }
-
-                // Rebind drawing_manager to the auto-bubble's style store.
-                if let Some(pid) = pid_desync {
-                    if let Some(style_arc) = self.core.bubble()
-                        .bubble(auto_bid)
-                        .map(|g| g.last_used_style.clone())
-                    {
-                        self.core.drawings_svc_mut().entry_or_default(pid).bind_style_store(style_arc);
-                    }
                 }
 
                 // Restore the window's pre-join scale mode.
@@ -221,23 +204,16 @@ impl ChartApp {
                 // indicators in the home auto-bubble were there all along.
                 // Owner UX: "untag is just a pointer flip from the tag
                 // bubble to the chart's auto-bubble; nothing moves".
+                // `auto_bub.primitives` was already set by `adopt()` above —
+                // that IS the authoritative home-state now, no separate
+                // per-window DrawingManager copy to sync back.
                 let _ = &pre_tag_ids;
                 eprintln!("[BubbleStore] Desync: pointer-flip to home auto_bubble {:?}", auto_bid);
-
-                // Sync drawing_manager primitives back into the auto-bubble so they
-                // are the authoritative home-state for future join cycles.
-                let dm_prims: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
-                    pid_desync
-                        .and_then(|pid| self.core.drawings_svc().get(pid).map(|dm| dm.primitives().iter().map(|p| p.clone_box()).collect::<Vec<_>>()))
-                        .unwrap_or_default();
-                if let Some(auto_bub) = self.core.bubble_mut().bubble_mut(auto_bid) {
-                    auto_bub.primitives = dm_prims;
-                }
             } else {
-                // Was not in a color group — just purge synced primitives and update ids.
-                if let Some(pid) = pid_desync {
-                    self.core.drawings_svc_mut().entry_or_default(pid).purge_synced_primitives();
-                }
+                // Was not in a color group — the window's `current_bubble_id`
+                // simply flips to `auto_bid`; `auto_bid`'s own primitives are
+                // already authoritative (no per-window synced copy to purge
+                // under the per-bubble model).
                 self.core.indicators_mut().purge_synced_instances_for_window(chart_id.0);
                 if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
                     window.current_bubble_id = auto_bid;
@@ -373,17 +349,11 @@ impl ChartApp {
                 chart_id, group_id, is_new_group
             );
 
-            // Rebind the joining window's DM to the group's shared style store so
-            // last-used style changes are immediately visible to all group peers.
-            let pid_join = self.panel_app.panel_grid.container_for_leaf(joining_leaf).map(|w| w.chart_panel_id);
-            if let Some(style_arc) = self.core.bubble()
-                .bubble(group_id)
-                .map(|g| g.last_used_style.clone())
-            {
-                if let Some(pid) = pid_join {
-                    self.core.drawings_svc_mut().entry_or_default(pid).bind_style_store(style_arc);
-                }
-            }
+            // NOTE (Step 3.1): style-store rebinding is no longer needed —
+            // `DrawingManager::effective_color` already reads
+            // `bubble.last_used_style` directly for the bubble the window
+            // points at (bid-keyed sessions, no per-window Arc to rebind).
+            let pid_join = self.panel_app.panel_grid.container_for_leaf(joining_leaf).map(|w| w.current_bubble_id);
 
             // Snapshot pre-tag indicator ids (these survive desync).
             // Indicators owned by the chart's home auto-bubble are the
@@ -514,10 +484,10 @@ impl ChartApp {
                 // drawing_manager first; fall back to auto_bubble.primitives if
                 // drawing_manager has nothing (e.g. cold-load presets).
                 let dm_prims: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
-                    pid_join.and_then(|pid| self.core.drawings_svc().get(pid).map(|dm| dm.primitives().iter()
+                    pid_join.map(|bid| self.core.drawings().primitives(bid).iter()
                             .filter(|p| p.data().origin_id.is_none())
                             .map(|p| p.clone_box())
-                            .collect::<Vec<_>>()))
+                            .collect::<Vec<_>>())
                         .unwrap_or_default();
                 let auto_prims: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
                     if let Some(bid) = auto_bid {
@@ -553,10 +523,10 @@ impl ChartApp {
                     // Re-read drawing_manager since source_prims was moved into
                     // group_prims.  drawing_manager still holds the originals.
                     let home_copy: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
-                        pid_join.and_then(|pid| self.core.drawings_svc().get(pid).map(|dm| dm.primitives().iter()
+                        pid_join.map(|bid| self.core.drawings().primitives(bid).iter()
                                 .filter(|p| p.data().origin_id.is_none())
                                 .map(|p| p.clone_box())
-                                .collect::<Vec<_>>()))
+                                .collect::<Vec<_>>())
                             .unwrap_or_default();
                     let home_count = home_copy.len();
                     {
@@ -572,13 +542,12 @@ impl ChartApp {
                     );
                 }
                 } // end if !is_retag
-                // Clear drawing_manager — per-frame forward sync from
-                // group.primitives will repopulate it with the re-ID'd group
-                // copies so we render the group view, not the home view.
-                if let Some(pid) = pid_join {
-                    self.core.drawings_svc_mut().entry_or_default(pid).clear_all_primitives();
-                    sglog!("[sync_join_color_group] cleared drawing_manager pid={:?} (group view will repopulate)", pid);
-                }
+                // NOTE (Step 3.1): no separate per-window DrawingManager to
+                // clear any more — once `window.current_bubble_id` flips to
+                // `group_id` below, the window reads `group.primitives`
+                // directly. `auto_bid`'s primitives were already stashed
+                // above and must NOT be cleared here (that stash is what
+                // `perform_desync` restores from later).
 
                 // Seed bars into the brand-new color group from the chart's
                 // home auto_bubble so the chart paints immediately under the
@@ -673,8 +642,9 @@ impl ChartApp {
                 return;
             }
 
-            // EXISTING GROUP: auto_bubble holds home drawings (no explicit stash needed).
-            // Clear drawing_manager; per-frame sync will fill it from group each frame.
+            // EXISTING GROUP: auto_bubble holds home drawings untouched; the
+            // window's `current_bubble_id` flip to `group_id` (below) is all
+            // that's needed for it to read the group's own primitives.
 
             // When sync_viewport is ON for this group, stash the window's current
             // scale mode and apply the group mode. F (Focus) implies a pinned viewport,
@@ -702,11 +672,6 @@ impl ChartApp {
                         window.calc_auto_scale(&joining_bars);
                     }
                 }
-            }
-
-            // Clear drawing_manager; group prims arrive via per-frame sync.
-            if let Some(pid) = pid_join {
-                self.core.drawings_svc_mut().entry_or_default(pid).clear_all_primitives();
             }
 
             // If the existing color group's `bars` is empty (cold-load preset
@@ -991,20 +956,10 @@ impl ChartApp {
                 .get(&chart_id)
                 .map(|w| w.chart_panel_id);
             if let Some(pid) = pid_opt {
-                let style_arc = self.bubble_for_chart(chart_id)
-                    .and_then(|bid| self.with_bubble(bid, |g| g.last_used_style.clone()));
                 let _panel = crate::chart_panel_bridge::ensure_chart_panel_state(
                     &mut self.panels_store,
                     pid,
                 );
-                {
-                    let mut guard = self.core.drawings_svc_mut();
-                    let dm = guard.entry_or_default(pid);
-                    dm.set_current_symbol_key(&source_sym, &source_exch, &source_at);
-                    if let Some(arc) = style_arc {
-                        dm.bind_style_store(arc);
-                    }
-                }
             }
         }
 
@@ -1248,17 +1203,6 @@ impl ChartApp {
                     window.tag_inherits_home_overlay = true;
                 }
             }
-            // Rebind every new window's DM to the group's shared style store.
-            let style_arc = self.core.bubble()
-                .bubble(group_id)
-                .map(|g| g.last_used_style.clone());
-            for &(leaf_id, _) in &leaf_chart_ids {
-                if let Some(pid) = self.panel_app.panel_grid.container_for_leaf(leaf_id).map(|w| w.chart_panel_id) {
-                    if let Some(ref arc) = style_arc {
-                        self.core.drawings_svc_mut().entry_or_default(pid).bind_style_store(arc.clone());
-                    }
-                }
-            }
             // BubbleStore reverse index updated by attach_chart_to_bubble loop above.
 
             // For new groups: snapshot source window's indicator ids and command_history
@@ -1330,15 +1274,10 @@ impl ChartApp {
                 new_leaves.len()
             );
 
-            // Clear legacy-cloned primitives from non-source windows.
-            // clone_for_split_shell copies no primitives in S2.8, but earlier paths
-            // may have left some. For grouped windows the pre-render sync fills them
-            // from the group each frame.
-            for &(leaf_id, _) in leaf_chart_ids.iter().skip(1) {
-                if let Some(pid) = self.panel_app.panel_grid.container_for_leaf(leaf_id).map(|w| w.chart_panel_id) {
-                    self.core.drawings_svc_mut().entry_or_default(pid).clear_all_primitives();
-                }
-            }
+            // NOTE (Step 3.1): no legacy-cloned primitives to purge from
+            // non-source windows any more — every leaf in `leaf_chart_ids`
+            // now has `current_bubble_id == group_id` (set above), so they
+            // all read `group.primitives` directly.
 
             // For EXISTING group: primitives are synced per-frame via pre-render,
             // but indicators need to be created on new windows NOW.
@@ -1365,18 +1304,19 @@ impl ChartApp {
                         .unwrap_or_else(|| "S".to_string());
                     (sym, exch, at)
                 };
+                // NOTE (Step 3.1): the source window's `current_bubble_id`
+                // was already flipped to `group_id` in the block above —
+                // read from its home `auto_bubble_id` instead, since that's
+                // where the "window's current drawings" actually still live.
+                let seed_auto_bid = first_leaf_chart_id
+                    .and_then(|cid| self.panel_app.panel_grid.containers().get(&cid))
+                    .map(|w| w.auto_bubble_id);
                 let mut source_prims: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
-                    self.panel_app.panel_grid
-                        .container_for_leaf(new_leaves[0])
-                        .map(|w| w.chart_panel_id)
-                        .and_then(|pid| {
-                            self.core.drawings_svc().get(pid).map(|dm| {
-                                dm.primitives().iter()
-                                    .filter(|p| p.data().origin_id.is_none())
-                                    .map(|p| p.clone_box())
-                                    .collect::<Vec<_>>()
-                            })
-                        })
+                    seed_auto_bid
+                        .map(|bid| self.core.drawings().primitives(bid).iter()
+                            .filter(|p| p.data().origin_id.is_none())
+                            .map(|p| p.clone_box())
+                            .collect::<Vec<_>>())
                         .unwrap_or_default();
                 for p in &mut source_prims {
                     let d = p.data_mut();
@@ -1598,21 +1538,31 @@ impl ChartApp {
                 .map(|lid| (*lid, self.panel_app.panel_grid.container_id_for_leaf(*lid)))
                 .collect();
 
-        // Apply the full instrument key change (symbol + exchange + account_type) to each peer
-        // window directly, bypassing change_symbol() which uses NullDataProvider and always fails.
+        // Apply the full instrument key change (symbol + exchange + account_type).
+        //
+        // NOTE (Step 3.1): under the per-bubble drawing model, sync leaves
+        // that share a tag also share `current_bubble_id` — calling
+        // `swap_symbol` once per leaf would clear + restore the SAME
+        // bubble's primitives N times (idempotent-redundant at best, a
+        // double-restore risk at worst). Deduplicate by bid: call
+        // `swap_symbol` once per distinct bubble, then run the per-leaf
+        // viewport reset (genuinely per-window state) for every leaf.
+        let mut swapped_bids: std::collections::HashSet<mlc_core::ids::BubbleId> = std::collections::HashSet::new();
         for (leaf_id, (old_symbol, old_exchange, old_account_type, _)) in sync_leaves.iter().zip(peer_info.iter()) {
-            let pid_opt = self.panel_app.panel_grid.container_for_leaf(*leaf_id).map(|w| w.chart_panel_id);
+            let bid_opt = self.panel_app.panel_grid.container_for_leaf(*leaf_id).map(|w| w.current_bubble_id);
             if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(*leaf_id) {
-                if let Some(pid) = pid_opt {
-                    let restore_snaps = window.take_drawings_snapshot_for_symbol(&symbol_owned, &exchange_owned, &account_type_owned);
-                    let result = self.core.drawings_svc_mut().swap_symbol(
-                        pid, &symbol_owned, &exchange_owned, &account_type_owned, restore_snaps.as_deref(),
-                    );
-                    let old_key = format!("{}:{}:{}", old_symbol, old_exchange, old_account_type);
-                    if result.old_primitives.is_empty() {
-                        window.symbol_drawings.remove(&old_key);
-                    } else {
-                        window.symbol_drawings.insert(old_key, result.old_primitives);
+                if let Some(bid) = bid_opt {
+                    if swapped_bids.insert(bid) {
+                        let restore_snaps = window.take_drawings_snapshot_for_symbol(&symbol_owned, &exchange_owned, &account_type_owned);
+                        let result = self.core.drawings_mut().swap_symbol(
+                            bid, &symbol_owned, &exchange_owned, &account_type_owned, restore_snaps.as_deref(),
+                        );
+                        let old_key = format!("{}:{}:{}", old_symbol, old_exchange, old_account_type);
+                        if result.old_primitives.is_empty() {
+                            window.symbol_drawings.remove(&old_key);
+                        } else {
+                            window.symbol_drawings.insert(old_key, result.old_primitives);
+                        }
                     }
                 }
                 window.viewport.bar_count = 0;
@@ -1829,62 +1779,15 @@ impl ChartApp {
         &mut self,
         source_leaf: mlc_core::LeafId,
     ) {
-        // Determine the source window's color tag.
-        let source_color = match self.panel_app.leaf_color_tags.get(&source_leaf).copied() {
-            Some(c) => c,
-            None => return,
-        };
-
-        // Collect peer leaf IDs that share the same color tag.
-        let peer_leaves: Vec<mlc_core::LeafId> = self.panel_app.leaf_color_tags.iter()
-            .filter(|(&lid, &c)| lid != source_leaf && sync_colors_match(c, source_color))
-            .map(|(&lid, _)| lid)
-            .collect();
-
-        if peer_leaves.is_empty() {
-            return;
-        }
-
-        // Get the chart ID for the source leaf, then read the new primitive's ID.
-        let source_chart_id = match self.panel_app.panel_grid.container_id_for_leaf(source_leaf) {
-            Some(id) => id,
-            None => return,
-        };
-
-        // If the source window is in a TagManager group, primitives are shared via the
-        // group — no clone-based propagation is needed.
-        if self.bubble_for_chart(source_chart_id).is_some() {
-            return;
-        }
-
-        let src_pid = self.panel_app.panel_grid.containers().get(&source_chart_id).map(|w| w.chart_panel_id);
-        let prim_id = match src_pid.and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.last_original_id()))
-        {
-            Some(id) => id,
-            None => return,
-        };
-
-        // For each peer leaf, clone the primitive into its drawing manager.
-        for peer_leaf in peer_leaves {
-            let peer_chart_id = match self.panel_app.panel_grid.container_id_for_leaf(peer_leaf) {
-                Some(id) => id,
-                None => continue,
-            };
-
-            // Clone the primitive from the source window.
-            let cloned = match src_pid.and_then(|pid| self.core.drawings_svc().get(pid)
-                .and_then(|dm| dm.clone_primitive_for_sync(prim_id, peer_chart_id.0)))
-            {
-                Some(c) => c,
-                None => continue,
-            };
-
-            // Insert the clone into the peer window.
-            if let Some(peer_pid) = self.panel_app.panel_grid.containers().get(&peer_chart_id).map(|w| w.chart_panel_id) {
-                self.core.drawings_svc_mut().entry_or_default(peer_pid).add_synced_primitives(vec![cloned]);
-                eprintln!("[ChartApp] Synced primitive {} to peer chart {:?}", prim_id, peer_chart_id);
-            }
-        }
+        // DEPRECATED (Step 3.1): this legacy clone-based path only ever ran
+        // for the "ungrouped peers" case (it already early-returned once a
+        // TagManager group existed). The manager methods it depended on
+        // (`last_original_id`, `clone_primitive_for_sync`,
+        // `add_synced_primitives`) were removed with the per-bubble
+        // DrawingManager reset — grouped peers share one bubble's
+        // `primitives` Vec directly, and ungrouped-peer clone propagation
+        // was already the deprecated tail this doc comment describes.
+        let _ = source_leaf;
     }
 
     /// Propagate crosshair position to all leaves in the same sync color group.
@@ -1985,200 +1888,55 @@ impl ChartApp {
         }
     }
 
-    /// DEPRECATED: Legacy drawing state propagation for non-grouped windows.
-    /// For grouped windows, drawing state sync should go through TagManager.
-    /// Will be removed once all windows use TagManager groups.
+    /// DEAD (Step 3.1): grouped peer leaves already share one bubble's
+    /// `BubbleDrawingSession` (the manager is keyed by `BubbleId`, not by
+    /// panel), so the in-progress multipoint construction state this
+    /// function used to clone into each peer's separate `DrawingManager` is
+    /// visible to every peer automatically — there is no separate session
+    /// to propagate into. The legacy ungrouped-peer fallback this function
+    /// also handled was already the deprecated tail (see the doc comment
+    /// history above this function before the reset).
     pub(super) fn propagate_drawing_state_to_sync_group(
         &mut self,
-        source_leaf: mlc_core::LeafId,
+        _source_leaf: mlc_core::LeafId,
     ) {
-        // Resolve the source window's TagManager group.
-        // Bug F5 fix: fan-out is gated on actual TagManager group membership, not
-        // on the `leaf_color_tags` map which can include windows from different groups
-        // that happen to share the same color value.
-        let group_id = self.panel_app.panel_grid
-            .container_id_for_leaf(source_leaf)
-            .and_then(|cid| self.bubble_for_chart(cid));
-
-        let should_sync = group_id
-            .and_then(|gid| self.with_bubble(gid, |g| g.sync_flags.sync_drawings))
-            .unwrap_or(true);
-        if !should_sync { return; }
-
-        // Collect peer leaf IDs using the TagManager group boundary.
-        let peer_leaves: Vec<mlc_core::LeafId> = if let Some(gid) = group_id {
-            // Every chart member of the group except the source leaf itself.
-            self.core.bubble()
-                .chart_member_ids(gid)
-                .into_iter()
-                .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
-                .filter(|&lid| lid != source_leaf)
-                .collect()
-        } else {
-            // No group — fall back to color-tag matching for ungrouped legacy windows.
-            let source_color = match self.panel_app.leaf_color_tags.get(&source_leaf).copied() {
-                Some(c) => c,
-                None => return,
-            };
-            self.panel_app.leaf_color_tags.iter()
-                .filter(|(&lid, &c)| lid != source_leaf && sync_colors_match(c, source_color))
-                .map(|(&lid, _)| lid)
-                .collect()
-        };
-
-        if peer_leaves.is_empty() {
-            return;
-        }
-
-        // Read the current drawing state and active pane from the source window.
-        // Extracted before taking mutable borrows on peer windows.
-        let src_pid_ds = self.panel_app.panel_grid.container_for_leaf(source_leaf).map(|w| w.chart_panel_id);
-        let (tool_id, points, src_pane_id) = {
-            let guard = self.core.drawings_svc();
-            match src_pid_ds.and_then(|pid| guard.get(pid)) {
-                Some(dm) => {
-                    let pane = dm.current_pane();
-                    match dm.drawing_state() {
-                        mlc_core::drawing::DrawingState::Creating { tool_id, points } => {
-                            (Some(tool_id.clone()), points.clone(), pane)
-                        }
-                        mlc_core::drawing::DrawingState::Idle => (None, Vec::new(), pane),
-                    }
-                }
-                None => return,
-            }
-        };
-
-        // Build a reverse map: source instance_id -> (type_id, ordinal).
-        // This is the same remap strategy used by prepare.rs for completed primitives.
-        // We build it once from the source chart and apply per-peer.
-        let source_cid = self.panel_app.panel_grid.container_id_for_leaf(source_leaf);
-        let src_pane_type_ord: Option<(String, usize)> = src_pane_id.and_then(|pid| {
-            let cid = source_cid?;
-            let bid = self.panel_app.panel_grid.containers()
-                .get(&cid).map(|w| w.current_bubble_id.0).unwrap_or(0);
-            let mut sub_pane_insts: Vec<(u64, String, usize, u64)> = self.core.indicators()
-                                .get_instances_for_bubble(bid)
-                .into_iter()
-                .filter(|i| i.pane > 0)
-                .map(|i| (i.id, i.type_id.clone(), i.pane, i.id))
-                .collect();
-            sub_pane_insts.sort_by(|a, b| a.2.cmp(&b.2).then(a.3.cmp(&b.3)));
-            let mut type_count: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-            for (iid, type_id, _pane, _) in &sub_pane_insts {
-                let ord = type_count.entry(type_id.clone()).or_insert(0);
-                if *iid == pid {
-                    return Some((type_id.clone(), *ord));
-                }
-                *ord += 1;
-            }
-            None
-        });
-
-        // Apply to every peer leaf.
-        for peer_leaf in &peer_leaves {
-            let peer_cid = self.panel_app.panel_grid.container_id_for_leaf(*peer_leaf);
-
-            // Remap source pane_id to the peer's corresponding instance_id.
-            let peer_pane_id: Option<u64> = src_pane_type_ord.as_ref().and_then(|(type_id, ord)| {
-                let cid = peer_cid?;
-                let pbid = self.panel_app.panel_grid.containers()
-                    .get(&cid).map(|w| w.current_bubble_id.0).unwrap_or(0);
-                let mut sub_pane_insts: Vec<(u64, String, usize, u64)> = self.core.indicators()
-                                .get_instances_for_bubble(pbid)
-                    .into_iter()
-                    .filter(|i| i.pane > 0)
-                    .map(|i| (i.id, i.type_id.clone(), i.pane, i.id))
-                    .collect();
-                sub_pane_insts.sort_by(|a, b| a.2.cmp(&b.2).then(a.3.cmp(&b.3)));
-                let mut type_count: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-                for (iid, t, _pane, _) in &sub_pane_insts {
-                    let o = type_count.entry(t.clone()).or_insert(0);
-                    if t == type_id && *o == *ord {
-                        return Some(*iid);
-                    }
-                    *o += 1;
-                }
-                None
-            });
-
-            if let Some(peer_pid) = self.panel_app.panel_grid.container_for_leaf(*peer_leaf).map(|w| w.chart_panel_id) {
-                let mut guard = self.core.drawings_svc_mut();
-                let peer_dm = guard.entry_or_default(peer_pid);
-                peer_dm.set_synced_drawing_state(tool_id.clone(), points.clone());
-                // Sync the pane context so the preview renders in the correct sub-pane
-                // on the peer (not on the main chart). When the source drawing is on
-                // the main chart (src_pane_id = None), clear any stale pane context.
-                if src_pane_id.is_some() {
-                    peer_dm.set_current_pane(peer_pane_id);
-                } else {
-                    peer_dm.set_current_pane(None);
-                }
-            }
-        }
     }
 
-    /// If the active window belongs to a TagManager group, move the most recently
-    /// completed primitive out of its `drawing_manager` and into the group's
-    /// authoritative primitive list.
+    /// Stamp the full instrument key (symbol, exchange, account_type) onto the
+    /// most recently completed primitive on the active window's bubble.
     ///
-    /// This is called immediately after any drawing-completion event (DrawingClick,
-    /// freehand drag-end, finish_multipoint) on a grouped window.  The per-frame
-    /// render-cache sync then distributes the primitive to all member windows.
+    /// Called immediately after any drawing-completion event (DrawingClick,
+    /// freehand drag-end, finish_multipoint). Under the per-bubble drawing
+    /// model there is no separate per-window `DrawingManager` to move the
+    /// primitive OUT of — the completed primitive already lives on
+    /// `window.current_bubble_id`'s `DataBubble.primitives`, which IS the
+    /// group's authoritative list once the window is tagged. This just
+    /// applies the instrument-key stamp that used to happen as part of the
+    /// pop/push dance.
     ///
-    /// Returns `true` when a primitive was transferred to the group.
+    /// Returns `true` when a primitive was found and stamped.
     pub(super) fn intercept_completed_primitive_to_group(&mut self) -> bool {
-        // Check if the active window is in a TagManager group.
         let chart_id = match self.panel_app.panel_grid.active_container_id() {
             Some(id) => id,
             None => return false,
         };
-        let group_id = match self.bubble_for_chart(chart_id) {
-            Some(gid) => gid,
+        let bid = match self.bubble_for_chart(chart_id) {
+            Some(bid) => bid,
             None => return false,
         };
 
-        // If sync_drawings is OFF for this group, leave the primitive in the
-        // drawing_manager for this window only — forward sync is blocked anyway,
-        // so moving it to the group would cause it to disappear visually.
+        // If sync_drawings is OFF for this group, leave stamping to whatever
+        // wrote the primitive in the first place — matches the previous
+        // early-return semantics for consistency.
         let (sync_drawings_on, is_auto_mono) = self.core.bubble()
-            .bubble(group_id)
+            .bubble(bid)
             .map(|g| (g.sync_flags.sync_drawings, g.auto_created && g.members.len() <= 1))
             .unwrap_or((true, false));
-        if !sync_drawings_on {
-            return false;
-        }
-        // Symmetric auto-mono guard: forward sync skips auto-created solo groups to
-        // avoid wiping their locally-managed drawing_manager primitives. Intercept
-        // mirrors this so primitives aren't moved to a group that never syncs back.
-        // Non-auto tagged groups with a single member DO use the group path — their
-        // primitives are stored in group.primitives and synced via prepare_frame.
-        if is_auto_mono {
+        if !sync_drawings_on || is_auto_mono {
             return false;
         }
 
-        // Pop the last primitive from the window's drawing_manager.
-        let active_pid_intercept = self.panel_app.panel_grid.containers().get(&chart_id).map(|w| w.chart_panel_id);
-        let prim = {
-            let pid = match active_pid_intercept {
-                Some(p) => p,
-                None => return false,
-            };
-            let mut guard = self.core.drawings_svc_mut();
-            let dm = guard.entry_or_default(pid);
-            let idx = match dm.last_index() {
-                Some(i) => i,
-                None => return false,
-            };
-            match dm.remove(idx) {
-                Some(p) => p,
-                None => return false,
-            }
-        };
-
-        // Stamp the full instrument key (symbol, exchange, account_type) on the primitive
-        // so per-instrument tracking works correctly across multi-exchange groups.
-        let mut prim = prim;
+        let Some(prim_id) = self.core.drawings().last_index(bid) else { return false };
         let (prim_symbol, prim_exchange, prim_account_type) = {
             let sym = self.symbol_for_chart(chart_id)
                 .map(String::from)
@@ -2191,29 +1949,12 @@ impl ChartApp {
                 .unwrap_or_else(|| "S".to_string());
             (sym, exch, at)
         };
-        {
-            let d = prim.data_mut();
-            d.symbol = prim_symbol;
-            d.exchange = prim_exchange;
-            d.account_type = prim_account_type;
-        }
-
-        // Add the primitive to the TagManager group so all members share it.
-        if let Some(group) = self.core.bubble_mut().bubble_mut(group_id) {
-            group.primitives.push(prim);
-            eprintln!(
-                "[BubbleStore] Moved completed primitive into group {:?} (now {} primitives)",
-                group_id,
-                group.primitives.len()
-            );
-            true
-        } else {
-            // Group disappeared — put the primitive back into drawing_manager.
-            if let Some(pid) = active_pid_intercept {
-                self.core.drawings_svc_mut().entry_or_default(pid).add_synced_primitives(vec![prim]);
-            }
-            false
-        }
+        let Some(mut data) = self.core.drawings().get_data(bid, prim_id) else { return false };
+        data.symbol = prim_symbol;
+        data.exchange = prim_exchange;
+        data.account_type = prim_account_type;
+        self.core.drawings_mut().set_data(bid, prim_id, &data);
+        true
     }
 
     /// Disconnect the window identified by `leaf_id` from its current group, and
@@ -2265,48 +2006,15 @@ impl ChartApp {
         }
     }
 
-    /// Write the active window's drawing_manager primitives back to the group.
-    /// Call this after ANY mutation (delete, color change, style change, etc.)
-    /// on drawing_manager for a grouped window. The per-frame forward sync
-    /// (group → drawing_manager) will then distribute the change to all members.
-    /// Sync the drawing_manager primitives from the window identified by
-    /// `leaf_id` back into its sync group.  Callers that mutate a specific
-    /// non-active window should use this variant so the correct window is read.
-    pub(super) fn sync_drawing_back_to_group_for(&mut self, leaf_id: mlc_core::LeafId) {
-        let chart_id = match self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
-            Some(cid) => cid,
-            None => return,
-        };
-        let group_id = match self.bubble_for_chart(chart_id) {
-            Some(gid) => gid,
-            None => return,
-        };
-        // Respect the sync_drawings flag — if disabled, do not write back to group.
-        if let Some(group) = self.core.bubble().bubble(group_id) {
-            if !group.sync_flags.sync_drawings {
-                return;
-            }
-        }
-        let new_prims: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
-            self.panel_app.panel_grid.containers().get(&chart_id)
-                .map(|w| w.chart_panel_id)
-                .and_then(|pid| self.core.drawings_svc().get(pid).map(|dm| dm.primitives().iter().map(|p| p.clone_box()).collect::<Vec<_>>()))
-                .unwrap_or_default();
-        if let Some(group) = self.core.bubble_mut().bubble_mut(group_id) {
-            group.primitives = new_prims;
-        }
-        self.sidebar_data_dirty = true;
-    }
-
-    /// Convenience wrapper: syncs the active window's drawing_manager back to
-    /// its group.  All existing call sites that mutate the active window use
-    /// this; callers that mutate a non-active window should use
-    /// `sync_drawing_back_to_group_for` with an explicit leaf_id instead.
+    /// DEAD (Step 3.1): under the per-bubble drawing model, a grouped
+    /// window's `current_bubble_id` already equals the group's bid — any
+    /// mutation made through `core.drawings_mut()` on that bid writes
+    /// directly into `DataBubble.primitives`, which IS the group's
+    /// authoritative primitive list. There is no separate per-window
+    /// `DrawingManager` copy left to write back. Only marks the sidebar
+    /// dirty; kept as a call-site marker for Step 4/5 cleanup.
     pub(super) fn sync_drawing_back_to_group(&mut self) {
-        // Resolve the active leaf via the docking manager, then delegate.
-        if let Some(leaf_id) = self.panel_app.panel_grid.docking().active_leaf() {
-            self.sync_drawing_back_to_group_for(leaf_id);
-        }
+        self.sidebar_data_dirty = true;
     }
 
     /// After split joins an existing group, create indicator instances on the

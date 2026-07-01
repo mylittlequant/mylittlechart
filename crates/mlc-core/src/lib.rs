@@ -322,11 +322,9 @@ pub use state::{
     DEFAULT_SNAP_MARGIN,
     // Chart-internal split/expand system
     ChartPanelGrid, SplitHitResult, ChartInputTarget, ChartRightClickHit,
-    ChartDragStartHit, FreehandCompleteResult,
+    ChartDragStartHit, FreehandCompleteResult, DrawingSession,
     // ChartId for the chart crate's ChartWindow
     generate_chart_id, bump_chart_id_past,
-    // Unified chart action executor (operates on ChartWindow, returns external events)
-    execute_chart_action, ChartExternalEvent, OpenModalRequest,
 };
 
 // Re-export uzor-panels types so callers don't need a direct dependency.
@@ -339,9 +337,13 @@ pub use uzor::panels::LeafId;
 // moved to mlc-layout in V1 — consumers import them as mlc_layout::X.
 
 // Drawing System (v2 - trait-based primitives)
+//
+// `DrawingManager` / `DrawingState` / `DragType` moved to
+// `mlc-backend-core::drawing` (Step 3.1 physical move) — they are no
+// longer re-exported here. Consumers import `mlc_backend_core::drawing::*`.
 pub use drawing::{
-    // Manager
-    DrawingManager, DrawingState, DragType,
+    // Render-path read view (implemented by mlc-backend-core::drawing::BubbleDrawingView)
+    DrawingRenderView,
     // Primitive trait and registry
     PrimitiveTrait, PrimitiveRegistry, PrimitiveMetadata, PrimitiveKind, ClickBehavior,
     PrimitiveData, PrimitiveFactory,

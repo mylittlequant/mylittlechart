@@ -439,8 +439,8 @@ pub enum UndoAction {
 
     /// Primitive was moved.
     PrimitiveMoved {
-        /// Primitive index.
-        index: usize,
+        /// Stable primitive id.
+        prim_id: u64,
         /// Previous points (ts_ms, price).
         old_points: Vec<(i64, f64)>,
         /// New points (ts_ms, price).
@@ -449,14 +449,14 @@ pub enum UndoAction {
 
     /// Primitive was created.
     PrimitiveCreated {
-        /// Primitive index.
-        index: usize,
+        /// Stable primitive id.
+        prim_id: u64,
     },
 
     /// Primitive was deleted.
     PrimitiveDeleted {
-        /// Primitive index.
-        index: usize,
+        /// Stable primitive id.
+        prim_id: u64,
         /// Serialized primitive data for restoration.
         data: String,
     },

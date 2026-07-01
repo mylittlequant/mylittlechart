@@ -61,7 +61,7 @@ fn read_active_last_close(app: &ChartApp) -> f64 {
         Some(b) => b, None => return 0.0,
     };
     let mgr = app.core.bubble();
-    mgr.bubble.bubble(bid).and_then(|b| b.bars.last().map(|x| x.close)).unwrap_or(0.0)
+    mgr.bubble(bid).and_then(|b| b.bars.last().map(|x| x.close)).unwrap_or(0.0)
 }
 
 fn read_active_bars_len(app: &ChartApp) -> usize {
@@ -72,7 +72,7 @@ fn read_active_bars_len(app: &ChartApp) -> usize {
         Some(b) => b, None => return 0,
     };
     let mgr = app.core.bubble();
-    mgr.bubble.bubble(bid).map(|b| b.bars.len()).unwrap_or(0)
+    mgr.bubble(bid).map(|b| b.bars.len()).unwrap_or(0)
 }
 
 fn read_active_last_ts(app: &ChartApp) -> i64 {
@@ -83,7 +83,7 @@ fn read_active_last_ts(app: &ChartApp) -> i64 {
         Some(b) => b, None => return 0,
     };
     let mgr = app.core.bubble();
-    mgr.bubble.bubble(bid).and_then(|b| b.bars.last().map(|x| x.timestamp)).unwrap_or(0)
+    mgr.bubble(bid).and_then(|b| b.bars.last().map(|x| x.timestamp)).unwrap_or(0)
 }
 
 /// `viewport.bar_count` — pure ChartApp state, ONLY updated by
@@ -217,11 +217,12 @@ async fn chart_app_tick_sustains_trade_flow_1m() {
     let end_vp_vstart = read_active_view_start(&app);
     log(&format!(
         "[smoke-1m] DONE ticks={} | bubble: close_uniq={} bars: {}->{} ts: {}->{} dt_s={} \
-         | viewport: count_uniq={} count: {}->{} vstart: {:.3}->{:.3} | probe: trade={} bar={}",
+         | viewport: count_uniq={} count: {}->{} vstart: {:.3}->{:.3} \
+         | probe: trade={} bar={} bars_loaded={} backfill={} other={}",
         tick_count, distinct_bubble_close.len(),
         start_bubble_n, end_bubble_n, start_ts, end_ts, end_ts - start_ts,
         distinct_vp_count.len(), start_vp_count, end_vp_count,
-        start_vp_vstart, end_vp_vstart, p_trade, p_bar,
+        start_vp_vstart, end_vp_vstart, p_trade, p_bar, p_bars_loaded, p_backfill, p_other,
     ));
 
     // ── Layer 1: bridge → BackendCore::tick_writers → bubble ──

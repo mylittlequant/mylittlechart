@@ -79,15 +79,41 @@ pub fn reassign_primitive_id(prim: &mut Box<dyn primitives_v2::Primitive>) {
     prim.data_mut().id = alloc_primitive_id();
 }
 
-mod manager;
 mod primitive_snapshot;
 
 // Trait-based primitive system
 pub mod primitives_v2;
 
-// Re-export manager types
-pub use manager::{DrawingManager, DrawingState, DragType, PrimitiveListItem};
+// `DrawingManager` (+ `DrawingState`, `DragType`, `PrimitiveListItem`) moved
+// to `mlc-backend-core::drawing` (Step 3.1, physical move per the doctrine:
+// mlc-core is a type dictionary, no managers). The primitive trait + value
+// types stay here — that IS the type vocabulary.
 pub use primitive_snapshot::PrimitiveSnapshot;
+
+// =============================================================================
+// DrawingRenderView — read-only render-path interface
+// =============================================================================
+
+/// Read-only view of one bubble's drawing state, for the render path.
+///
+/// `mlc-layout` renders drawing primitives + in-progress previews but
+/// cannot depend on `mlc-backend-core` (`mlc-backend-core` already depends
+/// on `mlc-sidebar-content` → `mlc-layout`; the reverse edge would cycle).
+/// This trait is the narrow read surface `mlc-layout`'s render functions
+/// need; `mlc-backend-core::drawing::BubbleDrawingView` implements it.
+pub trait DrawingRenderView {
+    fn primitives(&self) -> &[Box<dyn primitives_v2::Primitive>];
+    fn primitives_sorted_by_z_order(&self) -> Vec<usize>;
+    fn selected(&self) -> Option<u64>;
+    fn is_visible(&self) -> bool;
+    fn is_drawing(&self) -> bool;
+    fn is_drawing_freehand(&self) -> bool;
+    fn current_pane(&self) -> Option<u64>;
+    fn drawing_points(&self) -> Vec<(i64, f64)>;
+    fn drawing_tool_id(&self) -> Option<String>;
+    fn effective_color(&self) -> String;
+    fn create_preview(&self, cursor_ts_ms: i64, cursor_price: f64) -> Option<Box<dyn primitives_v2::Primitive>>;
+}
 
 // `SignalManager` + `TradeManager` (with `Trade`, `TradeDirection`) were
 // stateless scaffold dispatchers over `bubble.signals` / `bubble.trades`
@@ -186,7 +212,7 @@ pub use primitives_v2::TextAnchor;
 
 // Configuration system
 pub use primitives_v2::config::{
-    Configurable, ConfigProperty, PropertyType, PropertyValue, PropertyCategory,
+    Configurable, ConfigProperty, PropertyType, PropertyValue, PropertyKind, PropertyCategory,
     ContextMenuAction, PrimitiveFullConfig, FibLevelConfig, TimeframeVisibilityConfig,
     SelectOption, SettingsTemplate, TemplateStyle,
 };

@@ -713,17 +713,17 @@ impl ChartApp {
                 let target_leaf = self.panel_app.panel_grid.iter_containers()
                     .find(|(_, w)| w.id == target_cid)
                     .map(|(lid, _)| lid);
-                let target_pid = self.panel_app.panel_grid.containers().values()
+                let target_bid = self.panel_app.panel_grid.containers().values()
                     .find(|w| w.id == target_cid)
-                    .map(|w| w.chart_panel_id);
+                    .map(|w| w.current_bubble_id);
 
                 if let Some(window) = self.panel_app.panel_grid.containers_mut().values_mut()
                     .find(|w| w.id == target_cid)
                 {
-                    if let Some(pid) = target_pid {
+                    if let Some(bid) = target_bid {
                         let restore_snaps = window.take_drawings_snapshot_for_symbol(&symbol, resolved_exchange.as_str(), &account_type);
-                        let result = self.core.drawings_svc_mut().swap_symbol(
-                            pid, &symbol, resolved_exchange.as_str(), &account_type, restore_snaps.as_deref(),
+                        let result = self.core.drawings_mut().swap_symbol(
+                            bid, &symbol, resolved_exchange.as_str(), &account_type, restore_snaps.as_deref(),
                         );
                         let old_key = format!("{}:{}:{}", old_sym_search, old_exch_search, old_at_search);
                         if result.old_primitives.is_empty() {
@@ -1937,53 +1937,49 @@ impl ChartApp {
                         return;
                     };
 
-                    // Get auto_bubble_id and chart_panel_id before any mutable borrows.
+                    // Get auto_bubble_id and current bubble id before any mutable borrows.
                     let auto_bid = chart_id.and_then(|cid| {
                         self.panel_app.panel_grid.containers().get(&cid).map(|w| w.auto_bubble_id)
                     });
-                    let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                    let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
 
+                    // NOTE (Step 3.1): under the per-bubble drawing model, the
+                    // window's `current_bubble_id` is always the tag bubble
+                    // once tagged — there is no separate per-window
+                    // DrawingManager to stash/restore from any more.
+                    // `sync_drawings` toggling the *drawing* dimension is now
+                    // a no-op at this layer (the primitives always live on
+                    // the bubble the window points at); the stash/restore
+                    // dance below is preserved only for the auto-bubble
+                    // bookkeeping other flags (indicators, viewport) still
+                    // rely on. Flagged for product review in the handoff.
                     if new_sync {
-                        // sync_drawings OFF -> ON: the chart was showing its own drawings (from
-                        // auto_bubble); now it will show the color-group drawings via per-frame
-                        // sync.  Save current drawing_manager locals into auto_bubble.primitives
-                        // (they are the "home" state; auto_bubble must hold them for desync).
-                        if let (Some(bid), Some(pid)) = (auto_bid, active_pid) {
+                        if let (Some(bid), Some(active_bid)) = (auto_bid, active_bid) {
                             let local: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
-                                self.core.drawings_svc().get(pid)
-                                    .map(|dm| dm.primitives().iter()
-                                        .filter(|p| p.data().origin_id.is_none())
-                                        .map(|p| p.clone_box())
-                                        .collect())
-                                    .unwrap_or_default();
+                                self.core.drawings().primitives(active_bid).iter()
+                                    .filter(|p| p.data().origin_id.is_none())
+                                    .map(|p| p.clone_box())
+                                    .collect();
                             let stash_count = local.len();
                             if let Some(auto_bub) = self.core.bubble_mut().bubble_mut(bid) {
                                 auto_bub.primitives = local;
                             }
-                            self.core.drawings_svc_mut().entry_or_default(pid).clear_all_primitives();
                             eprintln!(
-                                "[BubbleStore] sync_drawings ON: moved {} window-local primitives into auto-bubble {:?}",
+                                "[BubbleStore] sync_drawings ON: stashed {} primitives into auto-bubble {:?}",
                                 stash_count, bid
                             );
                         }
-                    } else {
-                        // sync_drawings ON -> OFF: restore home drawings from auto_bubble into
-                        // drawing_manager so the chart shows its own drawings again.
-                        if let (Some(bid), Some(pid)) = (auto_bid, active_pid) {
-                            let restored: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
-                                self.core.bubble().bubble(bid)
-                                    .map(|bub| bub.primitives.iter().map(|p| p.clone_box()).collect())
-                                    .unwrap_or_default();
-                            let count = restored.len();
-                            let mut guard = self.core.drawings_svc_mut();
-                            let dm = guard.entry_or_default(pid);
-                            dm.clear_all_primitives();
-                            dm.add_synced_primitives(restored);
-                            eprintln!(
-                                "[BubbleStore] sync_drawings OFF: restored {} primitives from auto-bubble {:?}",
-                                count, bid
-                            );
-                        }
+                    } else if let (Some(bid), Some(active_bid)) = (auto_bid, active_bid) {
+                        let restored: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
+                            self.core.bubble().bubble(bid)
+                                .map(|bub| bub.primitives.iter().map(|p| p.clone_box()).collect())
+                                .unwrap_or_default();
+                        let count = restored.len();
+                        self.core.drawings_mut().adopt(active_bid, restored);
+                        eprintln!(
+                            "[BubbleStore] sync_drawings OFF: restored {} primitives from auto-bubble {:?}",
+                            count, bid
+                        );
                     }
                 } else {
                     eprintln!("[ChartApp] InternalToggleSyncDrawings: no active group");

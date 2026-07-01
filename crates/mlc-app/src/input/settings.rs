@@ -1011,12 +1011,12 @@ impl ChartApp {
         let wid = uzor::WidgetId::from(crate::text_input::PRIMITIVE_SETTINGS_FIELD);
         let text = self.input_coordinator.borrow().text_fields().text(&wid).to_string();
         self.input_coordinator.borrow_mut().text_fields_mut().blur();
-        let active_pid_prim = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+        let active_bid_prim = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
 
         if field == "text_content" {
-            if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
-                if let Some(pid) = active_pid_prim {
-                    if let Some(mut data) = self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)) {
+            if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
+                if let Some(bid) = active_bid_prim {
+                    if let Some(mut data) = self.core.drawings().get_data(bid, prim_id) {
                         if let Some(ref mut t) = data.text {
                             t.content = text.clone();
                         } else {
@@ -1026,7 +1026,7 @@ impl ChartApp {
                                 ..PrimitiveText::default()
                             });
                         }
-                        self.core.drawings_svc_mut().entry_or_default(pid).set_data_at(idx, &data);
+                        self.core.drawings_mut().set_data(bid, prim_id, &data);
                     }
                 }
             }
@@ -1034,11 +1034,11 @@ impl ChartApp {
             eprintln!("[ChartApp] prim_settings text_content auto-committed: {}", text);
         } else if field == "stroke_width_value" || field == "stroke_width" {
             if let Ok(width) = text.trim().parse::<f64>() {
-                if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
-                    if let Some(pid) = active_pid_prim {
-                        if let Some(mut data) = self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)) {
+                if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
+                    if let Some(bid) = active_bid_prim {
+                        if let Some(mut data) = self.core.drawings().get_data(bid, prim_id) {
                             data.width = width.clamp(0.5, 20.0);
-                            self.core.drawings_svc_mut().entry_or_default(pid).set_data_at(idx, &data);
+                            self.core.drawings_mut().set_data(bid, prim_id, &data);
                         }
                     }
                 }
@@ -1046,48 +1046,57 @@ impl ChartApp {
             self.sync_drawing_back_to_group();
         } else if field == "text_font_size" {
             if let Ok(font_size) = text.trim().parse::<f64>() {
-                if let Some(pid) = active_pid_prim {
-                    self.core.drawings_svc_mut().entry_or_default(pid).set_selected_text_font_size(font_size);
+                if let (Some(bid), Some(prim_id)) = (active_bid_prim, self.panel_app.primitive_settings_state.primitive_id) {
+                    if let Some(mut data) = self.core.drawings().get_data(bid, prim_id) {
+                        if let Some(ref mut t) = data.text {
+                            t.font_size = font_size.clamp(8.0, 72.0);
+                        } else {
+                            use mlc_core::drawing::primitives_v2::PrimitiveText;
+                            let mut t = PrimitiveText::default();
+                            t.font_size = font_size.clamp(8.0, 72.0);
+                            data.text = Some(t);
+                        }
+                        self.core.drawings_mut().set_data(bid, prim_id, &data);
+                    }
                 }
             }
             eprintln!("[ChartApp] prim_settings text_font_size auto-committed: {}", text);
         } else if field.starts_with("tf_") && field.ends_with("_min") {
             if let Ok(val) = text.trim().parse::<u32>() {
-                if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
+                if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
                     if let Some(tf_idx) = field.strip_prefix("tf_")
                         .and_then(|s| s.strip_suffix("_min"))
                         .and_then(|s| s.parse::<usize>().ok())
                     {
-                        self.apply_tf_min_value(idx, tf_idx, val);
+                        self.apply_tf_min_value(prim_id, tf_idx, val);
                     }
                 }
             }
         } else if field.starts_with("tf_") && field.ends_with("_max") {
             if let Ok(val) = text.trim().parse::<u32>() {
-                if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
+                if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
                     if let Some(tf_idx) = field.strip_prefix("tf_")
                         .and_then(|s| s.strip_suffix("_max"))
                         .and_then(|s| s.parse::<usize>().ok())
                     {
-                        self.apply_tf_max_value(idx, tf_idx, val);
+                        self.apply_tf_max_value(prim_id, tf_idx, val);
                     }
                 }
             }
         } else if field.starts_with("level_") && field.ends_with("_value") {
             if let Ok(val) = text.trim().parse::<f64>() {
-                if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
+                if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
                     if let Some(level_idx) = field.strip_prefix("level_")
                         .and_then(|s| s.strip_suffix("_value"))
                         .and_then(|s| s.parse::<usize>().ok())
                     {
-                        if let Some(pid) = active_pid_prim {
-                            let mut guard = self.core.drawings_svc_mut();
-                            let prims = guard.entry_or_default(pid).primitives_mut();
-                            if idx < prims.len() {
-                                if let Some(mut configs) = prims[idx].level_configs() {
+                        if let Some(bid) = active_bid_prim {
+                            let mut guard = self.core.drawings_mut();
+                            if let Some(prim) = guard.primitives(bid).iter().find(|p| p.data().id == prim_id) {
+                                if let Some(mut configs) = prim.level_configs() {
                                     if level_idx < configs.len() {
                                         configs[level_idx].level = val;
-                                        prims[idx].set_level_configs(configs);
+                                        guard.set_level_configs(bid, prim_id, configs);
                                     }
                                 }
                             }
@@ -1097,19 +1106,20 @@ impl ChartApp {
             }
         } else if field.starts_with("coord_") && field.ends_with("_price") {
             if let Ok(price) = text.trim().parse::<f64>() {
-                if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
+                if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
                     if let Some(pt_idx) = field.strip_prefix("coord_")
                         .and_then(|s| s.strip_suffix("_price"))
                         .and_then(|s| s.parse::<usize>().ok())
                     {
-                        if let Some(pid) = active_pid_prim {
-                            let mut guard = self.core.drawings_svc_mut();
-                            let prims = guard.entry_or_default(pid).primitives_mut();
-                            if idx < prims.len() {
-                                let mut pts = prims[idx].points().to_vec();
+                        if let Some(bid) = active_bid_prim {
+                            let mut guard = self.core.drawings_mut();
+                            if let Some(mut pts) = guard.primitives(bid).iter()
+                                .find(|p| p.data().id == prim_id)
+                                .map(|p| p.points())
+                            {
                                 if pt_idx < pts.len() {
                                     pts[pt_idx].1 = price;
-                                    prims[idx].set_points(&pts);
+                                    guard.set_points(bid, prim_id, &pts);
                                 }
                             }
                         }
@@ -1118,7 +1128,7 @@ impl ChartApp {
             }
         } else if field.starts_with("coord_") && field.ends_with("_bar") {
             if let Ok(bar) = text.trim().parse::<f64>() {
-                if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
+                if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
                     if let Some(pt_idx) = field.strip_prefix("coord_")
                         .and_then(|s| s.strip_suffix("_bar"))
                         .and_then(|s| s.parse::<usize>().ok())
@@ -1126,14 +1136,15 @@ impl ChartApp {
                         if let Some(_window) = self.panel_app.panel_grid.active_container() {
                             let coord_bars: Vec<mlc_core::Bar> = self.active_chart_bars();
                             let ts_ms = mlc_core::bar_f64_to_timestamp_ms(&coord_bars[..], bar);
-                            if let Some(pid) = active_pid_prim {
-                                let mut guard = self.core.drawings_svc_mut();
-                                let prims = guard.entry_or_default(pid).primitives_mut();
-                                if idx < prims.len() {
-                                    let mut pts = prims[idx].points().to_vec();
+                            if let Some(bid) = active_bid_prim {
+                                let mut guard = self.core.drawings_mut();
+                                if let Some(mut pts) = guard.primitives(bid).iter()
+                                    .find(|p| p.data().id == prim_id)
+                                    .map(|p| p.points())
+                                {
                                     if pt_idx < pts.len() {
                                         pts[pt_idx].0 = ts_ms;
-                                        prims[idx].set_points(&pts);
+                                        guard.set_points(bid, prim_id, &pts);
                                     }
                                 }
                             }
@@ -1143,20 +1154,19 @@ impl ChartApp {
             }
         } else if let Some(prop_id) = field.strip_prefix("text_prop:") {
             use mlc_core::drawing::primitives_v2::config::{PropertyValue, PropertyType};
-            if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
-                let prop_type_opt = active_pid_prim
-                    .and_then(|pid| {
-                        let guard = self.core.drawings_svc();
-                        guard.get(pid).and_then(|dm| {
-                            let prims = dm.primitives();
-                            prims.get(idx).and_then(|p| {
+            if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
+                let prop_type_opt = active_bid_prim
+                    .and_then(|bid| {
+                        let guard = self.core.drawings();
+                        guard.primitives(bid).iter()
+                            .find(|p| p.data().id == prim_id)
+                            .and_then(|p| {
                                 p.text_properties().and_then(|props| {
                                     props.into_iter()
                                         .find(|p| p.id == prop_id)
                                         .map(|p| p.prop_type)
                                 })
                             })
-                        })
                     });
                 let value = match prop_type_opt {
                     Some(PropertyType::Text { .. }) => PropertyValue::String(text.clone()),
@@ -1168,8 +1178,8 @@ impl ChartApp {
                         }
                     }
                 };
-                if let Some(pid) = active_pid_prim {
-                    self.core.drawings_svc_mut().entry_or_default(pid).apply_text_property(idx, prop_id, value);
+                if let Some(bid) = active_bid_prim {
+                    self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Text, prop_id, &value);
                 }
             }
             self.sync_drawing_back_to_group();
@@ -1178,9 +1188,9 @@ impl ChartApp {
         } else if let Some(prop_id) = field.strip_prefix("style_prop:") {
             use mlc_core::drawing::primitives_v2::config::PropertyValue;
             if let Ok(val) = text.trim().parse::<f64>() {
-                if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
-                    if let Some(pid) = active_pid_prim {
-                        self.core.drawings_svc_mut().entry_or_default(pid).apply_style_property(idx, prop_id, PropertyValue::Number(val));
+                if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
+                    if let Some(bid) = active_bid_prim {
+                        self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Style, prop_id, &PropertyValue::Number(val));
                     }
                 }
             }
@@ -1191,8 +1201,8 @@ impl ChartApp {
             eprintln!("[ChartApp] prim_settings '{}' editing auto-closed (value: {})", field, text);
         }
         // Snapshot after any committed text change.
-        if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
-            self.snapshot_primitive_settings_to_user_manager(idx);
+        if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
+            self.snapshot_primitive_settings_to_user_manager(prim_id);
         }
     }
 
@@ -1218,7 +1228,7 @@ impl ChartApp {
     fn handle_prim_settings_item(&mut self, item_id: &str, x: f64, _y: f64) {
         use mlc_core::drawing::primitives_v2::{LineStyle, TextAlign};
         use mlc_core::drawing::primitives_v2::config::{PropertyValue, PropertyType};
-        let active_pid_prim = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+        let active_bid_prim = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
 
         // Close template dropdown on any non-dropdown click
         if !item_id.starts_with("template_") {
@@ -1243,8 +1253,8 @@ impl ChartApp {
             return;
         }
 
-        // Get selected primitive index from settings state.
-        let idx = match self.panel_app.primitive_settings_state.primitive_idx {
+        // Get selected primitive id from settings state.
+        let prim_id = match self.panel_app.primitive_settings_state.primitive_id {
             Some(i) => i,
             None => {
                 eprintln!("[ChartApp] prim_settings item clicked but no primitive selected");
@@ -1257,18 +1267,13 @@ impl ChartApp {
 
         // ── Color swatches ────────────────────────────────────────────────────
         if matches!(item_id, "stroke_color" | "fill_color" | "text_color") {
-            let current_color: Option<String> = active_pid_prim
-                .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)))
+            let current_color: Option<String> = active_bid_prim
+                .and_then(|bid| self.core.drawings().get_data(bid, prim_id))
                 .and_then(|data| match item_id {
                     "stroke_color" => Some(data.color.stroke.clone()),
                     "fill_color"   => data.color.fill.clone(),
                     "text_color"   => data.text.as_ref().and_then(|t| t.color.clone())
-                                          .or_else(|| {
-                                              // fallback to stroke color
-                                              active_pid_prim
-                                                  .and_then(|pid2| self.core.drawings_svc().get(pid2).map(|dm| dm.get_data_at(idx).map(|d| d.color.stroke.clone())))
-                                                  .flatten()
-                                          }),
+                                          .or_else(|| Some(data.color.stroke.clone())),
                     _ => None,
                 });
             let widget_id_str = format!("prim_settings:item:{}", item_id);
@@ -1285,8 +1290,8 @@ impl ChartApp {
         if item_id == "line_style" {
             // Close any open dropdown first
             self.panel_app.primitive_settings_state.open_line_style_dropdown = false;
-            let data_opt = active_pid_prim
-                .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)));
+            let data_opt = active_bid_prim
+                .and_then(|bid| self.core.drawings().get_data(bid, prim_id));
             if let Some(mut data) = data_opt {
                 data.style = match data.style {
                     LineStyle::Solid        => LineStyle::Dashed,
@@ -1296,13 +1301,13 @@ impl ChartApp {
                     LineStyle::SparseDotted => LineStyle::Solid,
                 };
                 let style_str = data.style.as_str().to_string();
-                if let Some(pid) = active_pid_prim {
-                    self.core.drawings_svc_mut().entry_or_default(pid).set_data_at(idx, &data);
+                if let Some(bid) = active_bid_prim {
+                    self.core.drawings_mut().set_data(bid, prim_id, &data);
                 }
                 self.sync_drawing_back_to_group();
                 eprintln!("[ChartApp] prim_settings line_style cycled to: {}", style_str);
             }
-            self.snapshot_primitive_settings_to_user_manager(idx);
+            self.snapshot_primitive_settings_to_user_manager(prim_id);
             return;
         }
 
@@ -1325,19 +1330,19 @@ impl ChartApp {
                 _               => None,
             };
             if let Some(style) = new_style {
-                let data_opt = active_pid_prim
-                    .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)));
+                let data_opt = active_bid_prim
+                    .and_then(|bid| self.core.drawings().get_data(bid, prim_id));
                 if let Some(mut data) = data_opt {
                     data.style = style;
-                    if let Some(pid) = active_pid_prim {
-                        self.core.drawings_svc_mut().entry_or_default(pid).set_data_at(idx, &data);
+                    if let Some(bid) = active_bid_prim {
+                        self.core.drawings_mut().set_data(bid, prim_id, &data);
                     }
                     self.sync_drawing_back_to_group();
                     eprintln!("[ChartApp] prim_settings line_style set to: {}", style_name);
                 }
             }
             self.panel_app.primitive_settings_state.open_line_style_dropdown = false;
-            self.snapshot_primitive_settings_to_user_manager(idx);
+            self.snapshot_primitive_settings_to_user_manager(prim_id);
             return;
         }
 
@@ -1366,16 +1371,15 @@ impl ChartApp {
                     let prop_id = &rest[..colon_pos];
                     let value = &rest[colon_pos + 1..];
                     let new_val = mlc_core::drawing::primitives_v2::config::PropertyValue::String(value.to_string());
-                    if let Some(pid) = active_pid_prim {
-                        let mut guard = self.core.drawings_svc_mut();
-                        let dm = guard.entry_or_default(pid);
-                        if prefix.starts_with("style") {
-                            dm.apply_style_property(idx, prop_id, new_val);
+                    if let Some(bid) = active_bid_prim {
+                        let kind = if prefix.starts_with("style") {
+                            mlc_core::drawing::primitives_v2::PropertyKind::Style
                         } else if prefix.starts_with("text") {
-                            dm.apply_text_property(idx, prop_id, new_val);
+                            mlc_core::drawing::primitives_v2::PropertyKind::Text
                         } else {
-                            dm.apply_level_property(idx, prop_id, new_val);
-                        }
+                            mlc_core::drawing::primitives_v2::PropertyKind::Level
+                        };
+                        self.core.drawings_mut().apply_property(bid, prim_id, kind, prop_id, &new_val);
                     }
                     self.sync_drawing_back_to_group();
                     self.autosave_snapshot();
@@ -1388,8 +1392,8 @@ impl ChartApp {
 
         // ── Stroke width value — start inline text editing ───────────────────
         if item_id == "stroke_width_value" {
-            let current_width = active_pid_prim
-                .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)))
+            let current_width = active_bid_prim
+                .and_then(|bid| self.core.drawings().get_data(bid, prim_id))
                 .map(|data| format!("{}", data.width as u32))
                 .unwrap_or_default();
             self.start_prim_field_editing("stroke_width_value", &current_width, false);
@@ -1398,8 +1402,8 @@ impl ChartApp {
 
         // ── Text content — start inline text editing ──────────────────────────
         if item_id == "text_content" {
-            let current_text = active_pid_prim
-                .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)))
+            let current_text = active_bid_prim
+                .and_then(|bid| self.core.drawings().get_data(bid, prim_id))
                 .and_then(|data| data.text.map(|t| t.content.clone()))
                 .unwrap_or_default();
             self.start_prim_field_editing("text_content", &current_text, false);
@@ -1409,8 +1413,8 @@ impl ChartApp {
 
         // ── Text font size — start inline text editing ────────────────────────
         if item_id == "text_font_size" {
-            let current_font_size = active_pid_prim
-                .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)))
+            let current_font_size = active_bid_prim
+                .and_then(|bid| self.core.drawings().get_data(bid, prim_id))
                 .and_then(|data| data.text.map(|t| format!("{:.0}", t.font_size)))
                 .unwrap_or_else(|| "14".to_string());
             self.start_prim_field_editing("text_font_size", &current_font_size, true);
@@ -1420,14 +1424,14 @@ impl ChartApp {
 
         // ── Text bold toggle ──────────────────────────────────────────────────
         if item_id == "text_bold" {
-            let data_opt = active_pid_prim
-                .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)));
+            let data_opt = active_bid_prim
+                .and_then(|bid| self.core.drawings().get_data(bid, prim_id));
             if let Some(mut data) = data_opt {
                 if let Some(ref mut text) = data.text {
                     text.bold = !text.bold;
                     let new_bold = text.bold;
-                    if let Some(pid) = active_pid_prim {
-                        self.core.drawings_svc_mut().entry_or_default(pid).set_data_at(idx, &data);
+                    if let Some(bid) = active_bid_prim {
+                        self.core.drawings_mut().set_data(bid, prim_id, &data);
                     }
                     self.sync_drawing_back_to_group();
                     eprintln!("[ChartApp] prim_settings text_bold = {}", new_bold);
@@ -1438,14 +1442,14 @@ impl ChartApp {
 
         // ── Text italic toggle ────────────────────────────────────────────────
         if item_id == "text_italic" {
-            let data_opt = active_pid_prim
-                .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)));
+            let data_opt = active_bid_prim
+                .and_then(|bid| self.core.drawings().get_data(bid, prim_id));
             if let Some(mut data) = data_opt {
                 if let Some(ref mut text) = data.text {
                     text.italic = !text.italic;
                     let new_italic = text.italic;
-                    if let Some(pid) = active_pid_prim {
-                        self.core.drawings_svc_mut().entry_or_default(pid).set_data_at(idx, &data);
+                    if let Some(bid) = active_bid_prim {
+                        self.core.drawings_mut().set_data(bid, prim_id, &data);
                     }
                     self.sync_drawing_back_to_group();
                     eprintln!("[ChartApp] prim_settings text_italic = {}", new_italic);
@@ -1460,8 +1464,8 @@ impl ChartApp {
             if parts.len() == 2 {
                 let v_align = TextAlign::from_str(parts[0]);
                 let h_align = TextAlign::from_str(parts[1]);
-                let data_opt = active_pid_prim
-                    .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)));
+                let data_opt = active_bid_prim
+                    .and_then(|bid| self.core.drawings().get_data(bid, prim_id));
                 if let Some(mut data) = data_opt {
                     if data.text.is_none() {
                         data.text = Some(mlc_core::drawing::primitives_v2::PrimitiveText::default());
@@ -1470,8 +1474,8 @@ impl ChartApp {
                         text.v_align = v_align;
                         text.h_align = h_align;
                     }
-                    if let Some(pid) = active_pid_prim {
-                        self.core.drawings_svc_mut().entry_or_default(pid).set_data_at(idx, &data);
+                    if let Some(bid) = active_bid_prim {
+                        self.core.drawings_mut().set_data(bid, prim_id, &data);
                     }
                     self.sync_drawing_back_to_group();
                     eprintln!("[ChartApp] prim_settings text_pos: {}", item_id);
@@ -1482,8 +1486,8 @@ impl ChartApp {
 
         // ── Timeframe visibility toggle: tf_{i}_toggle ────────────────────────
         if item_id.starts_with("tf_") && item_id.ends_with("_toggle") {
-            let data_opt = active_pid_prim
-                .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)));
+            let data_opt = active_bid_prim
+                .and_then(|bid| self.core.drawings().get_data(bid, prim_id));
             if let Some(mut data) = data_opt {
                 let mut tf_config = data.timeframe_visibility.clone()
                     .unwrap_or_else(mlc_core::drawing::TimeframeVisibilityConfig::all);
@@ -1502,8 +1506,8 @@ impl ChartApp {
                         _ => {}
                     }
                     data.timeframe_visibility = Some(tf_config);
-                    if let Some(pid) = active_pid_prim {
-                        self.core.drawings_svc_mut().entry_or_default(pid).set_data_at(idx, &data);
+                    if let Some(bid) = active_bid_prim {
+                        self.core.drawings_mut().set_data(bid, prim_id, &data);
                     }
                     self.sync_drawing_back_to_group();
                     eprintln!("[ChartApp] prim_settings tf_{}_toggle toggled", tf_idx);
@@ -1521,8 +1525,8 @@ impl ChartApp {
                 .and_then(|s| if is_min { s.strip_suffix("_min") } else { s.strip_suffix("_max") })
                 .and_then(|s| s.parse::<usize>().ok())
             {
-                active_pid_prim
-                    .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)))
+                active_bid_prim
+                    .and_then(|bid| self.core.drawings().get_data(bid, prim_id))
                     .map(|data| {
                         let tf = data.timeframe_visibility.unwrap_or_else(TimeframeVisibilityConfig::all);
                         let range = match tf_idx {
@@ -1566,8 +1570,8 @@ impl ChartApp {
                     .strip_prefix("tf_").and_then(|s| s.strip_suffix("_slider"))
                     .and_then(|s| s.parse::<usize>().ok())
                 {
-                    active_pid_prim
-                        .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)))
+                    active_bid_prim
+                        .and_then(|bid| self.core.drawings().get_data(bid, prim_id))
                         .and_then(|data| {
                             let tf_config = data.timeframe_visibility
                                 .unwrap_or_else(TimeframeVisibilityConfig::all);
@@ -1609,17 +1613,17 @@ impl ChartApp {
             let parts: Vec<&str> = item_id.split('_').collect();
             if parts.len() >= 3 {
                 if let Ok(level_idx) = parts[1].parse::<usize>() {
-                    if let Some(pid) = active_pid_prim {
-                        let mut guard = self.core.drawings_svc_mut();
-                        let prims = guard.entry_or_default(pid).primitives_mut();
-                        if idx < prims.len() {
-                            if let Some(mut configs) = prims[idx].level_configs() {
-                                if level_idx < configs.len() {
-                                    configs[level_idx].visible = !configs[level_idx].visible;
-                                    let new_vis = configs[level_idx].visible;
-                                    prims[idx].set_level_configs(configs);
-                                    eprintln!("[ChartApp] prim_settings level_{}_visible = {}", level_idx, new_vis);
-                                }
+                    if let Some(bid) = active_bid_prim {
+                        let mut guard = self.core.drawings_mut();
+                        if let Some(mut configs) = guard.primitives(bid).iter()
+                            .find(|p| p.data().id == prim_id)
+                            .and_then(|p| p.level_configs())
+                        {
+                            if level_idx < configs.len() {
+                                configs[level_idx].visible = !configs[level_idx].visible;
+                                let new_vis = configs[level_idx].visible;
+                                guard.set_level_configs(bid, prim_id, configs);
+                                eprintln!("[ChartApp] prim_settings level_{}_visible = {}", level_idx, new_vis);
                             }
                         }
                     }
@@ -1633,17 +1637,17 @@ impl ChartApp {
             let parts: Vec<&str> = item_id.split('_').collect();
             if parts.len() >= 3 {
                 if let Ok(level_idx) = parts[1].parse::<usize>() {
-                    if let Some(pid) = active_pid_prim {
-                        let mut guard = self.core.drawings_svc_mut();
-                        let prims = guard.entry_or_default(pid).primitives_mut();
-                        if idx < prims.len() {
-                            if let Some(mut configs) = prims[idx].level_configs() {
-                                if level_idx < configs.len() {
-                                    configs[level_idx].fill_enabled = !configs[level_idx].fill_enabled;
-                                    let new_fill = configs[level_idx].fill_enabled;
-                                    prims[idx].set_level_configs(configs);
-                                    eprintln!("[ChartApp] prim_settings level_{}_fill = {}", level_idx, new_fill);
-                                }
+                    if let Some(bid) = active_bid_prim {
+                        let mut guard = self.core.drawings_mut();
+                        if let Some(mut configs) = guard.primitives(bid).iter()
+                            .find(|p| p.data().id == prim_id)
+                            .and_then(|p| p.level_configs())
+                        {
+                            if level_idx < configs.len() {
+                                configs[level_idx].fill_enabled = !configs[level_idx].fill_enabled;
+                                let new_fill = configs[level_idx].fill_enabled;
+                                guard.set_level_configs(bid, prim_id, configs);
+                                eprintln!("[ChartApp] prim_settings level_{}_fill = {}", level_idx, new_fill);
                             }
                         }
                     }
@@ -1657,21 +1661,20 @@ impl ChartApp {
             let parts: Vec<&str> = item_id.split('_').collect();
             if parts.len() >= 3 {
                 if let Ok(level_idx) = parts[1].parse::<usize>() {
-                    let current_color: Option<String> = active_pid_prim
-                        .and_then(|pid| {
-                            let guard = self.core.drawings_svc();
-                            guard.get(pid).and_then(|dm| {
-                                let prims = dm.primitives();
-                                if idx < prims.len() {
-                                    if let Some(configs) = prims[idx].level_configs() {
+                    let current_color: Option<String> = active_bid_prim
+                        .and_then(|bid| {
+                            let guard = self.core.drawings();
+                            guard.primitives(bid).iter()
+                                .find(|p| p.data().id == prim_id)
+                                .and_then(|p| {
+                                    if let Some(configs) = p.level_configs() {
                                         if level_idx < configs.len() {
                                             return configs[level_idx].color.clone()
-                                                .or_else(|| Some(prims[idx].data().color.stroke.clone()));
+                                                .or_else(|| Some(p.data().color.stroke.clone()));
                                         }
                                     }
-                                }
-                                None
-                            })
+                                    None
+                                })
                         });
                     let widget_id_str = format!("prim_settings:item:{}", item_id);
                     let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId::from(widget_id_str));
@@ -1690,20 +1693,19 @@ impl ChartApp {
             let parts: Vec<&str> = item_id.split('_').collect();
             let current_val: String = if parts.len() >= 3 {
                 if let Ok(level_idx) = parts[1].parse::<usize>() {
-                    active_pid_prim
-                        .and_then(|pid| {
-                            let guard = self.core.drawings_svc();
-                            guard.get(pid).and_then(|dm| {
-                                let prims = dm.primitives();
-                                if idx < prims.len() {
-                                    if let Some(configs) = prims[idx].level_configs() {
+                    active_bid_prim
+                        .and_then(|bid| {
+                            let guard = self.core.drawings();
+                            guard.primitives(bid).iter()
+                                .find(|p| p.data().id == prim_id)
+                                .and_then(|p| {
+                                    if let Some(configs) = p.level_configs() {
                                         if level_idx < configs.len() {
                                             return Some(format!("{:.4}", configs[level_idx].level));
                                         }
                                     }
-                                }
-                                None
-                            })
+                                    None
+                                })
                         })
                         .unwrap_or_default()
                 } else {
@@ -1724,23 +1726,23 @@ impl ChartApp {
                 .and_then(|s| if is_price { s.strip_suffix("_price") } else { s.strip_suffix("_bar") })
                 .and_then(|s| s.parse::<usize>().ok())
             {
-                active_pid_prim
-                    .and_then(|pid| {
-                        let guard = self.core.drawings_svc();
-                        guard.get(pid).and_then(|dm| {
-                            let prims = dm.primitives();
-                            if idx < prims.len() {
-                                let pts = prims[idx].points();
+                active_bid_prim
+                    .and_then(|bid| {
+                        let guard = self.core.drawings();
+                        guard.primitives(bid).iter()
+                            .find(|p| p.data().id == prim_id)
+                            .and_then(|p| {
+                                let pts = p.points();
                                 if pt_idx < pts.len() {
                                     if is_price {
-                                        return Some(format!("{:.4}", pts[pt_idx].1));
+                                        Some(format!("{:.4}", pts[pt_idx].1))
                                     } else {
-                                        return Some(format!("{:.0}", pts[pt_idx].0));
+                                        Some(format!("{:.0}", pts[pt_idx].0))
                                     }
+                                } else {
+                                    None
                                 }
-                            }
-                            None
-                        })
+                            })
                     })
                     .unwrap_or_default()
             } else {
@@ -1754,19 +1756,16 @@ impl ChartApp {
         // ── Style properties: style_prop:{id} ────────────────────────────────
         if let Some(prop_id) = item_id.strip_prefix("style_prop:") {
             // Collect property info under immutable borrow
-            let prop_info: Option<(PropertyType, PropertyValue)> = active_pid_prim
-                .and_then(|pid| {
-                    let guard = self.core.drawings_svc();
-                    guard.get(pid).and_then(|dm| {
-                        let prims = dm.primitives();
-                        if idx < prims.len() {
-                            let style_props = prims[idx].style_properties();
-                            style_props.iter().find(|p| p.id == prop_id)
-                                .map(|p| (p.prop_type.clone(), p.value.clone()))
-                        } else {
-                            None
-                        }
-                    })
+            let prop_info: Option<(PropertyType, PropertyValue)> = active_bid_prim
+                .and_then(|bid| {
+                    let guard = self.core.drawings();
+                    guard.primitives(bid).iter()
+                        .find(|p| p.data().id == prim_id)
+                        .and_then(|p| {
+                            let style_props = p.style_properties();
+                            style_props.iter().find(|prop| prop.id == prop_id)
+                                .map(|prop| (prop.prop_type.clone(), prop.value.clone()))
+                        })
                 });
 
             if let Some((prop_type, prop_value)) = prop_info {
@@ -1774,8 +1773,8 @@ impl ChartApp {
                     PropertyType::Boolean => {
                         let current = prop_value.as_bool().unwrap_or(false);
                         let new_val = PropertyValue::Boolean(!current);
-                        if let Some(pid) = active_pid_prim {
-                            self.core.drawings_svc_mut().entry_or_default(pid).apply_style_property(idx, prop_id, new_val);
+                        if let Some(bid) = active_bid_prim {
+                            self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Style, prop_id, &new_val);
                         }
                         self.sync_drawing_back_to_group();
                         self.autosave_snapshot();
@@ -1788,8 +1787,8 @@ impl ChartApp {
                         if let Some(next_opt) = options.get(next_idx) {
                             let new_val = PropertyValue::String(next_opt.value.clone());
                             let next_value = next_opt.value.clone();
-                            if let Some(pid) = active_pid_prim {
-                                self.core.drawings_svc_mut().entry_or_default(pid).apply_style_property(idx, prop_id, new_val);
+                            if let Some(bid) = active_bid_prim {
+                                self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Style, prop_id, &new_val);
                             }
                             self.sync_drawing_back_to_group();
                             self.autosave_snapshot();
@@ -1827,19 +1826,16 @@ impl ChartApp {
 
         // ── Level properties: level_prop:{id} ────────────────────────────────
         if let Some(prop_id) = item_id.strip_prefix("level_prop:") {
-            let prop_info: Option<(PropertyType, PropertyValue)> = active_pid_prim
-                .and_then(|pid| {
-                    let guard = self.core.drawings_svc();
-                    guard.get(pid).and_then(|dm| {
-                        let prims = dm.primitives();
-                        if idx < prims.len() {
-                            let level_props = prims[idx].level_properties();
-                            level_props.iter().find(|p| p.id == prop_id)
-                                .map(|p| (p.prop_type.clone(), p.value.clone()))
-                        } else {
-                            None
-                        }
-                    })
+            let prop_info: Option<(PropertyType, PropertyValue)> = active_bid_prim
+                .and_then(|bid| {
+                    let guard = self.core.drawings();
+                    guard.primitives(bid).iter()
+                        .find(|p| p.data().id == prim_id)
+                        .and_then(|p| {
+                            let level_props = p.level_properties();
+                            level_props.iter().find(|prop| prop.id == prop_id)
+                                .map(|prop| (prop.prop_type.clone(), prop.value.clone()))
+                        })
                 });
 
             if let Some((prop_type, prop_value)) = prop_info {
@@ -1847,8 +1843,8 @@ impl ChartApp {
                     PropertyType::Boolean => {
                         let current = prop_value.as_bool().unwrap_or(false);
                         let new_val = PropertyValue::Boolean(!current);
-                        if let Some(pid) = active_pid_prim {
-                            self.core.drawings_svc_mut().entry_or_default(pid).apply_level_property(idx, prop_id, new_val);
+                        if let Some(bid) = active_bid_prim {
+                            self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Level, prop_id, &new_val);
                         }
                         eprintln!("[ChartApp] prim_settings level_prop '{}' toggled: {} -> {}", prop_id, current, !current);
                     }
@@ -1859,8 +1855,8 @@ impl ChartApp {
                         if let Some(next_opt) = options.get(next_idx) {
                             let new_val = PropertyValue::String(next_opt.value.clone());
                             let next_value = next_opt.value.clone();
-                            if let Some(pid) = active_pid_prim {
-                                self.core.drawings_svc_mut().entry_or_default(pid).apply_level_property(idx, prop_id, new_val);
+                            if let Some(bid) = active_bid_prim {
+                                self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Level, prop_id, &new_val);
                             }
                             eprintln!("[ChartApp] prim_settings level_prop '{}' cycled: {} -> {}", prop_id, current, next_value);
                         }
@@ -1887,20 +1883,16 @@ impl ChartApp {
 
         // ── Text properties: text_prop:{id} ───────────────────────────────────
         if let Some(prop_id) = item_id.strip_prefix("text_prop:") {
-            let prop_info: Option<(PropertyType, PropertyValue)> = active_pid_prim
-                .and_then(|pid| {
-                    let guard = self.core.drawings_svc();
-                    guard.get(pid).and_then(|dm| {
-                        let prims = dm.primitives();
-                        if idx < prims.len() {
-                            prims[idx].text_properties().and_then(|text_props| {
-                                text_props.iter().find(|p| p.id == prop_id)
-                                    .map(|p| (p.prop_type.clone(), p.value.clone()))
-                            })
-                        } else {
-                            None
-                        }
-                    })
+            let prop_info: Option<(PropertyType, PropertyValue)> = active_bid_prim
+                .and_then(|bid| {
+                    let guard = self.core.drawings();
+                    guard.primitives(bid).iter()
+                        .find(|p| p.data().id == prim_id)
+                        .and_then(|p| p.text_properties())
+                        .and_then(|text_props| {
+                            text_props.iter().find(|prop| prop.id == prop_id)
+                                .map(|prop| (prop.prop_type.clone(), prop.value.clone()))
+                        })
                 });
 
             if let Some((prop_type, prop_value)) = prop_info {
@@ -1908,8 +1900,8 @@ impl ChartApp {
                     PropertyType::Boolean => {
                         let current = prop_value.as_bool().unwrap_or(false);
                         let new_val = PropertyValue::Boolean(!current);
-                        if let Some(pid) = active_pid_prim {
-                            self.core.drawings_svc_mut().entry_or_default(pid).apply_text_property(idx, prop_id, new_val);
+                        if let Some(bid) = active_bid_prim {
+                            self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Text, prop_id, &new_val);
                         }
                         eprintln!("[ChartApp] prim_settings text_prop '{}' toggled: {} -> {}", prop_id, current, !current);
                     }
@@ -1920,8 +1912,8 @@ impl ChartApp {
                         if let Some(next_opt) = options.get(next_idx) {
                             let new_val = PropertyValue::String(next_opt.value.clone());
                             let next_value = next_opt.value.clone();
-                            if let Some(pid) = active_pid_prim {
-                                self.core.drawings_svc_mut().entry_or_default(pid).apply_text_property(idx, prop_id, new_val);
+                            if let Some(bid) = active_bid_prim {
+                                self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Text, prop_id, &new_val);
                             }
                             eprintln!("[ChartApp] prim_settings text_prop '{}' cycled: {} -> {}", prop_id, current, next_value);
                         }
@@ -1986,15 +1978,15 @@ impl ChartApp {
                 self.panel_app.primitive_settings_state.applied_template_id = Some(tmpl.id.clone());
                 self.panel_app.primitive_settings_state.template_dropdown_open = false;
                 // Apply the template to the primitive
-                if let Some(pid) = active_pid_prim {
-                    if let Some(mut data) = self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)) {
+                if let Some(bid) = active_bid_prim {
+                    if let Some(mut data) = self.core.drawings().get_data(bid, prim_id) {
                         tmpl.apply_to_primitive_data(&mut data);
-                        self.core.drawings_svc_mut().entry_or_default(pid).set_data_at(idx, &data);
+                        self.core.drawings_mut().set_data(bid, prim_id, &data);
                     }
                 }
                 self.sync_drawing_back_to_group();
                 self.autosave_snapshot();
-                self.snapshot_primitive_settings_to_user_manager(idx);
+                self.snapshot_primitive_settings_to_user_manager(prim_id);
                 eprintln!("[ChartApp] prim_settings template applied: {}", tmpl.name);
             }
             return;
@@ -2024,18 +2016,18 @@ impl ChartApp {
             self.panel_app.primitive_settings_state.template_dropdown_open = false;
             self.panel_app.primitive_settings_state.applied_template_id = None;
             // Reset primitive to factory defaults
-            if let Some(pid) = active_pid_prim {
-                if let Some(data) = self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)) {
+            if let Some(bid) = active_bid_prim {
+                if let Some(data) = self.core.drawings().get_data(bid, prim_id) {
                     let type_id = data.type_id.clone();
                     let default_tmpl = mlc_core::templates::PrimitiveTemplate::new_with_defaults(&type_id, "__default__");
                     let mut data_copy = data;
                     default_tmpl.apply_to_primitive_data(&mut data_copy);
-                    self.core.drawings_svc_mut().entry_or_default(pid).set_data_at(idx, &data_copy);
+                    self.core.drawings_mut().set_data(bid, prim_id, &data_copy);
                 }
             }
             self.sync_drawing_back_to_group();
             self.autosave_snapshot();
-            self.snapshot_primitive_settings_to_user_manager(idx);
+            self.snapshot_primitive_settings_to_user_manager(prim_id);
             eprintln!("[ChartApp] prim_settings template reset to defaults");
             return;
         }
@@ -2061,7 +2053,7 @@ impl ChartApp {
             "save" => {
                 let field_id = uzor::WidgetId::from(crate::text_input::PRIMITIVE_SETTINGS_TEMPLATE_NAME);
                 let name = self.input_coordinator.borrow().text_fields().text(&field_id).to_string();
-                let idx = match self.panel_app.primitive_settings_state.primitive_idx {
+                let prim_id = match self.panel_app.primitive_settings_state.primitive_id {
                     Some(i) => i,
                     None => {
                         self.panel_app.primitive_settings_state.save_template_mode = false;
@@ -2069,10 +2061,10 @@ impl ChartApp {
                         return;
                     }
                 };
-                let active_pid_tmpl = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                let active_bid_tmpl = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
                 if !name.is_empty() {
-                    if let Some(data) = active_pid_tmpl
-                        .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx)))
+                    if let Some(data) = active_bid_tmpl
+                        .and_then(|bid| self.core.drawings().get_data(bid, prim_id))
                     {
                         let tmpl = mlc_core::templates::PrimitiveTemplate::from_primitive_data(&data, &name);
                         eprintln!("[ChartApp] prim_tmpl saved: {}", name);

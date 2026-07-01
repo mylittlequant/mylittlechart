@@ -4,7 +4,7 @@ use mlc_core::engine::render::RenderContext;
 use crate::ui::toolbar_render::ToolbarTheme;
 use uzor::types::Rect as WidgetRect;
 use crate::ui::modal_settings::{PrimitiveSettingsState, PrimitiveSettingsTab, DualSliderHandle, ActiveFieldRender};
-use mlc_core::drawing::{DrawingManager, LineStyle};
+use mlc_core::drawing::LineStyle;
 use mlc_core::drawing::primitives_v2::config::PropertyType;
 use crate::layout::render_frame::{
     PrimitiveSettingsResult,
@@ -161,7 +161,7 @@ pub fn render_primitive_settings_modal(
     screen_h: f64,
     default_modal_y: f64,
     state: &PrimitiveSettingsState,
-    drawing_manager: &DrawingManager,
+    primitives: &[Box<dyn mlc_core::drawing::primitives_v2::Primitive>],
     frame_theme: &FrameTheme,
     toolbar_theme: &ToolbarTheme,
     _toolbar_state: &ToolbarState,
@@ -181,10 +181,10 @@ pub fn render_primitive_settings_modal(
     let mut deferred_select_dropdown: Option<(f64, f64, f64, String, Vec<(String, String)>)> = None;
 
     // Get primitive info
-    let Some(idx) = state.primitive_idx else {
+    let Some(prim_id) = state.primitive_id else {
         return result;
     };
-    let Some(prim) = drawing_manager.primitive(idx) else {
+    let Some(prim) = primitives.iter().find(|p| p.data().id == prim_id) else {
         return result;
     };
 

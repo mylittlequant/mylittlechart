@@ -263,11 +263,11 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     };
                     prim.data_mut().width = style.width;
                     drop(registry);
-                    let cw_pid = chart.panel_app.panel_grid.containers().values()
+                    let cw_bid = chart.panel_app.panel_grid.containers().values()
                         .find(|cw| cw.id.0 == chart_id)
-                        .map(|cw| cw.chart_panel_id);
-                    if let Some(pid) = cw_pid {
-                        chart.core.drawings_svc_mut().entry_or_default(pid).add_external_primitive(prim);
+                        .map(|cw| cw.current_bubble_id);
+                    if let Some(bid) = cw_bid {
+                        chart.core.drawings_mut().add_external(bid, prim);
                         eprintln!("[AgentCommand] AddPrimitive: type={}, chart={}", type_id, chart_id);
                     } else {
                         eprintln!("[AgentCommand] AddPrimitive: chart not found: {}", chart_id);
@@ -285,25 +285,23 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     continue;
                 };
                 let chart = &mut *w.chart;
-                let cw_pid = chart.panel_app.panel_grid.containers().values()
+                let cw_bid = chart.panel_app.panel_grid.containers().values()
                     .find(|cw| cw.id.0 == chart_id)
-                    .map(|cw| cw.chart_panel_id);
-                if let Some(pid) = cw_pid {
-                    let mut dreg = chart.core.drawings_svc_mut();
-                    let dm = dreg.entry_or_default(pid);
-                    let prim = dm.primitives_mut()
-                        .iter_mut().find(|p| p.data().id == primitive_id);
-                    if let Some(prim) = prim {
+                    .map(|cw| cw.current_bubble_id);
+                if let Some(bid) = cw_bid {
+                    let mut dreg = chart.core.drawings_mut();
+                    if let Some(mut data) = dreg.get_data(bid, primitive_id) {
                         if let Some(pts) = points {
                             let new_pts: Vec<(i64, f64)> = pts.iter().map(|p| (p[0] as i64, p[1])).collect();
-                            prim.set_points(&new_pts);
+                            dreg.set_points(bid, primitive_id, &new_pts);
                         }
                         if let Some(s) = style {
-                            prim.data_mut().color = mlc_core::drawing::primitives_v2::PrimitiveColor {
+                            data.color = mlc_core::drawing::primitives_v2::PrimitiveColor {
                                 stroke: s.color,
                                 fill: s.fill_color,
                             };
-                            prim.data_mut().width = s.width;
+                            data.width = s.width;
+                            dreg.set_data(bid, primitive_id, &data);
                         }
                         eprintln!("[AgentCommand] UpdatePrimitive: id={}", primitive_id);
                     } else {
@@ -321,18 +319,11 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     continue;
                 };
                 let chart = &mut *w.chart;
-                let cw_pid = chart.panel_app.panel_grid.containers().values()
+                let cw_bid = chart.panel_app.panel_grid.containers().values()
                     .find(|cw| cw.id.0 == chart_id)
-                    .map(|cw| cw.chart_panel_id);
-                let removed = if let Some(pid) = cw_pid {
-                    let mut dreg = chart.core.drawings_svc_mut();
-                    let dm = dreg.entry_or_default(pid);
-                    let idx = dm.primitives()
-                        .iter().position(|p| p.data().id == primitive_id);
-                    if let Some(idx) = idx {
-                        dm.remove(idx);
-                        true
-                    } else { false }
+                    .map(|cw| cw.current_bubble_id);
+                let removed = if let Some(bid) = cw_bid {
+                    chart.core.drawings_mut().delete(bid, primitive_id)
                 } else { false };
                 if removed {
                     eprintln!("[AgentCommand] RemovePrimitive: id={}", primitive_id);

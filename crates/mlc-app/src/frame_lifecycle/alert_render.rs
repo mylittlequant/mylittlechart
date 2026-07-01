@@ -77,7 +77,7 @@ impl ChartApp {
         price_min: f64,
         price_max: f64,
         bars: &[Bar],
-        drawing_manager: &mlc_core::DrawingManager,
+        primitives: &[Box<dyn mlc_core::drawing::primitives_v2::Primitive>],
         indicator_manager: &IndicatorManager,
         alerts: &[AlertItem],
         window_id: Option<u64>,
@@ -116,8 +116,7 @@ impl ChartApp {
             match &alert.source {
                 AlertSource::Drawing { primitive_id, .. } => {
                     // Find the primitive.
-                    let prim = drawing_manager
-                        .primitives()
+                    let prim = primitives
                         .iter()
                         .find(|p| {
                             p.data().id == *primitive_id

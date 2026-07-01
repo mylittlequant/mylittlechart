@@ -15,8 +15,8 @@ pub enum ContextMenuTarget {
     /// No specific target (empty area)
     #[default]
     None,
-    /// A drawing primitive by index
-    Primitive(usize),
+    /// A drawing primitive by stable id
+    Primitive(u64),
     /// A signal by index
     Signal(usize),
     /// Chart background
@@ -203,10 +203,10 @@ impl ContextMenuState {
         self.is_open
     }
 
-    /// Get primitive index if targeting a primitive
-    pub fn primitive_idx(&self) -> Option<usize> {
+    /// Get primitive id if targeting a primitive
+    pub fn primitive_id(&self) -> Option<u64> {
         match self.target {
-            ContextMenuTarget::Primitive(idx) => Some(idx),
+            ContextMenuTarget::Primitive(id) => Some(id),
             _ => None,
         }
     }

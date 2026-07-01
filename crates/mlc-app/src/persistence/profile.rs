@@ -198,6 +198,15 @@ impl ChartApp {
         );
         let pk_alert_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
+        // Raw lock access — same reasoning as alert_manager above. Per-bubble
+        // drawing sessions (Step 3.1) must travel with tag_manager since
+        // both are keyed by the same BubbleIds.
+        let drawing_manager = std::mem::replace(
+            &mut *self.core.drawing.write().expect("BackendCore.drawing poisoned (write)"),
+            mlc_backend_core::drawing::DrawingManager::default(),
+        );
+        let pk_drawing_us = t0.elapsed().as_micros();
+        let t0 = web_time::Instant::now();
         let leaf_color_tags = std::mem::take(&mut self.panel_app.leaf_color_tags);
         let indicator_overlay_states = std::mem::take(&mut self.panel_app.indicator_overlay_states);
         let pending_sub_pane_ratios = std::mem::take(&mut self.pending_sub_pane_ratios);
@@ -221,6 +230,7 @@ impl ChartApp {
             tag_manager,
             indicator_manager,
             alert_manager,
+            drawing_manager,
             leaf_color_tags,
             indicator_overlay_states,
             pending_sub_pane_ratios,
@@ -235,9 +245,9 @@ impl ChartApp {
         self.live_preset_cache.insert(id.to_string(), state);
         let pk_insert_us = t0.elapsed().as_micros();
         eprintln!(
-            "[ChartApp] Parked preset '{}' into live cache ({} total cached) park_total={}us grid={}us bubble={}us ind={}us alert={}us takes={}us slots={}us panels={}us insert={}us",
+            "[ChartApp] Parked preset '{}' into live cache ({} total cached) park_total={}us grid={}us bubble={}us ind={}us alert={}us drawing={}us takes={}us slots={}us panels={}us insert={}us",
             id, self.live_preset_cache.len(), pk_total.elapsed().as_micros(),
-            pk_grid_us, pk_bubble_us, pk_ind_us, pk_alert_us, pk_takes_us, pk_slots_us, pk_panels_us, pk_insert_us,
+            pk_grid_us, pk_bubble_us, pk_ind_us, pk_alert_us, pk_drawing_us, pk_takes_us, pk_slots_us, pk_panels_us, pk_insert_us,
         );
     }
 
@@ -263,6 +273,9 @@ impl ChartApp {
         *self.core.alert.write().expect("BackendCore.alert poisoned (write)") = state.alert_manager;
         let up_alert_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
+        *self.core.drawing.write().expect("BackendCore.drawing poisoned (write)") = state.drawing_manager;
+        let up_drawing_us = t0.elapsed().as_micros();
+        let t0 = web_time::Instant::now();
         self.panel_app.leaf_color_tags = state.leaf_color_tags;
         self.panel_app.indicator_overlay_states = state.indicator_overlay_states;
         self.pending_sub_pane_ratios = state.pending_sub_pane_ratios;
@@ -279,9 +292,9 @@ impl ChartApp {
         self.sidebar_state.focused_free_leaf = state.focused_free_leaf;
         self.sidebar_data_dirty = true;
         eprintln!(
-            "[ChartApp] Unpacked preset '{}' from live cache unpark_total={}us remove={}us grid={}us bubble={}us ind={}us alert={}us misc={}us slots={}us panels={}us",
+            "[ChartApp] Unpacked preset '{}' from live cache unpark_total={}us remove={}us grid={}us bubble={}us ind={}us alert={}us drawing={}us misc={}us slots={}us panels={}us",
             id, up_total.elapsed().as_micros(),
-            up_remove_us, up_grid_us, up_bubble_us, up_ind_us, up_alert_us, up_misc_us, up_slots_us, up_panels_us,
+            up_remove_us, up_grid_us, up_bubble_us, up_ind_us, up_alert_us, up_drawing_us, up_misc_us, up_slots_us, up_panels_us,
         );
         true
     }

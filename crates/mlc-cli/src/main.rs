@@ -65,7 +65,7 @@ enum Command {
         #[command(subcommand)]
         action: IndicatorCmd,
     },
-    /// DrawingRegistry read.
+    /// Drawing (per-bubble DrawingManager) read.
     Drawing {
         #[command(subcommand)]
         action: DrawingCmd,

@@ -109,17 +109,14 @@ pub fn update_terminal_snapshot<H: AgentHost>(host: &H, agent_state: &AgentState
                     })
                     .collect();
 
-                let pid_snap = cw.chart_panel_id;
                 let primitives: Vec<PrimitiveSummary> = {
-                    let dreg_snap = chart.core.drawings_svc();
-                    dreg_snap.get(pid_snap)
-                        .map(|dm| dm.primitives().iter()
-                            .map(|p| {
-                                let d = p.data();
-                                PrimitiveSummary { id: d.id, type_id: d.type_id.clone() }
-                            })
-                            .collect())
-                        .unwrap_or_default()
+                    let dreg_snap = chart.core.drawings();
+                    dreg_snap.primitives(cw.current_bubble_id).iter()
+                        .map(|p| {
+                            let d = p.data();
+                            PrimitiveSummary { id: d.id, type_id: d.type_id.clone() }
+                        })
+                        .collect()
                 };
 
                 let (bar_count, derived) = chart.with_bubble(cw.current_bubble_id, |b| (b.bars.len(), DerivedSeriesCounts {

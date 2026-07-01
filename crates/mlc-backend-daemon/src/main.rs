@@ -46,9 +46,9 @@
 //! ### Drawings (full CRUD)
 //! - `GET    /v1/drawings`
 //! - `GET    /v1/catalog/primitives`
-//! - `POST   /v1/drawings/:panel_id`
-//! - `PATCH  /v1/drawings/:panel_id/:primitive_id`
-//! - `DELETE /v1/drawings/:panel_id/:primitive_id`
+//! - `POST   /v1/drawings/:bubble_id`
+//! - `PATCH  /v1/drawings/:bubble_id/:primitive_id`
+//! - `DELETE /v1/drawings/:bubble_id/:primitive_id`
 //!
 //! ### Indicators (full CRUD)
 //! - `GET    /v1/indicators`

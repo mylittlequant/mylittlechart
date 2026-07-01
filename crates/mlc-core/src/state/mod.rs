@@ -22,7 +22,6 @@ pub mod selected_config;
 pub mod command;
 pub mod history;
 pub mod app_state;
-pub mod action_executor;
 pub mod chart_container;
 pub mod panel_grid;
 pub mod chart_container_leaf;
@@ -77,14 +76,11 @@ pub use history::CommandHistory;
 // App state interface, window layout, window sync mode
 pub use app_state::{AppState, is_action_active, WindowLayout, WindowSyncMode};
 
-// Chart-domain action executor, result type, and external events
-pub use action_executor::{
-    ActionResult,
-    execute_chart_action_internal,
-    execute_chart_action,
-    ChartExternalEvent,
-    OpenModalRequest,
-};
+// `action_executor` (ActionResult, execute_chart_action[_internal],
+// ChartExternalEvent, OpenModalRequest) was zengeld-terminal-core legacy API
+// with zero callers in this workspace — deleted alongside the Step 3.1
+// DrawingManager physical move (it took `&mut DrawingManager` by value,
+// which no longer resolves from mlc-core).
 
 // Phase 1 hardcut of the chart-container cut: the former `ChartWindow` is
 // renamed in place to `ChartContainer`. It currently still owns ALL fields
@@ -121,7 +117,7 @@ pub use inner_layout::InnerLayout;
 pub use branch::InstanceId;
 
 // Panel grid — input-aware layout manager
-pub use panel_grid::{ChartPanelGrid, ChartInputTarget, ChartRightClickHit, ChartDragStartHit, SplitHitResult, FreehandCompleteResult};
+pub use panel_grid::{ChartPanelGrid, ChartInputTarget, ChartRightClickHit, ChartDragStartHit, SplitHitResult, FreehandCompleteResult, DrawingSession};
 
 // Phase 4 S2.7 — per-canvas display-option + series-visibility state
 pub use chart_panel_state::ChartPanelState;

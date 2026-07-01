@@ -274,8 +274,8 @@ impl PrimitiveSettingsTab {
 pub struct PrimitiveSettingsState {
     /// Is modal open?
     pub is_open: bool,
-    /// Index of primitive being edited
-    pub primitive_idx: Option<usize>,
+    /// Stable id of the primitive being edited.
+    pub primitive_id: Option<u64>,
     /// Current active tab
     pub active_tab: PrimitiveSettingsTab,
     /// Modal position (for dragging)
@@ -321,9 +321,9 @@ impl PrimitiveSettingsState {
     }
 
     /// Open settings for a primitive
-    pub fn open(&mut self, primitive_idx: usize) {
+    pub fn open(&mut self, primitive_id: u64) {
         self.is_open = true;
-        self.primitive_idx = Some(primitive_idx);
+        self.primitive_id = Some(primitive_id);
         self.active_tab = PrimitiveSettingsTab::Style;
         // Don't reset position - keep last position for convenience
     }
@@ -331,7 +331,7 @@ impl PrimitiveSettingsState {
     /// Close the modal
     pub fn close(&mut self) {
         self.is_open = false;
-        self.primitive_idx = None;
+        self.primitive_id = None;
         self.position = None;
         self.is_dragging = false;
         self.drag_offset = None;

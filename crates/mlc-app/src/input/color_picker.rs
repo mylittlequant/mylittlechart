@@ -606,13 +606,13 @@ impl ChartApp {
             Some(f) => f,
             None => return,
         };
-        let idx = match self.panel_app.primitive_settings_state.primitive_idx {
+        let prim_id = match self.panel_app.primitive_settings_state.primitive_id {
             Some(i) => i,
             None => return,
         };
-        let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-        if let Some(pid) = active_pid {
-            let data_opt = self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx));
+        let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+        if let Some(bid) = active_bid {
+            let data_opt = self.core.drawings().get_data(bid, prim_id);
             if let Some(mut data) = data_opt {
                 let style_prop_change = if field.starts_with("style_prop:") {
                     let prop_id = field["style_prop:".len()..].to_string();
@@ -638,19 +638,18 @@ impl ChartApp {
                     }
                     _ => {}
                 }
-                let mut guard = self.core.drawings_svc_mut();
-                let dm = guard.entry_or_default(pid);
+                let mut guard = self.core.drawings_mut();
                 if let Some((prop_id, value)) = style_prop_change {
-                    dm.apply_style_property(idx, &prop_id, value);
+                    guard.apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Style, &prop_id, &value);
                 }
-                dm.set_data_at(idx, &data);
+                guard.set_data(bid, prim_id, &data);
             }
         }
         self.sync_drawing_back_to_group();
         eprintln!("[ChartApp] applied primitive color: {} = {}", field, color);
         self.autosave_snapshot();
-        if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
-            self.snapshot_primitive_settings_to_user_manager(idx);
+        if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
+            self.snapshot_primitive_settings_to_user_manager(prim_id);
         }
     }
 

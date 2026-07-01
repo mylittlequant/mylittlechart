@@ -598,19 +598,19 @@ impl ChartApp {
                 // UNTAGGED window (auto_created group): flat list, no section headers
                 // ----------------------------------------------------------------
 
-                // Primitives from window-local drawing_manager — all symbols, annotated by state.
+                // Primitives from the bubble's drawing data — all symbols, annotated by state.
                 let local_prims: Vec<_> = self.panel_app.panel_grid.active_container()
-                    .map(|w| w.chart_panel_id)
-                    .and_then(|pid| {
-                        let guard = self.core.drawings_svc();
-                        guard.get(pid).map(|dm| dm.primitives().iter()
+                    .map(|w| w.current_bubble_id)
+                    .map(|bid| {
+                        let guard = self.core.drawings();
+                        guard.primitives(bid).iter()
                             .map(|p| {
                                 let data = p.data();
                                 let kind = p.kind();
                                 let display = localize_primitive_name(&data.type_id, p.display_name());
                                 (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone(), data.symbol.clone(), data.exchange.clone(), data.account_type.clone())
                             })
-                            .collect::<Vec<_>>())
+                            .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
 
@@ -1108,161 +1108,15 @@ impl ChartApp {
                 }
             }
 
-            // Sync group primitives into split windows, filtered to each
-            // window's current symbol so stale drawings don't bleed through
-            // after a symbol switch.
-            //
-            // Sub-pane pane_id remap: primitives drawn in a sub-pane carry
-            // pane_id = Some(source_instance_id). Peer windows have DIFFERENT
-            // instance ids for the same indicator type+ordinal, so we remap
-            // before cloning instead of distributing the raw source id (which
-            // the peer render filter would never match).
-            //
-            // Remap tables are built once per frame from indicator_manager,
-            // outside the per-peer loop.
-
-            // Step 1: reverse map — any known sub-pane instance_id -> (type_id, ordinal).
-            // "ordinal" = position among instances of the same type_id on that
-            // window, sorted by pane number then instance id for stability.
-            // Covers ALL member windows so remap works regardless of which peer
-            // originally drew the primitive.
-            let pane_id_to_type_ord: std::collections::HashMap<u64, (String, usize)> = {
-                let mut map = std::collections::HashMap::new();
-                for leaf_entry in &leaf_rects {
-                    let lid = leaf_entry.0;
-                    if let Some(cid) = self.panel_app.panel_grid.container_id_for_leaf(lid) {
-                        let bid = self.panel_app.panel_grid.containers()
-                            .get(&cid).map(|w| w.current_bubble_id.0).unwrap_or(0);
-                        let mut sub_pane_insts: Vec<(u64, String, usize, u64)> =
-                            self.core.indicators()
-                                .get_instances_for_bubble(bid)
-                                .into_iter()
-                                .filter(|i| i.pane > 0)
-                                .map(|i| (i.id, i.type_id.clone(), i.pane, i.id))
-                                .collect();
-                        // Stable ordering: primary by pane index, secondary by id.
-                        sub_pane_insts.sort_by(|a, b| a.2.cmp(&b.2).then(a.3.cmp(&b.3)));
-                        // Track per-type ordinal within this window.
-                        let mut type_count: std::collections::HashMap<String, usize> =
-                            std::collections::HashMap::new();
-                        for (iid, type_id, _pane, _) in &sub_pane_insts {
-                            let ord = type_count.entry(type_id.clone()).or_insert(0);
-                            map.entry(*iid).or_insert_with(|| (type_id.clone(), *ord));
-                            *ord += 1;
-                        }
-                    }
-                }
-                map
-            };
-
-            // Step 2: forward map per peer window — (type_id, ordinal) -> peer_instance_id.
-            // Built per-peer inside the loop below (cheap: one HashMap per peer per frame).
-
-            let group_prim_sync: Vec<(mlc_core::ChartId, Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>>)> = {
-                let mut syncs = Vec::new();
-                for &(leaf_id, _) in &leaf_rects {
-                    if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
-                        let window_symbol = self.symbol_for_chart(chart_id)
-                            .map(String::from)
-                            .unwrap_or_default();
-                        if let Some(group_id) = self.panel_app.panel_grid
-                            .container_id_for_leaf(leaf_id)
-                            .and_then(|cid| self.bubble_for_chart(cid))
-                        {
-                            if let Some(group) = self.core.bubble().bubble(group_id) {
-                                // Skip sync only for auto-created solo groups — their primitives
-                                // live directly in drawing_manager (intercept returns false for them).
-                                // Non-auto tagged groups with a single member still need the forward
-                                // sync so group.primitives are visible after preset restore.
-                                let is_auto_mono = group.auto_created && group.members.len() <= 1;
-                                if group.sync_flags.sync_drawings && !is_auto_mono {
-                                    // Build the forward remap for this peer window.
-                                    // peer_type_ord_to_id[(type_id, ordinal)] = peer_instance_id
-                                    let peer_type_ord: std::collections::HashMap<(String, usize), u64> = {
-                                        let mut m = std::collections::HashMap::new();
-                                        let peer_bid = self.panel_app.panel_grid.containers()
-                                            .get(&chart_id).map(|w| w.current_bubble_id.0).unwrap_or(0);
-                                        let mut sub_pane_insts: Vec<(u64, String, usize, u64)> =
-                                            self.core.indicators()
-                                                .get_instances_for_bubble(peer_bid)
-                                                .into_iter()
-                                                .filter(|i| i.pane > 0)
-                                                .map(|i| (i.id, i.type_id.clone(), i.pane, i.id))
-                                                .collect();
-                                        sub_pane_insts.sort_by(|a, b| a.2.cmp(&b.2).then(a.3.cmp(&b.3)));
-                                        let mut type_count: std::collections::HashMap<String, usize> =
-                                            std::collections::HashMap::new();
-                                        for (iid, type_id, _pane, _) in &sub_pane_insts {
-                                            let ord = type_count.entry(type_id.clone()).or_insert(0);
-                                            m.entry((type_id.clone(), *ord)).or_insert(*iid);
-                                            *ord += 1;
-                                        }
-                                        m
-                                    };
-
-                                    let cloned: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
-                                        group.primitives.iter()
-                                            .filter(|p| {
-                                                let sym = &p.data().symbol;
-                                                sym.is_empty() || sym == &window_symbol
-                                            })
-                                            .filter_map(|p| {
-                                                let data = p.data();
-                                                match data.pane_id {
-                                                    None => {
-                                                        // Main-chart primitive — clone as-is.
-                                                        Some(p.clone_box())
-                                                    }
-                                                    Some(src_id) => {
-                                                        // Sub-pane primitive: remap to peer's instance id.
-                                                        // If the source id is not in the reverse map (primitive
-                                                        // from an unknown window) keep it unchanged so it is not
-                                                        // silently dropped during a partial-sync window.
-                                                        let maybe_peer_id = pane_id_to_type_ord
-                                                            .get(&src_id)
-                                                            .and_then(|(type_id, ord)| {
-                                                                peer_type_ord.get(&(type_id.clone(), *ord)).copied()
-                                                            });
-                                                        match maybe_peer_id {
-                                                            Some(peer_id) => {
-                                                                // Indicator exists on this peer — remap pane_id.
-                                                                let mut cloned_prim = p.clone_box();
-                                                                cloned_prim.data_mut().pane_id = Some(peer_id);
-                                                                Some(cloned_prim)
-                                                            }
-                                                            None => {
-                                                                if pane_id_to_type_ord.contains_key(&src_id) {
-                                                                    // Source is known but peer has no matching
-                                                                    // indicator — skip this primitive for this peer.
-                                                                    None
-                                                                } else {
-                                                                    // Source id not in any known window; pass through.
-                                                                    Some(p.clone_box())
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            })
-                                            .collect();
-                                    syncs.push((chart_id, cloned));
-                                }
-                            }
-                        }
-                    }
-                }
-                syncs
-            };
-            for (chart_id, cloned_prims) in group_prim_sync {
-                if let Some(window) = self.panel_app.panel_grid.containers().get(&chart_id) {
-                    let panel_id = window.chart_panel_id;
-                    let mut guard = self.core.drawings_svc_mut();
-                    let dm = guard.entry_or_default(panel_id);
-                    if !dm.is_dragging() {
-                        dm.sync_from_group_primitives(&cloned_prims);
-                    }
-                }
-            }
+            // Group primitive sync into split windows — DEAD under the
+            // per-bubble drawing model (Step 3.1). Peer windows sharing a
+            // tag already share `current_bubble_id` (`do_split` sets
+            // `window.current_bubble_id = group_id` for every peer leaf),
+            // so `drawings().primitives(bid)` already returns the exact
+            // same `DataBubble.primitives` Vec for every peer — no clone,
+            // no pane_id remap, no per-frame copy needed. Indicator
+            // instances are bubble-owned the same way, so the sub-pane
+            // instance-id remap this block used to compute is moot too.
 
             // Sync indicator overlay visibility per leaf.
             for &(leaf_id, _) in &leaf_rects {
@@ -1284,53 +1138,10 @@ impl ChartApp {
                 state.visible = has_indicators || has_compare;
             }
         } else {
-            // Single pane: sync group primitives.
-            if let Some(active_container) = self.panel_app.panel_grid.active_container() {
-                let active_pid = active_container.chart_panel_id;
-                let is_dragging = self.core.drawings_svc().get(active_pid)
-                    .map(|dm| dm.is_dragging())
-                    .unwrap_or(false);
-                let chart_id_opt = self.panel_app.panel_grid.active_container_id();
-                let group_id_opt = chart_id_opt
-                    .and_then(|cid| self.bubble_for_chart(cid));
-                if let (Some(group_id), Some(chart_id)) = (group_id_opt, chart_id_opt) {
-                    if !is_dragging {
-                        // Respect the sync_drawings flag — skip forward sync if disabled.
-                        // Skip sync only for auto-created solo groups — their primitives live
-                        // directly in drawing_manager. Non-auto tagged groups with ≤1 member
-                        // still need the forward sync (group.primitives → drawing_manager) so
-                        // drawings loaded from a preset are visible on the canvas.
-                        let (drawings_on, is_auto_mono) = self.core.bubble()
-                            .bubble(group_id)
-                            .map(|g| (g.sync_flags.sync_drawings, g.auto_created && g.members.len() <= 1))
-                            .unwrap_or((true, false));
-                        if drawings_on && !is_auto_mono {
-                            // Capture the window's current symbol so we can filter
-                            // primitives — stale drawings from the previous symbol
-                            // must not be re-injected by the forward sync.
-                            let window_symbol = self.symbol_for_chart(chart_id)
-                                .map(String::from)
-                                .unwrap_or_default();
-                            let cloned: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
-                                self.core.bubble()
-                                    .bubble(group_id)
-                                    .map(|g| g.primitives.iter()
-                                        .filter(|p| {
-                                            let sym = &p.data().symbol;
-                                            sym.is_empty() || sym == &window_symbol
-                                        })
-                                        .map(|p| p.clone_box())
-                                        .collect())
-                                    .unwrap_or_default();
-                            if let Some(window) = self.panel_app.panel_grid.containers().get(&chart_id) {
-                                let pid = window.chart_panel_id;
-                                let mut guard = self.core.drawings_svc_mut();
-                                guard.entry_or_default(pid).sync_from_group_primitives(&cloned);
-                            }
-                        }
-                    }
-                }
-            }
+            // Single pane: group-primitive sync — DEAD under the per-bubble
+            // drawing model (Step 3.1). The active window's `current_bubble_id`
+            // already equals `group_id`; `drawings().primitives(bid)` reads
+            // `group.primitives` directly, no per-frame clone needed.
 
             // Single pane: sync indicator overlay visibility.
             let active_cid_single = self.panel_app.panel_grid.active_container_id();

@@ -492,7 +492,7 @@ impl ChartContainer {
             drag_start_spacing: 0.0,
             drag_start_price_min: 0.0,
             drag_start_price_max: 0.0,
-            // Object managers (DrawingManager lives in BackendCore::DrawingRegistry)
+            // Object managers (DrawingManager lives in BackendCore::drawing, keyed by BubbleId)
             price_lines: HashMap::new(),
             // Compare overlay (per-window)
             compare_overlay: CompareOverlay::new(),
@@ -945,11 +945,15 @@ impl ChartContainer {
     /// Create a minimal clone of this chart window for use in `panel_grid::split_active`.
     ///
     /// Unlike `clone_for_split`, this variant does **not** take a source
-    /// `DrawingManager` or `ChartPanelState`.  It creates a fresh `ChartContainer`
-    /// shell with no drawing state.  The caller
-    /// (chart-app `sync_group.rs`) is responsible for seeding the real
-    /// `ChartPanelState` and a fresh `DrawingManager` into `panels_store` and
-    /// `BackendCore::DrawingRegistry` after the split returns the new leaf ids.
+    /// `ChartPanelState`.  It creates a fresh `ChartContainer` shell whose
+    /// `current_bubble_id` is set by the caller — under the per-bubble
+    /// drawing model (Step 3.1) no separate `DrawingManager` seeding is
+    /// needed: the new leaf either shares the source bubble (peer window)
+    /// or is bound to a freshly created bubble, and `DrawingManager`
+    /// sessions in `BackendCore::drawing` are created lazily per `BubbleId`
+    /// on first access. The caller (chart-app `sync_group.rs`) is only
+    /// responsible for seeding the real `ChartPanelState` into `panels_store`
+    /// after the split returns the new leaf ids.
     ///
     /// This overload exists so that `ChartPanelGrid::split_active` (inside the
     /// `zengeld-chart` crate) can call it without needing to know about

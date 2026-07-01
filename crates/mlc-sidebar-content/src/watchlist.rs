@@ -505,7 +505,7 @@ mod tests {
     #[test]
     fn test_new_manager_has_one_list() {
         let mgr = WatchlistManager::new(vec![WatchlistSymbol::new(
-            "BTCUSDT".to_string(), "Binance".to_string(),
+            "BTCUSDT".to_string(), "Binance".to_string(), "S".to_string(),
         )]);
         assert_eq!(mgr.lists.len(), 1);
         assert_eq!(mgr.active_list_id, 1);
@@ -542,7 +542,7 @@ mod tests {
     #[test]
     fn test_create_and_delete_list() {
         let mut mgr = WatchlistManager::default();
-        let id = mgr.create_list("My List".to_string(), "S".to_string());
+        let id = mgr.create_list("My List".to_string());
         assert_eq!(mgr.lists.len(), 2);
         let deleted = mgr.delete_list(id);
         assert!(deleted);

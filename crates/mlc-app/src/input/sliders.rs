@@ -67,29 +67,29 @@ impl ChartApp {
         }
 
         // Primitive settings sliders
-        let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx else { return; };
+        let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id else { return; };
 
         if field_id == "stroke_width" {
-            let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-            if let Some(pid) = active_pid {
-                let data_opt = self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx))
+            let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+            if let Some(bid) = active_bid {
+                let data_opt = self.core.drawings().get_data(bid, prim_id)
                     .map(|mut d| { d.width = value; d });
                 if let Some(data) = data_opt {
-                    self.core.drawings_svc_mut().entry_or_default(pid).set_data_at(idx, &data);
+                    self.core.drawings_mut().set_data(bid, prim_id, &data);
                 }
             }
             self.sync_drawing_back_to_group();
             self.autosave_snapshot();
-            self.snapshot_primitive_settings_to_user_manager(idx);
+            self.snapshot_primitive_settings_to_user_manager(prim_id);
             return;
         }
 
         if let Some(prop_id) = field_id.strip_prefix("style_prop:") {
             use mlc_core::drawing::primitives_v2::config::PropertyValue;
             let new_val = PropertyValue::Number(value);
-            let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-            if let Some(pid) = active_pid {
-                self.core.drawings_svc_mut().entry_or_default(pid).apply_style_property(idx, prop_id, new_val);
+            let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+            if let Some(bid) = active_bid {
+                self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Style, prop_id, &new_val);
             }
             self.sync_drawing_back_to_group();
             self.autosave_snapshot();
@@ -99,9 +99,9 @@ impl ChartApp {
         if let Some(prop_id) = field_id.strip_prefix("text_prop:") {
             use mlc_core::drawing::primitives_v2::config::PropertyValue;
             let new_val = PropertyValue::Number(value);
-            let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-            if let Some(pid) = active_pid {
-                self.core.drawings_svc_mut().entry_or_default(pid).apply_text_property(idx, prop_id, new_val);
+            let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+            if let Some(bid) = active_bid {
+                self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Text, prop_id, &new_val);
             }
             self.autosave_snapshot();
             return;
@@ -112,11 +112,11 @@ impl ChartApp {
 
     /// Apply a dual-handle (min/max range) slider value for `tf_*_slider` fields.
     pub(crate) fn apply_dual_slider_value(&mut self, field_id: &str, value: u32, handle: DualSliderHandle) {
-        let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx else { return; };
+        let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id else { return; };
 
         let Some(data) = self.panel_app.panel_grid.active_container()
-            .map(|w| w.chart_panel_id)
-            .and_then(|pid| self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(idx))) else { return; };
+            .map(|w| w.current_bubble_id)
+            .and_then(|bid| self.core.drawings().get_data(bid, prim_id)) else { return; };
 
         if let Some(tf_idx) = field_id.strip_prefix("tf_")
             .and_then(|s| s.strip_suffix("_slider"))
@@ -152,9 +152,9 @@ impl ChartApp {
             }
 
             new_data.timeframe_visibility = Some(tf_config);
-            let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-            if let Some(pid) = active_pid {
-                self.core.drawings_svc_mut().entry_or_default(pid).set_data_at(idx, &new_data);
+            let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+            if let Some(bid) = active_bid {
+                self.core.drawings_mut().set_data(bid, prim_id, &new_data);
             }
             self.sync_drawing_back_to_group();
 
@@ -416,12 +416,12 @@ impl ChartApp {
         self.autosave_snapshot();
     }
 
-    /// Apply a new minimum value for the timeframe range at `tf_idx` on primitive `prim_idx`.
-    pub(crate) fn apply_tf_min_value(&mut self, prim_idx: usize, tf_idx: usize, val: u32) {
+    /// Apply a new minimum value for the timeframe range at `tf_idx` on primitive `prim_id`.
+    pub(crate) fn apply_tf_min_value(&mut self, prim_id: u64, tf_idx: usize, val: u32) {
         use mlc_core::drawing::TimeframeVisibilityConfig;
-        let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-        if let Some(pid) = active_pid {
-            let data_opt = self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(prim_idx));
+        let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+        if let Some(bid) = active_bid {
+            let data_opt = self.core.drawings().get_data(bid, prim_id);
             if let Some(mut data) = data_opt {
                 let mut tf = data.timeframe_visibility.clone()
                     .unwrap_or_else(TimeframeVisibilityConfig::all);
@@ -435,18 +435,18 @@ impl ChartApp {
                     _ => {}
                 }
                 data.timeframe_visibility = Some(tf);
-                self.core.drawings_svc_mut().entry_or_default(pid).set_data_at(prim_idx, &data);
+                self.core.drawings_mut().set_data(bid, prim_id, &data);
                 eprintln!("[ChartApp] prim_settings tf_{}_min committed: {}", tf_idx, val);
             }
         }
     }
 
-    /// Apply a new maximum value for the timeframe range at `tf_idx` on primitive `prim_idx`.
-    pub(crate) fn apply_tf_max_value(&mut self, prim_idx: usize, tf_idx: usize, val: u32) {
+    /// Apply a new maximum value for the timeframe range at `tf_idx` on primitive `prim_id`.
+    pub(crate) fn apply_tf_max_value(&mut self, prim_id: u64, tf_idx: usize, val: u32) {
         use mlc_core::drawing::TimeframeVisibilityConfig;
-        let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-        if let Some(pid) = active_pid {
-            let data_opt = self.core.drawings_svc().get(pid).and_then(|dm| dm.get_data_at(prim_idx));
+        let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+        if let Some(bid) = active_bid {
+            let data_opt = self.core.drawings().get_data(bid, prim_id);
             if let Some(mut data) = data_opt {
                 let mut tf = data.timeframe_visibility.clone()
                     .unwrap_or_else(TimeframeVisibilityConfig::all);
@@ -460,7 +460,7 @@ impl ChartApp {
                     _ => {}
                 }
                 data.timeframe_visibility = Some(tf);
-                self.core.drawings_svc_mut().entry_or_default(pid).set_data_at(prim_idx, &data);
+                self.core.drawings_mut().set_data(bid, prim_id, &data);
                 eprintln!("[ChartApp] prim_settings tf_{}_max committed: {}", tf_idx, val);
             }
         }

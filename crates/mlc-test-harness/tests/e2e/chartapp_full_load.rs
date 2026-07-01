@@ -202,13 +202,13 @@ fn bars_loaded_for_different_instrument_does_not_pollute_eth_tab() {
     for cid in &btc_ids {
         let win = app.panel_app.panel_grid.containers().get(cid).unwrap();
         let guard = app.core.bubble();
-        let bubble = guard.bubble.bubble(win.current_bubble_id).unwrap();
+        let bubble = guard.bubble(win.current_bubble_id).unwrap();
         if bubble.bars.len() == 300 { btc_filled += 1; }
     }
     for cid in &eth_ids {
         let win = app.panel_app.panel_grid.containers().get(cid).unwrap();
         let guard = app.core.bubble();
-        let bubble = guard.bubble.bubble(win.current_bubble_id).unwrap();
+        let bubble = guard.bubble(win.current_bubble_id).unwrap();
         if !bubble.bars.is_empty() { eth_filled += 1; }
     }
     assert_eq!(btc_filled, 2, "both BTC tabs filled");

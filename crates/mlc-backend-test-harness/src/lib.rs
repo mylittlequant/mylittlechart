@@ -20,7 +20,7 @@
 //! - bubble store contents after each write
 //! - the `BubbleEvent` emitted per arm
 //! - `SessionRegistry` lifecycle behaviour
-//! - `DrawingRegistry` per-`ChartPanelId` semantics
+//! - `DrawingManager` per-`BubbleId` session isolation (Step 3.1)
 //! - `IndicatorManager`'s `AtomicU64` `current_render_window_id` round-trip
 //! - The Mode-2 daemon binary over real HTTP (spawned by the harness)
 //!

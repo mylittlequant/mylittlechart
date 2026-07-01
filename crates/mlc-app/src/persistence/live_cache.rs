@@ -26,6 +26,11 @@ pub struct LivePresetState {
     pub tag_manager: BubbleStore,
     pub indicator_manager: IndicatorManager,
     pub alert_manager: mlc_backend_core::alert::AlertManager,
+    /// Per-bubble drawing sessions (Step 3.1). Must travel with `tag_manager`
+    /// — `DrawingManager::sessions` is keyed by the same `BubbleId`s that
+    /// live in this preset's `BubbleStore`; parking one without the other
+    /// orphans sessions in the (fresh, empty) active `DrawingManager`.
+    pub drawing_manager: mlc_backend_core::drawing::DrawingManager,
     pub leaf_color_tags: HashMap<LeafId, [f32; 4]>,
     pub indicator_overlay_states: HashMap<LeafId, mlc_layout::ui::modal_settings::IndicatorOverlayState>,
     pub pending_sub_pane_ratios: HashMap<u64, HashMap<u64, f32>>,

@@ -18,8 +18,6 @@ use mlc_live_data::LiveUpdate;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
-use mlc_core::state::chart_container_leaf::ChartPanelId;
-#[cfg(not(target_arch = "wasm32"))]
 use crate::DaemonGuard;
 
 use crate::{BackendHarness, HarnessError, HarnessResult};
@@ -267,60 +265,76 @@ pub fn session_registry_lifecycle() -> HarnessResult<()> {
 }
 
 // ==========================================================================
-// 8. DrawingRegistry: per-ChartPanelId insert/get/remove, drain_matching
+// 8. DrawingManager: per-BubbleId session isolation via Drawings/DrawingsMut
+// facade (Step 3.1 — sessions are keyed by BubbleId, not ChartPanelId; the
+// bubble's own `primitives` Vec is the source of truth, so "insert/get/
+// remove" from the old DrawingRegistry becomes "create bubble / add
+// primitive to it / drop_bubble").
 // ==========================================================================
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn drawing_registry_basic() -> HarnessResult<()> {
     let h = BackendHarness::fresh();
 
-    let panel_a = ChartPanelId(101);
-    let panel_b = ChartPanelId(202);
+    let (bubble_a, bubble_b) = {
+        let mut mgr = h.core.bubble_mut();
+        let a = mgr.create_group_auto([1.0, 0.0, 0.0, 1.0], "BTCUSDT".to_string(), Timeframe::h1());
+        let b = mgr.create_group_auto([0.0, 1.0, 0.0, 1.0], "ETHUSDT".to_string(), Timeframe::h1());
+        (a, b)
+    };
 
+    // Each bubble starts with an empty, independent drawing session.
     {
-        let mut reg = h.core.drawings_svc_mut();
-        let _ = reg.entry_or_default(panel_a);
-        let _ = reg.entry_or_default(panel_b);
-    }
-
-    {
-        let reg = h.core.drawings_svc();
-        if reg.get(panel_a).is_none() {
-            return Err(err("drawing-reg", "panel_a entry missing after entry_or_default"));
+        let reg = h.core.drawings();
+        if reg.count(bubble_a) != 0 {
+            return Err(err("drawing-reg", "bubble_a should start with zero primitives"));
         }
-        if reg.get(panel_b).is_none() {
-            return Err(err("drawing-reg", "panel_b entry missing after entry_or_default"));
-        }
-        let count = reg.iter().count();
-        if count != 2 {
-            return Err(err("drawing-reg", format!("iter count: {} != 2", count)));
+        if reg.count(bubble_b) != 0 {
+            return Err(err("drawing-reg", "bubble_b should start with zero primitives"));
         }
     }
 
-    // Remove panel_a only.
+    // Add a primitive to bubble_a only — bubble_b must remain unaffected
+    // (session isolation, no cross-talk between bubbles).
     {
-        let mut reg = h.core.drawings_svc_mut();
-        let removed = reg.remove(panel_a);
-        if removed.is_none() {
-            return Err(err("drawing-reg", "remove returned None on present key"));
+        let mut reg = h.core.drawings_mut();
+        reg.set_tool(bubble_a, Some("trend_line"));
+        let created = reg.on_canvas_click(bubble_a, 1_700_000_000_000, 50_000.0)
+            || reg.on_canvas_click(bubble_a, 1_700_000_060_000, 50_100.0);
+        if !created && reg.count(bubble_a) == 0 {
+            return Err(err("drawing-reg", "on_canvas_click did not create a primitive on bubble_a"));
         }
     }
     {
-        let reg = h.core.drawings_svc();
-        if reg.get(panel_a).is_some() {
-            return Err(err("drawing-reg", "panel_a still present after remove"));
+        let reg = h.core.drawings();
+        if reg.count(bubble_a) == 0 {
+            return Err(err("drawing-reg", "bubble_a primitive missing after on_canvas_click"));
         }
-        if reg.get(panel_b).is_none() {
-            return Err(err("drawing-reg", "panel_b dropped by panel_a remove (cross-talk)"));
+        if reg.count(bubble_b) != 0 {
+            return Err(err("drawing-reg", "bubble_b gained a primitive from bubble_a's session (cross-talk)"));
         }
     }
 
-    // drain_matching — drop everything whose id > 200.
+    // delete_all clears bubble_a's primitives without touching bubble_b
+    // (DataBubble.primitives is the source of truth, not session state).
     {
-        let mut reg = h.core.drawings_svc_mut();
-        reg.drain_matching(|pid| pid.0 > 200);
-        if reg.get(panel_b).is_some() {
-            return Err(err("drawing-reg", "drain_matching did not drop panel_b (id=202)"));
+        let mut reg = h.core.drawings_mut();
+        reg.delete_all(bubble_a);
+    }
+    {
+        let reg = h.core.drawings();
+        if reg.count(bubble_a) != 0 {
+            return Err(err("drawing-reg", "delete_all did not clear bubble_a's primitives"));
+        }
+    }
+
+    // drop_bubble discards the (now-empty) session state; must not panic
+    // and must not disturb bubble_b's independent session.
+    {
+        let mut reg = h.core.drawings_mut();
+        reg.drop_bubble(bubble_a);
+        if reg.count(bubble_b) == 0 {
+            return Err(err("drawing-reg", "bubble_b lost its primitive after bubble_a's drop_bubble (cross-talk)"));
         }
     }
 

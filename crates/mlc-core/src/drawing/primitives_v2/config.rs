@@ -429,6 +429,22 @@ pub enum PropertyValue {
     TimeframeVisibility(TimeframeVisibilityConfig),
 }
 
+/// Style / text / level property family.
+///
+/// Replaces the 3 separate `apply_{style,text,level}_property` manager
+/// methods with one intent call (`DrawingManager::apply_property`). The
+/// individual `prop_id` stays an open `&str` schema — properties within
+/// each family are introspected per-primitive-type via
+/// `Primitive::{style,text,level}_properties()` and are genuinely
+/// unbounded (new primitive types plug in new properties without touching
+/// central code). Only the 3-way family split is closed and stable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PropertyKind {
+    Style,
+    Text,
+    Level,
+}
+
 impl PropertyValue {
     pub fn as_color(&self) -> Option<&str> {
         match self {

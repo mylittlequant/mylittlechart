@@ -155,24 +155,11 @@ impl ChartApp {
                                         panel_state.show_baseline = snap.show_baseline;
                                         panel_state.chart_type = static_ct;
                                         self.panels_store.chart_panel.insert(window.chart_panel_id, panel_state);
-                                        // S2.8: restore drawings into DrawingRegistry
-                                        {
-                                            let pid = window.chart_panel_id;
-                                            let mut guard = self.core.drawings_svc_mut();
-                                            let dm = guard.entry_or_default(pid);
-                                            dm.set_current_symbol_key(
-                                                &snap.symbol, &snap.exchange, &snap.account_type,
-                                            );
-                                            dm.clear_all_primitives();
-                                            if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
-                                                for prim_snap in &snap.drawings.primitives {
-                                                    if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
-                                                        dm.add_external_primitive(prim);
-                                                    }
-                                                }
-                                            }
-                                            dm.migrate_all_legacy_timestamps();
-                                        }
+                                        // Restored drawings are written into the window's
+                                        // bubble further below, once `auto_bid` is known
+                                        // (the per-bubble drawing model reads directly off
+                                        // `window.current_bubble_id`, which isn't assigned
+                                        // yet at this point in the restore sequence).
                                     }
 
                                     // Restore command history
@@ -194,13 +181,27 @@ impl ChartApp {
                                     window.current_bubble_id = auto_bid;
                                     self.attach_chart_to_tag(chart_id, auto_bid);
 
-                                    // Restore stashed primitives into auto_bubble.primitives.
+                                    // Restore drawings into `auto_bid`'s primitives — under
+                                    // the per-bubble drawing model this bubble IS what the
+                                    // window renders (`current_bubble_id == auto_bid` above).
+                                    // `snap.drawings.primitives` is the window's live/active
+                                    // set; `snap.stashed_primitives` is the pre-tag home stash
+                                    // for windows that were tagged when saved (empty for
+                                    // untagged windows). Prefer the live set when present —
+                                    // it reflects what was actually visible on save.
+                                    let restore_snap: &[mlc_core::drawing::PrimitiveSnapshot] =
+                                        if !snap.drawings.primitives.is_empty() {
+                                            &snap.drawings.primitives
+                                        } else {
+                                            &snap.stashed_primitives
+                                        };
                                     if let Some(auto_bub) = self.core.bubble_mut().bubble_mut(auto_bid) {
                                         auto_bub.primitives.clear();
-                                        if !snap.stashed_primitives.is_empty() {
+                                        if !restore_snap.is_empty() {
                                             if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
-                                                for prim_snap in &snap.stashed_primitives {
-                                                    if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
+                                                for prim_snap in restore_snap {
+                                                    if let Some(mut prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
+                                                        prim.data_mut().id = mlc_core::drawing::alloc_primitive_id();
                                                         auto_bub.primitives.push(prim);
                                                     }
                                                 }
@@ -464,23 +465,21 @@ impl ChartApp {
                                     ps.show_baseline = snap.show_baseline;
                                     ps.chart_type = static_ct;
                                     panel_patches.push((window.chart_panel_id, ps));
-                                    // S2.8: restore drawings into DrawingRegistry
+                                    // Restore drawings into the window's current bubble
+                                    // directly — no separate per-window DrawingManager
+                                    // under the per-bubble model.
                                     {
-                                        let pid = window.chart_panel_id;
-                                        let mut guard = self.core.drawings_svc_mut();
-                                        let dm = guard.entry_or_default(pid);
-                                        dm.set_current_symbol_key(
-                                            &snap.symbol, &snap.exchange, &snap.account_type,
-                                        );
-                                        dm.clear_all_primitives();
+                                        let bid = window.current_bubble_id;
+                                        let mut guard = self.core.drawings_mut();
+                                        guard.delete_all(bid);
                                         if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
                                             for prim_snap in &snap.drawings.primitives {
                                                 if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
-                                                    dm.add_external_primitive(prim);
+                                                    guard.add_external(bid, prim);
                                                 }
                                             }
                                         }
-                                        dm.migrate_all_legacy_timestamps();
+                                        guard.migrate_legacy_timestamps(bid);
                                     }
 
                                     eprintln!("[ChartApp] patched window {}  ->  {}/{} ({} drawings)",
@@ -572,36 +571,10 @@ impl ChartApp {
                     eprintln!("[ChartApp] restored {} sync groups", preset.bubbles.len());
                     let bubbles_us = _t_bubbles.elapsed().as_micros();
 
-                    // Rebind every window's DM to its group's shared style store now
-                    // that all groups are fully reconstructed.  Windows whose group_id
-                    // is set but the group has no entry yet keep their own private Arc
-                    // (fresh HashMap) as a safe fallback.
-                    let _t_rebind = web_time::Instant::now();
-                    {
-                        // Collect (chart_id, group_id) pairs without holding borrow.
-                        let rebind_info: Vec<(mlc_core::ChartId, mlc_core::ids::BubbleId)> =
-                            self.panel_app.panel_grid.containers().keys()
-                                .copied()
-                                .filter_map(|cid| {
-                                    self.bubble_for_chart(cid)
-                                        .map(|gid| (cid, gid))
-                                })
-                                .collect();
-                        for (chart_id, group_id) in rebind_info {
-                            if let Some(style_arc) = self.core.bubble()
-                                .bubble(group_id)
-                                .map(|g| g.last_used_style.clone())
-                            {
-                                if let Some(window) = self.panel_app.panel_grid.containers()
-                                    .get(&chart_id)
-                                {
-                                    let pid = window.chart_panel_id;
-                                    self.core.drawings_svc_mut().entry_or_default(pid).bind_style_store(style_arc);
-                                }
-                            }
-                        }
-                    }
-                    let rebind_us = _t_rebind.elapsed().as_micros();
+                    // NOTE (Step 3.1): style-store rebinding is no longer needed —
+                    // `DrawingManager::effective_color` reads `bubble.last_used_style`
+                    // directly for the bid-keyed session, no per-window Arc to bind.
+                    let rebind_us = 0u128;
 
                     // Bump BubbleId counter past any restored bubble IDs so
                     // future create_group / create_group_auto calls never collide.
@@ -611,25 +584,13 @@ impl ChartApp {
                     }
 
                     // Seed the global primitive ID counter so future allocations
-                    // never collide with any ID loaded from disk.
+                    // never collide with any ID loaded from disk. All primitives
+                    // live on bubbles under the per-bubble drawing model — no
+                    // separate per-window DrawingManager sweep needed.
                     {
-                        let panel_prim_ids: Vec<u64> = {
-                            let dreg = self.core.drawings_svc();
-                            self.panel_app.panel_grid.containers().values()
-                                .flat_map(|w| {
-                                    let pid = w.chart_panel_id;
-                                    dreg.get(pid)
-                                        .map(|dm| dm.primitives().iter().map(|p| p.data().id).collect::<Vec<_>>())
-                                        .unwrap_or_default()
-                                })
-                                .collect()
-                        };
-                        let max_id = panel_prim_ids.into_iter()
-                            .chain(
-                                self.core.bubble().bubbles()
-                                    .flat_map(|g| g.primitives.iter())
-                                    .map(|p| p.data().id)
-                            )
+                        let max_id = self.core.bubble().bubbles()
+                            .flat_map(|g| g.primitives.iter())
+                            .map(|p| p.data().id)
                             .max()
                             .unwrap_or(0);
                         mlc_core::drawing::seed_primitive_id_counter(max_id);
@@ -723,10 +684,7 @@ impl ChartApp {
                             self.panel_app.panel_grid.iter_containers()
                                 .map(|(leaf_id, w)| (leaf_id, w.id))
                                 .collect();
-                        let style_arc = self.core.bubble()
-                            .bubble(group_id)
-                            .map(|g| g.last_used_style.clone());
-                        for &(leaf_id, chart_id) in &leaf_chart_ids {
+                        for &(_leaf_id, chart_id) in &leaf_chart_ids {
                             self.attach_chart_to_tag(chart_id, group_id);
                             // Sync the window-side bubble pointer so the renderer's
                             // `window.current_bubble_id` lookup matches the writer's
@@ -738,11 +696,6 @@ impl ChartApp {
                             if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&chart_id) {
                                 window.auto_bubble_id = group_id;
                                 window.current_bubble_id = group_id;
-                            }
-                            if let Some(pid) = self.panel_app.panel_grid.container_for_leaf(leaf_id).map(|w| w.chart_panel_id) {
-                                if let Some(ref arc) = style_arc {
-                                    self.core.drawings_svc_mut().entry_or_default(pid).bind_style_store(arc.clone());
-                                }
                             }
                         }
                         eprintln!("[ChartApp] Auto-created invisible sync group {:?} for {} orphaned windows", group_id, leaf_chart_ids.len());
@@ -797,7 +750,6 @@ impl ChartApp {
                                     &mut self.panels_store,
                                     pid,
                                 );
-                                self.core.drawings_svc_mut().entry_or_default(pid).set_current_symbol_key(&sym, &exch, "S");
                             }
                             eprintln!(
                                 "[ChartApp] Step 5c: re-membered orphaned window {:?} into auto group {:?} ({})",
