@@ -117,6 +117,11 @@ pub use instrument::{AccountType, InstrumentAddress};
 pub mod watchlist;
 pub use watchlist::{WatchlistGroup, WatchlistList};
 
+// Tag domain value type (no UI/presentation fields) — see
+// docs/mlc/plans/doctrine-cutover-2026-06-27.md §1B.
+pub mod tag;
+pub use tag::{Tag, TagId};
+
 // Chart preset system (snapshot types for persistence)
 pub mod preset;
 

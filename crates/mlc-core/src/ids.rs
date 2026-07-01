@@ -1,6 +1,6 @@
 //! Shared identifier + sync types — vocabulary used by both the
-//! backend data plane (`mlc-backend::bubble`) and the app
-//! orchestrator (`mlc-app::tag`).  Lives in `mlc-core` because both
+//! backend data plane (`mlc-backend::bubble`, `mlc-backend::tag`) and the
+//! app orchestrator (`mlc-app`).  Lives in `mlc-core` because both
 //! layers speak about these but neither owns them as a domain concept.
 //!
 //! These types are intentionally light: no business logic, no
@@ -41,7 +41,7 @@ impl BubbleId {
 
 /// Which properties are synchronised across the members of a sync
 /// group.  Authoritative copy lives on the backend `DataBubble`; the
-/// app inspects it through TagStore for UI rendering.
+/// app inspects it through `TagManager` for UI rendering.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SyncFlags {
     pub sync_crosshair: bool,
