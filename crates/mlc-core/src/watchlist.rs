@@ -141,16 +141,10 @@ impl WatchlistList {
         out
     }
 
-    /// Check if a (symbol, exchange, account_type) triple is in this list.
-    pub fn contains(&self, symbol: &str, exchange: &str, account_type: &str) -> bool {
-        self.contains_with_type(symbol, exchange, account_type)
-    }
-
-    /// Check if a (symbol, exchange, account_type) triple is in this list.
-    pub fn contains_with_type(&self, symbol: &str, exchange: &str, account_type: &str) -> bool {
-        let at: crate::instrument::AccountType = account_type.parse().unwrap_or_default();
-        self.ungrouped.iter().any(|s| s.symbol == symbol && s.exchange == exchange && s.account_type == at)
-            || self.groups.iter().any(|g| g.symbols.iter().any(|s| s.symbol == symbol && s.exchange == exchange && s.account_type == at))
+    /// Check if an instrument is in this list.
+    pub fn contains(&self, address: &InstrumentAddress) -> bool {
+        self.ungrouped.iter().any(|s| s == address)
+            || self.groups.iter().any(|g| g.symbols.iter().any(|s| s == address))
     }
 
     /// Check if a symbol (any exchange) is in this list.
@@ -159,40 +153,30 @@ impl WatchlistList {
             || self.groups.iter().any(|g| g.symbols.iter().any(|s| s.symbol == symbol))
     }
 
-    /// Add a symbol to the ungrouped section. No-op if the same (symbol, exchange, account_type) triple already present.
-    pub fn add_symbol(&mut self, symbol: String, exchange: String, account_type: String) {
-        self.add_symbol_with_type(symbol, exchange, account_type);
-    }
-
-    /// Add a symbol with an explicit account_type. No-op if the same (symbol, exchange, account_type) triple already present.
-    pub fn add_symbol_with_type(&mut self, symbol: String, exchange: String, account_type: String) {
-        if !self.contains_with_type(&symbol, &exchange, &account_type) {
-            let at = account_type.parse().unwrap_or_default();
-            self.ungrouped.push(InstrumentAddress::new(exchange, symbol, at));
+    /// Add an instrument to the ungrouped section. No-op if already present.
+    pub fn add_symbol(&mut self, address: InstrumentAddress) {
+        if !self.contains(&address) {
+            self.ungrouped.push(address);
         }
     }
 
-    /// Remove a specific (symbol, exchange, account_type) triple from everywhere in this list.
-    pub fn remove_symbol(&mut self, symbol: &str, exchange: &str, account_type: &str) {
-        let at: crate::instrument::AccountType = account_type.parse().unwrap_or_default();
-        self.ungrouped.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == at));
+    /// Remove a specific instrument from everywhere in this list.
+    pub fn remove_symbol(&mut self, address: &InstrumentAddress) {
+        self.ungrouped.retain(|s| s != address);
         for g in &mut self.groups {
-            g.symbols.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == at));
+            g.symbols.retain(|s| s != address);
         }
     }
 
-    /// Move a symbol into a specific group. Removes from previous location first.
-    ///
-    /// Matches on the full (symbol, exchange, account_type) triple.
-    pub fn move_to_group(&mut self, symbol: &str, exchange: &str, account_type: &str, group_id: u64) {
-        let at: crate::instrument::AccountType = account_type.parse().unwrap_or_default();
+    /// Move an instrument into a specific group. Removes from previous location first.
+    pub fn move_to_group(&mut self, address: &InstrumentAddress, group_id: u64) {
         // Find and remove from current location, keeping the address.
         let mut found: Option<InstrumentAddress> = None;
-        if let Some(pos) = self.ungrouped.iter().position(|s| s.symbol == symbol && s.exchange == exchange && s.account_type == at) {
+        if let Some(pos) = self.ungrouped.iter().position(|s| s == address) {
             found = Some(self.ungrouped.remove(pos));
         } else {
             for g in &mut self.groups {
-                if let Some(pos) = g.symbols.iter().position(|s| s.symbol == symbol && s.exchange == exchange && s.account_type == at) {
+                if let Some(pos) = g.symbols.iter().position(|s| s == address) {
                     found = Some(g.symbols.remove(pos));
                     break;
                 }
@@ -228,39 +212,41 @@ mod tests {
     #[test]
     fn test_same_symbol_different_exchanges() {
         let mut list = WatchlistList { id: 1, ..Default::default() };
-        list.add_symbol("BTCUSDT".to_string(), "Binance".to_string(), String::new());
-        list.add_symbol("BTCUSDT".to_string(), "OKX".to_string(), String::new());
+        let binance_btc = InstrumentAddress::new("Binance", "BTCUSDT", AccountType::Spot);
+        let okx_btc = InstrumentAddress::new("OKX", "BTCUSDT", AccountType::Spot);
+        let kucoin_btc = InstrumentAddress::new("KuCoin", "BTCUSDT", AccountType::Spot);
+        list.add_symbol(binance_btc.clone());
+        list.add_symbol(okx_btc.clone());
         assert_eq!(list.ungrouped.len(), 2);
-        assert!(list.contains("BTCUSDT", "Binance", ""));
-        assert!(list.contains("BTCUSDT", "OKX", ""));
-        assert!(!list.contains("BTCUSDT", "KuCoin", ""));
-        list.remove_symbol("BTCUSDT", "OKX", "");
-        assert!(list.contains("BTCUSDT", "Binance", ""));
-        assert!(!list.contains("BTCUSDT", "OKX", ""));
+        assert!(list.contains(&binance_btc));
+        assert!(list.contains(&okx_btc));
+        assert!(!list.contains(&kucoin_btc));
+        list.remove_symbol(&okx_btc);
+        assert!(list.contains(&binance_btc));
+        assert!(!list.contains(&okx_btc));
     }
 
     #[test]
     fn test_add_symbol_no_duplicates() {
         let mut list = WatchlistList { id: 1, ..Default::default() };
-        list.add_symbol("AAPL".to_string(), "Binance".to_string(), String::new());
-        list.add_symbol("AAPL".to_string(), "Binance".to_string(), String::new());
+        let aapl = InstrumentAddress::new("Binance", "AAPL", AccountType::Spot);
+        list.add_symbol(aapl.clone());
+        list.add_symbol(aapl);
         assert_eq!(list.ungrouped.iter().filter(|s| s.symbol == "AAPL").count(), 1);
     }
 
     #[test]
     fn test_group_operations() {
         let mut list = WatchlistList { id: 1, ..Default::default() };
-        list.add_symbol("BTC".to_string(), "Binance".to_string(), String::new());
+        let btc = InstrumentAddress::new("Binance", "BTC", AccountType::Spot);
+        list.add_symbol(btc.clone());
         list.add_group(10, "Crypto".to_string());
-        list.move_to_group("BTC", "Binance", "", 10);
+        list.move_to_group(&btc, 10);
         assert!(list.ungrouped.is_empty());
-        assert_eq!(
-            list.groups[0].symbols,
-            vec![InstrumentAddress::new("Binance", "BTC", AccountType::Spot)]
-        );
+        assert_eq!(list.groups[0].symbols, vec![btc.clone()]);
         list.remove_group(10);
         assert!(list.groups.is_empty());
-        assert_eq!(list.ungrouped, vec![InstrumentAddress::new("Binance", "BTC", AccountType::Spot)]);
+        assert_eq!(list.ungrouped, vec![btc]);
     }
 
     #[test]
@@ -278,13 +264,15 @@ mod tests {
     }
 
     #[test]
-    fn test_toggle_does_not_cross_account_types() {
+    fn test_remove_does_not_cross_account_types() {
         let mut list = WatchlistList { id: 1, ..Default::default() };
-        list.add_symbol_with_type("BTCUSDT".to_string(), "binance".to_string(), "S".to_string());
-        list.add_symbol_with_type("BTCUSDT".to_string(), "binance".to_string(), "F".to_string());
-        list.remove_symbol("BTCUSDT", "binance", "F");
-        assert!(list.contains_with_type("BTCUSDT", "binance", "S"));
-        assert!(!list.contains_with_type("BTCUSDT", "binance", "F"));
+        let spot = InstrumentAddress::new("binance", "BTCUSDT", AccountType::Spot);
+        let futures = InstrumentAddress::new("binance", "BTCUSDT", AccountType::FuturesCross);
+        list.add_symbol(spot.clone());
+        list.add_symbol(futures.clone());
+        list.remove_symbol(&futures);
+        assert!(list.contains(&spot));
+        assert!(!list.contains(&futures));
     }
 
     #[test]

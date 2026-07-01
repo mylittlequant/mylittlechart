@@ -40,9 +40,9 @@ impl<'a> Watchlists<'a> {
         self.mgr.find(list_id)
     }
 
-    /// Check if a (symbol, exchange, account_type) triple is in the given list.
-    pub fn contains(&self, list_id: u64, symbol: &str, exchange: &str, account_type: &str) -> bool {
-        self.mgr.contains(list_id, symbol, exchange, account_type)
+    /// Check if an instrument is in the given list.
+    pub fn contains(&self, list_id: u64, address: &mlc_core::InstrumentAddress) -> bool {
+        self.mgr.contains(list_id, address)
     }
 }
 
@@ -90,20 +90,20 @@ impl<'a> WatchlistsMut<'a> {
         self.mgr.next_unique_id()
     }
 
-    /// Add a symbol to the given list.
-    pub fn add_symbol(&mut self, list_id: u64, symbol: String, exchange: String, account_type: String) {
-        self.mgr.add_symbol(list_id, symbol, exchange, account_type);
+    /// Add an instrument to the given list.
+    pub fn add_symbol(&mut self, list_id: u64, address: mlc_core::InstrumentAddress) {
+        self.mgr.add_symbol(list_id, address);
     }
 
-    /// Remove a specific (symbol, exchange, account_type) triple from the given list.
-    pub fn remove_symbol(&mut self, list_id: u64, symbol: &str, exchange: &str, account_type: &str) {
-        self.mgr.remove_symbol(list_id, symbol, exchange, account_type);
+    /// Remove a specific instrument from the given list.
+    pub fn remove_symbol(&mut self, list_id: u64, address: &mlc_core::InstrumentAddress) {
+        self.mgr.remove_symbol(list_id, address);
     }
 
-    /// Toggle symbol membership in the given list: add if missing, remove if
-    /// present. Returns the new state (`true` = now in list).
-    pub fn toggle_symbol(&mut self, list_id: u64, symbol: &str, exchange: &str, account_type: &str) -> bool {
-        self.mgr.toggle_symbol(list_id, symbol, exchange, account_type)
+    /// Toggle instrument membership in the given list: add if missing, remove
+    /// if present. Returns the new state (`true` = now in list).
+    pub fn toggle_symbol(&mut self, list_id: u64, address: &mlc_core::InstrumentAddress) -> bool {
+        self.mgr.toggle_symbol(list_id, address)
     }
 
     /// Reorder a symbol in the given list's ungrouped section.
@@ -111,11 +111,11 @@ impl<'a> WatchlistsMut<'a> {
         self.mgr.reorder_symbol(list_id, from_idx, to_idx);
     }
 
-    /// Move a symbol into a specific group of the given list. No-op if the
-    /// list or the group does not exist.
-    pub fn move_to_group(&mut self, list_id: u64, symbol: &str, exchange: &str, account_type: &str, group_id: u64) {
+    /// Move an instrument into a specific group of the given list. No-op if
+    /// the list or the group does not exist.
+    pub fn move_to_group(&mut self, list_id: u64, address: &mlc_core::InstrumentAddress, group_id: u64) {
         if let Some(list) = self.mgr.find_mut(list_id) {
-            list.move_to_group(symbol, exchange, account_type, group_id);
+            list.move_to_group(address, group_id);
         }
     }
 
@@ -154,8 +154,8 @@ impl<'a> WatchlistsMut<'a> {
         *self.mgr = manager;
     }
 
-    /// Check if a (symbol, exchange, account_type) triple is in the given list.
-    pub fn contains(&self, list_id: u64, symbol: &str, exchange: &str, account_type: &str) -> bool {
-        self.mgr.contains(list_id, symbol, exchange, account_type)
+    /// Check if an instrument is in the given list.
+    pub fn contains(&self, list_id: u64, address: &mlc_core::InstrumentAddress) -> bool {
+        self.mgr.contains(list_id, address)
     }
 }

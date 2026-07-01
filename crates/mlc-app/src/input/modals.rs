@@ -459,14 +459,14 @@ impl ChartApp {
                     };
                 let exchange = exchange_owned.as_str();
                 let account_type = account_type_owned.as_str();
-                let account_type_parsed: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
+                let address = mlc_core::InstrumentAddress::new(exchange, symbol, account_type.parse().unwrap_or_default());
                 // Remove symbol from snapshot (if active) before removing from list.
                 {
                     let active_list_id = self.watchlist_ui.active_list_id;
                     if let Some(ref mut snap) = self.watchlist_ui.list_mut(active_list_id).order_snapshot {
-                        snap.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == account_type_parsed));
+                        snap.retain(|s| *s != address);
                     }
-                    self.core.watchlists_mut().remove_symbol(active_list_id, symbol, exchange, account_type);
+                    self.core.watchlists_mut().remove_symbol(active_list_id, &address);
                 }
                 self.watchlist_actions.push(crate::WatchlistAction::Remove { symbol: symbol.to_string(), exchange: exchange.to_string(), account_type: account_type.to_string() });
                 self.watchlists_dirty = true;

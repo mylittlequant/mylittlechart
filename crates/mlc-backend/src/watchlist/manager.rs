@@ -46,33 +46,33 @@ impl WatchlistManager {
         self.lists.iter_mut().find(|l| l.id == list_id)
     }
 
-    /// Check if a (symbol, exchange, account_type) triple is in the given list.
-    pub fn contains(&self, list_id: u64, symbol: &str, exchange: &str, account_type: &str) -> bool {
-        self.find(list_id).map(|l| l.contains_with_type(symbol, exchange, account_type)).unwrap_or(false)
+    /// Check if an instrument is in the given list.
+    pub fn contains(&self, list_id: u64, address: &InstrumentAddress) -> bool {
+        self.find(list_id).map(|l| l.contains(address)).unwrap_or(false)
     }
 
-    /// Add symbol to the given list.
-    pub fn add_symbol(&mut self, list_id: u64, symbol: String, exchange: String, account_type: String) {
+    /// Add an instrument to the given list.
+    pub fn add_symbol(&mut self, list_id: u64, address: InstrumentAddress) {
         if let Some(list) = self.find_mut(list_id) {
-            list.add_symbol_with_type(symbol, exchange, account_type);
+            list.add_symbol(address);
         }
     }
 
-    /// Remove a specific (symbol, exchange, account_type) triple from the given list.
-    pub fn remove_symbol(&mut self, list_id: u64, symbol: &str, exchange: &str, account_type: &str) {
+    /// Remove a specific instrument from the given list.
+    pub fn remove_symbol(&mut self, list_id: u64, address: &InstrumentAddress) {
         if let Some(list) = self.find_mut(list_id) {
-            list.remove_symbol(symbol, exchange, account_type);
+            list.remove_symbol(address);
         }
     }
 
-    /// Toggle symbol membership in the given list: add if missing, remove if
-    /// present. Returns the new state (`true` = now in list).
-    pub fn toggle_symbol(&mut self, list_id: u64, symbol: &str, exchange: &str, account_type: &str) -> bool {
-        if self.contains(list_id, symbol, exchange, account_type) {
-            self.remove_symbol(list_id, symbol, exchange, account_type);
+    /// Toggle instrument membership in the given list: add if missing, remove
+    /// if present. Returns the new state (`true` = now in list).
+    pub fn toggle_symbol(&mut self, list_id: u64, address: &InstrumentAddress) -> bool {
+        if self.contains(list_id, address) {
+            self.remove_symbol(list_id, address);
             false
         } else {
-            self.add_symbol(list_id, symbol.to_string(), exchange.to_string(), account_type.to_string());
+            self.add_symbol(list_id, address.clone());
             true
         }
     }
@@ -148,13 +148,14 @@ mod tests {
     fn test_toggle_symbol_add_remove() {
         let mut mgr = WatchlistManager::default();
         let id = mgr.create_list("L1".to_string());
-        assert!(!mgr.contains(id, "ETHUSDT", "Binance", ""));
-        let added = mgr.toggle_symbol(id, "ETHUSDT", "Binance", "");
+        let address = InstrumentAddress::new("Binance", "ETHUSDT", AccountType::Spot);
+        assert!(!mgr.contains(id, &address));
+        let added = mgr.toggle_symbol(id, &address);
         assert!(added);
-        assert!(mgr.contains(id, "ETHUSDT", "Binance", ""));
-        let removed = mgr.toggle_symbol(id, "ETHUSDT", "Binance", "");
+        assert!(mgr.contains(id, &address));
+        let removed = mgr.toggle_symbol(id, &address);
         assert!(!removed);
-        assert!(!mgr.contains(id, "ETHUSDT", "Binance", ""));
+        assert!(!mgr.contains(id, &address));
     }
 
     #[test]
@@ -181,8 +182,8 @@ mod tests {
     fn test_color_flags_persist_on_list() {
         let mut mgr = WatchlistManager::default();
         let id = mgr.lists[0].id;
-        mgr.add_symbol(id, "BTCUSDT".to_string(), "Binance".to_string(), "S".to_string());
         let address = InstrumentAddress::new("Binance", "BTCUSDT", AccountType::Spot);
+        mgr.add_symbol(id, address.clone());
         mgr.find_mut(id).unwrap().set_color_flag(&address, "#ff0000");
         assert_eq!(mgr.find(id).unwrap().get_color_flag(&address), Some("#ff0000"));
     }

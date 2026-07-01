@@ -2204,7 +2204,8 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 let active_list_id = self.app_state.watchlist_ui.active_list_id;
                 match action {
                     mlc_app::WatchlistAction::Toggle { symbol, exchange, account_type } => {
-                        let now_in = self.app_state.watchlist_manager.toggle_symbol(active_list_id, &symbol, &exchange, &account_type);
+                        let address = mlc_core::InstrumentAddress::new(exchange.clone(), symbol.clone(), account_type.parse().unwrap_or_default());
+                        let now_in = self.app_state.watchlist_manager.toggle_symbol(active_list_id, &address);
                         eprintln!("[App] watchlist toggle: {}:{}:{} -> in_watchlist={}", symbol, exchange, account_type, now_in);
                         if now_in {
                             if let Some(eid) = mlc_app::ExchangeId::from_str(&exchange) {
@@ -2228,7 +2229,8 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         }
                     }
                     mlc_app::WatchlistAction::Remove { symbol, exchange, account_type } => {
-                        self.app_state.watchlist_manager.remove_symbol(active_list_id, &symbol, &exchange, &account_type);
+                        let address = mlc_core::InstrumentAddress::new(exchange, symbol, account_type.parse().unwrap_or_default());
+                        self.app_state.watchlist_manager.remove_symbol(active_list_id, &address);
                     }
                     mlc_app::WatchlistAction::ClearOrderSnapshot => {
                         self.app_state.watchlist_ui.list_mut(active_list_id).order_snapshot = None;
@@ -2264,19 +2266,20 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         }
                     }
                     mlc_app::WatchlistAction::MoveToGroup { symbol, exchange, account_type, group_name } => {
+                        let address = mlc_core::InstrumentAddress::new(exchange, symbol, account_type.parse().unwrap_or_default());
                         if let Some(list) = self.app_state.watchlist_manager.find_mut(active_list_id) {
                             if let Some(group) = list.groups.iter().find(|g| g.name == group_name) {
                                 let group_id = group.id;
-                                list.move_to_group(&symbol, &exchange, &account_type, group_id);
+                                list.move_to_group(&address, group_id);
                             }
                         }
                     }
                     mlc_app::WatchlistAction::RemoveFromGroup { symbol, exchange, account_type } => {
+                        let address = mlc_core::InstrumentAddress::new(exchange, symbol, account_type.parse().unwrap_or_default());
                         if let Some(list) = self.app_state.watchlist_manager.find_mut(active_list_id) {
-                            let at: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                             let mut found: Option<mlc_core::instrument::InstrumentAddress> = None;
                             for g in &mut list.groups {
-                                if let Some(pos) = g.symbols.iter().position(|s| s.symbol == symbol && s.exchange == exchange && s.account_type == at) {
+                                if let Some(pos) = g.symbols.iter().position(|s| *s == address) {
                                     found = Some(g.symbols.remove(pos));
                                     break;
                                 }

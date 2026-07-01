@@ -2078,8 +2078,9 @@ impl ChartApp {
         for action in actions {
             match action {
                 WatchlistAction::Toggle { symbol, exchange, account_type } => {
+                    let address = mlc_core::InstrumentAddress::new(exchange.clone(), symbol.clone(), account_type.parse().unwrap_or_default());
                     let now_in = self.core.watchlists_mut()
-                        .toggle_symbol(active_list_id, &symbol, &exchange, &account_type);
+                        .toggle_symbol(active_list_id, &address);
                     if now_in {
                         if let Some(eid) = ExchangeId::from_str(&exchange) {
                             let enabled = self.sidebar_state.connector_enabled
@@ -2102,7 +2103,8 @@ impl ChartApp {
                     }
                 }
                 WatchlistAction::Remove { symbol, exchange, account_type } => {
-                    self.core.watchlists_mut().remove_symbol(active_list_id, &symbol, &exchange, &account_type);
+                    let address = mlc_core::InstrumentAddress::new(exchange, symbol, account_type.parse().unwrap_or_default());
+                    self.core.watchlists_mut().remove_symbol(active_list_id, &address);
                 }
                 WatchlistAction::ClearOrderSnapshot => {
                     self.watchlist_ui.list_mut(active_list_id).order_snapshot = None;
@@ -2136,20 +2138,19 @@ impl ChartApp {
                     self.core.watchlists_mut().set_color_flag(active_list_id, &address, color_str);
                 }
                 WatchlistAction::MoveToGroup { symbol, exchange, account_type, group_name } => {
+                    let address = mlc_core::InstrumentAddress::new(exchange, symbol, account_type.parse().unwrap_or_default());
                     let group_id = self.core.watchlists().find(active_list_id)
                         .and_then(|list| list.groups.iter().find(|g| g.name == group_name).map(|g| g.id));
                     if let Some(group_id) = group_id {
-                        self.core.watchlists_mut().move_to_group(active_list_id, &symbol, &exchange, &account_type, group_id);
+                        self.core.watchlists_mut().move_to_group(active_list_id, &address, group_id);
                     }
                 }
                 WatchlistAction::RemoveFromGroup { symbol, exchange, account_type } => {
+                    let address = mlc_core::InstrumentAddress::new(exchange, symbol, account_type.parse().unwrap_or_default());
                     if let Some(list) = self.core.watchlists_mut().find_mut(active_list_id) {
-                        let at: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                         let mut found: Option<mlc_core::instrument::InstrumentAddress> = None;
                         for g in &mut list.groups {
-                            if let Some(pos) = g.symbols.iter().position(|s|
-                                s.symbol == symbol && s.exchange == exchange && s.account_type == at)
-                            {
+                            if let Some(pos) = g.symbols.iter().position(|s| *s == address) {
                                 found = Some(g.symbols.remove(pos));
                                 break;
                             }
@@ -7452,8 +7453,13 @@ impl ChartApp {
                         })
                         .unwrap_or_else(|| s.symbol.clone());
 
+                    let search_address = mlc_core::InstrumentAddress::new(
+                        exchange_slug.to_string(),
+                        symbol_key.clone(),
+                        s.account_type.short_label().parse().unwrap_or_default(),
+                    );
                     let in_watchlist = active_watchlist
-                        .map(|l| l.contains_with_type(&symbol_key, exchange_slug, s.account_type.short_label()))
+                        .map(|l| l.contains(&search_address))
                         .unwrap_or(false);
                     let asset_type = if exchange_slug == "moex" { "Stock" } else { "Crypto" };
                     let category_icon = if exchange_slug == "moex" { "S" } else { "C" };

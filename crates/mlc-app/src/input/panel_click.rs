@@ -295,14 +295,14 @@ impl ChartApp {
                     let symbol = item.symbol.clone();
                     let exchange = item.exchange.clone();
                     let account_type = item.account_type.clone();
+                    let address = item.address.clone();
                     // Remove symbol from snapshot (if active) before removing from list.
                     {
                         let active_list_id = self.watchlist_ui.active_list_id;
-                        let at: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                         if let Some(ref mut snap) = self.watchlist_ui.list_mut(active_list_id).order_snapshot {
-                            snap.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == at));
+                            snap.retain(|s| *s != address);
                         }
-                        self.core.watchlists_mut().remove_symbol(active_list_id, &symbol, &exchange, &account_type);
+                        self.core.watchlists_mut().remove_symbol(active_list_id, &address);
                     }
                     self.watchlist_actions.push(crate::WatchlistAction::Remove { symbol: symbol.clone(), exchange: exchange.clone(), account_type: account_type.clone() });
                     self.watchlist_actions.push(crate::WatchlistAction::ClearOrderSnapshot);
