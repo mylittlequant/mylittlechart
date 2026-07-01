@@ -8,7 +8,6 @@ members = [
     "crates/mlc-app-input-shell",
     "crates/mlc-backend-indicator-engine",
     "crates/mlc-app-sidebar-content",
-    "crates/mlc-watchlist",
     "crates/mlc-app-panels",
     "crates/mlc-alert-delivery",
     "crates/mlc-backend-data-bridge",
