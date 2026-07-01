@@ -656,7 +656,7 @@ impl ChartApp {
     /// Apply the color picker color to the active indicator output.
     pub(super) fn apply_indicator_color(&mut self, output_name: &str, color: &str) {
         if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
-            if let Some(inst) = self.core.indicators_mut().get_instance_mut(ind_id) {
+            if let Some(inst) = self.core.indicators_mut().instance_mut(ind_id) {
                 match output_name {
                     "signal_bullish_color" => {
                         inst.signal_display.bullish_color = color.to_string();

@@ -339,46 +339,42 @@ pub fn drawing_registry_basic() -> HarnessResult<()> {
 }
 
 // ==========================================================================
-// 9. IndicatorManager AtomicU64 round-trip
+// 9. IndicatorManager bubble scoping — `instances_for_bubble(bid)` round-trip
+//
+// Replaces the deleted `current_render_bubble_id` scoping-cursor test
+// (Step 3.3 doctrine cutover — the facade now takes `bid` explicitly on
+// every bubble-scoped read/write instead of stashing it in a shared
+// atomic between a store call and a read call).
 // ==========================================================================
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn indicator_atomic_window_id() -> HarnessResult<()> {
-    use std::sync::atomic::Ordering;
-
-    fn decode(raw: u64) -> Option<u64> {
-        match raw { 0 => None, n => Some(n - 1) }
-    }
-
     let h = BackendHarness::fresh();
-    {
-        let im = h.core.indicators();
-        let raw = im.current_render_bubble_id.load(Ordering::Relaxed);
-        if decode(raw).is_some() {
-            return Err(err("indicator-atomic", format!("fresh manager has current_render_bubble_id raw={raw}")));
-        }
+    let bubble_a = h.core.bubbles_mut().create_group([1.0, 0.0, 0.0, 1.0], "BTCUSDT".to_string(), mlc_core::state::Timeframe::h1());
+    let bubble_b = h.core.bubbles_mut().create_group([0.0, 1.0, 0.0, 1.0], "ETHUSDT".to_string(), mlc_core::state::Timeframe::h1());
+
+    if !h.core.indicators().instances_for_bubble(bubble_a).is_empty() {
+        return Err(err("indicator-scope", "fresh bubble_a already has instances"));
     }
-    {
-        let im = h.core.indicators();
-        // store: encode Some(7) as 8
-        im.current_render_bubble_id.store(7 + 1, Ordering::Relaxed);
+
+    let id = match h.core.indicators_mut().add(Some(bubble_a), "sma") {
+        Some(id) => id,
+        None => return Err(err("indicator-scope", "add(bubble_a, \"sma\") returned None")),
+    };
+
+    if h.core.indicators().instances_for_bubble(bubble_a).len() != 1 {
+        return Err(err("indicator-scope", "bubble_a should have exactly 1 instance after add"));
     }
-    {
-        let im = h.core.indicators();
-        let raw = im.current_render_bubble_id.load(Ordering::Relaxed);
-        if decode(raw) != Some(7) {
-            return Err(err("indicator-atomic", format!("after store Some(7): raw={raw} decoded={:?}", decode(raw))));
-        }
+    if !h.core.indicators().instances_for_bubble(bubble_b).is_empty() {
+        return Err(err("indicator-scope", "bubble_b picked up bubble_a's instance (cross-talk)"));
     }
-    {
-        let im = h.core.indicators();
-        im.current_render_bubble_id.store(0, Ordering::Relaxed);
+
+    h.core.indicators_mut().reassign_bubble(id, Some(bubble_b));
+    if !h.core.indicators().instances_for_bubble(bubble_a).is_empty() {
+        return Err(err("indicator-scope", "bubble_a still shows the instance after reassign_bubble"));
     }
-    {
-        let im = h.core.indicators();
-        if im.current_render_bubble_id.load(Ordering::Relaxed) != 0 {
-            return Err(err("indicator-atomic", "after store(0): still nonzero"));
-        }
+    if h.core.indicators().instances_for_bubble(bubble_b).len() != 1 {
+        return Err(err("indicator-scope", "bubble_b should have exactly 1 instance after reassign_bubble"));
     }
     Ok(())
 }
@@ -413,7 +409,7 @@ pub fn lock_discipline_concurrent_reads() -> HarnessResult<()> {
             while !stop_r.load(Ordering::Relaxed) {
                 let _snap = core_r.sessions_snapshot();
                 let _bubbles_n = core_r.bubbles().bubble_ids().count();
-                let _ind_w = core_r.indicators().current_render_bubble_id.load(std::sync::atomic::Ordering::Relaxed);
+                let _ind_w = core_r.indicators().count();
                 read_count_r.fetch_add(1, Ordering::Relaxed);
             }
         }));

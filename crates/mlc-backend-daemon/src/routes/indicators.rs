@@ -137,7 +137,7 @@ fn json_to_indicator_value(v: &serde_json::Value) -> Option<IndicatorValue> {
 async fn list_indicators(State(s): State<AppState>) -> impl IntoResponse {
     let guard = s.core.indicators();
     let indicators: Vec<IndicatorSummaryOut> = guard
-        .get_all_instances()
+        .all_instances()
         .into_iter()
         .map(|inst| IndicatorSummaryOut {
             id: inst.id,
@@ -155,7 +155,7 @@ async fn list_indicators(State(s): State<AppState>) -> impl IntoResponse {
 async fn catalog_indicators(State(s): State<AppState>) -> impl IntoResponse {
     let guard = s.core.indicators();
     let definitions: Vec<IndicatorDefOut> = guard
-        .get_definitions()
+        .definitions()
         .into_iter()
         .map(|def| IndicatorDefOut {
             type_id: def.type_id.clone(),
@@ -174,7 +174,8 @@ async fn create_indicator(
     Json(body): Json<CreateIndicatorIn>,
 ) -> impl IntoResponse {
     let mut guard = s.core.indicators_mut();
-    let id = match guard.create_instance(&body.type_id) {
+    let bid = body.bubble_id.map(mlc_core::ids::BubbleId);
+    let id = match guard.add(bid, &body.type_id) {
         Some(id) => id,
         None => {
             return (
@@ -188,19 +189,14 @@ async fn create_indicator(
     // Apply params from body.
     for (k, v) in &body.params {
         if let Some(iv) = json_to_indicator_value(v) {
-            if let Some(inst) = guard.get_instance_mut(id) {
+            if let Some(inst) = guard.instance_mut(id) {
                 inst.params.insert(k.clone(), iv);
             }
         }
     }
 
-    // Assign to bubble if requested.
-    if let Some(bid) = body.bubble_id {
-        guard.assign_bubble(id, Some(bid));
-    }
-
     let (type_id, name) = guard
-        .get_instance(id)
+        .instance(id)
         .map(|inst| (inst.type_id.clone(), inst.name.clone()))
         .unwrap_or_default();
 
@@ -214,7 +210,7 @@ async fn patch_indicator(
 ) -> impl IntoResponse {
     let mut guard = s.core.indicators_mut();
     {
-        let inst = match guard.get_instance_mut(id) {
+        let inst = match guard.instance_mut(id) {
             Some(i) => i,
             None => return StatusCode::NOT_FOUND.into_response(),
         };
@@ -234,7 +230,7 @@ async fn patch_indicator(
         }
     }
     let out = guard
-        .get_instance(id)
+        .instance(id)
         .map(|inst| IndicatorUpdatedOut {
             id: inst.id,
             type_id: inst.type_id.clone(),
@@ -254,7 +250,7 @@ async fn delete_indicator(
     Path(id): Path<u64>,
     State(s): State<AppState>,
 ) -> impl IntoResponse {
-    let removed = s.core.indicators_mut().remove_instance(id);
+    let removed = s.core.indicators_mut().remove(id);
     if removed.is_some() {
         StatusCode::NO_CONTENT
     } else {

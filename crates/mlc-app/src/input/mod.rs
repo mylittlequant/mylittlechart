@@ -551,12 +551,6 @@ impl ChartApp {
 
         // Pre-extract active-window data needed by the indicator closures.
         // Done before the mutable borrow of panel_grid inside handle_right_click.
-        // S2.7.1e: read symbol via branch_meta (B6 — closure capture).
-        let active_cid_rc = self.panel_app.panel_grid.active_container_id();
-        let symbol: String = active_cid_rc
-            .and_then(|cid| self.symbol_for_chart(cid))
-            .map(String::from)
-            .unwrap_or_default();
         let (viewport, price_scale, sub_pane_ranges) = {
             if let Some(window) = self.panel_app.panel_grid.active_container() {
                 let ranges: Vec<(u64, f64, f64)> = window.sub_pane_y_state
@@ -577,9 +571,11 @@ impl ChartApp {
             }
         };
 
+        let overlay_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
         let indicator_overlay_hit = |lx: f64, ly: f64, chart_height: f64| {
+            let bid = overlay_bid?;
             self.core.indicators().hit_test_overlay(
-                lx, ly, &symbol, &viewport, &price_scale, chart_height, 8.0,
+                bid, lx, ly, &viewport, &price_scale, chart_height, 8.0,
             )
         };
         let indicator_subpane_hit = |instance_id: u64, plx: f64, ply: f64, pane_height: f64| {
@@ -1169,8 +1165,8 @@ impl ChartApp {
                 .and_then(|h| h.strip_prefix("watchlist_sep_").and_then(|s| s.parse::<usize>().ok()))
                 .map(|one_based| one_based.saturating_sub(1));
             // Skip separator drag when columns are in equal-width (aligned) mode.
-            let align_cols = self.core.watchlist()
-                .active_list()
+            let align_cols = self.core.watchlists()
+                .active()
                 .map(|l| l.column_config.align_columns)
                 .unwrap_or(true);
             if let Some(sep_idx) = on_sep.filter(|_| !align_cols) {
@@ -1183,8 +1179,8 @@ impl ChartApp {
 
                 // Determine current separator offset from area_left.
                 let sep_offset_at_start = {
-                    let wl_r = self.core.watchlist();
-                    let col_cfg = wl_r.active_list().map(|l| &l.column_config);
+                    let wl_r = self.core.watchlists();
+                    let col_cfg = wl_r.active().map(|l| &l.column_config);
                     let n_seps = col_cfg.map(|c| {
                         let mut n = 0usize; // symbol always present
                         if c.show_exchange     { n += 1; }
@@ -2156,7 +2152,7 @@ impl ChartApp {
                                             .and_then(|s| s.strip_suffix("_slider"))
                                             .and_then(|s| s.parse::<usize>().ok())
                                         {
-                                            self.core.indicators().get_instance(ind_id)
+                                            self.core.indicators().instance(ind_id)
                                                 .and_then(|inst| {
                                                     let tf_config = inst.timeframe_visibility.clone()
                                                         .unwrap_or_else(mlc_core::drawing::TimeframeVisibilityConfig::all);
@@ -2466,11 +2462,10 @@ impl ChartApp {
                 .map(|w| mlc_core::state::chart_container::collect_inner_instance_ids(&w.inner_docking))
                 .unwrap_or_default();
             let inst_dump: Vec<String> = active_cid
-                .map(|cid| {
-                    let bid = self.panel_app.panel_grid.containers()
-                        .get(&cid).map(|w| w.current_bubble_id.0).unwrap_or(0);
+                .and_then(|cid| self.panel_app.panel_grid.containers().get(&cid).map(|w| w.current_bubble_id))
+                .map(|bid| {
                     self.core.indicators()
-                                .get_instances_for_symbol_in_bubble("", bid)
+                        .instances_for_bubble(bid)
                         .into_iter()
                         .map(|i| format!("inst(id={},bub={:?},pane={},vis={})", i.id, i.bubble_id, i.pane, i.visible))
                         .collect()
@@ -2772,8 +2767,8 @@ impl ChartApp {
         // Watchlist column-separator drag: update absolute separator offset (clip curtain model).
         if let Some((sep_idx, start_x, sep_offset_at_start)) = self.sidebar_state.watchlist_sep_drag {
             // Skip drag when columns are aligned (equal-width mode).
-            let align = self.core.watchlist()
-                .active_list()
+            let align = self.core.watchlists()
+                .active()
                 .map(|l| l.column_config.align_columns)
                 .unwrap_or(true);
             if align {
@@ -2788,8 +2783,8 @@ impl ChartApp {
 
             // Count separators (= visible data columns).
             let n_seps = {
-                let wl_r = self.core.watchlist();
-                let cfg = wl_r.active_list().map(|l| &l.column_config);
+                let wl_r = self.core.watchlists();
+                let cfg = wl_r.active().map(|l| &l.column_config);
                 let mut n = 0usize;
                 if let Some(c) = cfg {
                     if c.show_exchange     { n += 1; }
@@ -2810,8 +2805,8 @@ impl ChartApp {
 
                 // Clamp against left neighbor (or area edge).
                 let prev_limit = if sep_idx == 0 { MIN_GAP } else {
-                    self.core.watchlist()
-                        .active_list()
+                    self.core.watchlists()
+                        .active()
                         .and_then(|l| l.column_config.separator_offsets.as_ref())
                         .and_then(|o| o.get(sep_idx - 1).copied())
                         .unwrap_or(MIN_GAP) + MIN_GAP
@@ -2819,7 +2814,7 @@ impl ChartApp {
                 let clamped = new_offset.max(prev_limit).min(usable_w - MIN_GAP);
 
                 // Initialise separator_offsets from defaults when not yet set or wrong length.
-                if let Some(list) = self.core.watchlist_mut().active_list_mut() {
+                if let Some(list) = self.core.watchlists_mut().active_mut() {
                     let needs_init = list.column_config.separator_offsets
                         .as_ref()
                         .map(|o| o.len() != n_seps)
@@ -3634,7 +3629,7 @@ impl ChartApp {
         // End watchlist column-separator drag: push the final offsets once to sync
         // app_state for persistence, then clear the drag handle.
         if self.sidebar_state.watchlist_sep_drag.is_some() {
-            if let Some(list) = self.core.watchlist().active_list() {
+            if let Some(list) = self.core.watchlists().active() {
                 if let Some(offsets) = &list.column_config.separator_offsets {
                     self.watchlist_actions.push(crate::WatchlistAction::SetSeparatorOffsets { offsets: offsets.clone() });
                 }
@@ -3654,13 +3649,13 @@ impl ChartApp {
             let to_idx = self.watchlist_modal.drop_index.take().unwrap_or(from_idx);
             if from_idx != to_idx {
                 // Clamp to the ungrouped length to avoid panics.
-                let list_len = self.core.watchlist()
-                    .active_list()
+                let list_len = self.core.watchlists()
+                    .active()
                     .map(|l| l.ungrouped.len())
                     .unwrap_or(0);
                 let clamped_to = to_idx.min(list_len.saturating_sub(1));
                 if from_idx != clamped_to {
-                    self.core.watchlist_mut().reorder_symbol(from_idx, clamped_to);
+                    self.core.watchlists_mut().reorder_symbol(from_idx, clamped_to);
                     self.watchlist_actions.push(crate::WatchlistAction::Reorder { from_idx, to_idx: clamped_to });
                     self.watchlist_actions.push(crate::WatchlistAction::ClearOrderSnapshot);
                     self.watchlist_actions.push(crate::WatchlistAction::ResetSort);
@@ -3670,7 +3665,7 @@ impl ChartApp {
                     eprintln!("[WatchlistModal] reorder: {} -> {}", from_idx, clamped_to);
                     // Manual reorder invalidates any saved sort snapshot — the new
                     // order becomes the "original" and sort mode resets to unsorted.
-                    if let Some(list) = self.core.watchlist_mut().active_list_mut() {
+                    if let Some(list) = self.core.watchlists_mut().active_mut() {
                         list.order_snapshot = None;
                     }
                 }
@@ -3684,14 +3679,14 @@ impl ChartApp {
             self.sidebar_state.watchlist_drag_y = 0.0;
 
             // Clamp drop_idx to the ungrouped length to avoid panics.
-            let list_len = self.core.watchlist()
-                .active_list()
+            let list_len = self.core.watchlists()
+                .active()
                 .map(|l| l.ungrouped.len())
                 .unwrap_or(0);
             let clamped_drop = drop_idx.min(list_len.saturating_sub(1));
 
             if drag_idx != clamped_drop {
-                self.core.watchlist_mut().reorder_symbol(drag_idx, clamped_drop);
+                self.core.watchlists_mut().reorder_symbol(drag_idx, clamped_drop);
                 self.watchlist_actions.push(crate::WatchlistAction::Reorder { from_idx: drag_idx, to_idx: clamped_drop });
                 self.watchlist_actions.push(crate::WatchlistAction::ClearOrderSnapshot);
                 self.watchlist_actions.push(crate::WatchlistAction::ResetSort);
@@ -3701,7 +3696,7 @@ impl ChartApp {
                 eprintln!("[Sidebar] Watchlist reorder: {} -> {}", drag_idx, clamped_drop);
                 // Manual reorder invalidates any saved sort snapshot — the new
                 // order becomes the "original" and sort mode resets to unsorted.
-                if let Some(list) = self.core.watchlist_mut().active_list_mut() {
+                if let Some(list) = self.core.watchlists_mut().active_mut() {
                     list.order_snapshot = None;
                 }
             }
@@ -6353,11 +6348,10 @@ impl ChartApp {
                     Some(w) => w.id,
                     None => return,
                 };
-                if self.core.indicators_mut().create_instance_with_id(*instance_id, type_id) {
-                    let bid = self.panel_app.panel_grid.containers()
-                        .get(&chart_id_val)
-                        .map(|w| w.current_bubble_id.0);
-                    self.core.indicators_mut().assign_bubble(*instance_id, bid);
+                let bid = self.panel_app.panel_grid.containers()
+                    .get(&chart_id_val)
+                    .map(|w| w.current_bubble_id);
+                if self.core.indicators_mut().restore_with_id(*instance_id, bid, type_id) {
                     let bars_snapshot = self.bars_for_chart(chart_id_val);
                     self.core.indicators_mut().calculate(*instance_id, &bars_snapshot);
                     // Re-add to auto_bubble.pre_tag_indicator_ids for Object Tree visibility.
@@ -6378,7 +6372,7 @@ impl ChartApp {
                 }
             }
             Command::RemoveIndicator { instance_id, .. } => {
-                if self.core.indicators_mut().remove_instance(*instance_id).is_some() {
+                if self.core.indicators_mut().remove(*instance_id).is_some() {
                     // Remove stale entries from auto_bubble.pre_tag_indicator_ids.
                     let removed_id = *instance_id;
                     let auto_bids: Vec<mlc_core::ids::BubbleId> = self.panel_app.panel_grid
@@ -6487,29 +6481,16 @@ impl ChartApp {
         // active_container() again so the borrow checker stays happy.
         // S2.7.1e: read symbol via branch_meta (B1).
         let visible_set: std::collections::HashSet<u64> = {
-            let active_chart_id = self.panel_app.panel_grid.active_container_id();
-            let symbol: String = active_chart_id
-                .and_then(|cid| self.symbol_for_chart(cid))
-                .map(String::from)
-                .unwrap_or_default();
-            let active_bid = active_chart_id
-                .and_then(|cid| self.panel_app.panel_grid.containers()
-                    .get(&cid).map(|w| w.current_bubble_id.0));
-            if let Some(bid) = active_bid {
-                self.core.indicators()
-                                .get_instances_for_symbol_in_bubble(&symbol, bid)
-                    .into_iter()
-                    .filter(|i| i.visible && i.pane > 0)
-                    .map(|i| i.id)
-                    .collect()
-            } else {
-                self.core.indicators()
-                                .get_instances_for_symbol(&symbol)
-                    .into_iter()
-                    .filter(|i| i.visible && i.pane > 0)
-                    .map(|i| i.id)
-                    .collect()
-            }
+            let active_bid = self.panel_app.panel_grid.active_container()
+                .map(|w| w.current_bubble_id);
+            let indicators_guard = self.core.indicators();
+            active_bid
+                .map(|bid| indicators_guard.instances_for_bubble(bid))
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|i| i.visible && i.pane > 0)
+                .map(|i| i.id)
+                .collect()
         };
 
         // Both order and proportions from the container's inner_docking tree,
@@ -6591,30 +6572,12 @@ impl ChartApp {
 
         // Build visible set from indicator_manager (single source of truth).
         // S2.7.1e: read symbol via branch_meta (B1).
-        let visible_set: std::collections::HashSet<u64> = {
-            let chart_id = self.panel_app.panel_grid.container_id_for_leaf(leaf_id);
-            let symbol: String = chart_id
-                .and_then(|cid| self.symbol_for_chart(cid))
-                .map(String::from)
-                .unwrap_or_default();
-            if let Some(cid) = chart_id {
-                let bid = window.current_bubble_id.0;
-                let _ = cid;
-                self.core.indicators()
-                                .get_instances_for_symbol_in_bubble(&symbol, bid)
-                    .into_iter()
-                    .filter(|i| i.visible && i.pane > 0)
-                    .map(|i| i.id)
-                    .collect()
-            } else {
-                self.core.indicators()
-                                .get_instances_for_symbol(&symbol)
-                    .into_iter()
-                    .filter(|i| i.visible && i.pane > 0)
-                    .map(|i| i.id)
-                    .collect()
-            }
-        };
+        let visible_set: std::collections::HashSet<u64> = self.core.indicators()
+            .instances_for_bubble(window.current_bubble_id)
+            .into_iter()
+            .filter(|i| i.visible && i.pane > 0)
+            .map(|i| i.id)
+            .collect();
 
         use mlc_core::state::chart_container::{collect_inner_instance_ids, collect_inner_proportions};
         let all_ids = collect_inner_instance_ids(&window.inner_docking);
@@ -6793,16 +6756,13 @@ impl ChartApp {
         match cmd {
             Command::ChangeSymbol { new_symbol, .. } => {
                 // Recalculate indicators for new bars
-                let (active_cid, bars) = self.panel_app.panel_grid.docking().active_leaf()
-                    .and_then(|leaf| {
-                        let cid = self.panel_app.panel_grid.container_id_for_leaf(leaf)?;
-                        let bars = self.bubble_for_chart(cid)
-                            .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()))
-                            .unwrap_or_default();
-                        Some((cid.0, bars))
-                    })
-                    .unwrap_or((0u64, Vec::new()));
-                self.core.indicators_mut().calculate_all_for_window(active_cid, &bars);
+                let recalc_bid_bars = self.panel_app.panel_grid.docking().active_leaf()
+                    .and_then(|leaf| self.panel_app.panel_grid.container_id_for_leaf(leaf))
+                    .and_then(|cid| self.bubble_for_chart(cid))
+                    .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()).map(|bars| (bid, bars)));
+                if let Some((bid, bars)) = recalc_bid_bars {
+                    self.core.indicators_mut().recalc_bubble(bid, &bars);
+                }
                 self.sync_sub_panes_from_manager();
                 // Propagate to sync group peers
                 // S2.7.1e: read exchange/account_type via branch_meta (B1).
@@ -6822,16 +6782,13 @@ impl ChartApp {
             }
             Command::ChangeTimeframe { new_timeframe, .. } => {
                 // Recalculate indicators for new bars
-                let (active_cid, bars) = self.panel_app.panel_grid.docking().active_leaf()
-                    .and_then(|leaf| {
-                        let cid = self.panel_app.panel_grid.container_id_for_leaf(leaf)?;
-                        let bars = self.bubble_for_chart(cid)
-                            .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()))
-                            .unwrap_or_default();
-                        Some((cid.0, bars))
-                    })
-                    .unwrap_or((0u64, Vec::new()));
-                self.core.indicators_mut().calculate_all_for_window(active_cid, &bars);
+                let recalc_bid_bars = self.panel_app.panel_grid.docking().active_leaf()
+                    .and_then(|leaf| self.panel_app.panel_grid.container_id_for_leaf(leaf))
+                    .and_then(|cid| self.bubble_for_chart(cid))
+                    .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()).map(|bars| (bid, bars)));
+                if let Some((bid, bars)) = recalc_bid_bars {
+                    self.core.indicators_mut().recalc_bubble(bid, &bars);
+                }
                 self.sync_sub_panes_from_manager();
                 // Propagate to sync group peers
                 if let Some(leaf) = self.panel_app.panel_grid.docking().active_leaf() {
@@ -7279,7 +7236,7 @@ impl ChartApp {
         // Snapshot indicators (sorted by display order so restore preserves sequence).
         {
             let im = self.core.indicators();
-            let mut sorted_instances: Vec<_> = im.instances_iter().collect();
+            let mut sorted_instances: Vec<_> = im.all_instances();
             sorted_instances.sort_by_key(|inst| inst.order);
             for inst in sorted_instances {
                 let outputs = inst.outputs.iter().map(|(k, v)| {

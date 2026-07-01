@@ -14,6 +14,7 @@ mlc-layout = { path = "../mlc-layout", package = "mylittlechart-layout" }
 mlc-indicators = { path = "../mlc-indicators", package = "mylittlechart-indicators" }
 uzor = "=1.4.15"
 mlc-sidebar-content = { path = "../mlc-sidebar-content", package = "mylittlechart-sidebar-content" }
+mlc-watchlist = { path = "../mlc-watchlist", package = "mylittlechart-watchlist" }
 mlc-panels = { path = "../mlc-panels", package = "mylittlechart-panels" }
 mlc-alert-delivery = { path = "../mlc-alert-delivery", package = "mylittlechart-alert-delivery" }
 mlc-crypto = { path = "../mlc-crypto", package = "mylittlechart-crypto" }

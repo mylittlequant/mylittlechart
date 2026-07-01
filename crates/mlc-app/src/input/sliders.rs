@@ -238,7 +238,7 @@ impl ChartApp {
 
         let new_range = {
             let mut im = self.core.indicators_mut();
-            let Some(inst) = im.get_instance_mut(ind_id) else { return; };
+            let Some(inst) = im.instance_mut(ind_id) else { return; };
 
             let mut tf_config = inst.timeframe_visibility.clone()
                 .unwrap_or_else(TimeframeVisibilityConfig::all);
@@ -301,7 +301,7 @@ impl ChartApp {
         let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id else { return; };
         {
             let mut im = self.core.indicators_mut();
-            let Some(inst) = im.get_instance_mut(ind_id) else { return; };
+            let Some(inst) = im.instance_mut(ind_id) else { return; };
             let mut tf = inst.timeframe_visibility.clone()
                 .unwrap_or_else(TimeframeVisibilityConfig::all);
             match tf_idx {
@@ -325,7 +325,7 @@ impl ChartApp {
         let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id else { return; };
         {
             let mut im = self.core.indicators_mut();
-            let Some(inst) = im.get_instance_mut(ind_id) else { return; };
+            let Some(inst) = im.instance_mut(ind_id) else { return; };
             let mut tf = inst.timeframe_visibility.clone()
                 .unwrap_or_else(TimeframeVisibilityConfig::all);
             match tf_idx {

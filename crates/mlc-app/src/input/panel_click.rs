@@ -144,7 +144,7 @@ impl ChartApp {
                 (self.sidebar_state.watchlist_sort_mode + 1) % 3;
             let mode = self.sidebar_state.watchlist_sort_mode;
             eprintln!("[Sidebar] watchlist_sort_mode -> {}", mode);
-            if let Some(list) = self.core.watchlist_mut().active_list_mut() {
+            if let Some(list) = self.core.watchlists_mut().active_mut() {
                 match mode {
                     0 => {
                         // Reset to original order from snapshot.
@@ -254,8 +254,8 @@ impl ChartApp {
                             let exchange = item.exchange.clone();
                             let account_type = item.account_type.clone();
                             let color_set: Option<String> = {
-                                let mut wl = self.core.watchlist_mut();
-                                if let Some(list) = wl.active_list_mut() {
+                                let mut wl = self.core.watchlists_mut();
+                                if let Some(list) = wl.active_mut() {
                                     let color = colors.get(color_idx).copied().unwrap_or_default();
                                     list.set_color_flag(&symbol, &exchange, &account_type, color);
                                     Some(color.to_string())
@@ -289,8 +289,8 @@ impl ChartApp {
                     let account_type = item.account_type.clone();
                     // Remove symbol from snapshot (if active) before removing from list.
                     {
-                        let mut wl = self.core.watchlist_mut();
-                        if let Some(list) = wl.active_list_mut() {
+                        let mut wl = self.core.watchlists_mut();
+                        if let Some(list) = wl.active_mut() {
                             if let Some(ref mut snap) = list.order_snapshot {
                                 snap.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == account_type));
                             }
@@ -2745,7 +2745,7 @@ impl ChartApp {
         if widget_id.contains("_ind_delete_") || widget_id.starts_with("ind_delete_") {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 // Try live indicator_manager first (Active + WindowOtherKey).
-                if self.core.indicators().get_instance(id).is_some() {
+                if self.core.indicators().instance(id).is_some() {
                     self.delete_indicator_instance(id);
                     return;
                 }
@@ -2955,7 +2955,7 @@ impl ChartApp {
                     .and_then(|_w| None::<&mlc_core::Bar>)
                     .map(|b| b.close)
                     .unwrap_or(0.0);
-                let source_name = self.core.indicators().get_instance(id)
+                let source_name = self.core.indicators().instance(id)
                     .map(|inst| inst.name.clone())
                     .unwrap_or_else(|| format!("Indicator {}", id));
                 // S2.7.1e: read symbol via branch_meta (B1).
@@ -3662,8 +3662,8 @@ impl ChartApp {
                         use mlc_layout::ui::modal_settings::WatchlistGroupNameMode;
                         match self.wl_group_name_input.mode.clone() {
                             WatchlistGroupNameMode::CreateNew => {
-                                let new_id = self.core.watchlist_mut().create_list(name.clone());
-                                self.core.watchlist_mut().active_list_id = new_id;
+                                let new_id = self.core.watchlists_mut().create_list(name.clone());
+                                self.core.watchlists_mut().set_active(new_id);
                                 self.watchlist_actions.push(crate::WatchlistAction::CreateList { name: name.clone() });
                                 self.watchlists_dirty = true;
                                 self.persist_watchlists();
@@ -3671,8 +3671,8 @@ impl ChartApp {
                             }
                             WatchlistGroupNameMode::Rename(id) => {
                                 let found = {
-                                    let mut wl = self.core.watchlist_mut();
-                                    if let Some(list) = wl.lists.iter_mut().find(|l| l.id == id) {
+                                    let mut wl = self.core.watchlists_mut();
+                                    if let Some(list) = wl.find_mut(id) {
                                         list.name = name.clone();
                                         true
                                     } else {
@@ -3943,11 +3943,12 @@ impl ChartApp {
                         _ => { eprintln!("[ChartApp] user_settings unknown recalc mode: {}", mode_str); return; }
                     };
                     self.panel_app.user_settings_state.recalc_mode_label = label.to_string();
-                    self.core.indicators_mut().recalc_mode = match mode_str {
+                    let new_mode = match mode_str {
                         "PerTick" => RecalcMode::PerTick,
                         "PerBar"  => RecalcMode::PerBar,
                         _         => RecalcMode::PerFrame,
                     };
+                    self.core.indicators_mut().set_recalc_mode(new_mode);
                     self.recalc_mode_changed = Some(mode_str.to_string());
                     // Reset counters and clear stale dirty flags when mode changes.
                     self.recalc_count = 0;

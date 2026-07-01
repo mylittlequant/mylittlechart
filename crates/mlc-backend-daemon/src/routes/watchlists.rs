@@ -31,10 +31,10 @@ struct WatchlistsOut {
 }
 
 async fn list_watchlists(State(s): State<AppState>) -> impl IntoResponse {
-    let guard = s.core.watchlist();
-    let active_id = guard.active_list_id;
+    let guard = s.core.watchlists();
+    let active_id = guard.active_id();
     let watchlists: Vec<WatchlistEntry> = guard
-        .lists
+        .lists()
         .iter()
         .map(|wl| {
             let mut items: Vec<WatchlistItemEntry> = Vec::new();

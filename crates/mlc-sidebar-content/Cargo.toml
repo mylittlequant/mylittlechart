@@ -10,6 +10,7 @@ name = "mlc_sidebar_content"
 web-time = "1"
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 mlc-layout = { path = "../mlc-layout", package = "mylittlechart-layout" }
+mlc-watchlist = { path = "../mlc-watchlist", package = "mylittlechart-watchlist" }
 uzor = "=1.4.15"
 serde = { version = "1.0", features = ["derive"] }
 

@@ -133,7 +133,7 @@ impl ChartApp {
         }
 
         // Sync recalc_mode_label into user_settings_state so the modal can display it.
-        self.panel_app.user_settings_state.recalc_mode_label = match self.core.indicators().recalc_mode {
+        self.panel_app.user_settings_state.recalc_mode_label = match self.core.indicators().recalc_mode() {
             RecalcMode::PerTick  => "Per Tick".to_string(),
             RecalcMode::PerFrame => "Per Frame".to_string(),
             RecalcMode::PerBar   => "Per Bar".to_string(),
@@ -475,12 +475,11 @@ impl ChartApp {
                 // no separate "indicator_configs" list; the bubble's own
                 // instance set IS the indicator list.
                 let active_bubble_id = active_cid
-                    .and_then(|cid| self.bubble_for_chart(cid))
-                    .map(|b| b.0);
+                    .and_then(|cid| self.bubble_for_chart(cid));
                 let group_indicator_data: Vec<(u64, String, String, bool, bool)> = active_bubble_id
                     .map(|bid| {
-                        self.core.indicators().instances_iter()
-                            .filter(|i| i.bubble_id == Some(bid))
+                        self.core.indicators().instances_for_bubble(bid)
+                            .into_iter()
                             .map(|i| (i.id, i.name.clone(), i.type_id.clone(), i.visible, i.locked))
                             .collect()
                     })
@@ -539,9 +538,8 @@ impl ChartApp {
                 let pre_tag_ids: Vec<u64> = if show_home_overlay {
                     active_auto_bid
                         .map(|auto_bid| {
-                            let bid_raw = auto_bid.0;
-                            self.core.indicators().instances_iter()
-                                .filter(|i| i.bubble_id == Some(bid_raw))
+                            self.core.indicators().instances_for_bubble(auto_bid)
+                                .into_iter()
                                 .map(|i| i.id)
                                 .collect()
                         })
@@ -569,8 +567,7 @@ impl ChartApp {
                     }
 
                     for &iid in &pre_tag_ids {
-                        if let Some(inst) = self.core.indicators().instances_iter()
-                            .find(|i| i.id == iid)
+                        if let Some(inst) = self.core.indicators().instance(iid)
                         {
                             let item = mlc_sidebar_content::types::ObjectTreeItem::new(
                                 inst.id,
@@ -651,10 +648,10 @@ impl ChartApp {
                 // Indicators bound to this chart's CURRENT bubble — always
                 // Active.  Indicators follow the bubble, not the window.
                 let active_bubble_id = active_cid
-                    .and_then(|cid| self.bubble_for_chart(cid))
-                    .map(|b| b.0);
-                let total_insts = self.core.indicators().instances_iter().count();
-                let inst_dump: Vec<(u64, Option<u64>, String)> = self.core.indicators().instances_iter()
+                    .and_then(|cid| self.bubble_for_chart(cid));
+                let total_insts = self.core.indicators().count();
+                let inst_dump: Vec<(u64, Option<u64>, String)> = self.core.indicators().all_instances()
+                    .into_iter()
                     .map(|i| (i.id, i.bubble_id, i.type_id.clone()))
                     .collect();
                 crate::sglog!(
@@ -662,8 +659,8 @@ impl ChartApp {
                     active_cid, active_bubble_id, total_insts, inst_dump
                 );
                 if let Some(bid) = active_bubble_id {
-                    let insts: Vec<_> = self.core.indicators().instances_iter()
-                        .filter(|i| i.bubble_id == Some(bid))
+                    let insts: Vec<_> = self.core.indicators().instances_for_bubble(bid)
+                        .into_iter()
                         .map(|i| (i.id, i.name.clone(), i.type_id.clone(), i.visible, i.locked))
                         .collect();
                     for (id, name, type_id, visible, locked) in &insts {
@@ -718,15 +715,13 @@ impl ChartApp {
             // Only show signals for indicator instances that belong to the
             // active chart's bubble (indicator ownership = bubble).
             let active_bubble_id_for_signals = active_cid
-                .and_then(|cid| self.bubble_for_chart(cid))
-                .map(|b| b.0);
-            let signal_groups: Vec<IndicatorSignalGroup> = self.core.indicators().instances_iter()
-                .filter(|inst| {
-                    !inst.signals.is_empty()
-                        && active_bubble_id_for_signals
-                            .map(|bid| inst.bubble_id == Some(bid))
-                            .unwrap_or(false)
-                })
+                .and_then(|cid| self.bubble_for_chart(cid));
+            let indicators_guard_signals = self.core.indicators();
+            let signal_groups: Vec<IndicatorSignalGroup> = active_bubble_id_for_signals
+                .map(|bid| indicators_guard_signals.instances_for_bubble(bid))
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|inst| !inst.signals.is_empty())
                 .map(|inst| {
                     let mut rows: Vec<IndicatorSignalRow> = inst
                         .signals
@@ -765,8 +760,8 @@ impl ChartApp {
                 self.sidebar_state.watchlist_items.clear();
                 let watchlist_entries: Vec<(String, String, String)> = self
                     .core
-                    .watchlist()
-                    .active_list()
+                    .watchlists()
+                    .active()
                     .map(|list| {
                         list.all_symbols()
                             .iter()
@@ -992,7 +987,7 @@ impl ChartApp {
         {
             let query = self.modal_state.search_query.clone();
             self.modal_state.symbol_search_results =
-                Self::build_demo_symbol_results(&query, &self.core.watchlist(), &self.core.exchange_symbols_read());
+                Self::build_demo_symbol_results(&query, self.core.watchlists().as_manager(), &self.core.exchange_symbols_read());
         }
 
         // --- Split-pane layout and viewport sync ---
@@ -1118,20 +1113,14 @@ impl ChartApp {
 
             // Sync indicator overlay visibility per leaf.
             for &(leaf_id, _) in &leaf_rects {
-                let symbol = self.panel_app.panel_grid.container_id_for_leaf(leaf_id)
-                    .and_then(|cid| self.symbol_for_chart(cid))
-                    .map(String::from)
-                    .unwrap_or_default();
                 let has_compare = self.panel_app.panel_grid.container_for_leaf(leaf_id)
                     .map(|w| !w.compare_overlay.series.is_empty())
                     .unwrap_or(false);
-                let has_indicators = if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
-                    let bid = self.panel_app.panel_grid.containers()
-                        .get(&chart_id).map(|w| w.current_bubble_id.0).unwrap_or(0);
-                    !self.core.indicators().get_instances_for_symbol_in_bubble(&symbol, bid).is_empty()
-                } else {
-                    !self.core.indicators().get_instances_for_symbol(&symbol).is_empty()
-                };
+                let bid = self.panel_app.panel_grid.container_for_leaf(leaf_id)
+                    .map(|w| w.current_bubble_id);
+                let has_indicators = bid
+                    .map(|b| !self.core.indicators().instances_for_bubble(b).is_empty())
+                    .unwrap_or(false);
                 let state = self.panel_app.indicator_overlay_state_for_leaf_mut(leaf_id);
                 state.visible = has_indicators || has_compare;
             }
@@ -1142,21 +1131,12 @@ impl ChartApp {
             // `group.primitives` directly, no per-frame clone needed.
 
             // Single pane: sync indicator overlay visibility.
-            let active_cid_single = self.panel_app.panel_grid.active_container_id();
-            let symbol = active_cid_single
-                .and_then(|cid| self.symbol_for_chart(cid))
-                .map(String::from)
-                .unwrap_or_default();
             let has_compare = self.panel_app.panel_grid.active_container()
                 .map(|w| !w.compare_overlay.series.is_empty())
                 .unwrap_or(false);
-            let has_indicators = if let Some(chart_id) = self.panel_app.panel_grid.active_container_id() {
-                let bid = self.panel_app.panel_grid.containers()
-                    .get(&chart_id).map(|w| w.current_bubble_id.0).unwrap_or(0);
-                !self.core.indicators().get_instances_for_symbol_in_bubble(&symbol, bid).is_empty()
-            } else {
-                !self.core.indicators().get_instances_for_symbol(&symbol).is_empty()
-            };
+            let has_indicators = self.panel_app.panel_grid.active_container()
+                .map(|w| !self.core.indicators().instances_for_bubble(w.current_bubble_id).is_empty())
+                .unwrap_or(false);
             self.panel_app.indicator_overlay_state.visible = has_indicators || has_compare;
         }
 

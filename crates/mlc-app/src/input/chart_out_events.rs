@@ -668,7 +668,7 @@ impl ChartApp {
             ChartOutEvent::OpenSymbolSearch => {
                 self.modal_state.open(OpenModal::SymbolSearch);
                 self.modal_state.symbol_search_results =
-                    crate::ChartApp::build_demo_symbol_results("", &self.core.watchlist(), &self.core.exchange_symbols_read());
+                    crate::ChartApp::build_demo_symbol_results("", self.core.watchlists().as_manager(), &self.core.exchange_symbols_read());
                 {
                     let sym_id = uzor::WidgetId::from(crate::text_input::SYMBOL_SEARCH);
                     self.input_coordinator.borrow_mut().text_fields_mut().clear(&sym_id);
@@ -773,7 +773,9 @@ impl ChartApp {
                 let bars: Vec<mlc_core::Bar> = self.bubble_for_chart(target_cid)
                     .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()))
                     .unwrap_or_default();
-                self.core.indicators_mut().calculate_all_for_window(chart_id, &bars);
+                if let Some(bid) = target_bid {
+                    self.core.indicators_mut().recalc_bubble(bid, &bars);
+                }
                 self.sync_sub_panes_from_manager();
                 self.sidebar_data_dirty = true;
                 self.autosave_snapshot();
@@ -782,7 +784,7 @@ impl ChartApp {
             ChartOutEvent::OpenCompareSearch => {
                 self.modal_state.open(OpenModal::CompareSearch);
                 self.modal_state.symbol_search_results =
-                    crate::ChartApp::build_demo_symbol_results("", &self.core.watchlist(), &self.core.exchange_symbols_read());
+                    crate::ChartApp::build_demo_symbol_results("", self.core.watchlists().as_manager(), &self.core.exchange_symbols_read());
                 {
                     let cmp_id = uzor::WidgetId::from(crate::text_input::COMPARE_SEARCH);
                     self.input_coordinator.borrow_mut().text_fields_mut().clear(&cmp_id);
@@ -2022,17 +2024,22 @@ impl ChartApp {
                         let group_indicator_ids: std::collections::HashSet<u64> =
                             self.core.bubbles().indicator_configs(gid).iter().map(|c| c.id).collect();
 
-                        let to_hide: Vec<u64> = self.core.indicators().instances_iter()
-                            .filter(|i| {
-                                i.bubble_id == auto_bid_raw
-                                    && pre_tag_ids.contains(&i.id)
-                                    && !group_indicator_ids.contains(&i.id)
-                            })
-                            .map(|i| i.id)
-                            .collect();
+                        let to_hide: Vec<u64> = {
+                            let indicators_guard = self.core.indicators();
+                            auto_bid_raw
+                                .map(|b| indicators_guard.instances_for_bubble(mlc_core::ids::BubbleId(b)))
+                                .unwrap_or_default()
+                                .into_iter()
+                                .filter(|i| {
+                                    pre_tag_ids.contains(&i.id)
+                                        && !group_indicator_ids.contains(&i.id)
+                                })
+                                .map(|i| i.id)
+                                .collect()
+                        };
 
                         for id in &to_hide {
-                            if let Some(inst) = self.core.indicators_mut().get_instance_mut(*id) {
+                            if let Some(inst) = self.core.indicators_mut().instance_mut(*id) {
                                 inst.visible = false;
                             }
                         }
@@ -2043,17 +2050,19 @@ impl ChartApp {
                     } else {
                         // ON  ->  OFF: unhide home (auto-bubble) indicators
                         // that were tucked away on tag join.
-                        let to_show: Vec<u64> = self.core.indicators().instances_iter()
-                            .filter(|i| {
-                                i.bubble_id == auto_bid_raw
-                                    && pre_tag_ids.contains(&i.id)
-                                    && !i.visible
-                            })
-                            .map(|i| i.id)
-                            .collect();
+                        let to_show: Vec<u64> = {
+                            let indicators_guard = self.core.indicators();
+                            auto_bid_raw
+                                .map(|b| indicators_guard.instances_for_bubble(mlc_core::ids::BubbleId(b)))
+                                .unwrap_or_default()
+                                .into_iter()
+                                .filter(|i| pre_tag_ids.contains(&i.id) && !i.visible)
+                                .map(|i| i.id)
+                                .collect()
+                        };
 
                         for id in &to_show {
-                            if let Some(inst) = self.core.indicators_mut().get_instance_mut(*id) {
+                            if let Some(inst) = self.core.indicators_mut().instance_mut(*id) {
                                 inst.visible = true;
                             }
                         }

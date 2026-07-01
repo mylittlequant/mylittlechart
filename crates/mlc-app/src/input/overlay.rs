@@ -679,7 +679,7 @@ impl ChartApp {
                             .and_then(|_w| None::<&mlc_core::Bar>)
                             .map(|b| b.close)
                             .unwrap_or(0.0);
-                        let label = self.core.indicators().get_instance(id)
+                        let label = self.core.indicators().instance(id)
                             .map(|inst| inst.name.clone())
                             .unwrap_or_else(|| format!("Indicator {}", id));
                         let symbol = self.panel_app.panel_grid.active_container_id()
@@ -744,7 +744,7 @@ impl ChartApp {
                             .and_then(|_w| None::<&mlc_core::Bar>)
                             .map(|b| b.close)
                             .unwrap_or(0.0);
-                        let label = self.core.indicators().get_instance(id)
+                        let label = self.core.indicators().instance(id)
                             .map(|inst| inst.name.clone())
                             .unwrap_or_else(|| format!("Indicator {}", id));
                         let symbol = self.panel_app.panel_grid.active_container_id()
@@ -781,7 +781,7 @@ impl ChartApp {
     /// of the same `type_id` across ALL group member windows are removed so that
     /// peer windows do not keep stale renders alive.
     pub(super) fn delete_indicator_instance(&mut self, id: u64) {
-        let type_id = match self.core.indicators().get_instance(id) {
+        let type_id = match self.core.indicators().instance(id) {
             Some(inst) => inst.type_id.clone(),
             None => return,
         };
@@ -831,12 +831,9 @@ impl ChartApp {
         // twice in `all_to_remove`.
         let peer_instances: Vec<u64> = active_bubble_id
             .map(|bid| {
-                self.core.indicators().instances_iter()
-                    .filter(|inst| {
-                        inst.type_id == type_id
-                            && inst.id != id
-                            && inst.bubble_id == Some(bid)
-                    })
+                self.core.indicators().instances_for_bubble(mlc_core::ids::BubbleId(bid))
+                    .into_iter()
+                    .filter(|inst| inst.type_id == type_id && inst.id != id)
                     .map(|inst| inst.id)
                     .collect()
             })
@@ -847,7 +844,7 @@ impl ChartApp {
         all_to_remove.extend(peer_instances);
 
         for inst_id in &all_to_remove {
-            self.core.indicators_mut().remove_instance(*inst_id);
+            self.core.indicators_mut().remove(*inst_id);
             self.core.alerts_mut().clear_for_indicator(*inst_id);
         }
 

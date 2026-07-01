@@ -735,17 +735,18 @@ impl ChartApp {
                     // instances reuse ids from the previous preset.
                     self.indicator_heal_attempted.clear();
                     for ind_snap in &preset.indicators {
-                        if self.core.indicators_mut().create_instance_with_id(
+                        let bid = ind_snap.bubble_id.map(mlc_core::ids::BubbleId);
+                        // Bind to the persisted bubble_id via `restore_with_id` —
+                        // direct field assignment would leak the instance into the
+                        // wrong by_bubble_id bucket.  Old preset files used
+                        // `window_id` for the same slot; the snapshot type
+                        // keeps a serde alias so they still load.
+                        if self.core.indicators_mut().restore_with_id(
                             ind_snap.id,
+                            bid,
                             &ind_snap.type_id,
                         ) {
-                            // Bind to the persisted bubble_id via the index — direct
-                            // field assignment would leak the instance into the
-                            // wrong by_bubble_id bucket.  Old preset files used
-                            // `window_id` for the same slot; the snapshot type
-                            // keeps a serde alias so they still load.
-                            self.core.indicators_mut().assign_bubble(ind_snap.id, ind_snap.bubble_id);
-                            if let Some(inst) = self.core.indicators_mut().get_instance_mut(ind_snap.id) {
+                            if let Some(inst) = self.core.indicators_mut().instance_mut(ind_snap.id) {
                                 inst.name = ind_snap.name.clone();
                                 inst.pane = ind_snap.pane;
                                 inst.order = ind_snap.order;
@@ -799,7 +800,7 @@ impl ChartApp {
                     let recalc_n = window_bar_data.len();
                     for (window_id, cid) in window_bar_data {
                         let bars = self.bars_for_chart(cid);
-                        self.core.indicators_mut().calculate_for_window(window_id, &bars);
+                        self.core.indicators_mut().recalc_bubble(mlc_core::ids::BubbleId(window_id), &bars);
                     }
                     eprintln!("[ChartApp] recalculated indicators for all windows with bars");
                     let recalc_us = _t_recalc.elapsed().as_micros();

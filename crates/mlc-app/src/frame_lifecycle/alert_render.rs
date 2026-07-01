@@ -6,8 +6,8 @@ use mlc_core::{
     LayoutRect,
     render::RenderContext,
 };
-use mlc_core::indicator_source::IndicatorSource;
-use mlc_indicators::IndicatorManager;
+use mlc_backend_core::Indicators;
+use mlc_core::ids::BubbleId;
 use mlc_core::alert::{AlertItem, AlertStatus, AlertSource};
 
 impl ChartApp {
@@ -24,7 +24,7 @@ impl ChartApp {
     /// output's value buffer.
     pub(crate) fn build_indicator_values_for_alerts(
         alerts: &[AlertItem],
-        indicator_manager: &IndicatorManager,
+        indicators: &Indicators<'_>,
     ) -> Vec<(u64, usize, Vec<f64>)> {
         use std::collections::HashSet;
         let mut result: Vec<(u64, usize, Vec<f64>)> = Vec::new();
@@ -38,7 +38,7 @@ impl ChartApp {
                 if !seen.insert((*indicator_id, *output_index)) {
                     continue;
                 }
-                if let Some(render_inst) = indicator_manager.get_render_instance(*indicator_id) {
+                if let Some(render_inst) = indicators.render_instance(*indicator_id) {
                     if let Some(output_def) = render_inst.output_defs.get(*output_index) {
                         if let Some(values) = render_inst.values.get(&output_def.name) {
                             result.push((*indicator_id, *output_index, values.clone()));
@@ -78,7 +78,7 @@ impl ChartApp {
         price_max: f64,
         bars: &[Bar],
         primitives: &[Box<dyn mlc_core::drawing::primitives_v2::Primitive>],
-        indicator_manager: &IndicatorManager,
+        indicators: &Indicators<'_>,
         alerts: &[AlertItem],
         window_id: Option<u64>,
         symbol: &str,
@@ -201,7 +201,7 @@ impl ChartApp {
 
                 AlertSource::Indicator { indicator_id, output_index, .. } => {
                     // Get render instance for this indicator.
-                    let render_inst = indicator_manager.get_render_instance(*indicator_id);
+                    let render_inst = indicators.render_instance(*indicator_id);
                     let render_inst = match render_inst {
                         Some(ri) => ri,
                         None => continue,
@@ -212,13 +212,17 @@ impl ChartApp {
                         continue;
                     }
 
-                    // Check that indicator belongs to this symbol and window.
-                    let symbol_instances = match window_id {
-                        Some(wid) => indicator_manager.get_instances_for_symbol_in_bubble(symbol, wid),
-                        None => indicator_manager.get_instances_for_symbol(symbol),
-                    };
-                    if !symbol_instances.iter().any(|i| i.id == *indicator_id) {
-                        continue;
+                    // Check that indicator belongs to this window's bubble (when
+                    // known — a `None` window_id means "no window scoping", the
+                    // instance's own existence check above is sufficient).
+                    if let Some(wid) = window_id {
+                        let bound_here = indicators
+                            .instances_for_bubble(BubbleId(wid))
+                            .iter()
+                            .any(|i| i.id == *indicator_id);
+                        if !bound_here {
+                            continue;
+                        }
                     }
 
                     // Find the output by index.
@@ -285,7 +289,7 @@ impl ChartApp {
                 AlertSource::Signal { indicator_id, .. } => {
                     // Position the bell near the last visible signal marker for this indicator,
                     // or fall back to the right edge of the first output line.
-                    let render_inst = indicator_manager.get_render_instance(*indicator_id);
+                    let render_inst = indicators.render_instance(*indicator_id);
                     let render_inst = match render_inst {
                         Some(ri) => ri,
                         None => continue,
@@ -296,13 +300,16 @@ impl ChartApp {
                         continue;
                     }
 
-                    // Check that indicator belongs to this symbol and window.
-                    let symbol_instances = match window_id {
-                        Some(wid) => indicator_manager.get_instances_for_symbol_in_bubble(symbol, wid),
-                        None => indicator_manager.get_instances_for_symbol(symbol),
-                    };
-                    if !symbol_instances.iter().any(|i| i.id == *indicator_id) {
-                        continue;
+                    // Check that indicator belongs to this window's bubble (when
+                    // known — a `None` window_id means "no window scoping").
+                    if let Some(wid) = window_id {
+                        let bound_here = indicators
+                            .instances_for_bubble(BubbleId(wid))
+                            .iter()
+                            .any(|i| i.id == *indicator_id);
+                        if !bound_here {
+                            continue;
+                        }
                     }
 
                     // Try to find the last visible signal position for this indicator.

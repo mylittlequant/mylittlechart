@@ -8,6 +8,7 @@ members = [
     "crates/mlc-input-shell",
     "crates/mlc-indicators",
     "crates/mlc-sidebar-content",
+    "crates/mlc-watchlist",
     "crates/mlc-panels",
     "crates/mlc-alert-delivery",
     "crates/mlc-live-data",

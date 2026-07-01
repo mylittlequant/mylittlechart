@@ -7,7 +7,6 @@
 //! - Full indicator catalog (480+ indicators from zengeld-chart-indicators)
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use serde::{Serialize, Deserialize};
 use super::indicator_bridge::IndicatorBridge;
@@ -543,21 +542,15 @@ pub struct IndicatorManager {
     /// Active indicator instances
     instances: HashMap<u64, IndicatorInstance>,
     /// Instances by bubble_id (= color tag / sync group id / home auto-bubble id).
-    /// Instances with `bubble_id = None` (legacy/unscoped) are indexed under key 0 —
-    /// they only show up when the manager is queried in legacy mode
-    /// (`current_render_bubble_id = None`).
+    /// Instances with `bubble_id = None` (legacy/unscoped) are indexed under key 0.
     by_bubble_id: HashMap<u64, Vec<u64>>,
-    /// Next instance ID
+    /// Next instance ID. Global, not per-bubble — unlike `AlertManager.alert_next_id`
+    /// (per-bubble, alerts never move bubbles), instance identity can migrate
+    /// across bubbles via `assign_bubble`/`reassign_bubble`, so a per-bubble
+    /// counter would have to be re-keyed on every reassignment. Single global
+    /// counter is the correct shape for an identity space instances can move
+    /// across bubbles within (design: `docs/mlc/plans/step-3.3-indicator-watchlist-design.md` §6.1).
     next_id: u64,
-    /// Transient: set before a render call to scope queries to a specific bubble.
-    /// When Some(x), `get_instances_for_symbol` and `get_render_instances_for_symbol`
-    /// only return instances where `bubble_id == Some(x)`.
-    /// When None, all instances are returned (legacy single-bubble behaviour).
-    ///
-    /// Encoded as `AtomicU64` using the `0 = None, n+1 = Some(n)` convention so
-    /// that `IndicatorManager` is naturally `Sync` and can live inside
-    /// `Arc<RwLock<IndicatorManager>>` on `BackendCore`.
-    pub current_render_bubble_id: AtomicU64,
 
     // ── Recalculation scheduling ──────────────────────────────────────────────
 
@@ -595,7 +588,6 @@ impl IndicatorManager {
             instances: HashMap::new(),
             by_bubble_id: HashMap::new(),
             next_id: 1,
-            current_render_bubble_id: AtomicU64::new(0),
             recalc_mode: RecalcMode::default(),
             dirty_symbols: HashSet::new(),
             new_bar_symbols: HashSet::new(),
@@ -617,7 +609,6 @@ impl IndicatorManager {
         self.instances.clear();
         self.by_bubble_id.clear();
         self.next_id = 1;
-        self.current_render_bubble_id.store(0, Ordering::Relaxed);
         self.dirty_symbols.clear();
         self.new_bar_symbols.clear();
         self.compute_caches.clear();
@@ -731,14 +722,6 @@ impl IndicatorManager {
         true
     }
 
-    /// Legacy alias for `assign_bubble` — semantics changed under the
-    /// bubble-ownership migration: callers must pass a `BubbleId.0`, not a
-    /// `ChartId.0`.  Kept temporarily so call sites can be migrated one at a
-    /// time without breaking compilation.
-    pub fn assign_window(&mut self, id: u64, bubble_id: Option<u64>) {
-        self.assign_bubble(id, bubble_id)
-    }
-
     /// Bind / rebind an existing indicator instance to a bubble.
     /// Updates `instance.bubble_id` and the `by_bubble_id` index so future
     /// queries route the instance to the correct bucket.
@@ -782,11 +765,6 @@ impl IndicatorManager {
     /// Remove an instance (alias for remove_instance)
     pub fn remove(&mut self, id: u64) -> Option<IndicatorInstance> {
         self.remove_instance(id)
-    }
-
-    /// Legacy alias for `purge_synced_instances_for_bubble`.
-    pub fn purge_synced_instances_for_window(&mut self, target_bubble_id: u64) {
-        self.purge_synced_instances_for_bubble(target_bubble_id)
     }
 
     /// Remove all cloned indicator instances for a specific bubble (used on desync).
@@ -897,32 +875,6 @@ impl IndicatorManager {
         self.instances.get_mut(&id)
     }
 
-    /// Decode the `current_render_bubble_id` atomic using the `0 = None, n+1 = Some(n)` convention.
-    fn current_render_bubble_id_get(&self) -> Option<u64> {
-        match self.current_render_bubble_id.load(Ordering::Relaxed) {
-            0 => None,
-            n => Some(n - 1),
-        }
-    }
-
-    /// Get all instances scoped to the current render bubble
-    /// (`current_render_bubble_id`). The `symbol` parameter is ignored — indicators
-    /// are bound to a *bubble*, not an instrument, and follow whatever the
-    /// chart that points at this bubble happens to display at any moment.
-    /// In legacy mode (`current_render_bubble_id = None`) all instances are returned.
-    pub fn get_instances_for_symbol(&self, _symbol: &str) -> Vec<&IndicatorInstance> {
-        match self.current_render_bubble_id_get() {
-            Some(bid) => self.get_instances_for_bubble(bid),
-            None => self.instances.values().collect(),
-        }
-    }
-
-    /// Legacy alias for `get_instances_for_bubble` — semantics changed under
-    /// the bubble-ownership migration: callers must pass a `BubbleId.0`.
-    pub fn get_instances_for_window(&self, bubble_id: u64) -> Vec<&IndicatorInstance> {
-        self.get_instances_for_bubble(bubble_id)
-    }
-
     /// Get indicator instances bound to a specific bubble.
     /// Only returns instances whose `bubble_id` exactly matches `bubble_id`.
     /// Instances with `bubble_id = None` are NOT included to prevent cross-tab leakage.
@@ -936,13 +888,6 @@ impl IndicatorManager {
             })
             .unwrap_or_default()
     }
-
-    /// Legacy adapter — `symbol` is ignored, kept for call sites that still
-    /// pass it. Use [`get_instances_for_bubble`] in new code.
-    pub fn get_instances_for_symbol_in_bubble(&self, _symbol: &str, bubble_id: u64) -> Vec<&IndicatorInstance> {
-        self.get_instances_for_bubble(bubble_id)
-    }
-
 
     /// Swap the display order of two sub-pane indicator instances within a bubble.
     ///
@@ -1121,16 +1066,11 @@ impl IndicatorManager {
         }
     }
 
-    /// Calculate all instances bound to a window in parallel using rayon.
+    /// Calculate all instances bound to a bubble in parallel using rayon.
     ///
     /// Each indicator computation is independent (reads params, writes values),
     /// so all instances can be computed concurrently on the rayon thread pool.
     /// Results are written back sequentially after the parallel phase.
-    /// Legacy alias for `calculate_all_for_bubble`.
-    pub fn calculate_all_for_window(&mut self, bubble_id: u64, bars: &[mlc_core::Bar]) {
-        self.calculate_all_for_bubble(bubble_id, bars);
-    }
-
     pub fn calculate_all_for_bubble(&mut self, bubble_id: u64, bars: &[mlc_core::Bar]) {
         use rayon::prelude::*;
         use super::indicator_calculator::IndicatorCalculator;
@@ -1245,11 +1185,6 @@ impl IndicatorManager {
     ///
     /// Instances whose `bubble_id` is `None` (unscoped / legacy) are skipped;
     /// they should be handled by `calculate_all_for_bubble(0, …)` when appropriate.
-    /// Legacy alias for `calculate_for_bubble`.
-    pub fn calculate_for_window(&mut self, bubble_id: u64, bars: &[mlc_core::Bar]) {
-        self.calculate_for_bubble(bubble_id, bars);
-    }
-
     pub fn calculate_for_bubble(&mut self, bubble_id: u64, bars: &[mlc_core::Bar]) {
         use rayon::prelude::*;
         use super::indicator_calculator::IndicatorCalculator;
@@ -1771,13 +1706,13 @@ impl IndicatorManager {
         &self,
         screen_x: f64,
         screen_y: f64,
-        symbol: &str,
+        bubble_id: u64,
         viewport: &mlc_core::Viewport,
         price_scale: &mlc_core::PriceScale,
         chart_height: f64,
         hit_distance: f64,
     ) -> Option<u64> {
-        let instances = self.get_instances_for_symbol(symbol);
+        let instances = self.get_instances_for_bubble(bubble_id);
 
         // Convert screen X to bar index
         let bar_idx = viewport.x_to_bar_f64(screen_x);
@@ -1956,50 +1891,28 @@ impl Default for IndicatorManager {
 }
 
 // =============================================================================
-// IndicatorSource implementation for IndicatorManager
+// IndicatorSource-shaped inherent methods (id-keyed, no bubble scoping needed)
 // =============================================================================
+//
+// `IndicatorManager` no longer implements `mlc_core::indicator_source::
+// IndicatorSource` directly — the two symbol-scoped trait methods
+// (`get_instances_for_symbol` / `get_render_instances_for_symbol`) require a
+// `BubbleId` to scope correctly, and the manager itself no longer carries the
+// `current_render_bubble_id` scoping cursor that used to stand in for that
+// parameter (design: `docs/mlc/plans/step-3.3-indicator-watchlist-design.md`
+// §1.1). The bubble-scoped trait impl now lives on
+// `mlc_backend_core::indicator::facade::BubbleIndicatorView`, constructed via
+// `Indicators::with_bubble(bid)` — mirrors Drawing's `BubbleDrawingView`
+// (`mlc_backend_core::drawing::facade`).
+//
+// The id-keyed methods below (`calculate_pane_range`, `get_render_instance`,
+// `get_settings_data`) don't need bubble scoping at all and stay directly
+// callable; `BubbleIndicatorView` forwards to them for its own trait impl.
 
-impl mlc_core::indicator_source::IndicatorSource for IndicatorManager {
-    fn get_instances_for_symbol(&self, symbol: &str) -> Vec<mlc_core::indicator_source::IndicatorInfo> {
-        self.get_instances_for_symbol(symbol)
-            .into_iter()
-            .map(|inst| mlc_core::indicator_source::IndicatorInfo {
-                id: inst.id,
-                name: inst.name.clone(),
-                pane_index: inst.pane,
-                visible: inst.visible,
-            })
-            .collect()
-    }
-
-    fn calculate_pane_range(
-        &self,
-        instance_id: u64,
-        visible_start: usize,
-        visible_end: usize,
-    ) -> Option<(f64, f64)> {
-        self.calculate_pane_range(instance_id, visible_start, visible_end)
-    }
-
-    fn get_render_instances_for_symbol(
-        &self,
-        symbol: &str,
-    ) -> Vec<mlc_core::indicator_source::IndicatorRenderInstance> {
-        self.get_instances_for_symbol(symbol)
-            .into_iter()
-            .filter_map(|inst| self.build_render_instance(inst))
-            .collect()
-    }
-
-    fn get_render_instance(
-        &self,
-        instance_id: u64,
-    ) -> Option<mlc_core::indicator_source::IndicatorRenderInstance> {
-        let inst = self.get_instance(instance_id)?;
-        self.build_render_instance(inst)
-    }
-
-    fn get_settings_data(
+impl IndicatorManager {
+    /// Get settings-level data for the indicator settings modal. Id-keyed —
+    /// no bubble scoping needed.
+    pub fn get_settings_data(
         &self,
         instance_id: u64,
     ) -> Option<mlc_core::indicator_source::IndicatorSettingsData> {
@@ -2107,6 +2020,16 @@ impl mlc_core::indicator_source::IndicatorSource for IndicatorManager {
             signal_display: inst.signal_display.clone(),
             timeframe_visibility: inst.timeframe_visibility.clone(),
         })
+    }
+
+    /// Get full render data for a single indicator instance by ID. Id-keyed —
+    /// no bubble scoping needed.
+    pub fn get_render_instance(
+        &self,
+        instance_id: u64,
+    ) -> Option<mlc_core::indicator_source::IndicatorRenderInstance> {
+        let inst = self.get_instance(instance_id)?;
+        self.build_render_instance(inst)
     }
 }
 

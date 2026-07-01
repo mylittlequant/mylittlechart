@@ -399,7 +399,8 @@ impl ChartApp {
             {
                 use mlc_indicators::signals::signal::BarConfirmation;
 
-                let signal_batch: Vec<(u64, usize, i8, u8, String)> = self.core.indicators().instances_iter()
+                let signal_batch: Vec<(u64, usize, i8, u8, String)> = self.core.indicators().all_instances()
+                    .into_iter()
                     .flat_map(|inst| {
                         let ind_id = inst.id;
                         inst.signals.iter().map(move |s| {
@@ -492,10 +493,10 @@ impl ChartApp {
                     let bid_opt = self.panel_app.panel_grid.containers().get(&chart_id).map(|w| w.current_bubble_id);
                     if let Some(bid) = bid_opt {
                         let bars_recalc: Vec<mlc_core::Bar> = self.with_bubble(bid, |b| b.bars.clone()).unwrap_or_default();
-                        self.core.indicators_mut().calculate_for_window(window_id, &bars_recalc);
+                        self.core.indicators_mut().recalc_bubble(bid, &bars_recalc);
                     }
                 }
-                let _ = symbol; // calculate_for_window filters by window_id, not symbol
+                let _ = symbol; // recalc_bubble filters by bid, not symbol
                 self.recalc_count += 1;
             }
             self.last_indicator_recalc_us += deferred_start.elapsed().as_micros() as u64;
@@ -506,7 +507,7 @@ impl ChartApp {
         if self.diagnostics_enabled
             && self.recalc_log_timer.elapsed() >= std::time::Duration::from_secs(5)
         {
-            let mode = match self.core.indicators().recalc_mode {
+            let mode = match self.core.indicators().recalc_mode() {
                 RecalcMode::PerTick => "PerTick",
                 RecalcMode::PerFrame => "PerFrame",
                 RecalcMode::PerBar => "PerBar",
@@ -677,7 +678,7 @@ impl ChartApp {
             let attempted = &self.indicator_heal_attempted;
             let im = self.core.indicators();
             self.panel_app.panel_grid.iter_containers().any(|(_, w)| {
-                im.get_instances_for_bubble(w.current_bubble_id.0)
+                im.instances_for_bubble(w.current_bubble_id)
                     .iter()
                     .any(|i| i.values.is_empty() && !attempted.contains(&i.id))
             })
@@ -690,7 +691,8 @@ impl ChartApp {
                 .map(|(_, w)| (w.current_bubble_id.0, w.id))
                 .collect();
             for (bid, cid) in window_ids {
-                let needs_heal: Vec<u64> = self.core.indicators().get_instances_for_bubble(bid)
+                let bubble_id = mlc_core::ids::BubbleId(bid);
+                let needs_heal: Vec<u64> = self.core.indicators().instances_for_bubble(bubble_id)
                     .iter()
                     .filter(|i| i.values.is_empty() && !self.indicator_heal_attempted.contains(&i.id))
                     .map(|i| i.id)
@@ -704,7 +706,7 @@ impl ChartApp {
                         "[ChartApp] indicator heal: bubble {} has {} bars, {} never-computed instance(s) {:?} — recalculating",
                         bid, bars.len(), needs_heal.len(), needs_heal
                     );
-                    self.core.indicators_mut().calculate_for_bubble(bid, &bars);
+                    self.core.indicators_mut().recalc_bubble(bubble_id, &bars);
                 }
             }
         }

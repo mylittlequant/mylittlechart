@@ -329,7 +329,7 @@ impl ChartApp {
                             )
                         } else {
                             // Only one colon — treat as "SYMBOL:exchange", look up account_type.
-                            let at = self.core.watchlist().active_list()
+                            let at = self.core.watchlists().active()
                                 .and_then(|list| {
                                     list.all_symbols().iter()
                                         .find(|ws| ws.symbol == remainder && ws.exchange == at_part)
@@ -442,17 +442,17 @@ impl ChartApp {
                             )
                         } else {
                             // Only one colon — "SYMBOL:exchange", look up account_type.
-                            let at = self.core.watchlist().active_list()
+                            let at = self.core.watchlists().active()
                                 .and_then(|l| l.all_symbols().iter().find(|ws| ws.symbol == remainder && ws.exchange == at_part).map(|ws| ws.account_type.clone()))
                                 .unwrap_or_default();
                             (remainder, at_part.to_string(), at)
                         }
                     } else {
                         // No colon — plain symbol, look up exchange + account_type.
-                        let ex = self.core.watchlist().active_list()
+                        let ex = self.core.watchlists().active()
                             .and_then(|l| l.all_symbols().iter().find(|ws| ws.symbol == key).map(|ws| ws.exchange.clone()))
                             .unwrap_or_else(|| self.active_exchange.as_str().to_string());
-                        let at = self.core.watchlist().active_list()
+                        let at = self.core.watchlists().active()
                             .and_then(|l| l.all_symbols().iter().find(|ws| ws.symbol == key).map(|ws| ws.account_type.clone()))
                             .unwrap_or_default();
                         (key, ex, at)
@@ -461,8 +461,8 @@ impl ChartApp {
                 let account_type = account_type_owned.as_str();
                 // Remove symbol from snapshot (if active) before removing from list.
                 {
-                    let mut wl = self.core.watchlist_mut();
-                    if let Some(list) = wl.active_list_mut() {
+                    let mut wl = self.core.watchlists_mut();
+                    if let Some(list) = wl.active_mut() {
                         if let Some(ref mut snap) = list.order_snapshot {
                             snap.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == account_type));
                         }
@@ -478,7 +478,7 @@ impl ChartApp {
             _ if rest.starts_with("group:") => {
                 let id_str = &rest["group:".len()..];
                 if let Ok(id) = id_str.parse::<u64>() {
-                    self.core.watchlist_mut().active_list_id = id;
+                    self.core.watchlists_mut().set_active(id);
                     self.watchlist_actions.push(crate::WatchlistAction::SetActiveList { id });
                     self.watchlists_dirty = true;
                     self.persist_watchlists();
@@ -489,7 +489,7 @@ impl ChartApp {
             _ if rest.starts_with("group_delete:") => {
                 let id_str = &rest["group_delete:".len()..];
                 if let Ok(id) = id_str.parse::<u64>() {
-                    let deleted = self.core.watchlist_mut().delete_list(id);
+                    let deleted = self.core.watchlists_mut().delete_list(id);
                     self.watchlist_actions.push(crate::WatchlistAction::DeleteList { id });
                     self.watchlists_dirty = true;
                     self.persist_watchlists();
@@ -498,7 +498,7 @@ impl ChartApp {
             }
             // Create new watchlist — open name input modal with auto-generated name
             "group_add" => {
-                let max_n = self.core.watchlist().lists.iter()
+                let max_n = self.core.watchlists().lists().iter()
                     .filter_map(|l| l.name.strip_prefix("Watchlist "))
                     .filter_map(|s| s.parse::<u32>().ok())
                     .max()
@@ -517,7 +517,7 @@ impl ChartApp {
             _ if rest.starts_with("group_rename:") => {
                 let id_str = &rest["group_rename:".len()..];
                 if let Ok(id) = id_str.parse::<u64>() {
-                    if let Some(list) = self.core.watchlist().lists.iter().find(|l| l.id == id) {
+                    if let Some(list) = self.core.watchlists().find(id) {
                         let name = list.name.clone();
                         self.wl_group_name_input.open_rename(id, &name);
                         {
@@ -604,20 +604,21 @@ impl ChartApp {
             return;
         };
 
-        // S2.7.1e: read symbol via branch_meta (B1).
-        let symbol: String = self.panel_app.panel_grid.active_container_id()
-            .and_then(|cid| self.symbol_for_chart(cid))
-            .map(String::from)
-            .unwrap_or_default();
+        // Indicator ownership is by bubble — target the active chart's current bubble.
+        let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
 
         // Remove all existing indicators (exclusive deployment, like preset)
-        let existing_ids: Vec<u64> = self.core.indicators()
-                                .get_instances_for_symbol(&symbol)
-            .iter()
-            .map(|inst| inst.id)
-            .collect();
+        let existing_ids: Vec<u64> = {
+            let indicators_guard = self.core.indicators();
+            active_bid
+                .map(|bid| indicators_guard.instances_for_bubble(bid))
+                .unwrap_or_default()
+                .into_iter()
+                .map(|inst| inst.id)
+                .collect()
+        };
         for id in &existing_ids {
-            self.core.indicators_mut().remove_instance(*id);
+            self.core.indicators_mut().remove(*id);
         }
         // Clear orphan pre_tag_indicator_ids from auto_bubble for every window so the
         // Object Tree does not show phantom items after a bulk indicator replace.
@@ -640,21 +641,13 @@ impl ChartApp {
 
         // Create new indicators from the set with full params/outputs
         for tmpl in &set.indicators {
-            let new_id_opt = self.core.indicators_mut().create_instance(&tmpl.type_id);
+            // Indicator lives in the chart's CURRENT bubble.
+            let new_id_opt = self.core.indicators_mut().add(active_bid, &tmpl.type_id);
             if let Some(new_id) = new_id_opt {
-                if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
-                    if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(active_leaf) {
-                        // Indicator lives in the chart's CURRENT bubble.
-                        let bid = self.panel_app.panel_grid.containers()
-                            .get(&chart_id)
-                            .map(|w| w.current_bubble_id.0);
-                        self.core.indicators_mut().assign_bubble(new_id, bid);
-                    }
-                }
                 // Apply saved params, output styles, and visibility from the template
                 {
                     let mut im = self.core.indicators_mut();
-                    if let Some(inst) = im.get_instance_mut(new_id) {
+                    if let Some(inst) = im.instance_mut(new_id) {
                         // Restore instance-level visibility
                         inst.visible = tmpl.visible;
                         // Restore params
@@ -689,17 +682,12 @@ impl ChartApp {
 
         // Pull real bars from the chart's bubble — the cutover sweep had stubbed
         // this to `Vec::new()` which made the recalc a no-op.
-        let (active_window_id, bars) = self.panel_app.panel_grid.docking().active_leaf()
-            .and_then(|leaf| self.panel_app.panel_grid.container_id_for_leaf(leaf).map(|cid| (cid.0, leaf)))
-            .and_then(|(cid, leaf)| {
-                self.panel_app.panel_grid.container_for_leaf(leaf)
-                    .map(|w| w.current_bubble_id)
-                    .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()))
-                    .map(|bars| (cid, bars))
-            })
+        let bars = active_bid
+            .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()))
             .unwrap_or_default();
-        let _ = symbol; // legacy, no longer needed for indicator calc
-        self.core.indicators_mut().calculate_all_for_window(active_window_id, &bars);
+        if let Some(bid) = active_bid {
+            self.core.indicators_mut().recalc_bubble(bid, &bars);
+        }
         self.sync_sub_panes_from_manager();
         self.autosave_snapshot();
         self.sidebar_data_dirty = true;
@@ -714,15 +702,12 @@ impl ChartApp {
     pub(crate) fn execute_create_indicator_set(&mut self, name: String) {
         use mlc_core::templates::{IndicatorTemplate, OutputStyleConfig};
 
-        // S2.7.1e: read symbol via branch_meta (B1).
-        let symbol: String = self.panel_app.panel_grid.active_container_id()
-            .and_then(|cid| self.symbol_for_chart(cid))
-            .map(String::from)
-            .unwrap_or_default();
+        // Indicator ownership is by bubble — target the active chart's current bubble.
+        let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
 
         let templates: Vec<IndicatorTemplate> = {
             let im = self.core.indicators();
-            let instances = im.get_instances_for_symbol(&symbol);
+            let instances = active_bid.map(|bid| im.instances_for_bubble(bid)).unwrap_or_default();
             instances
                 .iter()
                 .map(|inst| {
@@ -934,16 +919,13 @@ impl ChartApp {
                             }
                         }
                         // Recalculate all indicators for the new bars in this window.
-                        let (active_cid, bars) = self.panel_app.panel_grid.docking().active_leaf()
-                            .and_then(|leaf| {
-                                let cid = self.panel_app.panel_grid.container_id_for_leaf(leaf)?;
-                                let bars = self.bubble_for_chart(cid)
-                                    .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()))
-                                    .unwrap_or_default();
-                                Some((cid.0, bars))
-                            })
-                            .unwrap_or((0u64, Vec::new()));
-                        self.core.indicators_mut().calculate_all_for_window(active_cid, &bars);
+                        let recalc_bid_and_bars = self.panel_app.panel_grid.docking().active_leaf()
+                            .and_then(|leaf| self.panel_app.panel_grid.container_id_for_leaf(leaf))
+                            .and_then(|cid| self.bubble_for_chart(cid))
+                            .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()).map(|bars| (bid, bars)));
+                        if let Some((bid, bars)) = recalc_bid_and_bars {
+                            self.core.indicators_mut().recalc_bubble(bid, &bars);
+                        }
                         self.sync_sub_panes_from_manager();
                         self.sidebar_data_dirty = true;
                         self.autosave_snapshot();
@@ -1067,31 +1049,29 @@ impl ChartApp {
                         };
                         let active_container_id = active_leaf
                             .and_then(|leaf| self.panel_app.panel_grid.container_id_for_leaf(leaf));
-                        // Determine auto-color for overlay duplicates BEFORE create_instance
-                        // (borrowck: create_instance needs &mut, query needs &).
-                        let auto_color: Option<String> = active_container_id
-                            .and_then(|cid| self.core.indicators_mut().pick_overlay_color(item_id, cid.0));
-                        let new_id_opt = self.core.indicators_mut().create_instance(item_id);
+                        let bid = active_container_id
+                            .and_then(|cid| self.panel_app.panel_grid.containers().get(&cid))
+                            .map(|w| w.current_bubble_id);
+                        // Determine auto-color for overlay duplicates BEFORE add()
+                        // (borrowck: add() needs &mut, query needs &).
+                        let auto_color: Option<String> = bid
+                            .and_then(|b| self.core.indicators_mut().pick_overlay_color(item_id, b));
+                        let new_id_opt = self.core.indicators_mut().add(bid, item_id);
                         if let Some(new_id) = new_id_opt {
+                            crate::sglog!(
+                                "[indicator-create] type='{}' new_id={} chart_id={:?} current_bubble_id={:?}",
+                                item_id, new_id, active_container_id, bid
+                            );
                             // Apply auto-color when this is a duplicate overlay indicator.
                             if let Some(ref color) = auto_color {
                                 let mut im = self.core.indicators_mut();
-                                if let Some(inst) = im.get_instance_mut(new_id) {
+                                if let Some(inst) = im.instance_mut(new_id) {
                                     for oc in inst.outputs.values_mut() {
                                         oc.color = Some(color.clone());
                                     }
                                 }
                             }
-                            // Bind to the active chart's CURRENT bubble.
-                            if let (Some(active_leaf), Some(chart_id)) = (active_leaf, active_container_id) {
-                                let bid = self.panel_app.panel_grid.containers()
-                                    .get(&chart_id)
-                                    .map(|w| w.current_bubble_id.0);
-                                crate::sglog!(
-                                    "[indicator-create] type='{}' new_id={} chart_id={:?} current_bubble_id={:?}",
-                                    item_id, new_id, chart_id, bid
-                                );
-                                self.core.indicators_mut().assign_bubble(new_id, bid);
+                            if let Some(active_leaf) = active_leaf {
                                 // If this window is in a sync group and indicators are synced,
                                 // track the config in the group and push to peers.
                                 if let Some(group_id) = self.panel_app.panel_grid
@@ -1102,10 +1082,10 @@ impl ChartApp {
                                     if sync_on {
                                         let (inst_pane, inst_name) = {
                                             let im = self.core.indicators();
-                                            let inst_pane = im.get_instance(new_id)
+                                            let inst_pane = im.instance(new_id)
                                                 .map(|i| i.pane as u32)
                                                 .unwrap_or(0);
-                                            let inst_name = im.get_instance(new_id)
+                                            let inst_name = im.instance(new_id)
                                                 .map(|i| i.name.clone())
                                                 .unwrap_or_else(|| item_id.to_string());
                                             (inst_pane, inst_name)
@@ -1169,12 +1149,10 @@ impl ChartApp {
                             // a no-op and the new indicator stayed blank until the
                             // next live bar tick. Pull the actual bars out of the
                             // chart's bubble via `with_bubble`.
-                            let bars_opt: Option<Vec<mlc_core::Bar>> = active_leaf
-                                .and_then(|leaf| self.panel_app.panel_grid.container_for_leaf(leaf))
-                                .map(|w| w.current_bubble_id)
-                                .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()));
-                            if let (Some(cid), Some(bars)) = (active_container_id, bars_opt) {
-                                self.core.indicators_mut().calculate_all_for_window(cid.0, &bars);
+                            let bars_opt: Option<Vec<mlc_core::Bar>> = bid
+                                .and_then(|b| self.with_bubble(b, |bub| bub.bars.clone()));
+                            if let (Some(b), Some(bars)) = (bid, bars_opt) {
+                                self.core.indicators_mut().recalc_bubble(b, &bars);
                             }
                             self.sync_sub_panes_from_manager();
                             self.autosave_snapshot();
@@ -1351,8 +1329,8 @@ impl ChartApp {
                                         let root_id = window.inner_docking.tree().root().id;
                                         window.inner_docking.tree_mut().reorder_children(root_id, from, to);
                                     }
-                                    if let (Some(nbr_id), Some(cid)) = (neighbor_id, self.panel_app.panel_grid.active_container_id()) {
-                                        self.core.indicators_mut().swap_pane_order(cid.0, instance_id, nbr_id);
+                                    if let (Some(nbr_id), Some(bid)) = (neighbor_id, self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id)) {
+                                        self.core.indicators_mut().swap_pane_order(bid, instance_id, nbr_id);
                                     }
                                 }
                             } else {
@@ -1387,8 +1365,8 @@ impl ChartApp {
                                             let root_id = window.inner_docking.tree().root().id;
                                             window.inner_docking.tree_mut().reorder_children(root_id, from, to);
                                         }
-                                        if let (Some(nbr_id), Some(cid)) = (neighbor_id, self.panel_app.panel_grid.active_container_id()) {
-                                            self.core.indicators_mut().swap_pane_order(cid.0, instance_id, nbr_id);
+                                        if let (Some(nbr_id), Some(bid)) = (neighbor_id, self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id)) {
+                                            self.core.indicators_mut().swap_pane_order(bid, instance_id, nbr_id);
                                         }
                                     }
                                 }
@@ -1441,8 +1419,8 @@ impl ChartApp {
                                             let root_id = window.inner_docking.tree().root().id;
                                             window.inner_docking.tree_mut().reorder_children(root_id, from, to);
                                         }
-                                        if let (Some(nbr_id), Some(cid)) = (neighbor_id, self.panel_app.panel_grid.active_container_id()) {
-                                            self.core.indicators_mut().swap_pane_order(cid.0, instance_id, nbr_id);
+                                        if let (Some(nbr_id), Some(bid)) = (neighbor_id, self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id)) {
+                                            self.core.indicators_mut().swap_pane_order(bid, instance_id, nbr_id);
                                         }
                                     }
                                 }
@@ -1462,8 +1440,8 @@ impl ChartApp {
                                         let root_id = window.inner_docking.tree().root().id;
                                         window.inner_docking.tree_mut().reorder_children(root_id, from, to);
                                     }
-                                    if let (Some(nbr_id), Some(cid)) = (neighbor_id, self.panel_app.panel_grid.active_container_id()) {
-                                        self.core.indicators_mut().swap_pane_order(cid.0, instance_id, nbr_id);
+                                    if let (Some(nbr_id), Some(bid)) = (neighbor_id, self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id)) {
+                                        self.core.indicators_mut().swap_pane_order(bid, instance_id, nbr_id);
                                     }
                                 }
                             }
@@ -1518,7 +1496,7 @@ impl ChartApp {
                             .map(|b| b.close)
                             .unwrap_or(0.0);
                         let label = self.core.indicators()
-                                .get_instance(instance_id)
+                                .instance(instance_id)
                             .map(|inst| inst.name.clone())
                             .unwrap_or_else(|| format!("Indicator #{}", instance_id));
                         let source = mlc_core::alert::AlertSource::Indicator {
@@ -1964,17 +1942,12 @@ impl ChartApp {
             if local_x >= 0.0 && local_x <= chart_rect.width
                 && local_y >= 0.0 && local_y <= chart_rect.height
             {
-                // S2.7.1e: read symbol via branch_meta before the closure (B1).
-                let overlay_symbol: String = self.panel_app.panel_grid.active_container_id()
-                    .and_then(|cid| self.symbol_for_chart(cid))
-                    .map(String::from)
-                    .unwrap_or_default();
                 let ind_hit = self.panel_app.panel_grid.active_container()
                     .and_then(|window| {
                         self.core.indicators().hit_test_overlay(
+                            window.current_bubble_id,
                             local_x,
                             local_y,
-                            &overlay_symbol,
                             &window.viewport,
                             &window.price_scale,
                             chart_rect.height,
@@ -2320,7 +2293,7 @@ impl ChartApp {
                     "symbol_search" => {
                         self.modal_state.open(OpenModal::SymbolSearch);
                         self.modal_state.symbol_search_results =
-                            crate::ChartApp::build_demo_symbol_results("", &self.core.watchlist(), &self.core.exchange_symbols_read());
+                            crate::ChartApp::build_demo_symbol_results("", self.core.watchlists().as_manager(), &self.core.exchange_symbols_read());
                         {
                             let sym_id = uzor::WidgetId::from(crate::text_input::SYMBOL_SEARCH);
                             self.input_coordinator.borrow_mut().text_fields_mut().clear(&sym_id);

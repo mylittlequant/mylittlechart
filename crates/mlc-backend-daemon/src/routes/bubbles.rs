@@ -191,6 +191,10 @@ async fn delete_bubble(
         return StatusCode::NOT_FOUND;
     }
     s.core.bubbles_mut().remove_group(bid_typed);
+    // §6.7 cross-manager gap: indicator instances live in IndicatorManager,
+    // not on DataBubble, so removing the bubble doesn't automatically drop
+    // its indicators the way alerts/primitives (bubble data) do.
+    s.core.indicators_mut().purge_for_bubble(bid_typed);
     StatusCode::NO_CONTENT
 }
 

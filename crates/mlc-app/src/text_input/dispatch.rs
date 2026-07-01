@@ -290,8 +290,8 @@ impl ChartApp {
                     use mlc_layout::ui::modal_settings::WatchlistGroupNameMode;
                     match self.wl_group_name_input.mode.clone() {
                         WatchlistGroupNameMode::CreateNew => {
-                            let new_id = self.core.watchlist_mut().create_list(name.clone());
-                            self.core.watchlist_mut().active_list_id = new_id;
+                            let new_id = self.core.watchlists_mut().create_list(name.clone());
+                            self.core.watchlists_mut().set_active(new_id);
                             self.watchlist_actions.push(crate::WatchlistAction::CreateList { name: name.clone() });
                             self.watchlists_dirty = true;
                             self.persist_watchlists();
@@ -299,8 +299,8 @@ impl ChartApp {
                         }
                         WatchlistGroupNameMode::Rename(id) => {
                             let found = {
-                                let mut wl = self.core.watchlist_mut();
-                                if let Some(list) = wl.lists.iter_mut().find(|l| l.id == id) {
+                                let mut wl = self.core.watchlists_mut();
+                                if let Some(list) = wl.find_mut(id) {
                                     list.name = name.clone();
                                     true
                                 } else {
@@ -586,7 +586,7 @@ impl ChartApp {
                 {
                     let q = self.modal_state.search_query.clone();
                     self.modal_state.symbol_search_results =
-                        crate::ChartApp::build_demo_symbol_results(&q, &self.core.watchlist(), &self.core.exchange_symbols_read());
+                        crate::ChartApp::build_demo_symbol_results(&q, self.core.watchlists().as_manager(), &self.core.exchange_symbols_read());
                 }
             }
             TextAction::Cancel => {

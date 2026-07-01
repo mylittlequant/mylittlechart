@@ -211,7 +211,7 @@ impl ChartApp {
                 // simply flips to `auto_bid`; `auto_bid`'s own primitives are
                 // already authoritative (no per-window synced copy to purge
                 // under the per-bubble model).
-                self.core.indicators_mut().purge_synced_instances_for_window(chart_id.0);
+                self.core.indicators_mut().purge_for_bubble(mlc_core::ids::BubbleId(chart_id.0));
                 if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
                     window.current_bubble_id = auto_bid;
                 }
@@ -352,7 +352,8 @@ impl ChartApp {
                 .get(&chart_id)
                 .map(|w| w.auto_bubble_id.0);
             let pre_tag_ids: Vec<u64> = self.core.indicators()
-                                .instances_iter()
+                                .all_instances()
+                .into_iter()
                 .filter(|i| auto_bid_raw_pre.map_or(false, |b| i.bubble_id == Some(b)) && i.origin_id.is_none())
                 .map(|i| i.id)
                 .collect();
@@ -421,14 +422,13 @@ impl ChartApp {
                     let clones = {
                         let im = self.core.indicators();
                         pre_tag_ids.iter().filter_map(|iid| {
-                            im.get_instance(*iid).cloned()
+                            im.instance(*iid).cloned()
                         }).collect::<Vec<_>>()
                     };
                     for src in clones {
                         let mut im = self.core.indicators_mut();
-                        if let Some(new_id) = im.create_instance(&src.type_id) {
-                            im.assign_bubble(new_id, Some(group_id.0));
-                            if let Some(inst) = im.get_instance_mut(new_id) {
+                        if let Some(new_id) = im.add(Some(group_id), &src.type_id) {
+                            if let Some(inst) = im.instance_mut(new_id) {
                                 inst.params = src.params;
                                 inst.outputs = src.outputs;
                                 inst.visible = src.visible;
@@ -593,9 +593,13 @@ impl ChartApp {
                 };
                 let auto_bid_raw_cfg = self.panel_app.panel_grid.containers()
                     .get(&chart_id)
-                    .map(|w| w.auto_bubble_id.0);
-                let mut configs: Vec<mlc_core::indicator_types::IndicatorGroupConfig> = self.core.indicators().instances_iter()
-                    .filter(|i| i.origin_id.is_none() && auto_bid_raw_cfg.map_or(false, |b| i.bubble_id == Some(b)))
+                    .map(|w| w.auto_bubble_id);
+                let indicators_guard_cfg = self.core.indicators();
+                let mut configs: Vec<mlc_core::indicator_types::IndicatorGroupConfig> = auto_bid_raw_cfg
+                    .map(|bid| indicators_guard_cfg.instances_for_bubble(bid))
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|i| i.origin_id.is_none())
                     .map(|i| mlc_core::indicator_types::IndicatorGroupConfig {
                         id: i.id,
                         type_id: i.type_id.clone(),
@@ -738,13 +742,12 @@ impl ChartApp {
             if !is_retag {
                 let clones = {
                     let im = self.core.indicators();
-                    pre_tag_ids.iter().filter_map(|iid| im.get_instance(*iid).cloned()).collect::<Vec<_>>()
+                    pre_tag_ids.iter().filter_map(|iid| im.instance(*iid).cloned()).collect::<Vec<_>>()
                 };
                 for src in clones {
                     let mut im = self.core.indicators_mut();
-                    if let Some(new_id) = im.create_instance(&src.type_id) {
-                        im.assign_bubble(new_id, Some(group_id.0));
-                        if let Some(inst) = im.get_instance_mut(new_id) {
+                    if let Some(new_id) = im.add(Some(group_id), &src.type_id) {
+                        if let Some(inst) = im.instance_mut(new_id) {
                             inst.params = src.params;
                             inst.outputs = src.outputs;
                             inst.visible = src.visible;
@@ -1168,12 +1171,17 @@ impl ChartApp {
                 if let Some(&(source_leaf, source_cid)) = leaf_chart_ids.first() {
                     let source_auto_bid_raw = self.panel_app.panel_grid.containers()
                         .get(&source_cid)
-                        .map(|w| w.auto_bubble_id.0);
-                    let pre_tag_ids: Vec<u64> = self.core.indicators()
-                                .instances_iter()
-                        .filter(|i| source_auto_bid_raw.map_or(false, |b| i.bubble_id == Some(b)) && i.origin_id.is_none())
-                        .map(|i| i.id)
-                        .collect();
+                        .map(|w| w.auto_bubble_id);
+                    let pre_tag_ids: Vec<u64> = {
+                        let indicators_guard = self.core.indicators();
+                        source_auto_bid_raw
+                            .map(|bid| indicators_guard.instances_for_bubble(bid))
+                            .unwrap_or_default()
+                            .into_iter()
+                            .filter(|i| i.origin_id.is_none())
+                            .map(|i| i.id)
+                            .collect()
+                    };
 
                     // Read auto_bubble_id before taking mutable window borrow.
                     let source_auto_bid = self.panel_app.panel_grid
@@ -1204,13 +1212,12 @@ impl ChartApp {
                     // whose contents are a clone of the source auto-bubble.
                     let clones = {
                         let im = self.core.indicators();
-                        pre_tag_ids.iter().filter_map(|iid| im.get_instance(*iid).cloned()).collect::<Vec<_>>()
+                        pre_tag_ids.iter().filter_map(|iid| im.instance(*iid).cloned()).collect::<Vec<_>>()
                     };
                     for src in clones {
                         let mut im = self.core.indicators_mut();
-                        if let Some(new_id) = im.create_instance(&src.type_id) {
-                            im.assign_bubble(new_id, Some(group_id.0));
-                            if let Some(inst) = im.get_instance_mut(new_id) {
+                        if let Some(new_id) = im.add(Some(group_id), &src.type_id) {
+                            if let Some(inst) = im.instance_mut(new_id) {
                                 inst.params = src.params;
                                 inst.outputs = src.outputs;
                                 inst.visible = src.visible;
@@ -1317,12 +1324,13 @@ impl ChartApp {
                     };
                     let source_chart_auto_bid_raw = self.panel_app.panel_grid.containers()
                         .get(&source_chart_id)
-                        .map(|w| w.auto_bubble_id.0);
-                    let mut configs: Vec<mlc_core::indicator_types::IndicatorGroupConfig> = self.core.indicators().instances_iter()
-                        .filter(|i| {
-                            i.origin_id.is_none()
-                                && source_chart_auto_bid_raw.map_or(false, |b| i.bubble_id == Some(b))
-                        })
+                        .map(|w| w.auto_bubble_id);
+                    let indicators_guard_split = self.core.indicators();
+                    let mut configs: Vec<mlc_core::indicator_types::IndicatorGroupConfig> = source_chart_auto_bid_raw
+                        .map(|bid| indicators_guard_split.instances_for_bubble(bid))
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(|i| i.origin_id.is_none())
                         .map(|i| mlc_core::indicator_types::IndicatorGroupConfig {
                             id: i.id,
                             type_id: i.type_id.clone(),
@@ -2000,8 +2008,8 @@ impl ChartApp {
             // Already-present type_ids in this group (= bubble).
             let existing_types: std::collections::HashSet<String> = {
                 let im = self.core.indicators();
-                im.instances_iter()
-                    .filter(|i| i.bubble_id == Some(group_bid_raw))
+                im.instances_for_bubble(group_id)
+                    .into_iter()
                     .map(|i| i.type_id.clone())
                     .collect()
             };
@@ -2010,14 +2018,7 @@ impl ChartApp {
                 if existing_types.contains(type_id) {
                     continue;
                 }
-                let new_id_opt = {
-                    let mut im = self.core.indicators_mut();
-                    let nid = im.create_instance(type_id);
-                    if let Some(new_id) = nid {
-                        im.assign_bubble(new_id, Some(group_bid_raw));
-                    }
-                    nid
-                };
+                let new_id_opt = self.core.indicators_mut().add(Some(group_id), type_id);
                 if let Some(new_id) = new_id_opt {
                     eprintln!(
                         "[BubbleStore] Split sync: created indicator '{}' (id={}) on bubble {} (chart {:?})",
@@ -2028,7 +2029,7 @@ impl ChartApp {
 
             // Calculate indicators on the shared bubble using this chart's bars.
             let bars = self.bars_for_chart(chart_id);
-            self.core.indicators_mut().calculate_all_for_bubble(group_bid_raw, &bars);
+            self.core.indicators_mut().recalc_bubble(group_id, &bars);
         }
         self.sync_sub_panes_from_manager();
         eprintln!(
@@ -2072,12 +2073,11 @@ impl ChartApp {
             // in a state where DWM marked the window Not Responding).
             let new_id_opt = {
                 let mut im = self.core.indicators_mut();
-                let nid = im.create_instance(type_id);
+                // All peers share the same group bubble; the indicator
+                // lives once on the bubble, not per-chart.
+                let nid = im.add(Some(group_id), type_id);
                 if let Some(new_id) = nid {
-                    // All peers share the same group bubble; the indicator
-                    // lives once on the bubble, not per-chart.
-                    im.assign_bubble(new_id, Some(group_id.0));
-                    if let Some(inst) = im.get_instance_mut(new_id) {
+                    if let Some(inst) = im.instance_mut(new_id) {
                         inst.origin_id = None;
                     }
                 }
@@ -2090,7 +2090,7 @@ impl ChartApp {
                     .map(|w| w.current_bubble_id)
                     .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()));
                 if let Some(bars) = bars {
-                    self.core.indicators_mut().calculate_all_for_bubble(group_id.0, &bars);
+                    self.core.indicators_mut().recalc_bubble(group_id, &bars);
                 }
                 eprintln!(
                     "[BubbleStore] Synced indicator '{}' (id={}) to peer chart {:?}",

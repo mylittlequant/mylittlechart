@@ -1102,7 +1102,7 @@ impl App<'_> {
         }
         // Initialise the new window directly from AppState so it has current data
         // without waiting for the next dirty-flag sync pass.
-        *chart.core.watchlist_mut() = self.app_state.watchlist_manager.clone();
+        *chart.core.watchlist_mut_raw() = self.app_state.watchlist_manager.clone();
         chart.sidebar_state.connector_enabled = self.app_state.connector_enabled.clone();
         // Merge AppState presets into window — don't replace, to keep
         // any Untitled preset that new_window() just created.
@@ -1550,7 +1550,7 @@ impl App<'_> {
                     chart.panel_app.theme_manager.set_preset(&theme_preset);
                 }
                 // Sync AppState into the new live window (read-only from captured clones).
-                *chart.core.watchlist_mut() = watchlist_manager.clone();
+                *chart.core.watchlist_mut_raw() = watchlist_manager.clone();
                 chart.sidebar_state.connector_enabled = connector_enabled.clone();
                 for (k, v) in app_presets.iter() {
                     chart.core.presets_mut().entry(k.clone()).or_insert_with(|| v.clone());
@@ -2915,7 +2915,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 };
                 let recalc_mode = self.app_state.recalc_mode;
                 for pw in self.windows.values_mut() {
-                    pw.chart.core.indicators_mut().recalc_mode = recalc_mode;
+                    pw.chart.core.indicators_mut().set_recalc_mode(recalc_mode);
                 }
                 // Persist to DeviceSettings so the choice survives restarts.
                 let mut ds = mlc_core::user_profile::DeviceSettings::load();
@@ -3909,7 +3909,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             // when nothing has changed.
             if self.app_state.watchlists_dirty {
                 for pw in self.windows.values_mut() {
-                    *pw.chart.core.watchlist_mut() =
+                    *pw.chart.core.watchlist_mut_raw() =
                         self.app_state.watchlist_manager.clone();
                 }
                 self.app_state.watchlists_dirty = false;
@@ -3956,7 +3956,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             let recalc_mode = self.app_state.recalc_mode;
             let scale_mode = self.app_state.scale_mode;
             for pw in self.windows.values_mut() {
-                pw.chart.core.indicators_mut().recalc_mode = recalc_mode;
+                pw.chart.core.indicators_mut().set_recalc_mode(recalc_mode);
                 pw.chart.default_scale_mode = scale_mode;
             }
 
@@ -4158,9 +4158,10 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 // Internal CPU profiling fields — read directly from ChartApp.
                 perf.tick_us = pw.chart.last_tick_us;
                 perf.indicator_recalc_us = pw.chart.last_indicator_recalc_us;
-                perf.indicator_recalc_count = pw.chart.core.indicators().instances_count() as u32;
-                perf.indicator_incremental_count = pw.chart.core.indicators().last_incremental_count;
-                perf.indicator_full_count = pw.chart.core.indicators().last_full_count;
+                perf.indicator_recalc_count = pw.chart.core.indicators().count() as u32;
+                let (incremental_count, full_count) = pw.chart.core.indicators().recalc_stats();
+                perf.indicator_incremental_count = incremental_count;
+                perf.indicator_full_count = full_count;
                 perf.event_process_us = pw.chart.last_event_process_us;
                 perf.auto_scale_us = pw.chart.last_auto_scale_us;
 

@@ -149,12 +149,11 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     .and_then(|bid| chart.with_bubble(bid, |b| b.bars.clone()))
                     .unwrap_or_default();
 
-                let new_id_opt = chart.core.indicators_mut().create_instance(&type_id);
+                let new_id_opt = chart.core.indicators_mut().add(Some(mlc_core::ids::BubbleId(chart_id)), &type_id);
                 if let Some(new_id) = new_id_opt {
-                    chart.core.indicators_mut().assign_window(new_id, Some(chart_id));
                     {
                         let mut im = chart.core.indicators_mut();
-                        if let Some(inst) = im.get_instance_mut(new_id) {
+                        if let Some(inst) = im.instance_mut(new_id) {
                             for (k, v) in &params {
                                 let iv = match v {
                                     serde_json::Value::Number(n) => {
@@ -194,7 +193,7 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
 
                 let (found, wid_opt) = {
                     let mut im = chart.core.indicators_mut();
-                    if let Some(inst) = im.get_instance_mut(indicator_id) {
+                    if let Some(inst) = im.instance_mut(indicator_id) {
                         for (k, v) in &params {
                             let iv = match v {
                                 serde_json::Value::Number(n) => {
@@ -237,7 +236,7 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     eprintln!("[AgentCommand] RemoveIndicator: window not found: {}", window_id);
                     continue;
                 };
-                if w.chart.core.indicators_mut().remove_instance(indicator_id).is_some() {
+                if w.chart.core.indicators_mut().remove(indicator_id).is_some() {
                     w.chart.sync_sub_panes_from_manager();
                     eprintln!("[AgentCommand] RemoveIndicator: id={}", indicator_id);
                 } else {

@@ -86,7 +86,6 @@ macro_rules! sglog {
 pub(crate) use sglog;
 
 use std::cell::RefCell;
-use std::sync::atomic::Ordering as AtomicOrdering;
 
 use mlc_core::{
     ToolbarConfig,
@@ -1119,6 +1118,10 @@ impl ChartApp {
     /// Remove a bubble + its paired tag.
     pub fn remove_tag(&mut self, bid: mlc_core::ids::BubbleId) {
         self.core.bubbles_mut().remove_group(bid);
+        // §6.7 cross-manager gap: indicator instances live in IndicatorManager,
+        // not on DataBubble, so removing the bubble doesn't automatically drop
+        // its indicators the way alerts/primitives (bubble data) do.
+        self.core.indicators_mut().purge_for_bubble(bid);
         self.tag_store.remove(bid);
     }
 
@@ -1657,8 +1660,8 @@ impl ChartApp {
         // Subscribe to mini ticker updates for each symbol in the active watchlist,
         // using each symbol's own exchange.
         {
-            let wl_guard = app.core.watchlist();
-            let wl_syms: Vec<_> = wl_guard.active_list()
+            let wl_guard = app.core.watchlists();
+            let wl_syms: Vec<_> = wl_guard.active()
                 .map(|wl| wl.all_symbols().into_iter().map(|ws| (ws.exchange.clone(), ws.symbol.clone(), ws.account_type.clone())).collect())
                 .unwrap_or_default();
             drop(wl_guard);
@@ -1873,16 +1876,16 @@ impl ChartApp {
             compare_add_attempts: 0, compare_add_success: 0, compare_add_queued: 0,
         };
 
-        *app.core.watchlist_mut() = mlc_sidebar_content::watchlist::WatchlistManager::new(
+        app.core.watchlists_mut().replace_all(mlc_watchlist::WatchlistManager::new(
             vec![
-                mlc_sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "binance".to_string(), "S".to_string()),
-                mlc_sidebar_content::watchlist::WatchlistSymbol::new("ETHUSDT".to_string(), "binance".to_string(), "S".to_string()),
-                mlc_sidebar_content::watchlist::WatchlistSymbol::new("SOLUSDT".to_string(), "binance".to_string(), "S".to_string()),
-                mlc_sidebar_content::watchlist::WatchlistSymbol::new("BNBUSDT".to_string(), "binance".to_string(), "S".to_string()),
-                mlc_sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "bybit".to_string(), "S".to_string()),
-                mlc_sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "okx".to_string(), "S".to_string()),
+                mlc_watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "binance".to_string(), "S".to_string()),
+                mlc_watchlist::WatchlistSymbol::new("ETHUSDT".to_string(), "binance".to_string(), "S".to_string()),
+                mlc_watchlist::WatchlistSymbol::new("SOLUSDT".to_string(), "binance".to_string(), "S".to_string()),
+                mlc_watchlist::WatchlistSymbol::new("BNBUSDT".to_string(), "binance".to_string(), "S".to_string()),
+                mlc_watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "bybit".to_string(), "S".to_string()),
+                mlc_watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "okx".to_string(), "S".to_string()),
             ],
-        );
+        ));
 
         // Create a single "Untitled" preset tab.
         let untitled_preset = mlc_core::preset::preset::ChartPreset::new("Untitled".to_string());
@@ -2042,7 +2045,7 @@ impl ChartApp {
         // after loading a preset; wasm shell calls `seed_default_chart`
         // instead and previously skipped this step → mini-ticker DashMap
         // stayed empty and the watchlist froze at 0.0.
-        let wl_syms: Vec<(String, String, String)> = self.core.watchlist().active_list()
+        let wl_syms: Vec<(String, String, String)> = self.core.watchlists().active()
             .map(|wl| wl.all_symbols().into_iter().map(|ws| (ws.exchange.clone(), ws.symbol.clone(), ws.account_type.clone())).collect())
             .unwrap_or_default();
         for (ws_exchange_str, ws_symbol, ws_account_type) in wl_syms {
@@ -2082,7 +2085,7 @@ impl ChartApp {
         for action in actions {
             match action {
                 WatchlistAction::Toggle { symbol, exchange, account_type } => {
-                    let now_in = self.core.watchlist_mut()
+                    let now_in = self.core.watchlists_mut()
                         .toggle_symbol(&symbol, &exchange, &account_type);
                     if now_in {
                         if let Some(eid) = ExchangeId::from_str(&exchange) {
@@ -2094,7 +2097,7 @@ impl ChartApp {
                                 self.core.bridge.subscribe_mini_ticker(eid, &symbol, at);
                             }
                         }
-                        if let Some(list) = self.core.watchlist_mut().active_list_mut() {
+                        if let Some(list) = self.core.watchlists_mut().active_mut() {
                             list.order_snapshot = None;
                         }
                     } else {
@@ -2102,7 +2105,7 @@ impl ChartApp {
                             let at = account_type_from_label(&account_type);
                             self.core.bridge.unsubscribe_mini_ticker(eid, &symbol, at);
                         }
-                        if let Some(list) = self.core.watchlist_mut().active_list_mut() {
+                        if let Some(list) = self.core.watchlists_mut().active_mut() {
                             if let Some(ref mut snap) = list.order_snapshot {
                                 snap.retain(|s| s.symbol != symbol);
                             }
@@ -2110,40 +2113,39 @@ impl ChartApp {
                     }
                 }
                 WatchlistAction::Remove { symbol, exchange, account_type } => {
-                    self.core.watchlist_mut().remove_symbol(&symbol, &exchange, &account_type);
+                    self.core.watchlists_mut().remove_symbol(&symbol, &exchange, &account_type);
                 }
                 WatchlistAction::ClearOrderSnapshot => {
-                    if let Some(list) = self.core.watchlist_mut().active_list_mut() {
+                    if let Some(list) = self.core.watchlists_mut().active_mut() {
                         list.order_snapshot = None;
                     }
                 }
                 WatchlistAction::Reorder { from_idx, to_idx } => {
-                    self.core.watchlist_mut().reorder_symbol(from_idx, to_idx);
+                    self.core.watchlists_mut().reorder_symbol(from_idx, to_idx);
                 }
                 WatchlistAction::CreateList { name } => {
-                    let new_id = self.core.watchlist_mut().create_list(name);
-                    self.core.watchlist_mut().active_list_id = new_id;
+                    let new_id = self.core.watchlists_mut().create_list(name);
+                    self.core.watchlists_mut().set_active(new_id);
                 }
                 WatchlistAction::RenameList { id, new_name } => {
-                    let mut wl = self.core.watchlist_mut();
-                    if let Some(list) = wl.lists.iter_mut().find(|l| l.id == id) {
+                    if let Some(list) = self.core.watchlists_mut().find_mut(id) {
                         list.name = new_name;
                     }
                 }
                 WatchlistAction::DeleteList { id } => {
-                    self.core.watchlist_mut().delete_list(id);
+                    self.core.watchlists_mut().delete_list(id);
                 }
                 WatchlistAction::SetActiveList { id } => {
-                    self.core.watchlist_mut().active_list_id = id;
+                    self.core.watchlists_mut().set_active(id);
                 }
                 WatchlistAction::SetColorFlag { symbol, exchange, account_type, color } => {
-                    if let Some(list) = self.core.watchlist_mut().active_list_mut() {
+                    if let Some(list) = self.core.watchlists_mut().active_mut() {
                         let color_str = color.as_deref().unwrap_or("");
                         list.set_color_flag(&symbol, &exchange, &account_type, color_str);
                     }
                 }
                 WatchlistAction::MoveToGroup { symbol, exchange, account_type, group_name } => {
-                    if let Some(list) = self.core.watchlist_mut().active_list_mut() {
+                    if let Some(list) = self.core.watchlists_mut().active_mut() {
                         if let Some(group) = list.groups.iter().find(|g| g.name == group_name) {
                             let group_id = group.id;
                             list.move_to_group(&symbol, &exchange, &account_type, group_id);
@@ -2151,8 +2153,8 @@ impl ChartApp {
                     }
                 }
                 WatchlistAction::RemoveFromGroup { symbol, exchange, account_type } => {
-                    if let Some(list) = self.core.watchlist_mut().active_list_mut() {
-                        let mut found: Option<mlc_sidebar_content::watchlist::WatchlistSymbol> = None;
+                    if let Some(list) = self.core.watchlists_mut().active_mut() {
+                        let mut found: Option<mlc_watchlist::WatchlistSymbol> = None;
                         for g in &mut list.groups {
                             if let Some(pos) = g.symbols.iter().position(|s|
                                 s.symbol == symbol && s.exchange == exchange && s.account_type == account_type)
@@ -2167,17 +2169,17 @@ impl ChartApp {
                     }
                 }
                 WatchlistAction::SetSeparatorOffsets { offsets } => {
-                    if let Some(list) = self.core.watchlist_mut().active_list_mut() {
+                    if let Some(list) = self.core.watchlists_mut().active_mut() {
                         list.column_config.separator_offsets = Some(offsets);
                     }
                 }
                 WatchlistAction::ResetSeparatorOffsets => {
-                    if let Some(list) = self.core.watchlist_mut().active_list_mut() {
+                    if let Some(list) = self.core.watchlists_mut().active_mut() {
                         list.column_config.separator_offsets = None;
                     }
                 }
                 WatchlistAction::SetSeparatorOffset { index, value } => {
-                    if let Some(list) = self.core.watchlist_mut().active_list_mut() {
+                    if let Some(list) = self.core.watchlists_mut().active_mut() {
                         let n_cols = {
                             let c = &list.column_config;
                             let mut n: usize = 1;
@@ -2206,7 +2208,7 @@ impl ChartApp {
                     }
                 }
                 WatchlistAction::ToggleColumnVisibility { column } => {
-                    if let Some(list) = self.core.watchlist_mut().active_list_mut() {
+                    if let Some(list) = self.core.watchlists_mut().active_mut() {
                         match column.as_str() {
                             "exchange"     => list.column_config.show_exchange     = !list.column_config.show_exchange,
                             "last_price"   => list.column_config.show_last_price   = !list.column_config.show_last_price,
@@ -2229,12 +2231,12 @@ impl ChartApp {
                     }
                 }
                 WatchlistAction::SortCycle => {
-                    if let Some(list) = self.core.watchlist_mut().active_list_mut() {
+                    if let Some(list) = self.core.watchlists_mut().active_mut() {
                         list.order_snapshot = None;
                     }
                 }
                 WatchlistAction::ResetSort => {
-                    if let Some(list) = self.core.watchlist_mut().active_list_mut() {
+                    if let Some(list) = self.core.watchlists_mut().active_mut() {
                         list.order_snapshot = None;
                     }
                 }
@@ -2398,16 +2400,16 @@ impl ChartApp {
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_watchlists below.
-        *app.core.watchlist_mut() = mlc_sidebar_content::watchlist::WatchlistManager::new(
+        app.core.watchlists_mut().replace_all(mlc_watchlist::WatchlistManager::new(
             vec![
-                mlc_sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "binance".to_string(), "S".to_string()),
-                mlc_sidebar_content::watchlist::WatchlistSymbol::new("ETHUSDT".to_string(), "binance".to_string(), "S".to_string()),
-                mlc_sidebar_content::watchlist::WatchlistSymbol::new("SOLUSDT".to_string(), "binance".to_string(), "S".to_string()),
-                mlc_sidebar_content::watchlist::WatchlistSymbol::new("BNBUSDT".to_string(), "binance".to_string(), "S".to_string()),
-                mlc_sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "bybit".to_string(), "S".to_string()),
-                mlc_sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "okx".to_string(), "S".to_string()),
+                mlc_watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "binance".to_string(), "S".to_string()),
+                mlc_watchlist::WatchlistSymbol::new("ETHUSDT".to_string(), "binance".to_string(), "S".to_string()),
+                mlc_watchlist::WatchlistSymbol::new("SOLUSDT".to_string(), "binance".to_string(), "S".to_string()),
+                mlc_watchlist::WatchlistSymbol::new("BNBUSDT".to_string(), "binance".to_string(), "S".to_string()),
+                mlc_watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "bybit".to_string(), "S".to_string()),
+                mlc_watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "okx".to_string(), "S".to_string()),
             ],
-        );
+        ));
 
         // Phase 4: use app-level UserManager (loaded once in main.rs) instead of
         // calling load_user_state() per-window.  Eliminates redundant disk reads
@@ -2675,12 +2677,10 @@ impl ChartApp {
                 // Add the builtin volume histogram overlay to the fresh window.
                 // This is the default-on state for brand-new charts that have no saved preset.
                 if let Some(chart_id) = active_chart_id {
-                    if let Some(new_vol_id) = app.core.indicators_mut().create_instance("builtin_volume") {
-                        let bid = app.panel_app.panel_grid.containers()
-                            .get(&chart_id)
-                            .map(|w| w.current_bubble_id.0);
-                        app.core.indicators_mut().assign_bubble(new_vol_id, bid);
-                    }
+                    let bid = app.panel_app.panel_grid.containers()
+                        .get(&chart_id)
+                        .map(|w| w.current_bubble_id);
+                    app.core.indicators_mut().add(bid, "builtin_volume");
                 }
 
                 bridge.ensure_connector(exchange_id);
@@ -2710,7 +2710,7 @@ impl ChartApp {
 
         // Subscribe mini tickers for active watchlist.
         if !skeleton {
-            let wl_syms: Vec<_> = app.core.watchlist().active_list()
+            let wl_syms: Vec<_> = app.core.watchlists().active()
                 .map(|wl| wl.all_symbols().into_iter().map(|ws| (ws.exchange.clone(), ws.symbol.clone(), ws.account_type.clone())).collect())
                 .unwrap_or_default();
             for (ws_exchange_str, ws_symbol, ws_account_type) in wl_syms {
@@ -3374,7 +3374,7 @@ impl ChartApp {
             let chart_id = ChartId(window_id);
             let bars = self.bars_for_chart(chart_id);
             if self.panel_app.panel_grid.containers().get(&chart_id).is_some() {
-                self.core.indicators_mut().calculate_for_window(window_id, &bars[..]);
+                self.core.indicators_mut().recalc_bubble(mlc_core::ids::BubbleId(window_id), &bars[..]);
             }
         }
         let _ = symbol; // legacy — recalc filters by window_id, not symbol
@@ -3810,18 +3810,6 @@ impl ChartApp {
                     ..ChartRenderConfig::default()
                 };
 
-                // Scope indicator queries to this chart's CURRENT bubble so
-                // each split pane only renders the indicators owned by the
-                // tag / home-bubble this chart is currently displaying.
-                // Indicator ownership is by bubble, not by chart window.
-                if let Some(chart_id) = leaf_chart_id {
-                    let cur_bid = self.panel_app.panel_grid.containers()
-                        .get(&chart_id)
-                        .map(|w| w.current_bubble_id.0)
-                        .unwrap_or(0);
-                    self.core.indicators().current_render_bubble_id.store(cur_bid + 1, AtomicOrdering::Relaxed);
-                }
-
                 let alert_current_bar = 0usize.saturating_sub(1) as f64;
                 // Look up pre-built drawing points from cache (computed once per
                 // chart window before this loop to avoid per-leaf reallocation).
@@ -3855,12 +3843,13 @@ impl ChartApp {
                 let inner_sub_ids_vec = mlc_core::state::chart_container::collect_inner_instance_ids(&window.inner_docking);
                 let split_drawings_guard = self.core.drawings();
                 let split_view = split_drawings_guard.with_bubble(window.current_bubble_id);
+                let split_indicator_view = indicator_guard_split.with_bubble(window.current_bubble_id);
                 let panel_data = ChartPanelRenderData {
                     state: &render_state,
                     config: &render_config,
                     corner_state: &scale_corner_state,
                     drawing_manager: Some(&split_view as &dyn mlc_core::drawing::DrawingRenderView),
-                    indicator_source: Some(&*indicator_guard_split),
+                    indicator_source: Some(&split_indicator_view as &dyn IndicatorSource),
                     symbol: Some(split_symbol.as_str()),
                     sub_pane_y_state: Some(&window.sub_pane_y_state),
                     compare_overlay: Some(&window.compare_overlay),
@@ -3902,24 +3891,15 @@ impl ChartApp {
                     // Sub-pane order + proportions both come from the
                     // container's own InnerLayout -- single source of truth.
                     // indicator_manager visibility is a filter applied on top.
-                    // S2.7.1: use split_symbol (from branch_meta) for indicator lookup.
-                    let visible_set: std::collections::HashSet<u64> = if let Some(chart_id) = leaf_chart_id {
-                        let bid = self.panel_app.panel_grid.containers()
-                            .get(&chart_id).map(|w| w.current_bubble_id.0).unwrap_or(0);
-                        self.core.indicators()
-                                .get_instances_for_symbol_in_bubble(&split_symbol, bid)
-                            .into_iter()
-                            .filter(|i| i.visible && i.pane > 0)
-                            .map(|i| i.id)
-                            .collect()
-                    } else {
-                        self.core.indicators()
-                                .get_instances_for_symbol(&split_symbol)
-                            .into_iter()
-                            .filter(|i| i.visible && i.pane > 0)
-                            .map(|i| i.id)
-                            .collect()
-                    };
+                    // Indicator ownership is by bubble — `window.current_bubble_id`
+                    // is this leaf's bubble regardless of whether leaf_chart_id
+                    // resolved (S2.7.1).
+                    let visible_set: std::collections::HashSet<u64> = self.core.indicators()
+                        .instances_for_bubble(window.current_bubble_id)
+                        .into_iter()
+                        .filter(|i| i.visible && i.pane > 0)
+                        .map(|i| i.id)
+                        .collect();
                     let all_ids = mlc_core::state::chart_container::collect_inner_instance_ids(&window.inner_docking);
                     let all_props = mlc_core::state::chart_container::collect_inner_proportions(&window.inner_docking);
                     let (sub_pane_ids, sub_proportions): (Vec<u64>, Vec<f64>) = all_ids
@@ -4006,9 +3986,6 @@ impl ChartApp {
                     // handles these interactions without coordinator involvement.
                 }
 
-                // Reset render scope after this leaf is done.
-                self.core.indicators().current_render_bubble_id.store(0, AtomicOrdering::Relaxed);
-
                 // Render overlay tab header at the top-left of this leaf.
                 let is_active_leaf = self.panel_app.panel_grid.docking()
                     .active_leaf() == Some(leaf_id);
@@ -4077,8 +4054,6 @@ impl ChartApp {
 
                 // Render per-leaf indicator overlay (chevron) for this leaf.
                 {
-                    // S2.7.1: use split_symbol from branch_meta (already captured above).
-                    let symbol = split_symbol.clone();
                     // Collect compare series info before any mutable borrow of panel_app.
                     let compare_series_info: Vec<(String, bool, String)> = window
                         .compare_overlay
@@ -4086,13 +4061,9 @@ impl ChartApp {
                         .iter()
                         .map(|s| (s.symbol.clone(), s.visible, s.color.clone()))
                         .collect();
-                    let instances_empty = if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
-                        let bid = self.panel_app.panel_grid.containers()
-                            .get(&chart_id).map(|w| w.current_bubble_id.0).unwrap_or(0);
-                        self.core.indicators().get_instances_for_symbol_in_bubble(&symbol, bid).is_empty()
-                    } else {
-                        self.core.indicators().get_instances_for_symbol(&symbol).is_empty()
-                    };
+                    let instances_empty = self.core.indicators()
+                        .instances_for_bubble(window.current_bubble_id)
+                        .is_empty();
                     let _has_indicators = !instances_empty;
                     let _has_compare = !compare_series_info.is_empty();
 
@@ -4106,21 +4077,14 @@ impl ChartApp {
                     // leaf_tab_visible: hidden while a maximized sub-pane covers
                     // the container (chevron belongs to the chart layer).
                     if leaf_tab_visible && (overlay_state.visible || overlay_state.is_open) {
-                        let chart_bid = self.panel_app.panel_grid.container_id_for_leaf(leaf_id)
-                            .and_then(|cid| self.panel_app.panel_grid.containers()
-                                .get(&cid).map(|w| w.current_bubble_id.0));
                         let mut indicators: Vec<IndicatorOverlayInfo> = {
                             let im = self.core.indicators();
-                            let instances = if let Some(bid) = chart_bid {
-                                im.get_instances_for_symbol_in_bubble(&symbol, bid)
-                            } else {
-                                im.get_instances_for_symbol(&symbol)
-                            };
+                            let instances = im.instances_for_bubble(window.current_bubble_id);
                             instances
                                 .iter()
                                 .map(|inst| {
                                     let display_name = Self::format_indicator_display_name(
-                                        &*im, inst,
+                                        &im, inst,
                                     );
                                     IndicatorOverlayInfo {
                                         id: inst.id,
@@ -4329,16 +4293,6 @@ impl ChartApp {
                 .and_then(|cid| self.timeframe_for_chart(cid))
                 .map(|tf| tf.interval_ms);
 
-            // Scope indicator queries to the active chart's CURRENT bubble
-            // (single-window mode).  Indicator ownership is by bubble.
-            if let Some(chart_id) = self.panel_app.panel_grid.active_container_id() {
-                let cur_bid = self.panel_app.panel_grid.containers()
-                    .get(&chart_id)
-                    .map(|w| w.current_bubble_id.0)
-                    .unwrap_or(0);
-                self.core.indicators().current_render_bubble_id.store(cur_bid + 1, AtomicOrdering::Relaxed);
-            }
-
             // Hold the indicator manager read guard for the duration of the
             // single-window render path so `&self.indicator_manager` borrows stay alive.
             let indicator_guard_single = self.core.indicators();
@@ -4439,12 +4393,13 @@ impl ChartApp {
                 let inner_sub_ids_vec = mlc_core::state::chart_container::collect_inner_instance_ids(&window.inner_docking);
                 let single_window_drawings_guard = self.core.drawings();
                 let single_window_view = single_window_drawings_guard.with_bubble(window.current_bubble_id);
+                let single_indicator_view = indicator_guard_single.with_bubble(window.current_bubble_id);
                 let panel_data = ChartPanelRenderData {
                     state: &render_state,
                     config: &render_config,
                     corner_state: &scale_corner_state,
                     drawing_manager: Some(&single_window_view as &dyn mlc_core::drawing::DrawingRenderView),
-                    indicator_source: Some(&*indicator_guard_single),
+                    indicator_source: Some(&single_indicator_view as &dyn IndicatorSource),
                     symbol: Some(single_sym),
                     sub_pane_y_state: Some(&window.sub_pane_y_state),
                     compare_overlay: Some(&window.compare_overlay),
@@ -4487,24 +4442,14 @@ impl ChartApp {
                 {
                     // Compute the corrected chart area rect (same logic as
                     // render_full_chart_panel's internal ExtendedFrameLayout).
-                    // S2.7.1: use single_sym from branch_meta for indicator lookup.
-                    let visible_set: std::collections::HashSet<u64> = if let Some(chart_id) = self.panel_app.panel_grid.active_container_id() {
-                        let bid = self.panel_app.panel_grid.containers()
-                            .get(&chart_id).map(|w| w.current_bubble_id.0).unwrap_or(0);
-                        self.core.indicators()
-                                .get_instances_for_symbol_in_bubble(single_sym, bid)
-                            .into_iter()
-                            .filter(|i| i.visible && i.pane > 0)
-                            .map(|i| i.id)
-                            .collect()
-                    } else {
-                        self.core.indicators()
-                                .get_instances_for_symbol(single_sym)
-                            .into_iter()
-                            .filter(|i| i.visible && i.pane > 0)
-                            .map(|i| i.id)
-                            .collect()
-                    };
+                    // Indicator ownership is by bubble — `window.current_bubble_id`
+                    // is this window's bubble.
+                    let visible_set: std::collections::HashSet<u64> = self.core.indicators()
+                        .instances_for_bubble(window.current_bubble_id)
+                        .into_iter()
+                        .filter(|i| i.visible && i.pane > 0)
+                        .map(|i| i.id)
+                        .collect();
                     let all_ids2 = mlc_core::state::chart_container::collect_inner_instance_ids(&window.inner_docking);
                     let all_props2 = mlc_core::state::chart_container::collect_inner_proportions(&window.inner_docking);
                     let (sub_pane_ids, sub_proportions): (Vec<u64>, Vec<f64>) = all_ids2
@@ -4546,10 +4491,7 @@ impl ChartApp {
                     corrected_vp.chart_height = main.chart.height;
 
                     // alert-bell filter is by bubble
-                    let window_id = self.panel_app.panel_grid
-                        .active_container_id()
-                        .and_then(|cid| self.panel_app.panel_grid.containers()
-                            .get(&cid).map(|w| w.current_bubble_id.0));
+                    let window_id = Some(window.current_bubble_id.0);
 
                     // S2.7.1: use single_sym/exch/at from branch_meta.
                     // Skip chart-anchored bells when the main chart is collapsed
@@ -4638,9 +4580,6 @@ impl ChartApp {
                     out_loading_spinners.push((single_leaf_id, geom));
                 }
             }
-
-            // Reset render scope after single-window render is complete.
-            self.core.indicators().current_render_bubble_id.store(0, AtomicOrdering::Relaxed);
 
             // Render overlay tab header (single mode) — skipped while a
             // maximized sub-pane covers the container.
@@ -4766,12 +4705,7 @@ impl ChartApp {
             let toolbar_theme_for_overlay = self.panel_app.toolbar_theme_for_render();
             let overlay_state = &self.panel_app.indicator_overlay_state;
             if overlay_state.visible || overlay_state.is_open {
-                // S2.7.1: read symbol from branch_meta; compare_series still needs window borrow.
-                let ind_overlay_chart_id = self.panel_app.panel_grid.active_container_id();
-                let symbol: String = ind_overlay_chart_id
-                    .and_then(|cid| self.symbol_for_chart(cid))
-                    .map(String::from)
-                    .unwrap_or_default();
+                // compare_series still needs window borrow.
                 let compare_series: Vec<(String, bool, String)> =
                     self.panel_app.panel_grid.active_container()
                         .map(|w| w.compare_overlay.series.iter()
@@ -4779,21 +4713,19 @@ impl ChartApp {
                             .collect())
                         .unwrap_or_default();
 
-                let ind_overlay_chart_bid = ind_overlay_chart_id
-                    .and_then(|cid| self.panel_app.panel_grid.containers()
-                        .get(&cid).map(|w| w.current_bubble_id.0));
+                let ind_overlay_bid = self.panel_app.panel_grid.active_container()
+                    .map(|w| w.current_bubble_id);
                 let mut indicators: Vec<IndicatorOverlayInfo> = {
                     let im = self.core.indicators();
-                    let instances = if let Some(bid) = ind_overlay_chart_bid {
-                        im.get_instances_for_symbol_in_bubble(&symbol, bid)
-                    } else {
-                        im.get_instances_for_symbol(&symbol)
+                    let instances = match ind_overlay_bid {
+                        Some(bid) => im.instances_for_bubble(bid),
+                        None => Vec::new(),
                     };
                     instances
                         .iter()
                         .map(|inst| {
                             let display_name = Self::format_indicator_display_name(
-                                &*im, inst,
+                                &im, inst,
                             );
                             IndicatorOverlayInfo {
                                 id: inst.id,
@@ -5342,7 +5274,7 @@ impl ChartApp {
                         _ => None,
                     }
                 },
-                &*self.core.watchlist(),
+                self.core.watchlists().as_manager(),
             );
 
             Some(sidebar_result)
@@ -5859,7 +5791,7 @@ impl ChartApp {
                     _ => None,
                 }
             },
-            &*self.core.watchlist(),
+            self.core.watchlists().as_manager(),
         );
 
         // Persist agent terminal rect for hover-focus.
@@ -6206,6 +6138,9 @@ impl ChartApp {
         let theme_manager_ptr: *const mlc_core::theme::ThemeManager =
             &self.panel_app.theme_manager as *const _;
         let indicator_guard_modals = self.core.indicators();
+        // Modals only ever call `get_settings_data(id)` (id-keyed, no bubble
+        // scoping needed) on this view — the bound bid is a placeholder.
+        let indicator_view_modals = indicator_guard_modals.with_bubble(mlc_core::ids::BubbleId(0));
 
         let bubble_guard_modals = self.core.bubbles();
         let tm_guard_modals = self.core.template_manager();
@@ -6224,7 +6159,7 @@ impl ChartApp {
             ctx,
             &modal_layout,
             dm_ref,
-            Some(&*indicator_guard_modals as &dyn IndicatorSource),
+            Some(&indicator_view_modals as &dyn IndicatorSource),
             Some(&chart_settings_data),
             // SAFETY: theme_manager lives inside panel_app which render_modals
             // does not mutate (it only reads modal state fields).
@@ -6338,10 +6273,10 @@ impl ChartApp {
         // 8b. Watchlist modal
         let last_watchlist_modal_result: Option<mlc_layout::layout::modals::watchlist_modal::WatchlistModalResult> =
             if self.watchlist_modal.is_open() {
-                let wl_guard = self.core.watchlist();
+                let wl_guard = self.core.watchlists();
                 let color_flags: Vec<String> = self.sidebar_state.watchlist_items.iter()
                     .map(|item| {
-                        wl_guard.active_list()
+                        wl_guard.active()
                             .and_then(|l| l.get_color_flag(&item.symbol, &item.exchange, &item.account_type))
                             .unwrap_or_default()
                             .to_string()
@@ -6362,7 +6297,7 @@ impl ChartApp {
                         account_type: item.account_type.clone(),
                     })
                     .collect();
-                let groups_info: Vec<WatchlistGroupInfo> = wl_guard.lists.iter()
+                let groups_info: Vec<WatchlistGroupInfo> = wl_guard.lists().iter()
                     .map(|list| WatchlistGroupInfo {
                         id: list.id,
                         name: list.name.clone(),
@@ -6372,7 +6307,7 @@ impl ChartApp {
                             list.groups[0].color.clone()
                         },
                         symbol_count: list.all_symbols().len(),
-                        is_active: list.id == wl_guard.active_list_id,
+                        is_active: list.id == wl_guard.active_id(),
                     })
                     .collect();
                 drop(wl_guard);
@@ -7083,27 +7018,22 @@ impl ChartApp {
         use mlc_core::state::chart_container_leaf::ChartContainerLeaf;
 
         // Step 1: collect window-level read-only data before taking mutable borrows.
-        let window_data: Vec<(mlc_core::LeafId, u64, String, usize, usize)> = self
+        let window_data: Vec<(mlc_core::LeafId, u64, usize, usize)> = self
             .panel_app
             .panel_grid
             .iter_containers()
             .map(|(leaf_id, window)| {
-                let chart_id = self.panel_app.panel_grid.container_id_for_leaf(leaf_id);
                 // Indicators are scoped by bubble — pass current_bubble_id.
                 let bubble_id_val = window.current_bubble_id.0;
-                let symbol = chart_id
-                    .and_then(|cid| self.symbol_for_chart(cid))
-                    .map(String::from)
-                    .unwrap_or_default();
                 let (vs, ve) = window.viewport.visible_range();
-                (leaf_id, bubble_id_val, symbol, vs, ve)
+                (leaf_id, bubble_id_val, vs, ve)
             })
             .collect();
 
         // Step 2: for each window, collect desired instance_ids from indicator_manager.
-        for (leaf_id, bubble_id_val, symbol, visible_start, visible_end) in &window_data {
+        for (leaf_id, bubble_id_val, visible_start, visible_end) in &window_data {
             let pane_ids: Vec<u64> = self.core.indicators()
-                .get_instances_for_symbol_in_bubble(symbol, *bubble_id_val)
+                .instances_for_bubble(mlc_core::ids::BubbleId(*bubble_id_val))
                 .into_iter()
                 .filter(|i| i.pane > 0)
                 .map(|i| i.id)
@@ -7360,7 +7290,7 @@ impl ChartApp {
 
     /// Build indicator catalog items from the IndicatorManager definitions.
     fn build_indicator_catalog(&self) -> Vec<IndicatorCatalogItem> {
-        let mut items: Vec<IndicatorCatalogItem> = self.core.indicators().get_definitions().iter().map(|def| {
+        let mut items: Vec<IndicatorCatalogItem> = self.core.indicators().definitions().iter().map(|def| {
             IndicatorCatalogItem::new(&def.type_id, &def.name, &def.short_name, def.category)
                 .with_description(&def.description)
                 .with_overlay(def.overlay)
@@ -8408,12 +8338,12 @@ impl ChartApp {
     ///
     /// Examples: "SMA(20)", "RSI(14)", "MACD(26, 12, 9)", "BB(20, 2)"
     fn format_indicator_display_name(
-        mgr: &mlc_indicators::IndicatorManager,
+        mgr: &mlc_backend_core::Indicators<'_>,
         inst: &mlc_indicators::IndicatorMgrInstance,
     ) -> String {
         use mlc_indicators::{IndicatorParamType, IndicatorParamValue};
 
-        if let Some(def) = mgr.get_definition(&inst.type_id) {
+        if let Some(def) = mgr.definition(&inst.type_id) {
             // Collect numeric param values in definition order
             let numeric_vals: Vec<String> = def.params.iter()
                 .filter(|p| matches!(p.param_type, IndicatorParamType::Int { .. } | IndicatorParamType::Float { .. }))
@@ -8617,7 +8547,7 @@ impl ChartApp {
     /// app-level snapshot store, keyed by the indicator's `type_id`.
     pub fn snapshot_indicator_settings_to_user_manager(&mut self) {
         if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
-            if let Some(inst) = self.core.indicators().get_instance(ind_id) {
+            if let Some(inst) = self.core.indicators().instance(ind_id) {
                 let type_id = inst.type_id.to_string();
                 if let Ok(val) = serde_json::to_value(inst) {
                     self.snapshot_actions.push(SnapshotAction::IndicatorSettings { type_id, data: val });

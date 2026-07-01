@@ -27,10 +27,14 @@
 pub mod bubble;
 pub mod alert;
 pub mod drawing;
+pub mod indicator;
+pub mod watchlist;
 
 pub use alert::{Alerts, AlertsMut};
 pub use drawing::{Drawings, DrawingsMut, SwapSymbolResult};
 pub use bubble::{Bubbles, BubblesMut};
+pub use indicator::{Indicators, IndicatorsMut};
+pub use watchlist::{Watchlists, WatchlistsMut};
 
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -48,8 +52,8 @@ use crate::drawing::DrawingManager;
 use mlc_core::Bar;
 use mlc_indicators::IndicatorManager;
 use mlc_live_data::{DataBridge, LiveUpdate, LiveUpdateReceiver, OrderbookSource, SymbolInfo};
-use mlc_sidebar_content::watchlist::WatchlistManager;
 use mlc_trading_manager::TradingManager;
+use mlc_watchlist::WatchlistManager;
 
 /// Cached 24-hour ticker statistics from the WebSocket mini-ticker stream.
 ///
@@ -816,16 +820,42 @@ impl BackendCore {
             .collect()
     }
 
-    /// Read guard for the indicator manager.
+    /// INTERNAL: raw read guard for the indicator manager. Backend-crate use
+    /// only (park/unpark `mem::replace` in `mlc-app/src/persistence/profile.rs`
+    /// — design §6.6). App callers must use [`Self::indicators`] instead.
+    /// Step 7 deletes this method once every external caller is swept.
     #[inline]
-    pub fn indicators(&self) -> std::sync::RwLockReadGuard<'_, IndicatorManager> {
+    pub fn indicators_raw(&self) -> std::sync::RwLockReadGuard<'_, IndicatorManager> {
         self.indicators.read().expect("BackendCore.indicators poisoned (read)")
     }
 
-    /// Write guard for the indicator manager.
+    /// INTERNAL: raw write guard for the indicator manager. See
+    /// [`Self::indicators_raw`] — app callers must use
+    /// [`Self::indicators_mut`] instead.
     #[inline]
-    pub fn indicators_mut(&self) -> std::sync::RwLockWriteGuard<'_, IndicatorManager> {
+    pub fn indicators_mut_raw(&self) -> std::sync::RwLockWriteGuard<'_, IndicatorManager> {
         self.indicators.write().expect("BackendCore.indicators poisoned (write)")
+    }
+
+    /// Read-only facade over the indicator manager. The ONLY doctrinally-
+    /// sanctioned access path to indicator data (Step 3.3,
+    /// `docs/mlc/plans/doctrine-cutover-2026-06-27.md` §1A). Does not
+    /// co-acquire `bubble` — every read-only method operates purely on
+    /// manager state.
+    #[inline]
+    pub fn indicators(&self) -> Indicators<'_> {
+        let mgr = self.indicators.read().expect("BackendCore.indicators poisoned (read)");
+        Indicators::new(mgr)
+    }
+
+    /// Mutable facade over the indicator manager + bubble store.
+    ///
+    /// LOCK ORDER: bubble first, then indicators.
+    #[inline]
+    pub fn indicators_mut(&self) -> IndicatorsMut<'_> {
+        let bubbles = self.bubble.write().expect("BackendCore.bubble poisoned (write)");
+        let mgr = self.indicators.write().expect("BackendCore.indicators poisoned (write)");
+        IndicatorsMut::new(mgr, bubbles)
     }
 
     /// INTERNAL: raw read guard for the bubble store. Backend-crate use only
@@ -925,16 +955,39 @@ impl BackendCore {
         self.template_manager.write().expect("BackendCore.template_manager poisoned (write)")
     }
 
-    /// Read guard for the watchlist manager.
+    /// INTERNAL: raw read guard for the watchlist manager. Backend-crate use
+    /// only (park/unpark `mem::replace` in `mlc-app/src/persistence/profile.rs`,
+    /// cross-window sync push in `mlc-app-vello/src/main.rs` — design §6.6).
+    /// App callers must use [`Self::watchlists`] instead. Step 7 deletes this
+    /// method once every external caller is swept.
     #[inline]
-    pub fn watchlist(&self) -> std::sync::RwLockReadGuard<'_, WatchlistManager> {
+    pub fn watchlist_raw(&self) -> std::sync::RwLockReadGuard<'_, WatchlistManager> {
         self.watchlist_manager.read().expect("BackendCore.watchlist_manager poisoned (read)")
     }
 
-    /// Write guard for the watchlist manager.
+    /// INTERNAL: raw write guard for the watchlist manager. See
+    /// [`Self::watchlist_raw`] — app callers must use
+    /// [`Self::watchlists_mut`] instead.
     #[inline]
-    pub fn watchlist_mut(&self) -> std::sync::RwLockWriteGuard<'_, WatchlistManager> {
+    pub fn watchlist_mut_raw(&self) -> std::sync::RwLockWriteGuard<'_, WatchlistManager> {
         self.watchlist_manager.write().expect("BackendCore.watchlist_manager poisoned (write)")
+    }
+
+    /// Read-only facade over the watchlist manager. The ONLY doctrinally-
+    /// sanctioned access path to watchlist data (Step 3.3,
+    /// `docs/mlc/plans/doctrine-cutover-2026-06-27.md` §1A).
+    ///
+    /// LOCK ORDER: watchlist is a leaf lock — no `bubble` co-acquisition
+    /// needed (WatchlistManager never touches DataBubble, design §1.2).
+    #[inline]
+    pub fn watchlists(&self) -> Watchlists<'_> {
+        Watchlists::new(self.watchlist_manager.read().expect("BackendCore.watchlist_manager poisoned (read)"))
+    }
+
+    /// Mutable facade over the watchlist manager.
+    #[inline]
+    pub fn watchlists_mut(&self) -> WatchlistsMut<'_> {
+        WatchlistsMut::new(self.watchlist_manager.write().expect("BackendCore.watchlist_manager poisoned (write)"))
     }
 
     /// Read-only facade over the drawing manager. The ONLY doctrinally-

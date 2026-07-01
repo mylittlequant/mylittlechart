@@ -184,8 +184,10 @@ impl ChartApp {
         );
         let pk_bubble_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
+        // Raw lock access (not the `indicators_mut()` facade) — park/unpark
+        // swaps the whole manager in one shot, no bubble threading needed.
         let indicator_manager = std::mem::replace(
-            &mut *self.core.indicators_mut(),
+            &mut *self.core.indicators_mut_raw(),
             IndicatorManager::new(),
         );
         let pk_ind_us = t0.elapsed().as_micros();
@@ -267,7 +269,7 @@ impl ChartApp {
         *self.core.bubble_mut() = state.tag_manager;
         let up_bubble_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
-        *self.core.indicators_mut() = state.indicator_manager;
+        *self.core.indicators_mut_raw() = state.indicator_manager;
         let up_ind_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
         *self.core.alert.write().expect("BackendCore.alert poisoned (write)") = state.alert_manager;
@@ -372,7 +374,7 @@ impl ChartApp {
         if watchlists_path.exists() {
             match mlc_core::load_json::<mlc_sidebar_content::watchlist::WatchlistManager>(&watchlists_path, None) {
                 Ok(manager) => {
-                    *self.core.watchlist_mut() = manager;
+                    *self.core.watchlist_mut_raw() = manager;
                 }
                 Err(e) => {
                     eprintln!("[UserProfile] Failed to load watchlists: {}", e);
@@ -391,7 +393,7 @@ impl ChartApp {
         if watchlists_path.exists() {
             match mlc_core::load_json::<mlc_sidebar_content::watchlist::WatchlistManager>(&watchlists_path, None) {
                 Ok(manager) => {
-                    *self.core.watchlist_mut() = manager;
+                    *self.core.watchlist_mut_raw() = manager;
                 }
                 Err(e) => {
                     eprintln!("[UserProfile] Failed to load watchlists: {}", e);

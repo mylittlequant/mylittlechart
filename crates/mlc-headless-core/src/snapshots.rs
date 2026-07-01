@@ -98,10 +98,9 @@ pub fn update_terminal_snapshot<H: AgentHost>(host: &H, agent_state: &AgentState
                 let tf_name = chart.timeframe_for_chart(*chart_id)
                     .map(|tf| tf.name.clone()).unwrap_or_default();
 
-                let cw_bid_raw = cw.current_bubble_id.0;
                 let indicators: Vec<IndicatorSummary> = chart.core.indicators()
-                    .instances_iter()
-                    .filter(|inst| inst.bubble_id == Some(cw_bid_raw))
+                    .instances_for_bubble(cw.current_bubble_id)
+                    .into_iter()
                     .map(|inst| IndicatorSummary {
                         id: inst.id,
                         type_id: inst.type_id.clone(),
@@ -205,7 +204,7 @@ pub fn update_indicator_snapshot<H: AgentHost>(host: &H, agent_state: &AgentStat
         };
 
         let im = chart.core.indicators();
-        for inst in im.instances_iter() {
+        for inst in im.all_instances() {
             let params: std::collections::HashMap<String, serde_json::Value> = inst
                 .params
                 .iter()
@@ -274,10 +273,10 @@ pub fn update_watchlist_snapshot<H: AgentHost>(host: &H, agent_state: &AgentStat
         return;
     };
 
-    let wm_guard = first.chart.core.watchlist();
-    let active_id = wm_guard.active_list_id;
+    let wm_guard = first.chart.core.watchlists();
+    let active_id = wm_guard.active_id();
 
-    let watchlists: Vec<WatchlistEntry> = wm_guard.lists.iter().map(|list| {
+    let watchlists: Vec<WatchlistEntry> = wm_guard.lists().iter().map(|list| {
         let items: Vec<WatchlistItemEntry> = list.all_symbols().into_iter().map(|ws| {
             WatchlistItemEntry {
                 symbol: ws.symbol.clone(),

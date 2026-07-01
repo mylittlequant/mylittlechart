@@ -245,7 +245,7 @@ impl ChartApp {
                 // `calculate_for_bubble` looks up instances via `by_bubble_id`;
                 // passing chart_id here found nothing because indicators are
                 // bubble-bound, not chart-bound.
-                self.core.indicators_mut().calculate_for_bubble(bid.0, new_bars);
+                self.core.indicators_mut().recalc_bubble(*bid, new_bars);
 
                 // Subscribe trades for matched windows.
                 if any_matched {
@@ -431,7 +431,7 @@ impl ChartApp {
                     .map(|(cid, _)| cid.0)
                     .collect();
                 for wid in &matched_ids {
-                    self.core.indicators_mut().calculate_for_window(*wid, new_bars);
+                    self.core.indicators_mut().recalc_bubble(mlc_core::ids::BubbleId(*wid), new_bars);
                 }
             }
 
@@ -505,7 +505,7 @@ impl ChartApp {
                         .map(|(cid, _)| cid.0)
                         .collect();
                     for wid in &matched_ids {
-                        self.core.indicators_mut().calculate_for_window(*wid, new_bars);
+                        self.core.indicators_mut().recalc_bubble(mlc_core::ids::BubbleId(*wid), new_bars);
                     }
                 }
             }
@@ -611,7 +611,7 @@ impl ChartApp {
                 }
 
                 if let Some(ref sym) = bu_symbol_for_recalc {
-                    let recalc_mode = self.core.indicators().recalc_mode;
+                    let recalc_mode = self.core.indicators().recalc_mode();
                     match recalc_mode {
                         RecalcMode::PerTick => {
                             let _ri_start = web_time::Instant::now();
@@ -791,7 +791,7 @@ impl ChartApp {
                 }
                 self.last_trade_panel_us += _trade_panel_start.elapsed().as_micros() as u64;
 
-                let recalc_mode = self.core.indicators().recalc_mode;
+                let recalc_mode = self.core.indicators().recalc_mode();
                 match recalc_mode {
                     RecalcMode::PerTick => {
                         let _ri_start = web_time::Instant::now();
@@ -819,8 +819,8 @@ impl ChartApp {
                 }
                 let bridge = self.core.bridge.clone();
                 let exchange_str = eid_str;
-                let wl_guard = self.core.watchlist();
-                if let Some(wl) = wl_guard.active_list() {
+                let wl_guard = self.core.watchlists();
+                if let Some(wl) = wl_guard.active() {
                     for ws in wl.all_symbols() {
                         if ws.exchange == exchange_str {
                             let ws_at = account_type_from_label(&ws.account_type);
