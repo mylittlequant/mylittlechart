@@ -6,7 +6,10 @@
 //! dep on `mlc-backend`).
 //!
 //! This helper does the aggregation work (per-symbol indicator +
-//! primitive counts) that used to live inside the modal renderer.
+//! primitive counts) that used to live inside the modal renderer. Pure
+//! read over `BubbleView` — no `Tag` / `TagManager` coupling; lives under
+//! `tag_ui` because `GroupView` is tag-presentation for the Tags & Tabs
+//! modal.
 
 use mlc_backend::bubble::BubbleView;
 use mlc_core::GroupView;

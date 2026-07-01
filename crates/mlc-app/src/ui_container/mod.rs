@@ -11,8 +11,9 @@
 //! a `UiContainerKind` enum.  Enum re-introduces when `Trading` lands.
 //!
 //! Wave 3.3 simplification: no separate `UiContainerStore`.
-//! Containers are inlined on `Tag.ui_container_ids` for now (N=1 typical;
-//! store comes back if multi-container per Tag becomes real).
+//! Containers are inlined on `mlc-app::tag_ui::TagUiState::ui_container_ids`
+//! for now (N=1 typical; store comes back if multi-container per Tag
+//! becomes real).  See `docs/mlc/plans/doctrine-cutover-2026-06-27.md` §1B.
 //!
 //! Lives in `mlc-app` because the docking + visualisation half is
 //! shared-app-core concern, NOT shell-specific.  All fields must

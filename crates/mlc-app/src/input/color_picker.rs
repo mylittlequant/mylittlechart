@@ -569,19 +569,18 @@ impl ChartApp {
                         );
                         if !same_color {
                             self.disconnect_member(member);
-                            let target_gid = self
-                                .tag_store
-                                .find_tag_by_color(new_color)
-                                .unwrap_or_else(|| {
-                                    self.create_tagged_bubble(
-                                        new_color,
-                                        String::new(),
-                                        mlc_core::state::Timeframe::m1(),
-                                    )
-                                });
+                            let existing_tag = self.core.tags().find_tag_by_color(new_color);
+                            let target_gid = match existing_tag {
+                                Some(gid) => gid,
+                                None => self.create_tagged_bubble(
+                                    new_color,
+                                    String::new(),
+                                    mlc_core::state::Timeframe::m1(),
+                                ),
+                            };
                             self.connect_member(member, target_gid);
                             self.core.bubbles_mut().synced_panels_remove(member);
-                            self.tag_store.synced_panels_mut().remove(&member);
+                            self.core.tags_mut().unmark_synced(member);
                             eprintln!(
                                 "[ChartApp] Panel {} → color group [{:.2},{:.2},{:.2}]",
                                 panel_id, new_color[0], new_color[1], new_color[2]

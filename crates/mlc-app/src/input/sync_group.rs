@@ -278,7 +278,7 @@ impl ChartApp {
         // Find-or-create the group so TagManager stays consistent regardless of
         // whether this is the first leaf in the group or a later joiner.
         if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(joining_leaf) {
-            let existing_group = self.tag_store.find_tag_by_color(color);
+            let existing_group = self.core.tags().find_tag_by_color(color);
             let is_new_group = existing_group.is_none();
             let group_id = if let Some(gid) = existing_group {
                 gid
@@ -1084,7 +1084,7 @@ impl ChartApp {
                 if pre_split_is_auto {
                     // Was untagged (auto group) — split promotes to a real color tag.
                     // Create a NEW visible group with the first free color.
-                    let color = self.tag_store.next_unused_color();
+                    let color = self.core.tags().next_unused_color();
                     let gid = self.create_tagged_bubble(color, first_leaf_symbol, first_leaf_timeframe);
                     created_fresh_group = true;
                     eprintln!("[BubbleStore] Split promoted auto group to visible tag {:?}", gid);
@@ -1096,7 +1096,7 @@ impl ChartApp {
             } else {
                 // No existing group — pick color from TagManager's palette.
                 let color = pre_split_color
-                    .unwrap_or_else(|| self.tag_store.next_unused_color());
+                    .unwrap_or_else(|| self.core.tags().next_unused_color());
                 created_fresh_group = true;
                 self.create_tagged_bubble(color, first_leaf_symbol, first_leaf_timeframe)
             };

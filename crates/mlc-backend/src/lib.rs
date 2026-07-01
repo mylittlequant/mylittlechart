@@ -29,12 +29,14 @@ pub mod alert;
 pub mod drawing;
 pub mod indicator;
 pub mod watchlist;
+pub mod tag;
 
 pub use alert::{Alerts, AlertsMut};
 pub use drawing::{Drawings, DrawingsMut, SwapSymbolResult};
 pub use bubble::{Bubbles, BubblesMut};
 pub use indicator::{Indicators, IndicatorsMut};
 pub use watchlist::{Watchlists, WatchlistsMut};
+pub use tag::{Tags, TagsMut};
 
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -54,6 +56,7 @@ use mlc_backend_indicator_engine::IndicatorManager;
 use mlc_backend_data_bridge::{DataBridge, LiveUpdate, LiveUpdateReceiver, OrderbookSource, SymbolInfo};
 use mlc_backend_trading_engine::TradingManager;
 use crate::watchlist::WatchlistManager;
+use crate::tag::TagManager;
 
 /// Cached 24-hour ticker statistics from the WebSocket mini-ticker stream.
 ///
@@ -650,6 +653,18 @@ pub struct BackendCore {
     /// one place.
     pub watchlist_manager: std::sync::RwLock<WatchlistManager>,
 
+    /// Tag manager — registry of `Tag`s paired 1:1 with bubbles, plus the
+    /// member→tag routing table and the synced-panel set.
+    ///
+    /// Previously `mlc-app::tag::TagStore`. Moved here per doctrine 1B:
+    /// bubble grouping / member routing is domain, a headless daemon UI
+    /// cannot sync panels without it. Accessed exclusively through the
+    /// `Tags` / `TagsMut` facade (`BackendCore::tags` / `tags_mut`).
+    ///
+    /// LOCK ORDER: `tag` never co-acquires `bubble` — it is a leaf lock,
+    /// same shape as `watchlist_manager` (§1A).
+    pub tag: std::sync::RwLock<TagManager>,
+
     /// Registry of attached `AppSession`s. One per consumer of this backend.
     ///
     /// In Mode 1 (embedded `ChartApp`) the host calls `register_session` once
@@ -723,6 +738,7 @@ impl BackendCore {
             presets: std::sync::RwLock::new(HashMap::new()),
             template_manager: std::sync::RwLock::new(TemplateManager::new()),
             watchlist_manager: std::sync::RwLock::new(WatchlistManager::default()),
+            tag: std::sync::RwLock::new(TagManager::new()),
             sessions: std::sync::RwLock::new(SessionRegistry::default()),
             drawing: std::sync::RwLock::new(DrawingManager::default()),
             #[cfg(not(target_arch = "wasm32"))]
@@ -970,6 +986,23 @@ impl BackendCore {
     #[inline]
     pub fn watchlists_mut(&self) -> WatchlistsMut<'_> {
         WatchlistsMut::new(self.watchlist_manager.write().expect("BackendCore.watchlist_manager poisoned (write)"))
+    }
+
+    /// Read-only facade over the tag manager. The ONLY doctrinally-
+    /// sanctioned access path to tag data (Step 3.6b,
+    /// `docs/mlc/plans/doctrine-cutover-2026-06-27.md` §1B).
+    ///
+    /// LOCK ORDER: tag is a leaf lock — no `bubble` co-acquisition needed
+    /// (TagManager never touches DataBubble).
+    #[inline]
+    pub fn tags(&self) -> Tags<'_> {
+        Tags::new(self.tag.read().expect("BackendCore.tag poisoned (read)"))
+    }
+
+    /// Mutable facade over the tag manager.
+    #[inline]
+    pub fn tags_mut(&self) -> TagsMut<'_> {
+        TagsMut::new(self.tag.write().expect("BackendCore.tag poisoned (write)"))
     }
 
     /// Read-only facade over the drawing manager. The ONLY doctrinally-

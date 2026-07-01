@@ -31,7 +31,7 @@ pub mod chart_panel_app;
 pub mod panels_render;
 pub mod panels_store;
 pub mod scroll_dispatch;
-pub mod tag;
+pub mod tag_ui;
 pub mod text_input;
 pub mod ui_container;
 pub mod user_manager;
@@ -446,16 +446,19 @@ pub struct ChartApp {
     /// (more fields move here in subsequent passes).
     pub core: std::sync::Arc<mlc_backend::BackendCore>,
 
-    /// App-level tag registry.  Holds color / auto_created / members /
-    /// member_overrides + the `member_to_tag` routing table that used to
-    /// live on `BubbleStore`.  Paired 1:1 with bubbles in `core.bubble`:
-    /// `Tag.id == data_bubble_id` by invariant.
+    /// App-level tag presentation sidecar.  Domain tag data (color,
+    /// auto_created, members, member_overrides, member routing, synced
+    /// panels) lives in `core.tags()` / `core.tags_mut()`
+    /// (`mlc_backend::tag::TagManager`, doctrine 1B). This registry holds
+    /// only which windows display a tag (`ui_container_ids`,
+    /// `standalone_panel_ids`) and which tag the active chart currently
+    /// shows (`active_chart_tag`) — presentation, not persisted.
     ///
     /// All tag lifecycle goes through [`Self::create_tagged_bubble`] /
     /// [`Self::create_auto_bubble`] / [`Self::remove_tag`] /
     /// [`Self::connect_member`] / [`Self::disconnect_member`] so that
     /// the bubble + tag pair stays in sync.
-    pub tag_store: tag::TagStore,
+    pub tag_ui: tag_ui::TagUiRegistry,
 
     /// Currently active exchange.
     pub active_exchange: digdigdig3::ExchangeId,
@@ -1061,16 +1064,17 @@ pub struct RenderOutput {
 
 impl ChartApp {
     // -------------------------------------------------------------------------
-    // Tag lifecycle facade (Phase 2B-2 of the Tag/Bubble/UiContainer cutover).
+    // Tag lifecycle facade (Phase 2B-2 of the Tag/Bubble/UiContainer cutover;
+    // promoted to backend in Step 3.6b).
     //
     // Every operation that creates / removes a `DataBubble` or connects /
     // disconnects a member must go through these helpers so that the paired
-    // `TagStore` entry stays in sync with the bubble.
+    // `core.tags()` entry stays in sync with the bubble.
     //
-    // Today's helpers DUAL-WRITE: they update `core.bubble` AND `tag_store`
+    // Today's helpers DUAL-WRITE: they update `core.bubble` AND `core.tag`
     // so the legacy `bubble.color` / `bubble.members` / `bubble.auto_created`
     // / `bubble.member_overrides` fields stay consistent during the
-    // call-site migration.  Phase 2B-8 deletes the bubble-side dupes once
+    // call-site migration.  Step 6 deletes the bubble-side dupes once
     // every reader has been switched to the tag-side.
     // -------------------------------------------------------------------------
 
@@ -1085,7 +1089,7 @@ impl ChartApp {
             .core
             .bubbles_mut()
             .create_group(color, symbol, timeframe);
-        self.tag_store.insert(tag::Tag::new(bid, color));
+        self.core.tags_mut().insert(mlc_core::tag::Tag::new(bid, color));
         bid
     }
 
@@ -1100,7 +1104,7 @@ impl ChartApp {
             .core
             .bubbles_mut()
             .create_group_auto(color, symbol, timeframe);
-        self.tag_store.insert(tag::Tag::new_auto(bid, color));
+        self.core.tags_mut().insert(mlc_core::tag::Tag::new_auto(bid, color));
         bid
     }
 
@@ -1111,7 +1115,8 @@ impl ChartApp {
         // not on DataBubble, so removing the bubble doesn't automatically drop
         // its indicators the way alerts/primitives (bubble data) do.
         self.core.indicators_mut().purge_for_bubble(bid);
-        self.tag_store.remove(bid);
+        self.core.tags_mut().remove(bid);
+        self.tag_ui.remove_tag(bid);
     }
 
     /// Connect any sync member to a bubble's paired tag.  If the member
@@ -1122,7 +1127,7 @@ impl ChartApp {
         bid: mlc_core::ids::BubbleId,
     ) {
         let _ = self.core.bubbles_mut().connect(member, bid);
-        let _ = self.tag_store.connect(member, bid);
+        let _ = self.core.tags_mut().connect(member, bid);
     }
 
     /// Disconnect a member from its current tag (and from the matching
@@ -1132,7 +1137,7 @@ impl ChartApp {
         member: mlc_core::ids::SyncMemberId,
     ) -> Option<mlc_core::ids::BubbleId> {
         let from_bubble = self.core.bubbles_mut().disconnect(member);
-        let from_tag = self.tag_store.disconnect(member);
+        let from_tag = self.core.tags_mut().disconnect(member);
         // Both stores agree by invariant; prefer the tag-side reading.
         from_tag.or(from_bubble)
     }
@@ -1167,8 +1172,8 @@ impl ChartApp {
         self.core
             .bubbles_mut()
             .set_auto_group(panel_member, private_bubble_id);
-        self.tag_store.synced_panels_mut().remove(&panel_member);
-        let _ = self.tag_store.connect(panel_member, private_bubble_id);
+        self.core.tags_mut().unmark_synced(panel_member);
+        let _ = self.core.tags_mut().connect(panel_member, private_bubble_id);
     }
 
     /// Put a panel in Synced state and connect to a bubble's paired tag.
@@ -1178,8 +1183,8 @@ impl ChartApp {
         bid: mlc_core::ids::BubbleId,
     ) {
         self.core.bubbles_mut().set_synced(panel_member, bid);
-        self.tag_store.synced_panels_mut().insert(panel_member);
-        let _ = self.tag_store.connect(panel_member, bid);
+        self.core.tags_mut().mark_synced(panel_member);
+        let _ = self.core.tags_mut().connect(panel_member, bid);
     }
 
     /// Fully deregister a panel: disconnect from its tag and remove
@@ -1193,8 +1198,8 @@ impl ChartApp {
         self.core
             .bubbles_mut()
             .synced_panels_remove(panel_member);
-        let _ = self.tag_store.disconnect(panel_member);
-        self.tag_store.synced_panels_mut().remove(&panel_member);
+        let _ = self.core.tags_mut().disconnect(panel_member);
+        self.core.tags_mut().unmark_synced(panel_member);
     }
 
     /// Promote an auto-created tag to a user-visible (color-tagged) one.
@@ -1208,10 +1213,7 @@ impl ChartApp {
             .core
             .bubbles_mut()
             .promote_to_tagged(bid)?;
-        if let Some(tag) = self.tag_store.get_mut(bid) {
-            tag.auto_created = false;
-            tag.color = color;
-        }
+        self.core.tags_mut().promote_to_tagged(bid, color);
         Some(color)
     }
 
@@ -1435,7 +1437,7 @@ impl ChartApp {
             last_wl_group_name_result: None,
             needs_initial_viewport_fit: false,
             core,
-            tag_store: tag::TagStore::new(),
+            tag_ui: tag_ui::TagUiRegistry::new(),
             active_exchange: digdigdig3::ExchangeId::Binance,
             window_id: format!("win_{}", web_time::SystemTime::now()
                 .duration_since(web_time::UNIX_EPOCH)
@@ -1779,7 +1781,7 @@ impl ChartApp {
             last_wl_group_name_result: None,
             needs_initial_viewport_fit: false,
             core,
-            tag_store: tag::TagStore::new(),
+            tag_ui: tag_ui::TagUiRegistry::new(),
             active_exchange: digdigdig3::ExchangeId::Binance,
             window_id: format!(
                 "win_{}",
@@ -2300,7 +2302,7 @@ impl ChartApp {
             last_wl_group_name_result: None,
             needs_initial_viewport_fit: false,
             core,
-            tag_store: tag::TagStore::new(),
+            tag_ui: tag_ui::TagUiRegistry::new(),
             active_exchange: digdigdig3::ExchangeId::Binance,
             window_id,
             window_x: None,
@@ -6159,7 +6161,7 @@ impl ChartApp {
         // BubbleStore directly).  Selected_group is the one Details tab
         // currently focuses on (state.selected_group_id).
         let mut groups_for_modals: Vec<mlc_core::GroupView> = Vec::new();
-        bubble_guard_modals.each_bubble(|bv| groups_for_modals.push(crate::tag::build_group_view(bv)));
+        bubble_guard_modals.each_bubble(|bv| groups_for_modals.push(crate::tag_ui::build_group_view(bv)));
         let selected_group_for_modals: Option<&mlc_core::GroupView> = self
             .panel_app
             .tags_tabs_state
