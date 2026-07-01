@@ -159,7 +159,7 @@ pub use toolbar_state::{
 // Chart-settings data bags (pure serde — consumed by templates + app)
 pub use chart_settings_data::{ChartSettingsData, InstrumentSettings, ScalesLinesSettings, StatusLineSettings};
 
-// UI data types relocated from mlc-layout/src/ui/ — pure data consumed by backend
+// UI data types relocated from mlc-app-layout/src/ui/ — pure data consumed by backend
 pub use icons::Icon;
 pub use scroll_state::ScrollState;
 pub use modal_state::{ModalState, OpenModal, SearchResult, IndicatorCategory, IndicatorCategoryFilter, IndicatorCatalogItem, ClockPopupState};

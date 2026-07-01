@@ -5,7 +5,7 @@
 //! slots (was `DockState<PanelLeaf>` / `DockState<FreeItem>`).  It supersedes:
 //!
 //! - `crate::state::branch::PanelLeaf` (chart-side enum, removed in K1.2)
-//! - `mlc_sidebar_content::free_slot::FreeItem` (sidebar enum, removed in K1.3)
+//! - `mlc_app_sidebar_content::free_slot::FreeItem` (sidebar enum, removed in K1.3)
 //!
 //! Owner mandate: "чарт должен стать панелью, как и индикатор панель —
 //! попасть в общий enum панелей".  After K1 the chart is a sibling
@@ -39,12 +39,12 @@ use crate::state::chart_container::ChartId;
 /// Stable identity for a trading-panel instance across restarts.
 ///
 /// Held inside trading variants of `Panel` instead of the heavy state type
-/// so that `mlc-sidebar-content` stays free of an mlc-core dep cycle.  The
+/// so that `mlc-app-sidebar-content` stays free of an mlc-core dep cycle.  The
 /// matching heavy state lives in `mlc-app::TradingPanelsStore` keyed by
 /// `PanelId`.
 ///
-/// Moved from `mlc-sidebar-content::free_slot::PanelId` in K1.1.  Old call
-/// sites that imported it via `mlc_sidebar_content` keep working through a
+/// Moved from `mlc-app-sidebar-content::free_slot::PanelId` in K1.1.  Old call
+/// sites that imported it via `mlc_app_sidebar_content` keep working through a
 /// re-export.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PanelId(pub u64);

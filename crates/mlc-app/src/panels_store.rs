@@ -10,12 +10,12 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use mlc_core::state::{PanelId, Panel};
-use mlc_trading_manager::SharedTradingSnapshot;
+use mlc_backend_trading_engine::SharedTradingSnapshot;
 use mlc_core::state::ChartPanelId;
 use mlc_core::ChartPanelState;
 
-use mlc_panels::panel_trait::TradingPanel;
-use mlc_panels::trading::order_flow::{
+use mlc_app_panels::panel_trait::TradingPanel;
+use mlc_app_panels::trading::order_flow::{
     big_trades::BigTradesState,
     dom::DomState,
     footprint::FootprintState,
@@ -26,7 +26,7 @@ use mlc_panels::trading::order_flow::{
     trade_tape::TradeTapeState,
     volume_profile::VolumeProfileState,
 };
-use mlc_panels::trading::trading::{
+use mlc_app_panels::trading::trading::{
     order_entry::OrderEntryState,
     position_manager::PositionManagerState,
     risk_calculator::RiskCalculatorState,
@@ -57,7 +57,7 @@ pub struct TradingPanelsStore {
     pub risk_calculator: HashMap<PanelId, RiskCalculatorState>,
     pub trading_container: HashMap<PanelId, TradingContainerState>,
     /// Standalone indicator-visualization panels.  See
-    /// `mlc_panels::trading::order_flow::indicator_panel`.
+    /// `mlc_app_panels::trading::order_flow::indicator_panel`.
     pub indicator_panel: HashMap<PanelId, IndicatorPanelState>,
 
     /// Phase 4 / S2 chart canvas state, keyed by [`ChartPanelId`].

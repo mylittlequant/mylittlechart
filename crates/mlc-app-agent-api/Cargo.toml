@@ -1,0 +1,19 @@
+[package]
+name = "mylittlechart-app-agent-api"
+version.workspace = true
+edition.workspace = true
+description = "Render-agnostic Agent API plumbing — snapshot builders + command dispatch over ChartApp"
+
+[lib]
+name = "mlc_app_agent_api"
+
+[dependencies]
+mlc-app = { path = "../mlc-app", package = "mylittlechart-app" }
+mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
+mlc-backend-agent-server = { path = "../mlc-backend-agent-server", package = "mylittlechart-backend-agent-server" }
+mlc-backend-indicator-engine = { path = "../mlc-backend-indicator-engine", package = "mylittlechart-backend-indicator-engine" }
+mlc-backend-data-bridge = { path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
+mlc-app-sidebar-content = { path = "../mlc-app-sidebar-content", package = "mylittlechart-app-sidebar-content" }
+uzor = "=1.4.15"
+tokio = { version = "1", features = ["sync"] }
+serde_json = "1"

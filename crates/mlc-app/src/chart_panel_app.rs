@@ -2,11 +2,11 @@
 //!
 //! Owns toolbar state, modal states, and the chart data via
 //! `ChartPanelGrid`.  Holds the in-process `UserManager` for profile +
-//! settings snapshots.  Moved here from `mlc-layout::panel_app` because
+//! settings snapshots.  Moved here from `mlc-app-layout::panel_app` because
 //! it is squarely app-level state.  The pure rendering helpers
 //! (`ChartPanelLayout`, `compute_chart_internal_layout`,
 //! `chart_toolbar_render_toolbars`, `render_toolbars_with_theme`) stay
-//! in `mlc-layout::panel_app`.
+//! in `mlc-app-layout::panel_app`.
 
 use uzor::render::RenderContext;
 
@@ -17,17 +17,17 @@ use mlc_core::templates::TemplateManager;
 use mlc_core::indicator_source::IndicatorSource;
 use mlc_core::preset::preset::ChartPreset;
 
-use mlc_layout::layout::FrameTheme;
-use mlc_layout::chart_render::{ScaleTheme, ChartTheme};
-use mlc_layout::ui::modal_settings::{
+use mlc_app_layout::layout::FrameTheme;
+use mlc_app_layout::chart_render::{ScaleTheme, ChartTheme};
+use mlc_app_layout::ui::modal_settings::{
     PrimitiveSettingsState, IndicatorSettingsState, ChartSettingsState,
     IndicatorOverlayState, OverlaySettingsState, TagsTabsState,
     PresetNameInputState, ChartBrowserState, AlertSettingsState,
     CompareSettingsState,
 };
-use mlc_layout::ui::context_menu::ContextMenuState;
-use mlc_layout::layout::render_frame::{ChartModalRenderResult, ChartModalLayout};
-use mlc_layout::layout::modals::{
+use mlc_app_layout::ui::context_menu::ContextMenuState;
+use mlc_app_layout::layout::render_frame::{ChartModalRenderResult, ChartModalLayout};
+use mlc_app_layout::layout::modals::{
     render_primitive_settings_modal,
     render_primitive_color_picker_popup,
     render_indicator_settings_modal,
@@ -38,7 +38,7 @@ use mlc_layout::layout::modals::{
     render_panel_color_tag_picker_popup,
     render_tags_tabs_modal,
 };
-use mlc_layout::panel_app::{
+use mlc_app_layout::panel_app::{
     ChartPanelLayout,
     ChartToolbarState, ToolbarConfig, ChartToolbarRenderResult,
     chart_toolbar_render_toolbars,
@@ -87,14 +87,14 @@ pub struct ChartPanelApp {
     /// Compare settings modal state.
     pub compare_settings_state: CompareSettingsState,
     /// User settings modal state.
-    pub user_settings_state: mlc_layout::ui::modal_settings::UserSettingsState,
+    pub user_settings_state: mlc_app_layout::ui::modal_settings::UserSettingsState,
     /// Clock popup state (timezone selector + 24h toggle).
-    pub clock_popup_state: mlc_layout::ui::ClockPopupState,
+    pub clock_popup_state: mlc_app_layout::ui::ClockPopupState,
 
     // Panel color tag picker — opened when the user clicks the colored square
     // on an overlay tab header.
     /// Color picker state for the panel color tag picker.
-    pub panel_color_picker: mlc_layout::ui::color_picker_state::ColorPickerState,
+    pub panel_color_picker: mlc_app_layout::ui::color_picker_state::ColorPickerState,
     /// Which leaf's color tag is being edited.
     pub panel_color_picker_leaf: Option<uzor::panels::LeafId>,
     /// Per-leaf color tags (RGBA, 0.0–1.0 each channel).
@@ -103,9 +103,9 @@ pub struct ChartPanelApp {
     // Sync color grid popup — lightweight preset grid that replaces the full
     // L1/L2 picker for panel color-tag assignment.
     /// State for the sync color grid popup.
-    pub sync_color_grid: mlc_layout::ui::sync_color_grid::SyncColorGridState,
+    pub sync_color_grid: mlc_app_layout::ui::sync_color_grid::SyncColorGridState,
     /// Draw result from the last rendered sync color grid frame (used for hit testing).
-    pub sync_color_grid_draw: mlc_layout::ui::sync_color_grid::SyncColorGridDrawResult,
+    pub sync_color_grid_draw: mlc_app_layout::ui::sync_color_grid::SyncColorGridDrawResult,
 
     /// ID of the currently active preset. Defaults to `"__default__"`.
     /// Updated when a preset is loaded or saved-as.
@@ -148,13 +148,13 @@ impl ChartPanelApp {
             tags_tabs_state: TagsTabsState::default(),
             alert_settings_state: AlertSettingsState::new(),
             compare_settings_state: CompareSettingsState::new(),
-            user_settings_state: mlc_layout::ui::modal_settings::UserSettingsState::default(),
-            clock_popup_state: mlc_layout::ui::ClockPopupState::default(),
-            panel_color_picker: mlc_layout::ui::color_picker_state::ColorPickerState::new(),
+            user_settings_state: mlc_app_layout::ui::modal_settings::UserSettingsState::default(),
+            clock_popup_state: mlc_app_layout::ui::ClockPopupState::default(),
+            panel_color_picker: mlc_app_layout::ui::color_picker_state::ColorPickerState::new(),
             panel_color_picker_leaf: None,
             leaf_color_tags: std::collections::HashMap::new(),
-            sync_color_grid: mlc_layout::ui::sync_color_grid::SyncColorGridState::new(),
-            sync_color_grid_draw: mlc_layout::ui::sync_color_grid::SyncColorGridDrawResult::default(),
+            sync_color_grid: mlc_app_layout::ui::sync_color_grid::SyncColorGridState::new(),
+            sync_color_grid_draw: mlc_app_layout::ui::sync_color_grid::SyncColorGridDrawResult::default(),
             active_preset_id: "__default__".to_string(),
             open_tabs: Vec::new(),
             preset_name_input: PresetNameInputState::default(),
@@ -342,9 +342,9 @@ impl ChartPanelApp {
     ///
     /// Maps `RuntimeTheme` color fields to every `DropdownTheme` slot so that
     /// dropdown menus, submenus and context menus all respect the active theme.
-    pub fn dropdown_theme_for_render(&self) -> mlc_layout::ui::dropdown::DropdownTheme {
+    pub fn dropdown_theme_for_render(&self) -> mlc_app_layout::ui::dropdown::DropdownTheme {
         let rt = self.theme_manager.current();
-        mlc_layout::ui::dropdown::DropdownTheme {
+        mlc_app_layout::ui::dropdown::DropdownTheme {
             background:            rt.colors.dropdown_bg.clone(),
             border:                rt.colors.border.clone(),
             shadow:                "rgba(0,0,0,0.5)".to_string(),
@@ -364,9 +364,9 @@ impl ChartPanelApp {
     /// Build a `ToolbarTheme` (toolbar_render) from the current theme_manager state.
     ///
     /// Used by `render_toolbars_with_theme` so chart toolbars match the active theme.
-    pub fn toolbar_theme_for_render(&self) -> mlc_layout::ui::toolbar_render::ToolbarTheme {
+    pub fn toolbar_theme_for_render(&self) -> mlc_app_layout::ui::toolbar_render::ToolbarTheme {
         let rt = self.theme_manager.current();
-        mlc_layout::ui::toolbar_render::ToolbarTheme {
+        mlc_app_layout::ui::toolbar_render::ToolbarTheme {
             background: rt.colors.toolbar_bg.clone(),
             dropdown_bg: rt.colors.dropdown_bg.clone(),
             separator: rt.colors.toolbar_divider.clone(),
@@ -460,9 +460,9 @@ impl ChartPanelApp {
         indicator_source: Option<&dyn IndicatorSource>,
         chart_settings_data: Option<&ChartSettingsData>,
         theme_manager: Option<&mlc_core::theme::ThemeManager>,
-        frame_theme: &mlc_layout::layout::FrameTheme,
-        toolbar_theme: &mlc_layout::ui::toolbar_render::ToolbarTheme,
-        toolbar_state: &mlc_layout::layout::toolbar_state::ToolbarState,
+        frame_theme: &mlc_app_layout::layout::FrameTheme,
+        toolbar_theme: &mlc_app_layout::ui::toolbar_render::ToolbarTheme,
+        toolbar_state: &mlc_app_layout::layout::toolbar_state::ToolbarState,
         current_time_ms: u64,
         input_coordinator: &mut uzor::input::InputCoordinator,
         groups: &[mlc_core::GroupView],
@@ -494,7 +494,7 @@ impl ChartPanelApp {
 
         // Compare settings modal
         if self.compare_settings_state.is_open() {
-            result.compare_settings = Some(mlc_layout::layout::modals::compare_settings::render_compare_settings_modal(
+            result.compare_settings = Some(mlc_app_layout::layout::modals::compare_settings::render_compare_settings_modal(
                 ctx,
                 modal_layout.prim_screen_w,
                 modal_layout.prim_screen_h,
@@ -508,7 +508,7 @@ impl ChartPanelApp {
 
         // Alert settings modal
         if self.alert_settings_state.is_open() {
-            result.alert_settings = Some(mlc_layout::layout::modals::alert_settings::render_alert_settings_modal(
+            result.alert_settings = Some(mlc_app_layout::layout::modals::alert_settings::render_alert_settings_modal(
                 ctx,
                 modal_layout.prim_screen_w,
                 modal_layout.prim_screen_h,
@@ -614,9 +614,9 @@ impl ChartPanelApp {
         // it will be rendered AFTER the search overlay in lib.rs so it
         // appears visually on top.
         if self.preset_name_input.is_open
-            && self.preset_name_input.mode != mlc_layout::ui::modal_settings::PresetNameInputMode::CreateIndicatorSet
+            && self.preset_name_input.mode != mlc_app_layout::ui::modal_settings::PresetNameInputMode::CreateIndicatorSet
         {
-            use mlc_layout::layout::modals::preset_name_input::render_preset_name_input;
+            use mlc_app_layout::layout::modals::preset_name_input::render_preset_name_input;
             result.preset_name_input = Some(render_preset_name_input(
                 ctx,
                 modal_layout.prim_screen_w,
@@ -631,7 +631,7 @@ impl ChartPanelApp {
 
         // Template name overlay modal — primitive settings
         if self.primitive_settings_state.save_template_mode {
-            use mlc_layout::layout::modals::template_name_modal::render_template_name_modal;
+            use mlc_app_layout::layout::modals::template_name_modal::render_template_name_modal;
             result.prim_template_name = Some(render_template_name_modal(
                 ctx,
                 modal_layout.prim_screen_w,
@@ -647,7 +647,7 @@ impl ChartPanelApp {
 
         // Template name overlay modal — indicator settings
         if self.indicator_settings_state.save_template_mode {
-            use mlc_layout::layout::modals::template_name_modal::render_template_name_modal;
+            use mlc_app_layout::layout::modals::template_name_modal::render_template_name_modal;
             result.ind_template_name = Some(render_template_name_modal(
                 ctx,
                 modal_layout.prim_screen_w,
@@ -663,7 +663,7 @@ impl ChartPanelApp {
 
         // Template name overlay modal — compare settings
         if self.compare_settings_state.save_template_mode {
-            use mlc_layout::layout::modals::template_name_modal::render_template_name_modal;
+            use mlc_app_layout::layout::modals::template_name_modal::render_template_name_modal;
             result.cmp_template_name = Some(render_template_name_modal(
                 ctx,
                 modal_layout.prim_screen_w,
@@ -679,7 +679,7 @@ impl ChartPanelApp {
 
         // Template name overlay modal — chart settings
         if self.chart_settings_state.save_template_mode {
-            use mlc_layout::layout::modals::template_name_modal::render_template_name_modal;
+            use mlc_app_layout::layout::modals::template_name_modal::render_template_name_modal;
             result.chart_template_name = Some(render_template_name_modal(
                 ctx,
                 modal_layout.prim_screen_w,
@@ -695,7 +695,7 @@ impl ChartPanelApp {
 
         // Chart browser modal
         if self.chart_browser.is_open {
-            use mlc_layout::layout::modals::chart_browser::render_chart_browser;
+            use mlc_app_layout::layout::modals::chart_browser::render_chart_browser;
             let preset_summaries: Vec<mlc_core::PresetSummary> = presets
                 .values()
                 .map(preset_to_summary)
@@ -716,7 +716,7 @@ impl ChartPanelApp {
 
         // User settings modal
         if self.user_settings_state.is_open {
-            use mlc_layout::layout::modals::user_settings::render_user_settings_modal;
+            use mlc_app_layout::layout::modals::user_settings::render_user_settings_modal;
             result.user_settings = Some(render_user_settings_modal(
                 ctx,
                 modal_layout.prim_screen_w,
@@ -757,7 +757,7 @@ impl ChartPanelApp {
         // This is shown on first launch (no profile.json existed at startup).
         // It is non-closeable: the user must pick a mode to proceed.
         if self.user_settings_state.show_welcome_wizard {
-            use mlc_layout::layout::modals::welcome_wizard::render_welcome_wizard;
+            use mlc_app_layout::layout::modals::welcome_wizard::render_welcome_wizard;
             let text_color = &toolbar_theme.item_text.clone();
             if result.user_settings.is_none() {
                 result.user_settings = Some(Default::default());
@@ -785,7 +785,7 @@ impl ChartPanelApp {
         // In skeleton mode the content area is passed so the manager can render
         // as a full-area login screen rather than a small centered modal.
         if self.user_settings_state.show_profile_manager {
-            use mlc_layout::layout::modals::profile_manager::render_profile_manager;
+            use mlc_app_layout::layout::modals::profile_manager::render_profile_manager;
             let text_color = &toolbar_theme.item_text.clone();
             if result.user_settings.is_none() {
                 result.user_settings = Some(Default::default());
@@ -821,7 +821,7 @@ impl ChartPanelApp {
         &self,
         ctx: &mut dyn mlc_core::render::RenderContext,
         modal_layout: &ChartModalLayout,
-        toolbar_theme: &mlc_layout::ui::toolbar_render::ToolbarTheme,
+        toolbar_theme: &mlc_app_layout::ui::toolbar_render::ToolbarTheme,
         input_coordinator: &mut uzor::input::InputCoordinator,
         // Pre-resolved color of sync_color_grid.target_panel's non-auto group
         // (caller does the bubble_store lookup so render stays bubble-free).
@@ -841,7 +841,7 @@ impl ChartPanelApp {
 
         // Compare settings color picker popup (rendered above the compare settings modal)
         if self.compare_settings_state.is_open() && self.compare_settings_state.is_color_picker_open() {
-            result.color_picker = Some(mlc_layout::layout::modals::compare_color_picker::render_compare_color_picker_popup(
+            result.color_picker = Some(mlc_app_layout::layout::modals::compare_color_picker::render_compare_color_picker_popup(
                 ctx,
                 &self.compare_settings_state,
                 toolbar_theme,
@@ -881,9 +881,9 @@ impl ChartPanelApp {
 
         // Sync color grid popup — lightweight preset grid for panel color tags
         if self.sync_color_grid.is_open() {
-            use mlc_layout::ui::sync_color_grid::{draw_sync_color_grid, SyncColorGridDrawResult};
+            use mlc_app_layout::ui::sync_color_grid::{draw_sync_color_grid, SyncColorGridDrawResult};
             use uzor::{Rect, input::Sense};
-            use mlc_layout::ui::z_order::ZLayer;
+            use mlc_app_layout::ui::z_order::ZLayer;
 
             let current_color = if let Some(lid) = self.sync_color_grid.target_leaf {
                 self.leaf_color_tags.get(&lid).copied()
@@ -1049,7 +1049,7 @@ impl ChartPanelApp {
 
     /// Close panel color tag picker one level (L2→L1 or L1→Closed).
     pub fn close_panel_color_tag_picker_one_level(&mut self) {
-        use mlc_layout::ui::color_picker_state::ColorPickerLevel;
+        use mlc_app_layout::ui::color_picker_state::ColorPickerLevel;
         match self.panel_color_picker.level {
             ColorPickerLevel::L2 => {
                 self.panel_color_picker.back_to_l1();

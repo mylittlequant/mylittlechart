@@ -6,10 +6,10 @@ use crate::agent as gate4agent;
 
 use crate::ChartApp;
 use crate::{account_type_from_label, parse_timeframe_name};
-use mlc_backend_core::BubbleEvent;
-use mlc_live_data::LiveUpdate;
+use mlc_backend::BubbleEvent;
+use mlc_backend_data_bridge::LiveUpdate;
 use mlc_core::{ChartId, ScaleMode, timestamp_ms_to_bar_f64};
-use mlc_indicators::RecalcMode;
+use mlc_backend_indicator_engine::RecalcMode;
 
 impl ChartApp {
     /// Called every frame with the current wall-clock time in milliseconds.
@@ -397,7 +397,7 @@ impl ChartApp {
 
             // ── Signal alert checker ───────────────────────────────────────────────
             {
-                use mlc_indicators::signals::signal::BarConfirmation;
+                use mlc_backend_indicator_engine::signals::signal::BarConfirmation;
 
                 let signal_batch: Vec<(u64, usize, i8, u8, String)> = self.core.indicators().all_instances()
                     .into_iter()

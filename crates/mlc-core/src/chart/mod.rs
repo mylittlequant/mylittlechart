@@ -6,7 +6,7 @@
 //! - **render_data/**: Pure-data render types (ChartRect, ChartTheme, ScaleConfig, etc.)
 //! - **input/**: Input handling (pan, zoom, drag)
 //!
-//! Painter functions (draw_*) have moved to `mlc_layout::chart_render`.
+//! Painter functions (draw_*) have moved to `mlc_app_layout::chart_render`.
 //!
 //! # Architecture
 //!

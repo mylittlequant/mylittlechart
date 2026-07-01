@@ -2,7 +2,7 @@
 //!
 //! Computes horizontal histograms from bars already loaded in the chart window.
 //! This is the chart-overlay VP (C10). The live trade-aggregated VP lives in
-//! `mlc-panels/src/trading/order_flow/volume_profile.rs`.
+//! `mlc-app-panels/src/trading/order_flow/volume_profile.rs`.
 
 use serde::{Deserialize, Serialize};
 use crate::Bar;
@@ -155,7 +155,7 @@ impl VolumeProfileData {
             .unwrap_or(0);
         let poc_price = rows[poc_idx].price;
 
-        // ── Value Area (mirrors mlc-panels volume_profile.rs:compute_value_area) ──
+        // ── Value Area (mirrors mlc-app-panels volume_profile.rs:compute_value_area) ──
         let target = total_volume * value_area_pct.clamp(0.0, 1.0);
         let mut accumulated = rows[poc_idx].total_volume;
         let mut lo = poc_idx;

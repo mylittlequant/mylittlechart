@@ -1,0 +1,12 @@
+[package]
+name = "mylittlechart-app-render-context-vello-cpu"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "mlc_app_render_context_vello_cpu"
+
+[dependencies]
+uzor = "=1.4.15"
+uzor-render-vello-cpu = "=1.4.15"
+mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }

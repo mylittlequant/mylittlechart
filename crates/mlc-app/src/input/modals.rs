@@ -11,8 +11,8 @@ use mlc_core::{
     ScaleMode,
     localize_primitive_name,
 };
-use mlc_layout::layout::ExtendedLayoutHitTester;
-use mlc_layout::ui::context_menu::ContextMenuTarget;
+use mlc_app_layout::layout::ExtendedLayoutHitTester;
+use mlc_app_layout::ui::context_menu::ContextMenuTarget;
 use mlc_core::state::modal_state::{OpenModal, IndicatorCategoryFilter};
 
 impl ChartApp {
@@ -303,7 +303,7 @@ impl ChartApp {
                 self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
             }
             _ if rest.starts_with("tab:") => {
-                use mlc_layout::ui::modal_settings::WatchlistModalTab;
+                use mlc_app_layout::ui::modal_settings::WatchlistModalTab;
                 let tab = &rest["tab:".len()..];
                 match tab {
                     "overview" => self.watchlist_modal.active_tab = WatchlistModalTab::Overview,
@@ -2061,7 +2061,7 @@ impl ChartApp {
                     if !self.panel_app.user_settings_state.needs_vault_unlock {
                         self.panel_app.user_settings_state.show_profile_manager = false;
                         self.panel_app.user_settings_state.profile_manager_page =
-                            mlc_layout::ui::modal_settings::ProfileManagerPage::ProfileList;
+                            mlc_app_layout::ui::modal_settings::ProfileManagerPage::ProfileList;
                     }
                     eprintln!("[ChartApp] close_topmost_modal_layer: profile_manager (needs_vault_unlock={})", self.panel_app.user_settings_state.needs_vault_unlock);
                 }

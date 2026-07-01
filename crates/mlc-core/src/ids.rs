@@ -1,5 +1,5 @@
 //! Shared identifier + sync types — vocabulary used by both the
-//! backend data plane (`mlc-backend-core::bubble`) and the app
+//! backend data plane (`mlc-backend::bubble`) and the app
 //! orchestrator (`mlc-app::tag`).  Lives in `mlc-core` because both
 //! layers speak about these but neither owns them as a domain concept.
 //!
@@ -133,12 +133,12 @@ pub struct MemberSyncOverride {
 // =============================================================================
 
 /// Lightweight view of a sync-group used by render layers
-/// (`mlc-layout`).  Built by the caller (`mlc-app`) from
+/// (`mlc-app-layout`).  Built by the caller (`mlc-app`) from
 /// `BubbleStore` + `TagStore` and passed in by value/slice.
 ///
 /// Render layers MUST NOT depend on `DataBubble` or `BubbleStore` as
-/// types — they accept this view instead.  That keeps `mlc-layout` in
-/// the `mlc-core` dep-graph (no upward dep on `mlc-backend-core`).
+/// types — they accept this view instead.  That keeps `mlc-app-layout` in
+/// the `mlc-core` dep-graph (no upward dep on `mlc-backend`).
 #[derive(Clone, Debug)]
 pub struct GroupView {
     pub id: BubbleId,

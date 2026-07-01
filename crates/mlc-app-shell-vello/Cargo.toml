@@ -1,0 +1,49 @@
+[package]
+name = "mylittlechart-app-shell-vello"
+version.workspace = true
+edition.workspace = true
+description = "Standalone chart vello/winit runner — like terminal-vello but for chart-app"
+
+[[bin]]
+name = "mylittlechart"
+path = "src/main.rs"
+
+[dependencies]
+web-time = "1"
+mlc-shell-diagnostics = { path = "../mlc-shell-diagnostics", package = "mylittlechart-shell-diagnostics" }
+mlc-app = { path = "../mlc-app", package = "mylittlechart-app" }
+mlc-app-sidebar-content = { path = "../mlc-app-sidebar-content", package = "mylittlechart-app-sidebar-content" }
+mlc-alert-delivery = { path = "../mlc-alert-delivery", package = "mylittlechart-alert-delivery" }
+mlc-backend-data-bridge = { path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
+mlc-app-render-context-vello = { path = "../mlc-app-render-context-vello", package = "mylittlechart-app-render-context-vello" }
+mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
+mlc-app-input-shell = { path = "../mlc-app-input-shell", package = "mylittlechart-app-input-shell" }
+mlc-vault = { path = "../mlc-vault", package = "mylittlechart-vault" }
+mlc-app-layout = { path = "../mlc-app-layout", package = "mylittlechart-app-layout" }
+uzor = "=1.4.15"
+vello = "0.9"
+winit = "0.30"
+pollster = "0.4"
+png = "0.17"
+arboard = "3"
+tokio = { version = "1", features = ["sync"] }
+serde_json = "1"
+reqwest = { version = "0.12", features = ["json", "multipart"] }
+mlc-backend-agent-server = { path = "../mlc-backend-agent-server", package = "mylittlechart-backend-agent-server" }
+mlc-app-agent-api = { path = "../mlc-app-agent-api", package = "mylittlechart-app-agent-api" }
+mlc-backend-indicator-engine = { path = "../mlc-backend-indicator-engine", package = "mylittlechart-backend-indicator-engine" }
+sysinfo = "0.34"
+mlc-app-render-context-instanced = { path = "../mlc-app-render-context-instanced", package = "mylittlechart-app-render-context-instanced" }
+uzor-render-wgpu-instanced = "=1.4.15"
+mlc-app-render-context-vello-cpu = { path = "../mlc-app-render-context-vello-cpu", package = "mylittlechart-app-render-context-vello-cpu" }
+mlc-app-render-context-vello-hybrid = { path = "../mlc-app-render-context-vello-hybrid", package = "mylittlechart-app-render-context-vello-hybrid" }
+uzor-render-vello-hybrid = "=1.4.15"
+vello_hybrid = { version = "0.0.9", features = ["wgpu"] }
+mlc-app-render-context-tiny-skia = { path = "../mlc-app-render-context-tiny-skia", package = "mylittlechart-app-render-context-tiny-skia" }
+keyring = "3"
+
+[build-dependencies]
+winresource = "0.1"
+
+[features]
+default = []

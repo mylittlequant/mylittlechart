@@ -1,14 +1,14 @@
 //! Build the lightweight `mlc_core::GroupView` for render layers.
 //!
-//! `mlc-layout` accepts `&[GroupView]` instead of `&BubbleStore` so the
+//! `mlc-app-layout` accepts `&[GroupView]` instead of `&BubbleStore` so the
 //! render layer doesn't speak about `DataBubble` as a type — that keeps
 //! the layout crate firmly inside the `mlc-core` dep-graph (no upward
-//! dep on `mlc-backend-core`).
+//! dep on `mlc-backend`).
 //!
 //! This helper does the aggregation work (per-symbol indicator +
 //! primitive counts) that used to live inside the modal renderer.
 
-use mlc_backend_core::bubble::BubbleView;
+use mlc_backend::bubble::BubbleView;
 use mlc_core::GroupView;
 use std::collections::HashMap;
 

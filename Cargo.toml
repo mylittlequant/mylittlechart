@@ -1,33 +1,33 @@
 [workspace]
 members = [
     "crates/mlc-core",
-    "crates/mlc-crypto",
-    "crates/mlc-layout",
+    "crates/mlc-vault",
+    "crates/mlc-app-layout",
     "crates/mlc-app",
-    "crates/mlc-app-vello",
-    "crates/mlc-input-shell",
-    "crates/mlc-indicators",
-    "crates/mlc-sidebar-content",
+    "crates/mlc-app-shell-vello",
+    "crates/mlc-app-input-shell",
+    "crates/mlc-backend-indicator-engine",
+    "crates/mlc-app-sidebar-content",
     "crates/mlc-watchlist",
-    "crates/mlc-panels",
+    "crates/mlc-app-panels",
     "crates/mlc-alert-delivery",
-    "crates/mlc-live-data",
-    "crates/mlc-agentic-server",
-    "crates/mlc-instanced-context",
-    "crates/mlc-vello-context",
-    "crates/mlc-vello-cpu-context",
-    "crates/mlc-vello-hybrid-context",
-    "crates/mlc-tiny-skia-context",
-    "crates/mlc-diagnostics",
-    "crates/mlc-trading-manager",
-    "crates/mlc-test-harness",
-    "crates/mlc-backend-core",
-    "crates/mlc-backend-daemon",
+    "crates/mlc-backend-data-bridge",
+    "crates/mlc-backend-agent-server",
+    "crates/mlc-app-render-context-instanced",
+    "crates/mlc-app-render-context-vello",
+    "crates/mlc-app-render-context-vello-cpu",
+    "crates/mlc-app-render-context-vello-hybrid",
+    "crates/mlc-app-render-context-tiny-skia",
+    "crates/mlc-shell-diagnostics",
+    "crates/mlc-backend-trading-engine",
+    "crates/mlc-app-test-harness",
+    "crates/mlc-backend",
+    "crates/mlc-app-shell-daemon-lightweight",
     "crates/mlc-backend-test-harness",
-    "crates/mlc-cli",
-    "crates/mlc-headless-core",
-    "crates/mlc-headless",
-    "crates/mlc-app-web",
+    "crates/mlc-app-shell-cli",
+    "crates/mlc-app-agent-api",
+    "crates/mlc-app-shell-headless",
+    "crates/mlc-app-shell-web",
 ]
 resolver = "2"
 
@@ -52,7 +52,7 @@ strip = "none"
 
 # Optimize indicators in dev mode to prevent stack overflow
 # (large enum with 480 variants needs optimization)
-[profile.dev.package.mylittlechart-indicators]
+[profile.dev.package.mylittlechart-backend-indicator-engine]
 opt-level = 2
 
 [patch.crates-io]

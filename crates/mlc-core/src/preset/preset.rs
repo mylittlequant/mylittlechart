@@ -84,7 +84,7 @@ pub struct PersistedFreeLeaf {
     pub kind: PersistedFreeItemKind,
 }
 
-/// Local mirror of `mlc_panels::trading::SymbolSource`.
+/// Local mirror of `mlc_app_panels::trading::SymbolSource`.
 ///
 /// Kept here so the `chart` crate has no dependency on `zengeld-panels`.
 /// Old presets that do not have a `source` field deserialize with

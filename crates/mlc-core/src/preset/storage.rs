@@ -12,7 +12,7 @@
 //!
 //! # Storage backend
 //!
-//! All I/O is routed through [`mlc_crypto::global_storage()`] so the same
+//! All I/O is routed through [`mlc_vault::global_storage()`] so the same
 //! code runs on native (filesystem) and wasm (localStorage).
 
 use std::path::PathBuf;
@@ -20,8 +20,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use super::preset::ChartPreset;
-use mlc_crypto::vault::{self, VaultKey};
-use mlc_crypto::global_storage;
+use mlc_vault::vault::{self, VaultKey};
+use mlc_vault::global_storage;
 
 // =============================================================================
 // PresetMeta

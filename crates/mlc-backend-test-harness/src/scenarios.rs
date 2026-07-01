@@ -9,11 +9,11 @@
 //! is unavailable on wasm.
 
 use digdigdig3::{AccountType, ExchangeId};
-use mlc_backend_core::BubbleEvent;
+use mlc_backend::BubbleEvent;
 use mlc_core::state::Timeframe;
 use mlc_core::ids::BubbleId;
 use mlc_core::types::Bar;
-use mlc_live_data::LiveUpdate;
+use mlc_backend_data_bridge::LiveUpdate;
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
@@ -480,14 +480,14 @@ fn spawn_server_runtime() -> HarnessResult<&'static tokio::runtime::Runtime> {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn agent_state_apps_with_and_without_core(h: BackendHarness) -> HarnessResult<()> {
-    use mlc_agentic_server::AgentState;
+    use mlc_backend_agent_server::AgentState;
     use std::sync::Arc as StdArc;
 
     // Phase A: AgentState WITHOUT core attached.
     let state_no_core = StdArc::new(AgentState::new(h.bridge.clone(), "harness".to_string()));
     let port_a = pick_free_port()?;
     let rt = spawn_server_runtime()?;
-    let _handle_a = mlc_agentic_server::start_server(state_no_core.clone(), rt.handle(), port_a);
+    let _handle_a = mlc_backend_agent_server::start_server(state_no_core.clone(), rt.handle(), port_a);
     wait_for_health(port_a, "/api/v1/health").await?;
 
     let client = reqwest::Client::new();
@@ -862,7 +862,7 @@ fn locate_cli_binary() -> HarnessResult<std::path::PathBuf> {
     else if release.exists() { Ok(release) }
     else {
         Err(err("cli-smoke", format!(
-            "mlc CLI binary not found at {debug:?} or {release:?} — run cargo build -p mylittlechart-cli first"
+            "mlc CLI binary not found at {debug:?} or {release:?} — run cargo build -p mylittlechart-app-shell-cli first"
         )))
     }
 }
@@ -1003,7 +1003,7 @@ pub fn body_stream_orderbook_snapshot_ws_emits_event(h: &mut BackendHarness) -> 
         bids: bids.clone(),
         asks: asks.clone(),
         timestamp: 1_700_000_000_000,
-        source: mlc_live_data::OrderbookSource::Rest,
+        source: mlc_backend_data_bridge::OrderbookSource::Rest,
     })?;
     let events = h.tick(16);
     // REST snapshot → backend emits OrderbookSnapshotRest (signals DOM rebuild).

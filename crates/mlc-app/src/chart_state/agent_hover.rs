@@ -8,7 +8,7 @@ use crate::{text_input, ChartApp};
 
 impl ChartApp {
     pub fn check_agent_hover(&mut self, chart_x: f64, chart_y: f64) -> bool {
-        use mlc_sidebar_content::state::RightSidebarPanel;
+        use mlc_app_sidebar_content::state::RightSidebarPanel;
 
         let agents_open = self.sidebar_state.is_right_open()
             && self.sidebar_state.right_panel == RightSidebarPanel::Agents;

@@ -5,7 +5,7 @@
 //! - macOS:   `~/Library/Application Support/mylittlechart/`
 //! - Linux:   `$XDG_DATA_HOME/mylittlechart/` (default `~/.local/share/mylittlechart/`)
 //!
-//! All I/O is routed through [`mlc_crypto::global_storage()`] so the same
+//! All I/O is routed through [`mlc_vault::global_storage()`] so the same
 //! code runs on native (filesystem) and wasm (localStorage).
 //!
 //! # Public API
@@ -29,8 +29,8 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use super::profile::{ProfileIndex, ProfileMeta, UserProfile, VaultSecrets};
-use mlc_crypto::vault::{self, VaultKey};
-use mlc_crypto::global_storage;
+use mlc_vault::vault::{self, VaultKey};
+use mlc_vault::global_storage;
 
 // =============================================================================
 // ProfileError
@@ -414,7 +414,7 @@ pub fn create_profile(name: &str, avatar: &str) -> Result<ProfileMeta, String> {
         .map_err(|e| e.to_string())?;
 
     // Generate and persist a random 16-byte salt for future vault key derivation.
-    let salt = mlc_crypto::vault::generate_salt();
+    let salt = mlc_vault::vault::generate_salt();
     let salt_hex = salt.iter().map(|b| format!("{:02x}", b)).collect::<String>();
     global_storage()
         .write(&path_key(&profile_dir.join("salt.hex")), salt_hex.as_bytes())

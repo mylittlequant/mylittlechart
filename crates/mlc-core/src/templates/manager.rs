@@ -15,7 +15,7 @@ use super::storage::{
     category_dir, delete_template, load_all_templates,
     save_template, templates_root, TemplateError,
 };
-use mlc_crypto::vault::VaultKey;
+use mlc_vault::vault::VaultKey;
 
 // =============================================================================
 // Category constants
@@ -349,7 +349,7 @@ fn path_key(path: &Path) -> String {
 fn load_indicator_set_manager(dir: &Path) -> IndicatorSetManager {
     let path = dir.join(INDICATOR_SET_MANAGER_FILE);
     let key = path_key(&path);
-    mlc_crypto::global_storage()
+    mlc_vault::global_storage()
         .read(&key)
         .ok()
         .flatten()
@@ -365,6 +365,6 @@ fn save_indicator_set_manager(
 ) -> Result<(), TemplateError> {
     let path = dir.join(INDICATOR_SET_MANAGER_FILE);
     let json = serde_json::to_string_pretty(manager)?;
-    mlc_crypto::global_storage().write(&path_key(&path), json.as_bytes())?;
+    mlc_vault::global_storage().write(&path_key(&path), json.as_bytes())?;
     Ok(())
 }

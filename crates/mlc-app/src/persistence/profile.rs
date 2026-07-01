@@ -5,7 +5,7 @@ use crate::agent as gate4agent;
 
 use crate::ChartApp;
 use crate::persistence::live_cache as preset_cache;
-use mlc_indicators::IndicatorManager;
+use mlc_backend_indicator_engine::IndicatorManager;
 use mlc_core::ScaleMode;
 
 impl ChartApp {
@@ -180,7 +180,7 @@ impl ChartApp {
         let t0 = web_time::Instant::now();
         let tag_manager = std::mem::replace(
             &mut *self.core.bubble_mut(),
-            mlc_backend_core::bubble::BubbleStore::new(),
+            mlc_backend::bubble::BubbleStore::new(),
         );
         let pk_bubble_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
@@ -196,7 +196,7 @@ impl ChartApp {
         // swaps the whole manager in one shot, no bubble threading needed.
         let alert_manager = std::mem::replace(
             &mut *self.core.alert.write().expect("BackendCore.alert poisoned (write)"),
-            mlc_backend_core::alert::AlertManager::default(),
+            mlc_backend::alert::AlertManager::default(),
         );
         let pk_alert_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
@@ -205,7 +205,7 @@ impl ChartApp {
         // both are keyed by the same BubbleIds.
         let drawing_manager = std::mem::replace(
             &mut *self.core.drawing.write().expect("BackendCore.drawing poisoned (write)"),
-            mlc_backend_core::drawing::DrawingManager::default(),
+            mlc_backend::drawing::DrawingManager::default(),
         );
         let pk_drawing_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
@@ -218,7 +218,7 @@ impl ChartApp {
         let t0 = web_time::Instant::now();
         let slot_dockings = std::mem::replace(
             &mut self.sidebar_state.slot_dockings,
-            std::array::from_fn(|_| mlc_sidebar_content::SlotDockingManager::new()),
+            std::array::from_fn(|_| mlc_app_sidebar_content::SlotDockingManager::new()),
         );
         let pk_slots_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
@@ -318,7 +318,7 @@ impl ChartApp {
 
     /// Load and apply a previously saved user profile from `user_data/profile.json`.
     ///
-    /// Also restores the [`mlc_sidebar_content::watchlist::WatchlistManager`] from
+    /// Also restores the [`mlc_app_sidebar_content::watchlist::WatchlistManager`] from
     /// `user_data/watchlists.json` when that file exists.
     ///
     /// Missing files are silently ignored so that a fresh install with no
@@ -372,7 +372,7 @@ impl ChartApp {
         // Restore watchlist manager.
         let watchlists_path = mlc_core::user_profile::storage::watchlists_path();
         if watchlists_path.exists() {
-            match mlc_core::load_json::<mlc_sidebar_content::watchlist::WatchlistManager>(&watchlists_path, None) {
+            match mlc_core::load_json::<mlc_app_sidebar_content::watchlist::WatchlistManager>(&watchlists_path, None) {
                 Ok(manager) => {
                     *self.core.watchlist_mut_raw() = manager;
                 }
@@ -391,7 +391,7 @@ impl ChartApp {
     pub fn load_watchlists(&mut self) {
         let watchlists_path = mlc_core::user_profile::storage::watchlists_path();
         if watchlists_path.exists() {
-            match mlc_core::load_json::<mlc_sidebar_content::watchlist::WatchlistManager>(&watchlists_path, None) {
+            match mlc_core::load_json::<mlc_app_sidebar_content::watchlist::WatchlistManager>(&watchlists_path, None) {
                 Ok(manager) => {
                     *self.core.watchlist_mut_raw() = manager;
                 }

@@ -6,14 +6,14 @@
 //! `mlc_core::state::toolbar_state::ToolbarState::{
 //! handle_toolbar_click_with_chart, handle_dropdown_select_with_chart}` are
 //! generic over `impl DrawingSession` because `mlc-core` cannot depend on
-//! `mlc-backend-core` (the reverse dependency already exists). This is the
+//! `mlc-backend` (the reverse dependency already exists). This is the
 //! `mlc-app`-side implementor those callers pass in — a thin adapter over
 //! the bid-scoped facade, TRANSITIONAL until Step 4/5 moves these callers
 //! out of `mlc-core::state` entirely (see
 //! `docs/mlc/plans/step-3.1-drawing-manager-design.md` §2 "6 N3 external-fn
 //! callers").
 
-use mlc_backend_core::drawing::DrawingsMut;
+use mlc_backend::drawing::DrawingsMut;
 use mlc_core::drawing::primitives_v2::ControlPointType;
 use mlc_core::drawing::PrimitiveData;
 use mlc_core::ids::BubbleId;

@@ -7,9 +7,9 @@ use uzor::WidgetId;
 use mlc_core::{
     ChartId, LayoutRect, localize_primitive_name,
 };
-use mlc_layout::panel_app::ChartPanelLayout;
+use mlc_app_layout::panel_app::ChartPanelLayout;
 use mlc_core::state::modal_state::OpenModal;
-use mlc_indicators::RecalcMode;
+use mlc_backend_indicator_engine::RecalcMode;
 
 impl ChartApp {
     /// Pre-render mutations — call once per frame on the mutable self BEFORE
@@ -119,8 +119,8 @@ impl ChartApp {
             ] {
                 if !picker.is_open() { continue; }
                 let (pw, ph) = match picker.level {
-                    mlc_layout::ui::color_picker_state::ColorPickerLevel::L1 => picker.l1_config().calculate_size(),
-                    mlc_layout::ui::color_picker_state::ColorPickerLevel::L2 => picker.l2_config().calculate_size(),
+                    mlc_app_layout::ui::color_picker_state::ColorPickerLevel::L1 => picker.l1_config().calculate_size(),
+                    mlc_app_layout::ui::color_picker_state::ColorPickerLevel::L2 => picker.l2_config().calculate_size(),
                     _ => continue,
                 };
                 let min_x = cr.x + margin;
@@ -446,16 +446,16 @@ impl ChartApp {
                                 && prim_account_type == active_window_account_type
                         };
                         let item_state = if is_active_sym {
-                            mlc_sidebar_content::types::ObjectItemState::Active
+                            mlc_app_sidebar_content::types::ObjectItemState::Active
                         } else {
-                            mlc_sidebar_content::types::ObjectItemState::Memory
+                            mlc_app_sidebar_content::types::ObjectItemState::Memory
                         };
                         let memory_kind = if is_active_sym {
-                            mlc_sidebar_content::types::MemoryKind::None
+                            mlc_app_sidebar_content::types::MemoryKind::None
                         } else {
-                            mlc_sidebar_content::types::MemoryKind::GroupOtherKey
+                            mlc_app_sidebar_content::types::MemoryKind::GroupOtherKey
                         };
-                        let item = mlc_sidebar_content::types::ObjectTreeItem::new(
+                        let item = mlc_app_sidebar_content::types::ObjectTreeItem::new(
                             data.id, name, prim_category(kind), &data.type_id,
                         )
                         .with_visible(data.visible)
@@ -485,15 +485,15 @@ impl ChartApp {
                     })
                     .unwrap_or_default();
                 for (id, name, type_id, visible, locked) in group_indicator_data {
-                    let item = mlc_sidebar_content::types::ObjectTreeItem::new(
+                    let item = mlc_app_sidebar_content::types::ObjectTreeItem::new(
                         id, &name, mlc_core::ObjectCategory::Indicator, &type_id,
                     )
                     .with_visible(visible)
                     .with_locked(locked)
                     .with_section("Group")
                     .with_key(&active_window_sym, &active_window_exchange, &active_window_account_type)
-                    .with_item_state(mlc_sidebar_content::types::ObjectItemState::Active)
-                    .with_memory_kind(mlc_sidebar_content::types::MemoryKind::None);
+                    .with_item_state(mlc_app_sidebar_content::types::ObjectItemState::Active)
+                    .with_memory_kind(mlc_app_sidebar_content::types::MemoryKind::None);
                     self.sidebar_state.object_tree_items.push(item);
                 }
 
@@ -553,7 +553,7 @@ impl ChartApp {
                 if has_window_section {
                     for (id, display, type_id, kind, visible, locked, stroke, prim_symbol) in &stashed_prim_data {
                         let name = if display.is_empty() { type_id.as_str() } else { display.as_str() };
-                        let item = mlc_sidebar_content::types::ObjectTreeItem::new(
+                        let item = mlc_app_sidebar_content::types::ObjectTreeItem::new(
                             *id, name, prim_category(*kind), type_id,
                         )
                         .with_visible(*visible)
@@ -561,15 +561,15 @@ impl ChartApp {
                         .with_color(Some(stroke.clone()))
                         .with_section("Window")
                         .with_key(prim_symbol, &active_window_exchange, &active_window_account_type)
-                        .with_item_state(mlc_sidebar_content::types::ObjectItemState::Memory)
-                        .with_memory_kind(mlc_sidebar_content::types::MemoryKind::WindowStash);
+                        .with_item_state(mlc_app_sidebar_content::types::ObjectItemState::Memory)
+                        .with_memory_kind(mlc_app_sidebar_content::types::MemoryKind::WindowStash);
                         self.sidebar_state.object_tree_items.push(item);
                     }
 
                     for &iid in &pre_tag_ids {
                         if let Some(inst) = self.core.indicators().instance(iid)
                         {
-                            let item = mlc_sidebar_content::types::ObjectTreeItem::new(
+                            let item = mlc_app_sidebar_content::types::ObjectTreeItem::new(
                                 inst.id,
                                 &inst.name,
                                 mlc_core::ObjectCategory::Indicator,
@@ -584,8 +584,8 @@ impl ChartApp {
                             // "Window" section and behave the same as the
                             // stashed primitives above (no live mutation
                             // mirror; delete is suppressed by the UI).
-                            .with_item_state(mlc_sidebar_content::types::ObjectItemState::Memory)
-                            .with_memory_kind(mlc_sidebar_content::types::MemoryKind::WindowStash);
+                            .with_item_state(mlc_app_sidebar_content::types::ObjectItemState::Memory)
+                            .with_memory_kind(mlc_app_sidebar_content::types::MemoryKind::WindowStash);
                             self.sidebar_state.object_tree_items.push(item);
                         }
                     }
@@ -622,18 +622,18 @@ impl ChartApp {
                             && *prim_account_type == active_window_account_type
                     };
                     let item_state = if is_active_sym {
-                        mlc_sidebar_content::types::ObjectItemState::Active
+                        mlc_app_sidebar_content::types::ObjectItemState::Active
                     } else {
-                        mlc_sidebar_content::types::ObjectItemState::Memory
+                        mlc_app_sidebar_content::types::ObjectItemState::Memory
                     };
                     let memory_kind = if is_active_sym {
-                        mlc_sidebar_content::types::MemoryKind::None
+                        mlc_app_sidebar_content::types::MemoryKind::None
                     } else {
-                        mlc_sidebar_content::types::MemoryKind::WindowOtherKey
+                        mlc_app_sidebar_content::types::MemoryKind::WindowOtherKey
                     };
                     let key_exchange = if prim_exchange.is_empty() { &active_window_exchange } else { prim_exchange };
                     let key_account_type = if prim_account_type.is_empty() { &active_window_account_type } else { prim_account_type };
-                    let item = mlc_sidebar_content::types::ObjectTreeItem::new(
+                    let item = mlc_app_sidebar_content::types::ObjectTreeItem::new(
                         *id, name, prim_category(*kind), type_id,
                     )
                     .with_visible(*visible)
@@ -664,7 +664,7 @@ impl ChartApp {
                         .map(|i| (i.id, i.name.clone(), i.type_id.clone(), i.visible, i.locked))
                         .collect();
                     for (id, name, type_id, visible, locked) in &insts {
-                        let item = mlc_sidebar_content::types::ObjectTreeItem::new(
+                        let item = mlc_app_sidebar_content::types::ObjectTreeItem::new(
                             *id,
                             name,
                             mlc_core::ObjectCategory::Indicator,
@@ -673,8 +673,8 @@ impl ChartApp {
                         .with_visible(*visible)
                         .with_locked(*locked)
                         .with_key(&active_window_sym, &active_window_exchange, &active_window_account_type)
-                        .with_item_state(mlc_sidebar_content::types::ObjectItemState::Active)
-                        .with_memory_kind(mlc_sidebar_content::types::MemoryKind::None);
+                        .with_item_state(mlc_app_sidebar_content::types::ObjectItemState::Active)
+                        .with_memory_kind(mlc_app_sidebar_content::types::MemoryKind::None);
                         self.sidebar_state.object_tree_items.push(item);
                     }
                 }
@@ -688,8 +688,8 @@ impl ChartApp {
                     _ => 2,
                 };
                 let state_order: u8 = match item.item_state {
-                    mlc_sidebar_content::types::ObjectItemState::Active => 0,
-                    mlc_sidebar_content::types::ObjectItemState::Memory => 1,
+                    mlc_app_sidebar_content::types::ObjectItemState::Active => 0,
+                    mlc_app_sidebar_content::types::ObjectItemState::Memory => 1,
                 };
                 (section_order, state_order)
             });
@@ -697,7 +697,7 @@ impl ChartApp {
             // --- ObjectTree: compare overlay series ---
             if let Some(window) = self.panel_app.panel_grid.active_container() {
                 for (i, series) in window.compare_overlay.series.iter().enumerate() {
-                    let item = mlc_sidebar_content::types::ObjectTreeItem::new(
+                    let item = mlc_app_sidebar_content::types::ObjectTreeItem::new(
                         i as u64,
                         &series.symbol,
                         mlc_core::ObjectCategory::Compare,
@@ -710,7 +710,7 @@ impl ChartApp {
             }
 
             // --- Signals panel: collect per-instance SignalEvents ---
-            use mlc_sidebar_content::types::{IndicatorsTabData, IndicatorSignalGroup, IndicatorSignalRow};
+            use mlc_app_sidebar_content::types::{IndicatorsTabData, IndicatorSignalGroup, IndicatorSignalRow};
 
             // Only show signals for indicator instances that belong to the
             // active chart's bubble (indicator ownership = bubble).
@@ -755,7 +755,7 @@ impl ChartApp {
 
             // --- Watchlist: populate from WatchlistManager symbol list ---
             {
-                use mlc_sidebar_content::types::WatchlistItem;
+                use mlc_app_sidebar_content::types::WatchlistItem;
 
                 self.sidebar_state.watchlist_items.clear();
                 let watchlist_entries: Vec<(String, String, String)> = self
@@ -827,8 +827,8 @@ impl ChartApp {
 
             // --- Connectors: populate from active hub ---
             {
-                use mlc_sidebar_content::types::ConnectorStatusItem;
-                use mlc_sidebar_content::types::ConnectorGroup;
+                use mlc_app_sidebar_content::types::ConnectorStatusItem;
+                use mlc_app_sidebar_content::types::ConnectorGroup;
 
                 self.sidebar_state.connector_items.clear();
                 let active_ids = self.core.bridge.pool().list_connected();
@@ -840,7 +840,7 @@ impl ChartApp {
                         .collect();
 
                 {
-                    use mlc_sidebar_content::MetricsSnapshot;
+                    use mlc_app_sidebar_content::MetricsSnapshot;
                     let now = web_time::Instant::now();
                     let should_sample = self.sidebar_state.metrics_last_sample
                         .is_none_or(|last| now.duration_since(last).as_secs_f64() >= 1.0);

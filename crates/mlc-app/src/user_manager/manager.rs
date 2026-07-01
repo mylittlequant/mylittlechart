@@ -11,7 +11,7 @@ use mlc_core::user_profile::storage::{
     active_profile_data_dir, load_json, load_profile, save_profile,
 };
 use mlc_core::user_profile::UserProfile;
-use mlc_crypto::vault::VaultKey;
+use mlc_vault::vault::VaultKey;
 
 // =============================================================================
 // SettingsSnapshots

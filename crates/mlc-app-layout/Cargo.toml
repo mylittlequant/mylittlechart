@@ -1,0 +1,16 @@
+[package]
+name = "mylittlechart-app-layout"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Desktop/wasm frontend layer for mylittlechart — layout, render, ui widgets, hit-testing, input. Consumes mlc-core state; temporary until the tessera app shell lands."
+
+[lib]
+name = "mlc_app_layout"
+path = "src/lib.rs"
+
+[dependencies]
+web-time = "1"
+mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
+mlc-alert-delivery = { path = "../mlc-alert-delivery", package = "mylittlechart-alert-delivery" }
+uzor = "=1.4.15"

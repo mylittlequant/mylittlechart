@@ -1333,12 +1333,12 @@ impl ChartPanelGrid {
 // manager for `ChartPanelGrid`'s hit-test / freehand methods below.
 // =========================================================================
 //
-// `DrawingManager` physically lives in `mlc-backend-core` (Step 3.1 — the
+// `DrawingManager` physically lives in `mlc-backend` (Step 3.1 — the
 // type dictionary doesn't hold managers). `ChartPanelGrid` stays in
-// `mlc-core` and cannot depend on `mlc-backend-core` (that would invert
+// `mlc-core` and cannot depend on `mlc-backend` (that would invert
 // the dep graph: backend-core already depends on core). This trait is the
 // narrow interface these hit-test helpers need; `mlc-app` implements it as
-// a thin per-bubble wrapper around `mlc_backend_core::drawing::DrawingsMut`
+// a thin per-bubble wrapper around `mlc_backend::drawing::DrawingsMut`
 // (see `mlc-app/src/input/drawing_session.rs`).
 //
 // All methods operate on "the active bubble" implicitly — the implementor

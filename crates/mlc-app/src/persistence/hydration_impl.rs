@@ -106,7 +106,7 @@ impl ChartApp {
                                         .unwrap_or(digdigdig3::ExchangeId::Binance);
                                     let snap_at = crate::account_type_from_label(&snap.account_type);
                                     window.data_provider = std::sync::Arc::new(
-                                        mlc_live_data::LiveDataProvider::new(
+                                        mlc_backend_data_bridge::LiveDataProvider::new(
                                             snap_exchange_id,
                                             snap_exchange_id.as_str().to_string(),
                                             snap_at,
@@ -369,7 +369,7 @@ impl ChartApp {
                                         .unwrap_or(digdigdig3::ExchangeId::Binance);
                                     let patch_at = crate::account_type_from_label(&snap.account_type);
                                     window.data_provider = std::sync::Arc::new(
-                                        mlc_live_data::LiveDataProvider::new(
+                                        mlc_backend_data_bridge::LiveDataProvider::new(
                                             patch_exchange_id,
                                             patch_exchange_id.as_str().to_string(),
                                             patch_at,
@@ -913,15 +913,15 @@ impl ChartApp {
                     };
 
                     // Helper: convert PersistedSymbolSource  ->  SymbolSource.
-                    let convert_source = |src: &mlc_core::preset::preset::PersistedSymbolSource| -> mlc_panels::trading::SymbolSource {
+                    let convert_source = |src: &mlc_core::preset::preset::PersistedSymbolSource| -> mlc_app_panels::trading::SymbolSource {
                         match src {
-                            mlc_core::preset::preset::PersistedSymbolSource::HyperFocus => mlc_panels::trading::SymbolSource::HyperFocus,
-                            mlc_core::preset::preset::PersistedSymbolSource::Fixed { symbol, exchange, account_type } => mlc_panels::trading::SymbolSource::Fixed {
+                            mlc_core::preset::preset::PersistedSymbolSource::HyperFocus => mlc_app_panels::trading::SymbolSource::HyperFocus,
+                            mlc_core::preset::preset::PersistedSymbolSource::Fixed { symbol, exchange, account_type } => mlc_app_panels::trading::SymbolSource::Fixed {
                                 symbol: symbol.clone(),
                                 exchange: exchange.clone(),
                                 account_type: normalize_account_type(account_type),
                             },
-                            mlc_core::preset::preset::PersistedSymbolSource::BoundToChart { leaf_id } => mlc_panels::trading::SymbolSource::BoundToChart {
+                            mlc_core::preset::preset::PersistedSymbolSource::BoundToChart { leaf_id } => mlc_app_panels::trading::SymbolSource::BoundToChart {
                                 leaf_id: *leaf_id,
                             },
                         }
@@ -939,7 +939,7 @@ impl ChartApp {
                                             mlc_core::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
                                             mlc_core::preset::preset::PersistedSymbolSource::BoundToChart { .. } | mlc_core::preset::preset::PersistedSymbolSource::HyperFocus => String::new(),
                                         };
-                                        let mut s = mlc_panels::trading::order_flow::dom::DomState::new(symbol, *tick_size);
+                                        let mut s = mlc_app_panels::trading::order_flow::dom::DomState::new(symbol, *tick_size);
                                         s.levels_displayed = *levels_displayed;
                                         s.center_price = *center_price;
                                         // Market-data panels no longer carry SymbolSource; TagManager tracks their group.
@@ -965,7 +965,7 @@ impl ChartApp {
                                             mlc_core::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
                                             mlc_core::preset::preset::PersistedSymbolSource::BoundToChart { .. } | mlc_core::preset::preset::PersistedSymbolSource::HyperFocus => String::new(),
                                         };
-                                        let mut s = mlc_panels::trading::order_flow::footprint::FootprintState::new(symbol, *tick_size);
+                                        let mut s = mlc_app_panels::trading::order_flow::footprint::FootprintState::new(symbol, *tick_size);
                                         if let mlc_core::preset::preset::PersistedSymbolSource::Fixed { exchange, account_type, .. } = source {
                                             s.exchange = exchange.clone();
                                             s.account_type = normalize_account_type(account_type);
@@ -987,7 +987,7 @@ impl ChartApp {
                                             mlc_core::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
                                             mlc_core::preset::preset::PersistedSymbolSource::BoundToChart { .. } | mlc_core::preset::preset::PersistedSymbolSource::HyperFocus => String::new(),
                                         };
-                                        let mut s = mlc_panels::trading::order_flow::volume_profile::VolumeProfileState::new(symbol, *tick_size);
+                                        let mut s = mlc_app_panels::trading::order_flow::volume_profile::VolumeProfileState::new(symbol, *tick_size);
                                         if let mlc_core::preset::preset::PersistedSymbolSource::Fixed { exchange, account_type, .. } = source {
                                             s.exchange = exchange.clone();
                                             s.account_type = normalize_account_type(account_type);
@@ -1009,7 +1009,7 @@ impl ChartApp {
                                             mlc_core::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
                                             mlc_core::preset::preset::PersistedSymbolSource::BoundToChart { .. } | mlc_core::preset::preset::PersistedSymbolSource::HyperFocus => String::new(),
                                         };
-                                        let mut s = mlc_panels::trading::order_flow::liquidity_heatmap::LiquidityHeatmapState::new(symbol, *tick_size, *snapshot_interval_ms);
+                                        let mut s = mlc_app_panels::trading::order_flow::liquidity_heatmap::LiquidityHeatmapState::new(symbol, *tick_size, *snapshot_interval_ms);
                                         if let mlc_core::preset::preset::PersistedSymbolSource::Fixed { exchange, account_type, .. } = source {
                                             s.exchange = exchange.clone();
                                             s.account_type = normalize_account_type(account_type);
@@ -1030,7 +1030,7 @@ impl ChartApp {
                                             mlc_core::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
                                             mlc_core::preset::preset::PersistedSymbolSource::BoundToChart { .. } | mlc_core::preset::preset::PersistedSymbolSource::HyperFocus => String::new(),
                                         };
-                                        let mut s = mlc_panels::trading::order_flow::big_trades::BigTradesState::new();
+                                        let mut s = mlc_app_panels::trading::order_flow::big_trades::BigTradesState::new();
                                         s.symbol = symbol;
                                         if let mlc_core::preset::preset::PersistedSymbolSource::Fixed { exchange, account_type, .. } = source {
                                             s.exchange = exchange.clone();
@@ -1053,7 +1053,7 @@ impl ChartApp {
                                             mlc_core::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
                                             mlc_core::preset::preset::PersistedSymbolSource::BoundToChart { .. } | mlc_core::preset::preset::PersistedSymbolSource::HyperFocus => String::new(),
                                         };
-                                        let mut s = mlc_panels::trading::order_flow::l2_tape::L2TapeState::new();
+                                        let mut s = mlc_app_panels::trading::order_flow::l2_tape::L2TapeState::new();
                                         s.symbol = symbol;
                                         if let mlc_core::preset::preset::PersistedSymbolSource::Fixed { exchange, account_type, .. } = source {
                                             s.exchange = exchange.clone();
@@ -1075,7 +1075,7 @@ impl ChartApp {
                                             mlc_core::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
                                             mlc_core::preset::preset::PersistedSymbolSource::BoundToChart { .. } | mlc_core::preset::preset::PersistedSymbolSource::HyperFocus => String::new(),
                                         };
-                                        let mut s = mlc_panels::trading::order_flow::trade_tape::TradeTapeState::new();
+                                        let mut s = mlc_app_panels::trading::order_flow::trade_tape::TradeTapeState::new();
                                         s.symbol = symbol;
                                         if let mlc_core::preset::preset::PersistedSymbolSource::Fixed { exchange, account_type, .. } = source {
                                             s.exchange = exchange.clone();
@@ -1098,7 +1098,7 @@ impl ChartApp {
                                             mlc_core::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
                                             mlc_core::preset::preset::PersistedSymbolSource::BoundToChart { .. } | mlc_core::preset::preset::PersistedSymbolSource::HyperFocus => String::new(),
                                         };
-                                        let mut s = mlc_panels::trading::trading::order_entry::OrderEntryState::new(symbol);
+                                        let mut s = mlc_app_panels::trading::trading::order_entry::OrderEntryState::new(symbol);
                                         s.source = convert_source(source);
                                         if let mlc_core::preset::preset::PersistedSymbolSource::Fixed { exchange, account_type, .. } = source {
                                             s.exchange = exchange.clone();
@@ -1109,17 +1109,17 @@ impl ChartApp {
                                 }
                                 PersistedFreeItemKind::PositionManager => {
                                     if !self.panels_store.position_manager.contains_key(&pid) {
-                                        self.panels_store.position_manager.insert(pid, mlc_panels::trading::trading::position_manager::PositionManagerState::new());
+                                        self.panels_store.position_manager.insert(pid, mlc_app_panels::trading::trading::position_manager::PositionManagerState::new());
                                     }
                                 }
                                 PersistedFreeItemKind::TradeLog => {
                                     if !self.panels_store.trade_log.contains_key(&pid) {
-                                        self.panels_store.trade_log.insert(pid, mlc_panels::trading::trading::trade_log::TradeLogState::new());
+                                        self.panels_store.trade_log.insert(pid, mlc_app_panels::trading::trading::trade_log::TradeLogState::new());
                                     }
                                 }
                                 PersistedFreeItemKind::RiskCalculator => {
                                     if !self.panels_store.risk_calculator.contains_key(&pid) {
-                                        self.panels_store.risk_calculator.insert(pid, mlc_panels::trading::trading::risk_calculator::RiskCalculatorState::new());
+                                        self.panels_store.risk_calculator.insert(pid, mlc_app_panels::trading::trading::risk_calculator::RiskCalculatorState::new());
                                     }
                                 }
                                 PersistedFreeItemKind::TradingContainer { source, tick_size, market_price } => {
@@ -1128,7 +1128,7 @@ impl ChartApp {
                                             mlc_core::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
                                             mlc_core::preset::preset::PersistedSymbolSource::BoundToChart { .. } | mlc_core::preset::preset::PersistedSymbolSource::HyperFocus => String::new(),
                                         };
-                                        let mut s = mlc_panels::trading::trading::trading_container::TradingContainerState::new(symbol, *tick_size, *market_price);
+                                        let mut s = mlc_app_panels::trading::trading::trading_container::TradingContainerState::new(symbol, *tick_size, *market_price);
                                         s.source = convert_source(source);
                                         self.panels_store.trading_container.insert(pid, s);
                                     }
@@ -1139,7 +1139,7 @@ impl ChartApp {
                                     bar_spacing, view_position, height_ratio,
                                 } => {
                                     if !self.panels_store.indicator_panel.contains_key(&pid) {
-                                        let mut s = mlc_panels::trading::order_flow::indicator_panel::IndicatorPanelState::with_instance(
+                                        let mut s = mlc_app_panels::trading::order_flow::indicator_panel::IndicatorPanelState::with_instance(
                                             symbol.clone(), *instance_id,
                                         );
                                         s.exchange = exchange.clone();
@@ -1156,12 +1156,12 @@ impl ChartApp {
                                 }
                                 PersistedFreeItemKind::MultiDom { symbol, exchanges, grid_size, depth_per_side } => {
                                     if !self.panels_store.multi_dom.contains_key(&pid) {
-                                        let config = mlc_panels::trading::order_flow::multi_dom::MultiDomConfig {
+                                        let config = mlc_app_panels::trading::order_flow::multi_dom::MultiDomConfig {
                                             exchanges: exchanges.clone(),
                                             grid_size: *grid_size,
                                             depth_per_side: *depth_per_side,
                                         };
-                                        let s = mlc_panels::trading::order_flow::multi_dom::MultiDomState::new(
+                                        let s = mlc_app_panels::trading::order_flow::multi_dom::MultiDomState::new(
                                             symbol.clone(), config,
                                         );
                                         // Subscribe orderbook for each configured exchange.
@@ -1216,23 +1216,23 @@ impl ChartApp {
                                             Some(item)
                                         }) {
                                             Ok(tree) => {
-                                                mlc_sidebar_content::SlotDockingManager(
+                                                mlc_app_sidebar_content::SlotDockingManager(
                                                     uzor::layout::DockState::from_tree(tree),
                                                 )
                                             }
                                             Err(e) => {
                                                 eprintln!("[ChartApp] slot{} restore_tree failed: {} - empty fallback", i + 1, e);
-                                                mlc_sidebar_content::SlotDockingManager::new()
+                                                mlc_app_sidebar_content::SlotDockingManager::new()
                                             }
                                         }
                                     }
                                     Err(e) => {
                                         eprintln!("[ChartApp] slot{} from_json failed: {} - empty fallback", i + 1, e);
-                                        mlc_sidebar_content::SlotDockingManager::new()
+                                        mlc_app_sidebar_content::SlotDockingManager::new()
                                     }
                                 }
                             }
-                            None => mlc_sidebar_content::SlotDockingManager::new(),
+                            None => mlc_app_sidebar_content::SlotDockingManager::new(),
                         };
                         self.sidebar_state.slot_dockings[i] = mgr;
                     }

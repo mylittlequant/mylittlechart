@@ -95,13 +95,13 @@ use mlc_core::{
     input::DragMode,
     localize_primitive_name,
 };
-use mlc_layout::layout::ExtendedLayoutHitTester;
-use mlc_layout::panel_app::ChartPanelLayout;
-use mlc_layout::ui::context_menu::{
+use mlc_app_layout::layout::ExtendedLayoutHitTester;
+use mlc_app_layout::panel_app::ChartPanelLayout;
+use mlc_app_layout::ui::context_menu::{
     ContextMenuTarget, ContextMenuItemState,
     build_primitive_context_menu,
 };
-use mlc_layout::ui::modal_settings::DualSliderHandle;
+use mlc_app_layout::ui::modal_settings::DualSliderHandle;
 use mlc_core::drawing::TimeframeVisibilityConfig;
 use uzor::WidgetId;
 
@@ -209,7 +209,7 @@ impl ChartApp {
     /// Extract the currently selected PTY text from the focused leaf's snapshot.
     /// Returns an empty string if there is no selection or no grid.
     pub fn pty_selection_text(&self) -> String {
-        use mlc_sidebar_content::agent_types::AgentSnapshotMode;
+        use mlc_app_sidebar_content::agent_types::AgentSnapshotMode;
         let leaf_id = match self.sidebar_state.focused_agent_leaf {
             Some(id) => id,
             None => return String::new(),
@@ -328,7 +328,7 @@ impl ChartApp {
         //     Panels currently receive the click but have no built-in behavior.
         //     Infrastructure is wired so behavior can be added per-panel later.
         {
-            use mlc_sidebar_content::state::RightSidebarPanel;
+            use mlc_app_sidebar_content::state::RightSidebarPanel;
             let slot_idx_opt = match self.sidebar_state.right_panel {
                 RightSidebarPanel::Slot1 => Some(0usize),
                 RightSidebarPanel::Slot2 => Some(1),
@@ -987,7 +987,7 @@ impl ChartApp {
                     if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
                         self.sidebar_state.agent_pty_selections.insert(
                             leaf_id,
-                            mlc_sidebar_content::state::PtySelection::new(row, col),
+                            mlc_app_sidebar_content::state::PtySelection::new(row, col),
                         );
                     }
                     self.agent_pty_drag_active = true;
@@ -1050,13 +1050,13 @@ impl ChartApp {
                             if line_idx == 0 {
                                 let is_collapsible = self.sidebar_state.agent_leaf_snapshots.get(&leaf_id)
                                     .and_then(|snap| {
-                                        if let mlc_sidebar_content::agent_types::AgentSnapshotMode::Chat(ref msgs) = snap.mode {
+                                        if let mlc_app_sidebar_content::agent_types::AgentSnapshotMode::Chat(ref msgs) = snap.mode {
                                             msgs.get(msg_idx as usize)
                                         } else {
                                             None
                                         }
                                     })
-                                    .map(|msg| msg.role == mlc_sidebar_content::agent_types::ChatRole::Thinking || msg.role == mlc_sidebar_content::agent_types::ChatRole::Tool)
+                                    .map(|msg| msg.role == mlc_app_sidebar_content::agent_types::ChatRole::Thinking || msg.role == mlc_app_sidebar_content::agent_types::ChatRole::Tool)
                                     .unwrap_or(false);
                                 if is_collapsible {
                                     let key = (leaf_id, msg_idx);
@@ -1072,7 +1072,7 @@ impl ChartApp {
                             let char_idx = chat_char_idx_from_x(line_text, x, text_x);
                             self.sidebar_state.agent_chat_selections.insert(
                                 leaf_id,
-                                mlc_sidebar_content::state::ChatSelection::new_at(msg_idx, line_idx, char_idx),
+                                mlc_app_sidebar_content::state::ChatSelection::new_at(msg_idx, line_idx, char_idx),
                             );
                             self.sidebar_state.agent_chat_drag_active = true;
                             return false;
@@ -1104,12 +1104,12 @@ impl ChartApp {
         // This treats on_drag_start as a click for popup dismissal purposes,
         // preventing the UX issue where dragging outside doesn't close the picker.
         {
-            fn outside_popup(picker: &mlc_layout::ui::color_picker_state::ColorPickerState, x: f64, y: f64) -> bool {
+            fn outside_popup(picker: &mlc_app_layout::ui::color_picker_state::ColorPickerState, x: f64, y: f64) -> bool {
                 if !picker.is_open() { return false; }
                 let (ox, oy) = picker.origin;
                 let (pw, ph) = match picker.level {
-                    mlc_layout::ui::color_picker_state::ColorPickerLevel::L1 => picker.l1_config().calculate_size(),
-                    mlc_layout::ui::color_picker_state::ColorPickerLevel::L2 => picker.l2_config().calculate_size(),
+                    mlc_app_layout::ui::color_picker_state::ColorPickerLevel::L1 => picker.l1_config().calculate_size(),
+                    mlc_app_layout::ui::color_picker_state::ColorPickerLevel::L2 => picker.l2_config().calculate_size(),
                     _ => return false,
                 };
                 x < ox || x > ox + pw || y < oy || y > oy + ph
@@ -1159,7 +1159,7 @@ impl ChartApp {
 
         // Check if drag starts on a watchlist column separator — begin separator drag.
         // Must be checked before the watchlist row drag so separators win the hit-test.
-        if self.sidebar_state.right_panel == mlc_sidebar_content::state::RightSidebarPanel::Watchlist {
+        if self.sidebar_state.right_panel == mlc_app_sidebar_content::state::RightSidebarPanel::Watchlist {
             // Widget ids use 1-based indexing; strip prefix and subtract 1 for 0-based sep index.
             let on_sep = live_hover.as_deref()
                 .and_then(|h| h.strip_prefix("watchlist_sep_").and_then(|s| s.parse::<usize>().ok()))
@@ -1226,7 +1226,7 @@ impl ChartApp {
 
         // Check if drag starts on a watchlist row — begin drag-to-reorder.
         // Must be checked before the modal guard so it works while the sidebar is open.
-        if self.sidebar_state.right_panel == mlc_sidebar_content::state::RightSidebarPanel::Watchlist {
+        if self.sidebar_state.right_panel == mlc_app_sidebar_content::state::RightSidebarPanel::Watchlist {
             let on_watchlist_row = live_hover.as_deref()
                 .and_then(|h| h.strip_prefix("watchlist_").and_then(|s| s.parse::<usize>().ok()));
             if let Some(idx) = on_watchlist_row {
@@ -1579,7 +1579,7 @@ impl ChartApp {
                     scroll_state.start_drag(y);
                     true
                 } else if prefix == "user_settings" {
-                    use mlc_layout::ui::modal_settings::UserSettingsTab;
+                    use mlc_app_layout::ui::modal_settings::UserSettingsTab;
                     let scroll = match self.panel_app.user_settings_state.active_tab {
                         UserSettingsTab::General => &mut self.panel_app.user_settings_state.general_tab_scroll,
                         UserSettingsTab::Sync => &mut self.panel_app.user_settings_state.sync_tab_scroll,
@@ -1755,7 +1755,7 @@ impl ChartApp {
                         // Find the matching content_item rect.
                         if let Some((_, input_rect)) = us.content_items.iter().find(|(k, _)| k == field_id) {
                             if input_rect.contains(x, y) && !char_positions.is_empty() {
-                                let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(char_positions, x);
+                                let new_cursor = mlc_app_layout::ui::widgets::cursor_from_char_positions(char_positions, x);
                                 drag_field = Some(field_id.clone());
                                 drag_cursor = new_cursor;
                                 break;
@@ -1903,7 +1903,7 @@ impl ChartApp {
 
         // Watchlist modal — text select drag on the search input field (Overview tab only, TextFieldStore).
         if self.watchlist_modal.is_open() {
-            use mlc_layout::ui::modal_settings::WatchlistModalTab;
+            use mlc_app_layout::ui::modal_settings::WatchlistModalTab;
             if self.watchlist_modal.active_tab == WatchlistModalTab::Overview {
                 if let Some(ref wl) = self.last_watchlist_modal_result {
                     if wl.search_input_rect.contains(x, y) {
@@ -2041,7 +2041,7 @@ impl ChartApp {
             if self.panel_app.user_settings_state.is_open {
                 if let Some(ref us) = result.user_settings {
                     use crate::scroll_dispatch::{ScrollableInfo, try_handle_track_click};
-                    use mlc_layout::ui::modal_settings::UserSettingsTab;
+                    use mlc_app_layout::ui::modal_settings::UserSettingsTab;
 
                     let info = ScrollableInfo {
                         handle_rect: us.scrollbar_handle_rect,
@@ -2066,7 +2066,7 @@ impl ChartApp {
             }
             // User settings DATA & CACHE slider drag start
             if self.panel_app.user_settings_state.is_open {
-                use mlc_layout::ui::modal_settings::UserSettingsTab;
+                use mlc_app_layout::ui::modal_settings::UserSettingsTab;
                 if self.panel_app.user_settings_state.active_tab == UserSettingsTab::Performance {
                     if let Some(ref us) = result.user_settings {
                         for track in &us.slider_tracks {
@@ -2744,11 +2744,11 @@ impl ChartApp {
             // rather than allowing a degenerate layout that leads to negative rects.
             let min_chart_w = self.panel_app.panel_grid.min_sidebar_chart_width() as f64;
             let chart_if_min_sidebar =
-                self.right_toolbar_left_x - mlc_sidebar_content::state::MIN_SIDEBAR_WIDTH;
+                self.right_toolbar_left_x - mlc_app_sidebar_content::state::MIN_SIDEBAR_WIDTH;
             if chart_if_min_sidebar < min_chart_w {
                 // Not enough room — close the sidebar entirely.
                 self.sidebar_state
-                    .set_right_panel(mlc_sidebar_content::state::RightSidebarPanel::None);
+                    .set_right_panel(mlc_app_sidebar_content::state::RightSidebarPanel::None);
                 // Persist the auto-close so it survives restart.
                 self.sidebar_data_dirty = true;
                 self.persist_profile();
@@ -2757,7 +2757,7 @@ impl ChartApp {
             // Enforce [MIN_SIDEBAR_WIDTH, right_toolbar_left_x - min_chart_w] clamp.
             let max_w = self.right_toolbar_left_x - min_chart_w;
             let new_width = (self.right_toolbar_left_x - x)
-                .clamp(mlc_sidebar_content::state::MIN_SIDEBAR_WIDTH, max_w);
+                .clamp(mlc_app_sidebar_content::state::MIN_SIDEBAR_WIDTH, max_w);
             self.sidebar_state.set_right_width(new_width);
             // NOTE: width is persisted on drag-end (on_drag_end), not on every
             // mousemove — that would be hundreds of disk writes per second.
@@ -3045,7 +3045,7 @@ impl ChartApp {
                 .map(|(_, v)| v.clone())
                 .unwrap_or_default();
             if !char_positions.is_empty() {
-                let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                let new_cursor = mlc_app_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                 let drag_wid: Option<WidgetId> = match field_id.as_str() {
                     "e2e_passphrase_input" | "wizard_passphrase_input"
                     | "profile_mgr:new_passphrase_input" => {
@@ -3128,13 +3128,13 @@ impl ChartApp {
 
         // === Floating inline bar drag move ===
         if self.panel_app.toolbar_state.floating_inline_bar.dragging {
-            let panel_layout = mlc_layout::panel_app::ChartPanelLayout::compute(
+            let panel_layout = mlc_app_layout::panel_app::ChartPanelLayout::compute(
                 &mlc_core::LayoutRect::new(0.0, 0.0, self.width as f64, self.height as f64),
                 &self.panel_app.toolbar_config,
             );
             let bar_width = self.last_inline_bar_rect.map(|r| r.width).unwrap_or(400.0);
             let sidebar_w = self.sidebar_state.right_width();
-            mlc_layout::panel_app::floating_inline_update_drag(
+            mlc_app_layout::panel_app::floating_inline_update_drag(
                 &mut self.panel_app.toolbar_state.floating_inline_bar,
                 x, y,
                 &panel_layout,
@@ -3215,7 +3215,7 @@ impl ChartApp {
         // User settings scrollbar drag move
         {
             use crate::scroll_dispatch::{ScrollableInfo, try_handle_scrollbar_drag};
-            use mlc_layout::ui::modal_settings::UserSettingsTab;
+            use mlc_app_layout::ui::modal_settings::UserSettingsTab;
 
             if let Some(ref result) = self.frame_result {
                 if let Some(ref us) = result.user_settings {
@@ -4120,7 +4120,7 @@ impl ChartApp {
         self.last_mouse_pos = (x, y);
 
         // --- Overlay tab hover state is derived from InputCoordinator below ---
-        self.leaf_tab_hover = mlc_layout::layout::panel_overlay::LeafTabHoverZone::None;
+        self.leaf_tab_hover = mlc_app_layout::layout::panel_overlay::LeafTabHoverZone::None;
         self.leaf_tab_hovered_leaf = None;
 
         // --- Update panel overlay tab hover state (free-slot leaves) ---
@@ -4133,14 +4133,14 @@ impl ChartApp {
                         let [dx, dy, dw, dh] = zones.dots_rect;
                         let [cx, cy, cw, ch] = zones.color_tag_rect;
                         if x >= dx && x < dx + dw && y >= dy && y < dy + dh {
-                            mlc_layout::layout::panel_overlay::LeafTabHoverZone::GearMenu
+                            mlc_app_layout::layout::panel_overlay::LeafTabHoverZone::GearMenu
                         } else if x >= cx && x < cx + cw && y >= cy && y < cy + ch {
-                            mlc_layout::layout::panel_overlay::LeafTabHoverZone::ColorTag
+                            mlc_app_layout::layout::panel_overlay::LeafTabHoverZone::ColorTag
                         } else {
-                            mlc_layout::layout::panel_overlay::LeafTabHoverZone::Body
+                            mlc_app_layout::layout::panel_overlay::LeafTabHoverZone::Body
                         }
                     } else {
-                        mlc_layout::layout::panel_overlay::LeafTabHoverZone::None
+                        mlc_app_layout::layout::panel_overlay::LeafTabHoverZone::None
                     };
                     // Find which slot contains this leaf_id.
                     let slot_idx_opt = self.sidebar_state.slot_dockings.iter().enumerate()
@@ -4213,9 +4213,9 @@ impl ChartApp {
                     if let Ok(lid) = leaf_id_str.parse::<u64>() {
                         self.leaf_tab_hovered_leaf = Some(mlc_core::LeafId(lid));
                         self.leaf_tab_hover = match sub_zone {
-                            "gear" => mlc_layout::layout::panel_overlay::LeafTabHoverZone::GearMenu,
-                            "color_tag" => mlc_layout::layout::panel_overlay::LeafTabHoverZone::ColorTag,
-                            _ => mlc_layout::layout::panel_overlay::LeafTabHoverZone::Body,
+                            "gear" => mlc_app_layout::layout::panel_overlay::LeafTabHoverZone::GearMenu,
+                            "color_tag" => mlc_app_layout::layout::panel_overlay::LeafTabHoverZone::ColorTag,
+                            _ => mlc_app_layout::layout::panel_overlay::LeafTabHoverZone::Body,
                         };
                     }
                 }
@@ -4359,20 +4359,20 @@ impl ChartApp {
         if self.panel_app.sync_color_grid.is_open() {
             if let Some(ref result) = self.frame_result {
                 if let Some(ref grid_draw) = result.sync_color_grid {
-                    use mlc_layout::ui::sync_color_grid::hit_test_sync_color_grid;
+                    use mlc_app_layout::ui::sync_color_grid::hit_test_sync_color_grid;
                     let hit = hit_test_sync_color_grid(grid_draw, x, y);
                     match hit {
-                        mlc_layout::ui::sync_color_grid::SyncColorGridHitResult::Color(idx) => {
+                        mlc_app_layout::ui::sync_color_grid::SyncColorGridHitResult::Color(idx) => {
                             self.panel_app.sync_color_grid.hovered_index = Some(idx);
                             self.panel_app.sync_color_grid.hovered_remove = false;
                             self.panel_app.sync_color_grid.hovered_add = false;
                         }
-                        mlc_layout::ui::sync_color_grid::SyncColorGridHitResult::Remove => {
+                        mlc_app_layout::ui::sync_color_grid::SyncColorGridHitResult::Remove => {
                             self.panel_app.sync_color_grid.hovered_index = None;
                             self.panel_app.sync_color_grid.hovered_remove = true;
                             self.panel_app.sync_color_grid.hovered_add = false;
                         }
-                        mlc_layout::ui::sync_color_grid::SyncColorGridHitResult::AddCustom => {
+                        mlc_app_layout::ui::sync_color_grid::SyncColorGridHitResult::AddCustom => {
                             self.panel_app.sync_color_grid.hovered_index = None;
                             self.panel_app.sync_color_grid.hovered_remove = false;
                             self.panel_app.sync_color_grid.hovered_add = true;
@@ -5025,7 +5025,7 @@ impl ChartApp {
                         .cloned()
                         .or_else(|| leaf_rect_opt.and_then(|r| self.build_extended_layout_for_leaf(leaf_id, &r)));
                     if let Some(extended) = ext_opt {
-                        let tester = mlc_layout::layout::ExtendedLayoutHitTester::new(&extended);
+                        let tester = mlc_app_layout::layout::ExtendedLayoutHitTester::new(&extended);
                         use mlc_core::input::ChartHitTester;
                         let hit = tester.hit_test(x, y);
                         return hit.cursor();
@@ -5043,7 +5043,7 @@ impl ChartApp {
             Some(e) => e,
             None => { _fallback_cursor = self.build_extended_layout(); &_fallback_cursor }
         };
-        let tester = mlc_layout::layout::ExtendedLayoutHitTester::new(extended);
+        let tester = mlc_app_layout::layout::ExtendedLayoutHitTester::new(extended);
         use mlc_core::input::ChartHitTester;
         let hit = tester.hit_test(x, y);
         hit.cursor()
@@ -5228,7 +5228,7 @@ impl ChartApp {
                                 .cloned()
                             {
                                 use crate::scroll_dispatch::{ScrollableInfo, try_handle_wheel};
-                                use mlc_layout::ui::modal_settings::UserSettingsTab;
+                                use mlc_app_layout::ui::modal_settings::UserSettingsTab;
                                 let info = ScrollableInfo {
                                     handle_rect: us.scrollbar_handle_rect,
                                     track_rect: us.scrollbar_track_rect,
@@ -5387,7 +5387,7 @@ impl ChartApp {
 
                 // compare_settings sliders — guard: modal must be open
                 if self.panel_app.compare_settings_state.is_open() {
-                    use mlc_layout::ui::modal_settings::CompareSettingsTab;
+                    use mlc_app_layout::ui::modal_settings::CompareSettingsTab;
                     let delta = dy.signum();
 
                     if let Some(ref wid) = hovered_wid {
@@ -5533,7 +5533,7 @@ impl ChartApp {
                     // Phase 6.2a: agent scroll surfaces via coordinator dispatch.
                     // Sense-aware process_scroll(x, y) — finds topmost SCROLL widget
                     // ignoring rows/items stacked above without scroll sense.
-                    if self.sidebar_state.right_panel == mlc_sidebar_content::state::RightSidebarPanel::Agents {
+                    if self.sidebar_state.right_panel == mlc_app_sidebar_content::state::RightSidebarPanel::Agents {
                         let hovered_id = self.input_coordinator.borrow_mut().process_scroll(x, y).map(|h| h.as_str().to_string());
                         if let Some(ref id) = hovered_id {
                             let scroll_step = -dy;
@@ -5641,7 +5641,7 @@ impl ChartApp {
 
                     // Slot panels (Slot1..Slot4): route wheel to the hovered leaf body.
                     {
-                        use mlc_sidebar_content::state::RightSidebarPanel;
+                        use mlc_app_sidebar_content::state::RightSidebarPanel;
                         let slot_idx_opt = match self.sidebar_state.right_panel {
                             RightSidebarPanel::Slot1 => Some(0usize),
                             RightSidebarPanel::Slot2 => Some(1),
@@ -5689,8 +5689,8 @@ impl ChartApp {
                                             };
                                             state.set_tick_size(new_tick);
                                         } else {
-                                            use mlc_panels::BlackboxEvent;
-                                            use mlc_panels::panel_trait::TradingPanel;
+                                            use mlc_app_panels::BlackboxEvent;
+                                            use mlc_app_panels::panel_trait::TradingPanel;
                                             state.handle_blackbox_event(0.0, 0.0, BlackboxEvent::Scroll { dy: scroll_step as f32 });
                                         }
                                         self.sidebar_data_dirty = true;
@@ -7070,7 +7070,7 @@ impl ChartApp {
                 // Reset window data provider and kick off data flow.
                 self.active_exchange = digdigdig3::ExchangeId::Binance;
                 let data_provider: mlc_core::SharedDataProvider = std::sync::Arc::new(
-                    mlc_live_data::LiveDataProvider::new(
+                    mlc_backend_data_bridge::LiveDataProvider::new(
                         digdigdig3::ExchangeId::Binance,
                         exchange_name.clone(),
                         digdigdig3::AccountType::Spot,
@@ -7287,15 +7287,15 @@ impl ChartApp {
                 .ok();
 
             // Collect persisted leaf descriptors.
-            let persist_source = |source: &mlc_panels::trading::SymbolSource| -> mlc_core::preset::preset::PersistedSymbolSource {
+            let persist_source = |source: &mlc_app_panels::trading::SymbolSource| -> mlc_core::preset::preset::PersistedSymbolSource {
                 match source {
-                    mlc_panels::trading::SymbolSource::HyperFocus => mlc_core::preset::preset::PersistedSymbolSource::HyperFocus,
-                    mlc_panels::trading::SymbolSource::Fixed { symbol, exchange, account_type } => mlc_core::preset::preset::PersistedSymbolSource::Fixed {
+                    mlc_app_panels::trading::SymbolSource::HyperFocus => mlc_core::preset::preset::PersistedSymbolSource::HyperFocus,
+                    mlc_app_panels::trading::SymbolSource::Fixed { symbol, exchange, account_type } => mlc_core::preset::preset::PersistedSymbolSource::Fixed {
                         symbol: symbol.clone(),
                         exchange: exchange.clone(),
                         account_type: account_type.clone(),
                     },
-                    mlc_panels::trading::SymbolSource::BoundToChart { leaf_id } => mlc_core::preset::preset::PersistedSymbolSource::BoundToChart {
+                    mlc_app_panels::trading::SymbolSource::BoundToChart { leaf_id } => mlc_core::preset::preset::PersistedSymbolSource::BoundToChart {
                         leaf_id: *leaf_id,
                     },
                 }
@@ -7514,9 +7514,9 @@ pub(super) fn hex_str_to_rgba(hex: &str) -> [f32; 4] {
 /// - TAGS sidebar, Details sub-tab → `tags_details_scroll`
 /// - MAP sidebar → `tabs_scroll` (MAP section has no scrollable content)
 fn tags_tabs_active_scroll(
-    state: &mut mlc_layout::ui::modal_settings::TagsTabsState,
+    state: &mut mlc_app_layout::ui::modal_settings::TagsTabsState,
 ) -> &mut mlc_core::state::scroll_state::ScrollState {
-    use mlc_layout::ui::modal_settings::{TagsTabsSidebar, TagsTabsTagsTab};
+    use mlc_app_layout::ui::modal_settings::{TagsTabsSidebar, TagsTabsTagsTab};
     match state.sidebar {
         TagsTabsSidebar::Tabs => &mut state.tabs_scroll,
         TagsTabsSidebar::Tags => match state.tags_tab {

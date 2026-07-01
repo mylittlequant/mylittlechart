@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use super::storage::app_data_dir;
-use mlc_crypto::global_storage;
+use mlc_vault::global_storage;
 
 /// Available render backends for the chart application.
 ///

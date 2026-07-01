@@ -243,7 +243,7 @@ impl ChartApp {
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
             }
             TextAction::TextChanged(ref new_hex) => {
-                let pickers: [(&mut mlc_layout::ui::color_picker_state::ColorPickerState, &str); 5] = [
+                let pickers: [(&mut mlc_app_layout::ui::color_picker_state::ColorPickerState, &str); 5] = [
                     (&mut self.panel_app.primitive_settings_state.color_picker, "primitive"),
                     (&mut self.panel_app.indicator_settings_state.color_picker, "indicator"),
                     (&mut self.panel_app.chart_settings_state.color_picker, "chart"),
@@ -287,7 +287,7 @@ impl ChartApp {
             TextAction::Commit(name) => {
                 let name = name.trim().to_string();
                 if !name.is_empty() {
-                    use mlc_layout::ui::modal_settings::WatchlistGroupNameMode;
+                    use mlc_app_layout::ui::modal_settings::WatchlistGroupNameMode;
                     match self.wl_group_name_input.mode.clone() {
                         WatchlistGroupNameMode::CreateNew => {
                             let new_id = self.core.watchlists_mut().create_list(name.clone());
@@ -331,7 +331,7 @@ impl ChartApp {
         match action {
             TextAction::Commit(name) => {
                 if !name.trim().is_empty() {
-                    use mlc_layout::ui::modal_settings::PresetNameInputMode;
+                    use mlc_app_layout::ui::modal_settings::PresetNameInputMode;
                     match self.panel_app.preset_name_input.mode {
                         PresetNameInputMode::SaveAs => {
                             self.process_chart_out_event(
@@ -387,7 +387,7 @@ impl ChartApp {
             _ => {
                 match action {
                     TextAction::Commit(passphrase) => {
-                        use mlc_layout::ui::modal_settings::ProfileManagerPage;
+                        use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
                         let on_passphrase_page = if uss.show_profile_manager {
                             matches!(
                                 uss.profile_manager_page,

@@ -16,15 +16,15 @@
 //!       indicator_sets/   — IndicatorSet       ({id}.json)
 //! ```
 //!
-//! All I/O is routed through [`mlc_crypto::global_storage()`].
+//! All I/O is routed through [`mlc_vault::global_storage()`].
 
 use std::path::{Path, PathBuf};
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use mlc_crypto::vault::{self, VaultKey};
-use mlc_crypto::global_storage;
+use mlc_vault::vault::{self, VaultKey};
+use mlc_vault::global_storage;
 
 // =============================================================================
 // TemplateError

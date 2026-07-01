@@ -85,7 +85,7 @@ mod primitive_snapshot;
 pub mod primitives_v2;
 
 // `DrawingManager` (+ `DrawingState`, `DragType`, `PrimitiveListItem`) moved
-// to `mlc-backend-core::drawing` (Step 3.1, physical move per the doctrine:
+// to `mlc-backend::drawing` (Step 3.1, physical move per the doctrine:
 // mlc-core is a type dictionary, no managers). The primitive trait + value
 // types stay here — that IS the type vocabulary.
 pub use primitive_snapshot::PrimitiveSnapshot;
@@ -96,11 +96,11 @@ pub use primitive_snapshot::PrimitiveSnapshot;
 
 /// Read-only view of one bubble's drawing state, for the render path.
 ///
-/// `mlc-layout` renders drawing primitives + in-progress previews but
-/// cannot depend on `mlc-backend-core` (`mlc-backend-core` already depends
-/// on `mlc-sidebar-content` → `mlc-layout`; the reverse edge would cycle).
-/// This trait is the narrow read surface `mlc-layout`'s render functions
-/// need; `mlc-backend-core::drawing::BubbleDrawingView` implements it.
+/// `mlc-app-layout` renders drawing primitives + in-progress previews but
+/// cannot depend on `mlc-backend` (`mlc-backend` already depends
+/// on `mlc-app-sidebar-content` → `mlc-app-layout`; the reverse edge would cycle).
+/// This trait is the narrow read surface `mlc-app-layout`'s render functions
+/// need; `mlc-backend::drawing::BubbleDrawingView` implements it.
 pub trait DrawingRenderView {
     fn primitives(&self) -> &[Box<dyn primitives_v2::Primitive>];
     fn primitives_sorted_by_z_order(&self) -> Vec<usize>;

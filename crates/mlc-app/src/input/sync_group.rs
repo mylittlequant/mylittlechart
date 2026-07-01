@@ -1831,7 +1831,7 @@ impl ChartApp {
             let panel_ids = self.core.bubbles().panel_members(gid);
             let crosshair_price = if visible { Some(price) } else { None };
             for pid in panel_ids {
-                let panel_id = mlc_sidebar_content::free_slot::PanelId(pid);
+                let panel_id = mlc_app_sidebar_content::free_slot::PanelId(pid);
                 if let Some(s) = self.panels_store.dom.get_mut(&panel_id) {
                     s.crosshair_price = crosshair_price;
                 }

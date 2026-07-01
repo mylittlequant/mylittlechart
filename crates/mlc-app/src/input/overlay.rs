@@ -2,7 +2,7 @@
 //! Handles overlay popups, settings clicks, and indicator instance lifecycle.
 
 use crate::ChartApp;
-use mlc_layout::ui::modal_settings::DualSliderHandle;
+use mlc_app_layout::ui::modal_settings::DualSliderHandle;
 
 impl ChartApp {
     /// Handle clicks on widgets registered with the "ind_overlay:" prefix.
@@ -250,7 +250,7 @@ impl ChartApp {
             }
             id if id.starts_with("tab:") => {
                 self.panel_app.compare_settings_state.template_dropdown_open = false;
-                use mlc_layout::ui::modal_settings::CompareSettingsTab;
+                use mlc_app_layout::ui::modal_settings::CompareSettingsTab;
                 if let Some(tab) = CompareSettingsTab::from_id(&id["tab:".len()..]) {
                     self.panel_app.compare_settings_state.set_tab(tab);
                     eprintln!("[ChartApp] cmp_settings tab: {:?}", tab);
@@ -520,7 +520,7 @@ impl ChartApp {
     /// Apply a committed min/max value from the compare settings text input.
     pub(super) fn apply_cmp_tf_text_commit(&mut self, field_id: &str, text: &str) {
         use mlc_core::drawing::TimeframeVisibilityConfig;
-        use mlc_layout::ui::modal_settings::DualSliderHandle;
+        use mlc_app_layout::ui::modal_settings::DualSliderHandle;
 
         let tf_idx_result: Option<(usize, DualSliderHandle)> = if let Some(inner) = field_id.strip_prefix("tf_").and_then(|s| s.strip_suffix("_min")) {
             inner.parse::<usize>().ok().map(|i| (i, DualSliderHandle::Min))

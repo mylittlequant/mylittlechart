@@ -61,10 +61,10 @@
 // Module Declarations
 // =============================================================================
 
-// Platform-agnostic storage trait + global handle (defined in mlc-crypto to
+// Platform-agnostic storage trait + global handle (defined in mlc-vault to
 // avoid an upward dependency cycle; re-exported here for convenience).
 pub mod storage {
-    pub use mlc_crypto::storage::{
+    pub use mlc_vault::storage::{
         Storage, FilesystemStorage, global_storage, set_global_storage,
     };
 }
@@ -97,7 +97,7 @@ pub mod toolbar;
 pub mod modal;
 
 // Shared identifier + sync types — vocabulary used by both backend
-// (mlc-backend-core::bubble) and app (mlc-app::tag).
+// (mlc-backend::bubble) and app (mlc-app::tag).
 pub mod ids;
 pub use ids::{BubbleId, GroupView, MemberSyncOverride, SyncFlags, SyncMemberId};
 
@@ -170,12 +170,12 @@ pub use types::{
 // Layout geometry + interaction state (backend data types).
 //
 // These pure-data types were lifted out of the frontend `layout/` module into
-// `state/` during the mlc-layout split (Phase X + V1). They are re-exported here
+// `state/` during the mlc-app-layout split (Phase X + V1). They are re-exported here
 // from `state::` so `mlc_core::LayoutRect` etc keep working. The frontend
 // rendering symbols that used to be re-exported here (render_*, LayoutManager,
 // {Extended,}LayoutHitTester, FrameTheme, ChartRenderConfig, the *Result render
-// outputs, ChartModal*) now live in the `mlc-layout` crate — consumers import
-// those as `mlc_layout::X`.
+// outputs, ChartModal*) now live in the `mlc-app-layout` crate — consumers import
+// those as `mlc_app_layout::X`.
 pub use state::geometry::{
     LayoutRect, ChartAreaLayout, FrameLayout, ChartHitZone,
     ExtendedFrameLayout, SubPaneLayout,
@@ -190,8 +190,8 @@ pub use state::chart_settings_data::{
 
 // Frontend rendering symbols (LayoutHitTester, ExtendedLayoutHitTester,
 // ChartRenderConfig, render_*, FrameTheme, RenderPass, the *Result render
-// outputs, ChartModal*) moved to the `mlc-layout` crate in V1. Consumers now
-// import them as `mlc_layout::X`. They are NOT re-exported from mlc-core.
+// outputs, ChartModal*) moved to the `mlc-app-layout` crate in V1. Consumers now
+// import them as `mlc_app_layout::X`. They are NOT re-exported from mlc-core.
 
 // Input (unified input handling - events, actions, handlers, objects)
 pub use input::{
@@ -334,15 +334,15 @@ pub use uzor::panels::PanelRect;
 pub use uzor::panels::LeafId;
 
 // Overlay tab headers (render_leaf_tab, LeafTabHoverZone, LeafTabHitZones)
-// moved to mlc-layout in V1 — consumers import them as mlc_layout::X.
+// moved to mlc-app-layout in V1 — consumers import them as mlc_app_layout::X.
 
 // Drawing System (v2 - trait-based primitives)
 //
 // `DrawingManager` / `DrawingState` / `DragType` moved to
-// `mlc-backend-core::drawing` (Step 3.1 physical move) — they are no
-// longer re-exported here. Consumers import `mlc_backend_core::drawing::*`.
+// `mlc-backend::drawing` (Step 3.1 physical move) — they are no
+// longer re-exported here. Consumers import `mlc_backend::drawing::*`.
 pub use drawing::{
-    // Render-path read view (implemented by mlc-backend-core::drawing::BubbleDrawingView)
+    // Render-path read view (implemented by mlc-backend::drawing::BubbleDrawingView)
     DrawingRenderView,
     // Primitive trait and registry
     PrimitiveTrait, PrimitiveRegistry, PrimitiveMetadata, PrimitiveKind, ClickBehavior,
@@ -390,8 +390,8 @@ pub use modal::ChartOpenModal;
 
 // Toolbar interaction state + geometry (backend data). The frontend rendering
 // pieces — ChartPanelLayout, ChartInternalLayout, compute_chart_internal_layout
-// (panel_app), ToolbarTheme, DropdownTheme (ui widgets) — moved to mlc-layout
-// in V1; consumers import those as mlc_layout::X.
+// (panel_app), ToolbarTheme, DropdownTheme (ui widgets) — moved to mlc-app-layout
+// in V1; consumers import those as mlc_app_layout::X.
 pub use state::toolbar_state::{ChartToolbarRenderResult, ToolbarConfig, InlineDockEdge};
 pub use state::toolbar_geometry::{ToolbarRect, ToolbarRenderResult};
 

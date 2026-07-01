@@ -44,8 +44,8 @@ pub use panels_store::TradingPanelsStore;
 
 pub use input::KeyPress;
 pub use digdigdig3::ExchangeId;
-pub use mlc_sidebar_content::watchlist::{WatchlistManager, WatchlistSymbol};
-pub use mlc_indicators::RecalcMode;
+pub use mlc_app_sidebar_content::watchlist::{WatchlistManager, WatchlistSymbol};
+pub use mlc_backend_indicator_engine::RecalcMode;
 pub use mlc_core::{Language, set_language};
 
 // ── Debug log gate (MLC_PERF_LOG) ────────────────────────────────────────────
@@ -99,24 +99,24 @@ use mlc_core::{
     ScaleMode,
     ChartId,
 };
-use mlc_layout::layout::{
+use mlc_app_layout::layout::{
     ChartPanelRenderData, render_full_chart_panel,
     ChartModalLayout, ChartModalRenderResult,
     ChartRenderConfig,
     ContextMenuResult,
 };
-use mlc_layout::panel_app::ChartPanelLayout;
-use mlc_layout::layout::modals::context_menu::render_context_menu;
-use mlc_layout::layout::modals::indicator_overlay::render_indicator_overlay;
-use mlc_layout::layout::modals::search_overlay::render_search_overlay;
-use mlc_layout::layout::ModalSearchResult;
-use mlc_layout::layout::render_ui::IndicatorOverlayInfo;
+use mlc_app_layout::panel_app::ChartPanelLayout;
+use mlc_app_layout::layout::modals::context_menu::render_context_menu;
+use mlc_app_layout::layout::modals::indicator_overlay::render_indicator_overlay;
+use mlc_app_layout::layout::modals::search_overlay::render_search_overlay;
+use mlc_app_layout::layout::ModalSearchResult;
+use mlc_app_layout::layout::render_ui::IndicatorOverlayInfo;
 use mlc_core::indicator_source::{IndicatorSource, AlertRenderData, AlertRenderStatus};
 use mlc_core::state::modal_state::{ModalState, IndicatorCatalogItem};
-use mlc_layout::ui::modal_settings::{ChartScreenArea, WatchlistModalState, WatchlistGroupNameInputState};
-use mlc_layout::layout::modals::watchlist_modal::{render_watchlist_modal, WatchlistEntry, WatchlistGroupInfo, render_wl_group_name_input, WlGroupNameInputResult};
-use mlc_layout::layout::modals::clock_popup::render_clock_popup;
-use mlc_live_data::{DataBridge, LiveDataProvider};
+use mlc_app_layout::ui::modal_settings::{ChartScreenArea, WatchlistModalState, WatchlistGroupNameInputState};
+use mlc_app_layout::layout::modals::watchlist_modal::{render_watchlist_modal, WatchlistEntry, WatchlistGroupInfo, render_wl_group_name_input, WlGroupNameInputResult};
+use mlc_app_layout::layout::modals::clock_popup::render_clock_popup;
+use mlc_backend_data_bridge::{DataBridge, LiveDataProvider};
 
 use crate::chart_panel_app::ChartPanelApp;
 use uzor::input::{InputCoordinator, InputState};
@@ -226,10 +226,10 @@ fn parse_timeframe_name(name: &str) -> Option<mlc_core::state::Timeframe> {
 
 /// Draw the ghost rect + compass drop-zone indicator for an active cross-drag.
 ///
-// MiniTickerData lives in mlc-backend-core (see `mlc_backend_core::MiniTickerData`).
+// MiniTickerData lives in mlc-backend (see `mlc_backend::MiniTickerData`).
 // It's re-exported below as `crate::MiniTickerData` so existing references in
 // this crate continue to work without rewriting every call site.
-pub use mlc_backend_core::MiniTickerData;
+pub use mlc_backend::MiniTickerData;
 
 // =============================================================================
 // ChartApp
@@ -378,10 +378,10 @@ pub struct ChartApp {
 
     /// Stored overlay-tab hit zones per leaf (from last render frame).
     /// In single mode, only one entry with the active leaf id.
-    pub(crate) leaf_tab_hit_zones: std::collections::HashMap<mlc_core::LeafId, mlc_layout::layout::panel_overlay::LeafTabHitZones>,
+    pub(crate) leaf_tab_hit_zones: std::collections::HashMap<mlc_core::LeafId, mlc_app_layout::layout::panel_overlay::LeafTabHitZones>,
 
     /// Currently hovered overlay-tab zone (shared across all tabs — only one can be hovered at a time).
-    pub(crate) leaf_tab_hover: mlc_layout::layout::panel_overlay::LeafTabHoverZone,
+    pub(crate) leaf_tab_hover: mlc_app_layout::layout::panel_overlay::LeafTabHoverZone,
 
     /// LeafId of the tab currently being hovered (if any).
     pub(crate) leaf_tab_hovered_leaf: Option<mlc_core::LeafId>,
@@ -402,10 +402,10 @@ pub struct ChartApp {
     pub pending_alert_screenshot: bool,
 
     /// Sidebar panel state — tracks which right-side panel is open and its content.
-    pub sidebar_state: mlc_sidebar_content::state::SidebarState,
+    pub sidebar_state: mlc_app_sidebar_content::state::SidebarState,
 
     /// Right sidebar render result from the last frame (hit zones for click dispatch).
-    pub last_sidebar_result: Option<mlc_sidebar_content::render::RightSidebarResult>,
+    pub last_sidebar_result: Option<mlc_app_sidebar_content::render::RightSidebarResult>,
 
     /// True while the user is dragging the right-sidebar separator to resize it.
     ///
@@ -437,7 +437,7 @@ pub struct ChartApp {
     pub watchlist_modal: WatchlistModalState,
 
     /// Render result from the last watchlist modal frame (hit zones for click/scroll dispatch).
-    pub(crate) last_watchlist_modal_result: Option<mlc_layout::layout::modals::watchlist_modal::WatchlistModalResult>,
+    pub(crate) last_watchlist_modal_result: Option<mlc_app_layout::layout::modals::watchlist_modal::WatchlistModalResult>,
 
     /// State for the watchlist group name input modal (create new / rename).
     pub wl_group_name_input: WatchlistGroupNameInputState,
@@ -455,7 +455,7 @@ pub struct ChartApp {
     /// catalogue, trading manager. One per process; every `ChartApp` instance
     /// holds an `Arc::clone`. See `backend_core.rs` for the migration plan
     /// (more fields move here in subsequent passes).
-    pub core: std::sync::Arc<mlc_backend_core::BackendCore>,
+    pub core: std::sync::Arc<mlc_backend::BackendCore>,
 
     /// App-level tag registry.  Holds color / auto_created / members /
     /// member_overrides + the `member_to_tag` routing table that used to
@@ -1027,17 +1027,17 @@ pub struct RenderOutput {
     /// Modal render result (settings panels, color pickers).
     pub frame_result: Option<ChartModalRenderResult>,
     /// Search-overlay render result (indicator / symbol search).
-    pub search_modal_result: Option<mlc_layout::layout::ModalSearchResult>,
+    pub search_modal_result: Option<mlc_app_layout::layout::ModalSearchResult>,
     /// Context-menu render result.
     pub context_menu_result: Option<ContextMenuResult>,
     /// Right-sidebar render result.
-    pub last_sidebar_result: Option<mlc_sidebar_content::render::RightSidebarResult>,
+    pub last_sidebar_result: Option<mlc_app_sidebar_content::render::RightSidebarResult>,
     /// Watchlist-modal render result.
-    pub last_watchlist_modal_result: Option<mlc_layout::layout::modals::watchlist_modal::WatchlistModalResult>,
+    pub last_watchlist_modal_result: Option<mlc_app_layout::layout::modals::watchlist_modal::WatchlistModalResult>,
     /// Watchlist group-name input result.
     pub last_wl_group_name_result: Option<WlGroupNameInputResult>,
     /// Per-leaf tab hit zones, rebuilt every frame.
-    pub leaf_tab_hit_zones: std::collections::HashMap<mlc_core::LeafId, mlc_layout::layout::panel_overlay::LeafTabHitZones>,
+    pub leaf_tab_hit_zones: std::collections::HashMap<mlc_core::LeafId, mlc_app_layout::layout::panel_overlay::LeafTabHitZones>,
     /// Frame timing breakdown (chart_us, toolbar_us, sidebar_us, setup_us).
     pub render_timing_us: (u64, u64, u64, u64),
     /// Content rect (chart area minus sidebar) computed this frame.
@@ -1315,7 +1315,7 @@ impl ChartApp {
     pub fn with_bubble<R>(
         &self,
         bid: mlc_core::ids::BubbleId,
-        f: impl FnOnce(&mlc_backend_core::bubble::DataBubble) -> R,
+        f: impl FnOnce(&mlc_backend::bubble::DataBubble) -> R,
     ) -> Option<R> {
         self.core.bubbles().with_bubble(bid, f)
     }
@@ -1325,7 +1325,7 @@ impl ChartApp {
     pub fn with_chart_bubble<R>(
         &self,
         cid: mlc_core::state::ChartId,
-        f: impl FnOnce(&mlc_backend_core::bubble::DataBubble) -> R,
+        f: impl FnOnce(&mlc_backend::bubble::DataBubble) -> R,
     ) -> Option<R> {
         let m = self.core.bubbles();
         m.bubble_for_chart(cid).and_then(|bid| m.with_bubble(bid, f))
@@ -1391,15 +1391,15 @@ impl ChartApp {
         let bridge = std::sync::Arc::new(bridge);
         // _first_rx is the broadcast::Receiver from DataBridge::new(). BackendCore::new
         // calls bridge.add_listener() internally, so _first_rx is dropped here.
-        let trading = mlc_trading_manager::TradingManager::new(
+        let trading = mlc_backend_trading_engine::TradingManager::new(
             bridge.clone(),
             std::path::PathBuf::from("."),
             rt_handle,
         ).ok();
         #[cfg(not(target_arch = "wasm32"))]
-        let core = mlc_backend_core::BackendCore::new_with_runtime(bridge.clone(), trading, rt);
+        let core = mlc_backend::BackendCore::new_with_runtime(bridge.clone(), trading, rt);
         #[cfg(target_arch = "wasm32")]
-        let core = mlc_backend_core::BackendCore::new(bridge.clone(), trading);
+        let core = mlc_backend::BackendCore::new(bridge.clone(), trading);
 
         let mut app = Self {
             panel_app: ChartPanelApp::new(symbol),
@@ -1427,13 +1427,13 @@ impl ChartApp {
             drag_dismissed_popup: false,
             split_separator_drag: None,
             leaf_tab_hit_zones: std::collections::HashMap::new(),
-            leaf_tab_hover: mlc_layout::layout::panel_overlay::LeafTabHoverZone::None,
+            leaf_tab_hover: mlc_app_layout::layout::panel_overlay::LeafTabHoverZone::None,
             leaf_tab_hovered_leaf: None,
             last_toolbar_result: None,
             default_scale_mode: ScaleMode::Auto,
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
-            sidebar_state: mlc_sidebar_content::state::SidebarState::new(),
+            sidebar_state: mlc_app_sidebar_content::state::SidebarState::new(),
             last_sidebar_result: None,
             sidebar_separator_drag_active: false,
             split_without_group: false,
@@ -1736,7 +1736,7 @@ impl ChartApp {
     /// this window gets its own queue of live updates.
     pub fn new_empty(bridge: std::sync::Arc<DataBridge>) -> Self {
         let exchange_symbols_seed = bridge.symbols_snapshot();
-        let core = mlc_backend_core::BackendCore::new(bridge.clone(), None);
+        let core = mlc_backend::BackendCore::new(bridge.clone(), None);
         // Seed exchange_symbols cache from the bridge's session-long catalogue
         // so windows created after the connect wave start populated.
         {
@@ -1770,13 +1770,13 @@ impl ChartApp {
             drag_dismissed_popup: false,
             split_separator_drag: None,
             leaf_tab_hit_zones: std::collections::HashMap::new(),
-            leaf_tab_hover: mlc_layout::layout::panel_overlay::LeafTabHoverZone::None,
+            leaf_tab_hover: mlc_app_layout::layout::panel_overlay::LeafTabHoverZone::None,
             leaf_tab_hovered_leaf: None,
             last_toolbar_result: None,
             default_scale_mode: ScaleMode::Auto,
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
-            sidebar_state: mlc_sidebar_content::state::SidebarState::new(),
+            sidebar_state: mlc_app_sidebar_content::state::SidebarState::new(),
             last_sidebar_result: None,
             sidebar_separator_drag_active: false,
             split_without_group: false,
@@ -2067,7 +2067,7 @@ impl ChartApp {
     // BackendCore's watchlist + bridge.
     // -------------------------------------------------------------------------
     //
-    // Native shell (mlc-app-vello/main.rs:2191-2360) drains the same vec into
+    // Native shell (mlc-app-shell-vello/main.rs:2191-2360) drains the same vec into
     // its per-app `AppState::watchlist_manager` cache. Wasm shell has no
     // AppState (one window, no multi-window sync), so it drives the single
     // source of truth — `core.watchlist_manager` — directly.
@@ -2268,7 +2268,7 @@ impl ChartApp {
         skeleton: bool,
     ) -> Self {
         let exchange_symbols_seed = bridge.symbols_snapshot();
-        let core = mlc_backend_core::BackendCore::new(bridge.clone(), None);
+        let core = mlc_backend::BackendCore::new(bridge.clone(), None);
         {
             let mut es = core.exchange_symbols_mut();
             *es = exchange_symbols_seed;
@@ -2299,13 +2299,13 @@ impl ChartApp {
             drag_dismissed_popup: false,
             split_separator_drag: None,
             leaf_tab_hit_zones: std::collections::HashMap::new(),
-            leaf_tab_hover: mlc_layout::layout::panel_overlay::LeafTabHoverZone::None,
+            leaf_tab_hover: mlc_app_layout::layout::panel_overlay::LeafTabHoverZone::None,
             leaf_tab_hovered_leaf: None,
             last_toolbar_result: None,
             default_scale_mode: ScaleMode::Auto,
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
-            sidebar_state: mlc_sidebar_content::state::SidebarState::new(),
+            sidebar_state: mlc_app_sidebar_content::state::SidebarState::new(),
             last_sidebar_result: None,
             sidebar_separator_drag_active: false,
             split_without_group: false,
@@ -2894,7 +2894,7 @@ impl ChartApp {
                             } else {
                                 (fallback_cli, fallback_mode)
                             };
-                            Some(mlc_sidebar_content::AgentPaneLeaf {
+                            Some(mlc_app_sidebar_content::AgentPaneLeaf {
                                 instance_id: gate4agent::InstanceId::new(),
                                 cli,
                                 mode,
@@ -2927,7 +2927,7 @@ impl ChartApp {
                                     let _ = std::fs::create_dir_all(&workdir);
                                     match self.agent.create_instance(cli, mode, workdir.clone()) {
                                         Ok(instance_id) => {
-                                            let desc = mlc_sidebar_content::agents_dock::AgentLeafDescriptor {
+                                            let desc = mlc_app_sidebar_content::agents_dock::AgentLeafDescriptor {
                                                 instance_id,
                                                 cli,
                                                 mode,
@@ -3183,7 +3183,7 @@ impl ChartApp {
     }
 
     /// Diagnostic: snapshot of the pending-compare queue formatted as
-    /// short strings.  Used by `mlc-app-web` to expose state through
+    /// short strings.  Used by `mlc-app-shell-web` to expose state through
     /// `window.MLC_DEBUG.pending_compare` for `dev-attach --eval`.
     pub fn pending_compare_diag(&self) -> Vec<String> {
         self.pending_compare.iter()
@@ -3198,7 +3198,7 @@ impl ChartApp {
     }
 
     /// Diagnostic: total number of times the compare-add path was entered.
-    /// Used by `mlc-app-web` to detect whether the compare modal click is
+    /// Used by `mlc-app-shell-web` to detect whether the compare modal click is
     /// even reaching the `OpenModal::CompareSearch` branch.
     pub fn compare_add_attempts(&self) -> u32 { self.compare_add_attempts }
     pub fn compare_add_success(&self) -> u32 { self.compare_add_success }
@@ -3409,7 +3409,7 @@ impl ChartApp {
     /// The cached [`ExtendedFrameLayout`] built during [`prepare_frame`] is used
     /// directly — no geometry is recomputed here.
     pub fn render_overlay(&self, ctx: &mut dyn RenderContext) {
-        use mlc_layout::layout::render_chart_overlay;
+        use mlc_app_layout::layout::render_chart_overlay;
         use mlc_core::chart::ChartRect;
 
         let chart_theme = self.panel_app.chart_theme_for_render();
@@ -3625,7 +3625,7 @@ impl ChartApp {
         //    When not split, use the original single-window path.
 
         // Local leaf tab hit zones for this frame — returned via RenderOutput.
-        let mut out_leaf_tab_hit_zones: std::collections::HashMap<mlc_core::LeafId, mlc_layout::layout::panel_overlay::LeafTabHitZones> = std::collections::HashMap::new();
+        let mut out_leaf_tab_hit_zones: std::collections::HashMap<mlc_core::LeafId, mlc_app_layout::layout::panel_overlay::LeafTabHitZones> = std::collections::HashMap::new();
         // Submenu state update from toolbar dropdown rendering.
         let mut out_open_submenu_update: Option<Option<String>> = None;
         // Sub-pane range writebacks: render computes symmetrized+padded ranges,
@@ -3663,7 +3663,7 @@ impl ChartApp {
             // dispatched by the chart's own hit-tester via panel_grid.resolve_input.
             {
                 use uzor::input::{Sense, WidgetKind};
-                use mlc_layout::ui::z_order::ZLayer;
+                use mlc_app_layout::ui::z_order::ZLayer;
                 let chart_layer = ZLayer::ChartCanvas.push(&mut self.input_coordinator.borrow_mut());
                 for &(leaf_id, sub_rect) in &leaf_rects {
                     if sub_rect.width > 0.0 && sub_rect.height > 0.0 {
@@ -3826,7 +3826,7 @@ impl ChartApp {
                     .filter(|a| matches!(a.source, mlc_core::alert::AlertSource::Price { .. }))
                     .filter(|a| a.matches_window(&split_symbol, &split_exchange, &split_account_type))
                     .filter_map(|alert| {
-                        let price = mlc_backend_core::alert::AlertManager::resolve_price_static(
+                        let price = mlc_backend::alert::AlertManager::resolve_price_static(
                             alert,
                             alert_current_bar,
                             alert_drawing_points,
@@ -3992,7 +3992,7 @@ impl ChartApp {
                 let hover_zone = if self.leaf_tab_hovered_leaf == Some(leaf_id) {
                     self.leaf_tab_hover
                 } else {
-                    mlc_layout::layout::panel_overlay::LeafTabHoverZone::None
+                    mlc_app_layout::layout::panel_overlay::LeafTabHoverZone::None
                 };
                 let color_tag = self.panel_app.leaf_color_tags.get(&leaf_id).copied();
                 // S2.7.1: use split_symbol/tf_name/exchange/account_type from branch_meta.
@@ -4000,7 +4000,7 @@ impl ChartApp {
                 // (leaf_tab_visible == false): the tab belongs to the chart layer,
                 // which sits BELOW the maximized pane in z-order.
                 if leaf_tab_visible {
-                let hit_zones = mlc_layout::layout::panel_overlay::render_leaf_tab(
+                let hit_zones = mlc_app_layout::layout::panel_overlay::render_leaf_tab(
                     ctx,
                     leaf_rect.x + 2.0,
                     main_chart_y + 2.0,
@@ -4129,7 +4129,7 @@ impl ChartApp {
                             // Register indicator overlay hit zones for this leaf.
                             {
                                 use uzor::input::Sense;
-                                use mlc_layout::ui::z_order::ZLayer;
+                                use mlc_app_layout::ui::z_order::ZLayer;
 
                                 let prefix = format!("ind_overlay:leaf{}:", leaf_id.0);
                                 let cmp_prefix = format!("cmp_overlay:leaf{}:", leaf_id.0);
@@ -4334,7 +4334,7 @@ impl ChartApp {
                     .filter(|a| matches!(a.source, mlc_core::alert::AlertSource::Price { .. }))
                     .filter(|a| a.matches_window(single_sym, single_exch, single_at))
                     .filter_map(|alert| {
-                        let price = mlc_backend_core::alert::AlertManager::resolve_price_static(
+                        let price = mlc_backend::alert::AlertManager::resolve_price_static(
                             alert,
                             single_alert_current_bar,
                             &single_alert_drawing_points,
@@ -4539,7 +4539,7 @@ impl ChartApp {
             // Register single chart pane as BlackboxPanel — see split-mode comment above.
             if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
                 use uzor::input::{Sense, WidgetKind};
-                use mlc_layout::ui::z_order::ZLayer;
+                use mlc_app_layout::ui::z_order::ZLayer;
                 let chart_layer = ZLayer::ChartCanvas.push(&mut self.input_coordinator.borrow_mut());
                 self.input_coordinator.borrow_mut().register_composite(
                     format!("chart:pane:{}", active_leaf.0),
@@ -4591,10 +4591,10 @@ impl ChartApp {
                 let hover_zone = if self.leaf_tab_hovered_leaf == Some(single_leaf_id) {
                     self.leaf_tab_hover
                 } else {
-                    mlc_layout::layout::panel_overlay::LeafTabHoverZone::None
+                    mlc_app_layout::layout::panel_overlay::LeafTabHoverZone::None
                 };
                 let single_color_tag = self.panel_app.leaf_color_tags.get(&single_leaf_id).copied();
-                let hit_zones = mlc_layout::layout::panel_overlay::render_leaf_tab(
+                let hit_zones = mlc_app_layout::layout::panel_overlay::render_leaf_tab(
                     ctx,
                     content_rect.x + 2.0,
                     main_chart_y_single + 2.0,
@@ -4769,7 +4769,7 @@ impl ChartApp {
                     // Register indicator overlay hit zones with InputCoordinator.
                     {
                         use uzor::input::Sense;
-                        use mlc_layout::ui::z_order::ZLayer;
+                        use mlc_app_layout::ui::z_order::ZLayer;
 
                         let ov_layer = ZLayer::Toolbar.push_named(&mut self.input_coordinator.borrow_mut(), "ind_overlay");
 
@@ -4898,7 +4898,7 @@ impl ChartApp {
         let mut out_last_inline_bar_rect: Option<LayoutRect> = None;
         if let Some(ref toolbar_result) = out_last_toolbar_result {
             use uzor::input::Sense;
-            use mlc_layout::ui::z_order::ZLayer;
+            use mlc_app_layout::ui::z_order::ZLayer;
 
             let tb_layer = ZLayer::Toolbar.push(&mut self.input_coordinator.borrow_mut());
 
@@ -5028,7 +5028,7 @@ impl ChartApp {
             // Register dropdown hit zones (higher z-order)
             if let Some(ref dd) = toolbar_result.dropdown_result {
                 use uzor::input::Sense;
-                use mlc_layout::ui::z_order::ZLayer;
+                use mlc_app_layout::ui::z_order::ZLayer;
 
                 let dd_layer = ZLayer::Dropdown.push_named(&mut self.input_coordinator.borrow_mut(), "chart_dropdown");
 
@@ -5079,7 +5079,7 @@ impl ChartApp {
         // For non-VelloGpu backends, render_modal_layer() is called on the same ctx
         // immediately after render() returns (see scene_builder.rs).
         let out_frame_result: Option<ChartModalRenderResult> = None;
-        let out_search_modal_result: Option<mlc_layout::layout::ModalSearchResult> = None;
+        let out_search_modal_result: Option<mlc_app_layout::layout::ModalSearchResult> = None;
         let out_context_menu_result: Option<ContextMenuResult> = None;
 
         // 8. Render right sidebar if a panel is open.
@@ -5097,7 +5097,7 @@ impl ChartApp {
 
         let skeleton_active = self.panel_app.user_settings_state.show_profile_manager
             || self.panel_app.user_settings_state.show_welcome_wizard;
-        let out_last_sidebar_result: Option<mlc_sidebar_content::render::RightSidebarResult> = if self.sidebar_state.is_right_open() && !skeleton_active {
+        let out_last_sidebar_result: Option<mlc_app_sidebar_content::render::RightSidebarResult> = if self.sidebar_state.is_right_open() && !skeleton_active {
             let top_h = panel_layout.top_toolbar_rect.height;
             let bottom_h = panel_layout.bottom_toolbar_rect.height;
             let sidebar_x = content_rect.x + content_rect.width;
@@ -5113,7 +5113,7 @@ impl ChartApp {
             // borrow of sidebar_state and the closures' immutable reads of self.core.bubble.
             let (sidebar_panel_color_map, sidebar_panel_sync_flags_map): (
                 std::collections::HashMap<u64, [f32; 4]>,
-                std::collections::HashMap<u64, mlc_sidebar_content::render::PanelSyncFlagsSnapshot>,
+                std::collections::HashMap<u64, mlc_app_sidebar_content::render::PanelSyncFlagsSnapshot>,
             ) = {
                 use mlc_core::ids::SyncMemberId;
                 let mgr = self.core.bubbles();
@@ -5125,7 +5125,7 @@ impl ChartApp {
                             if !bubble.auto_created() {
                                 colors.insert(pid, bubble.color());
                             }
-                            flags.insert(pid, mlc_sidebar_content::render::PanelSyncFlagsSnapshot {
+                            flags.insert(pid, mlc_app_sidebar_content::render::PanelSyncFlagsSnapshot {
                                 sync_symbol: bubble.effective_sync_symbol(member),
                                 sync_crosshair: bubble.effective_sync_crosshair(member),
                             });
@@ -5139,7 +5139,7 @@ impl ChartApp {
             // When the cached sidebar_scene is composited on top these pixels
             // are overwritten, but the widget registrations survive until end_frame().
             let panels_store = &self.panels_store;
-            let sidebar_result = mlc_sidebar_content::render::render_right_sidebar(
+            let sidebar_result = mlc_app_sidebar_content::render::render_right_sidebar(
                 ctx,
                 &sidebar_rect,
                 &mut self.sidebar_state,
@@ -5150,7 +5150,7 @@ impl ChartApp {
                 },
                 &|item: &mlc_core::state::Panel| -> Option<String> {
                     use mlc_core::state::Panel;
-                    use mlc_panels::trading::SymbolSource;
+                    use mlc_app_panels::trading::SymbolSource;
                     // For account-bound panels that still carry SymbolSource.
                     fn label_from_source(source: &SymbolSource, symbol: &str, exchange: &str, account_type: &str) -> Option<String> {
                         match source {
@@ -5207,7 +5207,7 @@ impl ChartApp {
                 &|item: &mlc_core::state::Panel| -> Option<[f32; 4]> {
                     sidebar_panel_color_map.get(&item.panel_id().0).copied()
                 },
-                &|item: &mlc_core::state::Panel| -> Option<mlc_sidebar_content::render::PanelSyncFlagsSnapshot> {
+                &|item: &mlc_core::state::Panel| -> Option<mlc_app_sidebar_content::render::PanelSyncFlagsSnapshot> {
                     sidebar_panel_sync_flags_map.get(&item.panel_id().0).cloned()
                 },
                 &|item: &mlc_core::state::Panel| -> Option<(String, String, String)> {
@@ -5284,7 +5284,7 @@ impl ChartApp {
 
         // 8a-8d. Modals (color pickers, watchlist, clock popup) moved to render_modal_layer().
 
-        let out_last_watchlist_modal_result: Option<mlc_layout::layout::modals::watchlist_modal::WatchlistModalResult> = None;
+        let out_last_watchlist_modal_result: Option<mlc_app_layout::layout::modals::watchlist_modal::WatchlistModalResult> = None;
         let out_last_wl_group_name_result: Option<WlGroupNameInputResult> = None;
 
         // 9. End frame — dispatch widget responses (clicks / drag / scroll).
@@ -5420,7 +5420,7 @@ impl ChartApp {
             for leaf_id in chat_leaf_ids {
                 let new_len = self.sidebar_state.agent_leaf_snapshots.get(&leaf_id)
                     .and_then(|snap| {
-                        if let mlc_sidebar_content::agent_types::AgentSnapshotMode::Chat(ref msgs) = snap.mode {
+                        if let mlc_app_sidebar_content::agent_types::AgentSnapshotMode::Chat(ref msgs) = snap.mode {
                             Some(msgs.len())
                         } else {
                             None
@@ -5635,7 +5635,7 @@ impl ChartApp {
         // Pre-compute per-panel maps before render_right_sidebar mut-borrows sidebar_state.
         let (panel_color_map_main, panel_sync_flags_map_main): (
             std::collections::HashMap<u64, [f32; 4]>,
-            std::collections::HashMap<u64, mlc_sidebar_content::render::PanelSyncFlagsSnapshot>,
+            std::collections::HashMap<u64, mlc_app_sidebar_content::render::PanelSyncFlagsSnapshot>,
         ) = {
             use mlc_core::ids::SyncMemberId;
             let mgr = self.core.bubbles();
@@ -5647,7 +5647,7 @@ impl ChartApp {
                         if !bubble.auto_created() {
                             colors.insert(pid, bubble.color());
                         }
-                        flags.insert(pid, mlc_sidebar_content::render::PanelSyncFlagsSnapshot {
+                        flags.insert(pid, mlc_app_sidebar_content::render::PanelSyncFlagsSnapshot {
                             sync_symbol: bubble.effective_sync_symbol(member),
                             sync_crosshair: bubble.effective_sync_crosshair(member),
                         });
@@ -5658,7 +5658,7 @@ impl ChartApp {
         };
 
         let panels_store = &self.panels_store;
-        let sidebar_result = mlc_sidebar_content::render::render_right_sidebar(
+        let sidebar_result = mlc_app_sidebar_content::render::render_right_sidebar(
             ctx,
             &sidebar_rect,
             &mut self.sidebar_state,
@@ -5669,7 +5669,7 @@ impl ChartApp {
             },
             &|item: &mlc_core::state::Panel| -> Option<String> {
                 use mlc_core::state::Panel;
-                use mlc_panels::trading::SymbolSource;
+                use mlc_app_panels::trading::SymbolSource;
                 // Account-bound panels still use SymbolSource for display labels.
                 fn label_from_source(source: &SymbolSource, symbol: &str, exchange: &str, account_type: &str) -> Option<String> {
                     match source {
@@ -5725,7 +5725,7 @@ impl ChartApp {
             &|item: &mlc_core::state::Panel| -> Option<[f32; 4]> {
                 panel_color_map_main.get(&item.panel_id().0).copied()
             },
-            &|item: &mlc_core::state::Panel| -> Option<mlc_sidebar_content::render::PanelSyncFlagsSnapshot> {
+            &|item: &mlc_core::state::Panel| -> Option<mlc_app_sidebar_content::render::PanelSyncFlagsSnapshot> {
                 panel_sync_flags_map_main.get(&item.panel_id().0).cloned()
             },
             &|item: &mlc_core::state::Panel| -> Option<(String, String, String)> {
@@ -5888,7 +5888,7 @@ impl ChartApp {
 
         // Panel-targeting sync color grid popup.
         if self.panel_app.sync_color_grid.is_open() && self.panel_app.sync_color_grid.target_is_panel() {
-            use mlc_layout::layout::ChartModalLayout;
+            use mlc_app_layout::layout::ChartModalLayout;
             let modal_layout = ChartModalLayout {
                 prim_screen_w: w,
                 prim_screen_h: h,
@@ -6021,7 +6021,7 @@ impl ChartApp {
         // Wave 2b: populate active_render from TextFieldStore before render_modals so
         // that layout renderers can read text/cursor/selection without touching the store.
         {
-            use mlc_layout::ui::modal_settings::ActiveFieldRender;
+            use mlc_app_layout::ui::modal_settings::ActiveFieldRender;
             let tf = self.input_coordinator.borrow();
             let tf = tf.text_fields();
             let cursor_blink = tf.cursor_visible(current_time_ms);
@@ -6180,7 +6180,7 @@ impl ChartApp {
         let mut frame_result: Option<ChartModalRenderResult> = Some(modal_result);
 
         // 5b. Search overlay (indicator / symbol / compare)
-        let search_modal_result: Option<mlc_layout::layout::ModalSearchResult> =
+        let search_modal_result: Option<mlc_app_layout::layout::ModalSearchResult> =
             if self.modal_state.current.is_search_overlay() {
                 let screen = ChartScreenArea { x: 0.0, y: 0.0, width: modal_right_edge, height: h };
                 let indicator_catalog = self.build_indicator_catalog();
@@ -6214,9 +6214,9 @@ impl ChartApp {
         // 5c. Preset name input (CreateIndicatorSet mode)
         if self.panel_app.preset_name_input.is_open
             && self.panel_app.preset_name_input.mode
-                == mlc_layout::ui::modal_settings::PresetNameInputMode::CreateIndicatorSet
+                == mlc_app_layout::ui::modal_settings::PresetNameInputMode::CreateIndicatorSet
         {
-            use mlc_layout::layout::modals::preset_name_input::render_preset_name_input;
+            use mlc_app_layout::layout::modals::preset_name_input::render_preset_name_input;
             let pni_result = render_preset_name_input(
                 ctx,
                 w, h,
@@ -6271,7 +6271,7 @@ impl ChartApp {
         }
 
         // 8b. Watchlist modal
-        let last_watchlist_modal_result: Option<mlc_layout::layout::modals::watchlist_modal::WatchlistModalResult> =
+        let last_watchlist_modal_result: Option<mlc_app_layout::layout::modals::watchlist_modal::WatchlistModalResult> =
             if self.watchlist_modal.is_open() {
                 let wl_guard = self.core.watchlists();
                 let color_flags: Vec<String> = self.sidebar_state.watchlist_items.iter()
@@ -7305,8 +7305,8 @@ impl ChartApp {
     /// (200 total). Returns empty list if no symbols are loaded yet.
     pub(crate) fn build_symbol_search_results(
         query: &str,
-        watchlist_manager: &mlc_sidebar_content::watchlist::WatchlistManager,
-        exchange_symbols: &std::collections::HashMap<digdigdig3::ExchangeId, Vec<mlc_live_data::SymbolInfo>>,
+        watchlist_manager: &mlc_app_sidebar_content::watchlist::WatchlistManager,
+        exchange_symbols: &std::collections::HashMap<digdigdig3::ExchangeId, Vec<mlc_backend_data_bridge::SymbolInfo>>,
     ) -> Vec<mlc_core::state::modal_state::SearchResult> {
         use mlc_core::state::modal_state::SearchResult;
         use std::collections::HashMap;
@@ -7366,7 +7366,7 @@ impl ChartApp {
 
         /// Compute the canonical key for a symbol when base+quote are non-empty.
         /// Returns `None` when either asset field is empty (no canonicalization).
-        fn canonical_key(s: &mlc_live_data::SymbolInfo) -> Option<String> {
+        fn canonical_key(s: &mlc_backend_data_bridge::SymbolInfo) -> Option<String> {
             if s.base_asset.is_empty() || s.quote_asset.is_empty() {
                 return None;
             }
@@ -7401,7 +7401,7 @@ impl ChartApp {
                     }
                 }
 
-                let filtered: Vec<&mlc_live_data::SymbolInfo> = symbols
+                let filtered: Vec<&mlc_backend_data_bridge::SymbolInfo> = symbols
                     .iter()
                     .filter(|s| {
                         // Composite-query account-type filter ("...:S" / "...:F").
@@ -7490,8 +7490,8 @@ impl ChartApp {
     #[inline]
     pub(crate) fn build_demo_symbol_results(
         query: &str,
-        watchlist_manager: &mlc_sidebar_content::watchlist::WatchlistManager,
-        exchange_symbols: &std::collections::HashMap<digdigdig3::ExchangeId, Vec<mlc_live_data::SymbolInfo>>,
+        watchlist_manager: &mlc_app_sidebar_content::watchlist::WatchlistManager,
+        exchange_symbols: &std::collections::HashMap<digdigdig3::ExchangeId, Vec<mlc_backend_data_bridge::SymbolInfo>>,
     ) -> Vec<mlc_core::state::modal_state::SearchResult> {
         Self::build_symbol_search_results(query, watchlist_manager, exchange_symbols)
     }
@@ -8296,9 +8296,9 @@ impl ChartApp {
     // User profile persistence
     // -------------------------------------------------------------------------
 
-    /// Map a [`mlc_sidebar_content::state::RightSidebarPanel`] to a string name.
-    pub fn panel_to_str(panel: mlc_sidebar_content::state::RightSidebarPanel) -> Option<String> {
-        use mlc_sidebar_content::state::RightSidebarPanel;
+    /// Map a [`mlc_app_sidebar_content::state::RightSidebarPanel`] to a string name.
+    pub fn panel_to_str(panel: mlc_app_sidebar_content::state::RightSidebarPanel) -> Option<String> {
+        use mlc_app_sidebar_content::state::RightSidebarPanel;
         match panel {
             RightSidebarPanel::None => None,
             RightSidebarPanel::Watchlist => Some("watchlist".to_string()),
@@ -8315,9 +8315,9 @@ impl ChartApp {
         }
     }
 
-    /// Parse a string name into a [`mlc_sidebar_content::state::RightSidebarPanel`].
-    pub fn str_to_panel(s: &str) -> mlc_sidebar_content::state::RightSidebarPanel {
-        use mlc_sidebar_content::state::RightSidebarPanel;
+    /// Parse a string name into a [`mlc_app_sidebar_content::state::RightSidebarPanel`].
+    pub fn str_to_panel(s: &str) -> mlc_app_sidebar_content::state::RightSidebarPanel {
+        use mlc_app_sidebar_content::state::RightSidebarPanel;
         match s {
             "watchlist" => RightSidebarPanel::Watchlist,
             "alerts" => RightSidebarPanel::Alerts,
@@ -8338,10 +8338,10 @@ impl ChartApp {
     ///
     /// Examples: "SMA(20)", "RSI(14)", "MACD(26, 12, 9)", "BB(20, 2)"
     fn format_indicator_display_name(
-        mgr: &mlc_backend_core::Indicators<'_>,
-        inst: &mlc_indicators::IndicatorMgrInstance,
+        mgr: &mlc_backend::Indicators<'_>,
+        inst: &mlc_backend_indicator_engine::IndicatorMgrInstance,
     ) -> String {
-        use mlc_indicators::{IndicatorParamType, IndicatorParamValue};
+        use mlc_backend_indicator_engine::{IndicatorParamType, IndicatorParamValue};
 
         if let Some(def) = mgr.definition(&inst.type_id) {
             // Collect numeric param values in definition order
@@ -8373,8 +8373,8 @@ impl ChartApp {
     ///
     /// This is the same logic used during rendering so that templates saved via
     /// the "Save As…" button capture exactly what the render pass would show.
-    pub fn build_chart_settings_data(&self) -> mlc_layout::layout::modals::chart_settings::ChartSettingsData {
-        use mlc_layout::layout::modals::chart_settings::{
+    pub fn build_chart_settings_data(&self) -> mlc_app_layout::layout::modals::chart_settings::ChartSettingsData {
+        use mlc_app_layout::layout::modals::chart_settings::{
             ChartSettingsData, InstrumentSettings, StatusLineSettings, ScalesLinesSettings,
         };
 

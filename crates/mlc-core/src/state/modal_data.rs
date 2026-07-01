@@ -1,8 +1,8 @@
-//! Pure-data types cut from `mlc-layout/src/ui/modal_settings.rs`.
+//! Pure-data types cut from `mlc-app-layout/src/ui/modal_settings.rs`.
 //!
 //! These types are consumed by the backend (state/, engine/, indicator_source,
-//! tag_manager) and must therefore live in mlc-core, not in mlc-layout.
-//! mlc-layout re-exports them via shims in ui/modal_settings.rs.
+//! tag_manager) and must therefore live in mlc-core, not in mlc-app-layout.
+//! mlc-app-layout re-exports them via shims in ui/modal_settings.rs.
 
 // =============================================================================
 // Sub-Pane Overlay State

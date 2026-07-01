@@ -1,6 +1,6 @@
 //! `mlc-backend-test-harness` — programmatic test infrastructure for
-//! `mlc-backend-core`, `mlc-backend-daemon`, and the `/api/v1/apps` surface in
-//! `mlc-agentic-server`.
+//! `mlc-backend`, `mlc-app-shell-daemon-lightweight`, and the `/api/v1/apps` surface in
+//! `mlc-backend-agent-server`.
 //!
 //! This is **not** a `tests/` folder. It's a reusable library crate. Two
 //! consumers today:
@@ -32,8 +32,8 @@ use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
-use mlc_backend_core::BackendCore;
-use mlc_live_data::{DataBridge, LiveUpdate};
+use mlc_backend::BackendCore;
+use mlc_backend_data_bridge::{DataBridge, LiveUpdate};
 use tokio::sync::broadcast;
 
 pub mod scenarios;
@@ -122,7 +122,7 @@ impl BackendHarness {
 
     /// Step the simulated wall clock by `ms` and call `tick_writers`. Returns
     /// the events emitted.
-    pub fn tick(&mut self, ms: u64) -> Vec<mlc_backend_core::BubbleEvent> {
+    pub fn tick(&mut self, ms: u64) -> Vec<mlc_backend::BubbleEvent> {
         self.sim_now_ms = self.sim_now_ms.saturating_add(ms);
         self.core.tick_writers(self.sim_now_ms)
     }
@@ -133,8 +133,8 @@ impl BackendHarness {
     }
 }
 
-/// Spawn the `mlc-backend-daemon` binary in the background. The binary is
-/// expected to have been built (cargo `--bin mlc-backend-daemon`).
+/// Spawn the `mlc-app-shell-daemon-lightweight` binary in the background. The binary is
+/// expected to have been built (cargo `--bin mlc-app-shell-daemon-lightweight`).
 /// Native-only — wasm has no process / filesystem spawn surface.
 ///
 /// Returns a guard that kills the process on drop and the chosen port.
@@ -155,9 +155,9 @@ impl DaemonGuard {
 
     pub async fn spawn_with_port(port: u16) -> HarnessResult<Self> {
         let exe_name = if cfg!(windows) {
-            "mlc-backend-daemon.exe"
+            "mlc-app-shell-daemon-lightweight.exe"
         } else {
-            "mlc-backend-daemon"
+            "mlc-app-shell-daemon-lightweight"
         };
 
         // Try `target/debug/<exe>` then `target/release/<exe>`.
@@ -177,7 +177,7 @@ impl DaemonGuard {
             return Err(HarnessError {
                 scenario: "daemon-spawn",
                 message: format!(
-                    "daemon binary not found at {debug:?} or {release:?} — run cargo build -p mylittlechart-backend-daemon first",
+                    "daemon binary not found at {debug:?} or {release:?} — run cargo build -p mylittlechart-app-shell-daemon-lightweight first",
                     debug = debug_path,
                     release = release_path,
                 ),

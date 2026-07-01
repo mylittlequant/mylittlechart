@@ -14,7 +14,7 @@ use mlc_core::{
     ThemeSettingsPanel,
     UIStyle,
 };
-use mlc_layout::ui::modal_settings::DualSliderHandle;
+use mlc_app_layout::ui::modal_settings::DualSliderHandle;
 use mlc_core::drawing::TimeframeVisibilityConfig;
 
 impl ChartApp {
@@ -24,7 +24,7 @@ impl ChartApp {
 
     /// Handle clicks on widgets registered with the "chart_settings:" prefix.
     pub(super) fn handle_chart_settings_click(&mut self, rest: &str, x: f64, _y: f64) {
-        use mlc_layout::ui::modal_settings::ChartSettingsTab;
+        use mlc_app_layout::ui::modal_settings::ChartSettingsTab;
 
         // Auto-commit: if an input field is being edited and the click lands on a
         // DIFFERENT widget inside the same modal, commit the value (same as Enter).
@@ -72,7 +72,7 @@ impl ChartApp {
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
                         let wid = uzor::WidgetId::from(crate::text_input::CHART_SETTINGS_FIELD);
-                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        let new_cursor = mlc_app_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                         let mut coord = self.input_coordinator.borrow_mut();
                         if let Some(fs) = coord.text_fields_mut().field_state_mut(&wid) {
                             fs.cursor = new_cursor;
@@ -189,7 +189,7 @@ impl ChartApp {
     /// and updates both the `chart_settings_state` cached flags and the active
     /// chart window's live state.
     fn apply_chart_template(&mut self, tmpl: &mlc_core::templates::ChartTemplate) {
-        use mlc_layout::layout::modals::chart_settings::{
+        use mlc_app_layout::layout::modals::chart_settings::{
             InstrumentSettings, ScalesLinesSettings, StatusLineSettings,
         };
 
@@ -925,7 +925,7 @@ impl ChartApp {
 
     /// Handle clicks on widgets registered with the "prim_settings:" prefix.
     pub(super) fn handle_prim_settings_click(&mut self, rest: &str, x: f64, y: f64) {
-        use mlc_layout::ui::modal_settings::PrimitiveSettingsTab;
+        use mlc_app_layout::ui::modal_settings::PrimitiveSettingsTab;
 
         // Auto-commit: if an input field is being edited and the click lands on a
         // DIFFERENT widget inside the same modal, commit the value (same as Enter).
@@ -981,7 +981,7 @@ impl ChartApp {
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
                         let wid = uzor::WidgetId::from(crate::text_input::PRIMITIVE_SETTINGS_FIELD);
-                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        let new_cursor = mlc_app_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                         let mut coord = self.input_coordinator.borrow_mut();
                         if let Some(fs) = coord.text_fields_mut().field_state_mut(&wid) {
                             fs.cursor = new_cursor;
@@ -2099,12 +2099,12 @@ impl ChartApp {
                             .unwrap_or_default();
                         let params = self.core.indicators().instance(ind_id)
                             .map(|inst| {
-                                inst.params.iter().map(|(k, v): (&String, &mlc_indicators::IndicatorParamValue)| {
+                                inst.params.iter().map(|(k, v): (&String, &mlc_backend_indicator_engine::IndicatorParamValue)| {
                                     let json_val = match v {
-                                        mlc_indicators::IndicatorParamValue::Int(i) => serde_json::json!(i),
-                                        mlc_indicators::IndicatorParamValue::Float(f) => serde_json::json!(f),
-                                        mlc_indicators::IndicatorParamValue::String(s) => serde_json::json!(s),
-                                        mlc_indicators::IndicatorParamValue::Bool(b) => serde_json::json!(b),
+                                        mlc_backend_indicator_engine::IndicatorParamValue::Int(i) => serde_json::json!(i),
+                                        mlc_backend_indicator_engine::IndicatorParamValue::Float(f) => serde_json::json!(f),
+                                        mlc_backend_indicator_engine::IndicatorParamValue::String(s) => serde_json::json!(s),
+                                        mlc_backend_indicator_engine::IndicatorParamValue::Bool(b) => serde_json::json!(b),
                                         _ => serde_json::Value::Null,
                                     };
                                     (k.clone(), json_val)
@@ -2309,7 +2309,7 @@ impl ChartApp {
                 // Condition dropdown selection
                 if let Some(idx_str) = rest.strip_prefix("cond:") {
                     if let Ok(idx) = idx_str.parse::<usize>() {
-                        use mlc_layout::ui::modal_settings::AlertCondition;
+                        use mlc_app_layout::ui::modal_settings::AlertCondition;
                         let conditions = AlertCondition::all();
                         if idx < conditions.len() {
                             self.panel_app.alert_settings_state.condition = conditions[idx];
@@ -2321,7 +2321,7 @@ impl ChartApp {
             }
             // --- Tab switching ---
             _ if rest.starts_with("tab:") => {
-                use mlc_layout::ui::modal_settings::AlertSettingsTab;
+                use mlc_app_layout::ui::modal_settings::AlertSettingsTab;
                 let tab = match rest.strip_prefix("tab:").unwrap_or_default() {
                     "settings" => Some(AlertSettingsTab::Settings),
                     "notifications" => Some(AlertSettingsTab::Notifications),
@@ -2334,7 +2334,7 @@ impl ChartApp {
                     self.panel_app.alert_settings_state.condition_dropdown_open = false;
                     self.panel_app.alert_settings_state.trigger_mode_dropdown_open = false;
                     // Refresh alerts list when switching to list tab
-                    if t == mlc_layout::ui::modal_settings::AlertSettingsTab::AlertsList {
+                    if t == mlc_app_layout::ui::modal_settings::AlertSettingsTab::AlertsList {
                         self.panel_app.alert_settings_state.all_alerts = self.core.alerts().items_all();
                     }
                 }
@@ -2475,7 +2475,7 @@ impl ChartApp {
             }
             // --- Alerts list filter ---
             _ if rest.starts_with("filter:") => {
-                use mlc_layout::ui::modal_settings::AlertListFilter;
+                use mlc_app_layout::ui::modal_settings::AlertListFilter;
                 let filter = match rest.strip_prefix("filter:").unwrap_or_default() {
                     "all" => Some(AlertListFilter::All),
                     "active" => Some(AlertListFilter::Active),
@@ -2543,7 +2543,7 @@ impl ChartApp {
 
     /// Handle clicks on widgets registered with the "ind_settings:" prefix.
     pub(super) fn handle_ind_settings_click(&mut self, rest: &str, x: f64, y: f64) {
-        use mlc_layout::ui::modal_settings::IndicatorSettingsTab;
+        use mlc_app_layout::ui::modal_settings::IndicatorSettingsTab;
 
         // Auto-commit: if a param input is being edited and the click lands on a
         // DIFFERENT widget inside the same modal, commit the value (same as Enter).
@@ -2614,7 +2614,7 @@ impl ChartApp {
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
                         let wid = uzor::WidgetId::from(crate::text_input::INDICATOR_SETTINGS_FIELD);
-                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        let new_cursor = mlc_app_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                         let mut coord = self.input_coordinator.borrow_mut();
                         if let Some(fs) = coord.text_fields_mut().field_state_mut(&wid) {
                             fs.cursor = new_cursor;
@@ -2690,7 +2690,7 @@ impl ChartApp {
                             self.panel_app.indicator_settings_state.template_dropdown_open = false;
                             // Apply params from template to the indicator instance
                             if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
-                                use mlc_indicators::IndicatorParamValue as IndValue;
+                                use mlc_backend_indicator_engine::IndicatorParamValue as IndValue;
                                 if let Some(inst) = self.core.indicators_mut().instance_mut(ind_id) {
                                     for (k, v) in &tmpl.params {
                                         let pv = match v {
@@ -2753,7 +2753,7 @@ impl ChartApp {
         let text = self.input_coordinator.borrow().text_fields().text(&wid).to_string();
         self.input_coordinator.borrow_mut().text_fields_mut().blur();
         if let Some(param_name) = field.strip_prefix("indicator_param:") {
-            use mlc_indicators::IndicatorParamValue as IndValue;
+            use mlc_backend_indicator_engine::IndicatorParamValue as IndValue;
             if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
                 if let Some(inst) = self.core.indicators_mut().instance_mut(ind_id) {
                     let value = if let Ok(f) = text.trim().parse::<f64>() {
@@ -2815,7 +2815,7 @@ impl ChartApp {
 
     /// Handle a click on a specific indicator settings item.
     fn handle_ind_settings_item(&mut self, item_id: &str, _x: f64, _y: f64) {
-        use mlc_indicators::IndicatorParamValue as IndValue;
+        use mlc_backend_indicator_engine::IndicatorParamValue as IndValue;
 
         // Close template dropdown on any content item click
         self.panel_app.indicator_settings_state.template_dropdown_open = false;

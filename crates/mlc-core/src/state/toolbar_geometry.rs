@@ -1,11 +1,11 @@
-//! Pure geometry types cut from mlc-layout's toolbar modules, plus color presets.
+//! Pure geometry types cut from mlc-app-layout's toolbar modules, plus color presets.
 //!
 //! - `WidgetRect`        — from `ui/toolbar_core.rs`
 //! - `ToolbarRect`       — from `ui/toolbar_render.rs`
 //! - `ToolbarRenderResult` — from `ui/toolbar_render.rs`
 //! - `PRESET_COLORS`     — from `ui/sync_color_grid.rs`
 //!
-//! The render functions (`render_panel_toolbar`, etc.) remain in mlc-layout.
+//! The render functions (`render_panel_toolbar`, etc.) remain in mlc-app-layout.
 
 // =============================================================================
 // WidgetRect (from toolbar_core.rs)

@@ -1,4 +1,4 @@
-//! Chart render DATA types (themes, configs, render-state bags). Pure data consumed by backend + painters; the painters themselves live in mlc-layout (S1).
+//! Chart render DATA types (themes, configs, render-state bags). Pure data consumed by backend + painters; the painters themselves live in mlc-app-layout (S1).
 
 use crate::chart::types::{Viewport, PriceScale, TimeScale, GridOptions, Crosshair, Legend, TimeTick};
 use crate::chart::annotations::LineStyle;

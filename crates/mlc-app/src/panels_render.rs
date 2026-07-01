@@ -10,8 +10,8 @@ use mlc_core::state::Panel;
 use uzor::InputCoordinator;
 use mlc_core::render::RenderContext;
 
-use mlc_panels::panel_theme::PanelTheme;
-use mlc_panels::trading::SymbolSource;
+use mlc_app_panels::panel_theme::PanelTheme;
+use mlc_app_panels::trading::SymbolSource;
 
 use crate::panels_store::TradingPanelsStore;
 
@@ -157,9 +157,9 @@ pub fn panel_header_info(
 ///
 /// Common semantic colors (success, danger, warning, text, accent) are pulled
 /// from the runtime theme. Panel-specific colors come from `rt.trading`.
-pub fn panel_theme_from_runtime(rt: &mlc_core::theme::RuntimeTheme) -> mlc_panels::panel_theme::PanelTheme {
+pub fn panel_theme_from_runtime(rt: &mlc_core::theme::RuntimeTheme) -> mlc_app_panels::panel_theme::PanelTheme {
     let t = &rt.trading;
-    mlc_panels::panel_theme::PanelTheme {
+    mlc_app_panels::panel_theme::PanelTheme {
         // Common — mapped from RuntimeTheme base colors
         panel_bg:      rt.colors.toolbar_bg.clone(),
         row_bg_alt:    t.row_bg_alt.clone(),

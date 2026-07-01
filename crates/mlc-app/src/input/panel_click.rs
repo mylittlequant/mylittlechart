@@ -40,7 +40,7 @@ impl ChartApp {
                 if !in_skeleton && !self.panel_app.user_settings_state.runtime_profile_id.is_empty() {
                     self.panel_app.user_settings_state.show_profile_manager = false;
                     self.panel_app.user_settings_state.profile_manager_page =
-                        mlc_layout::ui::modal_settings::ProfileManagerPage::ProfileList;
+                        mlc_app_layout::ui::modal_settings::ProfileManagerPage::ProfileList;
                     self.panel_app.user_settings_state.vault_unlock_error = None;
                     {
                         let wid = uzor::WidgetId::from(crate::text_input::NEW_PASSPHRASE);
@@ -480,7 +480,7 @@ impl ChartApp {
 
         // === Performance panel control clicks — cycle through values ===
         if widget_id == "perf:backend" {
-            use mlc_sidebar_content::state::RenderBackend;
+            use mlc_app_sidebar_content::state::RenderBackend;
             let current = &self.sidebar_state.performance_data.render_backend;
             let all = RenderBackend::all();
             let idx = all.iter().position(|b| b == current).unwrap_or(0);
@@ -551,7 +551,7 @@ impl ChartApp {
         // --- CLI spawn buttons: agent:spawn:{claude|codex|gemini|opencode} ---
         if let Some(cli_str) = widget_id.strip_prefix("agent:spawn:") {
             use gate4agent::AgentCli;
-            use mlc_sidebar_content::agents_dock::{AgentLeafDescriptor, AgentPaneLeaf};
+            use mlc_app_sidebar_content::agents_dock::{AgentLeafDescriptor, AgentPaneLeaf};
             let cli = match cli_str {
                 "claude"   => AgentCli::Claude,
                 "codex"    => AgentCli::Codex,
@@ -567,7 +567,7 @@ impl ChartApp {
                     let desc = AgentLeafDescriptor {
                         instance_id, cli, mode, workdir, chat_session_id: None,
                     };
-                    use mlc_sidebar_content::state::AgentSpawnLayout;
+                    use mlc_app_sidebar_content::state::AgentSpawnLayout;
                     let leaf_id = match self.sidebar_state.agent_spawn_layout {
                         AgentSpawnLayout::Replace => {
                             if let Some(focus) = self.sidebar_state.focused_agent_leaf {
@@ -661,17 +661,17 @@ impl ChartApp {
 
         // --- [H] / [V] / [R] spawn layout toggles ---
         if widget_id == "agent:split:h" {
-            self.sidebar_state.agent_spawn_layout = mlc_sidebar_content::state::AgentSpawnLayout::SplitH;
+            self.sidebar_state.agent_spawn_layout = mlc_app_sidebar_content::state::AgentSpawnLayout::SplitH;
             self.sidebar_data_dirty = true;
             return;
         }
         if widget_id == "agent:split:v" {
-            self.sidebar_state.agent_spawn_layout = mlc_sidebar_content::state::AgentSpawnLayout::SplitV;
+            self.sidebar_state.agent_spawn_layout = mlc_app_sidebar_content::state::AgentSpawnLayout::SplitV;
             self.sidebar_data_dirty = true;
             return;
         }
         if widget_id == "agent:split:replace" {
-            self.sidebar_state.agent_spawn_layout = mlc_sidebar_content::state::AgentSpawnLayout::Replace;
+            self.sidebar_state.agent_spawn_layout = mlc_app_sidebar_content::state::AgentSpawnLayout::Replace;
             self.sidebar_data_dirty = true;
             return;
         }
@@ -721,7 +721,7 @@ impl ChartApp {
         if widget_id == "agent:split_h" || widget_id == "agent:split_v" {
             if let Some(focus) = self.sidebar_state.focused_agent_leaf {
                 use uzor::panels::SplitKind;
-                use mlc_sidebar_content::agents_dock::AgentLeafDescriptor;
+                use mlc_app_sidebar_content::agents_dock::AgentLeafDescriptor;
                 let kind = if widget_id == "agent:split_h" { SplitKind::SplitRight } else { SplitKind::SplitBottom };
                 let rw = self.sidebar_state.right_sidebar_width as f32;
                 let rh = self.height as f32;
@@ -1209,8 +1209,8 @@ impl ChartApp {
             if let Some((idx_str, kind_str)) = rest.split_once(":spawn:") {
                 if let Ok(idx) = idx_str.parse::<usize>() {
                     if idx < 4 {
-                        use mlc_panels::trading::SymbolSource;
-                        use mlc_sidebar_content::state::SlotSourceMode;
+                        use mlc_app_panels::trading::SymbolSource;
+                        use mlc_app_sidebar_content::state::SlotSourceMode;
 
                         // Build SymbolSource from the toolbar's current source mode.
                         // S2.7.1e: read instrument fields via branch_meta (B1).
@@ -1238,7 +1238,7 @@ impl ChartApp {
                         // Resolve immediately to get the concrete symbol for initial setup.
                         // S2.7.1e: read instrument fields via branch_meta (B1).
                         let active_resolved = spawn_active_cid.map(|cid| {
-                            mlc_panels::trading::ResolvedSymbol {
+                            mlc_app_panels::trading::ResolvedSymbol {
                                 symbol: self.symbol_for_chart(cid)
                                     .map(String::from).unwrap_or_default(),
                                 exchange: self.exchange_for_chart(cid)
@@ -1247,10 +1247,10 @@ impl ChartApp {
                                     .map(String::from).unwrap_or_default(),
                             }
                         });
-                        let resolve_leaf = |lid: u64| -> Option<mlc_panels::trading::ResolvedSymbol> {
+                        let resolve_leaf = |lid: u64| -> Option<mlc_app_panels::trading::ResolvedSymbol> {
                             let leaf = mlc_core::LeafId(lid);
                             let leaf_cid = self.panel_app.panel_grid.container_id_for_leaf(leaf)?;
-                            Some(mlc_panels::trading::ResolvedSymbol {
+                            Some(mlc_app_panels::trading::ResolvedSymbol {
                                 symbol: self.symbol_for_chart(leaf_cid)
                                     .map(String::from).unwrap_or_default(),
                                 exchange: self.exchange_for_chart(leaf_cid)
@@ -1515,10 +1515,10 @@ impl ChartApp {
                         );
                         if is_market_data {
                             if let Some(ref item) = item_opt {
-                                let pid = mlc_sidebar_content::free_slot::PanelId(item.panel_id().0);
+                                let pid = mlc_app_sidebar_content::free_slot::PanelId(item.panel_id().0);
                                 let member = mlc_core::ids::SyncMemberId::Panel(pid.0);
                                 match self.sidebar_state.slot_source_mode {
-                                    mlc_sidebar_content::state::SlotSourceMode::Tagged => {
+                                    mlc_app_sidebar_content::state::SlotSourceMode::Tagged => {
                                         // Attach to active chart's sync group. If that group is
                                         // still auto-created (untagged), promote it to a real
                                         // visible color tag so the panel-chart pair shows a
@@ -1553,7 +1553,7 @@ impl ChartApp {
                                             self.set_panel_synced(member, gid);
                                         }
                                     }
-                                    mlc_sidebar_content::state::SlotSourceMode::Untagged => {
+                                    mlc_app_sidebar_content::state::SlotSourceMode::Untagged => {
                                         // Spawn panel into its own 1-member auto-created group.
                                         // S2.7.1e: read timeframe via branch_meta (B1).
                                         let tf = spawn_active_cid
@@ -1574,7 +1574,7 @@ impl ChartApp {
                         }
 
                         if let Some(item) = item_opt {
-                            use mlc_sidebar_content::state::AgentSpawnLayout;
+                            use mlc_app_sidebar_content::state::AgentSpawnLayout;
                             use uzor::panels::SplitKind;
 
                             let layout = self.sidebar_state.slot_spawn_layout;
@@ -1652,26 +1652,26 @@ impl ChartApp {
                         match action {
                             "split:h" => {
                                 self.sidebar_state.slot_spawn_layout =
-                                    mlc_sidebar_content::state::AgentSpawnLayout::SplitH;
+                                    mlc_app_sidebar_content::state::AgentSpawnLayout::SplitH;
                                 self.sidebar_data_dirty = true;
                                 return;
                             }
                             "split:v" => {
                                 self.sidebar_state.slot_spawn_layout =
-                                    mlc_sidebar_content::state::AgentSpawnLayout::SplitV;
+                                    mlc_app_sidebar_content::state::AgentSpawnLayout::SplitV;
                                 self.sidebar_data_dirty = true;
                                 return;
                             }
                             "split:replace" => {
                                 self.sidebar_state.slot_spawn_layout =
-                                    mlc_sidebar_content::state::AgentSpawnLayout::Replace;
+                                    mlc_app_sidebar_content::state::AgentSpawnLayout::Replace;
                                 self.sidebar_data_dirty = true;
                                 return;
                             }
                             // Toggle: left half sets Tagged, right half sets Untagged.
                             "source:toggle" => {
                                 self.sidebar_state.slot_source_mode =
-                                    mlc_sidebar_content::state::SlotSourceMode::Tagged;
+                                    mlc_app_sidebar_content::state::SlotSourceMode::Tagged;
                                 // If a panel in this slot is focused, update its source too.
                                 if let Some((focused_idx, focused_leaf)) = self.sidebar_state.focused_free_leaf {
                                     if focused_idx == idx {
@@ -1681,7 +1681,7 @@ impl ChartApp {
                                             .leaf(focused_leaf)
                                             .and_then(|l| l.active_panel().cloned());
                                         if let Some(item) = item_opt {
-                                            use mlc_panels::trading::SymbolSource;
+                                            use mlc_app_panels::trading::SymbolSource;
                                             use mlc_core::state::Panel;
                                             let src = SymbolSource::HyperFocus;
                                             match &item {
@@ -1698,7 +1698,7 @@ impl ChartApp {
                             }
                             "source:toggle_u" => {
                                 self.sidebar_state.slot_source_mode =
-                                    mlc_sidebar_content::state::SlotSourceMode::Untagged;
+                                    mlc_app_sidebar_content::state::SlotSourceMode::Untagged;
                                 // If a panel in this slot is focused, update its source too.
                                 if let Some((focused_idx, focused_leaf)) = self.sidebar_state.focused_free_leaf {
                                     if focused_idx == idx {
@@ -1708,7 +1708,7 @@ impl ChartApp {
                                             .leaf(focused_leaf)
                                             .and_then(|l| l.active_panel().cloned());
                                         if let Some(item) = item_opt {
-                                            use mlc_panels::trading::SymbolSource;
+                                            use mlc_app_panels::trading::SymbolSource;
                                             use mlc_core::state::Panel;
                                             // S2.7.1e: read instrument fields via branch_meta (B1).
                                             let toggle_u_cid = self.panel_app.panel_grid.active_container_id();
@@ -1927,9 +1927,9 @@ impl ChartApp {
                                 .leaf(leaf_id)
                                 .and_then(|l| l.active_panel().cloned());
                             if let Some(item) = item_opt {
-                                use mlc_panels::trading::SymbolSource;
+                                use mlc_app_panels::trading::SymbolSource;
                                 use mlc_core::state::Panel;
-                                use mlc_sidebar_content::state::SlotSourceMode;
+                                use mlc_app_sidebar_content::state::SlotSourceMode;
                                 use mlc_core::ids::SyncMemberId;
                                 // For market-data panels: mode reflects the panel's actual
                                 // group state (auto_created = Untagged, else Tagged).
@@ -2346,7 +2346,7 @@ impl ChartApp {
                                     // HyperFocus → Fixed (pin to active chart symbol)
                                     // Fixed → HyperFocus
                                     // BoundToChart → HyperFocus
-                                    use mlc_panels::trading::SymbolSource;
+                                    use mlc_app_panels::trading::SymbolSource;
                                     use mlc_core::state::Panel;
 
                                     // Read the current source from account-bound panel states.
@@ -2485,7 +2485,7 @@ impl ChartApp {
                                         .leaf(leaf_id)
                                         .and_then(|l| l.active_panel().cloned());
                                     if let Some(mlc_core::state::Panel::OrderEntry(pid)) = item_opt {
-                                        use mlc_panels::panel_trait::TradingPanel;
+                                        use mlc_app_panels::panel_trait::TradingPanel;
                                         if let Some(state) = self.panels_store.order_entry.get_mut(&pid) {
                                             if state.handle_click(local_id, x, y) {
                                                 self.sidebar_data_dirty = true;
@@ -2513,7 +2513,7 @@ impl ChartApp {
                                             .map(|s| (s.config.exchanges.clone(), s.symbol.clone()))
                                             .unwrap_or_default();
 
-                                        use mlc_panels::panel_trait::TradingPanel;
+                                        use mlc_app_panels::panel_trait::TradingPanel;
                                         if let Some(state) = self.panels_store.multi_dom.get_mut(&pid) {
                                             state.handle_click(local_id, x, y);
                                         }
@@ -2563,9 +2563,9 @@ impl ChartApp {
                                     .leaf(leaf_id)
                                     .and_then(|l| l.active_panel().cloned());
                                 if let Some(item) = item_opt {
-                                    use mlc_panels::trading::SymbolSource;
+                                    use mlc_app_panels::trading::SymbolSource;
                                     use mlc_core::state::Panel;
-                                    use mlc_sidebar_content::state::SlotSourceMode;
+                                    use mlc_app_sidebar_content::state::SlotSourceMode;
                                     use mlc_core::ids::SyncMemberId;
                                     let is_market_data = matches!(
                                         &item,
@@ -2830,7 +2830,7 @@ impl ChartApp {
 
         // === Compare overlay object tree handlers ===
         // Widget IDs use the "{section}_{key}_cmp_*" prefix layout that the
-        // sidebar renderer produces (see `mlc-sidebar-content/src/render.rs`
+        // sidebar renderer produces (see `mlc-app-sidebar-content/src/render.rs`
         // around line 2205 — `widget_prefix = "{section_tag}_{key_slug}"`).
         // Mirror what `_drw_delete_` / `_ind_delete_` do: accept both the
         // prefixed contains-form AND the bare starts_with form so legacy ids
@@ -3385,7 +3385,7 @@ impl ChartApp {
                     // No-op — absorb click to prevent fall-through.
                 }
                 tab_id if tab_id.starts_with("tab:") => {
-                    use mlc_layout::ui::modal_settings::OverlayPanelTreeTab;
+                    use mlc_app_layout::ui::modal_settings::OverlayPanelTreeTab;
                     let tab = match &tab_id["tab:".len()..] {
                         "tree_view"  => OverlayPanelTreeTab::TreeView,
                         "eliminate"  => OverlayPanelTreeTab::Eliminate,
@@ -3464,7 +3464,7 @@ impl ChartApp {
 
         // === Tags & Tabs modal clicks ===
         if let Some(rest) = widget_id.strip_prefix("tags_tabs:") {
-            use mlc_layout::ui::modal_settings::{TagsTabsSidebar, TagsTabsTagsTab};
+            use mlc_app_layout::ui::modal_settings::{TagsTabsSidebar, TagsTabsTagsTab};
             use mlc_core::ids::BubbleId;
             match rest {
                 "close" => {
@@ -3484,7 +3484,7 @@ impl ChartApp {
                     self.panel_app.tags_tabs_state.set_sidebar(TagsTabsSidebar::Map);
                 }
                 id if id.starts_with("tab:") => {
-                    use mlc_layout::ui::modal_settings::OverlayPanelTreeTab;
+                    use mlc_app_layout::ui::modal_settings::OverlayPanelTreeTab;
                     let tab = match &id["tab:".len()..] {
                         "tree_view"  => OverlayPanelTreeTab::TreeView,
                         "eliminate"  => OverlayPanelTreeTab::Eliminate,
@@ -3659,7 +3659,7 @@ impl ChartApp {
                     let wl_gn_id = uzor::WidgetId::from(crate::text_input::WATCHLIST_GROUP_NAME);
                     let name = self.input_coordinator.borrow().text_fields().text(&wl_gn_id).trim().to_string();
                     if !name.is_empty() {
-                        use mlc_layout::ui::modal_settings::WatchlistGroupNameMode;
+                        use mlc_app_layout::ui::modal_settings::WatchlistGroupNameMode;
                         match self.wl_group_name_input.mode.clone() {
                             WatchlistGroupNameMode::CreateNew => {
                                 let new_id = self.core.watchlists_mut().create_list(name.clone());
@@ -3798,7 +3798,7 @@ impl ChartApp {
                     let pni_id = WidgetId::from(crate::text_input::PRESET_NAME_INPUT);
                     let name = self.input_coordinator.borrow().text_fields().text(&pni_id).trim().to_string();
                     if !name.is_empty() {
-                        use mlc_layout::ui::modal_settings::PresetNameInputMode;
+                        use mlc_app_layout::ui::modal_settings::PresetNameInputMode;
                         match self.panel_app.preset_name_input.mode {
                             PresetNameInputMode::SaveAs => {
                                 self.process_chart_out_event(
@@ -3910,7 +3910,7 @@ impl ChartApp {
 
         // === User settings modal clicks ===
         if let Some(action) = widget_id.strip_prefix("user_settings:") {
-            use mlc_layout::ui::modal_settings::UserSettingsTab;
+            use mlc_app_layout::ui::modal_settings::UserSettingsTab;
             match action {
                 "close" => {
                     self.panel_app.user_settings_state.close();
@@ -3984,7 +3984,7 @@ impl ChartApp {
                         .map(|(_, v)| v.clone())
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
-                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        let new_cursor = mlc_app_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                         if let Some(fs) = self.input_coordinator.borrow_mut().text_fields_mut().field_state_mut(&np_wid) {
                             fs.cursor = new_cursor;
                             fs.selection_start = None;
@@ -4101,7 +4101,7 @@ impl ChartApp {
                         .map(|(_, v)| v.clone())
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
-                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        let new_cursor = mlc_app_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                         if let Some(fs) = self.input_coordinator.borrow_mut().text_fields_mut().field_state_mut(&npn_wid) {
                             fs.cursor = new_cursor;
                             fs.selection_start = None;
@@ -4131,7 +4131,7 @@ impl ChartApp {
                         .map(|(_, v)| v.clone())
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
-                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        let new_cursor = mlc_app_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                         if let Some(fs) = self.input_coordinator.borrow_mut().text_fields_mut().field_state_mut(&np_wid) {
                             fs.cursor = new_cursor;
                             fs.selection_start = None;
@@ -4160,7 +4160,7 @@ impl ChartApp {
                         .map(|(_, v)| v.clone())
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
-                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        let new_cursor = mlc_app_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                         if let Some(fs) = self.input_coordinator.borrow_mut().text_fields_mut().field_state_mut(&cp_wid) {
                             fs.cursor = new_cursor;
                             fs.selection_start = None;
@@ -4256,7 +4256,7 @@ impl ChartApp {
                     // × button — dismiss profile manager, return to live chart
                     self.panel_app.user_settings_state.show_profile_manager = false;
                     self.panel_app.user_settings_state.profile_manager_page =
-                        mlc_layout::ui::modal_settings::ProfileManagerPage::ProfileList;
+                        mlc_app_layout::ui::modal_settings::ProfileManagerPage::ProfileList;
                     self.panel_app.user_settings_state.vault_unlock_error = None;
                     {
                         let np_wid = uzor::WidgetId::from(crate::text_input::NEW_PASSPHRASE);
@@ -4265,7 +4265,7 @@ impl ChartApp {
                     eprintln!("[ChartApp] profile_mgr: close button clicked, dismissing");
                 }
                 "profile_mgr:back" => {
-                    use mlc_layout::ui::modal_settings::ProfileManagerPage;
+                    use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
                     // Only block Back on ShowRecoveryKey — user MUST acknowledge recovery key
                     if matches!(self.panel_app.user_settings_state.profile_manager_page, ProfileManagerPage::ShowRecoveryKey) {
                         eprintln!("[ChartApp] profile_mgr: back blocked — must acknowledge recovery key");
@@ -4289,7 +4289,7 @@ impl ChartApp {
                     }
                 }
                 "profile_mgr:create_new" => {
-                    use mlc_layout::ui::modal_settings::ProfileManagerPage;
+                    use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
                     self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreateNew;
                     {
                         let npn_wid = uzor::WidgetId::from(crate::text_input::NEW_PROFILE_NAME);
@@ -4340,7 +4340,7 @@ impl ChartApp {
                         .map(|(_, v)| v.clone())
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
-                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        let new_cursor = mlc_app_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                         if let Some(fs) = self.input_coordinator.borrow_mut().text_fields_mut().field_state_mut(&npn_wid) {
                             fs.cursor = new_cursor;
                             fs.selection_start = None;
@@ -4349,7 +4349,7 @@ impl ChartApp {
                     eprintln!("[ChartApp] profile_mgr: name input focused");
                 }
                 "profile_mgr:use_recovery_key" => {
-                    use mlc_layout::ui::modal_settings::ProfileManagerPage;
+                    use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
                     self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::UseRecoveryKey;
                     {
                         let rk_wid = uzor::WidgetId::from(crate::text_input::RECOVERY_KEY);
@@ -4374,7 +4374,7 @@ impl ChartApp {
                         .map(|(_, v)| v.clone())
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
-                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        let new_cursor = mlc_app_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                         if let Some(fs) = self.input_coordinator.borrow_mut().text_fields_mut().field_state_mut(&rk_wid) {
                             fs.cursor = new_cursor;
                             fs.selection_start = None;
@@ -4396,7 +4396,7 @@ impl ChartApp {
                         .map(|(_, v)| v.clone())
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
-                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        let new_cursor = mlc_app_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                         if let Some(fs) = self.input_coordinator.borrow_mut().text_fields_mut().field_state_mut(&np_wid) {
                             fs.cursor = new_cursor;
                             fs.selection_start = None;
@@ -4418,7 +4418,7 @@ impl ChartApp {
                         .map(|(_, v)| v.clone())
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
-                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        let new_cursor = mlc_app_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                         if let Some(fs) = self.input_coordinator.borrow_mut().text_fields_mut().field_state_mut(&cp_wid) {
                             fs.cursor = new_cursor;
                             fs.selection_start = None;
@@ -4440,7 +4440,7 @@ impl ChartApp {
                         .map(|(_, v)| v.clone())
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
-                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        let new_cursor = mlc_app_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                         if let Some(fs) = self.input_coordinator.borrow_mut().text_fields_mut().field_state_mut(&cp_wid) {
                             fs.cursor = new_cursor;
                             fs.selection_start = None;
@@ -4498,7 +4498,7 @@ impl ChartApp {
                         .map(|(_, v)| v.clone())
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
-                        let new_cursor = mlc_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        let new_cursor = mlc_app_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                         if let Some(fs) = self.input_coordinator.borrow_mut().text_fields_mut().field_state_mut(&rk_wid) {
                             fs.cursor = new_cursor;
                             fs.selection_start = None;
@@ -4596,7 +4596,7 @@ impl ChartApp {
                     eprintln!("[ChartApp] profile_new_cancel");
                 }
                 rest if rest.starts_with("vault_picker_profile:") => {
-                    use mlc_layout::ui::modal_settings::ProfileManagerPage;
+                    use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
                     let profile_id = &rest["vault_picker_profile:".len()..];
                     let target_has_vault = self.panel_app.user_settings_state.profiles_with_vault_status
                         .iter()
@@ -4638,7 +4638,7 @@ impl ChartApp {
                     self.panel_app.user_settings_state.new_passphrase_focused = false;
                 }
                 rest if rest.starts_with("profile_mgr:select:") => {
-                    use mlc_layout::ui::modal_settings::ProfileManagerPage;
+                    use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
                     let profile_id = &rest["profile_mgr:select:".len()..];
                     // Check if target profile has vault (encrypted)
                     let target_has_vault = self.panel_app.user_settings_state.profiles_with_vault_status
@@ -4728,7 +4728,7 @@ impl ChartApp {
                     );
                 }
                 rest if rest.starts_with("profile_switch:") => {
-                    use mlc_layout::ui::modal_settings::ProfileManagerPage;
+                    use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
                     let profile_id = &rest["profile_switch:".len()..];
                     // Check if target profile has vault
                     let target_has_vault = self.panel_app.user_settings_state.profiles_with_vault_status

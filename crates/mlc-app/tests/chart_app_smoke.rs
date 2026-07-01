@@ -6,13 +6,13 @@
 //! Layers under test (one layer beyond `bridge_smoke`):
 //!
 //!   browser/native WS -> dig3-station Station
-//!     -> mlc_live_data::DataBridge (LiveUpdate::TradeUpdate / BarUpdate)
-//!     -> mlc_backend_core::BackendCore::tick_writers (BubbleEvent)
+//!     -> mlc_backend_data_bridge::DataBridge (LiveUpdate::TradeUpdate / BarUpdate)
+//!     -> mlc_backend::BackendCore::tick_writers (BubbleEvent)
 //!     -> ChartApp::react_to_bubble_event
 //!     -> bubble.bars.last_bar_mut().{close,volume,high,low} = ...
 //!
 //! The web shell drives this exact `chart.tick(now_ms)` from its RAF
-//! loop (mlc-app-web/src/lib.rs); the desktop shell does the same.
+//! loop (mlc-app-shell-web/src/lib.rs); the desktop shell does the same.
 //! If either is broken, `last_close` here would not advance — same path.
 //!
 //! Run:
@@ -26,7 +26,7 @@ use std::time::Duration;
 use digdigdig3::core::types::{AccountType, ExchangeId};
 use mlc_app::ChartApp;
 use mlc_core::state::Timeframe;
-use mlc_live_data::{DataBridge, LiveUpdate};
+use mlc_backend_data_bridge::{DataBridge, LiveUpdate};
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_test::wasm_bindgen_test_configure;

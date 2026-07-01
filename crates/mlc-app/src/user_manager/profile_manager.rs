@@ -8,8 +8,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use mlc_crypto::crypto;
-use mlc_crypto::global_storage;
+use mlc_vault::crypto;
+use mlc_vault::global_storage;
 use mlc_core::preset::preset::ChartPreset;
 use mlc_core::preset::storage::{list_presets, load_preset};
 use mlc_core::templates::TemplateManager;
@@ -18,7 +18,7 @@ use mlc_core::user_profile::storage::{
     active_profile_data_dir, app_data_dir, create_profile, delete_profile, load_json,
     load_profile, load_profile_index, profiles_dir, save_profile, save_profile_index,
 };
-use mlc_crypto::vault::{self, VaultKey};
+use mlc_vault::vault::{self, VaultKey};
 
 /// Convert an absolute path to a storage key relative to app_data_dir.
 fn path_key(path: &Path) -> String {

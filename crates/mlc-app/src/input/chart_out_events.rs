@@ -455,7 +455,7 @@ impl ChartApp {
                                             let freq = if chart_param > 0.0 { chart_param as u16 } else { 30 };
                                             self.core.bridge.request_tpo(
                                                 self.active_exchange, &symbol, at, freq,
-                                                mlc_live_data::TpoSource::TradeBucket,
+                                                mlc_backend_data_bridge::TpoSource::TradeBucket,
                                             );
                                         }
                                         "three_line_break" => {
@@ -985,7 +985,7 @@ impl ChartApp {
             //   None              ->  panel switched   ->  no viewport change needed
             ChartOutEvent::ToggleWatchlist => {
                 let result = self.sidebar_state.toggle_right_panel(
-                    mlc_sidebar_content::state::RightSidebarPanel::Watchlist,
+                    mlc_app_sidebar_content::state::RightSidebarPanel::Watchlist,
                 );
                 if let Some((opening, _width)) = result {
                     eprintln!("[ChartApp] Watchlist panel: {}", if opening { "opened" } else { "closed" });
@@ -995,7 +995,7 @@ impl ChartApp {
             }
             ChartOutEvent::ToggleAlerts => {
                 let result = self.sidebar_state.toggle_right_panel(
-                    mlc_sidebar_content::state::RightSidebarPanel::Alerts,
+                    mlc_app_sidebar_content::state::RightSidebarPanel::Alerts,
                 );
                 if let Some((opening, _width)) = result {
                     eprintln!("[ChartApp] Alerts panel: {}", if opening { "opened" } else { "closed" });
@@ -1005,7 +1005,7 @@ impl ChartApp {
             }
             ChartOutEvent::ToggleObjectTree => {
                 let result = self.sidebar_state.toggle_right_panel(
-                    mlc_sidebar_content::state::RightSidebarPanel::ObjectTree,
+                    mlc_app_sidebar_content::state::RightSidebarPanel::ObjectTree,
                 );
                 if let Some((opening, _width)) = result {
                     eprintln!("[ChartApp] Object Tree panel: {}", if opening { "opened" } else { "closed" });
@@ -1015,7 +1015,7 @@ impl ChartApp {
             }
             ChartOutEvent::ToggleSignals => {
                 let result = self.sidebar_state.toggle_right_panel(
-                    mlc_sidebar_content::state::RightSidebarPanel::Signals,
+                    mlc_app_sidebar_content::state::RightSidebarPanel::Signals,
                 );
                 if let Some((opening, _width)) = result {
                     eprintln!("[ChartApp] Signals panel: {}", if opening { "opened" } else { "closed" });
@@ -1025,7 +1025,7 @@ impl ChartApp {
             }
             ChartOutEvent::ToggleConnectors => {
                 let result = self.sidebar_state.toggle_right_panel(
-                    mlc_sidebar_content::state::RightSidebarPanel::Connectors,
+                    mlc_app_sidebar_content::state::RightSidebarPanel::Connectors,
                 );
                 if let Some((opening, _width)) = result {
                     eprintln!("[ChartApp] Connectors panel: {}", if opening { "opened" } else { "closed" });
@@ -1035,7 +1035,7 @@ impl ChartApp {
             }
             ChartOutEvent::TogglePerformance => {
                 let result = self.sidebar_state.toggle_right_panel(
-                    mlc_sidebar_content::state::RightSidebarPanel::Performance,
+                    mlc_app_sidebar_content::state::RightSidebarPanel::Performance,
                 );
                 if let Some((opening, _width)) = result {
                     eprintln!("[ChartApp] Performance panel: {}", if opening { "opened" } else { "closed" });
@@ -1045,7 +1045,7 @@ impl ChartApp {
             }
             ChartOutEvent::ToggleAgents => {
                 let result = self.sidebar_state.toggle_right_panel(
-                    mlc_sidebar_content::state::RightSidebarPanel::Agents,
+                    mlc_app_sidebar_content::state::RightSidebarPanel::Agents,
                 );
                 if let Some((opening, _width)) = result {
                     eprintln!("[ChartApp] Agents panel: {}", if opening { "opened" } else { "closed" });
@@ -1056,7 +1056,7 @@ impl ChartApp {
                 self.persist_profile();
             }
             ChartOutEvent::ToggleSlot(idx) => {
-                let panel = mlc_sidebar_content::state::RightSidebarPanel::from_slot_index(idx);
+                let panel = mlc_app_sidebar_content::state::RightSidebarPanel::from_slot_index(idx);
                 let _ = self.sidebar_state.toggle_right_panel(panel);
                 self.sidebar_data_dirty = true;
                 self.persist_profile();

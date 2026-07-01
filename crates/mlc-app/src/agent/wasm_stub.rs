@@ -4,7 +4,7 @@
 //! SessionMeta, ChatRole, ChatMessage, TermCell, TermGrid, CliTool,
 //! CliCapabilities, CliFeatures, ModelInfo, PermissionModeInfo, BuddyArt,
 //! AgentSnapshotMode, LiveStatus) are re-exported from
-//! `mlc_sidebar_content::gate4agent_stub` so that both crates share one
+//! `mlc_app_sidebar_content::gate4agent_stub` so that both crates share one
 //! wasm copy of each type — eliminating the E0308 mismatches that occur when
 //! mlc-app compares sidebar-content values against its own duplicate types.
 //!
@@ -15,7 +15,7 @@ use std::path::PathBuf;
 
 // ── Re-export all shared types from sidebar-content's single wasm stub ──────
 
-pub use mlc_sidebar_content::gate4agent_stub::{
+pub use mlc_app_sidebar_content::gate4agent_stub::{
     AgentCli,
     AgentRenderSnapshot,
     AgentSnapshotMode,
@@ -33,8 +33,8 @@ pub use mlc_sidebar_content::gate4agent_stub::{
     TermGrid,
 };
 
-pub use mlc_sidebar_content::gate4agent_stub::pty::snapshot::LiveStatus;
-pub use mlc_sidebar_content::gate4agent_stub::history::SessionMeta;
+pub use mlc_app_sidebar_content::gate4agent_stub::pty::snapshot::LiveStatus;
+pub use mlc_app_sidebar_content::gate4agent_stub::history::SessionMeta;
 
 // ── SessionConfig ──────────────────────────────────────────────────────────
 

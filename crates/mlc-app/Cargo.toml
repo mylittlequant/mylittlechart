@@ -8,19 +8,19 @@ name = "mlc_app"
 
 [dependencies]
 web-time = "1"
-mlc-backend-core = { path = "../mlc-backend-core", package = "mylittlechart-backend-core" }
+mlc-backend = { path = "../mlc-backend", package = "mylittlechart-backend" }
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
-mlc-layout = { path = "../mlc-layout", package = "mylittlechart-layout" }
-mlc-indicators = { path = "../mlc-indicators", package = "mylittlechart-indicators" }
+mlc-app-layout = { path = "../mlc-app-layout", package = "mylittlechart-app-layout" }
+mlc-backend-indicator-engine = { path = "../mlc-backend-indicator-engine", package = "mylittlechart-backend-indicator-engine" }
 uzor = "=1.4.15"
-mlc-sidebar-content = { path = "../mlc-sidebar-content", package = "mylittlechart-sidebar-content" }
+mlc-app-sidebar-content = { path = "../mlc-app-sidebar-content", package = "mylittlechart-app-sidebar-content" }
 mlc-watchlist = { path = "../mlc-watchlist", package = "mylittlechart-watchlist" }
-mlc-panels = { path = "../mlc-panels", package = "mylittlechart-panels" }
+mlc-app-panels = { path = "../mlc-app-panels", package = "mylittlechart-app-panels" }
 mlc-alert-delivery = { path = "../mlc-alert-delivery", package = "mylittlechart-alert-delivery" }
-mlc-crypto = { path = "../mlc-crypto", package = "mylittlechart-crypto" }
+mlc-vault = { path = "../mlc-vault", package = "mylittlechart-vault" }
 uuid = { version = "1", features = ["v4"] }
-mlc-live-data = { path = "../mlc-live-data", package = "mylittlechart-live-data" }
-mlc-trading-manager = { path = "../mlc-trading-manager", package = "mylittlechart-trading-manager" }
+mlc-backend-data-bridge = { path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
+mlc-backend-trading-engine = { path = "../mlc-backend-trading-engine", package = "mylittlechart-backend-trading-engine" }
 digdigdig3 = "=0.3.24"
 tokio = { version = "1", features = ["sync"] }
 dashmap = "6"
@@ -40,11 +40,11 @@ vt100 = "0.15"
 # build ChartApp::new_empty, seed_default_chart, drive chart.tick() in a loop,
 # assert bubble.bars.last().close moves. This isolates the bubble-write path
 # (BackendCore::tick_writers + ChartApp react.rs TradeUpdatePassthrough arm)
-# from the canvas/render path that mlc-app-web exercises. The same body
+# from the canvas/render path that mlc-app-shell-web exercises. The same body
 # runs on wasm32 (headless Chrome) AND native (tokio multi-thread).
 
 [dev-dependencies]
-mlc-live-data = { path = "../mlc-live-data", package = "mylittlechart-live-data" }
+mlc-backend-data-bridge = { path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
 digdigdig3-station = "=0.3.24"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

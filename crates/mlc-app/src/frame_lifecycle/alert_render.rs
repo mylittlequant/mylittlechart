@@ -6,7 +6,7 @@ use mlc_core::{
     LayoutRect,
     render::RenderContext,
 };
-use mlc_backend_core::Indicators;
+use mlc_backend::Indicators;
 use mlc_core::ids::BubbleId;
 use mlc_core::alert::{AlertItem, AlertStatus, AlertSource};
 

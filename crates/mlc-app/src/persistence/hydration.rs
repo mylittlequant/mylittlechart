@@ -22,9 +22,9 @@
 use std::collections::{HashMap, HashSet};
 
 use mlc_core::state::panel_grid::ChartPanelGrid;
-use mlc_backend_core::bubble::BubbleStore;
+use mlc_backend::bubble::BubbleStore;
 use mlc_core::LeafId;
-use mlc_indicators::IndicatorManager;
+use mlc_backend_indicator_engine::IndicatorManager;
 
 /// Build-result of a pure preset hydration pass.
 ///
@@ -36,16 +36,16 @@ pub struct HydratedPresetState {
     pub panel_grid: ChartPanelGrid,
     pub tag_manager: BubbleStore,
     pub indicator_manager: IndicatorManager,
-    pub alert_manager: mlc_backend_core::alert::AlertManager,
+    pub alert_manager: mlc_backend::alert::AlertManager,
     /// Per-bubble drawing sessions (Step 3.1) — see `LivePresetState::drawing_manager`.
-    pub drawing_manager: mlc_backend_core::drawing::DrawingManager,
+    pub drawing_manager: mlc_backend::drawing::DrawingManager,
     pub leaf_color_tags: HashMap<LeafId, [f32; 4]>,
-    pub indicator_overlay_states: HashMap<LeafId, mlc_layout::ui::modal_settings::IndicatorOverlayState>,
+    pub indicator_overlay_states: HashMap<LeafId, mlc_app_layout::ui::modal_settings::IndicatorOverlayState>,
     pub pending_sub_pane_ratios: HashMap<u64, HashMap<u64, f32>>,
     pub pending_sub_pane_above_main: HashMap<u64, HashSet<u64>>,
     pub pending_sub_pane_order: HashMap<u64, Vec<u64>>,
     pub pending_sub_pane_hidden: HashMap<u64, HashSet<u64>>,
-    pub slot_dockings: [mlc_sidebar_content::SlotDockingManager; 4],
+    pub slot_dockings: [mlc_app_sidebar_content::SlotDockingManager; 4],
     pub panels_store: crate::panels_store::TradingPanelsStore,
     /// `(exchange_id_str, symbol, timeframe, account_type_label,
     /// needs_force)`. After swap-in `ignite_subscriptions` walks this list
