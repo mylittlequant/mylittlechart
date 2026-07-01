@@ -669,7 +669,7 @@ impl DrawingManager {
         if let Some(variant) = session.tool_variant.clone() {
             Self::apply_variant_to_primitive(&mut prim, &variant);
         }
-        prim.data_mut().symbol = b.symbol.clone();
+        prim.data_mut().symbol = b.address.symbol.clone();
         let id = prim.data().id;
         b.primitives.push(prim);
         session.selected = Some(id);
@@ -1595,7 +1595,7 @@ impl DrawingManager {
         prim.data_mut().id = alloc_primitive_id();
         let Some(b) = bubbles.bubble_mut(bid) else { return prim.data().id };
         if prim.data().symbol.is_empty() {
-            prim.data_mut().symbol = b.symbol.clone();
+            prim.data_mut().symbol = b.address.symbol.clone();
         }
         let id = prim.data().id;
         b.primitives.push(prim);
@@ -1661,9 +1661,9 @@ impl DrawingManager {
         };
         let old_primitives: Vec<PrimitiveSnapshot> = b.primitives.iter().map(|p| PrimitiveSnapshot::from_primitive(p.as_ref())).collect();
 
-        b.symbol = symbol.to_string();
-        b.exchange = exchange.to_string();
-        b.account_type = account_type.to_string();
+        b.address.symbol = symbol.to_string();
+        b.address.exchange = exchange.to_string();
+        b.address.account_type = account_type.parse().unwrap_or_default();
         b.primitives.clear();
 
         let mut restored = 0usize;
@@ -1673,7 +1673,7 @@ impl DrawingManager {
                     if let Some(mut prim) = reg.from_json(&snap.type_id, &snap.json) {
                         prim.data_mut().id = alloc_primitive_id();
                         if prim.data().symbol.is_empty() {
-                            prim.data_mut().symbol = b.symbol.clone();
+                            prim.data_mut().symbol = b.address.symbol.clone();
                         }
                         b.primitives.push(prim);
                         restored += 1;

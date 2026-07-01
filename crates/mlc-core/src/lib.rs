@@ -107,6 +107,11 @@ pub mod indicator_types;
 // Pure value-types for alerts shared between backend and app.
 pub mod alert;
 
+// Canonical instrument key (exchange, symbol, account_type) — see
+// docs/mlc/plans/doctrine-cutover-2026-06-27.md §1C.
+pub mod instrument;
+pub use instrument::{AccountType, InstrumentAddress};
+
 // Chart preset system (snapshot types for persistence)
 pub mod preset;
 

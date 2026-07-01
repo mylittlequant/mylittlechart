@@ -35,13 +35,13 @@ impl<'a> BubbleView<'a> {
         self.bubble.id
     }
     pub fn symbol(&self) -> &str {
-        &self.bubble.symbol
+        &self.bubble.address.symbol
     }
     pub fn exchange(&self) -> &str {
-        &self.bubble.exchange
+        &self.bubble.address.exchange
     }
     pub fn account_type(&self) -> &str {
-        &self.bubble.account_type
+        self.bubble.address.account_type.as_label()
     }
     pub fn timeframe(&self) -> &Timeframe {
         &self.bubble.timeframe

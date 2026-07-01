@@ -361,7 +361,7 @@ impl ChartApp {
                     let at = self.account_type_for_chart(active_cid_sync)
                         .map(String::from).unwrap_or_else(|| "S".to_string());
                     self.core.bubbles_mut().set_bubble_instrument(new_active_group, exch, at);
-                    self.core.bubbles_mut().with_bubble_mut(new_active_group, |g| g.symbol = sym);
+                    self.core.bubbles_mut().with_bubble_mut(new_active_group, |g| g.address.symbol = sym);
                 }
                 self.core.bubbles_mut().reassign_synced_panels(new_active_group);
                 self.apply_key_to_panels_in_group(new_active_group);

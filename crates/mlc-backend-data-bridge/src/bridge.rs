@@ -4356,17 +4356,14 @@ fn try_resolve_wire_symbol(
 ///
 /// Unknown labels fall back to [`AccountType::Spot`] — the safe default and
 /// backward-compatible case (old disk files without an account_type prefix).
+///
+/// Delegates to `mlc_core::instrument::AccountType` (the single canonical
+/// label parser — see `docs/mlc/plans/doctrine-cutover-2026-06-27.md` §1C)
+/// and converts across the mlc-core/dig3 boundary via
+/// [`crate::convert::account_type_to_dig3`].
 pub fn account_type_from_short_label(s: &str) -> AccountType {
-    match s {
-        "M"  => AccountType::Margin,
-        "F"  => AccountType::FuturesCross,
-        "FI" => AccountType::FuturesIsolated,
-        "E"  => AccountType::Earn,
-        "L"  => AccountType::Lending,
-        "O"  => AccountType::Options,
-        "CV" => AccountType::Convert,
-        _    => AccountType::Spot, // "S" and unknown → Spot
-    }
+    let core_at: mlc_core::instrument::AccountType = s.parse().unwrap_or_default();
+    crate::convert::account_type_to_dig3(core_at)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

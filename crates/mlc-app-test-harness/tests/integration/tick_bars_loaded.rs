@@ -62,9 +62,9 @@ fn bars_loaded_writer_arm(
     for (_, cid, _) in charts {
         let Some(bid) = store.bubble_for_chart(*cid) else { continue };
         let Some(instrument) = store.instrument(bid) else { continue };
-        if instrument.exchange == exchange
-            && instrument.account_type == account_type
-            && instrument.symbol == symbol
+        if instrument.address.exchange == exchange
+            && instrument.address.account_type.as_label() == account_type
+            && instrument.address.symbol == symbol
             && instrument.timeframe.name == tf_name
         {
             matched.push(*cid);

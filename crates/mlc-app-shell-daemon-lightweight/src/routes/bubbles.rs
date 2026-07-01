@@ -168,9 +168,9 @@ async fn get_bubble(
     let auto_created = guard.auto_created(bid_typed);
     let out = BubbleSnapshotOut {
         id: bid,
-        symbol: instrument.symbol,
-        exchange: instrument.exchange,
-        account_type: instrument.account_type,
+        symbol: instrument.address.symbol,
+        exchange: instrument.address.exchange,
+        account_type: instrument.address.account_type.as_label().to_string(),
         timeframe_name: instrument.timeframe.name.clone(),
         bars_len: guard.bars(bid_typed).len(),
         primitives_count: s.core.drawings().count(bid_typed),

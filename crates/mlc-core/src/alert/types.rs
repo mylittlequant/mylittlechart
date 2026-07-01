@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::instrument::InstrumentAddress;
+
 // =============================================================================
 // DrawingExtendMode
 // =============================================================================
@@ -333,10 +335,6 @@ fn default_transports() -> Vec<AlertTransport> {
     AlertTransport::all_default()
 }
 
-fn default_account_type() -> String {
-    "S".to_string()
-}
-
 // =============================================================================
 // AlertItem
 // =============================================================================
@@ -378,10 +376,6 @@ pub struct AlertItem {
     #[serde(default)]
     pub expires_at: Option<u64>,
     // Kept for backward-compat deserialization of old snapshots.
-    // Use `symbol()` accessor instead of reading this field directly.
-    #[serde(default)]
-    symbol: String,
-    // Kept for backward-compat deserialization of old snapshots.
     #[serde(default)]
     pub last_triggered: Option<String>,
     /// Previous tick's dynamic level (for crossing detection on Drawing/Indicator alerts).
@@ -394,14 +388,9 @@ pub struct AlertItem {
     #[serde(default)]
     pub group_id: Option<u64>,
 
-    /// Exchange this alert is bound to (e.g. `"Binance"`).
-    /// Populated at create time from the active window's `exchange`.
-    #[serde(default)]
-    pub exchange: String,
-
     /// Window that created this alert. Used as a display hint only —
     /// alerts are NOT exclusive to one window, they show on all windows
-    /// in the same group that match `exchange:symbol`.
+    /// in the same group that match the instrument address.
     #[serde(default)]
     pub window_id_hint: Option<u64>,
 
@@ -410,10 +399,13 @@ pub struct AlertItem {
     #[serde(default)]
     pub timeframe: String,
 
-    /// Account type of the window when this alert was created (e.g. `"S"` for spot,
-    /// `"F"` for futures). Defaults to `"S"` for backward compat with old presets.
-    #[serde(default = "default_account_type")]
-    pub account_type: String,
+    /// Instrument this alert is bound to (exchange, symbol, account_type).
+    /// Flattened so the persisted JSON layout stays byte-for-byte identical
+    /// to the pre-cutover flat `exchange` / `account_type` fields (the
+    /// `symbol` field here is the non-Price-source symbol — see
+    /// `AlertItem::symbol()`).
+    #[serde(flatten)]
+    pub address: InstrumentAddress,
 }
 
 impl AlertItem {
@@ -456,14 +448,12 @@ impl AlertItem {
             created_at: 0,
             last_triggered_at: None,
             expires_at: None,
-            symbol,
             last_triggered: None,
             prev_dynamic_price: 0.0,
             group_id: spec.group_id,
-            exchange: spec.exchange,
             window_id_hint: spec.window_id_hint,
             timeframe: spec.timeframe,
-            account_type: default_account_type(),
+            address: InstrumentAddress::new(spec.exchange, symbol, crate::instrument::AccountType::default()),
         }
     }
 
@@ -492,14 +482,12 @@ impl AlertItem {
             created_at: 0,
             last_triggered_at: None,
             expires_at: None,
-            symbol: String::new(),
             last_triggered: None,
             prev_dynamic_price: 0.0,
             group_id: None,
-            exchange: String::new(),
             window_id_hint: None,
             timeframe: String::new(),
-            account_type: default_account_type(),
+            address: InstrumentAddress::new(String::new(), String::new(), crate::instrument::AccountType::default()),
         }
     }
 
@@ -555,14 +543,24 @@ impl AlertItem {
     pub fn symbol(&self) -> &str {
         match &self.source {
             AlertSource::Price { symbol } => symbol,
-            _ => &self.symbol,
+            _ => &self.address.symbol,
         }
     }
 
     /// Set the symbol for non-Price alerts (Drawing, Indicator, Signal).
     /// Price alerts carry the symbol inside `AlertSource::Price { symbol }`.
     pub fn set_symbol(&mut self, symbol: String) {
-        self.symbol = symbol;
+        self.address.symbol = symbol;
+    }
+
+    /// Exchange this alert is bound to (e.g. `"Binance"`).
+    pub fn exchange(&self) -> &str {
+        &self.address.exchange
+    }
+
+    /// Account type of the window when this alert was created.
+    pub fn account_type(&self) -> crate::instrument::AccountType {
+        self.address.account_type
     }
 
     /// Human-readable description of what this alert monitors.
@@ -582,12 +580,16 @@ impl AlertItem {
 
     /// Returns `"exchange:symbol:account_type"` routing key for per-symbol crossing detection.
     /// Falls back to just `symbol()` when exchange is empty (old presets).
+    ///
+    /// Delegates to [`InstrumentAddress::routing_key`] but reads the symbol
+    /// through [`Self::symbol`] (Price-source alerts carry their symbol
+    /// inside `AlertSource::Price`, not on `address.symbol`).
     pub fn routing_key(&self) -> String {
         let sym = self.symbol();
-        if self.exchange.is_empty() {
+        if self.address.exchange.is_empty() {
             sym.to_string()
         } else {
-            format!("{}:{}:{}", self.exchange, sym, self.account_type)
+            format!("{}:{}:{}", self.address.exchange, sym, self.address.account_type)
         }
     }
 
@@ -597,8 +599,112 @@ impl AlertItem {
     pub fn matches_window(&self, symbol: &str, exchange: &str, account_type: &str) -> bool {
         let self_sym = self.symbol();
         let sym_match = self_sym.is_empty() || self_sym == symbol;
-        let exch_match = self.exchange.is_empty() || self.exchange == exchange;
-        let at_match = self.account_type.is_empty() || self.account_type == account_type;
+        let exch_match = self.address.exchange.is_empty() || self.address.exchange == exchange;
+        let at_match = self.address.account_type.as_label().is_empty() || self.address.account_type.as_label() == account_type;
         sym_match && exch_match && at_match
+    }
+}
+
+// =============================================================================
+// Tests — JSON persistence compatibility gate
+// =============================================================================
+
+#[cfg(test)]
+mod json_compat_tests {
+    use super::*;
+
+    /// Literal JSON produced by the pre-cutover `AlertItem` (flat `exchange`
+    /// / `account_type: String` fields) for a fully-populated Drawing alert.
+    /// This is the exact shape `serde_json::to_string` emitted before the
+    /// `#[serde(flatten)] address: InstrumentAddress` change — captured from
+    /// the struct definition prior to this commit. Doctrine gate: this MUST
+    /// still deserialize cleanly and re-serialize to the same field set.
+    const LEGACY_JSON: &str = r#"{
+        "id": 42,
+        "name": "BTC breakout",
+        "source": {"Drawing": {"primitive_id": 7, "label": "Trendline"}},
+        "condition": "CrossingUp",
+        "price": 65000.0,
+        "price2": 0.0,
+        "percentage": 0.0,
+        "trigger_mode": "OneShot",
+        "max_triggers": 0,
+        "trigger_count": 2,
+        "transports": ["Popup"],
+        "status": "Active",
+        "created_at": 1735689600000,
+        "last_triggered_at": null,
+        "expires_at": null,
+        "symbol": "BTCUSDT",
+        "last_triggered": null,
+        "group_id": 9,
+        "exchange": "Binance",
+        "window_id_hint": 3,
+        "timeframe": "1H",
+        "account_type": "FI"
+    }"#;
+
+    #[test]
+    fn legacy_flat_json_deserializes_into_instrument_address() {
+        let item: AlertItem = serde_json::from_str(LEGACY_JSON)
+            .expect("legacy flat exchange/account_type JSON must still deserialize");
+
+        assert_eq!(item.id, 42);
+        assert_eq!(item.symbol(), "BTCUSDT");
+        assert_eq!(item.address.exchange, "Binance");
+        assert_eq!(item.address.symbol, "BTCUSDT");
+        assert_eq!(item.address.account_type, crate::instrument::AccountType::FuturesIsolated);
+        assert_eq!(item.timeframe, "1H");
+        assert_eq!(item.group_id, Some(9));
+        assert_eq!(item.window_id_hint, Some(3));
+    }
+
+    #[test]
+    fn roundtrip_preserves_flat_field_shape() {
+        let item: AlertItem = serde_json::from_str(LEGACY_JSON).expect("legacy JSON must parse");
+        let reserialized = serde_json::to_string(&item).expect("must re-serialize");
+        let value: serde_json::Value = serde_json::from_str(&reserialized).expect("re-serialized must be valid JSON");
+
+        // Flatten must produce the SAME flat keys as the pre-cutover struct —
+        // no nested "address" object anywhere in the output.
+        assert!(value.get("address").is_none(), "address must be flattened, not nested");
+        assert_eq!(value.get("exchange").and_then(|v| v.as_str()), Some("Binance"));
+        assert_eq!(value.get("symbol").and_then(|v| v.as_str()), Some("BTCUSDT"));
+        assert_eq!(value.get("account_type").and_then(|v| v.as_str()), Some("FI"));
+
+        // Full round-trip: re-deserializing the re-serialized JSON must
+        // reproduce the same address.
+        let roundtripped: AlertItem = serde_json::from_str(&reserialized).expect("roundtrip must parse");
+        assert_eq!(roundtripped.address, item.address);
+        assert_eq!(roundtripped.symbol(), item.symbol());
+    }
+
+    #[test]
+    fn missing_exchange_and_account_type_default_like_legacy() {
+        // Old presets created before `exchange`/`account_type` existed —
+        // both fields absent. Legacy default: exchange = "", account_type = "S" (Spot).
+        let json = r#"{
+            "id": 1,
+            "name": "Legacy price alert",
+            "source": {"Price": {"symbol": "ETHUSDT"}},
+            "condition": "GreaterThan",
+            "price": 3000.0,
+            "price2": 0.0,
+            "percentage": 0.0,
+            "trigger_mode": "OneShot",
+            "max_triggers": 0,
+            "trigger_count": 0,
+            "transports": ["Popup"],
+            "status": "Active",
+            "created_at": 0,
+            "last_triggered_at": null,
+            "expires_at": null,
+            "symbol": "",
+            "last_triggered": null
+        }"#;
+        let item: AlertItem = serde_json::from_str(json).expect("pre-account_type JSON must still parse");
+        assert_eq!(item.address.exchange, "");
+        assert_eq!(item.address.account_type, crate::instrument::AccountType::Spot);
+        assert_eq!(item.symbol(), "ETHUSDT");
     }
 }

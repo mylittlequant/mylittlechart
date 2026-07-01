@@ -49,7 +49,10 @@ mod convert;
 
 pub use bridge::{DataBridge, LiveUpdate, OrderbookSource, account_type_from_short_label};
 pub use provider::LiveDataProvider;
-pub use convert::{kline_to_bar, timeframe_to_interval};
+pub use convert::{
+    account_type_from_dig3, account_type_to_dig3, kline_to_bar, resolve_exchange, timeframe_to_interval,
+    to_dig3, UnknownExchange,
+};
 
 // ── Debug log gate (MLC_PERF_LOG) ────────────────────────────────────────────
 static DEBUG_LOG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();

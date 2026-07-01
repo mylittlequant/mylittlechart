@@ -5,6 +5,7 @@ use mlc_core::chart::types::price_scale::ScaleMode;
 use mlc_core::drawing::primitives_v2::config::TemplateStyle;
 use mlc_core::ids::{BubbleId, MemberSyncOverride, SyncFlags, SyncMemberId};
 use mlc_core::indicator_types::IndicatorGroupConfig;
+use mlc_core::instrument::InstrumentAddress;
 use mlc_core::state::chart_container::ConnectionStatus;
 use mlc_core::state::CommandHistory;
 use mlc_core::state::Timeframe;
@@ -18,11 +19,10 @@ pub struct DataBubble {
     // Owned state shared across all member windows
     pub primitives: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>>,
     pub indicator_configs: Vec<IndicatorGroupConfig>,
-    pub symbol: String,
-    /// Exchange name (e.g. `"binance"`).
-    pub exchange: String,
-    /// Account type short label (e.g. `"S"` for Spot, `"F"` for Futures).
-    pub account_type: String,
+    /// Instrument this bubble tracks (exchange, symbol, account_type).
+    /// Persistence (`DataBubbleSnapshot`) keeps the flat `String` triplet —
+    /// converted at `from_snapshot` / `to_snapshot`.
+    pub address: InstrumentAddress,
     pub timeframe: Timeframe,
 
     /// Which properties are synchronized.
@@ -190,9 +190,11 @@ impl DataBubble {
             color: snap.color,
             primitives: Vec::new(),
             indicator_configs: snap.indicator_configs.clone(),
-            symbol: snap.symbol.clone(),
-            exchange: snap.exchange.clone(),
-            account_type: snap.account_type.clone(),
+            address: InstrumentAddress::new(
+                snap.exchange.clone(),
+                snap.symbol.clone(),
+                snap.account_type.parse().unwrap_or_default(),
+            ),
             timeframe: snap.timeframe.clone(),
             sync_flags: snap.sync_flags.clone(),
             scale_mode: snap.scale_mode,
@@ -341,9 +343,7 @@ impl Clone for DataBubble {
             color: self.color,
             primitives: self.primitives.iter().map(|p| p.clone_box()).collect(),
             indicator_configs: self.indicator_configs.clone(),
-            symbol: self.symbol.clone(),
-            exchange: self.exchange.clone(),
-            account_type: self.account_type.clone(),
+            address: self.address.clone(),
             timeframe: self.timeframe.clone(),
             sync_flags: self.sync_flags.clone(),
             scale_mode: self.scale_mode,
@@ -384,9 +384,7 @@ impl std::fmt::Debug for DataBubble {
             .field("color", &self.color)
             .field("primitives_count", &self.primitives.len())
             .field("indicator_configs", &self.indicator_configs)
-            .field("symbol", &self.symbol)
-            .field("exchange", &self.exchange)
-            .field("account_type", &self.account_type)
+            .field("address", &self.address)
             .field("timeframe", &self.timeframe)
             .field("sync_flags", &self.sync_flags)
             .field("members", &self.members)

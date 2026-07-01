@@ -148,43 +148,25 @@ const ALL_EXCHANGE_IDS: &[digdigdig3::ExchangeId] = &[
 /// Falls back to `AccountType::Spot` for unknown or empty labels so that
 /// existing serialised data without an `account_type` field continues to
 /// work correctly.
+///
+/// Delegates to `mlc_core::instrument::AccountType` — the single canonical
+/// label parser (see `docs/mlc/plans/doctrine-cutover-2026-06-27.md` §1C)
+/// — and converts across the mlc-core/dig3 boundary via
+/// `mlc_backend_data_bridge::account_type_to_dig3`.
 pub fn account_type_from_label(label: &str) -> digdigdig3::AccountType {
-    use digdigdig3::AccountType;
-    match label {
-        "M"        => AccountType::Margin,
-        "F" | "FC" => AccountType::FuturesCross,
-        "FI"       => AccountType::FuturesIsolated,
-        "E"        => AccountType::Earn,
-        "L"        => AccountType::Lending,
-        "O"        => AccountType::Options,
-        "C" | "CV" => AccountType::Convert,
-        _          => AccountType::Spot, // "S" and unknown → Spot (backward compat)
-    }
+    let core_at: mlc_core::instrument::AccountType = label.parse().unwrap_or_default();
+    mlc_backend_data_bridge::account_type_to_dig3(core_at)
 }
 
 /// Convert an [`AccountType`] back to the short label used in persisted
 /// state, bubble metadata, and every map key. Inverse of
 /// [`account_type_from_label`].
 ///
-/// MUST stay in lockstep with `digdigdig3::AccountType::short_label()` —
-/// any divergence means a round-trip `short_label → string → from_label →
-/// to_label` produces a different string on the way back and every key
-/// keyed on `account_type` misses (the `mini_ticker` DashMap, drawing keys,
-/// alert keys, etc.). Notably `Convert` is `"CV"` here to match
-/// `short_label()`; pre-2026-06-24 this fn returned `"C"` which broke that
-/// round-trip.
+/// Delegates to `mlc_core::instrument::AccountType::as_label` — the single
+/// canonical label formatter, converted across the mlc-core/dig3 boundary
+/// via `mlc_backend_data_bridge::account_type_from_dig3`.
 pub fn account_type_to_label(at: digdigdig3::AccountType) -> &'static str {
-    use digdigdig3::AccountType;
-    match at {
-        AccountType::Spot             => "S",
-        AccountType::Margin           => "M",
-        AccountType::FuturesCross     => "F",
-        AccountType::FuturesIsolated  => "FI",
-        AccountType::Earn             => "E",
-        AccountType::Lending          => "L",
-        AccountType::Options          => "O",
-        AccountType::Convert          => "CV",
-    }
+    mlc_backend_data_bridge::account_type_from_dig3(at).as_label()
 }
 
 // =============================================================================
@@ -6578,9 +6560,9 @@ impl ChartApp {
             let mgr = self.core.bubbles();
             let Some(instrument) = mgr.instrument(group_id) else { return };
             (
-                instrument.symbol,
-                instrument.exchange,
-                instrument.account_type,
+                instrument.address.symbol,
+                instrument.address.exchange,
+                instrument.address.account_type.as_label().to_string(),
                 mgr.panel_members(group_id),
             )
         };

@@ -1993,11 +1993,11 @@ fn render_alert_items(
 
             // --- Line 3: symbol:exchange:timeframe ---
             let sym = item.symbol();
-            let symbol_exchange_text = match (item.exchange.is_empty(), item.timeframe.is_empty()) {
+            let symbol_exchange_text = match (item.exchange().is_empty(), item.timeframe.is_empty()) {
                 (true, true) => sym.to_string(),
-                (false, true) => format!("{}:{}", sym, item.exchange),
+                (false, true) => format!("{}:{}", sym, item.exchange()),
                 (true, false) => format!("{}:{}", sym, item.timeframe),
-                (false, false) => format!("{}:{}:{}", sym, item.exchange, item.timeframe),
+                (false, false) => format!("{}:{}:{}", sym, item.exchange(), item.timeframe),
             };
             ctx.set_font("9px sans-serif");
             ctx.fill_text(&symbol_exchange_text, rect.x + item_padding + 12.0, current_y + 37.0);

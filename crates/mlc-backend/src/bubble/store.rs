@@ -4,6 +4,7 @@ use std::sync::{Arc, RwLock};
 use mlc_core::chart::types::price_scale::ScaleMode;
 use mlc_core::ids::{BubbleId, SyncFlags, SyncMemberId};
 use mlc_core::indicator_types::IndicatorGroupConfig;
+use mlc_core::instrument::InstrumentAddress;
 use mlc_core::state::chart_container::{ChartId, ConnectionStatus};
 use mlc_core::state::{CommandHistory, Timeframe};
 
@@ -85,9 +86,7 @@ impl BubbleStore {
             color,
             primitives: Vec::new(),
             indicator_configs: Vec::new(),
-            symbol,
-            exchange: String::new(),
-            account_type: String::new(),
+            address: InstrumentAddress::new(String::new(), symbol, mlc_core::instrument::AccountType::default()),
             timeframe,
             sync_flags: SyncFlags::default(),
             scale_mode: ScaleMode::Auto,
@@ -134,9 +133,7 @@ impl BubbleStore {
             color,
             primitives: Vec::new(),
             indicator_configs: Vec::new(),
-            symbol,
-            exchange: String::new(),
-            account_type: String::new(),
+            address: InstrumentAddress::new(String::new(), symbol, mlc_core::instrument::AccountType::default()),
             timeframe,
             sync_flags: SyncFlags::default(),
             scale_mode: ScaleMode::Auto,
@@ -302,7 +299,7 @@ impl BubbleStore {
     pub fn symbol_for_chart(&self, chart_id: ChartId) -> Option<&str> {
         self.bubble_for_chart(chart_id)
             .and_then(|bid| self.bubble(bid))
-            .map(|b| b.symbol.as_str())
+            .map(|b| b.address.symbol.as_str())
             .filter(|s| !s.is_empty())
     }
 
@@ -317,7 +314,7 @@ impl BubbleStore {
     pub fn exchange_for_chart(&self, chart_id: ChartId) -> Option<&str> {
         self.bubble_for_chart(chart_id)
             .and_then(|bid| self.bubble(bid))
-            .map(|b| b.exchange.as_str())
+            .map(|b| b.address.exchange.as_str())
             .filter(|s| !s.is_empty())
     }
 
@@ -325,7 +322,7 @@ impl BubbleStore {
     pub fn account_type_for_chart(&self, chart_id: ChartId) -> Option<&str> {
         self.bubble_for_chart(chart_id)
             .and_then(|bid| self.bubble(bid))
-            .map(|b| b.account_type.as_str())
+            .map(|b| b.address.account_type.as_label())
             .filter(|s| !s.is_empty())
     }
 
@@ -344,8 +341,9 @@ impl BubbleStore {
         account_type: &str,
         symbol: &str,
     ) -> Option<BubbleId> {
+        let at: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
         self.bubbles.iter().find_map(|(id, b)| {
-            (b.exchange == exchange && b.account_type == account_type && b.symbol == symbol)
+            (b.address.exchange == exchange && b.address.account_type == at && b.address.symbol == symbol)
                 .then_some(*id)
         })
     }
@@ -362,9 +360,10 @@ impl BubbleStore {
         account_type: &str,
         symbol: &str,
     ) -> Vec<BubbleId> {
+        let at: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
         self.bubbles.iter()
             .filter_map(|(id, b)| {
-                (b.exchange == exchange && b.account_type == account_type && b.symbol == symbol)
+                (b.address.exchange == exchange && b.address.account_type == at && b.address.symbol == symbol)
                     .then_some(*id)
             })
             .collect()
@@ -616,7 +615,7 @@ impl BubbleStore {
         let member = SyncMemberId::Chart(chart_id.0);
         let Some(bubble_id) = self.member_to_bubble.get(&member).copied() else { return false };
         let Some(bubble) = self.bubbles.get_mut(&bubble_id) else { return false };
-        bubble.symbol = symbol;
+        bubble.address.symbol = symbol;
         true
     }
 
@@ -640,9 +639,9 @@ impl BubbleStore {
     ) -> bool {
         let Some(bubble_id) = self.member_to_bubble.get(&member).copied() else { return false };
         let Some(bubble) = self.bubbles.get_mut(&bubble_id) else { return false };
-        bubble.symbol = symbol;
-        bubble.exchange = exchange;
-        bubble.account_type = account_type;
+        bubble.address.symbol = symbol;
+        bubble.address.exchange = exchange;
+        bubble.address.account_type = account_type.parse().unwrap_or_default();
         true
     }
 
@@ -652,8 +651,8 @@ impl BubbleStore {
     /// with no chart attached yet.
     pub fn set_bubble_instrument(&mut self, bid: BubbleId, exchange: String, account_type: String) -> bool {
         let Some(bubble) = self.bubbles.get_mut(&bid) else { return false };
-        bubble.exchange = exchange;
-        bubble.account_type = account_type;
+        bubble.address.exchange = exchange;
+        bubble.address.account_type = account_type.parse().unwrap_or_default();
         true
     }
 
@@ -669,9 +668,9 @@ impl BubbleStore {
         timeframe: Timeframe,
     ) -> bool {
         let Some(bubble) = self.bubbles.get_mut(&bid) else { return false };
-        bubble.symbol = symbol;
-        bubble.exchange = exchange;
-        bubble.account_type = account_type;
+        bubble.address.symbol = symbol;
+        bubble.address.exchange = exchange;
+        bubble.address.account_type = account_type.parse().unwrap_or_default();
         bubble.timeframe = timeframe;
         true
     }
@@ -679,7 +678,7 @@ impl BubbleStore {
     /// Update just the exchange field for a bubble known by id directly.
     pub fn set_exchange_for_bid(&mut self, bid: BubbleId, exchange: String) -> bool {
         let Some(bubble) = self.bubbles.get_mut(&bid) else { return false };
-        bubble.exchange = exchange;
+        bubble.address.exchange = exchange;
         true
     }
 
@@ -914,17 +913,17 @@ impl BubbleStore {
 
     /// Symbol of a bubble known by id directly. `None` if missing or empty.
     pub fn symbol(&self, bid: BubbleId) -> Option<&str> {
-        self.bubbles.get(&bid).map(|b| b.symbol.as_str()).filter(|s| !s.is_empty())
+        self.bubbles.get(&bid).map(|b| b.address.symbol.as_str()).filter(|s| !s.is_empty())
     }
 
     /// Exchange of a bubble known by id directly. `None` if missing or empty.
     pub fn exchange(&self, bid: BubbleId) -> Option<&str> {
-        self.bubbles.get(&bid).map(|b| b.exchange.as_str()).filter(|s| !s.is_empty())
+        self.bubbles.get(&bid).map(|b| b.address.exchange.as_str()).filter(|s| !s.is_empty())
     }
 
     /// Account type of a bubble known by id directly. `None` if missing or empty.
     pub fn account_type(&self, bid: BubbleId) -> Option<&str> {
-        self.bubbles.get(&bid).map(|b| b.account_type.as_str()).filter(|s| !s.is_empty())
+        self.bubbles.get(&bid).map(|b| b.address.account_type.as_label()).filter(|s| !s.is_empty())
     }
 
     /// Timeframe of a bubble known by id directly.
@@ -932,14 +931,12 @@ impl BubbleStore {
         self.bubbles.get(&bid).map(|b| &b.timeframe)
     }
 
-    /// Bundled `(symbol, exchange, account_type, timeframe)` read — the shape
-    /// most DTO builders (e.g. the daemon's bubble snapshot route) actually want.
+    /// Bundled instrument-address + timeframe read — the shape most DTO
+    /// builders (e.g. the daemon's bubble snapshot route) actually want.
     pub fn instrument(&self, bid: BubbleId) -> Option<InstrumentKey> {
         let b = self.bubbles.get(&bid)?;
         Some(InstrumentKey {
-            symbol: b.symbol.clone(),
-            exchange: b.exchange.clone(),
-            account_type: b.account_type.clone(),
+            address: b.address.clone(),
             timeframe: b.timeframe.clone(),
         })
     }
@@ -1067,13 +1064,10 @@ impl BubbleStore {
     }
 }
 
-/// Bundled `(symbol, exchange, account_type, timeframe)` read — see
-/// [`BubbleStore::instrument`].
+/// Bundled `{ address, timeframe }` read — see [`BubbleStore::instrument`].
 #[derive(Debug, Clone)]
 pub struct InstrumentKey {
-    pub symbol: String,
-    pub exchange: String,
-    pub account_type: String,
+    pub address: InstrumentAddress,
     pub timeframe: Timeframe,
 }
 

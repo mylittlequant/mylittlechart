@@ -71,9 +71,9 @@ impl DataBubble {
         DataBubbleSnapshot {
             id: self.id.0,
             color: self.color,
-            symbol: self.symbol.clone(),
-            exchange: self.exchange.clone(),
-            account_type: self.account_type.clone(),
+            symbol: self.address.symbol.clone(),
+            exchange: self.address.exchange.clone(),
+            account_type: self.address.account_type.as_label().to_string(),
             timeframe: self.timeframe.clone(),
             sync_flags: self.sync_flags.clone(),
             scale_mode: self.scale_mode,

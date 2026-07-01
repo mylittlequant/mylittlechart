@@ -69,9 +69,9 @@ impl ChartApp {
                 .and_then(|cid| self.panel_app.panel_grid.containers().get(&cid).map(|w| w.auto_bubble_id));
             let cur_bid_dbg = cid_dbg.and_then(|cid| self.bubble_for_chart(cid));
             let auto_snap = auto_bid_dbg
-                .and_then(|bid| self.with_bubble(bid, |b| (b.symbol.clone(), b.exchange.clone(), b.account_type.clone())));
+                .and_then(|bid| self.with_bubble(bid, |b| (b.address.symbol.clone(), b.address.exchange.clone(), b.address.account_type)));
             let cur_snap = cur_bid_dbg
-                .and_then(|bid| self.with_bubble(bid, |b| (b.symbol.clone(), b.exchange.clone(), b.account_type.clone())));
+                .and_then(|bid| self.with_bubble(bid, |b| (b.address.symbol.clone(), b.address.exchange.clone(), b.address.account_type)));
             sglog!(
                 "[perform_desync] ENTER leaf={:?} cid={:?} auto_bid={:?} auto={:?} cur_bid={:?} cur={:?}",
                 leaf_id, cid_dbg, auto_bid_dbg, auto_snap, cur_bid_dbg, cur_snap
@@ -265,9 +265,9 @@ impl ChartApp {
                 .and_then(|cid| self.panel_app.panel_grid.containers().get(&cid).map(|w| w.auto_bubble_id));
             let cur_bid_dbg = cid_dbg.and_then(|cid| self.bubble_for_chart(cid));
             let auto_snap = auto_bid_dbg
-                .and_then(|bid| self.with_bubble(bid, |b| (b.symbol.clone(), b.exchange.clone(), b.account_type.clone())));
+                .and_then(|bid| self.with_bubble(bid, |b| (b.address.symbol.clone(), b.address.exchange.clone(), b.address.account_type)));
             let cur_snap = cur_bid_dbg
-                .and_then(|bid| self.with_bubble(bid, |b| (b.symbol.clone(), b.exchange.clone(), b.account_type.clone())));
+                .and_then(|bid| self.with_bubble(bid, |b| (b.address.symbol.clone(), b.address.exchange.clone(), b.address.account_type)));
             sglog!(
                 "[sync_join_color_group] ENTER leaf={:?} cid={:?} auto_bid={:?} auto={:?} cur_bid={:?} cur={:?} color=[{:.2},{:.2},{:.2},{:.2}]",
                 joining_leaf, cid_dbg, auto_bid_dbg, auto_snap, cur_bid_dbg, cur_snap,
@@ -308,7 +308,7 @@ impl ChartApp {
                     .map(|w| w.auto_bubble_id);
                 let auto_view: Option<(String, String, String, mlc_core::state::Timeframe)> = auto_bid
                     .and_then(|bid| self.with_bubble(bid, |b| {
-                        (b.symbol.clone(), b.exchange.clone(), b.account_type.clone(), b.timeframe.clone())
+                        (b.address.symbol.clone(), b.address.exchange.clone(), b.address.account_type.as_label().to_string(), b.timeframe.clone())
                     }));
                 let (sym, exch_join, at_join, tf) = if let Some((s, e, a, t)) = auto_view {
                     (s, e, a, t)
@@ -1109,8 +1109,8 @@ impl ChartApp {
             // loop above for why this matters.
             if created_fresh_group {
                 self.core.bubbles_mut().with_bubble_mut(group_id, |bubble| {
-                    bubble.exchange = source_exch.clone();
-                    bubble.account_type = source_at.clone();
+                    bubble.address.exchange = source_exch.clone();
+                    bubble.address.account_type = source_at.parse().unwrap_or_default();
                     // Phase X0 / C5c regression fix: seed bars from the source
                     // bubble snapshot taken at the top of do_split.  Without
                     // this, every new sibling chart renders blank until the
