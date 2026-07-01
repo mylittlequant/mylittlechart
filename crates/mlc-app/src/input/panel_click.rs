@@ -170,10 +170,10 @@ impl ChartApp {
                         ];
                         let mut symbols = base;
                         symbols.sort_by(|a, b| {
-                            let a_idx = list.get_color_flag(&a.symbol, &a.exchange, a.account_type.as_label())
+                            let a_idx = list.get_color_flag(a)
                                 .and_then(|f| color_order.iter().position(|c| *c == f))
                                 .unwrap_or(99);
-                            let b_idx = list.get_color_flag(&b.symbol, &b.exchange, b.account_type.as_label())
+                            let b_idx = list.get_color_flag(b)
                                 .and_then(|f| color_order.iter().position(|c| *c == f))
                                 .unwrap_or(99);
                             if mode == 1 {
@@ -254,15 +254,13 @@ impl ChartApp {
                     if let (Ok(row_idx), Ok(color_idx)) = (parts[0].parse::<usize>(), parts[1].parse::<usize>()) {
                         let colors: &[&str] = &["#ef5350", "#f59e0b", "#22c55e", "#3b82f6", "#a855f7", "#ec4899", "#6b7280", ""];
                         if let Some(item) = self.sidebar_state.watchlist_items.get(row_idx) {
-                            let symbol = item.symbol.clone();
-                            let exchange = item.exchange.clone();
-                            let account_type = item.account_type.clone();
+                            let address = item.address.clone();
                             let color_set: Option<String> = {
                                 let active_list_id = self.watchlist_ui.active_list_id;
                                 let mut wl = self.core.watchlists_mut();
                                 if wl.find(active_list_id).is_some() {
                                     let color = colors.get(color_idx).copied().unwrap_or_default();
-                                    wl.set_color_flag(active_list_id, &symbol, &exchange, &account_type, color);
+                                    wl.set_color_flag(active_list_id, &address, color);
                                     Some(color.to_string())
                                 } else {
                                     None
@@ -270,10 +268,15 @@ impl ChartApp {
                             };
                             if let Some(color) = color_set {
                                 let color_opt = if color.is_empty() { None } else { Some(color.clone()) };
-                                self.watchlist_actions.push(crate::WatchlistAction::SetColorFlag { symbol: symbol.clone(), exchange: exchange.clone(), account_type: account_type.clone(), color: color_opt });
+                                self.watchlist_actions.push(crate::WatchlistAction::SetColorFlag {
+                                    symbol: address.symbol.clone(),
+                                    exchange: address.exchange.clone(),
+                                    account_type: address.account_type.as_label().to_string(),
+                                    color: color_opt,
+                                });
                                 self.watchlists_dirty = true;
                                 self.persist_watchlists();
-                                eprintln!("[Sidebar] Color flag set: {}:{}:{} = {:?}", symbol, exchange, account_type, color);
+                                eprintln!("[Sidebar] Color flag set: {} = {:?}", address.routing_key(), color);
                             }
                         }
                         self.sidebar_state.watchlist_color_picker_open = None;

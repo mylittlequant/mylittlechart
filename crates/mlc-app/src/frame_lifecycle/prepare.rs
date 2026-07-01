@@ -758,27 +758,25 @@ impl ChartApp {
                 use mlc_app_sidebar_content::types::WatchlistItem;
 
                 self.sidebar_state.watchlist_items.clear();
-                let watchlist_entries: Vec<(String, String, String)> = self
+                let watchlist_entries: Vec<mlc_core::InstrumentAddress> = self
                     .core
                     .watchlists()
                     .find(self.watchlist_ui.active_list_id)
-                    .map(|list| {
-                        list.all_symbols()
-                            .iter()
-                            .map(|ws| (ws.symbol.clone(), ws.exchange.clone(), ws.account_type.as_label().to_string()))
-                            .collect()
-                    })
+                    .map(|list| list.all_symbols().into_iter().cloned().collect())
                     .unwrap_or_default();
 
-                for (sym_name, sym_exchange, sym_account_type) in &watchlist_entries {
+                for address in &watchlist_entries {
+                    let sym_name = address.symbol.as_str();
+                    let sym_exchange = address.exchange.as_str();
+                    let sym_account_type = address.account_type.as_label();
                     let price_data = self.panel_app.panel_grid.containers().iter()
                         .find(|(cid, _)| {
                             self.symbol_for_chart(**cid)
-                                .map_or(false, |s| &s == sym_name)
+                                .map_or(false, |s| s == sym_name)
                             && self.exchange_for_chart(**cid)
-                                .map_or(false, |e| &e == sym_exchange)
+                                .map_or(false, |e| e == sym_exchange)
                             && self.account_type_for_chart(**cid)
-                                .map_or(false, |a| &a == sym_account_type)
+                                .map_or(false, |a| a == sym_account_type)
                         })
                         .and_then(|(_, _w)| None::<&mlc_core::Bar>)
                         .map(|bar| (bar.close, bar.open, bar.high, bar.low, bar.volume));
@@ -790,36 +788,39 @@ impl ChartApp {
                             0.0
                         };
                         self.sidebar_state.watchlist_items.push(WatchlistItem {
-                            symbol: sym_name.clone(),
-                            exchange: sym_exchange.clone(),
+                            symbol: sym_name.to_string(),
+                            exchange: sym_exchange.to_string(),
                             last_price: price,
                             change_percent: change_pct,
                             high_24h: high,
                             low_24h: low,
                             volume_24h: volume,
-                            account_type: sym_account_type.clone(),
+                            account_type: sym_account_type.to_string(),
+                            address: address.clone(),
                         });
                     } else if let Some(ticker) = self.core.mini_ticker.get(&format!("{}:{}:{}", sym_name, sym_exchange, sym_account_type)) {
                         self.sidebar_state.watchlist_items.push(WatchlistItem {
-                            symbol: sym_name.clone(),
-                            exchange: sym_exchange.clone(),
+                            symbol: sym_name.to_string(),
+                            exchange: sym_exchange.to_string(),
                             last_price: ticker.last_price,
                             change_percent: ticker.price_change_percent,
                             high_24h: ticker.high_price,
                             low_24h: ticker.low_price,
                             volume_24h: ticker.volume,
-                            account_type: sym_account_type.clone(),
+                            account_type: sym_account_type.to_string(),
+                            address: address.clone(),
                         });
                     } else {
                         self.sidebar_state.watchlist_items.push(WatchlistItem {
-                            symbol: sym_name.clone(),
-                            exchange: sym_exchange.clone(),
+                            symbol: sym_name.to_string(),
+                            exchange: sym_exchange.to_string(),
                             last_price: 0.0,
                             change_percent: 0.0,
                             high_24h: 0.0,
                             low_24h: 0.0,
                             volume_24h: 0.0,
-                            account_type: sym_account_type.clone(),
+                            account_type: sym_account_type.to_string(),
+                            address: address.clone(),
                         });
                     }
                 }

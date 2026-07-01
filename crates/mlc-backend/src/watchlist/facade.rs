@@ -138,10 +138,10 @@ impl<'a> WatchlistsMut<'a> {
         }
     }
 
-    /// Set a color flag for a symbol in the given list.
-    pub fn set_color_flag(&mut self, list_id: u64, symbol: &str, exchange: &str, account_type: &str, color: &str) {
+    /// Set a color flag for an instrument in the given list.
+    pub fn set_color_flag(&mut self, list_id: u64, address: &mlc_core::InstrumentAddress, color: &str) {
         if let Some(list) = self.mgr.find_mut(list_id) {
-            list.set_color_flag(symbol, exchange, account_type, color);
+            list.set_color_flag(address, color);
         }
     }
 

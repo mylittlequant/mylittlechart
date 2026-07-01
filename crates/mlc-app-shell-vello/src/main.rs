@@ -2259,7 +2259,8 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     mlc_app::WatchlistAction::SetColorFlag { symbol, exchange, account_type, color } => {
                         if let Some(list) = self.app_state.watchlist_manager.find_mut(active_list_id) {
                             let color_str = color.as_deref().unwrap_or("");
-                            list.set_color_flag(&symbol, &exchange, &account_type, color_str);
+                            let address = mlc_core::InstrumentAddress::new(exchange, symbol, account_type.parse().unwrap_or_default());
+                            list.set_color_flag(&address, color_str);
                         }
                     }
                     mlc_app::WatchlistAction::MoveToGroup { symbol, exchange, account_type, group_name } => {

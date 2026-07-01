@@ -267,7 +267,7 @@ pub fn render_right_sidebar(
     panel_overlay_info_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<(String, String, String)>,
     panel_col_visibility_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<Vec<bool>>,
     watchlist_column_config: &WatchlistColumnConfig,
-    watchlist_color_flag_fn: &dyn Fn(&str, &str, &str) -> Option<String>,
+    watchlist_color_flag_fn: &dyn Fn(&mlc_core::InstrumentAddress) -> Option<String>,
 ) -> RightSidebarResult {
     let panel = sidebar_state.right_panel;
 
@@ -1192,7 +1192,7 @@ fn render_watchlist_items(
     result: &mut RightSidebarResult,
     input_coordinator: &mut InputCoordinator,
     watchlist_column_config: &WatchlistColumnConfig,
-    watchlist_color_flag_fn: &dyn Fn(&str, &str, &str) -> Option<String>,
+    watchlist_color_flag_fn: &dyn Fn(&mlc_core::InstrumentAddress) -> Option<String>,
 ) -> f64 {
     let _ = scrollbar_width;
 
@@ -1441,8 +1441,7 @@ fn render_watchlist_items(
         }
 
         // Color flag — 10px wide rect at the left edge, full row height.
-        let color_flag_owned = watchlist_color_flag_fn(&item.symbol, &item.exchange, &item.account_type)
-            .unwrap_or_default();
+        let color_flag_owned = watchlist_color_flag_fn(&item.address).unwrap_or_default();
         let color_flag = color_flag_owned.as_str();
         // Flag click zone (first 10 px of row) — register BEFORE drawing so
         // is_hovered works on the same frame.

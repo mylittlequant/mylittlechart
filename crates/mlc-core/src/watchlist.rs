@@ -94,12 +94,26 @@ pub struct WatchlistList {
 }
 
 impl WatchlistList {
-    /// Set a color flag for a symbol on a specific exchange and account type.
+    /// Color-flag map key for `address`.
+    ///
+    /// NOT `InstrumentAddress::routing_key()` — that format is
+    /// `"exchange:symbol:account_type"`, while `color_flags` has always
+    /// persisted `"symbol:exchange:account_type"` (see the pre-cutover
+    /// `WatchlistList::set_color_flag`/`get_color_flag`, which built this
+    /// exact string from three loose `&str` params). Changing the order
+    /// would silently orphan every color flag already saved in
+    /// `watchlists.json`. Kept as its own private helper — the ONLY place
+    /// this string is built — so the format is centralized even though it
+    /// intentionally diverges from `routing_key()`.
+    fn color_flag_key(address: &InstrumentAddress) -> String {
+        format!("{}:{}:{}", address.symbol, address.exchange, address.account_type)
+    }
+
+    /// Set a color flag for an instrument.
     ///
     /// Passing an empty `color` removes the flag.
-    /// Key format: `"symbol:exchange:account_type"` (e.g. `"BTCUSDT:Binance:FC"`).
-    pub fn set_color_flag(&mut self, symbol: &str, exchange: &str, account_type: &str, color: &str) {
-        let key = format!("{}:{}:{}", symbol, exchange, account_type);
+    pub fn set_color_flag(&mut self, address: &InstrumentAddress, color: &str) {
+        let key = Self::color_flag_key(address);
         if color.is_empty() {
             self.color_flags.remove(&key);
         } else {
@@ -107,9 +121,9 @@ impl WatchlistList {
         }
     }
 
-    /// Get the color flag for a symbol on a specific exchange and account type, or `None` if none is set.
-    pub fn get_color_flag(&self, symbol: &str, exchange: &str, account_type: &str) -> Option<&str> {
-        let key = format!("{}:{}:{}", symbol, exchange, account_type);
+    /// Get the color flag for an instrument, or `None` if none is set.
+    pub fn get_color_flag(&self, address: &InstrumentAddress) -> Option<&str> {
+        let key = Self::color_flag_key(address);
         self.color_flags.get(&key).map(|s| s.as_str())
     }
 

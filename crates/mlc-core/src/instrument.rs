@@ -121,7 +121,7 @@ impl<'de> Deserialize<'de> for AccountType {
 /// Canonical `(exchange, symbol, account_type)` identity of a tradable
 /// instrument. Timeframe is NOT part of the address — series consumers that
 /// need TF compose `{ address, timeframe }` at their own layer.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct InstrumentAddress {
     /// Exchange name (e.g. `"binance"`).
     ///

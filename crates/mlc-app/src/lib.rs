@@ -2132,7 +2132,8 @@ impl ChartApp {
                 }
                 WatchlistAction::SetColorFlag { symbol, exchange, account_type, color } => {
                     let color_str = color.as_deref().unwrap_or("");
-                    self.core.watchlists_mut().set_color_flag(active_list_id, &symbol, &exchange, &account_type, color_str);
+                    let address = mlc_core::InstrumentAddress::new(exchange, symbol, account_type.parse().unwrap_or_default());
+                    self.core.watchlists_mut().set_color_flag(active_list_id, &address, color_str);
                 }
                 WatchlistAction::MoveToGroup { symbol, exchange, account_type, group_name } => {
                     let group_id = self.core.watchlists().find(active_list_id)
@@ -5116,14 +5117,14 @@ impl ChartApp {
                 (colors, flags)
             };
 
-            // Pre-compute watchlist column config + color-flag map before
+            // Pre-compute watchlist column config + a clone of the active
+            // list (for color-flag lookups by InstrumentAddress) before
             // render_right_sidebar mutably borrows self.sidebar_state (same
             // E0502 rationale as sidebar_panel_color_map above).
             let watchlist_col_cfg = self.watchlist_ui.column_config(self.watchlist_ui.active_list_id);
-            let watchlist_color_flags: std::collections::HashMap<String, String> = self.core.watchlists()
+            let watchlist_active_list: Option<mlc_core::WatchlistList> = self.core.watchlists()
                 .find(self.watchlist_ui.active_list_id)
-                .map(|l| l.color_flags.clone())
-                .unwrap_or_default();
+                .cloned();
 
             // Draw sidebar and register hit zones every frame.
             // When the cached sidebar_scene is composited on top these pixels
@@ -5265,9 +5266,10 @@ impl ChartApp {
                     }
                 },
                 &watchlist_col_cfg,
-                &|symbol: &str, exchange: &str, account_type: &str| -> Option<String> {
-                    let key = format!("{}:{}:{}", symbol, exchange, account_type);
-                    watchlist_color_flags.get(&key).cloned()
+                &|address: &mlc_core::InstrumentAddress| -> Option<String> {
+                    watchlist_active_list.as_ref()
+                        .and_then(|l| l.get_color_flag(address))
+                        .map(|s| s.to_string())
                 },
             );
 
@@ -5651,13 +5653,13 @@ impl ChartApp {
             (colors, flags)
         };
 
-        // Pre-compute watchlist column config + color-flag map before
+        // Pre-compute watchlist column config + a clone of the active list
+        // (for color-flag lookups by InstrumentAddress) before
         // render_right_sidebar mut-borrows self.sidebar_state.
         let watchlist_col_cfg_main = self.watchlist_ui.column_config(self.watchlist_ui.active_list_id);
-        let watchlist_color_flags_main: std::collections::HashMap<String, String> = self.core.watchlists()
+        let watchlist_active_list_main: Option<mlc_core::WatchlistList> = self.core.watchlists()
             .find(self.watchlist_ui.active_list_id)
-            .map(|l| l.color_flags.clone())
-            .unwrap_or_default();
+            .cloned();
 
         let panels_store = &self.panels_store;
         let sidebar_result = mlc_app_sidebar_content::render::render_right_sidebar(
@@ -5794,9 +5796,10 @@ impl ChartApp {
                 }
             },
             &watchlist_col_cfg_main,
-            &|symbol: &str, exchange: &str, account_type: &str| -> Option<String> {
-                let key = format!("{}:{}:{}", symbol, exchange, account_type);
-                watchlist_color_flags_main.get(&key).cloned()
+            &|address: &mlc_core::InstrumentAddress| -> Option<String> {
+                watchlist_active_list_main.as_ref()
+                    .and_then(|l| l.get_color_flag(address))
+                    .map(|s| s.to_string())
             },
         );
 
@@ -6284,7 +6287,7 @@ impl ChartApp {
                 let color_flags: Vec<String> = self.sidebar_state.watchlist_items.iter()
                     .map(|item| {
                         wl_guard.find(active_list_id)
-                            .and_then(|l| l.get_color_flag(&item.symbol, &item.exchange, &item.account_type))
+                            .and_then(|l| l.get_color_flag(&item.address))
                             .unwrap_or_default()
                             .to_string()
                     })

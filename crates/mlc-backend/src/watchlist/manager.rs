@@ -182,7 +182,8 @@ mod tests {
         let mut mgr = WatchlistManager::default();
         let id = mgr.lists[0].id;
         mgr.add_symbol(id, "BTCUSDT".to_string(), "Binance".to_string(), "S".to_string());
-        mgr.find_mut(id).unwrap().set_color_flag("BTCUSDT", "Binance", "S", "#ff0000");
-        assert_eq!(mgr.find(id).unwrap().get_color_flag("BTCUSDT", "Binance", "S"), Some("#ff0000"));
+        let address = InstrumentAddress::new("Binance", "BTCUSDT", AccountType::Spot);
+        mgr.find_mut(id).unwrap().set_color_flag(&address, "#ff0000");
+        assert_eq!(mgr.find(id).unwrap().get_color_flag(&address), Some("#ff0000"));
     }
 }

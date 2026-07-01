@@ -286,6 +286,14 @@ pub struct WatchlistItem {
     /// Uses `String` to avoid a dependency on digdigdig3 types.
     #[serde(default)]
     pub account_type: String,
+    /// Canonical instrument identity — the single source of truth for
+    /// color-flag lookups and any other (exchange, symbol, account_type)
+    /// keyed operation. `symbol`/`exchange`/`account_type` above stay as
+    /// separate fields for display strings (row text, truncation, sort
+    /// keys); this field exists so call sites never need to re-parse those
+    /// display strings back into a triplet.
+    #[serde(default)]
+    pub address: mlc_core::InstrumentAddress,
 }
 
 impl WatchlistItem {
