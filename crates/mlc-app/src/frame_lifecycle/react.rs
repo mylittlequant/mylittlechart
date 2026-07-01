@@ -823,7 +823,7 @@ impl ChartApp {
                 if let Some(wl) = wl_guard.active() {
                     for ws in wl.all_symbols() {
                         if ws.exchange == exchange_str {
-                            let ws_at = account_type_from_label(&ws.account_type);
+                            let ws_at = mlc_backend_data_bridge::account_type_to_dig3(ws.account_type);
                             bridge.subscribe_mini_ticker(*exchange_id, &ws.symbol, ws_at);
                         }
                     }

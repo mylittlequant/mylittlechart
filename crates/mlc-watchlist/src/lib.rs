@@ -5,6 +5,8 @@
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
+use mlc_core::instrument::InstrumentAddress;
+
 // =============================================================================
 // WatchlistColumnConfig
 // =============================================================================
@@ -66,77 +68,32 @@ impl Default for WatchlistColumnConfig {
 }
 
 // =============================================================================
-// WatchlistSymbol
+// Serde migration helpers
 // =============================================================================
 
-/// A symbol entry with its exchange affiliation.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct WatchlistSymbol {
-    pub symbol: String,
-    /// Exchange identifier string (e.g. "binance", "okx").
-    /// Defaults to "binance" for migration of old watchlists.
-    #[serde(default = "default_exchange")]
-    pub exchange: String,
-    /// Account type short label: `"S"` (Spot), `"M"` (Margin), `"F"`
-    /// (FuturesCross), `"FI"` (FuturesIsolated), `"E"` (Earn), `"L"`
-    /// (Lending), `"O"` (Options), `"CV"` (Convert).
-    ///
-    /// MUST match the same short-label form `mini_ticker` DashMap keys
-    /// and bubble metadata use; otherwise the watchlist render reads
-    /// `"BTCUSDT:binance:"` while the writer stored `"BTCUSDT:binance:S"`
-    /// and every row stays at 0.00. Uses `String` to avoid a
-    /// dependency on digdigdig3 types.
-    ///
-    /// Defaults to `"S"` on deserialize so old persisted entries that
-    /// were saved with the previous empty-string default (constructor
-    /// pre-2026-06-24) come back as Spot instead of empty.
-    #[serde(default = "default_spot_account_type")]
-    pub account_type: String,
-}
-
+/// Default exchange for migration of old watchlists (plain-string entries
+/// predating the exchange field).
 fn default_exchange() -> String {
     "binance".to_string()
 }
 
-fn default_spot_account_type() -> String {
-    "S".to_string()
+/// Constructs an [`InstrumentAddress`] for a bare-string legacy watchlist
+/// entry (pre-exchange-field format). Account type defaults to Spot.
+fn address_from_plain_symbol(symbol: String) -> InstrumentAddress {
+    InstrumentAddress::new(default_exchange(), symbol, mlc_core::instrument::AccountType::default())
 }
 
-impl WatchlistSymbol {
-    /// Construct a watchlist symbol.
-    ///
-    /// `account_type` MUST be the short label form (`"S"`, `"M"`, `"F"`,
-    /// `"FI"`, `"E"`, `"L"`, `"O"`, `"CV"`) — the same form `mini_ticker`
-    /// DashMap keys, drawing keys, alert keys and bubble metadata use.
-    /// Passing the long form (`"Spot"`, `"spot"`, `"Margin"`, ...) or
-    /// the empty string makes every cross-key lookup miss silently —
-    /// fresh-install watchlists used to show 0.0 for every row because
-    /// the previous default-arg constructor stamped the field with
-    /// `String::new()`.
-    pub fn new(symbol: String, exchange: String, account_type: String) -> Self {
-        debug_assert!(
-            !account_type.is_empty(),
-            "WatchlistSymbol::new: account_type must be a short label (e.g. \"S\"), got empty string",
-        );
-        Self { symbol, exchange, account_type }
-    }
-}
-
-// =============================================================================
-// Serde migration helpers
-// =============================================================================
-
-/// Deserializes either a plain string list or a WatchlistSymbol list.
+/// Deserializes either a plain string list or an `InstrumentAddress` list.
 /// Old format: ["BTCUSDT", "ADAUSDT"]
-/// New format: [{"symbol": "BTCUSDT", "exchange": "binance"}, ...]
-fn deserialize_symbols<'de, D>(deserializer: D) -> Result<Vec<WatchlistSymbol>, D::Error>
+/// New format: [{"symbol": "BTCUSDT", "exchange": "binance", "account_type": "S"}, ...]
+fn deserialize_symbols<'de, D>(deserializer: D) -> Result<Vec<InstrumentAddress>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     #[derive(Deserialize)]
     #[serde(untagged)]
     enum SymbolOrString {
-        Symbol(WatchlistSymbol),
+        Symbol(InstrumentAddress),
         Plain(String),
     }
 
@@ -144,23 +101,23 @@ where
     Ok(items
         .into_iter()
         .map(|item| match item {
-            SymbolOrString::Symbol(ws) => ws,
-            SymbolOrString::Plain(s) => WatchlistSymbol::new(s, "binance".to_string(), "S".to_string()),
+            SymbolOrString::Symbol(addr) => addr,
+            SymbolOrString::Plain(s) => address_from_plain_symbol(s),
         })
         .collect())
 }
 
-/// Deserializes an optional plain string list or WatchlistSymbol list.
+/// Deserializes an optional plain string list or `InstrumentAddress` list.
 fn deserialize_symbols_opt<'de, D>(
     deserializer: D,
-) -> Result<Option<Vec<WatchlistSymbol>>, D::Error>
+) -> Result<Option<Vec<InstrumentAddress>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     #[derive(Deserialize)]
     #[serde(untagged)]
     enum SymbolOrString {
-        Symbol(WatchlistSymbol),
+        Symbol(InstrumentAddress),
         Plain(String),
     }
 
@@ -169,8 +126,8 @@ where
         items
             .into_iter()
             .map(|item| match item {
-                SymbolOrString::Symbol(ws) => ws,
-                SymbolOrString::Plain(s) => WatchlistSymbol::new(s, "binance".to_string(), "S".to_string()),
+                SymbolOrString::Symbol(addr) => addr,
+                SymbolOrString::Plain(s) => address_from_plain_symbol(s),
             })
             .collect()
     }))
@@ -187,7 +144,7 @@ pub struct WatchlistGroup {
     pub name: String,
     pub color: String,
     #[serde(deserialize_with = "deserialize_symbols")]
-    pub symbols: Vec<WatchlistSymbol>,
+    pub symbols: Vec<InstrumentAddress>,
     pub collapsed: bool,
 }
 
@@ -204,7 +161,7 @@ pub struct WatchlistList {
     pub groups: Vec<WatchlistGroup>,
     /// Symbols not assigned to any group.
     #[serde(deserialize_with = "deserialize_symbols")]
-    pub ungrouped: Vec<WatchlistSymbol>,
+    pub ungrouped: Vec<InstrumentAddress>,
     pub column_config: WatchlistColumnConfig,
     /// Per-symbol color flag. Key = symbol name, value = CSS hex color.
     ///
@@ -217,7 +174,7 @@ pub struct WatchlistList {
     /// Set when the user first activates a sort mode; cleared when the user
     /// resets to mode 0 or manually reorders symbols via drag.
     #[serde(default, deserialize_with = "deserialize_symbols_opt")]
-    pub order_snapshot: Option<Vec<WatchlistSymbol>>,
+    pub order_snapshot: Option<Vec<InstrumentAddress>>,
 }
 
 impl WatchlistList {
@@ -241,7 +198,7 @@ impl WatchlistList {
     }
 
     /// All symbols in this list (groups + ungrouped), preserving order.
-    pub fn all_symbols(&self) -> Vec<&WatchlistSymbol> {
+    pub fn all_symbols(&self) -> Vec<&InstrumentAddress> {
         let mut out = Vec::new();
         for g in &self.groups {
             for s in &g.symbols {
@@ -261,8 +218,9 @@ impl WatchlistList {
 
     /// Check if a (symbol, exchange, account_type) triple is in this list.
     pub fn contains_with_type(&self, symbol: &str, exchange: &str, account_type: &str) -> bool {
-        self.ungrouped.iter().any(|s| s.symbol == symbol && s.exchange == exchange && s.account_type == account_type)
-            || self.groups.iter().any(|g| g.symbols.iter().any(|s| s.symbol == symbol && s.exchange == exchange && s.account_type == account_type))
+        let at: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
+        self.ungrouped.iter().any(|s| s.symbol == symbol && s.exchange == exchange && s.account_type == at)
+            || self.groups.iter().any(|g| g.symbols.iter().any(|s| s.symbol == symbol && s.exchange == exchange && s.account_type == at))
     }
 
     /// Check if a symbol (any exchange) is in this list.
@@ -279,15 +237,17 @@ impl WatchlistList {
     /// Add a symbol with an explicit account_type. No-op if the same (symbol, exchange, account_type) triple already present.
     pub fn add_symbol_with_type(&mut self, symbol: String, exchange: String, account_type: String) {
         if !self.contains_with_type(&symbol, &exchange, &account_type) {
-            self.ungrouped.push(WatchlistSymbol { symbol, exchange, account_type });
+            let at = account_type.parse().unwrap_or_default();
+            self.ungrouped.push(InstrumentAddress::new(exchange, symbol, at));
         }
     }
 
     /// Remove a specific (symbol, exchange, account_type) triple from everywhere in this list.
     pub fn remove_symbol(&mut self, symbol: &str, exchange: &str, account_type: &str) {
-        self.ungrouped.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == account_type));
+        let at: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
+        self.ungrouped.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == at));
         for g in &mut self.groups {
-            g.symbols.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == account_type));
+            g.symbols.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == at));
         }
     }
 
@@ -295,13 +255,14 @@ impl WatchlistList {
     ///
     /// Matches on the full (symbol, exchange, account_type) triple.
     pub fn move_to_group(&mut self, symbol: &str, exchange: &str, account_type: &str, group_id: u64) {
-        // Find and remove from current location, keeping the WatchlistSymbol.
-        let mut found: Option<WatchlistSymbol> = None;
-        if let Some(pos) = self.ungrouped.iter().position(|s| s.symbol == symbol && s.exchange == exchange && s.account_type == account_type) {
+        let at: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
+        // Find and remove from current location, keeping the address.
+        let mut found: Option<InstrumentAddress> = None;
+        if let Some(pos) = self.ungrouped.iter().position(|s| s.symbol == symbol && s.exchange == exchange && s.account_type == at) {
             found = Some(self.ungrouped.remove(pos));
         } else {
             for g in &mut self.groups {
-                if let Some(pos) = g.symbols.iter().position(|s| s.symbol == symbol && s.exchange == exchange && s.account_type == account_type) {
+                if let Some(pos) = g.symbols.iter().position(|s| s.symbol == symbol && s.exchange == exchange && s.account_type == at) {
                     found = Some(g.symbols.remove(pos));
                     break;
                 }
@@ -350,7 +311,7 @@ pub struct WatchlistManager {
 
 impl WatchlistManager {
     /// Create with a single default list containing the given symbols.
-    pub fn new(default_symbols: Vec<WatchlistSymbol>) -> Self {
+    pub fn new(default_symbols: Vec<InstrumentAddress>) -> Self {
         let list = WatchlistList {
             id: 1,
             name: "Watchlist 1".to_string(), groups: Vec::new(),
@@ -504,8 +465,8 @@ mod tests {
 
     #[test]
     fn test_new_manager_has_one_list() {
-        let mgr = WatchlistManager::new(vec![WatchlistSymbol::new(
-            "BTCUSDT".to_string(), "Binance".to_string(), "S".to_string(),
+        let mgr = WatchlistManager::new(vec![InstrumentAddress::new(
+            "Binance", "BTCUSDT", mlc_core::instrument::AccountType::Spot,
         )]);
         assert_eq!(mgr.lists.len(), 1);
         assert_eq!(mgr.active_list_id, 1);
@@ -580,13 +541,13 @@ mod tests {
             assert!(list.ungrouped.is_empty());
             assert_eq!(
                 list.groups[0].symbols,
-                vec![WatchlistSymbol::new("BTC".to_string(), "Binance".to_string(), "S".to_string())]
+                vec![InstrumentAddress::new("Binance", "BTC", mlc_core::instrument::AccountType::Spot)]
             );
             list.remove_group(10);
             assert!(list.groups.is_empty());
             assert_eq!(
                 list.ungrouped,
-                vec![WatchlistSymbol::new("BTC".to_string(), "Binance".to_string(), "S".to_string())]
+                vec![InstrumentAddress::new("Binance", "BTC", mlc_core::instrument::AccountType::Spot)]
             );
         }
     }
@@ -597,7 +558,7 @@ mod tests {
             id: 1,
             name: "Test".to_string(),
             groups: Vec::new(),
-            ungrouped: vec![WatchlistSymbol::new("AAPL".to_string(), "Binance".to_string(), "S".to_string())],
+            ungrouped: vec![InstrumentAddress::new("Binance", "AAPL", mlc_core::instrument::AccountType::Spot)],
             column_config: WatchlistColumnConfig::default(),
             color_flags: HashMap::new(),
             order_snapshot: None,
@@ -605,7 +566,7 @@ mod tests {
         list.add_group(1, "Grp".to_string(), "#fff".to_string());
         list.groups[0]
             .symbols
-            .push(WatchlistSymbol::new("BTC".to_string(), "Binance".to_string(), "S".to_string()));
+            .push(InstrumentAddress::new("Binance", "BTC", mlc_core::instrument::AccountType::Spot));
         let syms = list.all_symbols();
         assert_eq!(syms[0].symbol, "BTC");
         assert_eq!(syms[1].symbol, "AAPL");
@@ -681,5 +642,67 @@ mod tests {
         let list: WatchlistList = serde_json::from_str(json).unwrap();
         assert_eq!(list.ungrouped[0].symbol, "BTCUSDT");
         assert_eq!(list.ungrouped[0].exchange, "OKX");
+    }
+}
+
+// =============================================================================
+// Tests — JSON persistence compatibility gate (WatchlistSymbol -> InstrumentAddress)
+// =============================================================================
+
+#[cfg(test)]
+mod json_compat_tests {
+    use super::*;
+
+    /// Literal `watchlists.json` fragment produced by the pre-cutover
+    /// `WatchlistSymbol` entry (flat `symbol` / `exchange` / `account_type:
+    /// String` fields) — captured from the struct definition prior to this
+    /// commit. Doctrine gate: this MUST still deserialize cleanly into
+    /// `InstrumentAddress` entries and re-serialize to the same flat shape.
+    const LEGACY_ENTRY_JSON: &str = r#"{"symbol": "BTCUSDT", "exchange": "Binance", "account_type": "FI"}"#;
+
+    #[test]
+    fn legacy_entry_json_deserializes_into_instrument_address() {
+        let addr: InstrumentAddress = serde_json::from_str(LEGACY_ENTRY_JSON)
+            .expect("legacy flat symbol/exchange/account_type entry must still deserialize");
+        assert_eq!(addr.symbol, "BTCUSDT");
+        assert_eq!(addr.exchange, "Binance");
+        assert_eq!(addr.account_type, mlc_core::instrument::AccountType::FuturesIsolated);
+    }
+
+    #[test]
+    fn entry_roundtrip_preserves_flat_field_shape() {
+        let addr: InstrumentAddress = serde_json::from_str(LEGACY_ENTRY_JSON).expect("must parse");
+        let reserialized = serde_json::to_string(&addr).expect("must re-serialize");
+        let value: serde_json::Value = serde_json::from_str(&reserialized).expect("must be valid JSON");
+        assert_eq!(value.get("symbol").and_then(|v| v.as_str()), Some("BTCUSDT"));
+        assert_eq!(value.get("exchange").and_then(|v| v.as_str()), Some("Binance"));
+        assert_eq!(value.get("account_type").and_then(|v| v.as_str()), Some("FI"));
+    }
+
+    #[test]
+    fn full_list_with_legacy_entries_roundtrips() {
+        let json = r##"{
+            "id": 1,
+            "name": "Legacy",
+            "groups": [],
+            "ungrouped": [
+                {"symbol": "BTCUSDT", "exchange": "Binance", "account_type": "FI"},
+                {"symbol": "ETHUSDT", "exchange": "Binance", "account_type": "S"}
+            ],
+            "column_config": {
+                "show_exchange": true,
+                "show_last_price": true,
+                "show_change_pct": true,
+                "show_change_abs": false,
+                "show_volume": false,
+                "show_high_low": false
+            },
+            "color_flags": {"BTCUSDT:Binance:FI": "#ff0000"}
+        }"##;
+        let list: WatchlistList = serde_json::from_str(json).expect("legacy list JSON must still deserialize");
+        assert_eq!(list.ungrouped.len(), 2);
+        assert_eq!(list.ungrouped[0], InstrumentAddress::new("Binance", "BTCUSDT", mlc_core::instrument::AccountType::FuturesIsolated));
+        assert_eq!(list.ungrouped[1], InstrumentAddress::new("Binance", "ETHUSDT", mlc_core::instrument::AccountType::Spot));
+        assert_eq!(list.get_color_flag("BTCUSDT", "Binance", "FI"), Some("#ff0000"));
     }
 }

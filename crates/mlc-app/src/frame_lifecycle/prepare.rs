@@ -765,7 +765,7 @@ impl ChartApp {
                     .map(|list| {
                         list.all_symbols()
                             .iter()
-                            .map(|ws| (ws.symbol.clone(), ws.exchange.clone(), ws.account_type.clone()))
+                            .map(|ws| (ws.symbol.clone(), ws.exchange.clone(), ws.account_type.as_label().to_string()))
                             .collect()
                     })
                     .unwrap_or_default();

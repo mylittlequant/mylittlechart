@@ -44,7 +44,8 @@ pub use panels_store::TradingPanelsStore;
 
 pub use input::KeyPress;
 pub use digdigdig3::ExchangeId;
-pub use mlc_app_sidebar_content::watchlist::{WatchlistManager, WatchlistSymbol};
+pub use mlc_app_sidebar_content::watchlist::WatchlistManager;
+pub use mlc_core::instrument::InstrumentAddress;
 pub use mlc_backend_indicator_engine::RecalcMode;
 pub use mlc_core::{Language, set_language};
 
@@ -1643,8 +1644,8 @@ impl ChartApp {
         // using each symbol's own exchange.
         {
             let wl_guard = app.core.watchlists();
-            let wl_syms: Vec<_> = wl_guard.active()
-                .map(|wl| wl.all_symbols().into_iter().map(|ws| (ws.exchange.clone(), ws.symbol.clone(), ws.account_type.clone())).collect())
+            let wl_syms: Vec<(String, String, mlc_core::instrument::AccountType)> = wl_guard.active()
+                .map(|wl| wl.all_symbols().into_iter().map(|ws| (ws.exchange.clone(), ws.symbol.clone(), ws.account_type)).collect())
                 .unwrap_or_default();
             drop(wl_guard);
             for (ws_exchange_str, ws_symbol, ws_account_type) in wl_syms {
@@ -1653,7 +1654,7 @@ impl ChartApp {
                 if !app.sidebar_state.connector_enabled.get(ws_exchange.as_str()).copied().unwrap_or(true) {
                     continue;
                 }
-                let ws_at = account_type_from_label(&ws_account_type);
+                let ws_at = mlc_backend_data_bridge::account_type_to_dig3(ws_account_type);
                 bridge.ensure_connector(ws_exchange);
                 bridge.subscribe_mini_ticker(ws_exchange, &ws_symbol, ws_at);
             }
@@ -1860,12 +1861,12 @@ impl ChartApp {
 
         app.core.watchlists_mut().replace_all(mlc_watchlist::WatchlistManager::new(
             vec![
-                mlc_watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "binance".to_string(), "S".to_string()),
-                mlc_watchlist::WatchlistSymbol::new("ETHUSDT".to_string(), "binance".to_string(), "S".to_string()),
-                mlc_watchlist::WatchlistSymbol::new("SOLUSDT".to_string(), "binance".to_string(), "S".to_string()),
-                mlc_watchlist::WatchlistSymbol::new("BNBUSDT".to_string(), "binance".to_string(), "S".to_string()),
-                mlc_watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "bybit".to_string(), "S".to_string()),
-                mlc_watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "okx".to_string(), "S".to_string()),
+                mlc_core::instrument::InstrumentAddress::new("binance", "BTCUSDT", mlc_core::instrument::AccountType::Spot),
+                mlc_core::instrument::InstrumentAddress::new("binance", "ETHUSDT", mlc_core::instrument::AccountType::Spot),
+                mlc_core::instrument::InstrumentAddress::new("binance", "SOLUSDT", mlc_core::instrument::AccountType::Spot),
+                mlc_core::instrument::InstrumentAddress::new("binance", "BNBUSDT", mlc_core::instrument::AccountType::Spot),
+                mlc_core::instrument::InstrumentAddress::new("bybit", "BTCUSDT", mlc_core::instrument::AccountType::Spot),
+                mlc_core::instrument::InstrumentAddress::new("okx", "BTCUSDT", mlc_core::instrument::AccountType::Spot),
             ],
         ));
 
@@ -2027,8 +2028,8 @@ impl ChartApp {
         // after loading a preset; wasm shell calls `seed_default_chart`
         // instead and previously skipped this step → mini-ticker DashMap
         // stayed empty and the watchlist froze at 0.0.
-        let wl_syms: Vec<(String, String, String)> = self.core.watchlists().active()
-            .map(|wl| wl.all_symbols().into_iter().map(|ws| (ws.exchange.clone(), ws.symbol.clone(), ws.account_type.clone())).collect())
+        let wl_syms: Vec<(String, String, mlc_core::instrument::AccountType)> = self.core.watchlists().active()
+            .map(|wl| wl.all_symbols().into_iter().map(|ws| (ws.exchange.clone(), ws.symbol.clone(), ws.account_type)).collect())
             .unwrap_or_default();
         for (ws_exchange_str, ws_symbol, ws_account_type) in wl_syms {
             let ws_exchange = digdigdig3::ExchangeId::from_str(&ws_exchange_str)
@@ -2036,7 +2037,7 @@ impl ChartApp {
             if !self.sidebar_state.connector_enabled.get(ws_exchange.as_str()).copied().unwrap_or(true) {
                 continue;
             }
-            let ws_at = account_type_from_label(&ws_account_type);
+            let ws_at = mlc_backend_data_bridge::account_type_to_dig3(ws_account_type);
             bridge.ensure_connector(ws_exchange);
             bridge.subscribe_mini_ticker(ws_exchange, &ws_symbol, ws_at);
         }
@@ -2136,10 +2137,11 @@ impl ChartApp {
                 }
                 WatchlistAction::RemoveFromGroup { symbol, exchange, account_type } => {
                     if let Some(list) = self.core.watchlists_mut().active_mut() {
-                        let mut found: Option<mlc_watchlist::WatchlistSymbol> = None;
+                        let at: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
+                        let mut found: Option<mlc_core::instrument::InstrumentAddress> = None;
                         for g in &mut list.groups {
                             if let Some(pos) = g.symbols.iter().position(|s|
-                                s.symbol == symbol && s.exchange == exchange && s.account_type == account_type)
+                                s.symbol == symbol && s.exchange == exchange && s.account_type == at)
                             {
                                 found = Some(g.symbols.remove(pos));
                                 break;
@@ -2384,12 +2386,12 @@ impl ChartApp {
         // Initialize watchlist with a minimal default — overwritten by load_watchlists below.
         app.core.watchlists_mut().replace_all(mlc_watchlist::WatchlistManager::new(
             vec![
-                mlc_watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "binance".to_string(), "S".to_string()),
-                mlc_watchlist::WatchlistSymbol::new("ETHUSDT".to_string(), "binance".to_string(), "S".to_string()),
-                mlc_watchlist::WatchlistSymbol::new("SOLUSDT".to_string(), "binance".to_string(), "S".to_string()),
-                mlc_watchlist::WatchlistSymbol::new("BNBUSDT".to_string(), "binance".to_string(), "S".to_string()),
-                mlc_watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "bybit".to_string(), "S".to_string()),
-                mlc_watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "okx".to_string(), "S".to_string()),
+                mlc_core::instrument::InstrumentAddress::new("binance", "BTCUSDT", mlc_core::instrument::AccountType::Spot),
+                mlc_core::instrument::InstrumentAddress::new("binance", "ETHUSDT", mlc_core::instrument::AccountType::Spot),
+                mlc_core::instrument::InstrumentAddress::new("binance", "SOLUSDT", mlc_core::instrument::AccountType::Spot),
+                mlc_core::instrument::InstrumentAddress::new("binance", "BNBUSDT", mlc_core::instrument::AccountType::Spot),
+                mlc_core::instrument::InstrumentAddress::new("bybit", "BTCUSDT", mlc_core::instrument::AccountType::Spot),
+                mlc_core::instrument::InstrumentAddress::new("okx", "BTCUSDT", mlc_core::instrument::AccountType::Spot),
             ],
         ));
 
@@ -2692,8 +2694,8 @@ impl ChartApp {
 
         // Subscribe mini tickers for active watchlist.
         if !skeleton {
-            let wl_syms: Vec<_> = app.core.watchlists().active()
-                .map(|wl| wl.all_symbols().into_iter().map(|ws| (ws.exchange.clone(), ws.symbol.clone(), ws.account_type.clone())).collect())
+            let wl_syms: Vec<(String, String, mlc_core::instrument::AccountType)> = app.core.watchlists().active()
+                .map(|wl| wl.all_symbols().into_iter().map(|ws| (ws.exchange.clone(), ws.symbol.clone(), ws.account_type)).collect())
                 .unwrap_or_default();
             for (ws_exchange_str, ws_symbol, ws_account_type) in wl_syms {
                 let ws_exchange = digdigdig3::ExchangeId::from_str(&ws_exchange_str)
@@ -2701,7 +2703,7 @@ impl ChartApp {
                 if !app.sidebar_state.connector_enabled.get(ws_exchange.as_str()).copied().unwrap_or(true) {
                     continue;
                 }
-                let ws_at = account_type_from_label(&ws_account_type);
+                let ws_at = mlc_backend_data_bridge::account_type_to_dig3(ws_account_type);
                 bridge.ensure_connector(ws_exchange);
                 bridge.subscribe_mini_ticker(ws_exchange, &ws_symbol, ws_at);
             }

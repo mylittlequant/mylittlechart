@@ -43,7 +43,7 @@ async fn list_watchlists(State(s): State<AppState>) -> impl IntoResponse {
                     items.push(WatchlistItemEntry {
                         symbol: sym.symbol.clone(),
                         exchange: sym.exchange.clone(),
-                        account_type: sym.account_type.clone(),
+                        account_type: sym.account_type.as_label().to_string(),
                     });
                 }
             }
@@ -51,7 +51,7 @@ async fn list_watchlists(State(s): State<AppState>) -> impl IntoResponse {
                 items.push(WatchlistItemEntry {
                     symbol: sym.symbol.clone(),
                     exchange: sym.exchange.clone(),
-                    account_type: sym.account_type.clone(),
+                    account_type: sym.account_type.as_label().to_string(),
                 });
             }
             WatchlistEntry {

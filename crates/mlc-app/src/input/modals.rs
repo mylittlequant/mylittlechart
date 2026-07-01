@@ -333,7 +333,7 @@ impl ChartApp {
                                 .and_then(|list| {
                                     list.all_symbols().iter()
                                         .find(|ws| ws.symbol == remainder && ws.exchange == at_part)
-                                        .map(|ws| ws.account_type.clone())
+                                        .map(|ws| ws.account_type.as_label().to_string())
                                 })
                                 .unwrap_or_else(|| "S".to_string());
                             (remainder, at_part, at)
@@ -443,7 +443,7 @@ impl ChartApp {
                         } else {
                             // Only one colon — "SYMBOL:exchange", look up account_type.
                             let at = self.core.watchlists().active()
-                                .and_then(|l| l.all_symbols().iter().find(|ws| ws.symbol == remainder && ws.exchange == at_part).map(|ws| ws.account_type.clone()))
+                                .and_then(|l| l.all_symbols().iter().find(|ws| ws.symbol == remainder && ws.exchange == at_part).map(|ws| ws.account_type.as_label().to_string()))
                                 .unwrap_or_default();
                             (remainder, at_part.to_string(), at)
                         }
@@ -453,18 +453,19 @@ impl ChartApp {
                             .and_then(|l| l.all_symbols().iter().find(|ws| ws.symbol == key).map(|ws| ws.exchange.clone()))
                             .unwrap_or_else(|| self.active_exchange.as_str().to_string());
                         let at = self.core.watchlists().active()
-                            .and_then(|l| l.all_symbols().iter().find(|ws| ws.symbol == key).map(|ws| ws.account_type.clone()))
+                            .and_then(|l| l.all_symbols().iter().find(|ws| ws.symbol == key).map(|ws| ws.account_type.as_label().to_string()))
                             .unwrap_or_default();
                         (key, ex, at)
                     };
                 let exchange = exchange_owned.as_str();
                 let account_type = account_type_owned.as_str();
+                let account_type_parsed: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                 // Remove symbol from snapshot (if active) before removing from list.
                 {
                     let mut wl = self.core.watchlists_mut();
                     if let Some(list) = wl.active_mut() {
                         if let Some(ref mut snap) = list.order_snapshot {
-                            snap.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == account_type));
+                            snap.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == account_type_parsed));
                         }
                     }
                     wl.remove_symbol(symbol, exchange, account_type);

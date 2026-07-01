@@ -167,10 +167,10 @@ impl ChartApp {
                         ];
                         let mut symbols = base;
                         symbols.sort_by(|a, b| {
-                            let a_idx = list.get_color_flag(&a.symbol, &a.exchange, &a.account_type)
+                            let a_idx = list.get_color_flag(&a.symbol, &a.exchange, a.account_type.as_label())
                                 .and_then(|f| color_order.iter().position(|c| *c == f))
                                 .unwrap_or(99);
-                            let b_idx = list.get_color_flag(&b.symbol, &b.exchange, &b.account_type)
+                            let b_idx = list.get_color_flag(&b.symbol, &b.exchange, b.account_type.as_label())
                                 .and_then(|f| color_order.iter().position(|c| *c == f))
                                 .unwrap_or(99);
                             if mode == 1 {
@@ -289,10 +289,11 @@ impl ChartApp {
                     let account_type = item.account_type.clone();
                     // Remove symbol from snapshot (if active) before removing from list.
                     {
+                        let at: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                         let mut wl = self.core.watchlists_mut();
                         if let Some(list) = wl.active_mut() {
                             if let Some(ref mut snap) = list.order_snapshot {
-                                snap.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == account_type));
+                                snap.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == at));
                             }
                         }
                         wl.remove_symbol(&symbol, &exchange, &account_type);

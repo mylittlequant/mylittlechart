@@ -2269,9 +2269,10 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     }
                     mlc_app::WatchlistAction::RemoveFromGroup { symbol, exchange, account_type } => {
                         if let Some(list) = self.app_state.watchlist_manager.active_list_mut() {
-                            let mut found: Option<mlc_app_sidebar_content::watchlist::WatchlistSymbol> = None;
+                            let at: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
+                            let mut found: Option<mlc_core::instrument::InstrumentAddress> = None;
                             for g in &mut list.groups {
-                                if let Some(pos) = g.symbols.iter().position(|s| s.symbol == symbol && s.exchange == exchange && s.account_type == account_type) {
+                                if let Some(pos) = g.symbols.iter().position(|s| s.symbol == symbol && s.exchange == exchange && s.account_type == at) {
                                     found = Some(g.symbols.remove(pos));
                                     break;
                                 }

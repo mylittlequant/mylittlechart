@@ -8,6 +8,7 @@ name = "mlc_watchlist"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
+mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 
 [dev-dependencies]
 serde_json = "1.0"
