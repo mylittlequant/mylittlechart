@@ -274,7 +274,7 @@ pub fn update_watchlist_snapshot<H: AgentHost>(host: &H, agent_state: &AgentStat
     };
 
     let wm_guard = first.chart.core.watchlists();
-    let active_id = wm_guard.active_id();
+    let active_id = first.chart.watchlist_ui.active_list_id;
 
     let watchlists: Vec<WatchlistEntry> = wm_guard.lists().iter().map(|list| {
         let items: Vec<WatchlistItemEntry> = list.all_symbols().into_iter().map(|ws| {

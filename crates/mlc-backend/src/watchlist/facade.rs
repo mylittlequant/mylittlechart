@@ -1,16 +1,24 @@
 //! `Watchlists` / `WatchlistsMut` — the only doctrinally-sanctioned access
 //! path to `WatchlistManager` from outside `mlc-backend`.
 //!
-//! Unlike Alert/Drawing/Indicator, `WatchlistManager` never touches
-//! `DataBubble` (confirmed: `docs/mlc/plans/step-3.3-indicator-watchlist-design.md`
+//! Unlike Alert/Drawing, `WatchlistManager` never touches `DataBubble`
+//! (confirmed: `docs/mlc/plans/step-3.3-indicator-watchlist-design.md`
 //! §1.2 — zero bubble references anywhere in the manager). The facade holds
 //! exactly one guard, no `BubbleStore` co-acquisition, ever.
 //!
-//! See `docs/mlc/plans/doctrine-cutover-2026-06-27.md` §1A.
+//! `WatchlistManager` no longer owns `active_list_id` (doctrine 1B — which
+//! tab is open is presentation, lives on `mlc-app::watchlist_ui`). Every
+//! method that used to implicitly target "the active list" now takes
+//! `list_id: u64` explicitly; the caller (app) supplies it from its own
+//! UI-side active-list-id.
+//!
+//! See `docs/mlc/plans/doctrine-cutover-2026-06-27.md` §1A / §1B.
 
 use std::sync::{RwLockReadGuard, RwLockWriteGuard};
 
-use mlc_watchlist::{WatchlistList, WatchlistManager};
+use mlc_core::WatchlistList;
+
+use super::manager::WatchlistManager;
 
 /// Read-only facade over `WatchlistManager`.
 pub struct Watchlists<'a> {
@@ -22,39 +30,19 @@ impl<'a> Watchlists<'a> {
         Self { mgr }
     }
 
-    /// Raw `&WatchlistManager` reference, for render functions
-    /// (`mlc_app_sidebar_content::render::render_right_sidebar`) whose signature
-    /// takes the manager type directly rather than the facade — the facade
-    /// hides `BubbleStore` co-acquisition (there is none here), not the
-    /// manager's own already-intent-shaped API.
-    pub fn as_manager(&self) -> &WatchlistManager {
-        &self.mgr
-    }
-
     /// All watchlists.
     pub fn lists(&self) -> &[WatchlistList] {
         &self.mgr.lists
     }
 
-    /// The currently-active watchlist, if any.
-    pub fn active(&self) -> Option<&WatchlistList> {
-        self.mgr.active_list()
-    }
-
-    /// The id of the currently-active watchlist.
-    pub fn active_id(&self) -> u64 {
-        self.mgr.active_list_id
-    }
-
     /// Find a watchlist by id.
     pub fn find(&self, list_id: u64) -> Option<&WatchlistList> {
-        self.mgr.lists.iter().find(|l| l.id == list_id)
+        self.mgr.find(list_id)
     }
 
-    /// Check if a (symbol, exchange, account_type) triple is in the active
-    /// watchlist.
-    pub fn contains(&self, symbol: &str, exchange: &str, account_type: &str) -> bool {
-        self.mgr.contains_with_type(symbol, exchange, account_type)
+    /// Check if a (symbol, exchange, account_type) triple is in the given list.
+    pub fn contains(&self, list_id: u64, symbol: &str, exchange: &str, account_type: &str) -> bool {
+        self.mgr.contains(list_id, symbol, exchange, account_type)
     }
 }
 
@@ -73,33 +61,18 @@ impl<'a> WatchlistsMut<'a> {
         &self.mgr.lists
     }
 
-    /// The currently-active watchlist, if any.
-    pub fn active(&self) -> Option<&WatchlistList> {
-        self.mgr.active_list()
-    }
-
-    /// The id of the currently-active watchlist.
-    pub fn active_id(&self) -> u64 {
-        self.mgr.active_list_id
-    }
-
     /// Find a watchlist by id.
     pub fn find(&self, list_id: u64) -> Option<&WatchlistList> {
-        self.mgr.lists.iter().find(|l| l.id == list_id)
+        self.mgr.find(list_id)
     }
 
-    /// The currently-active watchlist, mutably. `WatchlistList` IS the
-    /// domain's own value type (same class as `AlertItem`/`IndicatorInstance`
-    /// returned by other facades' `_mut` accessors) — the facade's job is
-    /// hiding `DataBubble`/`BubbleStore`, not hiding every field of a value
-    /// type that has no bubble concept at all.
-    pub fn active_mut(&mut self) -> Option<&mut WatchlistList> {
-        self.mgr.active_list_mut()
-    }
-
-    /// Find a watchlist by id, mutably.
+    /// Find a watchlist by id, mutably. `WatchlistList` IS the domain's own
+    /// value type (same class as `AlertItem`/`IndicatorInstance` returned by
+    /// other facades' `_mut` accessors) — the facade's job is hiding
+    /// `DataBubble`/`BubbleStore`, not hiding every field of a value type
+    /// that has no bubble concept at all.
     pub fn find_mut(&mut self, list_id: u64) -> Option<&mut WatchlistList> {
-        self.mgr.lists.iter_mut().find(|l| l.id == list_id)
+        self.mgr.find_mut(list_id)
     }
 
     /// Create a new empty watchlist and return its id.
@@ -112,64 +85,62 @@ impl<'a> WatchlistsMut<'a> {
         self.mgr.delete_list(id)
     }
 
-    /// Set the active watchlist.
-    pub fn set_active(&mut self, id: u64) {
-        self.mgr.active_list_id = id;
+    /// Generate the next unique id (for groups etc).
+    pub fn next_unique_id(&mut self) -> u64 {
+        self.mgr.next_unique_id()
     }
 
-    /// Add a symbol to the active watchlist.
-    pub fn add_symbol(&mut self, symbol: String, exchange: String, account_type: String) {
-        self.mgr.add_symbol_with_type(symbol, exchange, account_type);
+    /// Add a symbol to the given list.
+    pub fn add_symbol(&mut self, list_id: u64, symbol: String, exchange: String, account_type: String) {
+        self.mgr.add_symbol(list_id, symbol, exchange, account_type);
     }
 
-    /// Remove a specific (symbol, exchange, account_type) triple from the
-    /// active watchlist.
-    pub fn remove_symbol(&mut self, symbol: &str, exchange: &str, account_type: &str) {
-        self.mgr.remove_symbol(symbol, exchange, account_type);
+    /// Remove a specific (symbol, exchange, account_type) triple from the given list.
+    pub fn remove_symbol(&mut self, list_id: u64, symbol: &str, exchange: &str, account_type: &str) {
+        self.mgr.remove_symbol(list_id, symbol, exchange, account_type);
     }
 
-    /// Toggle symbol membership: add if missing, remove if present. Returns
-    /// the new state (`true` = now in list).
-    pub fn toggle_symbol(&mut self, symbol: &str, exchange: &str, account_type: &str) -> bool {
-        self.mgr.toggle_symbol(symbol, exchange, account_type)
+    /// Toggle symbol membership in the given list: add if missing, remove if
+    /// present. Returns the new state (`true` = now in list).
+    pub fn toggle_symbol(&mut self, list_id: u64, symbol: &str, exchange: &str, account_type: &str) -> bool {
+        self.mgr.toggle_symbol(list_id, symbol, exchange, account_type)
     }
 
-    /// Reorder a symbol in the active list's ungrouped section.
-    pub fn reorder_symbol(&mut self, from_idx: usize, to_idx: usize) {
-        self.mgr.reorder_symbol(from_idx, to_idx);
+    /// Reorder a symbol in the given list's ungrouped section.
+    pub fn reorder_symbol(&mut self, list_id: u64, from_idx: usize, to_idx: usize) {
+        self.mgr.reorder_symbol(list_id, from_idx, to_idx);
     }
 
-    /// Move a symbol into a specific group of the active list. No-op if the
-    /// active list or the group does not exist.
-    pub fn move_to_group(&mut self, symbol: &str, exchange: &str, account_type: &str, group_id: u64) {
-        if let Some(list) = self.mgr.active_list_mut() {
+    /// Move a symbol into a specific group of the given list. No-op if the
+    /// list or the group does not exist.
+    pub fn move_to_group(&mut self, list_id: u64, symbol: &str, exchange: &str, account_type: &str, group_id: u64) {
+        if let Some(list) = self.mgr.find_mut(list_id) {
             list.move_to_group(symbol, exchange, account_type, group_id);
         }
     }
 
-    /// Add a new group to the active list. Returns the new group id, or 0 if
-    /// there is no active list.
-    pub fn add_group(&mut self, name: String, color: String) -> u64 {
+    /// Add a new group to the given list. Returns the new group id, or 0 if
+    /// the list does not exist.
+    pub fn add_group(&mut self, list_id: u64, name: String) -> u64 {
         let id = self.mgr.next_unique_id();
-        if let Some(list) = self.mgr.active_list_mut() {
-            list.add_group(id, name, color);
+        if let Some(list) = self.mgr.find_mut(list_id) {
+            list.add_group(id, name);
             id
         } else {
             0
         }
     }
 
-    /// Remove a group from the active list by id. Its symbols move to
-    /// ungrouped.
-    pub fn remove_group(&mut self, group_id: u64) {
-        if let Some(list) = self.mgr.active_list_mut() {
+    /// Remove a group from the given list by id. Its symbols move to ungrouped.
+    pub fn remove_group(&mut self, list_id: u64, group_id: u64) {
+        if let Some(list) = self.mgr.find_mut(list_id) {
             list.remove_group(group_id);
         }
     }
 
-    /// Set a color flag for a symbol in the active list.
-    pub fn set_color_flag(&mut self, symbol: &str, exchange: &str, account_type: &str, color: &str) {
-        if let Some(list) = self.mgr.active_list_mut() {
+    /// Set a color flag for a symbol in the given list.
+    pub fn set_color_flag(&mut self, list_id: u64, symbol: &str, exchange: &str, account_type: &str, color: &str) {
+        if let Some(list) = self.mgr.find_mut(list_id) {
             list.set_color_flag(symbol, exchange, account_type, color);
         }
     }
@@ -183,9 +154,8 @@ impl<'a> WatchlistsMut<'a> {
         *self.mgr = manager;
     }
 
-    /// Check if a (symbol, exchange, account_type) triple is in the active
-    /// watchlist.
-    pub fn contains(&self, symbol: &str, exchange: &str, account_type: &str) -> bool {
-        self.mgr.contains_with_type(symbol, exchange, account_type)
+    /// Check if a (symbol, exchange, account_type) triple is in the given list.
+    pub fn contains(&self, list_id: u64, symbol: &str, exchange: &str, account_type: &str) -> bool {
+        self.mgr.contains(list_id, symbol, exchange, account_type)
     }
 }

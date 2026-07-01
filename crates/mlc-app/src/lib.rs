@@ -38,13 +38,14 @@ pub mod user_manager;
 use uzor::input::TextFieldConfig;
 use uzor::WidgetId;
 pub mod persistence;
+pub mod watchlist_ui;
 pub mod workspace;
 
 pub use panels_store::TradingPanelsStore;
 
 pub use input::KeyPress;
 pub use digdigdig3::ExchangeId;
-pub use mlc_app_sidebar_content::watchlist::WatchlistManager;
+pub use mlc_backend::watchlist::WatchlistManager;
 pub use mlc_core::instrument::InstrumentAddress;
 pub use mlc_backend_indicator_engine::RecalcMode;
 pub use mlc_core::{Language, set_language};
@@ -386,6 +387,11 @@ pub struct ChartApp {
 
     /// Sidebar panel state — tracks which right-side panel is open and its content.
     pub sidebar_state: mlc_app_sidebar_content::state::SidebarState,
+
+    /// Watchlist UI/presentation state — active list tab, column config,
+    /// group color/collapsed, sort-order snapshot. Doctrine 1B split from
+    /// `WatchlistManager` (backend owns domain: lists/groups/color_flags).
+    pub watchlist_ui: watchlist_ui::WatchlistUiState,
 
     /// Right sidebar render result from the last frame (hit zones for click dispatch).
     pub last_sidebar_result: Option<mlc_app_sidebar_content::render::RightSidebarResult>,
@@ -1417,6 +1423,7 @@ impl ChartApp {
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
             sidebar_state: mlc_app_sidebar_content::state::SidebarState::new(),
+            watchlist_ui: watchlist_ui::WatchlistUiState::default(),
             last_sidebar_result: None,
             sidebar_separator_drag_active: false,
             split_without_group: false,
@@ -1644,7 +1651,7 @@ impl ChartApp {
         // using each symbol's own exchange.
         {
             let wl_guard = app.core.watchlists();
-            let wl_syms: Vec<(String, String, mlc_core::instrument::AccountType)> = wl_guard.active()
+            let wl_syms: Vec<(String, String, mlc_core::instrument::AccountType)> = wl_guard.find(app.watchlist_ui.active_list_id)
                 .map(|wl| wl.all_symbols().into_iter().map(|ws| (ws.exchange.clone(), ws.symbol.clone(), ws.account_type)).collect())
                 .unwrap_or_default();
             drop(wl_guard);
@@ -1760,6 +1767,7 @@ impl ChartApp {
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
             sidebar_state: mlc_app_sidebar_content::state::SidebarState::new(),
+            watchlist_ui: watchlist_ui::WatchlistUiState::default(),
             last_sidebar_result: None,
             sidebar_separator_drag_active: false,
             split_without_group: false,
@@ -1859,7 +1867,7 @@ impl ChartApp {
             compare_add_attempts: 0, compare_add_success: 0, compare_add_queued: 0,
         };
 
-        app.core.watchlists_mut().replace_all(mlc_watchlist::WatchlistManager::new(
+        app.core.watchlists_mut().replace_all(mlc_backend::watchlist::WatchlistManager::new(
             vec![
                 mlc_core::instrument::InstrumentAddress::new("binance", "BTCUSDT", mlc_core::instrument::AccountType::Spot),
                 mlc_core::instrument::InstrumentAddress::new("binance", "ETHUSDT", mlc_core::instrument::AccountType::Spot),
@@ -2028,7 +2036,7 @@ impl ChartApp {
         // after loading a preset; wasm shell calls `seed_default_chart`
         // instead and previously skipped this step → mini-ticker DashMap
         // stayed empty and the watchlist froze at 0.0.
-        let wl_syms: Vec<(String, String, mlc_core::instrument::AccountType)> = self.core.watchlists().active()
+        let wl_syms: Vec<(String, String, mlc_core::instrument::AccountType)> = self.core.watchlists().find(self.watchlist_ui.active_list_id)
             .map(|wl| wl.all_symbols().into_iter().map(|ws| (ws.exchange.clone(), ws.symbol.clone(), ws.account_type)).collect())
             .unwrap_or_default();
         for (ws_exchange_str, ws_symbol, ws_account_type) in wl_syms {
@@ -2065,11 +2073,13 @@ impl ChartApp {
             return false;
         }
 
+        let active_list_id = self.watchlist_ui.active_list_id;
+
         for action in actions {
             match action {
                 WatchlistAction::Toggle { symbol, exchange, account_type } => {
                     let now_in = self.core.watchlists_mut()
-                        .toggle_symbol(&symbol, &exchange, &account_type);
+                        .toggle_symbol(active_list_id, &symbol, &exchange, &account_type);
                     if now_in {
                         if let Some(eid) = ExchangeId::from_str(&exchange) {
                             let enabled = self.sidebar_state.connector_enabled
@@ -2080,35 +2090,29 @@ impl ChartApp {
                                 self.core.bridge.subscribe_mini_ticker(eid, &symbol, at);
                             }
                         }
-                        if let Some(list) = self.core.watchlists_mut().active_mut() {
-                            list.order_snapshot = None;
-                        }
+                        self.watchlist_ui.list_mut(active_list_id).order_snapshot = None;
                     } else {
                         if let Some(eid) = ExchangeId::from_str(&exchange) {
                             let at = account_type_from_label(&account_type);
                             self.core.bridge.unsubscribe_mini_ticker(eid, &symbol, at);
                         }
-                        if let Some(list) = self.core.watchlists_mut().active_mut() {
-                            if let Some(ref mut snap) = list.order_snapshot {
-                                snap.retain(|s| s.symbol != symbol);
-                            }
+                        if let Some(ref mut snap) = self.watchlist_ui.list_mut(active_list_id).order_snapshot {
+                            snap.retain(|s| s.symbol != symbol);
                         }
                     }
                 }
                 WatchlistAction::Remove { symbol, exchange, account_type } => {
-                    self.core.watchlists_mut().remove_symbol(&symbol, &exchange, &account_type);
+                    self.core.watchlists_mut().remove_symbol(active_list_id, &symbol, &exchange, &account_type);
                 }
                 WatchlistAction::ClearOrderSnapshot => {
-                    if let Some(list) = self.core.watchlists_mut().active_mut() {
-                        list.order_snapshot = None;
-                    }
+                    self.watchlist_ui.list_mut(active_list_id).order_snapshot = None;
                 }
                 WatchlistAction::Reorder { from_idx, to_idx } => {
-                    self.core.watchlists_mut().reorder_symbol(from_idx, to_idx);
+                    self.core.watchlists_mut().reorder_symbol(active_list_id, from_idx, to_idx);
                 }
                 WatchlistAction::CreateList { name } => {
                     let new_id = self.core.watchlists_mut().create_list(name);
-                    self.core.watchlists_mut().set_active(new_id);
+                    self.watchlist_ui.active_list_id = new_id;
                 }
                 WatchlistAction::RenameList { id, new_name } => {
                     if let Some(list) = self.core.watchlists_mut().find_mut(id) {
@@ -2116,27 +2120,29 @@ impl ChartApp {
                     }
                 }
                 WatchlistAction::DeleteList { id } => {
-                    self.core.watchlists_mut().delete_list(id);
-                }
-                WatchlistAction::SetActiveList { id } => {
-                    self.core.watchlists_mut().set_active(id);
-                }
-                WatchlistAction::SetColorFlag { symbol, exchange, account_type, color } => {
-                    if let Some(list) = self.core.watchlists_mut().active_mut() {
-                        let color_str = color.as_deref().unwrap_or("");
-                        list.set_color_flag(&symbol, &exchange, &account_type, color_str);
-                    }
-                }
-                WatchlistAction::MoveToGroup { symbol, exchange, account_type, group_name } => {
-                    if let Some(list) = self.core.watchlists_mut().active_mut() {
-                        if let Some(group) = list.groups.iter().find(|g| g.name == group_name) {
-                            let group_id = group.id;
-                            list.move_to_group(&symbol, &exchange, &account_type, group_id);
+                    if self.core.watchlists_mut().delete_list(id) {
+                        self.watchlist_ui.remove_list(id);
+                        if self.watchlist_ui.active_list_id == id {
+                            self.watchlist_ui.active_list_id = self.core.watchlists().lists().first().map(|l| l.id).unwrap_or(0);
                         }
                     }
                 }
+                WatchlistAction::SetActiveList { id } => {
+                    self.watchlist_ui.active_list_id = id;
+                }
+                WatchlistAction::SetColorFlag { symbol, exchange, account_type, color } => {
+                    let color_str = color.as_deref().unwrap_or("");
+                    self.core.watchlists_mut().set_color_flag(active_list_id, &symbol, &exchange, &account_type, color_str);
+                }
+                WatchlistAction::MoveToGroup { symbol, exchange, account_type, group_name } => {
+                    let group_id = self.core.watchlists().find(active_list_id)
+                        .and_then(|list| list.groups.iter().find(|g| g.name == group_name).map(|g| g.id));
+                    if let Some(group_id) = group_id {
+                        self.core.watchlists_mut().move_to_group(active_list_id, &symbol, &exchange, &account_type, group_id);
+                    }
+                }
                 WatchlistAction::RemoveFromGroup { symbol, exchange, account_type } => {
-                    if let Some(list) = self.core.watchlists_mut().active_mut() {
+                    if let Some(list) = self.core.watchlists_mut().find_mut(active_list_id) {
                         let at: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                         let mut found: Option<mlc_core::instrument::InstrumentAddress> = None;
                         for g in &mut list.groups {
@@ -2153,76 +2159,66 @@ impl ChartApp {
                     }
                 }
                 WatchlistAction::SetSeparatorOffsets { offsets } => {
-                    if let Some(list) = self.core.watchlists_mut().active_mut() {
-                        list.column_config.separator_offsets = Some(offsets);
-                    }
+                    self.watchlist_ui.list_mut(active_list_id).column_config.separator_offsets = Some(offsets);
                 }
                 WatchlistAction::ResetSeparatorOffsets => {
-                    if let Some(list) = self.core.watchlists_mut().active_mut() {
-                        list.column_config.separator_offsets = None;
-                    }
+                    self.watchlist_ui.list_mut(active_list_id).column_config.separator_offsets = None;
                 }
                 WatchlistAction::SetSeparatorOffset { index, value } => {
-                    if let Some(list) = self.core.watchlists_mut().active_mut() {
-                        let n_cols = {
-                            let c = &list.column_config;
-                            let mut n: usize = 1;
-                            if c.show_exchange     { n += 1; }
-                            if c.show_account_type { n += 1; }
-                            if c.show_last_price   { n += 1; }
-                            if c.show_change_pct   { n += 1; }
-                            if c.show_change_abs   { n += 1; }
-                            if c.show_high_low     { n += 2; }
-                            if c.show_volume       { n += 1; }
-                            n
-                        };
-                        let n_seps = n_cols.saturating_sub(1);
-                        let needs_init = list.column_config.separator_offsets
-                            .as_ref()
-                            .map(|o| o.len() != n_seps)
-                            .unwrap_or(true);
-                        if needs_init {
-                            list.column_config.separator_offsets = Some(vec![0.0; n_seps]);
-                        }
-                        if let Some(ref mut offsets) = list.column_config.separator_offsets {
-                            if index < offsets.len() {
-                                offsets[index] = value;
-                            }
+                    let list_ui = self.watchlist_ui.list_mut(active_list_id);
+                    let n_cols = {
+                        let c = &list_ui.column_config;
+                        let mut n: usize = 1;
+                        if c.show_exchange     { n += 1; }
+                        if c.show_account_type { n += 1; }
+                        if c.show_last_price   { n += 1; }
+                        if c.show_change_pct   { n += 1; }
+                        if c.show_change_abs   { n += 1; }
+                        if c.show_high_low     { n += 2; }
+                        if c.show_volume       { n += 1; }
+                        n
+                    };
+                    let n_seps = n_cols.saturating_sub(1);
+                    let needs_init = list_ui.column_config.separator_offsets
+                        .as_ref()
+                        .map(|o| o.len() != n_seps)
+                        .unwrap_or(true);
+                    if needs_init {
+                        list_ui.column_config.separator_offsets = Some(vec![0.0; n_seps]);
+                    }
+                    if let Some(ref mut offsets) = list_ui.column_config.separator_offsets {
+                        if index < offsets.len() {
+                            offsets[index] = value;
                         }
                     }
                 }
                 WatchlistAction::ToggleColumnVisibility { column } => {
-                    if let Some(list) = self.core.watchlists_mut().active_mut() {
-                        match column.as_str() {
-                            "exchange"     => list.column_config.show_exchange     = !list.column_config.show_exchange,
-                            "last_price"   => list.column_config.show_last_price   = !list.column_config.show_last_price,
-                            "change_pct"   => list.column_config.show_change_pct   = !list.column_config.show_change_pct,
-                            "change_abs"   => list.column_config.show_change_abs   = !list.column_config.show_change_abs,
-                            "volume"       => list.column_config.show_volume       = !list.column_config.show_volume,
-                            "high_low"     => list.column_config.show_high_low     = !list.column_config.show_high_low,
-                            "account_type" => list.column_config.show_account_type = !list.column_config.show_account_type,
-                            "align_columns" => {
-                                list.column_config.align_columns = !list.column_config.align_columns;
-                                if list.column_config.align_columns {
-                                    list.column_config.separator_offsets = None;
-                                }
+                    let list_ui = self.watchlist_ui.list_mut(active_list_id);
+                    match column.as_str() {
+                        "exchange"     => list_ui.column_config.show_exchange     = !list_ui.column_config.show_exchange,
+                        "last_price"   => list_ui.column_config.show_last_price   = !list_ui.column_config.show_last_price,
+                        "change_pct"   => list_ui.column_config.show_change_pct   = !list_ui.column_config.show_change_pct,
+                        "change_abs"   => list_ui.column_config.show_change_abs   = !list_ui.column_config.show_change_abs,
+                        "volume"       => list_ui.column_config.show_volume       = !list_ui.column_config.show_volume,
+                        "high_low"     => list_ui.column_config.show_high_low     = !list_ui.column_config.show_high_low,
+                        "account_type" => list_ui.column_config.show_account_type = !list_ui.column_config.show_account_type,
+                        "align_columns" => {
+                            list_ui.column_config.align_columns = !list_ui.column_config.align_columns;
+                            if list_ui.column_config.align_columns {
+                                list_ui.column_config.separator_offsets = None;
                             }
-                            _ => {}
                         }
-                        if column != "align_columns" {
-                            list.column_config.separator_offsets = None;
-                        }
+                        _ => {}
+                    }
+                    if column != "align_columns" {
+                        list_ui.column_config.separator_offsets = None;
                     }
                 }
                 WatchlistAction::SortCycle => {
-                    if let Some(list) = self.core.watchlists_mut().active_mut() {
-                        list.order_snapshot = None;
-                    }
+                    self.watchlist_ui.list_mut(active_list_id).order_snapshot = None;
                 }
                 WatchlistAction::ResetSort => {
-                    if let Some(list) = self.core.watchlists_mut().active_mut() {
-                        list.order_snapshot = None;
-                    }
+                    self.watchlist_ui.list_mut(active_list_id).order_snapshot = None;
                 }
             }
         }
@@ -2290,6 +2286,7 @@ impl ChartApp {
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
             sidebar_state: mlc_app_sidebar_content::state::SidebarState::new(),
+            watchlist_ui: watchlist_ui::WatchlistUiState::default(),
             last_sidebar_result: None,
             sidebar_separator_drag_active: false,
             split_without_group: false,
@@ -2384,7 +2381,7 @@ impl ChartApp {
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_watchlists below.
-        app.core.watchlists_mut().replace_all(mlc_watchlist::WatchlistManager::new(
+        app.core.watchlists_mut().replace_all(mlc_backend::watchlist::WatchlistManager::new(
             vec![
                 mlc_core::instrument::InstrumentAddress::new("binance", "BTCUSDT", mlc_core::instrument::AccountType::Spot),
                 mlc_core::instrument::InstrumentAddress::new("binance", "ETHUSDT", mlc_core::instrument::AccountType::Spot),
@@ -2694,7 +2691,7 @@ impl ChartApp {
 
         // Subscribe mini tickers for active watchlist.
         if !skeleton {
-            let wl_syms: Vec<(String, String, mlc_core::instrument::AccountType)> = app.core.watchlists().active()
+            let wl_syms: Vec<(String, String, mlc_core::instrument::AccountType)> = app.core.watchlists().find(app.watchlist_ui.active_list_id)
                 .map(|wl| wl.all_symbols().into_iter().map(|ws| (ws.exchange.clone(), ws.symbol.clone(), ws.account_type)).collect())
                 .unwrap_or_default();
             for (ws_exchange_str, ws_symbol, ws_account_type) in wl_syms {
@@ -5119,6 +5116,15 @@ impl ChartApp {
                 (colors, flags)
             };
 
+            // Pre-compute watchlist column config + color-flag map before
+            // render_right_sidebar mutably borrows self.sidebar_state (same
+            // E0502 rationale as sidebar_panel_color_map above).
+            let watchlist_col_cfg = self.watchlist_ui.column_config(self.watchlist_ui.active_list_id);
+            let watchlist_color_flags: std::collections::HashMap<String, String> = self.core.watchlists()
+                .find(self.watchlist_ui.active_list_id)
+                .map(|l| l.color_flags.clone())
+                .unwrap_or_default();
+
             // Draw sidebar and register hit zones every frame.
             // When the cached sidebar_scene is composited on top these pixels
             // are overwritten, but the widget registrations survive until end_frame().
@@ -5258,7 +5264,11 @@ impl ChartApp {
                         _ => None,
                     }
                 },
-                self.core.watchlists().as_manager(),
+                &watchlist_col_cfg,
+                &|symbol: &str, exchange: &str, account_type: &str| -> Option<String> {
+                    let key = format!("{}:{}:{}", symbol, exchange, account_type);
+                    watchlist_color_flags.get(&key).cloned()
+                },
             );
 
             Some(sidebar_result)
@@ -5641,6 +5651,14 @@ impl ChartApp {
             (colors, flags)
         };
 
+        // Pre-compute watchlist column config + color-flag map before
+        // render_right_sidebar mut-borrows self.sidebar_state.
+        let watchlist_col_cfg_main = self.watchlist_ui.column_config(self.watchlist_ui.active_list_id);
+        let watchlist_color_flags_main: std::collections::HashMap<String, String> = self.core.watchlists()
+            .find(self.watchlist_ui.active_list_id)
+            .map(|l| l.color_flags.clone())
+            .unwrap_or_default();
+
         let panels_store = &self.panels_store;
         let sidebar_result = mlc_app_sidebar_content::render::render_right_sidebar(
             ctx,
@@ -5775,7 +5793,11 @@ impl ChartApp {
                     _ => None,
                 }
             },
-            self.core.watchlists().as_manager(),
+            &watchlist_col_cfg_main,
+            &|symbol: &str, exchange: &str, account_type: &str| -> Option<String> {
+                let key = format!("{}:{}:{}", symbol, exchange, account_type);
+                watchlist_color_flags_main.get(&key).cloned()
+            },
         );
 
         // Persist agent terminal rect for hover-focus.
@@ -6257,10 +6279,11 @@ impl ChartApp {
         // 8b. Watchlist modal
         let last_watchlist_modal_result: Option<mlc_app_layout::layout::modals::watchlist_modal::WatchlistModalResult> =
             if self.watchlist_modal.is_open() {
+                let active_list_id = self.watchlist_ui.active_list_id;
                 let wl_guard = self.core.watchlists();
                 let color_flags: Vec<String> = self.sidebar_state.watchlist_items.iter()
                     .map(|item| {
-                        wl_guard.active()
+                        wl_guard.find(active_list_id)
                             .and_then(|l| l.get_color_flag(&item.symbol, &item.exchange, &item.account_type))
                             .unwrap_or_default()
                             .to_string()
@@ -6288,10 +6311,13 @@ impl ChartApp {
                         color: if list.groups.is_empty() {
                             String::new()
                         } else {
-                            list.groups[0].color.clone()
+                            self.watchlist_ui.list(list.id)
+                                .and_then(|l| l.groups.get(&list.groups[0].id))
+                                .map(|g| g.color.clone())
+                                .unwrap_or_default()
                         },
                         symbol_count: list.all_symbols().len(),
-                        is_active: list.id == wl_guard.active_id(),
+                        is_active: list.id == active_list_id,
                     })
                     .collect();
                 drop(wl_guard);
@@ -7289,7 +7315,7 @@ impl ChartApp {
     /// (200 total). Returns empty list if no symbols are loaded yet.
     pub(crate) fn build_symbol_search_results(
         query: &str,
-        watchlist_manager: &mlc_app_sidebar_content::watchlist::WatchlistManager,
+        active_watchlist: Option<&mlc_core::WatchlistList>,
         exchange_symbols: &std::collections::HashMap<digdigdig3::ExchangeId, Vec<mlc_backend_data_bridge::SymbolInfo>>,
     ) -> Vec<mlc_core::state::modal_state::SearchResult> {
         use mlc_core::state::modal_state::SearchResult;
@@ -7423,11 +7449,9 @@ impl ChartApp {
                         })
                         .unwrap_or_else(|| s.symbol.clone());
 
-                    let in_watchlist = watchlist_manager.contains_with_type(
-                        &symbol_key,
-                        exchange_slug,
-                        s.account_type.short_label(),
-                    );
+                    let in_watchlist = active_watchlist
+                        .map(|l| l.contains_with_type(&symbol_key, exchange_slug, s.account_type.short_label()))
+                        .unwrap_or(false);
                     let asset_type = if exchange_slug == "moex" { "Stock" } else { "Crypto" };
                     let category_icon = if exchange_slug == "moex" { "S" } else { "C" };
                     results.push(SearchResult {
@@ -7474,10 +7498,10 @@ impl ChartApp {
     #[inline]
     pub(crate) fn build_demo_symbol_results(
         query: &str,
-        watchlist_manager: &mlc_app_sidebar_content::watchlist::WatchlistManager,
+        active_watchlist: Option<&mlc_core::WatchlistList>,
         exchange_symbols: &std::collections::HashMap<digdigdig3::ExchangeId, Vec<mlc_backend_data_bridge::SymbolInfo>>,
     ) -> Vec<mlc_core::state::modal_state::SearchResult> {
-        Self::build_symbol_search_results(query, watchlist_manager, exchange_symbols)
+        Self::build_symbol_search_results(query, active_watchlist, exchange_symbols)
     }
 
     /// Apply `ChartOutputAction` results to the active `ChartContainer`.

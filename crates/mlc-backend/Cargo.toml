@@ -13,8 +13,6 @@ mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 mlc-backend-indicator-engine = { path = "../mlc-backend-indicator-engine", package = "mylittlechart-backend-indicator-engine" }
 mlc-backend-data-bridge = { path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
 mlc-backend-trading-engine = { path = "../mlc-backend-trading-engine", package = "mylittlechart-backend-trading-engine" }
-mlc-app-sidebar-content = { path = "../mlc-app-sidebar-content", package = "mylittlechart-app-sidebar-content" }
-mlc-watchlist = { path = "../mlc-watchlist", package = "mylittlechart-watchlist" }
 digdigdig3 = "=0.3.24"
 dashmap = "6"
 serde = { version = "1", features = ["derive"] }

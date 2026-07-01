@@ -53,7 +53,7 @@ use mlc_core::Bar;
 use mlc_backend_indicator_engine::IndicatorManager;
 use mlc_backend_data_bridge::{DataBridge, LiveUpdate, LiveUpdateReceiver, OrderbookSource, SymbolInfo};
 use mlc_backend_trading_engine::TradingManager;
-use mlc_watchlist::WatchlistManager;
+use crate::watchlist::WatchlistManager;
 
 /// Cached 24-hour ticker statistics from the WebSocket mini-ticker stream.
 ///
@@ -953,24 +953,6 @@ impl BackendCore {
     #[inline]
     pub fn template_manager_mut(&self) -> std::sync::RwLockWriteGuard<'_, TemplateManager> {
         self.template_manager.write().expect("BackendCore.template_manager poisoned (write)")
-    }
-
-    /// INTERNAL: raw read guard for the watchlist manager. Backend-crate use
-    /// only (park/unpark `mem::replace` in `mlc-app/src/persistence/profile.rs`,
-    /// cross-window sync push in `mlc-app-shell-vello/src/main.rs` — design §6.6).
-    /// App callers must use [`Self::watchlists`] instead. Step 7 deletes this
-    /// method once every external caller is swept.
-    #[inline]
-    pub fn watchlist_raw(&self) -> std::sync::RwLockReadGuard<'_, WatchlistManager> {
-        self.watchlist_manager.read().expect("BackendCore.watchlist_manager poisoned (read)")
-    }
-
-    /// INTERNAL: raw write guard for the watchlist manager. See
-    /// [`Self::watchlist_raw`] — app callers must use
-    /// [`Self::watchlists_mut`] instead.
-    #[inline]
-    pub fn watchlist_mut_raw(&self) -> std::sync::RwLockWriteGuard<'_, WatchlistManager> {
-        self.watchlist_manager.write().expect("BackendCore.watchlist_manager poisoned (write)")
     }
 
     /// Read-only facade over the watchlist manager. The ONLY doctrinally-

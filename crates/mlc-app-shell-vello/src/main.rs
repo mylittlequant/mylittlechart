@@ -1102,7 +1102,8 @@ impl App<'_> {
         }
         // Initialise the new window directly from AppState so it has current data
         // without waiting for the next dirty-flag sync pass.
-        *chart.core.watchlist_mut_raw() = self.app_state.watchlist_manager.clone();
+        chart.core.watchlists_mut().replace_all(self.app_state.watchlist_manager.clone());
+        chart.watchlist_ui = self.app_state.watchlist_ui.clone();
         chart.sidebar_state.connector_enabled = self.app_state.connector_enabled.clone();
         // Merge AppState presets into window — don't replace, to keep
         // any Untitled preset that new_window() just created.
@@ -1492,6 +1493,7 @@ impl App<'_> {
         // AppState fields needed for the sync block (read-only in the worker).
         let theme_preset = self.app_state.theme_preset.clone();
         let watchlist_manager = self.app_state.watchlist_manager.clone();
+        let watchlist_ui = self.app_state.watchlist_ui.clone();
         let connector_enabled = self.app_state.connector_enabled.clone();
         let app_presets = self.app_state.presets.clone();
         let snapshots = self.app_state.snapshots.clone();
@@ -1550,7 +1552,8 @@ impl App<'_> {
                     chart.panel_app.theme_manager.set_preset(&theme_preset);
                 }
                 // Sync AppState into the new live window (read-only from captured clones).
-                *chart.core.watchlist_mut_raw() = watchlist_manager.clone();
+                chart.core.watchlists_mut().replace_all(watchlist_manager.clone());
+                chart.watchlist_ui = watchlist_ui.clone();
                 chart.sidebar_state.connector_enabled = connector_enabled.clone();
                 for (k, v) in app_presets.iter() {
                     chart.core.presets_mut().entry(k.clone()).or_insert_with(|| v.clone());
@@ -2198,9 +2201,10 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         for pw in self.windows.values_mut() {
             for action in pw.chart.watchlist_actions.drain(..) {
                 watchlist_had_actions = true;
+                let active_list_id = self.app_state.watchlist_ui.active_list_id;
                 match action {
                     mlc_app::WatchlistAction::Toggle { symbol, exchange, account_type } => {
-                        let now_in = self.app_state.watchlist_manager.toggle_symbol(&symbol, &exchange, &account_type);
+                        let now_in = self.app_state.watchlist_manager.toggle_symbol(active_list_id, &symbol, &exchange, &account_type);
                         eprintln!("[App] watchlist toggle: {}:{}:{} -> in_watchlist={}", symbol, exchange, account_type, now_in);
                         if now_in {
                             if let Some(eid) = mlc_app::ExchangeId::from_str(&exchange) {
@@ -2212,35 +2216,29 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                     self.bridge.subscribe_mini_ticker(eid, &symbol, at);
                                 }
                             }
-                            if let Some(list) = self.app_state.watchlist_manager.active_list_mut() {
-                                list.order_snapshot = None;
-                            }
+                            self.app_state.watchlist_ui.list_mut(active_list_id).order_snapshot = None;
                         } else {
                             if let Some(eid) = mlc_app::ExchangeId::from_str(&exchange) {
                                 let at = mlc_app::account_type_from_label(&account_type);
                                 self.bridge.unsubscribe_mini_ticker(eid, &symbol, at);
                             }
-                            if let Some(list) = self.app_state.watchlist_manager.active_list_mut() {
-                                if let Some(ref mut snap) = list.order_snapshot {
-                                    snap.retain(|s| s.symbol != symbol);
-                                }
+                            if let Some(ref mut snap) = self.app_state.watchlist_ui.list_mut(active_list_id).order_snapshot {
+                                snap.retain(|s| s.symbol != symbol);
                             }
                         }
                     }
                     mlc_app::WatchlistAction::Remove { symbol, exchange, account_type } => {
-                        self.app_state.watchlist_manager.remove_symbol(&symbol, &exchange, &account_type);
+                        self.app_state.watchlist_manager.remove_symbol(active_list_id, &symbol, &exchange, &account_type);
                     }
                     mlc_app::WatchlistAction::ClearOrderSnapshot => {
-                        if let Some(list) = self.app_state.watchlist_manager.active_list_mut() {
-                            list.order_snapshot = None;
-                        }
+                        self.app_state.watchlist_ui.list_mut(active_list_id).order_snapshot = None;
                     }
                     mlc_app::WatchlistAction::Reorder { from_idx, to_idx } => {
-                        self.app_state.watchlist_manager.reorder_symbol(from_idx, to_idx);
+                        self.app_state.watchlist_manager.reorder_symbol(active_list_id, from_idx, to_idx);
                     }
                     mlc_app::WatchlistAction::CreateList { name } => {
                         let new_id = self.app_state.watchlist_manager.create_list(name);
-                        self.app_state.watchlist_manager.active_list_id = new_id;
+                        self.app_state.watchlist_ui.active_list_id = new_id;
                     }
                     mlc_app::WatchlistAction::RenameList { id, new_name } => {
                         if let Some(list) = self.app_state.watchlist_manager.lists.iter_mut().find(|l| l.id == id) {
@@ -2248,19 +2246,24 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         }
                     }
                     mlc_app::WatchlistAction::DeleteList { id } => {
-                        self.app_state.watchlist_manager.delete_list(id);
+                        if self.app_state.watchlist_manager.delete_list(id) {
+                            self.app_state.watchlist_ui.remove_list(id);
+                            if self.app_state.watchlist_ui.active_list_id == id {
+                                self.app_state.watchlist_ui.active_list_id = self.app_state.watchlist_manager.lists.first().map(|l| l.id).unwrap_or(0);
+                            }
+                        }
                     }
                     mlc_app::WatchlistAction::SetActiveList { id } => {
-                        self.app_state.watchlist_manager.active_list_id = id;
+                        self.app_state.watchlist_ui.active_list_id = id;
                     }
                     mlc_app::WatchlistAction::SetColorFlag { symbol, exchange, account_type, color } => {
-                        if let Some(list) = self.app_state.watchlist_manager.active_list_mut() {
+                        if let Some(list) = self.app_state.watchlist_manager.find_mut(active_list_id) {
                             let color_str = color.as_deref().unwrap_or("");
                             list.set_color_flag(&symbol, &exchange, &account_type, color_str);
                         }
                     }
                     mlc_app::WatchlistAction::MoveToGroup { symbol, exchange, account_type, group_name } => {
-                        if let Some(list) = self.app_state.watchlist_manager.active_list_mut() {
+                        if let Some(list) = self.app_state.watchlist_manager.find_mut(active_list_id) {
                             if let Some(group) = list.groups.iter().find(|g| g.name == group_name) {
                                 let group_id = group.id;
                                 list.move_to_group(&symbol, &exchange, &account_type, group_id);
@@ -2268,7 +2271,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         }
                     }
                     mlc_app::WatchlistAction::RemoveFromGroup { symbol, exchange, account_type } => {
-                        if let Some(list) = self.app_state.watchlist_manager.active_list_mut() {
+                        if let Some(list) = self.app_state.watchlist_manager.find_mut(active_list_id) {
                             let at: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                             let mut found: Option<mlc_core::instrument::InstrumentAddress> = None;
                             for g in &mut list.groups {
@@ -2283,81 +2286,71 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         }
                     }
                     mlc_app::WatchlistAction::SetSeparatorOffsets { offsets } => {
-                        if let Some(list) = self.app_state.watchlist_manager.active_list_mut() {
-                            list.column_config.separator_offsets = Some(offsets);
-                        }
+                        self.app_state.watchlist_ui.list_mut(active_list_id).column_config.separator_offsets = Some(offsets);
                     }
                     mlc_app::WatchlistAction::ResetSeparatorOffsets => {
-                        if let Some(list) = self.app_state.watchlist_manager.active_list_mut() {
-                            list.column_config.separator_offsets = None;
-                        }
+                        self.app_state.watchlist_ui.list_mut(active_list_id).column_config.separator_offsets = None;
                     }
                     mlc_app::WatchlistAction::SetSeparatorOffset { index, value } => {
-                        if let Some(list) = self.app_state.watchlist_manager.active_list_mut() {
-                            // Count visible columns to get correct separator count.
-                            let n_cols = {
-                                let c = &list.column_config;
-                                let mut n: usize = 1; // Symbol always on
-                                if c.show_exchange     { n += 1; }
-                                if c.show_account_type { n += 1; }
-                                if c.show_last_price   { n += 1; }
-                                if c.show_change_pct   { n += 1; }
-                                if c.show_change_abs   { n += 1; }
-                                if c.show_high_low     { n += 2; }
-                                if c.show_volume       { n += 1; }
-                                n
-                            };
-                            let n_seps = n_cols.saturating_sub(1);
+                        let list_ui = self.app_state.watchlist_ui.list_mut(active_list_id);
+                        // Count visible columns to get correct separator count.
+                        let n_cols = {
+                            let c = &list_ui.column_config;
+                            let mut n: usize = 1; // Symbol always on
+                            if c.show_exchange     { n += 1; }
+                            if c.show_account_type { n += 1; }
+                            if c.show_last_price   { n += 1; }
+                            if c.show_change_pct   { n += 1; }
+                            if c.show_change_abs   { n += 1; }
+                            if c.show_high_low     { n += 2; }
+                            if c.show_volume       { n += 1; }
+                            n
+                        };
+                        let n_seps = n_cols.saturating_sub(1);
 
-                            let needs_init = list.column_config.separator_offsets
-                                .as_ref()
-                                .map(|o| o.len() != n_seps)
-                                .unwrap_or(true);
-                            if needs_init {
-                                list.column_config.separator_offsets = Some(vec![0.0; n_seps]);
-                            }
-                            if let Some(ref mut offsets) = list.column_config.separator_offsets {
-                                if index < offsets.len() {
-                                    offsets[index] = value;
-                                }
+                        let needs_init = list_ui.column_config.separator_offsets
+                            .as_ref()
+                            .map(|o| o.len() != n_seps)
+                            .unwrap_or(true);
+                        if needs_init {
+                            list_ui.column_config.separator_offsets = Some(vec![0.0; n_seps]);
+                        }
+                        if let Some(ref mut offsets) = list_ui.column_config.separator_offsets {
+                            if index < offsets.len() {
+                                offsets[index] = value;
                             }
                         }
                     }
                     mlc_app::WatchlistAction::ToggleColumnVisibility { column } => {
-                        if let Some(list) = self.app_state.watchlist_manager.active_list_mut() {
-                            match column.as_str() {
-                                "exchange"     => list.column_config.show_exchange     = !list.column_config.show_exchange,
-                                "last_price"   => list.column_config.show_last_price   = !list.column_config.show_last_price,
-                                "change_pct"   => list.column_config.show_change_pct   = !list.column_config.show_change_pct,
-                                "change_abs"   => list.column_config.show_change_abs   = !list.column_config.show_change_abs,
-                                "volume"       => list.column_config.show_volume       = !list.column_config.show_volume,
-                                "high_low"     => list.column_config.show_high_low     = !list.column_config.show_high_low,
-                                "account_type" => list.column_config.show_account_type = !list.column_config.show_account_type,
-                                "align_columns" => {
-                                    list.column_config.align_columns = !list.column_config.align_columns;
-                                    if list.column_config.align_columns {
-                                        list.column_config.separator_offsets = None;
-                                    }
+                        let list_ui = self.app_state.watchlist_ui.list_mut(active_list_id);
+                        match column.as_str() {
+                            "exchange"     => list_ui.column_config.show_exchange     = !list_ui.column_config.show_exchange,
+                            "last_price"   => list_ui.column_config.show_last_price   = !list_ui.column_config.show_last_price,
+                            "change_pct"   => list_ui.column_config.show_change_pct   = !list_ui.column_config.show_change_pct,
+                            "change_abs"   => list_ui.column_config.show_change_abs   = !list_ui.column_config.show_change_abs,
+                            "volume"       => list_ui.column_config.show_volume       = !list_ui.column_config.show_volume,
+                            "high_low"     => list_ui.column_config.show_high_low     = !list_ui.column_config.show_high_low,
+                            "account_type" => list_ui.column_config.show_account_type = !list_ui.column_config.show_account_type,
+                            "align_columns" => {
+                                list_ui.column_config.align_columns = !list_ui.column_config.align_columns;
+                                if list_ui.column_config.align_columns {
+                                    list_ui.column_config.separator_offsets = None;
                                 }
-                                _ => {}
                             }
-                            // Reset separator offsets when column visibility changes
-                            // (but not for align_columns which manages its own offsets).
-                            if column != "align_columns" {
-                                list.column_config.separator_offsets = None;
-                            }
+                            _ => {}
+                        }
+                        // Reset separator offsets when column visibility changes
+                        // (but not for align_columns which manages its own offsets).
+                        if column != "align_columns" {
+                            list_ui.column_config.separator_offsets = None;
                         }
                     }
                     mlc_app::WatchlistAction::SortCycle => {
                         // Clear order snapshot to trigger re-sort on next render
-                        if let Some(list) = self.app_state.watchlist_manager.active_list_mut() {
-                            list.order_snapshot = None;
-                        }
+                        self.app_state.watchlist_ui.list_mut(active_list_id).order_snapshot = None;
                     }
                     mlc_app::WatchlistAction::ResetSort => {
-                        if let Some(list) = self.app_state.watchlist_manager.active_list_mut() {
-                            list.order_snapshot = None;
-                        }
+                        self.app_state.watchlist_ui.list_mut(active_list_id).order_snapshot = None;
                     }
                 }
             }
@@ -3910,8 +3903,8 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             // when nothing has changed.
             if self.app_state.watchlists_dirty {
                 for pw in self.windows.values_mut() {
-                    *pw.chart.core.watchlist_mut_raw() =
-                        self.app_state.watchlist_manager.clone();
+                    pw.chart.core.watchlists_mut().replace_all(self.app_state.watchlist_manager.clone());
+                    pw.chart.watchlist_ui = self.app_state.watchlist_ui.clone();
                 }
                 self.app_state.watchlists_dirty = false;
             }

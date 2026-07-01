@@ -10,6 +10,9 @@
 pub(crate) struct AppState {
     /// Watchlist manager — all lists, groups, and symbols.
     pub(crate) watchlist_manager: mlc_app::WatchlistManager,
+    /// Watchlist UI/presentation state — active list tab, column config,
+    /// group color/collapsed, sort-order snapshot (doctrine 1B split).
+    pub(crate) watchlist_ui: mlc_app::watchlist_ui::WatchlistUiState,
     /// Per-exchange enabled/disabled flag (keyed by `ExchangeId::as_str()`).
     pub(crate) connector_enabled: std::collections::HashMap<String, bool>,
     /// All chart presets loaded at startup (keyed by preset id).
@@ -122,6 +125,7 @@ impl AppState {
 
         Self {
             watchlist_manager,
+            watchlist_ui: mlc_app::watchlist_ui::WatchlistUiState::default(),
             connector_enabled: profile.connector_enabled.clone(),
             presets,
             preset_dirty_ids: std::collections::HashSet::new(),

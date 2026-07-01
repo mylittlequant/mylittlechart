@@ -26,8 +26,8 @@ use uzor::panels::DockPanel;
 use uzor::types::Rect as WidgetRect;
 
 use crate::state::{SidebarState, RightSidebarPanel};
-use crate::watchlist::WatchlistManager;
 use crate::types::ObjectItemState;
+use crate::types::WatchlistColumnConfig;
 
 
 // =============================================================================
@@ -266,7 +266,8 @@ pub fn render_right_sidebar(
     panel_sync_flags_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<PanelSyncFlagsSnapshot>,
     panel_overlay_info_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<(String, String, String)>,
     panel_col_visibility_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<Vec<bool>>,
-    watchlist_manager: &WatchlistManager,
+    watchlist_column_config: &WatchlistColumnConfig,
+    watchlist_color_flag_fn: &dyn Fn(&str, &str, &str) -> Option<String>,
 ) -> RightSidebarResult {
     let panel = sidebar_state.right_panel;
 
@@ -527,7 +528,7 @@ pub fn render_right_sidebar(
             toolbar_theme,
             &mut result,
             input_coordinator,
-            watchlist_manager,
+            watchlist_column_config,
         );
     }
 
@@ -588,7 +589,8 @@ pub fn render_right_sidebar(
                 toolbar_theme,
                 &mut result,
                 input_coordinator,
-                watchlist_manager,
+                watchlist_column_config,
+                watchlist_color_flag_fn,
             );
         }
 
@@ -739,7 +741,7 @@ pub fn render_right_sidebar(
             toolbar_theme,
             &mut result,
             input_coordinator,
-            watchlist_manager,
+            watchlist_column_config,
         );
     }
 
@@ -781,17 +783,14 @@ fn render_watchlist_config_dropdown(
     theme: &ToolbarTheme,
     result: &mut RightSidebarResult,
     input_coordinator: &mut InputCoordinator,
-    watchlist_manager: &WatchlistManager,
+    watchlist_column_config: &WatchlistColumnConfig,
 ) {
     let row_h = 28.0;
     let pad = 10.0;
     let checkbox_size = 10.0;
     let gap = 8.0; // gap between checkbox and label
 
-    let col_cfg = watchlist_manager
-        .active_list()
-        .map(|l| l.column_config.clone())
-        .unwrap_or_default();
+    let col_cfg = watchlist_column_config.clone();
 
     // Column options: (field_name, label, current_value)
     let options: &[(&str, &str, bool)] = &[
@@ -1017,16 +1016,12 @@ fn render_watchlist_column_header(
     theme: &ToolbarTheme,
     result: &mut RightSidebarResult,
     input_coordinator: &mut InputCoordinator,
-    watchlist_manager: &WatchlistManager,
+    watchlist_column_config: &WatchlistColumnConfig,
 ) {
     let item_padding = 8.0;
     let header_row_h = 22.0;
 
-    // Read column config from WatchlistManager; fall back to defaults when no list is active.
-    let col_cfg = watchlist_manager
-        .active_list()
-        .map(|l| l.column_config.clone())
-        .unwrap_or_default();
+    let col_cfg = watchlist_column_config.clone();
 
     // Build dynamic column list based on config.
     let mut col_labels: Vec<&str> = Vec::with_capacity(9);
@@ -1196,7 +1191,8 @@ fn render_watchlist_items(
     theme: &ToolbarTheme,
     result: &mut RightSidebarResult,
     input_coordinator: &mut InputCoordinator,
-    watchlist_manager: &WatchlistManager,
+    watchlist_column_config: &WatchlistColumnConfig,
+    watchlist_color_flag_fn: &dyn Fn(&str, &str, &str) -> Option<String>,
 ) -> f64 {
     let _ = scrollbar_width;
 
@@ -1243,11 +1239,7 @@ fn render_watchlist_items(
     let viewport_height = (rect.height - sidebar_header_h - watchlist_col_header_h).max(0.0);
     let viewport_bottom = viewport_top + viewport_height;
 
-    // Read column config from WatchlistManager; fall back to defaults when no list is active.
-    let col_cfg = watchlist_manager
-        .active_list()
-        .map(|l| l.column_config.clone())
-        .unwrap_or_default();
+    let col_cfg = watchlist_column_config.clone();
 
     // Build dynamic column list based on config.
     // All columns are left-aligned so that clipping from the right preserves text.
@@ -1449,9 +1441,9 @@ fn render_watchlist_items(
         }
 
         // Color flag — 10px wide rect at the left edge, full row height.
-        let color_flag = watchlist_manager.active_list()
-            .and_then(|l| l.get_color_flag(&item.symbol, &item.exchange, &item.account_type))
-            .unwrap_or("");
+        let color_flag_owned = watchlist_color_flag_fn(&item.symbol, &item.exchange, &item.account_type)
+            .unwrap_or_default();
+        let color_flag = color_flag_owned.as_str();
         // Flag click zone (first 10 px of row) — register BEFORE drawing so
         // is_hovered works on the same frame.
         let flag_id = format!("watchlist_flag_{}", i);

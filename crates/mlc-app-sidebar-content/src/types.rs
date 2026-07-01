@@ -298,6 +298,68 @@ impl WatchlistItem {
     }
 }
 
+/// Configuration for which columns to show in the watchlist sidebar.
+///
+/// Presentation state — owned by `mlc-app::watchlist_ui::ListUiState`
+/// (per doctrine 1B, `docs/mlc/plans/doctrine-cutover-2026-06-27.md`).
+/// Defined here (not in `mlc-app`) because the sidebar render function
+/// needs it by concrete type and `mlc-app-sidebar-content` sits below
+/// `mlc-app` in the dependency graph.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WatchlistColumnConfig {
+    pub show_exchange: bool,
+    pub show_last_price: bool,
+    pub show_change_pct: bool,
+    pub show_change_abs: bool,
+    pub show_volume: bool,
+    pub show_high_low: bool,
+    /// Show account type column (e.g. "S", "FC", "M"). Default false.
+    #[serde(default)]
+    pub show_account_type: bool,
+
+    /// Custom separator X positions as offsets from the left edge of the usable area.
+    ///
+    /// Index 0 = separator between column 0 and column 1, etc.
+    /// There is always one fewer separator than there are visible columns.
+    ///
+    /// When `None` (the default and after any column toggle), separators are
+    /// placed at the default column boundaries computed by the renderer.
+    /// Reset to `None` whenever a column is toggled on or off so the layout
+    /// starts fresh.
+    ///
+    /// Dragging a separator left clips the column to its left; dragging right
+    /// clips the column to its right.  Column content positions are always at
+    /// the default layout positions and are never moved — only clipped.
+    #[serde(default)]
+    pub separator_offsets: Option<Vec<f64>>,
+
+    /// When `true` (the default), all visible columns share equal width and
+    /// separator drag is disabled.  Setting to `false` lets the user drag
+    /// column separators to custom widths.
+    #[serde(default = "default_true_column_config")]
+    pub align_columns: bool,
+}
+
+fn default_true_column_config() -> bool {
+    true
+}
+
+impl Default for WatchlistColumnConfig {
+    fn default() -> Self {
+        Self {
+            show_exchange: true,
+            show_last_price: true,
+            show_change_pct: true,
+            show_change_abs: false,
+            show_volume: false,
+            show_high_low: false,
+            show_account_type: false,
+            separator_offsets: None,
+            align_columns: true,
+        }
+    }
+}
+
 // =============================================================================
 // Connectors
 // =============================================================================

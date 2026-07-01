@@ -668,7 +668,7 @@ impl ChartApp {
             ChartOutEvent::OpenSymbolSearch => {
                 self.modal_state.open(OpenModal::SymbolSearch);
                 self.modal_state.symbol_search_results =
-                    crate::ChartApp::build_demo_symbol_results("", self.core.watchlists().as_manager(), &self.core.exchange_symbols_read());
+                    crate::ChartApp::build_demo_symbol_results("", self.core.watchlists().find(self.watchlist_ui.active_list_id), &self.core.exchange_symbols_read());
                 {
                     let sym_id = uzor::WidgetId::from(crate::text_input::SYMBOL_SEARCH);
                     self.input_coordinator.borrow_mut().text_fields_mut().clear(&sym_id);
@@ -784,7 +784,7 @@ impl ChartApp {
             ChartOutEvent::OpenCompareSearch => {
                 self.modal_state.open(OpenModal::CompareSearch);
                 self.modal_state.symbol_search_results =
-                    crate::ChartApp::build_demo_symbol_results("", self.core.watchlists().as_manager(), &self.core.exchange_symbols_read());
+                    crate::ChartApp::build_demo_symbol_results("", self.core.watchlists().find(self.watchlist_ui.active_list_id), &self.core.exchange_symbols_read());
                 {
                     let cmp_id = uzor::WidgetId::from(crate::text_input::COMPARE_SEARCH);
                     self.input_coordinator.borrow_mut().text_fields_mut().clear(&cmp_id);

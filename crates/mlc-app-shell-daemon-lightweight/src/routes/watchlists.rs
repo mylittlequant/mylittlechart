@@ -32,7 +32,10 @@ struct WatchlistsOut {
 
 async fn list_watchlists(State(s): State<AppState>) -> impl IntoResponse {
     let guard = s.core.watchlists();
-    let active_id = guard.active_id();
+    // `active_list_id` is UI/presentation state (doctrine 1B — which tab is
+    // open), owned by mlc-app::watchlist_ui, not the headless backend this
+    // daemon wraps. Always `false` here; a future daemon-aware UI client
+    // tracks its own active tab client-side.
     let watchlists: Vec<WatchlistEntry> = guard
         .lists()
         .iter()
@@ -57,7 +60,7 @@ async fn list_watchlists(State(s): State<AppState>) -> impl IntoResponse {
             WatchlistEntry {
                 id: wl.id,
                 name: wl.name.clone(),
-                active: wl.id == active_id,
+                active: false,
                 items,
             }
         })

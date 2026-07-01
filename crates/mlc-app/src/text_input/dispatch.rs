@@ -291,7 +291,7 @@ impl ChartApp {
                     match self.wl_group_name_input.mode.clone() {
                         WatchlistGroupNameMode::CreateNew => {
                             let new_id = self.core.watchlists_mut().create_list(name.clone());
-                            self.core.watchlists_mut().set_active(new_id);
+                            self.watchlist_ui.active_list_id = new_id;
                             self.watchlist_actions.push(crate::WatchlistAction::CreateList { name: name.clone() });
                             self.watchlists_dirty = true;
                             self.persist_watchlists();
@@ -586,7 +586,7 @@ impl ChartApp {
                 {
                     let q = self.modal_state.search_query.clone();
                     self.modal_state.symbol_search_results =
-                        crate::ChartApp::build_demo_symbol_results(&q, self.core.watchlists().as_manager(), &self.core.exchange_symbols_read());
+                        crate::ChartApp::build_demo_symbol_results(&q, self.core.watchlists().find(self.watchlist_ui.active_list_id), &self.core.exchange_symbols_read());
                 }
             }
             TextAction::Cancel => {

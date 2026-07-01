@@ -112,6 +112,11 @@ pub mod alert;
 pub mod instrument;
 pub use instrument::{AccountType, InstrumentAddress};
 
+// Watchlist domain value types (no UI/presentation fields) — see
+// docs/mlc/plans/doctrine-cutover-2026-06-27.md §1B.
+pub mod watchlist;
+pub use watchlist::{WatchlistGroup, WatchlistList};
+
 // Chart preset system (snapshot types for persistence)
 pub mod preset;
 

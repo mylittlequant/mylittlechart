@@ -1165,10 +1165,7 @@ impl ChartApp {
                 .and_then(|h| h.strip_prefix("watchlist_sep_").and_then(|s| s.parse::<usize>().ok()))
                 .map(|one_based| one_based.saturating_sub(1));
             // Skip separator drag when columns are in equal-width (aligned) mode.
-            let align_cols = self.core.watchlists()
-                .active()
-                .map(|l| l.column_config.align_columns)
-                .unwrap_or(true);
+            let align_cols = self.watchlist_ui.column_config(self.watchlist_ui.active_list_id).align_columns;
             if let Some(sep_idx) = on_sep.filter(|_| !align_cols) {
                 // Compute the current separator absolute X offset from area_left.
                 let item_padding = 8.0_f64;
@@ -1179,9 +1176,8 @@ impl ChartApp {
 
                 // Determine current separator offset from area_left.
                 let sep_offset_at_start = {
-                    let wl_r = self.core.watchlists();
-                    let col_cfg = wl_r.active().map(|l| &l.column_config);
-                    let n_seps = col_cfg.map(|c| {
+                    let c = self.watchlist_ui.column_config(self.watchlist_ui.active_list_id);
+                    let n_seps = {
                         let mut n = 0usize; // symbol always present
                         if c.show_exchange     { n += 1; }
                         if c.show_account_type { n += 1; }
@@ -1191,16 +1187,14 @@ impl ChartApp {
                         if c.show_high_low     { n += 2; }
                         if c.show_volume       { n += 1; }
                         n
-                    }).unwrap_or(0);
+                    };
 
-                    let use_custom = col_cfg
-                        .and_then(|c| c.separator_offsets.as_ref())
+                    let use_custom = c.separator_offsets.as_ref()
                         .map(|o| o.len() == n_seps)
                         .unwrap_or(false);
 
                     if use_custom {
-                        col_cfg
-                            .and_then(|c| c.separator_offsets.as_ref())
+                        c.separator_offsets.as_ref()
                             .and_then(|o| o.get(sep_idx).copied())
                             .unwrap_or(0.0)
                     } else {
@@ -2766,11 +2760,9 @@ impl ChartApp {
 
         // Watchlist column-separator drag: update absolute separator offset (clip curtain model).
         if let Some((sep_idx, start_x, sep_offset_at_start)) = self.sidebar_state.watchlist_sep_drag {
+            let active_list_id = self.watchlist_ui.active_list_id;
             // Skip drag when columns are aligned (equal-width mode).
-            let align = self.core.watchlists()
-                .active()
-                .map(|l| l.column_config.align_columns)
-                .unwrap_or(true);
+            let align = self.watchlist_ui.column_config(active_list_id).align_columns;
             if align {
                 return;
             }
@@ -2783,18 +2775,15 @@ impl ChartApp {
 
             // Count separators (= visible data columns).
             let n_seps = {
-                let wl_r = self.core.watchlists();
-                let cfg = wl_r.active().map(|l| &l.column_config);
+                let c = self.watchlist_ui.column_config(active_list_id);
                 let mut n = 0usize;
-                if let Some(c) = cfg {
-                    if c.show_exchange     { n += 1; }
-                    if c.show_account_type { n += 1; }
-                    if c.show_last_price   { n += 1; }
-                    if c.show_change_pct   { n += 1; }
-                    if c.show_change_abs   { n += 1; }
-                    if c.show_high_low     { n += 2; }
-                    if c.show_volume       { n += 1; }
-                }
+                if c.show_exchange     { n += 1; }
+                if c.show_account_type { n += 1; }
+                if c.show_last_price   { n += 1; }
+                if c.show_change_pct   { n += 1; }
+                if c.show_change_abs   { n += 1; }
+                if c.show_high_low     { n += 2; }
+                if c.show_volume       { n += 1; }
                 n
             };
 
@@ -2805,42 +2794,39 @@ impl ChartApp {
 
                 // Clamp against left neighbor (or area edge).
                 let prev_limit = if sep_idx == 0 { MIN_GAP } else {
-                    self.core.watchlists()
-                        .active()
-                        .and_then(|l| l.column_config.separator_offsets.as_ref())
+                    self.watchlist_ui.column_config(active_list_id).separator_offsets
                         .and_then(|o| o.get(sep_idx - 1).copied())
                         .unwrap_or(MIN_GAP) + MIN_GAP
                 };
                 let clamped = new_offset.max(prev_limit).min(usable_w - MIN_GAP);
 
                 // Initialise separator_offsets from defaults when not yet set or wrong length.
-                if let Some(list) = self.core.watchlists_mut().active_mut() {
-                    let needs_init = list.column_config.separator_offsets
-                        .as_ref()
-                        .map(|o| o.len() != n_seps)
-                        .unwrap_or(true);
+                let column_config = &mut self.watchlist_ui.list_mut(active_list_id).column_config;
+                let needs_init = column_config.separator_offsets
+                    .as_ref()
+                    .map(|o| o.len() != n_seps)
+                    .unwrap_or(true);
 
-                    if needs_init {
-                        // Mirror the default layout from render.rs — all columns equal width.
-                        let n_cols = n_seps + 1;
-                        let equal_col_w = usable_w / n_cols as f64;
-                        let offsets: Vec<f64> = (0..n_seps)
-                            .map(|i| (i + 1) as f64 * equal_col_w)
-                            .collect();
-                        list.column_config.separator_offsets = Some(offsets);
-                    }
+                if needs_init {
+                    // Mirror the default layout from render.rs — all columns equal width.
+                    let n_cols = n_seps + 1;
+                    let equal_col_w = usable_w / n_cols as f64;
+                    let offsets: Vec<f64> = (0..n_seps)
+                        .map(|i| (i + 1) as f64 * equal_col_w)
+                        .collect();
+                    column_config.separator_offsets = Some(offsets);
+                }
 
-                    if let Some(offsets) = list.column_config.separator_offsets.as_mut() {
-                        if sep_idx < offsets.len() {
-                            offsets[sep_idx] = clamped;
-                            // Push-right chain: if this separator moved right past
-                            // the next one, push all subsequent separators to maintain
-                            // MIN_GAP between each pair.
-                            for j in (sep_idx + 1)..offsets.len() {
-                                let min_pos = offsets[j - 1] + MIN_GAP;
-                                if offsets[j] < min_pos {
-                                    offsets[j] = min_pos.min(usable_w - MIN_GAP * (offsets.len() - j) as f64);
-                                }
+                if let Some(offsets) = column_config.separator_offsets.as_mut() {
+                    if sep_idx < offsets.len() {
+                        offsets[sep_idx] = clamped;
+                        // Push-right chain: if this separator moved right past
+                        // the next one, push all subsequent separators to maintain
+                        // MIN_GAP between each pair.
+                        for j in (sep_idx + 1)..offsets.len() {
+                            let min_pos = offsets[j - 1] + MIN_GAP;
+                            if offsets[j] < min_pos {
+                                offsets[j] = min_pos.min(usable_w - MIN_GAP * (offsets.len() - j) as f64);
                             }
                         }
                     }
@@ -3629,10 +3615,8 @@ impl ChartApp {
         // End watchlist column-separator drag: push the final offsets once to sync
         // app_state for persistence, then clear the drag handle.
         if self.sidebar_state.watchlist_sep_drag.is_some() {
-            if let Some(list) = self.core.watchlists().active() {
-                if let Some(offsets) = &list.column_config.separator_offsets {
-                    self.watchlist_actions.push(crate::WatchlistAction::SetSeparatorOffsets { offsets: offsets.clone() });
-                }
+            if let Some(offsets) = &self.watchlist_ui.column_config(self.watchlist_ui.active_list_id).separator_offsets {
+                self.watchlist_actions.push(crate::WatchlistAction::SetSeparatorOffsets { offsets: offsets.clone() });
             }
             self.watchlists_dirty = true;
             self.sidebar_state.watchlist_sep_drag = None;
@@ -3648,14 +3632,15 @@ impl ChartApp {
         if let Some((from_idx, _)) = self.watchlist_modal.drag_reorder.take() {
             let to_idx = self.watchlist_modal.drop_index.take().unwrap_or(from_idx);
             if from_idx != to_idx {
+                let active_list_id = self.watchlist_ui.active_list_id;
                 // Clamp to the ungrouped length to avoid panics.
                 let list_len = self.core.watchlists()
-                    .active()
+                    .find(active_list_id)
                     .map(|l| l.ungrouped.len())
                     .unwrap_or(0);
                 let clamped_to = to_idx.min(list_len.saturating_sub(1));
                 if from_idx != clamped_to {
-                    self.core.watchlists_mut().reorder_symbol(from_idx, clamped_to);
+                    self.core.watchlists_mut().reorder_symbol(active_list_id, from_idx, clamped_to);
                     self.watchlist_actions.push(crate::WatchlistAction::Reorder { from_idx, to_idx: clamped_to });
                     self.watchlist_actions.push(crate::WatchlistAction::ClearOrderSnapshot);
                     self.watchlist_actions.push(crate::WatchlistAction::ResetSort);
@@ -3665,9 +3650,7 @@ impl ChartApp {
                     eprintln!("[WatchlistModal] reorder: {} -> {}", from_idx, clamped_to);
                     // Manual reorder invalidates any saved sort snapshot — the new
                     // order becomes the "original" and sort mode resets to unsorted.
-                    if let Some(list) = self.core.watchlists_mut().active_mut() {
-                        list.order_snapshot = None;
-                    }
+                    self.watchlist_ui.list_mut(active_list_id).order_snapshot = None;
                 }
             }
             return;
@@ -3677,16 +3660,17 @@ impl ChartApp {
         if let Some(drag_idx) = self.sidebar_state.watchlist_drag_index.take() {
             let drop_idx = self.sidebar_state.watchlist_drop_index.take().unwrap_or(drag_idx);
             self.sidebar_state.watchlist_drag_y = 0.0;
+            let active_list_id = self.watchlist_ui.active_list_id;
 
             // Clamp drop_idx to the ungrouped length to avoid panics.
             let list_len = self.core.watchlists()
-                .active()
+                .find(active_list_id)
                 .map(|l| l.ungrouped.len())
                 .unwrap_or(0);
             let clamped_drop = drop_idx.min(list_len.saturating_sub(1));
 
             if drag_idx != clamped_drop {
-                self.core.watchlists_mut().reorder_symbol(drag_idx, clamped_drop);
+                self.core.watchlists_mut().reorder_symbol(active_list_id, drag_idx, clamped_drop);
                 self.watchlist_actions.push(crate::WatchlistAction::Reorder { from_idx: drag_idx, to_idx: clamped_drop });
                 self.watchlist_actions.push(crate::WatchlistAction::ClearOrderSnapshot);
                 self.watchlist_actions.push(crate::WatchlistAction::ResetSort);
@@ -3696,9 +3680,7 @@ impl ChartApp {
                 eprintln!("[Sidebar] Watchlist reorder: {} -> {}", drag_idx, clamped_drop);
                 // Manual reorder invalidates any saved sort snapshot — the new
                 // order becomes the "original" and sort mode resets to unsorted.
-                if let Some(list) = self.core.watchlists_mut().active_mut() {
-                    list.order_snapshot = None;
-                }
+                self.watchlist_ui.list_mut(active_list_id).order_snapshot = None;
             }
             return;
         }

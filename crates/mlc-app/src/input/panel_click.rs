@@ -144,23 +144,26 @@ impl ChartApp {
                 (self.sidebar_state.watchlist_sort_mode + 1) % 3;
             let mode = self.sidebar_state.watchlist_sort_mode;
             eprintln!("[Sidebar] watchlist_sort_mode -> {}", mode);
-            if let Some(list) = self.core.watchlists_mut().active_mut() {
+            let active_list_id = self.watchlist_ui.active_list_id;
+            let mut wl = self.core.watchlists_mut();
+            if let Some(list) = wl.find_mut(active_list_id) {
+                let list_ui = self.watchlist_ui.list_mut(active_list_id);
                 match mode {
                     0 => {
                         // Reset to original order from snapshot.
-                        if let Some(snap) = list.order_snapshot.take() {
+                        if let Some(snap) = list_ui.order_snapshot.take() {
                             list.ungrouped = snap;
                         }
                         eprintln!("[Sidebar] Watchlist sort reset to original order");
                     }
                     1 | 2 => {
                         // Save snapshot if not already saved (first sort from unsorted state).
-                        if list.order_snapshot.is_none() {
-                            list.order_snapshot = Some(list.ungrouped.clone());
+                        if list_ui.order_snapshot.is_none() {
+                            list_ui.order_snapshot = Some(list.ungrouped.clone());
                         }
                         // Always sort from the snapshot base so switching between modes
                         // 1 and 2 does not compound on an already-sorted order.
-                        let base = list.order_snapshot.as_ref().unwrap().clone();
+                        let base = list_ui.order_snapshot.as_ref().unwrap().clone();
                         let color_order: &[&str] = &[
                             "#ef5350", "#f59e0b", "#22c55e", "#3b82f6",
                             "#a855f7", "#ec4899", "#6b7280",
@@ -186,6 +189,7 @@ impl ChartApp {
                     _ => {}
                 }
             }
+            drop(wl);
             self.watchlist_actions.push(crate::WatchlistAction::SortCycle);
             return;
         }
@@ -254,10 +258,11 @@ impl ChartApp {
                             let exchange = item.exchange.clone();
                             let account_type = item.account_type.clone();
                             let color_set: Option<String> = {
+                                let active_list_id = self.watchlist_ui.active_list_id;
                                 let mut wl = self.core.watchlists_mut();
-                                if let Some(list) = wl.active_mut() {
+                                if wl.find(active_list_id).is_some() {
                                     let color = colors.get(color_idx).copied().unwrap_or_default();
-                                    list.set_color_flag(&symbol, &exchange, &account_type, color);
+                                    wl.set_color_flag(active_list_id, &symbol, &exchange, &account_type, color);
                                     Some(color.to_string())
                                 } else {
                                     None
@@ -289,14 +294,12 @@ impl ChartApp {
                     let account_type = item.account_type.clone();
                     // Remove symbol from snapshot (if active) before removing from list.
                     {
+                        let active_list_id = self.watchlist_ui.active_list_id;
                         let at: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
-                        let mut wl = self.core.watchlists_mut();
-                        if let Some(list) = wl.active_mut() {
-                            if let Some(ref mut snap) = list.order_snapshot {
-                                snap.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == at));
-                            }
+                        if let Some(ref mut snap) = self.watchlist_ui.list_mut(active_list_id).order_snapshot {
+                            snap.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == at));
                         }
-                        wl.remove_symbol(&symbol, &exchange, &account_type);
+                        self.core.watchlists_mut().remove_symbol(active_list_id, &symbol, &exchange, &account_type);
                     }
                     self.watchlist_actions.push(crate::WatchlistAction::Remove { symbol: symbol.clone(), exchange: exchange.clone(), account_type: account_type.clone() });
                     self.watchlist_actions.push(crate::WatchlistAction::ClearOrderSnapshot);
@@ -3664,7 +3667,7 @@ impl ChartApp {
                         match self.wl_group_name_input.mode.clone() {
                             WatchlistGroupNameMode::CreateNew => {
                                 let new_id = self.core.watchlists_mut().create_list(name.clone());
-                                self.core.watchlists_mut().set_active(new_id);
+                                self.watchlist_ui.active_list_id = new_id;
                                 self.watchlist_actions.push(crate::WatchlistAction::CreateList { name: name.clone() });
                                 self.watchlists_dirty = true;
                                 self.persist_watchlists();

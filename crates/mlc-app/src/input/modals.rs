@@ -329,7 +329,7 @@ impl ChartApp {
                             )
                         } else {
                             // Only one colon — treat as "SYMBOL:exchange", look up account_type.
-                            let at = self.core.watchlists().active()
+                            let at = self.core.watchlists().find(self.watchlist_ui.active_list_id)
                                 .and_then(|list| {
                                     list.all_symbols().iter()
                                         .find(|ws| ws.symbol == remainder && ws.exchange == at_part)
@@ -442,17 +442,17 @@ impl ChartApp {
                             )
                         } else {
                             // Only one colon — "SYMBOL:exchange", look up account_type.
-                            let at = self.core.watchlists().active()
+                            let at = self.core.watchlists().find(self.watchlist_ui.active_list_id)
                                 .and_then(|l| l.all_symbols().iter().find(|ws| ws.symbol == remainder && ws.exchange == at_part).map(|ws| ws.account_type.as_label().to_string()))
                                 .unwrap_or_default();
                             (remainder, at_part.to_string(), at)
                         }
                     } else {
                         // No colon — plain symbol, look up exchange + account_type.
-                        let ex = self.core.watchlists().active()
+                        let ex = self.core.watchlists().find(self.watchlist_ui.active_list_id)
                             .and_then(|l| l.all_symbols().iter().find(|ws| ws.symbol == key).map(|ws| ws.exchange.clone()))
                             .unwrap_or_else(|| self.active_exchange.as_str().to_string());
-                        let at = self.core.watchlists().active()
+                        let at = self.core.watchlists().find(self.watchlist_ui.active_list_id)
                             .and_then(|l| l.all_symbols().iter().find(|ws| ws.symbol == key).map(|ws| ws.account_type.as_label().to_string()))
                             .unwrap_or_default();
                         (key, ex, at)
@@ -462,13 +462,11 @@ impl ChartApp {
                 let account_type_parsed: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                 // Remove symbol from snapshot (if active) before removing from list.
                 {
-                    let mut wl = self.core.watchlists_mut();
-                    if let Some(list) = wl.active_mut() {
-                        if let Some(ref mut snap) = list.order_snapshot {
-                            snap.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == account_type_parsed));
-                        }
+                    let active_list_id = self.watchlist_ui.active_list_id;
+                    if let Some(ref mut snap) = self.watchlist_ui.list_mut(active_list_id).order_snapshot {
+                        snap.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == account_type_parsed));
                     }
-                    wl.remove_symbol(symbol, exchange, account_type);
+                    self.core.watchlists_mut().remove_symbol(active_list_id, symbol, exchange, account_type);
                 }
                 self.watchlist_actions.push(crate::WatchlistAction::Remove { symbol: symbol.to_string(), exchange: exchange.to_string(), account_type: account_type.to_string() });
                 self.watchlists_dirty = true;
@@ -479,7 +477,7 @@ impl ChartApp {
             _ if rest.starts_with("group:") => {
                 let id_str = &rest["group:".len()..];
                 if let Ok(id) = id_str.parse::<u64>() {
-                    self.core.watchlists_mut().set_active(id);
+                    self.watchlist_ui.active_list_id = id;
                     self.watchlist_actions.push(crate::WatchlistAction::SetActiveList { id });
                     self.watchlists_dirty = true;
                     self.persist_watchlists();
@@ -2294,7 +2292,7 @@ impl ChartApp {
                     "symbol_search" => {
                         self.modal_state.open(OpenModal::SymbolSearch);
                         self.modal_state.symbol_search_results =
-                            crate::ChartApp::build_demo_symbol_results("", self.core.watchlists().as_manager(), &self.core.exchange_symbols_read());
+                            crate::ChartApp::build_demo_symbol_results("", self.core.watchlists().find(self.watchlist_ui.active_list_id), &self.core.exchange_symbols_read());
                         {
                             let sym_id = uzor::WidgetId::from(crate::text_input::SYMBOL_SEARCH);
                             self.input_coordinator.borrow_mut().text_fields_mut().clear(&sym_id);

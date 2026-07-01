@@ -372,9 +372,9 @@ impl ChartApp {
         // Restore watchlist manager.
         let watchlists_path = mlc_core::user_profile::storage::watchlists_path();
         if watchlists_path.exists() {
-            match mlc_core::load_json::<mlc_app_sidebar_content::watchlist::WatchlistManager>(&watchlists_path, None) {
+            match mlc_core::load_json::<mlc_backend::watchlist::WatchlistManager>(&watchlists_path, None) {
                 Ok(manager) => {
-                    *self.core.watchlist_mut_raw() = manager;
+                    self.core.watchlists_mut().replace_all(manager);
                 }
                 Err(e) => {
                     eprintln!("[UserProfile] Failed to load watchlists: {}", e);
@@ -391,9 +391,9 @@ impl ChartApp {
     pub fn load_watchlists(&mut self) {
         let watchlists_path = mlc_core::user_profile::storage::watchlists_path();
         if watchlists_path.exists() {
-            match mlc_core::load_json::<mlc_app_sidebar_content::watchlist::WatchlistManager>(&watchlists_path, None) {
+            match mlc_core::load_json::<mlc_backend::watchlist::WatchlistManager>(&watchlists_path, None) {
                 Ok(manager) => {
-                    *self.core.watchlist_mut_raw() = manager;
+                    self.core.watchlists_mut().replace_all(manager);
                 }
                 Err(e) => {
                     eprintln!("[UserProfile] Failed to load watchlists: {}", e);

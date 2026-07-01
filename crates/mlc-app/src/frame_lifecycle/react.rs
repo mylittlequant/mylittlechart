@@ -820,7 +820,7 @@ impl ChartApp {
                 let bridge = self.core.bridge.clone();
                 let exchange_str = eid_str;
                 let wl_guard = self.core.watchlists();
-                if let Some(wl) = wl_guard.active() {
+                if let Some(wl) = wl_guard.find(self.watchlist_ui.active_list_id) {
                     for ws in wl.all_symbols() {
                         if ws.exchange == exchange_str {
                             let ws_at = mlc_backend_data_bridge::account_type_to_dig3(ws.account_type);
