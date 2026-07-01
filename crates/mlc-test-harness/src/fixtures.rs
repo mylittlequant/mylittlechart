@@ -37,10 +37,7 @@ pub fn n_charts_same_instrument(
     for _ in 0..n {
         let chart_id = generate_chart_id();
         let bid = store.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol.to_string(), tf.clone());
-        if let Some(b) = store.bubble_mut(bid) {
-            b.exchange = exchange.to_string();
-            b.account_type = account_type.to_string();
-        }
+        store.set_bubble_instrument(bid, exchange.to_string(), account_type.to_string());
         store.attach_chart_to_bubble(chart_id, bid).expect("attach");
         out.push((chart_id, bid));
     }
@@ -72,10 +69,7 @@ pub fn chart_with_phantom_instrument_bubble(
     // A SEPARATE bubble that carries the matching instrument identity but
     // no chart attached. This is what `bubble_for_instrument` would return.
     let phantom_bid = store.create_group_auto([0.0; 4], symbol.to_string(), tf);
-    if let Some(b) = store.bubble_mut(phantom_bid) {
-        b.exchange = exchange.to_string();
-        b.account_type = account_type.to_string();
-    }
+    store.set_bubble_instrument(phantom_bid, exchange.to_string(), account_type.to_string());
 
     (store, chart_id, attached_bid, phantom_bid)
 }

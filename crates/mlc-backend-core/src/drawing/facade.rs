@@ -682,6 +682,15 @@ impl<'a> DrawingsMut<'a> {
         self.mgr.migrate_legacy_timestamps(&mut self.bubbles, bid)
     }
 
+    // ---- Bulk cross-bubble maintenance -----------------------------------
+
+    /// Walk every bubble's primitives, deduplicate primitive IDs globally
+    /// (replaces the `hydration_impl.rs` `bubbles_mut()` iterator use).
+    /// Returns the count of renumbered primitives.
+    pub fn dedup_primitive_ids(&mut self) -> u32 {
+        self.mgr.dedup_primitive_ids(&mut self.bubbles)
+    }
+
     // ---- Test-harness lifecycle -----------------------------------------
 
     pub fn drop_bubble(&mut self, bid: BubbleId) {

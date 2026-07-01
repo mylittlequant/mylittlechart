@@ -1741,6 +1741,24 @@ impl DrawingManager {
         }
     }
 
+    /// Deduplicate primitive IDs globally, across every bubble. Old presets
+    /// may carry group primitives with identical IDs (from historical clone
+    /// paths that didn't re-ID). Returns the count of renumbered primitives.
+    pub(crate) fn dedup_primitive_ids(&self, bubbles: &mut BubbleStore) -> u32 {
+        let mut total = 0u32;
+        for group in bubbles.bubbles_mut() {
+            let mut seen_ids = std::collections::HashSet::new();
+            for p in &mut group.primitives {
+                let id = p.data().id;
+                if !seen_ids.insert(id) {
+                    p.data_mut().id = alloc_primitive_id();
+                    total += 1;
+                }
+            }
+        }
+        total
+    }
+
     // =========================================================================
     // Test-harness-only lifecycle (not part of the public facade surface)
     // =========================================================================

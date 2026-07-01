@@ -184,7 +184,7 @@ async fn create_alert(
         Some(raw) => Some(BubbleId(raw)),
         // Fall back to the first available bubble (today's behavior) when
         // the caller does not know its bubble.
-        None => s.core.bubble().bubbles().next().map(|b| b.id),
+        None => s.core.bubbles().bubble_ids().next(),
     };
     let bid = match target_bid {
         Some(bid) => bid,

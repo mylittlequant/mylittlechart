@@ -61,14 +61,12 @@ fn old_writer_pattern_leaves_3_of_4_bubbles_empty() {
     let bid = store
         .bubble_for_instrument("binance", "S", "BTCUSDT")
         .expect("at least one bubble");
-    if let Some(b) = store.bubble_mut(bid) {
-        b.bars = new_bars.clone();
-    }
+    store.set_bars(bid, new_bars.clone());
 
     let mut filled = 0;
     let mut empty = 0;
     for (_, bubble_id) in &charts {
-        let bars_len = store.bubble(*bubble_id).map(|b| b.bars.len()).unwrap_or(0);
+        let bars_len = store.bars(*bubble_id).len();
         if bars_len == 300 { filled += 1; } else { empty += 1; }
     }
     assert_eq!(filled, 1, "old writer fills exactly one bubble");
@@ -90,13 +88,11 @@ fn new_writer_pattern_fills_all_attached_bubbles() {
     assert_eq!(target_bubbles.len(), 4, "must resolve all 4 bubbles, not just one");
 
     for bid in target_bubbles {
-        if let Some(b) = store.bubble_mut(bid) {
-            b.bars = new_bars.clone();
-        }
+        store.set_bars(bid, new_bars.clone());
     }
 
     for (_, bubble_id) in &charts {
-        let bars_len = store.bubble(*bubble_id).map(|b| b.bars.len()).unwrap_or(0);
+        let bars_len = store.bars(*bubble_id).len();
         assert_eq!(bars_len, 300, "every chart's own bubble has bars now");
     }
 }
@@ -114,12 +110,12 @@ fn live_bug_repro_writer_via_instrument_misses_chart_bubble() {
     // OLD pattern: write via bubble_for_instrument.
     let bid = store.bubble_for_instrument("binance", "S", "BTCUSDT").expect("phantom");
     assert_eq!(bid, phantom_bid, "instrument lookup returns the phantom, not the chart's bubble");
-    store.bubble_mut(bid).unwrap().bars = new_bars.clone();
+    store.set_bars(bid, new_bars.clone());
 
     // Renderer reads via bubble_for_chart — still empty.
     let renderer_bid = store.bubble_for_chart(chart_id).expect("chart attached");
     assert_eq!(renderer_bid, attached_bid);
-    assert!(store.bubble(renderer_bid).unwrap().bars.is_empty(), "spinner repro");
+    assert!(store.bars(renderer_bid).is_empty(), "spinner repro");
 }
 
 #[test]
@@ -132,11 +128,11 @@ fn new_writer_via_bubble_for_chart_fills_renderer_bubble() {
     // NEW pattern: write directly to the chart's attached bubble.
     let bid = store.bubble_for_chart(chart_id).expect("chart attached");
     assert_eq!(bid, attached_bid);
-    store.bubble_mut(bid).unwrap().bars = new_bars.clone();
+    store.set_bars(bid, new_bars.clone());
 
     // Renderer reads via current_bubble_id (same path) — populated.
     let renderer_bid = store.bubble_for_chart(chart_id).expect("chart attached");
-    let bars = &store.bubble(renderer_bid).unwrap().bars;
+    let bars = store.bars(renderer_bid);
     assert_eq!(bars.len(), 300, "spinner retires");
 }
 
@@ -153,12 +149,12 @@ fn renderer_read_path_after_new_writer() {
         .filter_map(|(cid, _)| store.bubble_for_chart(*cid))
         .collect();
     for bid in target_bubbles {
-        store.bubble_mut(bid).unwrap().bars = new_bars.clone();
+        store.set_bars(bid, new_bars.clone());
     }
 
     for (cid, _) in &charts {
         let bid = store.bubble_for_chart(*cid).expect("chart attached");
-        let bars = &store.bubble(bid).expect("bubble exists").bars;
+        let bars = store.bars(bid);
         assert_eq!(bars.len(), 300, "renderer sees 300 bars for chart {:?}", cid);
         assert!(!bars.is_empty(), "renderer's is_empty() check → spinner retires");
     }

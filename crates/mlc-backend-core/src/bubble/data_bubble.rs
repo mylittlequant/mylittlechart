@@ -147,6 +147,82 @@ pub struct DataBubble {
 
 
 impl DataBubble {
+    /// Reconstruct a [`DataBubble`] from a [`mlc_core::preset::snapshots::DataBubbleSnapshot`].
+    ///
+    /// The resulting bubble starts with an empty `primitives` list — primitives
+    /// are restored separately via the `PrimitiveRegistry` and pushed in by the
+    /// caller ([`crate::bubble::BubbleStore::restore_from_snapshots`]).
+    pub fn from_snapshot(snap: &mlc_core::preset::snapshots::DataBubbleSnapshot) -> Self {
+        let mut members = std::collections::HashSet::new();
+        for &raw in &snap.members {
+            members.insert(SyncMemberId::Chart(raw));
+        }
+        for &raw in &snap.panel_members {
+            members.insert(SyncMemberId::Panel(raw));
+        }
+
+        let member_overrides: std::collections::HashMap<SyncMemberId, MemberSyncOverride> = snap
+            .member_overrides
+            .iter()
+            .map(|o| {
+                let member = if o.kind == 0 {
+                    SyncMemberId::Chart(o.id)
+                } else {
+                    SyncMemberId::Panel(o.id)
+                };
+                let override_val = MemberSyncOverride {
+                    sync_symbol: o.sync_symbol,
+                    sync_crosshair: o.sync_crosshair,
+                };
+                (member, override_val)
+            })
+            .collect();
+
+        let mut style_map = HashMap::new();
+        for (type_id, raw) in &snap.last_used_style {
+            if let Ok(style) = serde_json::from_value::<TemplateStyle>(raw.clone()) {
+                style_map.insert(type_id.clone(), style);
+            }
+        }
+
+        Self {
+            id: BubbleId(snap.id),
+            color: snap.color,
+            primitives: Vec::new(),
+            indicator_configs: snap.indicator_configs.clone(),
+            symbol: snap.symbol.clone(),
+            exchange: snap.exchange.clone(),
+            account_type: snap.account_type.clone(),
+            timeframe: snap.timeframe.clone(),
+            sync_flags: snap.sync_flags.clone(),
+            scale_mode: snap.scale_mode,
+            members,
+            member_overrides,
+            command_history: snap.command_history.clone().unwrap_or_else(|| CommandHistory::new(250)),
+            pre_tag_indicator_ids: Vec::new(),
+            auto_created: snap.auto_created,
+            last_used_style: Arc::new(RwLock::new(style_map)),
+            prev_close_price: None,
+            connection_status: ConnectionStatus::default(),
+            bars: Vec::new(),
+            footprint_bars: None,
+            renko_bars: None,
+            three_line_break: None,
+            pnf_columns: None,
+            kagi_segments: None,
+            cvd_line: None,
+            tpo_sessions: None,
+            oi_delta: None,
+            funding_rate: None,
+            dom_heatmap: None,
+            dom_trade_dots: None,
+            liq_heatmap: None,
+            liq_dots: None,
+            alerts: snap.alerts.clone(),
+            alert_next_id: snap.alerts.iter().map(|a| a.id).max().unwrap_or(0) + 1,
+        }
+    }
+
     /// Effective `sync_symbol` for a specific member.
     ///
     /// The per-member override (if present) wins over the bubble-level flag.

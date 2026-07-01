@@ -67,15 +67,16 @@ pub fn data_plane_bars_loaded() -> HarnessResult<()> {
 
     // Register a bubble for BTCUSDT spot on Binance.
     let bid = {
-        let mut mgr = h.core.bubble_mut();
+        let mut mgr = h.core.bubbles_mut();
         let bid = mgr
             .create_group_auto([1.0, 0.0, 0.0, 1.0], "BTCUSDT".to_string(), Timeframe::h1());
-        if let Some(b) = mgr.bubble_mut(bid) {
-            // bubbles_for_instrument matches on the lowercase id string and the
-            // short-label account type — these are what tick_writers passes in.
-            b.exchange = ExchangeId::Binance.as_str().to_string();
-            b.account_type = AccountType::Spot.short_label().to_string();
-        }
+        // bubbles_for_instrument matches on the lowercase id string and the
+        // short-label account type — these are what tick_writers passes in.
+        mgr.set_bubble_instrument(
+            bid,
+            ExchangeId::Binance.as_str().to_string(),
+            AccountType::Spot.short_label().to_string(),
+        );
         bid
     };
 
@@ -105,11 +106,7 @@ pub fn data_plane_bars_loaded() -> HarnessResult<()> {
     }
 
     // Verify bubble actually got the bars written.
-    let store_bars_len = h.core
-        .bubble()
-        .bubble(bid)
-        .map(|b| b.bars.len())
-        .unwrap_or(0);
+    let store_bars_len = h.core.bubbles().bars(bid).len();
     if store_bars_len != bars.len() {
         return Err(err("data-plane", format!("bubble.bars: stored {} != injected {}", store_bars_len, bars.len())));
     }
@@ -277,7 +274,7 @@ pub fn drawing_registry_basic() -> HarnessResult<()> {
     let h = BackendHarness::fresh();
 
     let (bubble_a, bubble_b) = {
-        let mut mgr = h.core.bubble_mut();
+        let mut mgr = h.core.bubbles_mut();
         let a = mgr.create_group_auto([1.0, 0.0, 0.0, 1.0], "BTCUSDT".to_string(), Timeframe::h1());
         let b = mgr.create_group_auto([0.0, 1.0, 0.0, 1.0], "ETHUSDT".to_string(), Timeframe::h1());
         (a, b)
@@ -415,7 +412,7 @@ pub fn lock_discipline_concurrent_reads() -> HarnessResult<()> {
         readers.push(thread::spawn(move || {
             while !stop_r.load(Ordering::Relaxed) {
                 let _snap = core_r.sessions_snapshot();
-                let _bubbles_n = core_r.bubble().bubbles().count();
+                let _bubbles_n = core_r.bubbles().bubble_ids().count();
                 let _ind_w = core_r.indicators().current_render_bubble_id.load(std::sync::atomic::Ordering::Relaxed);
                 read_count_r.fetch_add(1, Ordering::Relaxed);
             }
@@ -885,12 +882,9 @@ fn locate_cli_binary() -> HarnessResult<std::path::PathBuf> {
 // ==========================================================================
 
 pub fn register_bubble(h: &BackendHarness, exchange: ExchangeId, account: AccountType, symbol: &str, tf: Timeframe) -> BubbleId {
-    let mut mgr = h.core.bubble_mut();
+    let mut mgr = h.core.bubbles_mut();
     let bid = mgr.create_group_auto([1.0, 0.0, 0.0, 1.0], symbol.to_string(), tf);
-    if let Some(b) = mgr.bubble_mut(bid) {
-        b.exchange = exchange.as_str().to_string();
-        b.account_type = account.short_label().to_string();
-    }
+    mgr.set_bubble_instrument(bid, exchange.as_str().to_string(), account.short_label().to_string());
     bid
 }
 
@@ -916,7 +910,7 @@ pub fn body_stream_backfill_complete_writes_bubble(h: &mut BackendHarness) -> Ha
     if n != 1 {
         return Err(err("backfill", format!("expected 1 BackfillCompleted, got {}", n)));
     }
-    let stored = h.core.bubble().bubble(bid).map(|b| b.bars.len()).unwrap_or(0);
+    let stored = h.core.bubbles().bars(bid).len();
     if stored != bars.len() {
         return Err(err("backfill", format!("bubble.bars: {} != {}", stored, bars.len())));
     }
@@ -958,7 +952,7 @@ pub fn body_stream_scroll_bars_merges_with_live_tail(h: &mut BackendHarness) -> 
     // The bubble must now hold BOTH ranges merged by timestamp (older + live tail),
     // not just the 10-bar scroll page. This is the regression fix from
     // backend-core ScrollBarsLoaded arm.
-    let stored: Vec<Bar> = h.core.bubble().bubble(bid).map(|b| b.bars.clone()).unwrap_or_default();
+    let stored: Vec<Bar> = h.core.bubbles().bars(bid).to_vec();
     if stored.len() != older_page.len() + live_tail.len() {
         return Err(err("scroll", format!("merge count: {} != {}+{}", stored.len(), older_page.len(), live_tail.len())));
     }
@@ -1207,8 +1201,8 @@ pub fn body_multi_symbol_bars_isolation(h: &mut BackendHarness) -> HarnessResult
     })?;
     let _ = h.tick(16);
 
-    let btc_len = h.core.bubble().bubble(bid_btc).map(|b| b.bars.len()).unwrap_or(0);
-    let eth_len = h.core.bubble().bubble(bid_eth).map(|b| b.bars.len()).unwrap_or(0);
+    let btc_len = h.core.bubbles().bars(bid_btc).len();
+    let eth_len = h.core.bubbles().bars(bid_eth).len();
     if btc_len != bars_btc.len() {
         return Err(err("multi-sym", format!("BTC bubble: {} != {}", btc_len, bars_btc.len())));
     }
@@ -1217,7 +1211,7 @@ pub fn body_multi_symbol_bars_isolation(h: &mut BackendHarness) -> HarnessResult
     }
     // Cross-check: BTC bubble's bars must be the BTC payload (prices 50k+),
     // not the ETH one (3k+).
-    let btc_close0 = h.core.bubble().bubble(bid_btc).and_then(|b| b.bars.first().map(|x| x.close)).unwrap_or(0.0);
+    let btc_close0 = h.core.bubbles().bars(bid_btc).first().map(|x| x.close).unwrap_or(0.0);
     if btc_close0 < 49_000.0 {
         return Err(err("multi-sym", format!("BTC bubble got wrong payload: close={}", btc_close0)));
     }
@@ -1341,15 +1335,13 @@ pub fn body_stream_footprint_update_writes_bubble(h: &mut BackendHarness) -> Har
     if !hit {
         return Err(err("footprint", "no FootprintBarAppended emitted"));
     }
-    let fp_len = h.core.bubble().bubble(bid)
-        .and_then(|b| b.footprint_bars.as_ref().map(|v| v.len()))
-        .unwrap_or(0);
+    let fp_len = h.core.bubbles().footprint_bars(bid).map(|v| v.len()).unwrap_or(0);
     if fp_len != 1 {
         return Err(err("footprint", format!("bubble.footprint_bars: {} != 1", fp_len)));
     }
     // The arm also mirrors OHLC into bubble.bars so the standard candle layer
     // can render historical context — sanity check that grew too.
-    let bars_len = h.core.bubble().bubble(bid).map(|b| b.bars.len()).unwrap_or(0);
+    let bars_len = h.core.bubbles().bars(bid).len();
     if bars_len != 1 {
         return Err(err("footprint", format!("bubble.bars mirror: {} != 1", bars_len)));
     }
@@ -1383,9 +1375,7 @@ pub fn body_stream_renko_brick_writes_bubble(h: &mut BackendHarness) -> HarnessR
     if !hit {
         return Err(err("renko", "no RenkoBarAppended emitted"));
     }
-    let renko_len = h.core.bubble().bubble(bid)
-        .and_then(|b| b.renko_bars.as_ref().map(|v| v.len()))
-        .unwrap_or(0);
+    let renko_len = h.core.bubbles().renko_bars(bid).map(|v| v.len()).unwrap_or(0);
     if renko_len != 1 {
         return Err(err("renko", format!("bubble.renko_bars: {} != 1", renko_len)));
     }
@@ -1421,9 +1411,7 @@ pub fn body_stream_pnf_column_writes_bubble(h: &mut BackendHarness) -> HarnessRe
     if !hit {
         return Err(err("pnf", "no PnfBarAppended emitted"));
     }
-    let pnf_len = h.core.bubble().bubble(bid)
-        .and_then(|b| b.pnf_columns.as_ref().map(|v| v.len()))
-        .unwrap_or(0);
+    let pnf_len = h.core.bubbles().pnf_columns(bid).map(|v| v.len()).unwrap_or(0);
     if pnf_len != 1 {
         return Err(err("pnf", format!("bubble.pnf_columns: {} != 1", pnf_len)));
     }
@@ -1457,9 +1445,7 @@ pub fn body_stream_kagi_segment_writes_bubble(h: &mut BackendHarness) -> Harness
     if !hit {
         return Err(err("kagi", "no KagiBarAppended emitted"));
     }
-    let kagi_len = h.core.bubble().bubble(bid)
-        .and_then(|b| b.kagi_segments.as_ref().map(|v| v.len()))
-        .unwrap_or(0);
+    let kagi_len = h.core.bubbles().kagi_segments(bid).map(|v| v.len()).unwrap_or(0);
     if kagi_len != 1 {
         return Err(err("kagi", format!("bubble.kagi_segments: {} != 1", kagi_len)));
     }
@@ -1489,9 +1475,7 @@ pub fn body_stream_cvd_scalar_writes_bubble(h: &mut BackendHarness) -> HarnessRe
     if !hit {
         return Err(err("cvd", "no CvdSampleAppended emitted"));
     }
-    let cvd_len = h.core.bubble().bubble(bid)
-        .and_then(|b| b.cvd_line.as_ref().map(|v| v.len()))
-        .unwrap_or(0);
+    let cvd_len = h.core.bubbles().cvd_line(bid).map(|v| v.len()).unwrap_or(0);
     if cvd_len != 1 {
         return Err(err("cvd", format!("bubble.cvd_line: {} != 1", cvd_len)));
     }
@@ -1531,9 +1515,7 @@ pub fn body_stream_tpo_session_writes_bubble(h: &mut BackendHarness) -> HarnessR
     if !hit {
         return Err(err("tpo", "no TpoSessionUpdated emitted"));
     }
-    let tpo_len = h.core.bubble().bubble(bid)
-        .and_then(|b| b.tpo_sessions.as_ref().map(|v| v.len()))
-        .unwrap_or(0);
+    let tpo_len = h.core.bubbles().tpo_sessions(bid).map(|v| v.len()).unwrap_or(0);
     if tpo_len != 1 {
         return Err(err("tpo", format!("bubble.tpo_sessions: {} != 1", tpo_len)));
     }
@@ -1567,9 +1549,7 @@ pub fn body_stream_three_line_break_writes_bubble(h: &mut BackendHarness) -> Har
     if !hit {
         return Err(err("tlb", "no TlbLineAppended emitted"));
     }
-    let tlb_len = h.core.bubble().bubble(bid)
-        .and_then(|b| b.three_line_break.as_ref().map(|v| v.len()))
-        .unwrap_or(0);
+    let tlb_len = h.core.bubbles().three_line_break(bid).map(|v| v.len()).unwrap_or(0);
     if tlb_len != 1 {
         return Err(err("tlb", format!("bubble.three_line_break: {} != 1", tlb_len)));
     }

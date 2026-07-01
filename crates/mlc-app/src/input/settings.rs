@@ -2199,7 +2199,7 @@ impl ChartApp {
             "save" => {
                 // Snapshot all the AlertSettingsState fields we need up front
                 // so we don't keep a borrow on `self.panel_app` while taking
-                // `self.core.bubble_mut()` below.
+                // `self.core.alerts_mut()` below.
                 let (source, name, price, price2, percentage, condition,
                      trigger_mode, transports, editing_id) = {
                     let s = &self.panel_app.alert_settings_state;

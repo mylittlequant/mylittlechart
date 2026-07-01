@@ -808,15 +808,17 @@ impl ChartApp {
         if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
             if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(active_leaf) {
                 if let Some(group_id) = self.bubble_for_chart(chart_id) {
-                    if let Some(group) = self.core.bubble_mut().bubble_mut(group_id) {
-                        if let Some(pos) = group.indicator_configs.iter().position(|c| c.type_id == type_id) {
-                            group.indicator_configs.remove(pos);
-                            eprintln!(
-                                "[BubbleStore] Removed 1 indicator config with type_id={} from group {:?}",
-                                type_id,
-                                group_id,
-                            );
-                        }
+                    let removed = self.core.bubbles_mut().with_bubble_mut(group_id, |group| {
+                        let pos = group.indicator_configs.iter().position(|c| c.type_id == type_id)?;
+                        group.indicator_configs.remove(pos);
+                        Some(())
+                    }).flatten();
+                    if removed.is_some() {
+                        eprintln!(
+                            "[BubbleStore] Removed 1 indicator config with type_id={} from group {:?}",
+                            type_id,
+                            group_id,
+                        );
                     }
                 }
             }
@@ -859,9 +861,9 @@ impl ChartApp {
                 .filter(|&bid| bid != mlc_core::ids::BubbleId(0))
                 .collect();
             for bid in auto_bids {
-                if let Some(auto_bub) = self.core.bubble_mut().bubble_mut(bid) {
+                self.core.bubbles_mut().with_bubble_mut(bid, |auto_bub| {
                     auto_bub.pre_tag_indicator_ids.retain(|iid| !all_to_remove.contains(iid));
-                }
+                });
             }
         }
 

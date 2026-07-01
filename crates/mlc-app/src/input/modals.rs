@@ -394,12 +394,13 @@ impl ChartApp {
                 }
                 if let Some(chart_id) = active_chart_id {
                     if let Some(bid) = self.bubble_for_chart(chart_id) {
-                        if let Some(bubble) = self.core.bubble_mut().bubble_mut(bid) {
-                            bubble.symbol = sym_part.to_string();
-                            bubble.timeframe = timeframe.clone();
-                            bubble.exchange = exchange_part.to_string();
-                            bubble.account_type = wl_at_label.clone();
-                        }
+                        self.core.bubbles_mut().set_bid_instrument_full(
+                            bid,
+                            sym_part.to_string(),
+                            exchange_part.to_string(),
+                            wl_at_label.clone(),
+                            timeframe.clone(),
+                        );
                     }
                 }
                 // Propagate symbol change to all peers in the same sync group.
@@ -628,9 +629,9 @@ impl ChartApp {
                 .filter(|&bid| bid != mlc_core::ids::BubbleId(0))
                 .collect();
             for bid in auto_bids {
-                if let Some(auto_bub) = self.core.bubble_mut().bubble_mut(bid) {
+                self.core.bubbles_mut().with_bubble_mut(bid, |auto_bub| {
                     auto_bub.pre_tag_indicator_ids.retain(|iid| !existing_ids.contains(iid));
-                }
+                });
             }
         }
         // Clear stale overlay states
@@ -896,12 +897,13 @@ impl ChartApp {
                         // Phase 1.2: dual-write instrument into branch_meta + bubble.
                         if let Some(chart_id) = active_chart_id {
                             if let Some(bid) = self.bubble_for_chart(chart_id) {
-                                if let Some(bubble) = self.core.bubble_mut().bubble_mut(bid) {
-                                    bubble.symbol = symbol_part.to_string();
-                                    bubble.timeframe = timeframe.clone();
-                                    bubble.exchange = resolved_exchange.as_str().to_string();
-                                    bubble.account_type = search_at_label.clone();
-                                }
+                                self.core.bubbles_mut().set_bid_instrument_full(
+                                    bid,
+                                    symbol_part.to_string(),
+                                    resolved_exchange.as_str().to_string(),
+                                    search_at_label.clone(),
+                                    timeframe.clone(),
+                                );
                             }
                         }
                         // Switch to the exchange that owns this symbol and request bars.
@@ -1108,7 +1110,7 @@ impl ChartApp {
                                                 .unwrap_or_else(|| item_id.to_string());
                                             (inst_pane, inst_name)
                                         };
-                                        if let Some(group) = self.core.bubble_mut().bubble_mut(group_id) {
+                                        let pushed = self.core.bubbles_mut().with_bubble_mut(group_id, |group| {
                                             group.indicator_configs.push(
                                                 mlc_core::indicator_types::IndicatorGroupConfig {
                                                     id: new_id,
@@ -1122,6 +1124,8 @@ impl ChartApp {
                                                     account_type: String::new(),
                                                 },
                                             );
+                                        }).is_some();
+                                        if pushed {
                                             eprintln!(
                                                 "[BubbleStore] Added indicator config id={} '{}' to group {:?}",
                                                 new_id, item_id, group_id
@@ -1140,9 +1144,9 @@ impl ChartApp {
                                                 .get(&cid)
                                                 .map(|w| w.auto_bubble_id);
                                             if let Some(bid) = auto_bid {
-                                                if let Some(auto_bub) = self.core.bubble_mut().bubble_mut(bid) {
+                                                self.core.bubbles_mut().with_bubble_mut(bid, |auto_bub| {
                                                     auto_bub.pre_tag_indicator_ids.push(new_id);
-                                                }
+                                                });
                                             }
                                             eprintln!(
                                                 "[BubbleStore] sync_indicators=off: recorded id={} in auto_bubble.pre_tag_indicator_ids for leaf {:?}",
@@ -1242,10 +1246,8 @@ impl ChartApp {
                         .container_id_for_leaf(hit_leaf_id)
                         .and_then(|cid| self.bubble_for_chart(cid))
                         .and_then(|gid| {
-                            self.core.bubble_mut().bubble_mut(gid).map(|g| {
-                                g.scale_mode = next_mode;
-                                g.sync_flags.sync_viewport
-                            })
+                            self.core.bubbles_mut().set_scale_mode(gid, next_mode);
+                            self.core.bubbles().sync_flags(gid).map(|sf| sf.sync_viewport)
                         })
                         .unwrap_or(false);
                     if viewport_sync_on {
@@ -1948,7 +1950,7 @@ impl ChartApp {
                         self.selected_indicator_id = None;
                     } else {
                         self.selected_indicator_id = Some(instance_id);
-                        let all_bids: Vec<_> = self.core.bubble().bubbles().map(|b| b.id).collect();
+                        let all_bids: Vec<_> = self.core.bubbles().bubble_ids().collect();
                         for bid in all_bids {
                             self.core.drawings_mut().deselect(bid);
                         }
@@ -1982,7 +1984,7 @@ impl ChartApp {
                 if let Some(ind_id) = ind_hit {
                     self.selected_indicator_id = Some(ind_id);
                     // Deselect any drawing primitive across ALL bubbles when an indicator is selected.
-                    let all_bids: Vec<_> = self.core.bubble().bubbles().map(|b| b.id).collect();
+                    let all_bids: Vec<_> = self.core.bubbles().bubble_ids().collect();
                     for bid in all_bids {
                         self.core.drawings_mut().deselect(bid);
                     }
@@ -1994,7 +1996,7 @@ impl ChartApp {
 
         // No primitive or indicator hit — deselect everything across ALL bubbles.
         self.selected_indicator_id = None;
-        let all_bids2: Vec<_> = self.core.bubble().bubbles().map(|b| b.id).collect();
+        let all_bids2: Vec<_> = self.core.bubbles().bubble_ids().collect();
         for bid in all_bids2 {
             self.core.drawings_mut().deselect(bid);
         }

@@ -539,12 +539,7 @@ impl ChartApp {
 
             let bar_counts_by_chart: std::collections::HashMap<mlc_core::state::ChartId, usize> =
                 self.panel_app.panel_grid.containers().iter()
-                    .map(|(cid, w)| {
-                        let n = self.core.bubble().bubble(w.current_bubble_id)
-                            .map(|b| b.bars.len())
-                            .unwrap_or(0);
-                        (*cid, n)
-                    })
+                    .map(|(cid, w)| (*cid, self.core.bubbles().bars(w.current_bubble_id).len()))
                     .collect();
 
             for (cid_scroll, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
@@ -592,8 +587,7 @@ impl ChartApp {
                 // EVERY scroll-fetch — left/scroll backfill silently no-op'd.
                 let oldest_ts = self.panel_app.panel_grid.containers()
                     .get(&cid_req)
-                    .and_then(|w| self.core.bubble().bubble(w.current_bubble_id)
-                        .and_then(|b| b.bars.first().map(|bar| bar.timestamp)))
+                    .and_then(|w| self.core.bubbles().bars(w.current_bubble_id).first().map(|bar| bar.timestamp))
                     .unwrap_or(0);
 
                 if oldest_ts == 0 { continue; }

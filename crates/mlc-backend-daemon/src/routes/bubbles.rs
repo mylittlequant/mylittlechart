@@ -136,8 +136,8 @@ struct BarsCountOut {
 // ---------------------------------------------------------------------------
 
 async fn list_bubbles(State(s): State<AppState>) -> impl IntoResponse {
-    let guard = s.core.bubble();
-    let bubble_ids: Vec<u64> = guard.bubbles().map(|b| b.id.0).collect();
+    let guard = s.core.bubbles();
+    let bubble_ids: Vec<u64> = guard.bubble_ids().map(|id| id.0).collect();
     Json(BubbleListOut { bubble_ids })
 }
 
@@ -147,18 +147,11 @@ async fn create_bubble(
 ) -> impl IntoResponse {
     let ms = timeframe_ms(&body.timeframe);
     let tf = Timeframe::new(&body.timeframe, ms as i64);
-    let bid = {
-        let mut mgr = s.core.bubble_mut();
-        mgr.create_group_auto(body.color, body.symbol, tf)
-    };
-    // Set exchange + account_type on the newly created bubble.
-    {
-        let mut mgr = s.core.bubble_mut();
-        if let Some(bubble) = mgr.bubble_mut(bid) {
-            bubble.exchange = body.exchange;
-            bubble.account_type = body.account_type;
-        }
-    }
+    let bid = s.core.bubbles_mut().create_group_auto(body.color, body.symbol, tf);
+    // Set exchange + account_type on the newly created bubble. This is a bare
+    // bubble creation with no chart member attached yet, hence the bid-keyed
+    // `set_bubble_instrument` rather than the member-keyed `set_instrument`.
+    s.core.bubbles_mut().set_bubble_instrument(bid, body.exchange, body.account_type);
     (StatusCode::CREATED, Json(CreateBubbleOut { bid: bid.0 }))
 }
 
@@ -167,26 +160,26 @@ async fn get_bubble(
     State(s): State<AppState>,
 ) -> impl IntoResponse {
     let bid_typed = BubbleId(bid);
-    let guard = s.core.bubble();
-    match guard.bubble(bid_typed) {
-        None => StatusCode::NOT_FOUND.into_response(),
-        Some(b) => {
-            let out = BubbleSnapshotOut {
-                id: b.id.0,
-                symbol: b.symbol.clone(),
-                exchange: b.exchange.clone(),
-                account_type: b.account_type.clone(),
-                timeframe_name: b.timeframe.name.clone(),
-                bars_len: b.bars.len(),
-                primitives_count: b.primitives.len(),
-                indicator_configs_count: b.indicator_configs.len(),
-                members_count: b.members.len(),
-                auto_created: b.auto_created,
-                scale_mode: format!("{:?}", b.scale_mode),
-            };
-            Json(out).into_response()
-        }
-    }
+    let guard = s.core.bubbles();
+    let Some(instrument) = guard.instrument(bid_typed) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let scale_mode = guard.scale_mode(bid_typed).unwrap_or_default();
+    let auto_created = guard.auto_created(bid_typed);
+    let out = BubbleSnapshotOut {
+        id: bid,
+        symbol: instrument.symbol,
+        exchange: instrument.exchange,
+        account_type: instrument.account_type,
+        timeframe_name: instrument.timeframe.name.clone(),
+        bars_len: guard.bars(bid_typed).len(),
+        primitives_count: s.core.drawings().count(bid_typed),
+        indicator_configs_count: guard.indicator_configs(bid_typed).len(),
+        members_count: guard.members(bid_typed).map(|m| m.len()).unwrap_or(0),
+        auto_created,
+        scale_mode: format!("{:?}", scale_mode),
+    };
+    Json(out).into_response()
 }
 
 async fn delete_bubble(
@@ -194,11 +187,10 @@ async fn delete_bubble(
     State(s): State<AppState>,
 ) -> impl IntoResponse {
     let bid_typed = BubbleId(bid);
-    let exists = s.core.bubble().bubble(bid_typed).is_some();
-    if !exists {
+    if !s.core.bubbles().exists(bid_typed) {
         return StatusCode::NOT_FOUND;
     }
-    s.core.bubble_mut().remove_group(bid_typed);
+    s.core.bubbles_mut().remove_group(bid_typed);
     StatusCode::NO_CONTENT
 }
 
@@ -208,32 +200,31 @@ async fn get_bubble_bars(
     State(s): State<AppState>,
 ) -> impl IntoResponse {
     let bid_typed = BubbleId(bid);
-    let guard = s.core.bubble();
-    match guard.bubble(bid_typed) {
-        None => StatusCode::NOT_FOUND.into_response(),
-        Some(b) => {
-            const DEFAULT_LIMIT: usize = 200;
-            const MAX_LIMIT: usize = 5000;
-            let limit = q.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
-            let bars_slice = if b.bars.len() > limit {
-                &b.bars[b.bars.len() - limit..]
-            } else {
-                &b.bars
-            };
-            let dtos: Vec<BarDto> = bars_slice
-                .iter()
-                .map(|bar| BarDto {
-                    ts: bar.timestamp,
-                    o: bar.open,
-                    h: bar.high,
-                    l: bar.low,
-                    c: bar.close,
-                    v: bar.volume,
-                })
-                .collect();
-            Json(BarsOut { bid, count: dtos.len(), bars: dtos }).into_response()
-        }
+    let guard = s.core.bubbles();
+    if !guard.exists(bid_typed) {
+        return StatusCode::NOT_FOUND.into_response();
     }
+    let bars = guard.bars(bid_typed);
+    const DEFAULT_LIMIT: usize = 200;
+    const MAX_LIMIT: usize = 5000;
+    let limit = q.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
+    let bars_slice = if bars.len() > limit {
+        &bars[bars.len() - limit..]
+    } else {
+        bars
+    };
+    let dtos: Vec<BarDto> = bars_slice
+        .iter()
+        .map(|bar| BarDto {
+            ts: bar.timestamp,
+            o: bar.open,
+            h: bar.high,
+            l: bar.low,
+            c: bar.close,
+            v: bar.volume,
+        })
+        .collect();
+    Json(BarsOut { bid, count: dtos.len(), bars: dtos }).into_response()
 }
 
 /// Legacy: `GET /v1/bubble/:bid/bars/:kind` — returns count only.
@@ -242,12 +233,7 @@ async fn bubble_bars_count(
     State(s): State<AppState>,
 ) -> impl IntoResponse {
     let bid_typed = BubbleId(bid);
-    let guard = s.core.bubble();
-    let count = guard
-        .bubbles()
-        .find(|b| b.id == bid_typed)
-        .map(|b| b.bars.len())
-        .unwrap_or(0);
+    let count = s.core.bubbles().bars(bid_typed).len();
     Json(BarsCountOut { bid, kind, count })
 }
 

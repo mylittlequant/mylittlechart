@@ -30,6 +30,7 @@ pub mod drawing;
 
 pub use alert::{Alerts, AlertsMut};
 pub use drawing::{Drawings, DrawingsMut, SwapSymbolResult};
+pub use bubble::{Bubbles, BubblesMut};
 
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -827,18 +828,39 @@ impl BackendCore {
         self.indicators.write().expect("BackendCore.indicators poisoned (write)")
     }
 
-    /// Read guard for the bubble store.  Hold for the duration of one logical
-    /// read operation.  The guard drops automatically.
+    /// INTERNAL: raw read guard for the bubble store. Backend-crate use only
+    /// (`tick_writers`, and the `Alerts`/`AlertsMut`/`Drawings`/`DrawingsMut`
+    /// facade constructors, which co-acquire this alongside their own
+    /// manager lock). App callers must use [`Self::bubbles`] instead — Step
+    /// 3.2, `docs/mlc/plans/doctrine-cutover-2026-06-27.md` §1A. Step 7
+    /// deletes this method once every external caller is swept.
     #[inline]
     pub fn bubble(&self) -> std::sync::RwLockReadGuard<'_, BubbleStore> {
         self.bubble.read().expect("BackendCore.bubble poisoned (read)")
     }
 
-    /// Write guard for the bubble store.  Take one per writer arm in tick.rs;
-    /// release at end of arm.
+    /// INTERNAL: raw write guard for the bubble store. See [`Self::bubble`] —
+    /// app callers must use [`Self::bubbles_mut`] instead.
     #[inline]
     pub fn bubble_mut(&self) -> std::sync::RwLockWriteGuard<'_, BubbleStore> {
         self.bubble.write().expect("BackendCore.bubble poisoned (write)")
+    }
+
+    /// Read-only facade over the bubble store. The ONLY doctrinally-
+    /// sanctioned access path for external (app/daemon/headless) callers
+    /// (Step 3.2, `docs/mlc/plans/doctrine-cutover-2026-06-27.md` §1A).
+    ///
+    /// LOCK ORDER: bubble is the base lock — nothing else needs to be
+    /// acquired before it.
+    #[inline]
+    pub fn bubbles(&self) -> Bubbles<'_> {
+        Bubbles::new(self.bubble.read().expect("BackendCore.bubble poisoned (read)"))
+    }
+
+    /// Mutable facade over the bubble store.
+    #[inline]
+    pub fn bubbles_mut(&self) -> BubblesMut<'_> {
+        BubblesMut::new(self.bubble.write().expect("BackendCore.bubble poisoned (write)"))
     }
 
     /// Read-only facade over the alert manager + bubble store. The ONLY
@@ -988,18 +1010,10 @@ impl BackendCore {
                             // OLD bars (otherwise `prev` == `new` and the
                             // anchor collapses, leaving the viewport pinned to
                             // the historic index whenever bars grow underneath).
-                            let prev_bars = {
-                                let mgr = self.bubble();
-                                mgr.bubble(bid)
-                                    .map(|b| b.bars.clone())
-                                    .unwrap_or_default()
-                            };
-                            {
-                                let mut mgr = self.bubble_mut();
-                                if let Some(bubble) = mgr.bubble_mut(bid) {
-                                    bubble.bars = bars.clone();
-                                }
-                            }
+                            let mut mgr = self.bubble_mut();
+                            let prev_bars = mgr.bars(bid).to_vec();
+                            mgr.replace_bars(bid, bars.clone());
+                            drop(mgr);
                             events.push(BubbleEvent::BarsLoaded {
                                 bid,
                                 exchange_id,
@@ -1021,18 +1035,10 @@ impl BackendCore {
                         // Same rationale as BarsLoaded above: snapshot the OLD
                         // bubble.bars before overwrite so the reactor's
                         // capture_view_anchor sees real prior state.
-                        let prev_bars = {
-                            let mgr = self.bubble();
-                            mgr.bubble(bid)
-                                .map(|b| b.bars.clone())
-                                .unwrap_or_default()
-                        };
-                        {
-                            let mut mgr = self.bubble_mut();
-                            if let Some(bubble) = mgr.bubble_mut(bid) {
-                                bubble.bars = bars.clone();
-                            }
-                        }
+                        let mut mgr = self.bubble_mut();
+                        let prev_bars = mgr.bars(bid).to_vec();
+                        mgr.replace_bars(bid, bars.clone());
+                        drop(mgr);
                         events.push(BubbleEvent::BackfillCompleted {
                             bid,
                             exchange_id,
@@ -1059,26 +1065,9 @@ impl BackendCore {
                     let bids = self.bubble()
                         .bubbles_for_instrument(exchange_id.as_str(), &at_label, &symbol);
                     for bid in bids {
-                        let merged: Vec<mlc_core::Bar> = {
-                            let mgr = self.bubble();
-                            let existing = mgr.bubble(bid)
-                                .map(|b| b.bars.clone())
-                                .unwrap_or_default();
-                            // Build a ts→bar map: insert the older REST page first,
-                            // then overwrite with existing bars so live/right-edge
-                            // versions win on any timestamp collision.
-                            let mut by_ts: std::collections::BTreeMap<i64, mlc_core::Bar> =
-                                std::collections::BTreeMap::new();
-                            for b in &bars { by_ts.insert(b.timestamp, *b); }
-                            for b in &existing { by_ts.insert(b.timestamp, *b); }
-                            by_ts.into_values().collect()
-                        };
-                        {
-                            let mut mgr = self.bubble_mut();
-                            if let Some(bubble) = mgr.bubble_mut(bid) {
-                                bubble.bars = merged.clone();
-                            }
-                        }
+                        let mut mgr = self.bubble_mut();
+                        let merged = mgr.merge_scroll_bars(bid, &bars);
+                        drop(mgr);
                         events.push(BubbleEvent::ScrollBarsAppended {
                             bid,
                             exchange_id,

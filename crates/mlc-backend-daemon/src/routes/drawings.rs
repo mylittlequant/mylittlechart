@@ -109,15 +109,15 @@ fn encode_points(pts: &[(i64, f64)]) -> Vec<[f64; 2]> {
 
 async fn list_drawings(State(s): State<AppState>) -> impl IntoResponse {
     let dreg = s.core.drawings();
-    let bubbles = s.core.bubble();
+    let bubbles = s.core.bubbles();
     let drawings: Vec<DrawingRowOut> = bubbles
-        .bubbles()
-        .map(|b| DrawingRowOut {
-            bubble_id: b.id.0,
-            primitive_count: dreg.count(b.id),
-            current_tool: dreg.current_tool(b.id).map(str::to_string),
-            locked: dreg.is_locked(b.id),
-            visible: dreg.is_visible(b.id),
+        .bubble_ids()
+        .map(|bid| DrawingRowOut {
+            bubble_id: bid.0,
+            primitive_count: dreg.count(bid),
+            current_tool: dreg.current_tool(bid).map(str::to_string),
+            locked: dreg.is_locked(bid),
+            visible: dreg.is_visible(bid),
         })
         .collect();
     Json(DrawingsOut { drawings })

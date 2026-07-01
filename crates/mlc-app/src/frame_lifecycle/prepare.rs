@@ -171,9 +171,7 @@ impl ChartApp {
             let bars_by_chart_pre: std::collections::HashMap<ChartId, Vec<mlc_core::Bar>> =
                 self.panel_app.panel_grid.containers().iter()
                     .map(|(cid, w)| {
-                        let bars = self.core.bubble().bubble(w.current_bubble_id)
-                            .map(|b| b.bars.clone())
-                            .unwrap_or_default();
+                        let bars = self.core.bubbles().bars(w.current_bubble_id).to_vec();
                         (*cid, bars)
                     })
                     .collect();
@@ -240,9 +238,13 @@ impl ChartApp {
         let bubble_snapshot: std::collections::HashMap<
             mlc_core::ids::BubbleId,
             (Vec<mlc_core::Bar>,)
-        > = self.core.bubble().bubbles()
-            .map(|b| (b.id, (b.bars.clone(),)))
-            .collect();
+        > = {
+            let mut map = std::collections::HashMap::new();
+            self.core.bubbles().each_bubble(|bv| {
+                map.insert(bv.id(), (bv.bars().to_vec(),));
+            });
+            map
+        };
 
         // Diagnostic: dump per-container bubble pointers + bar counts ONCE per
         // dirty render so we can see whether `window.current_bubble_id` lines
@@ -253,15 +255,16 @@ impl ChartApp {
         // bubble id while the data lands in a different bubble.
         {
             let mut dump: Vec<String> = Vec::new();
+            let bubble_mgr = self.core.bubbles();
             for (cid, w) in self.panel_app.panel_grid.containers().iter() {
                 let cur_bid = w.current_bubble_id;
                 let auto_bid = w.auto_bubble_id;
-                let bid_via_chart = self.core.bubble().bubble_for_chart(*cid);
-                let cur_bars = self.core.bubble().bubble(cur_bid).map(|b| b.bars.len()).unwrap_or(usize::MAX);
-                let cur_sym  = self.core.bubble().bubble(cur_bid).map(|b| b.symbol.clone()).unwrap_or_default();
-                let cur_exch = self.core.bubble().bubble(cur_bid).map(|b| b.exchange.clone()).unwrap_or_default();
-                let auto_bars = self.core.bubble().bubble(auto_bid).map(|b| b.bars.len()).unwrap_or(usize::MAX);
-                let auto_sym  = self.core.bubble().bubble(auto_bid).map(|b| b.symbol.clone()).unwrap_or_default();
+                let bid_via_chart = bubble_mgr.bubble_for_chart(*cid);
+                let cur_bars = bubble_mgr.bars(cur_bid).len();
+                let cur_sym  = bubble_mgr.symbol(cur_bid).unwrap_or_default().to_string();
+                let cur_exch = bubble_mgr.exchange(cur_bid).unwrap_or_default().to_string();
+                let auto_bars = bubble_mgr.bars(auto_bid).len();
+                let auto_sym  = bubble_mgr.symbol(auto_bid).unwrap_or_default().to_string();
                 dump.push(format!(
                     "cid={:?} cur={:?}(sym='{}' exch='{}' bars={}) auto={:?}(sym='{}' bars={}) via_chart={:?}",
                     cid, cur_bid, cur_sym, cur_exch, cur_bars, auto_bid, auto_sym, auto_bars, bid_via_chart
@@ -357,13 +360,10 @@ impl ChartApp {
                         .map(String::from).unwrap_or_default();
                     let at = self.account_type_for_chart(active_cid_sync)
                         .map(String::from).unwrap_or_else(|| "S".to_string());
-                    if let Some(g) = self.core.bubble_mut().bubble_mut(new_active_group) {
-                        g.symbol = sym;
-                        g.exchange = exch;
-                        g.account_type = at;
-                    }
+                    self.core.bubbles_mut().set_bubble_instrument(new_active_group, exch, at);
+                    self.core.bubbles_mut().with_bubble_mut(new_active_group, |g| g.symbol = sym);
                 }
-                self.core.bubble_mut().reassign_synced_panels(new_active_group);
+                self.core.bubbles_mut().reassign_synced_panels(new_active_group);
                 self.apply_key_to_panels_in_group(new_active_group);
             }
         }
@@ -1079,9 +1079,7 @@ impl ChartApp {
                 let bars_by_chart_split: std::collections::HashMap<ChartId, Vec<mlc_core::Bar>> =
                     self.panel_app.panel_grid.containers().iter()
                         .map(|(cid, w)| {
-                            let bars = self.core.bubble().bubble(w.current_bubble_id)
-                                .map(|b| b.bars.clone())
-                                .unwrap_or_default();
+                            let bars = self.core.bubbles().bars(w.current_bubble_id).to_vec();
                             (*cid, bars)
                         })
                         .collect();

@@ -34,10 +34,7 @@ fn mk_chart_with_bubble(
 ) -> (ChartContainer, ChartId, BubbleId) {
     let chart_id = generate_chart_id();
     let bid = store.create_group_auto([0.0; 4], symbol.to_string(), tf.clone());
-    if let Some(b) = store.bubble_mut(bid) {
-        b.exchange = exchange.to_string();
-        b.account_type = account_type.to_string();
-    }
+    store.set_bubble_instrument(bid, exchange.to_string(), account_type.to_string());
     store.attach_chart_to_bubble(chart_id, bid).expect("attach");
 
     let mut chart = ChartContainer::new(symbol, tf);
@@ -63,24 +60,21 @@ fn bars_loaded_writer_arm(
     // matched_windows: every chart whose attached bubble matches the instrument.
     let mut matched: Vec<ChartId> = Vec::new();
     for (_, cid, _) in charts {
-        let bubble = store.bubble_for_chart(*cid).and_then(|bid| store.bubble(bid));
-        if let Some(b) = bubble {
-            if b.exchange == exchange
-                && b.account_type == account_type
-                && b.symbol == symbol
-                && b.timeframe.name == tf_name
-            {
-                matched.push(*cid);
-            }
+        let Some(bid) = store.bubble_for_chart(*cid) else { continue };
+        let Some(instrument) = store.instrument(bid) else { continue };
+        if instrument.exchange == exchange
+            && instrument.account_type == account_type
+            && instrument.symbol == symbol
+            && instrument.timeframe.name == tf_name
+        {
+            matched.push(*cid);
         }
     }
 
     // Fan-out write into every bubble for this instrument.
     if !matched.is_empty() {
         for bid in store.bubbles_for_instrument(exchange, account_type, symbol) {
-            if let Some(b) = store.bubble_mut(bid) {
-                b.bars = new_bars.to_vec();
-            }
+            store.set_bars(bid, new_bars.to_vec());
         }
     }
 }
@@ -106,7 +100,7 @@ fn bars_loaded_fills_every_bubble_when_four_tabs_share_instrument() {
     // Every chart's current_bubble_id → bubble.bars must equal new_bars.
     for (chart, cid, _) in &charts {
         let bid = chart.current_bubble_id;
-        let bars = &store.bubble(bid).expect("bubble exists").bars;
+        let bars = store.bars(bid);
         assert_eq!(
             bars.len(),
             300,
@@ -141,12 +135,12 @@ fn bars_loaded_does_not_leak_to_unrelated_instrument() {
 
     // BTC charts: 300 bars each.
     for (chart, _, _) in charts.iter().take(2) {
-        let bars = &store.bubble(chart.current_bubble_id).unwrap().bars;
+        let bars = store.bars(chart.current_bubble_id);
         assert_eq!(bars.len(), 300, "BTC tab gets bars");
     }
     // ETH charts: still empty.
     for (chart, _, _) in charts.iter().skip(2) {
-        let bars = &store.bubble(chart.current_bubble_id).unwrap().bars;
+        let bars = store.bars(chart.current_bubble_id);
         assert_eq!(bars.len(), 0, "ETH tab is NOT polluted by BTC write");
     }
 }
@@ -169,6 +163,6 @@ fn bars_loaded_with_timeframe_mismatch_no_matched_windows_no_write() {
     );
 
     let (chart, _, _) = &charts[0];
-    let bars = &store.bubble(chart.current_bubble_id).unwrap().bars;
+    let bars = store.bars(chart.current_bubble_id);
     assert_eq!(bars.len(), 0, "mismatched timeframe must not trigger write");
 }

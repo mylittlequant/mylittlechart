@@ -60,8 +60,8 @@ fn read_active_last_close(app: &ChartApp) -> f64 {
     let bid = match app.bubble_for_chart(active_cid) {
         Some(b) => b, None => return 0.0,
     };
-    let mgr = app.core.bubble();
-    mgr.bubble(bid).and_then(|b| b.bars.last().map(|x| x.close)).unwrap_or(0.0)
+    let mgr = app.core.bubbles();
+    mgr.bars(bid).last().map(|x| x.close).unwrap_or(0.0)
 }
 
 fn read_active_bars_len(app: &ChartApp) -> usize {
@@ -71,8 +71,8 @@ fn read_active_bars_len(app: &ChartApp) -> usize {
     let bid = match app.bubble_for_chart(active_cid) {
         Some(b) => b, None => return 0,
     };
-    let mgr = app.core.bubble();
-    mgr.bubble(bid).map(|b| b.bars.len()).unwrap_or(0)
+    let mgr = app.core.bubbles();
+    mgr.bars(bid).len()
 }
 
 fn read_active_last_ts(app: &ChartApp) -> i64 {
@@ -82,8 +82,8 @@ fn read_active_last_ts(app: &ChartApp) -> i64 {
     let bid = match app.bubble_for_chart(active_cid) {
         Some(b) => b, None => return 0,
     };
-    let mgr = app.core.bubble();
-    mgr.bubble(bid).and_then(|b| b.bars.last().map(|x| x.timestamp)).unwrap_or(0)
+    let mgr = app.core.bubbles();
+    mgr.bars(bid).last().map(|x| x.timestamp).unwrap_or(0)
 }
 
 /// `viewport.bar_count` — pure ChartApp state, ONLY updated by

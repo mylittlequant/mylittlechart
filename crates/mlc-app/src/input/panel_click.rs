@@ -383,12 +383,13 @@ impl ChartApp {
                         }
                         if let Some(chart_id) = active_chart_id {
                             if let Some(bid) = self.bubble_for_chart(chart_id) {
-                                if let Some(bubble) = self.core.bubble_mut().bubble_mut(bid) {
-                                    bubble.symbol = symbol.clone();
-                                    bubble.timeframe = timeframe.clone();
-                                    bubble.exchange = item_exchange.clone();
-                                    bubble.account_type = item_account_type.clone();
-                                }
+                                self.core.bubbles_mut().set_bid_instrument_full(
+                                    bid,
+                                    symbol.clone(),
+                                    item_exchange.clone(),
+                                    item_account_type.clone(),
+                                    timeframe.clone(),
+                                );
                             }
                         }
                         self.active_exchange = resolved_exchange;
@@ -1523,7 +1524,7 @@ impl ChartApp {
                                         // visible color tag so the panel-chart pair shows a
                                         // shared color marker — this is the moment a 1-member
                                         // untagged group becomes a 2+-member tagged one.
-                                        let group_id = self.core.bubble().active_chart_bubble
+                                        let group_id = self.core.bubbles().active_chart_bubble()
                                             .or_else(|| {
                                                 self.panel_app.panel_grid
                                                     .active_container_id()
@@ -1531,8 +1532,7 @@ impl ChartApp {
                                             });
                                         if let Some(gid) = group_id {
                                             // Promote if currently auto-created.
-                                            let was_auto = self.core.bubble().bubble(gid)
-                                                .map(|g| g.auto_created)
+                                            let was_auto = self.with_bubble(gid, |g| g.auto_created)
                                                 .unwrap_or(false);
                                             if was_auto {
                                                 if let Some(new_color) = self.promote_to_tagged(gid) {
@@ -1540,7 +1540,7 @@ impl ChartApp {
                                                     // chart member of this group so chart leaf
                                                     // headers also show the new color marker.
                                                     let chart_member_ids: Vec<mlc_core::ChartId> =
-                                                        self.core.bubble().chart_member_ids(gid)
+                                                        self.core.bubbles().chart_member_ids(gid)
                                                             .into_iter()
                                                             .collect();
                                                     for cid in chart_member_ids {
@@ -1567,10 +1567,7 @@ impl ChartApp {
                                         self.set_panel_auto(member, solo_gid);
                                         // Seed exchange/account_type on the new group so apply_key
                                         // picks them up next frame.
-                                        if let Some(g) = self.core.bubble_mut().bubble_mut(solo_gid) {
-                                            g.exchange = exchange_str.clone();
-                                            g.account_type = account_type_str.clone();
-                                        }
+                                        self.core.bubbles_mut().set_bubble_instrument(solo_gid, exchange_str.clone(), account_type_str.clone());
                                     }
                                 }
                             }
@@ -1946,7 +1943,7 @@ impl ChartApp {
                                 );
                                 if is_market_data {
                                     let member = SyncMemberId::Panel(item.panel_id().0);
-                                    let is_untagged = self.core.bubble()
+                                    let is_untagged = self.core.bubbles()
                                         .group_for_member(member)
                                         .and_then(|gid| self.with_bubble(gid, |g| g.auto_created))
                                         .unwrap_or(true);
@@ -2116,7 +2113,7 @@ impl ChartApp {
                                     let src_member = mlc_core::ids::SyncMemberId::Panel(src_item.panel_id().0);
                                     let new_member = mlc_core::ids::SyncMemberId::Panel(new_item.panel_id().0);
                                     let src_gid = self.group_for_member(src_member);
-                                    let src_was_synced = self.core.bubble().is_synced(src_member);
+                                    let src_was_synced = self.core.bubbles().is_synced(src_member);
                                     if let Some(gid) = src_gid {
                                         if src_was_synced {
                                             self.set_panel_synced(new_member, gid);
@@ -2579,7 +2576,7 @@ impl ChartApp {
                                     );
                                     if is_market_data {
                                         let member = SyncMemberId::Panel(item.panel_id().0);
-                                        let is_untagged = self.core.bubble()
+                                        let is_untagged = self.core.bubbles()
                                             .group_for_member(member)
                                             .and_then(|gid| self.with_bubble(gid, |g| g.auto_created))
                                             .unwrap_or(true);
@@ -2711,13 +2708,7 @@ impl ChartApp {
                         .get(&cid)
                         .map(|w| w.auto_bubble_id);
                     if let Some(bid) = auto_bid {
-                        if let Some(auto_bub) = self.core.bubble_mut().bubble_mut(bid) {
-                            let before = auto_bub.primitives.len();
-                            auto_bub.primitives.retain(|p| p.data().id != id);
-                            auto_bub.primitives.len() < before
-                        } else {
-                            false
-                        }
+                        self.core.drawings_mut().delete(bid, id)
                     } else {
                         false
                     }
@@ -2737,16 +2728,7 @@ impl ChartApp {
                     .active_container_id()
                     .and_then(|cid| self.bubble_for_chart(cid));
                 if let Some(gid) = group_id {
-                    let deleted = {
-                        let mut mgr = self.core.bubble_mut();
-                        if let Some(group) = mgr.bubble_mut(gid) {
-                            let before = group.primitives.len();
-                            group.primitives.retain(|p| p.data().id != id);
-                            group.primitives.len() < before
-                        } else {
-                            false
-                        }
-                    };
+                    let deleted = self.core.drawings_mut().delete(gid, id);
                     if deleted {
                         self.autosave_snapshot();
                         self.sidebar_data_dirty = true;
@@ -2773,16 +2755,11 @@ impl ChartApp {
                     .active_container_id()
                     .and_then(|cid| self.bubble_for_chart(cid));
                 if let Some(gid) = group_id {
-                    let deleted = {
-                        let mut mgr = self.core.bubble_mut();
-                        if let Some(group) = mgr.bubble_mut(gid) {
-                            let before = group.indicator_configs.len();
-                            group.indicator_configs.retain(|cfg| cfg.id != id);
-                            group.indicator_configs.len() < before
-                        } else {
-                            false
-                        }
-                    };
+                    let deleted = self.core.bubbles_mut().with_bubble_mut(gid, |group| {
+                        let before = group.indicator_configs.len();
+                        group.indicator_configs.retain(|cfg| cfg.id != id);
+                        group.indicator_configs.len() < before
+                    }).unwrap_or(false);
                     if deleted {
                         self.autosave_snapshot();
                         self.sidebar_data_dirty = true;
@@ -3124,9 +3101,7 @@ impl ChartApp {
                                     .container_id_for_leaf(active_leaf)
                                     .and_then(|cid| self.bubble_for_chart(cid))
                                 {
-                                    if let Some(g) = self.core.bubble_mut().bubble_mut(gid) {
-                                        g.scale_mode = ScaleMode::Auto;
-                                    }
+                                    self.core.bubbles_mut().set_scale_mode(gid, ScaleMode::Auto);
                                 }
                             }
                         }
@@ -3554,7 +3529,7 @@ impl ChartApp {
                         let flag_str = &suffix[colon_pos + 1..];
                         if let Ok(gid_val) = gid_str.parse::<u64>() {
                             let gid = BubbleId(gid_val);
-                            if let Some(group) = self.core.bubble_mut().bubble_mut(gid) {
+                            let toggled = self.core.bubbles_mut().with_bubble_mut(gid, |group| {
                                 match flag_str {
                                     "sync_crosshair"  => group.sync_flags.sync_crosshair  = !group.sync_flags.sync_crosshair,
                                     "sync_viewport"   => group.sync_flags.sync_viewport   = !group.sync_flags.sync_viewport,
@@ -3564,6 +3539,8 @@ impl ChartApp {
                                     "sync_indicators" => group.sync_flags.sync_indicators = !group.sync_flags.sync_indicators,
                                     _ => {}
                                 }
+                            }).is_some();
+                            if toggled {
                                 eprintln!("[TagsTabs] Toggled {} on group {}", flag_str, gid_val);
                             }
                         }

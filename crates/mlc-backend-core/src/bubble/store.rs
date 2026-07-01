@@ -2,8 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use mlc_core::chart::types::price_scale::ScaleMode;
-use mlc_core::drawing::primitives_v2::config::TemplateStyle;
-use mlc_core::ids::{BubbleId, MemberSyncOverride, SyncFlags, SyncMemberId};
+use mlc_core::ids::{BubbleId, SyncFlags, SyncMemberId};
 use mlc_core::indicator_types::IndicatorGroupConfig;
 use mlc_core::state::chart_container::{ChartId, ConnectionStatus};
 use mlc_core::state::{CommandHistory, Timeframe};
@@ -181,22 +180,47 @@ impl BubbleStore {
     }
 
     /// Get an immutable reference to a bubble by id.
-    pub fn bubble(&self, id: BubbleId) -> Option<&DataBubble> {
+    ///
+    /// `pub(crate)` — external callers (outside `mlc-backend-core`) go
+    /// through the `Bubbles`/`BubblesMut` facade instead (Step 3.2,
+    /// `docs/mlc/plans/doctrine-cutover-2026-06-27.md` §1A). Kept `pub` at
+    /// the crate level so `tick_writers`, `Alerts`/`AlertsMut`, and
+    /// `Drawings`/`DrawingsMut` can still reach it directly.
+    pub(crate) fn bubble(&self, id: BubbleId) -> Option<&DataBubble> {
         self.bubbles.get(&id)
     }
 
-    /// Get a mutable reference to a bubble by id.
-    pub fn bubble_mut(&mut self, id: BubbleId) -> Option<&mut DataBubble> {
+    /// Get a mutable reference to a bubble by id. `pub(crate)` — see [`Self::bubble`].
+    pub(crate) fn bubble_mut(&mut self, id: BubbleId) -> Option<&mut DataBubble> {
         self.bubbles.get_mut(&id)
     }
 
-    /// Iterate over all data bubbles.
-    pub fn bubbles(&self) -> impl Iterator<Item = &DataBubble> {
+    /// Returns `true` if a bubble with this id exists.
+    pub fn exists(&self, id: BubbleId) -> bool {
+        self.bubbles.contains_key(&id)
+    }
+
+    /// Iterate over every bubble's id.
+    pub fn bubble_ids(&self) -> impl Iterator<Item = BubbleId> + '_ {
+        self.bubbles.keys().copied()
+    }
+
+    /// Call `f` once per bubble with a bundled read view. Replaces the raw
+    /// `bubbles()` iterator for external callers that need more than just
+    /// the id (Step 3.2 §2.1 #6).
+    pub fn each_bubble<F: FnMut(super::facade::BubbleView<'_>)>(&self, mut f: F) {
+        for bubble in self.bubbles.values() {
+            f(super::facade::BubbleView::new(bubble));
+        }
+    }
+
+    /// Iterate over all data bubbles. `pub(crate)` — see [`Self::bubble`].
+    pub(crate) fn bubbles(&self) -> impl Iterator<Item = &DataBubble> {
         self.bubbles.values()
     }
 
-    /// Iterate over all data bubbles mutably.
-    pub fn bubbles_mut(&mut self) -> impl Iterator<Item = &mut DataBubble> {
+    /// Iterate over all data bubbles mutably. `pub(crate)` — see [`Self::bubble`].
+    pub(crate) fn bubbles_mut(&mut self) -> impl Iterator<Item = &mut DataBubble> {
         self.bubbles.values_mut()
     }
 
@@ -587,23 +611,22 @@ impl BubbleStore {
 
     /// Update the symbol for the data bubble that contains the given window.
     ///
-    /// Returns a reference to the updated bubble, or `None` if the window is
-    /// not in any bubble.
-    pub fn set_symbol(&mut self, chart_id: ChartId, symbol: String) -> Option<&DataBubble> {
+    /// Returns `true` if the window is in a bubble and the write happened.
+    pub fn set_symbol(&mut self, chart_id: ChartId, symbol: String) -> bool {
         let member = SyncMemberId::Chart(chart_id.0);
-        let bubble_id = self.member_to_bubble.get(&member).copied()?;
-        let bubble = self.bubbles.get_mut(&bubble_id)?;
+        let Some(bubble_id) = self.member_to_bubble.get(&member).copied() else { return false };
+        let Some(bubble) = self.bubbles.get_mut(&bubble_id) else { return false };
         bubble.symbol = symbol;
-        Some(bubble)
+        true
     }
 
     /// Update the timeframe for the data bubble that contains the given window.
-    pub fn set_timeframe(&mut self, chart_id: ChartId, tf: Timeframe) -> Option<&DataBubble> {
+    pub fn set_timeframe(&mut self, chart_id: ChartId, tf: Timeframe) -> bool {
         let member = SyncMemberId::Chart(chart_id.0);
-        let bubble_id = self.member_to_bubble.get(&member).copied()?;
-        let bubble = self.bubbles.get_mut(&bubble_id)?;
+        let Some(bubble_id) = self.member_to_bubble.get(&member).copied() else { return false };
+        let Some(bubble) = self.bubbles.get_mut(&bubble_id) else { return false };
         bubble.timeframe = tf;
-        Some(bubble)
+        true
     }
 
     /// Update symbol, exchange, and account_type for the data bubble that
@@ -614,13 +637,50 @@ impl BubbleStore {
         symbol: String,
         exchange: String,
         account_type: String,
-    ) -> Option<&DataBubble> {
-        let bubble_id = self.member_to_bubble.get(&member).copied()?;
-        let bubble = self.bubbles.get_mut(&bubble_id)?;
+    ) -> bool {
+        let Some(bubble_id) = self.member_to_bubble.get(&member).copied() else { return false };
+        let Some(bubble) = self.bubbles.get_mut(&bubble_id) else { return false };
         bubble.symbol = symbol;
         bubble.exchange = exchange;
         bubble.account_type = account_type;
-        Some(bubble)
+        true
+    }
+
+    /// Update exchange and account_type for a bubble known by id directly
+    /// (no chart member required). Used by bare/headless bubble creation —
+    /// e.g. the daemon's `POST /v1/bubbles` route, which creates a bubble
+    /// with no chart attached yet.
+    pub fn set_bubble_instrument(&mut self, bid: BubbleId, exchange: String, account_type: String) -> bool {
+        let Some(bubble) = self.bubbles.get_mut(&bid) else { return false };
+        bubble.exchange = exchange;
+        bubble.account_type = account_type;
+        true
+    }
+
+    /// Update symbol/exchange/account_type/timeframe for a bubble known by id
+    /// directly. Covers the "assign full instrument to a freshly-created
+    /// bubble" shape used by chart-seed / new-window flows.
+    pub fn set_bid_instrument_full(
+        &mut self,
+        bid: BubbleId,
+        symbol: String,
+        exchange: String,
+        account_type: String,
+        timeframe: Timeframe,
+    ) -> bool {
+        let Some(bubble) = self.bubbles.get_mut(&bid) else { return false };
+        bubble.symbol = symbol;
+        bubble.exchange = exchange;
+        bubble.account_type = account_type;
+        bubble.timeframe = timeframe;
+        true
+    }
+
+    /// Update just the exchange field for a bubble known by id directly.
+    pub fn set_exchange_for_bid(&mut self, bid: BubbleId, exchange: String) -> bool {
+        let Some(bubble) = self.bubbles.get_mut(&bid) else { return false };
+        bubble.exchange = exchange;
+        true
     }
 
     // =========================================================================
@@ -715,7 +775,10 @@ impl BubbleStore {
     /// is silently replaced. After inserting, also rebuilds the
     /// `member_to_bubble` reverse-index for all members already recorded on
     /// the bubble.
-    pub fn insert_group_raw(&mut self, bubble: DataBubble) {
+    ///
+    /// Private — the only caller is [`Self::restore_from_snapshots`]. External
+    /// callers use that instead (Step 3.2, doctrine-cutover-2026-06-27.md §1A).
+    fn insert_group_raw(&mut self, bubble: DataBubble) {
         let bubble_id = bubble.id;
         for &member_id in &bubble.members {
             self.member_to_bubble.insert(member_id, bubble_id);
@@ -723,83 +786,295 @@ impl BubbleStore {
         self.bubbles.insert(bubble_id, bubble);
     }
 
-    /// Reconstruct a [`DataBubble`] from a [`DataBubbleSnapshot`].
+    /// Rebuild the entire bubble registry from persisted snapshots.
     ///
-    /// The resulting bubble starts with an empty `primitives` list — primitives
-    /// are restored separately via the `PrimitiveRegistry` and pushed in
-    /// afterwards.
-    pub fn group_from_snapshot(
-        snap: &mlc_core::preset::snapshots::DataBubbleSnapshot,
-    ) -> DataBubble {
-        let mut members = std::collections::HashSet::new();
-        for &raw in &snap.members {
-            members.insert(SyncMemberId::Chart(raw));
-        }
-        for &raw in &snap.panel_members {
-            members.insert(SyncMemberId::Panel(raw));
-        }
-
-        let member_overrides: std::collections::HashMap<SyncMemberId, MemberSyncOverride> = snap
-            .member_overrides
-            .iter()
-            .map(|o| {
-                let member = if o.kind == 0 {
-                    SyncMemberId::Chart(o.id)
-                } else {
-                    SyncMemberId::Panel(o.id)
-                };
-                let override_val = MemberSyncOverride {
-                    sync_symbol: o.sync_symbol,
-                    sync_crosshair: o.sync_crosshair,
-                };
-                (member, override_val)
-            })
-            .collect();
-
-        let mut style_map = HashMap::new();
-        for (type_id, raw) in &snap.last_used_style {
-            if let Ok(style) = serde_json::from_value::<TemplateStyle>(raw.clone()) {
-                style_map.insert(type_id.clone(), style);
+    /// For each snapshot: constructs a [`DataBubble`] via
+    /// [`DataBubble::from_snapshot`], backfills primitive `symbol`/`exchange`/
+    /// `account_type` from the bubble's own instrument fields (for primitives
+    /// saved before those fields existed), inserts the bubble, and invokes
+    /// `synced_panel_restorer` once per restored `SyncMemberId::Panel` member
+    /// that was in the Synced set at save time.
+    ///
+    /// Does NOT call [`Self::clear`] — callers that want a full wipe-and-
+    /// rebuild call `clear()` first.
+    ///
+    /// Returns the ids of every bubble restored, in snapshot order.
+    pub fn restore_from_snapshots(
+        &mut self,
+        snaps: &[mlc_core::preset::snapshots::DataBubbleSnapshot],
+        mut synced_panel_restorer: impl FnMut(SyncMemberId, BubbleId),
+    ) -> Vec<BubbleId> {
+        let mut restored_ids = Vec::with_capacity(snaps.len());
+        for snap in snaps {
+            let mut group = DataBubble::from_snapshot(snap);
+            if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
+                for ps in &snap.primitives {
+                    if let Some(mut prim) = reg.from_json(&ps.type_id, &ps.json) {
+                        // Backfill symbol/exchange/account_type for primitives
+                        // saved before these fields existed (serde(default)
+                        // gives empty string). Use the group's shared
+                        // instrument as source of truth.
+                        if prim.data().symbol.is_empty() && !snap.symbol.is_empty() {
+                            prim.data_mut().symbol = snap.symbol.clone();
+                        }
+                        if prim.data().exchange.is_empty() && !snap.exchange.is_empty() {
+                            prim.data_mut().exchange = snap.exchange.clone();
+                        }
+                        if prim.data().account_type.is_empty() && !snap.account_type.is_empty() {
+                            prim.data_mut().account_type = snap.account_type.clone();
+                        }
+                        group.primitives.push(prim);
+                    }
+                }
             }
+            let gid = group.id;
+            self.insert_group_raw(group);
+            for &pid in &snap.synced_panel_ids {
+                synced_panel_restorer(SyncMemberId::Panel(pid), gid);
+            }
+            restored_ids.push(gid);
         }
+        restored_ids
+    }
 
-        DataBubble {
-            id: BubbleId(snap.id),
-            color: snap.color,
-            primitives: Vec::new(),
-            indicator_configs: snap.indicator_configs.clone(),
-            symbol: snap.symbol.clone(),
-            exchange: snap.exchange.clone(),
-            account_type: snap.account_type.clone(),
-            timeframe: snap.timeframe.clone(),
-            sync_flags: snap.sync_flags.clone(),
-            scale_mode: snap.scale_mode,
-            members,
-            member_overrides,
-            command_history: snap.command_history.clone().unwrap_or_else(|| CommandHistory::new(250)),
-            pre_tag_indicator_ids: Vec::new(),
-            auto_created: snap.auto_created,
-            last_used_style: Arc::new(RwLock::new(style_map)),
-            prev_close_price: None,
-            connection_status: ConnectionStatus::default(),
-            bars: Vec::new(),
-            footprint_bars: None,
-            renko_bars: None,
-            three_line_break: None,
-            pnf_columns: None,
-            kagi_segments: None,
-            cvd_line: None,
-            tpo_sessions: None,
-            oi_delta: None,
-            funding_rate: None,
-            dom_heatmap: None,
-            dom_trade_dots: None,
-            liq_heatmap: None,
-            liq_dots: None,
-            alerts: snap.alerts.clone(),
-            alert_next_id: snap.alerts.iter().map(|a| a.id).max().unwrap_or(0) + 1,
+    // =========================================================================
+    // Bid-keyed read intents (Step 3.2 §2.2 — the `Bubbles`/`BubblesMut`
+    // facade forwards to these).
+    // =========================================================================
+
+    /// OHLC bars for a bubble. Empty slice if the bubble doesn't exist.
+    pub fn bars(&self, bid: BubbleId) -> &[mlc_core::Bar] {
+        self.bubbles.get(&bid).map(|b| b.bars.as_slice()).unwrap_or(&[])
+    }
+
+    /// Footprint cluster bars, if any have been written.
+    pub fn footprint_bars(&self, bid: BubbleId) -> Option<&[mlc_core::types::FootprintBar]> {
+        self.bubbles.get(&bid)?.footprint_bars.as_deref()
+    }
+
+    /// Renko bricks, if any have been written.
+    pub fn renko_bars(&self, bid: BubbleId) -> Option<&[mlc_core::types::RenkoBrick]> {
+        self.bubbles.get(&bid)?.renko_bars.as_deref()
+    }
+
+    /// Three Line Break lines, if any have been written.
+    pub fn three_line_break(&self, bid: BubbleId) -> Option<&[mlc_core::types::ThreeLineBreakLine]> {
+        self.bubbles.get(&bid)?.three_line_break.as_deref()
+    }
+
+    /// Point-and-Figure columns, if any have been written.
+    pub fn pnf_columns(&self, bid: BubbleId) -> Option<&[mlc_core::types::PnfColumn]> {
+        self.bubbles.get(&bid)?.pnf_columns.as_deref()
+    }
+
+    /// Kagi segments, if any have been written.
+    pub fn kagi_segments(&self, bid: BubbleId) -> Option<&[mlc_core::types::KagiSegment]> {
+        self.bubbles.get(&bid)?.kagi_segments.as_deref()
+    }
+
+    /// Cumulative Volume Delta samples, if any have been written.
+    pub fn cvd_line(&self, bid: BubbleId) -> Option<&[mlc_core::types::CvdSample]> {
+        self.bubbles.get(&bid)?.cvd_line.as_deref()
+    }
+
+    /// TPO Market Profile session snapshots, if any have been written.
+    pub fn tpo_sessions(&self, bid: BubbleId) -> Option<&[mlc_core::types::TpoSession]> {
+        self.bubbles.get(&bid)?.tpo_sessions.as_deref()
+    }
+
+    /// Open Interest Δ bars, if any have been written.
+    pub fn oi_delta(&self, bid: BubbleId) -> Option<&[mlc_core::types::OiDeltaBar]> {
+        self.bubbles.get(&bid)?.oi_delta.as_deref()
+    }
+
+    /// Funding Rate cells, if any have been written.
+    pub fn funding_rate(&self, bid: BubbleId) -> Option<&[mlc_core::types::FundingRateCell]> {
+        self.bubbles.get(&bid)?.funding_rate.as_deref()
+    }
+
+    /// DOM heatmap ring buffer, if any has been written.
+    pub fn dom_heatmap(&self, bid: BubbleId) -> Option<&mlc_core::chart::dom_heatmap::DomHeatmapBuffer> {
+        self.bubbles.get(&bid)?.dom_heatmap.as_ref()
+    }
+
+    /// DOM trade-circle ring overlay, if any has been written.
+    pub fn dom_trade_dots(&self, bid: BubbleId) -> Option<&[mlc_core::chart::dom_heatmap::DomTradeDot]> {
+        self.bubbles.get(&bid)?.dom_trade_dots.as_deref()
+    }
+
+    /// Liquidation heatmap ring buffer, if any has been written.
+    pub fn liq_heatmap(&self, bid: BubbleId) -> Option<&mlc_core::chart::liquidation_heatmap::LiquidationHeatmapBuffer> {
+        self.bubbles.get(&bid)?.liq_heatmap.as_ref()
+    }
+
+    /// Liquidation dot overlay, if any has been written.
+    pub fn liq_dots(&self, bid: BubbleId) -> Option<&[mlc_core::chart::liquidation_heatmap::LiquidationDot]> {
+        self.bubbles.get(&bid)?.liq_dots.as_deref()
+    }
+
+    /// Symbol of a bubble known by id directly. `None` if missing or empty.
+    pub fn symbol(&self, bid: BubbleId) -> Option<&str> {
+        self.bubbles.get(&bid).map(|b| b.symbol.as_str()).filter(|s| !s.is_empty())
+    }
+
+    /// Exchange of a bubble known by id directly. `None` if missing or empty.
+    pub fn exchange(&self, bid: BubbleId) -> Option<&str> {
+        self.bubbles.get(&bid).map(|b| b.exchange.as_str()).filter(|s| !s.is_empty())
+    }
+
+    /// Account type of a bubble known by id directly. `None` if missing or empty.
+    pub fn account_type(&self, bid: BubbleId) -> Option<&str> {
+        self.bubbles.get(&bid).map(|b| b.account_type.as_str()).filter(|s| !s.is_empty())
+    }
+
+    /// Timeframe of a bubble known by id directly.
+    pub fn timeframe(&self, bid: BubbleId) -> Option<&Timeframe> {
+        self.bubbles.get(&bid).map(|b| &b.timeframe)
+    }
+
+    /// Bundled `(symbol, exchange, account_type, timeframe)` read — the shape
+    /// most DTO builders (e.g. the daemon's bubble snapshot route) actually want.
+    pub fn instrument(&self, bid: BubbleId) -> Option<InstrumentKey> {
+        let b = self.bubbles.get(&bid)?;
+        Some(InstrumentKey {
+            symbol: b.symbol.clone(),
+            exchange: b.exchange.clone(),
+            account_type: b.account_type.clone(),
+            timeframe: b.timeframe.clone(),
+        })
+    }
+
+    /// Display color of a bubble known by id directly.
+    pub fn color(&self, bid: BubbleId) -> Option<[f32; 4]> {
+        self.bubbles.get(&bid).map(|b| b.color)
+    }
+
+    /// Price-scale corner mode of a bubble known by id directly.
+    pub fn scale_mode(&self, bid: BubbleId) -> Option<ScaleMode> {
+        self.bubbles.get(&bid).map(|b| b.scale_mode)
+    }
+
+    /// Sync flags of a bubble known by id directly.
+    pub fn sync_flags(&self, bid: BubbleId) -> Option<SyncFlags> {
+        self.bubbles.get(&bid).map(|b| b.sync_flags.clone())
+    }
+
+    /// Shared undo/redo history of a bubble known by id directly.
+    pub fn command_history(&self, bid: BubbleId) -> Option<&CommandHistory> {
+        self.bubbles.get(&bid).map(|b| &b.command_history)
+    }
+
+    /// Previous session close price of a bubble known by id directly.
+    pub fn prev_close(&self, bid: BubbleId) -> Option<f64> {
+        self.bubbles.get(&bid).and_then(|b| b.prev_close_price)
+    }
+
+    /// Live/Delayed/Disconnected status of a bubble known by id directly.
+    pub fn connection_status(&self, bid: BubbleId) -> Option<ConnectionStatus> {
+        self.bubbles.get(&bid).map(|b| b.connection_status)
+    }
+
+    /// Indicator configs of a bubble known by id directly. Empty slice if missing.
+    pub fn indicator_configs(&self, bid: BubbleId) -> &[IndicatorGroupConfig] {
+        self.bubbles.get(&bid).map(|b| b.indicator_configs.as_slice()).unwrap_or(&[])
+    }
+
+    /// Whether a bubble known by id directly is an invisible auto-created
+    /// bubble (no user color tag). `false` if the bubble doesn't exist.
+    pub fn auto_created(&self, bid: BubbleId) -> bool {
+        self.bubbles.get(&bid).map(|b| b.auto_created).unwrap_or(false)
+    }
+
+    /// Indicator instance ids hidden pre-tag (desync/rejoin bookkeeping).
+    /// Empty slice if missing.
+    pub fn pre_tag_indicator_ids(&self, bid: BubbleId) -> &[u64] {
+        self.bubbles.get(&bid).map(|b| b.pre_tag_indicator_ids.as_slice()).unwrap_or(&[])
+    }
+
+    /// The bubble that the currently-active chart belongs to.
+    pub fn active_chart_bubble(&self) -> Option<BubbleId> {
+        self.active_chart_bubble
+    }
+
+    // =========================================================================
+    // Bid-keyed write intents (Step 3.2 §2.4)
+    // =========================================================================
+
+    /// Append one bar to a bubble's OHLC series.
+    pub fn append_bar(&mut self, bid: BubbleId, bar: mlc_core::Bar) {
+        if let Some(b) = self.bubbles.get_mut(&bid) {
+            b.append_bar(bar);
         }
     }
+
+    /// Replace a bubble's entire OHLC series.
+    pub fn replace_bars(&mut self, bid: BubbleId, bars: Vec<mlc_core::Bar>) {
+        if let Some(b) = self.bubbles.get_mut(&bid) {
+            b.replace_bars(bars);
+        }
+    }
+
+    /// Merge a page of scroll-loaded bars into the existing series by
+    /// timestamp (last-write-wins on collision — the live ring's version of
+    /// any overlapping bar takes priority), sorted oldest→newest. Returns the
+    /// merged series so the caller can build the matching `BubbleEvent`.
+    pub fn merge_scroll_bars(&mut self, bid: BubbleId, bars: &[mlc_core::Bar]) -> Vec<mlc_core::Bar> {
+        let Some(b) = self.bubbles.get_mut(&bid) else { return Vec::new() };
+        let mut by_ts: std::collections::BTreeMap<i64, mlc_core::Bar> = std::collections::BTreeMap::new();
+        for bar in bars { by_ts.insert(bar.timestamp, *bar); }
+        for bar in &b.bars { by_ts.insert(bar.timestamp, *bar); }
+        let merged: Vec<mlc_core::Bar> = by_ts.into_values().collect();
+        b.replace_bars(merged.clone());
+        merged
+    }
+
+    /// Replace a bubble's entire OHLC series (restore/hydration path — same
+    /// underlying write as `replace_bars`, distinct name for call-site intent
+    /// clarity between "live tick" and "restore").
+    pub fn set_bars(&mut self, bid: BubbleId, bars: Vec<mlc_core::Bar>) {
+        if let Some(b) = self.bubbles.get_mut(&bid) {
+            b.replace_bars(bars);
+        }
+    }
+
+    /// Set the price-scale corner mode of a bubble known by id directly.
+    pub fn set_scale_mode(&mut self, bid: BubbleId, mode: ScaleMode) {
+        if let Some(b) = self.bubbles.get_mut(&bid) {
+            b.scale_mode = mode;
+        }
+    }
+
+    /// Set the previous session close price of a bubble known by id directly.
+    pub fn set_prev_close(&mut self, bid: BubbleId, price: Option<f64>) {
+        if let Some(b) = self.bubbles.get_mut(&bid) {
+            b.prev_close_price = price;
+        }
+    }
+
+    /// Set the Live/Delayed/Disconnected status of a bubble known by id directly.
+    pub fn set_connection_status(&mut self, bid: BubbleId, status: ConnectionStatus) {
+        if let Some(b) = self.bubbles.get_mut(&bid) {
+            b.connection_status = status;
+        }
+    }
+
+    /// Set the pre-tag indicator ids of a bubble known by id directly
+    /// (desync-join bookkeeping write).
+    pub fn set_pre_tag_indicator_ids(&mut self, bid: BubbleId, ids: Vec<u64>) {
+        if let Some(b) = self.bubbles.get_mut(&bid) {
+            b.pre_tag_indicator_ids = ids;
+        }
+    }
+}
+
+/// Bundled `(symbol, exchange, account_type, timeframe)` read — see
+/// [`BubbleStore::instrument`].
+#[derive(Debug, Clone)]
+pub struct InstrumentKey {
+    pub symbol: String,
+    pub exchange: String,
+    pub account_type: String,
+    pub timeframe: Timeframe,
 }
 
 impl Default for BubbleStore {

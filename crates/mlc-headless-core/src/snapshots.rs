@@ -196,12 +196,13 @@ pub fn update_indicator_snapshot<H: AgentHost>(host: &H, agent_state: &AgentStat
         // Indicators are keyed by bubble; resolve the symbol per bubble via the
         // bubble's own `symbol` field so the snapshot is correct under the
         // bubble-ownership model even when no chart currently points at it.
-        let bubble_symbols: std::collections::HashMap<u64, String> = chart
-            .core
-            .bubble()
-            .bubbles()
-            .map(|b| (b.id.0, b.symbol.clone()))
-            .collect();
+        let bubble_symbols: std::collections::HashMap<u64, String> = {
+            let mut map = std::collections::HashMap::new();
+            chart.core.bubbles().each_bubble(|bv| {
+                map.insert(bv.id().0, bv.symbol().to_string());
+            });
+            map
+        };
 
         let im = chart.core.indicators();
         for inst in im.instances_iter() {

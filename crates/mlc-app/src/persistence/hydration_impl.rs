@@ -195,7 +195,7 @@ impl ChartApp {
                                         } else {
                                             &snap.stashed_primitives
                                         };
-                                    if let Some(auto_bub) = self.core.bubble_mut().bubble_mut(auto_bid) {
+                                    self.core.bubbles_mut().with_bubble_mut(auto_bid, |auto_bub| {
                                         auto_bub.primitives.clear();
                                         if !restore_snap.is_empty() {
                                             if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
@@ -213,7 +213,7 @@ impl ChartApp {
                                         if let Some(h) = snap.stashed_command_history.clone() {
                                             auto_bub.command_history = h;
                                         }
-                                    }
+                                    });
 
                                     // Restore per-symbol drawing cache
                                     window.symbol_drawings = snap.symbol_drawings_snapshots.clone();
@@ -251,12 +251,13 @@ impl ChartApp {
                                     );
 
                                     if let Some(bid) = self.bubble_for_chart(chart_id) {
-                                        if let Some(bubble) = self.core.bubble_mut().bubble_mut(bid) {
-                                            bubble.symbol = snap.symbol.clone();
-                                            bubble.timeframe = snap.timeframe.clone();
-                                            bubble.exchange = snap.exchange.clone();
-                                            bubble.account_type = snap.account_type.clone();
-                                        }
+                                        self.core.bubbles_mut().set_bid_instrument_full(
+                                            bid,
+                                            snap.symbol.clone(),
+                                            snap.exchange.clone(),
+                                            snap.account_type.clone(),
+                                            snap.timeframe.clone(),
+                                        );
                                     }
                                     // Phase 4 C: panel state already written above.
 
@@ -392,7 +393,7 @@ impl ChartApp {
                                     // restoration is deferred until the post-loop pass
                                     // re-runs the same body with a real auto_bid.
                                     let auto_bid_for_window = window.auto_bubble_id;
-                                    if let Some(auto_bub) = self.core.bubble_mut().bubble_mut(auto_bid_for_window) {
+                                    self.core.bubbles_mut().with_bubble_mut(auto_bid_for_window, |auto_bub| {
                                         auto_bub.primitives.clear();
                                         if !snap.stashed_primitives.is_empty() {
                                             if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
@@ -407,7 +408,7 @@ impl ChartApp {
                                         if let Some(h) = snap.stashed_command_history.clone() {
                                             auto_bub.command_history = h;
                                         }
-                                    }
+                                    });
 
                                     // Restore per-symbol drawing cache
                                     window.symbol_drawings = snap.symbol_drawings_snapshots.clone();
@@ -492,12 +493,13 @@ impl ChartApp {
                         for snap in &preset.windows {
                             let chart_id = mlc_core::state::chart_container::ChartId(snap.window_id);
                             if let Some(bid) = self.bubble_for_chart(chart_id) {
-                                if let Some(bubble) = self.core.bubble_mut().bubble_mut(bid) {
-                                    bubble.symbol = snap.symbol.clone();
-                                    bubble.timeframe = snap.timeframe.clone();
-                                    bubble.exchange = snap.exchange.clone();
-                                    bubble.account_type = snap.account_type.clone();
-                                }
+                                self.core.bubbles_mut().set_bid_instrument_full(
+                                    bid,
+                                    snap.symbol.clone(),
+                                    snap.exchange.clone(),
+                                    snap.account_type.clone(),
+                                    snap.timeframe.clone(),
+                                );
                             }
                             // Note: pre_tag_indicator_ids and stashed_command_history are
                             // already written into auto_bubble above; no separate map needed.
@@ -534,39 +536,18 @@ impl ChartApp {
                     // Step 5: Restore TagManager (sync groups)
                     // ----------------------------------------------------------------
                     let _t_bubbles = web_time::Instant::now();
-                    self.core.bubble_mut().clear();
-                    for sg_snap in &preset.bubbles {
-                        let mut group = mlc_backend_core::bubble::BubbleStore::group_from_snapshot(sg_snap);
-                        if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
-                            for ps in &sg_snap.primitives {
-                                if let Some(mut prim) = reg.from_json(&ps.type_id, &ps.json) {
-                                    // Backfill symbol/exchange/account_type for primitives
-                                    // saved before these fields existed (serde(default) gives
-                                    // empty string). Use the group's shared instrument as
-                                    // source of truth  -  prevents them falling into Memory on load.
-                                    if prim.data().symbol.is_empty() && !sg_snap.symbol.is_empty() {
-                                        prim.data_mut().symbol = sg_snap.symbol.clone();
-                                    }
-                                    if prim.data().exchange.is_empty() && !sg_snap.exchange.is_empty() {
-                                        prim.data_mut().exchange = sg_snap.exchange.clone();
-                                    }
-                                    if prim.data().account_type.is_empty() && !sg_snap.account_type.is_empty() {
-                                        prim.data_mut().account_type = sg_snap.account_type.clone();
-                                    }
-                                    group.primitives.push(prim);
-                                }
-                            }
-                        }
-                        self.core.bubble_mut().insert_group_raw(group);
-                        // Restore per-group synced_panels list. Each panel id stored
-                        // in synced_panel_ids was Synced (= follows active chart) at
-                        // save time; re-register via set_synced so that next active
-                        // chart change re-attaches the panel correctly.
-                        let gid = mlc_core::ids::BubbleId(sg_snap.id);
-                        for &pid in &sg_snap.synced_panel_ids {
-                            let member = mlc_core::ids::SyncMemberId::Panel(pid);
-                            self.set_panel_synced(member, gid);
-                        }
+                    self.core.bubbles_mut().clear();
+                    // `restore_from_snapshots` builds each bubble (including the
+                    // symbol/exchange/account_type primitive backfill) and inserts
+                    // it; the closure below runs once per restored bubble's
+                    // `synced_panel_ids` so `set_panel_synced` (an app-level method,
+                    // not a store method) stays in app code.
+                    let mut panel_syncs: Vec<(mlc_core::ids::SyncMemberId, mlc_core::ids::BubbleId)> = Vec::new();
+                    self.core.bubbles_mut().restore_from_snapshots(&preset.bubbles, |member, gid| {
+                        panel_syncs.push((member, gid));
+                    });
+                    for (member, gid) in panel_syncs {
+                        self.set_panel_synced(member, gid);
                     }
                     eprintln!("[ChartApp] restored {} sync groups", preset.bubbles.len());
                     let bubbles_us = _t_bubbles.elapsed().as_micros();
@@ -588,11 +569,12 @@ impl ChartApp {
                     // live on bubbles under the per-bubble drawing model — no
                     // separate per-window DrawingManager sweep needed.
                     {
-                        let max_id = self.core.bubble().bubbles()
-                            .flat_map(|g| g.primitives.iter())
-                            .map(|p| p.data().id)
-                            .max()
-                            .unwrap_or(0);
+                        let mut max_id = 0u64;
+                        self.core.bubbles().each_bubble(|bv| {
+                            if let Some(id) = bv.max_primitive_id() {
+                                max_id = max_id.max(id);
+                            }
+                        });
                         mlc_core::drawing::seed_primitive_id_counter(max_id);
                     }
 
@@ -611,8 +593,7 @@ impl ChartApp {
                                 .filter_map(|cid| {
                                     let gid = self.bubble_for_chart(cid)?;
                                     let group_ids: std::collections::HashSet<u64> =
-                                        self.core.bubble().bubble(gid)
-                                            .map(|g| g.primitives.iter().map(|p| p.data().id).collect())
+                                        self.with_bubble(gid, |g| g.primitives.iter().map(|p| p.data().id).collect())
                                             .unwrap_or_default();
                                     Some((cid, gid, group_ids))
                                 })
@@ -620,20 +601,21 @@ impl ChartApp {
 
                         // Phase 2: mutably iterate auto_bubble.primitives and re-ID colliding ones.
                         for (chart_id, _gid, group_ids) in &collision_info {
-                            let mut reid_count = 0u32;
                             let auto_bid = self.panel_app.panel_grid.containers()
                                 .get(chart_id)
                                 .map(|w| w.auto_bubble_id);
-                            if let Some(bid) = auto_bid {
-                                if let Some(auto_bub) = self.core.bubble_mut().bubble_mut(bid) {
+                            let reid_count = auto_bid.and_then(|bid| {
+                                self.core.bubbles_mut().with_bubble_mut(bid, |auto_bub| {
+                                    let mut reid_count = 0u32;
                                     for p in auto_bub.primitives.iter_mut() {
                                         if group_ids.contains(&p.data().id) {
                                             p.data_mut().id = mlc_core::drawing::alloc_primitive_id();
                                             reid_count += 1;
                                         }
                                     }
-                                }
-                            }
+                                    reid_count
+                                })
+                            }).unwrap_or(0);
                             if reid_count > 0 {
                                 eprintln!(
                                     "[ChartApp] Re-IDed {} auto-bubble primitive(s) in window {:?} (legacy autosave collision fix)",
@@ -643,25 +625,12 @@ impl ChartApp {
                         }
                     }
 
-                    // Deduplicate IDs within each group.primitives collection.
+                    // Deduplicate primitive IDs globally, across every bubble.
                     // Old presets may have group primitives with identical IDs
                     // (from historical clone paths that didn't re-ID).
-                    for group in self.core.bubble_mut().bubbles_mut() {
-                        let mut seen_ids = std::collections::HashSet::new();
-                        let mut reid_count = 0u32;
-                        for p in &mut group.primitives {
-                            let id = p.data().id;
-                            if !seen_ids.insert(id) {
-                                p.data_mut().id = mlc_core::drawing::alloc_primitive_id();
-                                reid_count += 1;
-                            }
-                        }
-                        if reid_count > 0 {
-                            eprintln!(
-                                "[ChartApp] Re-IDed {} duplicate primitive(s) within group {:?}",
-                                reid_count, group.id
-                            );
-                        }
+                    let total_dedup = self.core.drawings_mut().dedup_primitive_ids();
+                    if total_dedup > 0 {
+                        eprintln!("[ChartApp] Re-IDed {} duplicate primitive(s) across all groups", total_dedup);
                     }
                     let seed_ids_us = _t_seed_ids.elapsed().as_micros();
 
@@ -735,10 +704,8 @@ impl ChartApp {
                                 sym.clone(),
                                 tf,
                             );
-                            if let Some(bubble) = self.core.bubble_mut().bubble_mut(group_id) {
-                                bubble.exchange = exch.clone();
-                                bubble.account_type = if at.is_empty() { "S".to_string() } else { at };
-                            }
+                            let at_normalized = if at.is_empty() { "S".to_string() } else { at };
+                            self.core.bubbles_mut().set_bubble_instrument(group_id, exch.clone(), at_normalized);
                             self.attach_chart_to_tag(chart_id, group_id);
                             // Sync window-side bubble pointer (see Step 5b for rationale).
                             if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&chart_id) {
@@ -905,9 +872,7 @@ impl ChartApp {
                                 .map(mlc_core::ids::BubbleId)
                                 .or_else(|| {
                                     // Fall back to the first available bubble.
-                                    let bm = self.core.bubble();
-                                    let v = bm.bubbles().next().map(|b| b.id);
-                                    v
+                                    self.core.bubbles().bubble_ids().next()
                                 });
                             if let Some(bid) = target_bid {
                                 self.core.alerts_mut().restore_one(bid, alert);
@@ -1435,15 +1400,15 @@ impl ChartApp {
                         };
                         // Collect orphans (Panel members in any group with no live state).
                         let mut orphans: Vec<SyncMemberId> = Vec::new();
-                        for group in self.core.bubble().bubbles() {
-                            for member in group.members.iter() {
+                        self.core.bubbles().each_bubble(|group| {
+                            for member in group.members() {
                                 if let SyncMemberId::Panel(pid) = member {
-                                    if !live_panel_ids.contains(pid) {
-                                        orphans.push(SyncMemberId::Panel(*pid));
+                                    if !live_panel_ids.contains(&pid) {
+                                        orphans.push(SyncMemberId::Panel(pid));
                                     }
                                 }
                             }
-                        }
+                        });
                         let pruned = orphans.len();
                         for member in orphans {
                             self.remove_panel_completely(member);

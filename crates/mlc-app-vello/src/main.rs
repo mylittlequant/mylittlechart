@@ -1129,7 +1129,7 @@ impl App<'_> {
         // sessions in this new window (per-bubble model — styles live on
         // DataBubble.last_used_style, loaded once per distinct bubble).
         let drawing_styles = self.app_state.snapshots.last_used_drawing_styles.clone();
-        let all_bids_styles: Vec<_> = chart.core.bubble().bubbles().map(|b| b.id).collect();
+        let all_bids_styles: Vec<_> = chart.core.bubbles().bubble_ids().collect();
         {
             let mut dreg = chart.core.drawings_mut();
             for bid in all_bids_styles {
@@ -1558,7 +1558,7 @@ impl App<'_> {
                 chart.panel_app.user_manager.snapshots = snapshots.clone();
                 {
                     let drawing_styles = snapshots.last_used_drawing_styles.clone();
-                    let all_bids_ls: Vec<_> = chart.core.bubble().bubbles().map(|b| b.id).collect();
+                    let all_bids_ls: Vec<_> = chart.core.bubbles().bubble_ids().collect();
                     let mut dreg = chart.core.drawings_mut();
                     for bid in all_bids_ls {
                         dreg.load_last_styles(bid, &drawing_styles);
@@ -3935,7 +3935,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     // Apply persisted last-used drawing styles to every bubble's
                     // drawing session so new primitives of each type inherit the
                     // user's last-used style.
-                    let all_bids_sd: Vec<_> = pw.chart.core.bubble().bubbles().map(|b| b.id).collect();
+                    let all_bids_sd: Vec<_> = pw.chart.core.bubbles().bubble_ids().collect();
                     let mut dreg = pw.chart.core.drawings_mut();
                     for bid in all_bids_sd {
                         dreg.load_last_styles(bid, &drawing_styles);
@@ -4020,7 +4020,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 if let Some((active_cid, group_id)) = group_info {
                     let sync_symbol_on = pw.chart.with_bubble(group_id, |g| g.sync_flags.sync_symbol).unwrap_or(false);
                     if sync_symbol_on {
-                        let peer_ids: Vec<mlc_core::ChartId> = pw.chart.core.bubble()
+                        let peer_ids: Vec<mlc_core::ChartId> = pw.chart.core.bubbles()
                             .chart_member_ids(group_id)
                             .into_iter()
                             .filter(|&m| m != active_cid)
@@ -4127,9 +4127,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             for pw in self.windows.values_mut() {
                 let total_bars: usize = pw.chart.panel_app.panel_grid.containers()
                     .values()
-                    .map(|w| pw.chart.core.bubble().bubble(w.current_bubble_id)
-                        .map(|b| b.bars.len())
-                        .unwrap_or(0))
+                    .map(|w| pw.chart.core.bubbles().bars(w.current_bubble_id).len())
                     .sum();
                 let lag_events = pw.chart.lag_event_count;
 

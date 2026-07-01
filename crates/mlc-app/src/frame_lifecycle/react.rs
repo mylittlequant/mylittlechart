@@ -167,9 +167,7 @@ impl ChartApp {
                 // Write prev_close_price.
                 for (chart_id, prev_close) in prev_close_mirrors {
                     if let Some(b) = self.bubble_for_chart(chart_id) {
-                        if let Some(bubble) = self.core.bubble_mut().bubble_mut(b) {
-                            bubble.prev_close_price = prev_close;
-                        }
+                        self.core.bubbles_mut().set_prev_close(b, prev_close);
                     }
                 }
 
@@ -210,9 +208,7 @@ impl ChartApp {
                                 .into_iter()
                                 .collect();
                             for bid_p in &parked_bubble_ids {
-                                if let Some(bubble) = parked.tag_manager.bubble_mut(*bid_p) {
-                                    bubble.bars = new_bars.clone();
-                                }
+                                parked.tag_manager.set_bars(*bid_p, new_bars.clone());
                             }
                             for cid in cids {
                                 if let Some(window) = parked.panel_grid.containers_mut().get_mut(&cid) {
@@ -306,11 +302,10 @@ impl ChartApp {
                             let main_bars = self.panel_app.panel_grid.containers()
                                 .get(&cid)
                                 .and_then(|w| self.bubble_for_chart(cid)
-                                    .and_then(|bid| {
+                                    .map(|bid| {
                                         // Read bars from the bubble rather than re-fetching.
                                         let _ = w; // use w to satisfy borrow checker
-                                        self.core.bubble_mut().bubble_mut(bid)
-                                            .map(|b| b.bars.clone())
+                                        self.core.bubbles().bars(bid).to_vec()
                                     }))
                                 .unwrap_or_default();
 
@@ -422,9 +417,7 @@ impl ChartApp {
 
                 for (chart_id, prev_close) in prev_close_mirrors {
                     if let Some(b) = self.bubble_for_chart(chart_id) {
-                        if let Some(bubble) = self.core.bubble_mut().bubble_mut(b) {
-                            bubble.prev_close_price = prev_close;
-                        }
+                        self.core.bubbles_mut().set_prev_close(b, prev_close);
                     }
                 }
 
@@ -462,10 +455,9 @@ impl ChartApp {
                 };
 
                 let prev_bars_for_anchor: Vec<mlc_core::Bar> = {
-                    let mgr = self.core.bubble();
+                    let mgr = self.core.bubbles();
                     mgr.bubble_for_instrument(exchange_id.as_str(), at_label, symbol)
-                        .and_then(|b| mgr.bubble(b))
-                        .map(|b| b.bars.clone())
+                        .map(|b| mgr.bars(b).to_vec())
                         .unwrap_or_default()
                 };
 
@@ -499,9 +491,7 @@ impl ChartApp {
 
                 for (chart_id, prev_close) in prev_close_mirrors {
                     if let Some(b) = self.bubble_for_chart(chart_id) {
-                        if let Some(bubble) = self.core.bubble_mut().bubble_mut(b) {
-                            bubble.prev_close_price = prev_close;
-                        }
+                        self.core.bubbles_mut().set_prev_close(b, prev_close);
                     }
                 }
 
@@ -557,7 +547,7 @@ impl ChartApp {
                         .collect();
 
                 for bid_bu in &target_bubbles_bu {
-                    if let Some(bubble) = self.core.bubble_mut().bubble_mut(*bid_bu) {
+                    let is_new = self.core.bubbles_mut().with_bubble_mut(*bid_bu, |bubble| {
                         let last_ts = bubble.bars.last().map(|b| b.timestamp);
                         if last_ts == Some(bar.timestamp) {
                             if let Some(last) = bubble.last_bar_mut() {
@@ -567,16 +557,19 @@ impl ChartApp {
                                 last.close  = bar.close;
                                 last.volume = bar.volume;
                             }
-                            bu_is_new_bar = false;
+                            false
                         } else {
                             bubble.append_bar(bar.clone());
-                            bu_is_new_bar = true;
+                            true
                         }
+                    });
+                    if let Some(is_new) = is_new {
+                        bu_is_new_bar = is_new;
                     }
                 }
 
                 let bu_bubble_bars: Vec<mlc_core::Bar> = target_bubbles_bu.iter().next()
-                    .and_then(|b| self.with_bubble(*b, |bub| bub.bars.clone()))
+                    .map(|b| self.core.bubbles().bars(*b).to_vec())
                     .unwrap_or_default();
 
                 for (cid_bu, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
@@ -688,24 +681,25 @@ impl ChartApp {
                 let mut needs_backfill = false;
 
                 for (bid_tu, period_secs) in &bubble_periods {
-                    if let Some(bubble) = self.core.bubble_mut().bubble_mut(*bid_tu) {
+                    let outcome = self.core.bubbles_mut().with_bubble_mut(*bid_tu, |bubble| {
                         if let Some(last_ts) = bubble.bars.last().map(|b| b.timestamp) {
                             let candle_end = last_ts + period_secs;
                             if trade_ts_secs >= candle_end {
-                                if trade_ts_secs >= candle_end + period_secs {
-                                    needs_backfill = true;
-                                }
+                                let needs_bf = trade_ts_secs >= candle_end + period_secs;
                                 let new_candle_start = (trade_ts_secs / period_secs) * period_secs;
                                 bubble.append_bar(mlc_core::Bar {
                                     timestamp: new_candle_start,
                                     open: *price, high: *price, low: *price, close: *price, volume: *quantity,
                                 });
-                                is_new_bar = true;
-                            } else if let Some(last) = bubble.last_bar_mut() {
-                                last.close = *price;
-                                if *price > last.high { last.high = *price; }
-                                if *price < last.low  { last.low  = *price; }
-                                last.volume += quantity;
+                                (true, needs_bf)
+                            } else {
+                                if let Some(last) = bubble.last_bar_mut() {
+                                    last.close = *price;
+                                    if *price > last.high { last.high = *price; }
+                                    if *price < last.low  { last.low  = *price; }
+                                    last.volume += quantity;
+                                }
+                                (false, false)
                             }
                         } else {
                             let candle_start = (trade_ts_secs / period_secs) * period_secs;
@@ -713,8 +707,12 @@ impl ChartApp {
                                 timestamp: candle_start,
                                 open: *price, high: *price, low: *price, close: *price, volume: *quantity,
                             });
-                            is_new_bar = true;
+                            (true, false)
                         }
+                    });
+                    if let Some((new_bar, needs_bf)) = outcome {
+                        if new_bar { is_new_bar = true; }
+                        if needs_bf { needs_backfill = true; }
                     }
                 }
 
@@ -913,9 +911,7 @@ impl ChartApp {
                 let bids: std::collections::HashSet<mlc_core::ids::BubbleId> =
                     target_cids.iter().filter_map(|cid| self.bubble_for_chart(*cid)).collect();
                 for b in bids {
-                    if let Some(bubble) = self.core.bubble_mut().bubble_mut(b) {
-                        bubble.append_oi(*point);
-                    }
+                    self.core.bubbles_mut().with_bubble_mut(b, |bubble| bubble.append_oi(*point));
                 }
             }
 
@@ -933,9 +929,7 @@ impl ChartApp {
                 let bids: std::collections::HashSet<mlc_core::ids::BubbleId> =
                     target_cids.iter().filter_map(|cid| self.bubble_for_chart(*cid)).collect();
                 for b in bids {
-                    if let Some(bubble) = self.core.bubble_mut().bubble_mut(b) {
-                        bubble.append_funding(*point);
-                    }
+                    self.core.bubbles_mut().with_bubble_mut(b, |bubble| bubble.append_funding(*point));
                 }
             }
 
@@ -958,18 +952,17 @@ impl ChartApp {
                 let bubble_ids: std::collections::HashSet<mlc_core::ids::BubbleId> =
                     target_cids.iter().filter_map(|cid| self.bubble_for_chart(*cid)).collect();
                 for b in &bubble_ids {
-                    if let Some(bubble) = self.core.bubble_mut().bubble_mut(*b) {
+                    self.core.bubbles_mut().with_bubble_mut(*b, |bubble| {
                         const DEFAULT_TICK: f64 = 0.5;
                         bubble.dom_heatmap_mut()
                             .get_or_insert_with(|| mlc_core::chart::dom_heatmap::DomHeatmapBuffer::new(DEFAULT_TICK))
                             .push_snapshot(*ts_ms, bids, asks);
-                    }
+                    });
                 }
                 let dom_bubble_bars: Vec<mlc_core::Bar> = {
-                    let mgr = self.core.bubble();
+                    let mgr = self.core.bubbles();
                     mgr.bubble_for_instrument(exchange_id.as_str(), at_label, symbol)
-                        .and_then(|b| mgr.bubble(b))
-                        .map(|b| b.bars.clone())
+                        .map(|b| mgr.bars(b).to_vec())
                         .unwrap_or_default()
                 };
                 for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
@@ -999,12 +992,12 @@ impl ChartApp {
                 let bids: std::collections::HashSet<mlc_core::ids::BubbleId> =
                     target_cids.iter().filter_map(|cid| self.bubble_for_chart(*cid)).collect();
                 for b in bids {
-                    if let Some(bubble) = self.core.bubble_mut().bubble_mut(b) {
+                    self.core.bubbles_mut().with_bubble_mut(b, |bubble| {
                         const MAX_DOTS: usize = 2_000;
                         let dots = bubble.dom_trade_dots.get_or_insert_with(Vec::new);
                         if dots.len() >= MAX_DOTS { dots.remove(0); }
                         dots.push(*dot);
-                    }
+                    });
                 }
             }
 
@@ -1027,7 +1020,7 @@ impl ChartApp {
                 let bubble_ids: std::collections::HashSet<mlc_core::ids::BubbleId> =
                     target_cids.iter().filter_map(|cid| self.bubble_for_chart(*cid)).collect();
                 for b in &bubble_ids {
-                    if let Some(bubble) = self.core.bubble_mut().bubble_mut(*b) {
+                    self.core.bubbles_mut().with_bubble_mut(*b, |bubble| {
                         const DEFAULT_TICK: f64 = 0.5;
                         bubble.liq_heatmap_mut()
                             .get_or_insert_with(|| mlc_core::chart::liquidation_heatmap::LiquidationHeatmapBuffer::new(DEFAULT_TICK))
@@ -1040,13 +1033,12 @@ impl ChartApp {
                             value_usd: if value_usd.is_finite() { *value_usd } else { 0.0 },
                             side: *side,
                         });
-                    }
+                    });
                 }
                 let liq_bubble_bars: Vec<mlc_core::Bar> = {
-                    let mgr = self.core.bubble();
+                    let mgr = self.core.bubbles();
                     mgr.bubble_for_instrument(exchange_id.as_str(), at_label, symbol)
-                        .and_then(|b| mgr.bubble(b))
-                        .map(|b| b.bars.clone())
+                        .map(|b| mgr.bars(b).to_vec())
                         .unwrap_or_default()
                 };
                 for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
@@ -1078,7 +1070,7 @@ impl ChartApp {
                 let bubble_ids: std::collections::HashSet<mlc_core::ids::BubbleId> =
                     target_cids.iter().filter_map(|cid| self.bubble_for_chart(*cid)).collect();
                 for b in bubble_ids {
-                    if let Some(bubble) = self.core.bubble_mut().bubble_mut(b) {
+                    self.core.bubbles_mut().with_bubble_mut(b, |bubble| {
                         const DEFAULT_TICK: f64 = 0.5;
                         const SPREAD_HALF_TICKS: i64 = 5;
                         let mark_opt = mark_price_opt.or_else(|| bubble.bars.last().map(|b| b.close));
@@ -1087,7 +1079,7 @@ impl ChartApp {
                         if let Some(mark) = mark_opt {
                             buf.push_bucket_spread(*ts_ms, *long_liq_usd, *short_liq_usd, mark, SPREAD_HALF_TICKS);
                         }
-                    }
+                    });
                 }
             }
 

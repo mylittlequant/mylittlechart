@@ -254,10 +254,8 @@ fn run_render_loop(
             let st = state_clone.borrow();
             let active_cid = st.chart.panel_app.panel_grid.active_container_id();
             let active_bid = active_cid.and_then(|cid| st.chart.bubble_for_chart(cid));
-            let mgr = st.chart.core.bubble();
-            let bubble = active_bid.and_then(|bid| mgr.bubble.bubble(bid));
-            let (sym, count, last_ts, last_close) = bubble
-                .map(|b| {
+            let (sym, count, last_ts, last_close) = active_bid
+                .and_then(|bid| st.chart.with_bubble(bid, |b| {
                     let last = b.bars.last();
                     (
                         b.symbol.clone(),
@@ -265,7 +263,7 @@ fn run_render_loop(
                         last.map(|x| x.timestamp as f64).unwrap_or(0.0),
                         last.map(|x| x.close).unwrap_or(0.0),
                     )
-                })
+                }))
                 .unwrap_or_else(|| ("<none>".to_string(), 0.0, 0.0, 0.0));
             let (view_start, bar_spacing, chart_width, bar_count_vp) = active_cid
                 .and_then(|cid| st.chart.panel_app.panel_grid.containers().get(&cid))
