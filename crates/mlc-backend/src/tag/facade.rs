@@ -11,6 +11,7 @@
 use std::sync::{RwLockReadGuard, RwLockWriteGuard};
 
 use mlc_core::ids::{BubbleId, SyncMemberId};
+use mlc_core::state::chart_container::ChartId;
 use mlc_core::tag::{Tag, TagId};
 
 use super::manager::{TagManager, TagManagerError};
@@ -77,6 +78,36 @@ impl<'a> Tags<'a> {
 
     pub fn is_synced(&self, member: SyncMemberId) -> bool {
         self.mgr.is_synced(member)
+    }
+
+    pub fn synced_panels_snapshot(&self) -> Vec<SyncMemberId> {
+        self.mgr.synced_panels_snapshot()
+    }
+
+    /// Return the tag that contains the given chart window, if any.
+    pub fn tag_for_chart(&self, chart_id: ChartId) -> Option<TagId> {
+        self.mgr.tag_for_chart(chart_id)
+    }
+
+    /// Return all chart members of a tag as `ChartId` values.
+    pub fn chart_member_ids(&self, tag_id: TagId) -> Vec<ChartId> {
+        self.mgr.chart_member_ids(tag_id)
+    }
+
+    /// Return all panel member IDs of a tag.
+    pub fn panel_members(&self, tag_id: TagId) -> Vec<u64> {
+        self.mgr.panel_members(tag_id)
+    }
+
+    /// Return the set of all member `SyncMemberId`s in a tag.
+    pub fn members(&self, tag_id: TagId) -> Option<&std::collections::HashSet<SyncMemberId>> {
+        self.mgr.members(tag_id)
+    }
+
+    /// Return all peer chart windows of the given chart (every chart member
+    /// of its tag except itself).
+    pub fn peers(&self, chart_id: ChartId) -> Vec<ChartId> {
+        self.mgr.peers(chart_id)
     }
 }
 
@@ -171,5 +202,67 @@ impl<'a> TagsMut<'a> {
 
     pub fn unmark_synced(&mut self, member: SyncMemberId) {
         self.mgr.unmark_synced(member);
+    }
+
+    pub fn synced_panels_snapshot(&self) -> Vec<SyncMemberId> {
+        self.mgr.synced_panels_snapshot()
+    }
+
+    /// Attach a chart window to a tag. Wraps `connect(SyncMemberId::Chart(...))`.
+    pub fn attach_chart_to_tag(&mut self, chart_id: ChartId, tag_id: TagId) -> Result<(), TagManagerError> {
+        self.mgr.attach_chart_to_tag(chart_id, tag_id)
+    }
+
+    /// Detach a chart window from its current tag.
+    pub fn detach_chart_from_tag(&mut self, chart_id: ChartId) -> Option<TagId> {
+        self.mgr.detach_chart_from_tag(chart_id)
+    }
+
+    /// Return the tag that contains the given chart window, if any.
+    pub fn tag_for_chart(&self, chart_id: ChartId) -> Option<TagId> {
+        self.mgr.tag_for_chart(chart_id)
+    }
+
+    /// Return all chart members of a tag as `ChartId` values.
+    pub fn chart_member_ids(&self, tag_id: TagId) -> Vec<ChartId> {
+        self.mgr.chart_member_ids(tag_id)
+    }
+
+    /// Return all panel member IDs of a tag.
+    pub fn panel_members(&self, tag_id: TagId) -> Vec<u64> {
+        self.mgr.panel_members(tag_id)
+    }
+
+    /// Return the set of all member `SyncMemberId`s in a tag.
+    pub fn members(&self, tag_id: TagId) -> Option<&std::collections::HashSet<SyncMemberId>> {
+        self.mgr.members(tag_id)
+    }
+
+    /// Return all peer chart windows of the given chart (every chart member
+    /// of its tag except itself).
+    pub fn peers(&self, chart_id: ChartId) -> Vec<ChartId> {
+        self.mgr.peers(chart_id)
+    }
+
+    /// Put a panel in Synced state: register in `synced_panels` and connect
+    /// to the given tag.
+    pub fn set_synced(&mut self, panel: SyncMemberId, tag_id: TagId) {
+        self.mgr.set_synced(panel, tag_id);
+    }
+
+    /// Put a panel in auto-created tag state: remove from `synced_panels`
+    /// and connect to its own private auto-created tag.
+    pub fn set_auto_group(&mut self, panel: SyncMemberId, private_tag_id: TagId) {
+        self.mgr.set_auto_group(panel, private_tag_id);
+    }
+
+    /// Move all currently-Synced panels to a new tag.
+    pub fn reassign_synced_panels(&mut self, new_tag_id: TagId) {
+        self.mgr.reassign_synced_panels(new_tag_id);
+    }
+
+    /// Set the display color of a tag.
+    pub fn set_color(&mut self, tag_id: TagId, color: [f32; 4]) {
+        self.mgr.set_color(tag_id, color);
     }
 }
