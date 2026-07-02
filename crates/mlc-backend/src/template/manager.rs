@@ -2,16 +2,22 @@
 //!
 //! Holds all loaded templates in memory and provides CRUD operations plus
 //! bulk save/load from a directory tree.
+//!
+//! Promoted here from `mlc-core::templates::manager` (doctrine 1A — the
+//! manager body is backend-plane state; the value types it holds
+//! (`ChartTemplate`, `PrimitiveTemplate`, `IndicatorTemplate`,
+//! `CompareTemplate`, `IndicatorSet`, `IndicatorSetManager`) stay in
+//! `mlc-core::templates` as the type dictionary).
 
 use std::path::Path;
 
-use super::chart_template::ChartTemplate;
-use super::compare_template::CompareTemplate;
-use super::indicator_set::IndicatorSet;
-use super::indicator_template::IndicatorTemplate;
-use super::primitive_template::PrimitiveTemplate;
-use super::set_manager::IndicatorSetManager;
-use super::storage::{
+use mlc_core::templates::chart_template::ChartTemplate;
+use mlc_core::templates::compare_template::CompareTemplate;
+use mlc_core::templates::indicator_set::IndicatorSet;
+use mlc_core::templates::indicator_template::IndicatorTemplate;
+use mlc_core::templates::primitive_template::PrimitiveTemplate;
+use mlc_core::templates::set_manager::IndicatorSetManager;
+use mlc_core::templates::storage::{
     category_dir, delete_template, load_all_templates,
     save_template, templates_root, TemplateError,
 };
@@ -334,7 +340,7 @@ impl TemplateManager {
 
 /// Convert a `&Path` to a storage key (relative to app_data_dir).
 fn path_key(path: &Path) -> String {
-    let root = crate::user_profile::storage::app_data_dir();
+    let root = mlc_core::user_profile::storage::app_data_dir();
     if let Ok(rel) = path.strip_prefix(&root) {
         rel.to_string_lossy().replace('\\', "/")
     } else {

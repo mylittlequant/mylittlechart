@@ -46,6 +46,7 @@ pub use panels_store::TradingPanelsStore;
 pub use input::KeyPress;
 pub use digdigdig3::ExchangeId;
 pub use mlc_backend::watchlist::WatchlistManager;
+pub use mlc_backend::template::TemplateManager;
 pub use mlc_core::instrument::InstrumentAddress;
 pub use mlc_backend_indicator_engine::RecalcMode;
 pub use mlc_core::{Language, set_language};
@@ -1512,8 +1513,8 @@ impl ChartApp {
         // from the profile is respected during the first render.
         {
             let (loaded_presets, loaded_tm) = app.panel_app.load_user_state();
-            *app.core.presets_mut() = loaded_presets;
-            *app.core.template_manager_mut() = loaded_tm;
+            app.core.presets_mut().replace_all(loaded_presets);
+            app.core.templates_mut().replace_all(loaded_tm);
         }
 
         // Restore user profile (sidebar state) and watchlist from disk.
@@ -2380,8 +2381,8 @@ impl ChartApp {
         // Phase 4: use app-level UserManager (loaded once in main.rs) instead of
         // calling load_user_state() per-window.  Eliminates redundant disk reads
         // when multiple windows are opened.
-        *app.core.template_manager_mut() = user_manager.template_manager.clone();
-        *app.core.presets_mut() = user_manager.presets.clone();
+        app.core.templates_mut().replace_all(user_manager.template_manager.clone());
+        app.core.presets_mut().replace_all(user_manager.presets.clone());
 
         // Always restore active_preset_id from profile (not just on restore).
         // This prevents skeleton launches from creating spurious new Untitled presets.
@@ -2424,12 +2425,12 @@ impl ChartApp {
 
         {
             let presets_guard = app.core.presets();
-            let tm_guard = app.core.template_manager();
+            let tm_guard = app.core.templates();
             dlog!(
                 "[ChartApp] new_window: using {} presets, {} prim-templates, {} ind-templates",
                 presets_guard.len(),
-                tm_guard.primitive_templates.len(),
-                tm_guard.indicator_templates.len(),
+                tm_guard.primitive_templates().len(),
+                tm_guard.indicator_templates().len(),
             );
         }
 
@@ -4850,7 +4851,7 @@ impl ChartApp {
                 sidebar_w,
                 active_sync_flags_owned.as_ref(),
                 active_is_mono_group,
-                &*presets_guard_tb,
+                presets_guard_tb.values(),
             );
             drop(bubble_guard_tb);
             drop(tags_guard_tb);
@@ -5542,7 +5543,7 @@ impl ChartApp {
             sidebar_w,
             active_sync_flags_owned.as_ref(),
             active_is_mono_group,
-            &*presets_guard_tb2,
+            presets_guard_tb2.values(),
         );
         drop(bubble_guard_tb2);
         drop(tags_guard_tb2);
@@ -6145,7 +6146,7 @@ impl ChartApp {
 
         let bubble_guard_modals = self.core.bubbles();
         let tags_guard_modals = self.core.tags();
-        let tm_guard_modals = self.core.template_manager();
+        let tm_guard_modals = self.core.templates();
         let presets_guard_modals = self.core.presets();
         // Build GroupView slice for the render layer (it no longer reads
         // BubbleStore directly).  Selected_group is the one Details tab
@@ -6177,8 +6178,8 @@ impl ChartApp {
             &mut self.input_coordinator.borrow_mut(),
             &groups_for_modals,
             selected_group_for_modals,
-            &*tm_guard_modals,
-            &*presets_guard_modals,
+            &tm_guard_modals,
+            presets_guard_modals.values(),
         );
         drop(bubble_guard_modals);
         drop(tags_guard_modals);
@@ -6193,8 +6194,8 @@ impl ChartApp {
                 let indicator_catalog = self.build_indicator_catalog();
                 let hovered = self.modal_state.hovered_item_id.as_deref();
                 let toolbar_theme_search = self.panel_app.toolbar_theme_for_render();
-                let tm_guard_search = self.core.template_manager();
-                let indicator_sets = &tm_guard_search.indicator_sets;
+                let tm_guard_search = self.core.templates();
+                let indicator_sets = tm_guard_search.indicator_sets();
                 let search_field_id = match self.modal_state.current {
                     mlc_core::state::modal_state::OpenModal::SymbolSearch => crate::text_input::SYMBOL_SEARCH,
                     mlc_core::state::modal_state::OpenModal::IndicatorSearch => crate::text_input::INDICATOR_SEARCH,

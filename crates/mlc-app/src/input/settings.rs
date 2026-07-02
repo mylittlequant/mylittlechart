@@ -102,7 +102,7 @@ impl ChartApp {
                         self.panel_app.chart_settings_state.template_dropdown_open = false;
                         self.panel_app.chart_settings_state.save_template_mode = true;
                         let prefix = "Мой шаблон ";
-                        let max_n = self.core.template_manager().chart_templates
+                        let max_n = self.core.templates().chart_templates()
                             .iter()
                             .filter_map(|t| t.name.strip_prefix(prefix))
                             .filter_map(|s| s.parse::<u32>().ok())
@@ -135,7 +135,7 @@ impl ChartApp {
                     }
                     _ if btn_id.starts_with("template_option:") => {
                         let tmpl_id = &btn_id["template_option:".len()..];
-                        let tmpl_opt = self.core.template_manager().get_chart_template(tmpl_id).cloned();
+                        let tmpl_opt = self.core.templates().get_chart_template(tmpl_id).cloned();
                         if let Some(tmpl) = tmpl_opt {
                             self.panel_app.chart_settings_state.applied_template_id = Some(tmpl.id.clone());
                             self.panel_app.chart_settings_state.template_dropdown_open = false;
@@ -1973,7 +1973,7 @@ impl ChartApp {
 
         // ── Template option selected ──────────────────────────────────────────
         if let Some(tmpl_id) = item_id.strip_prefix("template_option:") {
-            let tmpl_opt = self.core.template_manager().get_primitive_template(tmpl_id).cloned();
+            let tmpl_opt = self.core.templates().get_primitive_template(tmpl_id).cloned();
             if let Some(tmpl) = tmpl_opt {
                 self.panel_app.primitive_settings_state.applied_template_id = Some(tmpl.id.clone());
                 self.panel_app.primitive_settings_state.template_dropdown_open = false;
@@ -1997,7 +1997,7 @@ impl ChartApp {
             self.panel_app.primitive_settings_state.template_dropdown_open = false;
             self.panel_app.primitive_settings_state.save_template_mode = true;
             let prefix = "Мой шаблон ";
-            let max_n = self.core.template_manager().primitive_templates
+            let max_n = self.core.templates().primitive_templates()
                 .iter()
                 .filter_map(|t| t.name.strip_prefix(prefix))
                 .filter_map(|s| s.parse::<u32>().ok())
@@ -2642,7 +2642,7 @@ impl ChartApp {
                         self.panel_app.indicator_settings_state.template_dropdown_open = false;
                         self.panel_app.indicator_settings_state.save_template_mode = true;
                         let prefix = "Мой шаблон ";
-                        let max_n = self.core.template_manager().indicator_templates
+                        let max_n = self.core.templates().indicator_templates()
                             .iter()
                             .filter_map(|t| t.name.strip_prefix(prefix))
                             .filter_map(|s| s.parse::<u32>().ok())
@@ -2684,7 +2684,7 @@ impl ChartApp {
                     }
                     _ if btn_id.starts_with("template_option:") => {
                         let tmpl_id = &btn_id["template_option:".len()..];
-                        let tmpl_opt = self.core.template_manager().get_indicator_template(tmpl_id).cloned();
+                        let tmpl_opt = self.core.templates().get_indicator_template(tmpl_id).cloned();
                         if let Some(tmpl) = tmpl_opt {
                             self.panel_app.indicator_settings_state.applied_template_id = Some(tmpl.id.clone());
                             self.panel_app.indicator_settings_state.template_dropdown_open = false;

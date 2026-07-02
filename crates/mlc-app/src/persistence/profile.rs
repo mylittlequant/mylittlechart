@@ -317,7 +317,7 @@ impl ChartApp {
 
     /// Persist templates to disk.
     pub fn persist_templates(&self) {
-        if let Err(e) = self.core.template_manager().save_to_default_dir(None) {
+        if let Err(e) = self.core.templates().save_to_default_dir(None) {
             eprintln!("[persist] templates: {:?}", e);
         }
     }

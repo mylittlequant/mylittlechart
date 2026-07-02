@@ -10,6 +10,7 @@ name = "mlc_backend"
 [dependencies]
 web-time = "1"
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
+mlc-vault = { path = "../mlc-vault", package = "mylittlechart-vault" }
 mlc-backend-indicator-engine = { path = "../mlc-backend-indicator-engine", package = "mylittlechart-backend-indicator-engine" }
 mlc-backend-data-bridge = { path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
 mlc-backend-trading-engine = { path = "../mlc-backend-trading-engine", package = "mylittlechart-backend-trading-engine" }

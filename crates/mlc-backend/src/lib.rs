@@ -30,6 +30,8 @@ pub mod drawing;
 pub mod indicator;
 pub mod watchlist;
 pub mod tag;
+pub mod preset;
+pub mod template;
 
 pub use alert::{Alerts, AlertsMut};
 pub use drawing::{Drawings, DrawingsMut, SwapSymbolResult};
@@ -37,6 +39,8 @@ pub use bubble::{Bubbles, BubblesMut};
 pub use indicator::{Indicators, IndicatorsMut};
 pub use watchlist::{Watchlists, WatchlistsMut};
 pub use tag::{Tags, TagsMut};
+pub use preset::{Presets, PresetsMut};
+pub use template::{Templates, TemplatesMut};
 
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -45,8 +49,6 @@ use dashmap::DashMap;
 use serde::{Serialize, Serializer};
 
 use digdigdig3::ExchangeId;
-use mlc_core::preset::preset::ChartPreset;
-use mlc_core::templates::manager::TemplateManager;
 use mlc_core::ids::BubbleId;
 use crate::alert::AlertManager;
 use crate::bubble::BubbleStore;
@@ -57,6 +59,8 @@ use mlc_backend_data_bridge::{DataBridge, LiveUpdate, LiveUpdateReceiver, Orderb
 use mlc_backend_trading_engine::TradingManager;
 use crate::watchlist::WatchlistManager;
 use crate::tag::TagManager;
+use crate::preset::PresetManager;
+use crate::template::TemplateManager;
 
 /// Cached 24-hour ticker statistics from the WebSocket mini-ticker stream.
 ///
@@ -632,19 +636,29 @@ pub struct BackendCore {
     /// from the tick loop. Single-threaded contention in embedded mode = 0.
     pub trading: Option<std::sync::Mutex<TradingManager>>,
 
-    /// Chart presets — in-memory store keyed by preset id.
+    /// Chart preset registry.
     ///
-    /// Previously lived on `ChartPanelApp.presets`. Moved here so that the
-    /// persist layer, input handlers, and render path all share one authoritative
-    /// copy without per-window duplication (single-`BackendCore` hosts).
-    pub presets: std::sync::RwLock<HashMap<String, ChartPreset>>,
+    /// Previously lived on `ChartPanelApp.presets` as a bare
+    /// `HashMap<String, ChartPreset>`. Moved here so that the persist layer,
+    /// input handlers, and render path all share one authoritative copy
+    /// without per-window duplication (single-`BackendCore` hosts). Accessed
+    /// exclusively through the `Presets` / `PresetsMut` facade
+    /// (`BackendCore::presets` / `presets_mut`).
+    ///
+    /// LOCK ORDER: `preset` never co-acquires `bubble` — it is a leaf lock,
+    /// same shape as `watchlist_manager` (§1A).
+    preset: std::sync::RwLock<PresetManager>,
 
-    /// In-memory template manager — drawing primitive / indicator / compare /
-    /// chart templates and indicator sets.
+    /// Template manager — drawing primitive / indicator / compare / chart
+    /// templates and indicator sets.
     ///
-    /// Previously on `ChartPanelApp.template_manager`. Moved here for the same
-    /// reason as `presets`.
-    pub template_manager: std::sync::RwLock<TemplateManager>,
+    /// Previously on `ChartPanelApp.template_manager` (before that,
+    /// `mlc-core::templates::manager::TemplateManager`). Moved here per
+    /// doctrine 1A. Accessed exclusively through the `Templates` /
+    /// `TemplatesMut` facade (`BackendCore::templates` / `templates_mut`).
+    ///
+    /// LOCK ORDER: `template` never co-acquires `bubble` — leaf lock.
+    template: std::sync::RwLock<TemplateManager>,
 
     /// Watchlist manager — all named watchlists with their symbol rows.
     ///
@@ -735,8 +749,8 @@ impl BackendCore {
             mini_ticker: DashMap::new(),
             exchange_symbols: std::sync::RwLock::new(HashMap::new()),
             trading: trading.map(std::sync::Mutex::new),
-            presets: std::sync::RwLock::new(HashMap::new()),
-            template_manager: std::sync::RwLock::new(TemplateManager::new()),
+            preset: std::sync::RwLock::new(PresetManager::new()),
+            template: std::sync::RwLock::new(TemplateManager::new()),
             watchlist_manager: std::sync::RwLock::new(WatchlistManager::default()),
             tag: std::sync::RwLock::new(TagManager::new()),
             sessions: std::sync::RwLock::new(SessionRegistry::default()),
@@ -947,28 +961,36 @@ impl BackendCore {
         self.exchange_symbols.write().expect("BackendCore.exchange_symbols poisoned (write)")
     }
 
-    /// Read guard for the presets map.
+    /// Read-only facade over the preset manager. The ONLY doctrinally-
+    /// sanctioned access path to preset data (Step 3.6d,
+    /// `docs/mlc/plans/doctrine-cutover-2026-06-27.md` §1A).
+    ///
+    /// LOCK ORDER: preset is a leaf lock — no `bubble` co-acquisition needed.
     #[inline]
-    pub fn presets(&self) -> std::sync::RwLockReadGuard<'_, HashMap<String, ChartPreset>> {
-        self.presets.read().expect("BackendCore.presets poisoned (read)")
+    pub fn presets(&self) -> Presets<'_> {
+        Presets::new(self.preset.read().expect("BackendCore.preset poisoned (read)"))
     }
 
-    /// Write guard for the presets map.
+    /// Mutable facade over the preset manager.
     #[inline]
-    pub fn presets_mut(&self) -> std::sync::RwLockWriteGuard<'_, HashMap<String, ChartPreset>> {
-        self.presets.write().expect("BackendCore.presets poisoned (write)")
+    pub fn presets_mut(&self) -> PresetsMut<'_> {
+        PresetsMut::new(self.preset.write().expect("BackendCore.preset poisoned (write)"))
     }
 
-    /// Read guard for the template manager.
+    /// Read-only facade over the template manager. The ONLY doctrinally-
+    /// sanctioned access path to template data (Step 3.6d,
+    /// `docs/mlc/plans/doctrine-cutover-2026-06-27.md` §1A).
+    ///
+    /// LOCK ORDER: template is a leaf lock — no `bubble` co-acquisition needed.
     #[inline]
-    pub fn template_manager(&self) -> std::sync::RwLockReadGuard<'_, TemplateManager> {
-        self.template_manager.read().expect("BackendCore.template_manager poisoned (read)")
+    pub fn templates(&self) -> Templates<'_> {
+        Templates::new(self.template.read().expect("BackendCore.template poisoned (read)"))
     }
 
-    /// Write guard for the template manager.
+    /// Mutable facade over the template manager.
     #[inline]
-    pub fn template_manager_mut(&self) -> std::sync::RwLockWriteGuard<'_, TemplateManager> {
-        self.template_manager.write().expect("BackendCore.template_manager poisoned (write)")
+    pub fn templates_mut(&self) -> TemplatesMut<'_> {
+        TemplatesMut::new(self.template.write().expect("BackendCore.template poisoned (write)"))
     }
 
     /// Read-only facade over the watchlist manager. The ONLY doctrinally-

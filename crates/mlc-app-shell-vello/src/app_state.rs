@@ -22,7 +22,7 @@ pub(crate) struct AppState {
     /// Settings snapshots — shared across all windows (last-used settings per category).
     pub(crate) snapshots: mlc_app::user_manager::manager::SettingsSnapshots,
     /// Template manager — single source of truth for all template types across windows.
-    pub(crate) template_manager: mlc_core::templates::manager::TemplateManager,
+    pub(crate) template_manager: mlc_app::TemplateManager,
     /// Active theme preset name (e.g. "dark", "light").
     /// Single source of truth — synced to all windows each frame.
     pub(crate) theme_preset: String,
@@ -71,7 +71,7 @@ impl AppState {
         profile: &mlc_core::UserProfile,
         presets: std::collections::HashMap<String, mlc_core::preset::preset::ChartPreset>,
         snapshots: mlc_app::user_manager::manager::SettingsSnapshots,
-        template_manager: mlc_core::templates::manager::TemplateManager,
+        template_manager: mlc_app::TemplateManager,
         vault_key: Option<mlc_vault::vault::VaultKey>,
     ) -> Self {
         let default_wl = || {

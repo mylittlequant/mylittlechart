@@ -22,7 +22,7 @@ use super::indicator_template::IndicatorTemplate;
 /// # Persistence
 ///
 /// The manager is serialized as a single JSON document (unlike the individual
-/// [`IndicatorSet`] files stored by [`TemplateManager`]).  This allows the
+/// [`IndicatorSet`] files stored by `TemplateManager` (in `mlc-backend`).  This allows the
 /// active-index selection and set ordering to survive restarts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndicatorSetManager {

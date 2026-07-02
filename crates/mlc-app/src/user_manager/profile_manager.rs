@@ -12,7 +12,7 @@ use mlc_vault::crypto;
 use mlc_vault::global_storage;
 use mlc_core::preset::preset::ChartPreset;
 use mlc_core::preset::storage::{list_presets, load_preset};
-use mlc_core::templates::TemplateManager;
+use mlc_backend::template::TemplateManager;
 use mlc_core::user_profile::profile::{ProfileIndex, ProfileMeta, UserProfile, VaultSecrets};
 use mlc_core::user_profile::storage::{
     active_profile_data_dir, app_data_dir, create_profile, delete_profile, load_json,

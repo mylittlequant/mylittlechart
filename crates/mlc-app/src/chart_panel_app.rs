@@ -13,7 +13,7 @@ use uzor::render::RenderContext;
 use mlc_core::state::{ChartPanelGrid, ChartContainer, Timeframe};
 use mlc_core::modal::ChartOpenModal;
 use mlc_core::state::selected_config::SelectedPrimitiveConfig;
-use mlc_core::templates::TemplateManager;
+use mlc_backend::template::TemplateManager;
 use mlc_core::indicator_source::IndicatorSource;
 use mlc_core::preset::preset::ChartPreset;
 
@@ -404,7 +404,7 @@ impl ChartPanelApp {
     /// Delegates to `toolbar_state.render_toolbars` with the theme built from
     /// the chart's own ThemeManager (which is commanded by the terminal).
     /// Uses `self.toolbar_config` to determine which toolbars to render.
-    pub fn render_toolbars_with_theme(
+    pub fn render_toolbars_with_theme<'a>(
         &self,
         ctx: &mut dyn RenderContext,
         layout: &ChartPanelLayout,
@@ -416,13 +416,12 @@ impl ChartPanelApp {
         sidebar_w: f64,
         active_sync_flags: Option<&mlc_core::SyncFlags>,
         active_is_mono_group: bool,
-        presets: &std::collections::HashMap<String, mlc_core::preset::preset::ChartPreset>,
+        presets: impl Iterator<Item = &'a mlc_core::preset::preset::ChartPreset>,
     ) -> ChartToolbarRenderResult {
         let toolbar_theme = self.toolbar_theme_for_render();
         let dropdown_theme = self.dropdown_theme_for_render();
         let is_expanded = self.panel_grid.is_expanded();
         let preset_summaries: Vec<mlc_core::PresetSummary> = presets
-            .values()
             .map(preset_to_summary)
             .collect();
         chart_toolbar_render_toolbars(&self.toolbar_state, ctx, layout, &self.toolbar_config, selected_primitive, Some(&toolbar_theme), Some(&dropdown_theme), clock_time, &preset_summaries, &self.active_preset_id, self.autosave_enabled, active_sync_flags, is_expanded, split_without_group, active_is_mono_group, active_symbol, active_timeframe, sidebar_w)
@@ -452,7 +451,7 @@ impl ChartPanelApp {
     /// - `toolbar_state` — toolbar state (passed through to primitive settings)
     /// - `current_time_ms` — current timestamp for cursor blink
     /// - `input_coordinator` — uzor input coordinator
-    pub fn render_modals(
+    pub fn render_modals<'a>(
         &self,
         ctx: &mut dyn mlc_core::render::RenderContext,
         modal_layout: &ChartModalLayout,
@@ -467,8 +466,8 @@ impl ChartPanelApp {
         input_coordinator: &mut uzor::input::InputCoordinator,
         groups: &[mlc_core::GroupView],
         selected_group: Option<&mlc_core::GroupView>,
-        template_manager: &TemplateManager,
-        presets: &std::collections::HashMap<String, mlc_core::preset::preset::ChartPreset>,
+        template_manager: &mlc_backend::template::Templates<'_>,
+        presets: impl Iterator<Item = &'a mlc_core::preset::preset::ChartPreset>,
     ) -> ChartModalRenderResult {
         let mut result = ChartModalRenderResult::default();
 
@@ -487,7 +486,7 @@ impl ChartPanelApp {
                     toolbar_state,
                     current_time_ms,
                     input_coordinator,
-                    &template_manager.primitive_templates,
+                    template_manager.primitive_templates(),
                 ));
             }
         }
@@ -502,7 +501,7 @@ impl ChartPanelApp {
                 frame_theme,
                 toolbar_theme,
                 input_coordinator,
-                &template_manager.compare_templates,
+                template_manager.compare_templates(),
             ));
         }
 
@@ -542,7 +541,7 @@ impl ChartPanelApp {
                             frame_theme,
                             toolbar_theme,
                             input_coordinator,
-                            &template_manager.indicator_templates,
+                            template_manager.indicator_templates(),
                         ));
                     }
                 }
@@ -565,7 +564,7 @@ impl ChartPanelApp {
                     toolbar_theme,
                     current_time_ms,
                     input_coordinator,
-                    &template_manager.chart_templates,
+                    template_manager.chart_templates(),
                 ));
             }
         }
@@ -697,7 +696,6 @@ impl ChartPanelApp {
         if self.chart_browser.is_open {
             use mlc_app_layout::layout::modals::chart_browser::render_chart_browser;
             let preset_summaries: Vec<mlc_core::PresetSummary> = presets
-                .values()
                 .map(preset_to_summary)
                 .collect();
             result.chart_browser = Some(render_chart_browser(

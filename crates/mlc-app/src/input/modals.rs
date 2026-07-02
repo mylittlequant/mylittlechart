@@ -550,7 +550,7 @@ impl ChartApp {
             }
             "set_create" => {
                 // Compute next available name: "My Indicator Set 1", "My Indicator Set 2", etc.
-                let max_n = self.core.template_manager().indicator_sets
+                let max_n = self.core.templates().indicator_sets()
                     .iter()
                     .filter_map(|s| s.name.strip_prefix("My Indicator Set "))
                     .filter_map(|s| s.parse::<u32>().ok())
@@ -593,7 +593,7 @@ impl ChartApp {
     /// Deploy an indicator set by its ID: replace all current indicators with
     /// the set's indicators (exclusive — like a preset, only one set active).
     pub(super) fn deploy_indicator_set(&mut self, set_id: &str) {
-        let set = self.core.template_manager().indicator_sets
+        let set = self.core.templates().indicator_sets()
             .iter()
             .find(|s| s.id == set_id)
             .cloned();

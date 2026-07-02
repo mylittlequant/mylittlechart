@@ -1107,8 +1107,11 @@ impl App<'_> {
         chart.sidebar_state.connector_enabled = self.app_state.connector_enabled.clone();
         // Merge AppState presets into window — don't replace, to keep
         // any Untitled preset that new_window() just created.
-        for (k, v) in self.app_state.presets.iter() {
-            chart.core.presets_mut().entry(k.clone()).or_insert_with(|| v.clone());
+        {
+            let mut presets_mut = chart.core.presets_mut();
+            for (k, v) in self.app_state.presets.iter() {
+                presets_mut.insert_if_absent(k.clone(), || v.clone());
+            }
         }
         // Sync back: if new_window() created an Untitled preset for a fresh profile,
         // propagate it to app_state so chrome tabs and preset list can see it.
@@ -1137,7 +1140,7 @@ impl App<'_> {
                 dreg.load_last_styles(bid, &drawing_styles);
             }
         }
-        *chart.core.template_manager_mut() = self.app_state.template_manager.clone();
+        chart.core.templates_mut().replace_all(self.app_state.template_manager.clone());
         // Sync server settings so the User Settings modal shows current state.
         chart.panel_app.user_settings_state.server_enabled = self.app_state.server_enabled;
         chart.panel_app.user_settings_state.server_port = self.app_state.server_port;
@@ -1555,8 +1558,11 @@ impl App<'_> {
                 chart.core.watchlists_mut().replace_all(watchlist_manager.clone());
                 chart.watchlist_ui = watchlist_ui.clone();
                 chart.sidebar_state.connector_enabled = connector_enabled.clone();
-                for (k, v) in app_presets.iter() {
-                    chart.core.presets_mut().entry(k.clone()).or_insert_with(|| v.clone());
+                {
+                    let mut presets_mut = chart.core.presets_mut();
+                    for (k, v) in app_presets.iter() {
+                        presets_mut.insert_if_absent(k.clone(), || v.clone());
+                    }
                 }
                 chart.panel_app.user_manager.snapshots = snapshots.clone();
                 {
@@ -1567,7 +1573,7 @@ impl App<'_> {
                         dreg.load_last_styles(bid, &drawing_styles);
                     }
                 }
-                *chart.core.template_manager_mut() = template_manager.clone();
+                chart.core.templates_mut().replace_all(template_manager.clone());
                 chart.panel_app.user_settings_state.server_enabled = server_enabled;
                 chart.panel_app.user_settings_state.server_port = server_port;
                 chart.panel_app.user_settings_state.server_status = if server_enabled {
@@ -3921,7 +3927,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
             if self.app_state.presets_dirty {
                 for pw in self.windows.values_mut() {
-                    *pw.chart.core.presets_mut() = self.app_state.presets.clone();
+                    pw.chart.core.presets_mut().replace_all(self.app_state.presets.clone());
                 }
                 self.app_state.presets_dirty = false;
             }
@@ -3943,8 +3949,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
             if self.app_state.templates_dirty {
                 for pw in self.windows.values_mut() {
-                    *pw.chart.core.template_manager_mut() =
-                        self.app_state.template_manager.clone();
+                    pw.chart.core.templates_mut().replace_all(self.app_state.template_manager.clone());
                 }
                 self.app_state.templates_dirty = false;
             }

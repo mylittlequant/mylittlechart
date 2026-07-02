@@ -17,13 +17,13 @@ struct TemplateSummaryOut {
 }
 
 async fn templates_summary(State(s): State<AppState>) -> impl IntoResponse {
-    let guard = s.core.template_manager();
+    let guard = s.core.templates();
     Json(TemplateSummaryOut {
-        primitive_templates: guard.primitive_templates.len(),
-        indicator_templates: guard.indicator_templates.len(),
-        compare_templates: guard.compare_templates.len(),
-        chart_templates: guard.chart_templates.len(),
-        indicator_sets: guard.indicator_sets.len(),
+        primitive_templates: guard.primitive_templates().len(),
+        indicator_templates: guard.indicator_templates().len(),
+        compare_templates: guard.compare_templates().len(),
+        chart_templates: guard.chart_templates().len(),
+        indicator_sets: guard.indicator_sets().len(),
     })
 }
 
