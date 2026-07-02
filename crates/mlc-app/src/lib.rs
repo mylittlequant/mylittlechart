@@ -2620,7 +2620,14 @@ impl ChartApp {
                     if let Some(max_n) = max_n_opt {
                         let untitled_preset = mlc_core::preset::preset::ChartPreset::new(format!("Untitled {}", max_n + 1));
                         let untitled_id = untitled_preset.id.clone();
-                        app.core.presets_mut().insert(untitled_id.clone(), untitled_preset);
+                        app.core.presets_mut().insert(untitled_id.clone(), untitled_preset.clone());
+                        // Emit the same PresetAction the ordinary edit path uses so the
+                        // shell's per-frame drain (main.rs about_to_wait) picks this up,
+                        // marks it dirty, and flushes it to disk on the next frame —
+                        // without this, a crash between window creation and the next
+                        // unrelated profile_dirty/save_all sweep silently lost this
+                        // preset (it existed only in the shared in-memory core).
+                        app.preset_actions.push(crate::PresetAction::Upsert(untitled_preset));
                         app.panel_app.open_tabs = vec![untitled_id.clone()];
                         app.panel_app.active_preset_id = untitled_id;
                     }
