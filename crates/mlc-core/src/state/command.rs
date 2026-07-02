@@ -16,6 +16,16 @@
 //! Legacy commands work with object IDs (for backward compatibility):
 //! - `SetVisibility` - uses object_id
 //! - `SetLock` - uses object_id
+//!
+//! Step 4 audit finding (2026-07-02, not fixed here — out of this step's
+//! scope): the entire "legacy ID-based commands" family (`ObjectInfo`,
+//! `SetVisibility`, `SetLock`, `SetGlobalLock`, `SetCategoryVisibility`,
+//! `DeleteObject`, `DeleteCategory`, `DeleteAll`, `CreateObject`,
+//! `ModifyObject`, `MoveObject`, `SetTimeframe` (the legacy variant),
+//! `PropertyValue`, `Position`) is constructed nowhere in the workspace
+//! outside this file's own `#[cfg(test)]` block (`history.rs` tests). Only
+//! the `.inverse()` / `.description()` match arms keep them "used". Dead
+//! surface from the pre-`ChartContainer` object-ID API era.
 
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};

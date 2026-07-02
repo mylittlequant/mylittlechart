@@ -103,6 +103,16 @@ pub use sub_pane_overlay::SubPaneOverlayResult;
 
 // Toolbar interaction state (pure data — no render logic)
 // Also includes chart-toolbar types (moved from panel_app — Phase X.4 back-edge removal).
+//
+// STAYS IN mlc-core (Step 4 audit, deliberately NOT moved to mlc-app):
+// ChartToolbarState/ToolbarConfig/ChartToolbarRenderResult are read
+// read-only (`tb: &ChartToolbarState`) by 5 render function signatures in
+// `mlc-app-layout::panel_app` (below mlc-app in the dep graph — cannot
+// depend on it). Zero backend consumers. Converting those 5 signatures to
+// plain-data/closure params (the option-(a) pattern used for ChartPanelGrid
+// in Step 4 cluster 4) would require decomposing a large toolbar-render
+// function's internals — out of this step's mechanical-sweep scope.
+// Honest stay per doctrine's option (b): shared UI-model type.
 pub use toolbar_state::{
     ToolbarState, ToolbarClickResult, ToggleIconPair,
     ToolbarConfig,
@@ -122,6 +132,26 @@ pub use chart_settings_data::{ChartSettingsData, InstrumentSettings, ScalesLines
 // UI data types relocated from mlc-app-layout/src/ui/ — pure data consumed by backend
 pub use icons::Icon;
 pub use scroll_state::ScrollState;
+
+// ModalState/OpenModal/SearchResult/IndicatorCategory(modal)/
+// IndicatorCategoryFilter/ClockPopupState: STAYS IN mlc-core, same
+// rationale as ChartToolbarState above — read-only by
+// `mlc-app-layout::layout::modals::search_overlay::render_search_overlay`
+// (`modal_state: &ModalState`), zero backend consumers, and the render fn
+// reads many fields across ~300 lines (not a narrow 2-accessor case like
+// ChartPanelGrid's `.docking()`/`.is_expanded()`).
 pub use modal_state::{ModalState, OpenModal, SearchResult, IndicatorCategory, IndicatorCategoryFilter, IndicatorCatalogItem, ClockPopupState};
+
+// SubPaneButton/SubPaneOverlayState/IndicatorDisplayInfo/IndicatorParamDef/
+// IndicatorParamType/IndicatorOutputDef/IndicatorOutputType: STAYS IN
+// mlc-core — genuine backend consumer.
+// `mlc-backend::indicator::manager::IndicatorManager::get_settings_data`
+// imports `mlc_core::state::modal_data::{IndicatorDisplayInfo, ...}`
+// directly to build the indicator-settings-modal payload. This is the
+// doctrine §1A "CommandHistory-style" case: a type physically living in
+// mlc-core because a backend manager needs it, not because it's UI state.
 pub use modal_data::{SubPaneButton, SubPaneOverlayState, IndicatorDisplayInfo, IndicatorParamDef, IndicatorParamType, IndicatorOutputDef, IndicatorOutputType};
+
+// PRESET_COLORS: STAYS IN mlc-core — genuine backend consumer
+// (`mlc-backend::tag::manager` uses it for auto-assigned tag colors).
 pub use toolbar_geometry::{WidgetRect, ToolbarRect, ToolbarRenderResult, PRESET_COLORS};
