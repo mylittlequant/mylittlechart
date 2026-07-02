@@ -286,15 +286,23 @@ struct App<'s> {
     saved_windows: Vec<mlc_core::WindowState>,
     /// User profile loaded once at startup.
     profile: mlc_core::UserProfile,
-    /// ProfileManager — encapsulated profile management layer (presets, templates,
-    /// snapshots, vault key). Loaded once at startup and shared across all windows.
-    /// Each `new_window()` call clones the relevant fields instead of re-reading
-    /// from disk, eliminating redundant disk I/O when multiple windows are opened.
+    /// ProfileManager — disk-load/vault-derivation bookkeeping (loading the
+    /// profile once at startup, deriving/rotating the vault key, listing
+    /// available profiles). Loaded once, read by `new_window`/the promote
+    /// worker for non-domain fields (language, display name, available
+    /// profiles list). Domain data (presets/templates/watchlists/snapshots)
+    /// is seeded from here into `core` ONCE via `seed_core_from_profile` —
+    /// windows read that shared copy, not a per-window clone of this struct
+    /// (shared-BackendCore arc Phase B).
     profile_manager: mlc_app::user_manager::ProfileManager,
     /// Window that last received focus — used by save_all() to pick a deterministic
     /// source for sidebar/toolbar/preset state instead of relying on HashMap iteration order.
     last_focused: Option<WindowId>,
-    /// Application-level shared state (watchlist, connector preferences).
+    /// Application-level shared state — theme + read-only-after-startup
+    /// process identity. Domain data (watchlist, presets, templates,
+    /// snapshots, connector preferences, recalc/scale mode, server
+    /// settings, vault key) lives on `core` now (shared-BackendCore arc
+    /// Phase B/C) — see `app_state.rs` module doc.
     app_state: AppState,
     /// Preset ids modified this frame but not yet flushed to disk.
     ///
