@@ -32,6 +32,7 @@ pub mod watchlist;
 pub mod tag;
 pub mod preset;
 pub mod template;
+pub mod user;
 
 pub use alert::{Alerts, AlertsMut};
 pub use drawing::{Drawings, DrawingsMut, SwapSymbolResult};
@@ -41,6 +42,7 @@ pub use watchlist::{Watchlists, WatchlistsMut};
 pub use tag::{Tags, TagsMut};
 pub use preset::{Presets, PresetsMut};
 pub use template::{Templates, TemplatesMut};
+pub use user::{User, UserMut};
 
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -61,6 +63,7 @@ use crate::watchlist::WatchlistManager;
 use crate::tag::TagManager;
 use crate::preset::PresetManager;
 use crate::template::TemplateManager;
+use crate::user::UserProfileManager;
 
 /// Cached 24-hour ticker statistics from the WebSocket mini-ticker stream.
 ///
@@ -660,6 +663,18 @@ pub struct BackendCore {
     /// LOCK ORDER: `template` never co-acquires `bubble` — leaf lock.
     template: std::sync::RwLock<TemplateManager>,
 
+    /// User profile + settings snapshots + vault key.
+    ///
+    /// Previously duplicated across `mlc-app::user_manager::{UserManager,
+    /// ProfileManager}` and `mlc-app-shell-vello::AppState`. Moved here per
+    /// doctrine 1B — a headless daemon UI needs `UserProfile` (bar_count,
+    /// data_load, recalc_mode, scale_mode) to behave correctly, same as a
+    /// native window. Accessed exclusively through the `User` / `UserMut`
+    /// facade (`BackendCore::user` / `user_mut`).
+    ///
+    /// LOCK ORDER: `user` never co-acquires `bubble` — leaf lock.
+    user: std::sync::RwLock<UserProfileManager>,
+
     /// Watchlist manager — all named watchlists with their symbol rows.
     ///
     /// Previously on `SidebarState.watchlist_manager`. Moved here so that the
@@ -751,6 +766,7 @@ impl BackendCore {
             trading: trading.map(std::sync::Mutex::new),
             preset: std::sync::RwLock::new(PresetManager::new()),
             template: std::sync::RwLock::new(TemplateManager::new()),
+            user: std::sync::RwLock::new(UserProfileManager::new()),
             watchlist_manager: std::sync::RwLock::new(WatchlistManager::default()),
             tag: std::sync::RwLock::new(TagManager::new()),
             sessions: std::sync::RwLock::new(SessionRegistry::default()),
@@ -991,6 +1007,22 @@ impl BackendCore {
     #[inline]
     pub fn templates_mut(&self) -> TemplatesMut<'_> {
         TemplatesMut::new(self.template.write().expect("BackendCore.template poisoned (write)"))
+    }
+
+    /// Read-only facade over the user profile manager. The ONLY doctrinally-
+    /// sanctioned access path to profile/snapshots/vault-key data (Step 3.6c,
+    /// `docs/mlc/plans/doctrine-cutover-2026-06-27.md` §1B).
+    ///
+    /// LOCK ORDER: user is a leaf lock — no `bubble` co-acquisition needed.
+    #[inline]
+    pub fn user(&self) -> User<'_> {
+        User::new(self.user.read().expect("BackendCore.user poisoned (read)"))
+    }
+
+    /// Mutable facade over the user profile manager.
+    #[inline]
+    pub fn user_mut(&self) -> UserMut<'_> {
+        UserMut::new(self.user.write().expect("BackendCore.user poisoned (write)"))
     }
 
     /// Read-only facade over the watchlist manager. The ONLY doctrinally-

@@ -30,7 +30,7 @@ fn path_key(path: &Path) -> String {
     }
 }
 
-use super::manager::SettingsSnapshots;
+use mlc_core::user_profile::SettingsSnapshots;
 
 /// Minimum length required for a vault passphrase.
 ///

@@ -20,7 +20,7 @@ pub(crate) struct AppState {
     /// Preset ids that have been modified but not yet persisted.
     pub(crate) preset_dirty_ids: std::collections::HashSet<String>,
     /// Settings snapshots — shared across all windows (last-used settings per category).
-    pub(crate) snapshots: mlc_app::user_manager::manager::SettingsSnapshots,
+    pub(crate) snapshots: mlc_core::user_profile::SettingsSnapshots,
     /// Template manager — single source of truth for all template types across windows.
     pub(crate) template_manager: mlc_app::TemplateManager,
     /// Active theme preset name (e.g. "dark", "light").
@@ -70,7 +70,7 @@ impl AppState {
     pub(crate) fn from_profile(
         profile: &mlc_core::UserProfile,
         presets: std::collections::HashMap<String, mlc_core::preset::preset::ChartPreset>,
-        snapshots: mlc_app::user_manager::manager::SettingsSnapshots,
+        snapshots: mlc_core::user_profile::SettingsSnapshots,
         template_manager: mlc_app::TemplateManager,
         vault_key: Option<mlc_vault::vault::VaultKey>,
     ) -> Self {
