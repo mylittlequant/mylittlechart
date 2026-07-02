@@ -315,7 +315,7 @@ pub use state::{
     // Timeframe
     Timeframe,
     // Command pattern (undo/redo)
-    Command, CommandResult, StateChange, ViewportState, CommandHistory,
+    Command, ViewportState, CommandHistory,
     // ChartId / ChartPanelId / ConnectionStatus — ID-newtypes + domain-data
     // enum consumed directly by mlc-backend / mlc-app-layout, live in
     // mlc-core::ids (re-exported here via mlc-core::state for compatibility).
