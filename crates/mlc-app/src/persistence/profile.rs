@@ -200,6 +200,34 @@ impl ChartApp {
         ids
     }
 
+    /// Claim `id` for this window before materializing it via
+    /// `apply_preset_cold` — the ONE real cross-window collision point
+    /// (park/unpark only ever touch a window's own `live_preset_cache`
+    /// entries, so they can never legitimately observe another window's
+    /// claim; see the comments on `park_active_preset`/`unpark_preset`).
+    ///
+    /// Returns `true` if the claim succeeds (unclaimed, or already claimed
+    /// by this same window — re-opening your own preset is not a
+    /// collision). Returns `false` — and logs — if a DIFFERENT window's
+    /// `window_id` already holds it: the caller MUST refuse the cold-load
+    /// in that case (§5.3.5 "a preset is live in at most one window").
+    /// Now enforced (not just logged) because Phase F wired
+    /// `release_all_presets_for_app` into window close / profile-switch,
+    /// so a refused claim is guaranteed to eventually clear rather than
+    /// wedge the preset forever.
+    pub(crate) fn try_claim_preset_for_cold_load(&mut self, id: &str) -> bool {
+        if self.core.try_claim_preset(id, &self.window_id) {
+            true
+        } else {
+            eprintln!(
+                "[ChartApp] REFUSED: preset '{}' cold-load in window '{}' — already claimed by \
+                 another window (same-preset-two-windows hazard, shared-backend-core-2026-07-03.md §5.3.5)",
+                id, self.window_id,
+            );
+            false
+        }
+    }
+
     /// Park the active preset's live state into the cache.
     /// Active fields are replaced with cheap placeholders.
     ///
@@ -212,19 +240,27 @@ impl ChartApp {
     /// preset stays parked (`docs/mlc/plans/shared-backend-core-2026-07-03.md`
     /// §5.1-§5.3).
     pub(crate) fn park_active_preset(&mut self, id: &str) {
-        // Claim (or reaffirm) ownership of this preset id before parking its
-        // bubbles into this window's cache. Re-claiming a preset THIS window
-        // already owns always succeeds (see `try_claim_preset`). A `false`
-        // return means a DIFFERENT window's `window_id` already holds the
-        // claim — the same-preset-two-windows hazard the shared-BackendCore
-        // arc introduced (§5.3.5). Logged loudly and NOT enforced yet: full
-        // enforcement (refuse the park / release-on-close) needs Phase F's
-        // session lifecycle wiring to avoid a stale claim permanently
-        // wedging a preset — tracked there, not silently fixed here.
+        // Reaffirm ownership of this preset id before parking its bubbles
+        // into this window's cache. Warn-only BY DESIGN (Phase F
+        // decision, not an oversight): `park_active_preset` is only ever
+        // called on `self.panel_app.active_preset_id` — a preset THIS
+        // window is currently displaying live. It is structurally
+        // impossible for another window's claim to be sitting on an id
+        // that is simultaneously live in THIS window's own panel_grid
+        // (the claim registry's own invariant — "live in at most one
+        // window" — guarantees whoever is live already owns the claim).
+        // A `false` return here means the invariant itself broke (a
+        // real bug, not a normal contention case) — logged loudly so it
+        // is never silent, but there is no correct action to "refuse"
+        // into: the caller already committed to switching away from this
+        // preset. Real cross-window collision enforcement lives at the
+        // ONE place a genuinely new window can pick up a preset id it
+        // does not yet own: `ChartApp::try_claim_preset_for_cold_load`,
+        // gating `apply_preset_cold` (see `chart_out_events.rs`).
         if !self.core.try_claim_preset(id, &self.window_id) {
             eprintln!(
                 "[ChartApp] WARNING: preset '{}' parked by window '{}' while claim registry \
-                 shows a different owner — same-preset-two-windows hazard, \
+                 shows a different owner — claim-registry invariant violated, \
                  see shared-backend-core-2026-07-03.md §5.3.5",
                 id, self.window_id,
             );
@@ -304,11 +340,14 @@ impl ChartApp {
         let t0 = web_time::Instant::now();
         let Some(state) = self.live_preset_cache.remove(id) else { return false; };
         // Reaffirm ownership — see the matching comment in
-        // `park_active_preset`. This preset was already parked in THIS
-        // window's own cache (we just removed it above), so the claim
-        // should always already belong to `self.window_id`; the warning
-        // path exists only to surface a bug if that invariant is ever
-        // violated.
+        // `park_active_preset`. Warn-only BY DESIGN, same reasoning: this
+        // preset was already parked in THIS window's own
+        // `live_preset_cache` (a per-window field, we just removed it
+        // above), so the claim can only ever belong to `self.window_id`
+        // here. A `false` return means the invariant broke elsewhere —
+        // surfaced loudly, but by this point `state` has already been
+        // removed from the cache, so refusing here would strand it
+        // (neither restored to `self` nor left recoverable in the cache).
         if !self.core.try_claim_preset(id, &self.window_id) {
             eprintln!(
                 "[ChartApp] WARNING: preset '{}' unparked by window '{}' while claim registry \

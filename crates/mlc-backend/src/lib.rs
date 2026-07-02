@@ -1918,7 +1918,7 @@ mod phase_b_facade_accessor_tests {
     #[test]
     fn templates_set_vault_key_round_trips_through_facade() {
         let core = build_core();
-        assert_eq!(core.templates().save_to_default_dir(None).is_ok(), true);
+        assert!(core.templates().save_to_default_dir(None).is_ok());
 
         let key: mlc_vault::vault::VaultKey = [7u8; 32];
         core.templates_mut().set_vault_key(Some(key));

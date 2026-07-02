@@ -166,6 +166,11 @@ struct PerWindowState {
     /// Stored here so we can identify the primary window during coordinated save
     /// without having to borrow `chart` when iterating over all windows.
     window_id: String,
+    /// `AppSession` id returned by `core.register_session` when this window
+    /// was created. Used to `deregister_session`/`release_all_presets_for_app`
+    /// on window close (shared-BackendCore arc Phase F,
+    /// `docs/mlc/plans/shared-backend-core-2026-07-03.md` §4.1/§5.3.5).
+    app_id: String,
     /// Set when context menu "Close Window" is selected; drained in about_to_wait.
     close_window_requested: bool,
     /// Set when context menu "Delete Window" is selected; drained in about_to_wait.
@@ -1344,6 +1349,16 @@ impl App<'_> {
         let win_id = window.id();
         #[cfg(target_os = "windows")]
         let cached_hwnd = win32_border::extract_hwnd(&window);
+        // Register this window as an AppSession on the shared core (Phase F,
+        // §4.1) — makes AppSession a real 1:1 mirror of open OS windows
+        // instead of dead scaffolding. `app_id` is also the identity the
+        // open_presets claim registry (§5.3.5) keys park/unpark ownership
+        // by (ChartApp::window_id, threaded in as the claim's app_id param).
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let app_id = self.core.register_session(Some(chart.window_id.clone()), now_secs);
         let pw = PerWindowState {
             window,
             surface,
@@ -1374,6 +1389,7 @@ impl App<'_> {
             close_requested: false,
             spawn_new_window: false,
             window_id,
+            app_id,
             close_window_requested: false,
             delete_window_requested: false,
             last_sidebar_hover_row: None,
@@ -1456,7 +1472,15 @@ impl App<'_> {
         self.wait_for_gpu_frame_blocking();
         let window_ids: Vec<winit::window::WindowId> = self.windows.keys().copied().collect();
         for wid in window_ids {
-            self.windows.remove(&wid);
+            if let Some(pw) = self.windows.remove(&wid) {
+                // `core` is the SAME shared Arc<BackendCore> across the
+                // switch (only its domain data is re-seeded below) — every
+                // session/claim registered under the OLD profile's windows
+                // must be released here, since these windows never go
+                // through the normal close path that would otherwise do it.
+                self.core.deregister_session(&pw.app_id);
+                self.core.release_all_presets_for_app(&pw.app_id);
+            }
         }
         self.last_focused = None;
 
@@ -2922,7 +2946,15 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 // check (vello 0.8 / wgpu-core 28).
                 self.wait_for_gpu_frame_blocking();
                 for (wid, _) in windows_to_close {
-                    self.windows.remove(&wid);
+                    if let Some(pw) = self.windows.remove(&wid) {
+                        // Release this window's AppSession + any presets it
+                        // still had claimed (§4.1/§5.3.5) — tied to the same
+                        // lifecycle event so a closed window never leaves a
+                        // stale claim behind (risk 5 in the plan: "do not
+                        // invent a second cleanup mechanism").
+                        self.core.deregister_session(&pw.app_id);
+                        self.core.release_all_presets_for_app(&pw.app_id);
+                    }
                 }
             }
         }

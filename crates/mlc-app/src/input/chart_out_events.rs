@@ -92,6 +92,17 @@ impl ChartApp {
             self.pending_background_warm.push_front(target_id);
             return false;
         }
+        // Refuse BEFORE anything is mutated if another window already
+        // claims target_id — background-warm is a pure optimization
+        // (pre-hydrate into cache for a snappier future switch), never
+        // worth stealing a preset another window is actively showing.
+        if !self.try_claim_preset_for_cold_load(&target_id) {
+            eprintln!(
+                "[ChartApp] background-warm SKIPPED '{}' — already claimed by another window",
+                target_id,
+            );
+            return true; // counted as drained, nothing to do
+        }
 
         let t0 = web_time::Instant::now();
         // 1. Park current active into live_preset_cache.
@@ -1303,6 +1314,15 @@ impl ChartApp {
                 // so no autosave either).
                 if prev_id == id && already_materialized {
                     sglog!("[LoadPreset] no-op: prev_id == id == '{}' and already_materialized=true", id);
+                } else if prev_id != id && !self.try_claim_preset_for_cold_load(&id) {
+                    // Refuse BEFORE anything is mutated (prev_id not yet
+                    // parked, active_preset_id not yet changed) — a clean
+                    // early-return, no rollback needed. Same-window
+                    // re-selects (prev_id == id) skip this check entirely
+                    // since try_claim_preset_for_cold_load would trivially
+                    // succeed anyway (reclaiming your own preset), and the
+                    // no-op branch above already handles that case.
+                    sglog!("[LoadPreset] refused: '{}' already claimed by another window — staying on '{}'", id, prev_id);
                 } else {
                 sglog!(
                     "[LoadPreset] proceeding: already_materialized={} (prev_id != id ? {})",

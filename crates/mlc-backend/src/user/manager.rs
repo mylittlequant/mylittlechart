@@ -195,8 +195,10 @@ mod tests {
         mgr.set_profile(profile);
         assert_eq!(mgr.profile().ui.active_preset_id, "preset_1");
 
-        let mut snaps = SettingsSnapshots::default();
-        snaps.chart_settings = Some(serde_json::json!({"x": 1}));
+        let snaps = SettingsSnapshots {
+            chart_settings: Some(serde_json::json!({"x": 1})),
+            ..Default::default()
+        };
         mgr.set_snapshots(snaps);
         assert!(mgr.snapshots().chart_settings.is_some());
     }
