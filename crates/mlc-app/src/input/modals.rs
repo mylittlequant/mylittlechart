@@ -643,31 +643,15 @@ impl ChartApp {
             if let Some(new_id) = new_id_opt {
                 // Apply saved params, output styles, and visibility from the template
                 {
-                    let mut im = self.core.indicators_mut();
-                    if let Some(inst) = im.instance_mut(new_id) {
-                        // Restore instance-level visibility
-                        inst.visible = tmpl.visible;
-                        // Restore params
-                        for (k, v) in &tmpl.params {
-                            if let Ok(iv) = serde_json::from_value(v.clone()) {
-                                inst.params.insert(k.clone(), iv);
-                            }
-                        }
-                        // Restore output styles
-                        for (key, out_style) in &tmpl.outputs {
-                            let entry = inst.outputs.entry(key.clone())
-                                .or_insert_with(Default::default);
-                            if let Some(ref c) = out_style.color {
-                                entry.color = Some(c.clone());
-                            }
-                            if let Some(lw) = out_style.line_width {
-                                entry.line_width = Some(lw);
-                            }
-                            if let Some(vis) = out_style.visible {
-                                entry.visible = vis;
-                            }
-                        }
-                    }
+                    let params: Vec<(String, mlc_backend_indicator_engine::IndicatorParamValue)> = tmpl.params
+                        .iter()
+                        .filter_map(|(k, v)| serde_json::from_value(v.clone()).ok().map(|iv| (k.clone(), iv)))
+                        .collect();
+                    let outputs: Vec<(String, mlc_core::templates::OutputStyleConfig)> = tmpl.outputs
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect();
+                    self.core.indicators_mut().apply_template(new_id, tmpl.visible, params, outputs);
                 }
                 self.push_undo_command(mlc_core::Command::AddIndicator {
                     instance_id: new_id,
@@ -1059,12 +1043,7 @@ impl ChartApp {
                             );
                             // Apply auto-color when this is a duplicate overlay indicator.
                             if let Some(ref color) = auto_color {
-                                let mut im = self.core.indicators_mut();
-                                if let Some(inst) = im.instance_mut(new_id) {
-                                    for oc in inst.outputs.values_mut() {
-                                        oc.color = Some(color.clone());
-                                    }
-                                }
+                                self.core.indicators_mut().set_all_output_colors(new_id, color.clone());
                             }
                             if let Some(active_leaf) = active_leaf {
                                 // If this window is in a sync group and indicators are synced,

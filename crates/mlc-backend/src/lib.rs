@@ -39,7 +39,7 @@ pub mod exchange_symbols;
 pub use alert::{Alerts, AlertsMut};
 pub use drawing::{Drawings, DrawingsMut, SwapSymbolResult};
 pub use bubble::{Bubbles, BubblesMut};
-pub use indicator::{Indicators, IndicatorsMut};
+pub use indicator::{IndicatorFullConfig, Indicators, IndicatorsMut};
 pub use watchlist::{Watchlists, WatchlistsMut};
 pub use tag::{Tags, TagsMut};
 pub use preset::{Presets, PresetsMut};

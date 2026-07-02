@@ -151,25 +151,20 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
 
                 let new_id_opt = chart.core.indicators_mut().add(Some(mlc_core::ids::BubbleId(chart_id)), &type_id);
                 if let Some(new_id) = new_id_opt {
-                    {
-                        let mut im = chart.core.indicators_mut();
-                        if let Some(inst) = im.instance_mut(new_id) {
-                            for (k, v) in &params {
-                                let iv = match v {
-                                    serde_json::Value::Number(n) => {
-                                        if let Some(i) = n.as_i64() {
-                                            IndicatorParamValue::Int(i as i32)
-                                        } else {
-                                            IndicatorParamValue::Float(n.as_f64().unwrap_or(0.0))
-                                        }
-                                    }
-                                    serde_json::Value::Bool(b) => IndicatorParamValue::Bool(*b),
-                                    serde_json::Value::String(s) => IndicatorParamValue::String(s.clone()),
-                                    _ => continue,
-                                };
-                                inst.set_param(k, iv);
+                    for (k, v) in &params {
+                        let iv = match v {
+                            serde_json::Value::Number(n) => {
+                                if let Some(i) = n.as_i64() {
+                                    IndicatorParamValue::Int(i as i32)
+                                } else {
+                                    IndicatorParamValue::Float(n.as_f64().unwrap_or(0.0))
+                                }
                             }
-                        }
+                            serde_json::Value::Bool(b) => IndicatorParamValue::Bool(*b),
+                            serde_json::Value::String(s) => IndicatorParamValue::String(s.clone()),
+                            _ => continue,
+                        };
+                        chart.core.indicators_mut().set_param(new_id, k, iv);
                     }
                     chart.core.indicators_mut().calculate(new_id, &bars);
                     chart.sync_sub_panes_from_manager();
@@ -191,30 +186,24 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                 // SAFETY: see AddIndicator above.
                 let chart: &mut mlc_app::ChartApp = unsafe { &mut *chart_ptr };
 
-                let (found, wid_opt) = {
-                    let mut im = chart.core.indicators_mut();
-                    if let Some(inst) = im.instance_mut(indicator_id) {
-                        for (k, v) in &params {
-                            let iv = match v {
-                                serde_json::Value::Number(n) => {
-                                    if let Some(i) = n.as_i64() {
-                                        IndicatorParamValue::Int(i as i32)
-                                    } else {
-                                        IndicatorParamValue::Float(n.as_f64().unwrap_or(0.0))
-                                    }
-                                }
-                                serde_json::Value::Bool(b) => IndicatorParamValue::Bool(*b),
-                                serde_json::Value::String(s) => IndicatorParamValue::String(s.clone()),
-                                _ => continue,
-                            };
-                            inst.set_param(k, iv);
-                        }
-                        (true, inst.bubble_id)
-                    } else {
-                        (false, None)
-                    }
-                };
+                let found = chart.core.indicators().instance(indicator_id).is_some();
+                let wid_opt = chart.core.indicators().instance(indicator_id).and_then(|inst| inst.bubble_id);
                 if found {
+                    for (k, v) in &params {
+                        let iv = match v {
+                            serde_json::Value::Number(n) => {
+                                if let Some(i) = n.as_i64() {
+                                    IndicatorParamValue::Int(i as i32)
+                                } else {
+                                    IndicatorParamValue::Float(n.as_f64().unwrap_or(0.0))
+                                }
+                            }
+                            serde_json::Value::Bool(b) => IndicatorParamValue::Bool(*b),
+                            serde_json::Value::String(s) => IndicatorParamValue::String(s.clone()),
+                            _ => continue,
+                        };
+                        chart.core.indicators_mut().set_param(indicator_id, k, iv);
+                    }
                     // Indicator ownership is by bubble — bars live on the
                     // bubble directly, no chart lookup needed.
                     let bars: Vec<mlc_core::Bar> = wid_opt

@@ -189,9 +189,7 @@ async fn create_indicator(
     // Apply params from body.
     for (k, v) in &body.params {
         if let Some(iv) = json_to_indicator_value(v) {
-            if let Some(inst) = guard.instance_mut(id) {
-                inst.params.insert(k.clone(), iv);
-            }
+            guard.set_param(id, k, iv);
         }
     }
 
@@ -209,24 +207,21 @@ async fn patch_indicator(
     Json(body): Json<PatchIndicatorIn>,
 ) -> impl IntoResponse {
     let mut guard = s.core.indicators_mut();
-    {
-        let inst = match guard.instance_mut(id) {
-            Some(i) => i,
-            None => return StatusCode::NOT_FOUND.into_response(),
-        };
-        if let Some(v) = body.visible {
-            inst.visible = v;
-        }
-        if let Some(l) = body.locked {
-            inst.locked = l;
-        }
-        if let Some(ref n) = body.name {
-            inst.name = n.clone();
-        }
-        for (k, v) in &body.params {
-            if let Some(iv) = json_to_indicator_value(v) {
-                inst.params.insert(k.clone(), iv);
-            }
+    if guard.instance(id).is_none() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    if let Some(v) = body.visible {
+        guard.set_visible(id, v);
+    }
+    if let Some(l) = body.locked {
+        guard.set_locked(id, l);
+    }
+    if let Some(ref n) = body.name {
+        guard.set_name(id, n.clone());
+    }
+    for (k, v) in &body.params {
+        if let Some(iv) = json_to_indicator_value(v) {
+            guard.set_param(id, k, iv);
         }
     }
     let out = guard

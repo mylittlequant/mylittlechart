@@ -654,21 +654,18 @@ impl ChartApp {
     /// Apply the color picker color to the active indicator output.
     pub(super) fn apply_indicator_color(&mut self, output_name: &str, color: &str) {
         if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
-            if let Some(inst) = self.core.indicators_mut().instance_mut(ind_id) {
-                match output_name {
-                    "signal_bullish_color" => {
-                        inst.signal_display.bullish_color = color.to_string();
-                        eprintln!("[ChartApp] applied indicator signal_bullish_color: {} = {}", ind_id, color);
-                    }
-                    "signal_bearish_color" => {
-                        inst.signal_display.bearish_color = color.to_string();
-                        eprintln!("[ChartApp] applied indicator signal_bearish_color: {} = {}", ind_id, color);
-                    }
-                    _ => {
-                        if let Some(output_cfg) = inst.outputs.get_mut(output_name) {
-                            output_cfg.color = Some(color.to_string());
-                            eprintln!("[ChartApp] applied indicator color: {} output '{}' = {}", ind_id, output_name, color);
-                        }
+            match output_name {
+                "signal_bullish_color" => {
+                    self.core.indicators_mut().set_signal_bullish_color(ind_id, color);
+                    eprintln!("[ChartApp] applied indicator signal_bullish_color: {} = {}", ind_id, color);
+                }
+                "signal_bearish_color" => {
+                    self.core.indicators_mut().set_signal_bearish_color(ind_id, color);
+                    eprintln!("[ChartApp] applied indicator signal_bearish_color: {} = {}", ind_id, color);
+                }
+                _ => {
+                    if self.core.indicators_mut().set_output_color(ind_id, output_name, color) {
+                        eprintln!("[ChartApp] applied indicator color: {} output '{}' = {}", ind_id, output_name, color);
                     }
                 }
             }

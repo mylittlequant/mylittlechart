@@ -426,18 +426,11 @@ impl ChartApp {
                         }).collect::<Vec<_>>()
                     };
                     for src in clones {
+                        let mut config = mlc_backend::IndicatorFullConfig::from(&src);
+                        config.origin_id = Some(src.id);
                         let mut im = self.core.indicators_mut();
                         if let Some(new_id) = im.add(Some(group_id), &src.type_id) {
-                            if let Some(inst) = im.instance_mut(new_id) {
-                                inst.params = src.params;
-                                inst.outputs = src.outputs;
-                                inst.visible = src.visible;
-                                inst.locked = src.locked;
-                                inst.pane = src.pane;
-                                inst.order = src.order;
-                                inst.timeframe_visibility = src.timeframe_visibility;
-                                inst.origin_id = Some(src.id);
-                            }
+                            im.apply_full_config(new_id, config);
                         }
                     }
                 }
@@ -745,18 +738,11 @@ impl ChartApp {
                     pre_tag_ids.iter().filter_map(|iid| im.instance(*iid).cloned()).collect::<Vec<_>>()
                 };
                 for src in clones {
+                    let mut config = mlc_backend::IndicatorFullConfig::from(&src);
+                    config.origin_id = Some(src.id);
                     let mut im = self.core.indicators_mut();
                     if let Some(new_id) = im.add(Some(group_id), &src.type_id) {
-                        if let Some(inst) = im.instance_mut(new_id) {
-                            inst.params = src.params;
-                            inst.outputs = src.outputs;
-                            inst.visible = src.visible;
-                            inst.locked = src.locked;
-                            inst.pane = src.pane;
-                            inst.order = src.order;
-                            inst.timeframe_visibility = src.timeframe_visibility;
-                            inst.origin_id = Some(src.id);
-                        }
+                        im.apply_full_config(new_id, config);
                     }
                 }
             }
@@ -1221,18 +1207,11 @@ impl ChartApp {
                         pre_tag_ids.iter().filter_map(|iid| im.instance(*iid).cloned()).collect::<Vec<_>>()
                     };
                     for src in clones {
+                        let mut config = mlc_backend::IndicatorFullConfig::from(&src);
+                        config.origin_id = Some(src.id);
                         let mut im = self.core.indicators_mut();
                         if let Some(new_id) = im.add(Some(group_id), &src.type_id) {
-                            if let Some(inst) = im.instance_mut(new_id) {
-                                inst.params = src.params;
-                                inst.outputs = src.outputs;
-                                inst.visible = src.visible;
-                                inst.locked = src.locked;
-                                inst.pane = src.pane;
-                                inst.order = src.order;
-                                inst.timeframe_visibility = src.timeframe_visibility;
-                                inst.origin_id = Some(src.id);
-                            }
+                            im.apply_full_config(new_id, config);
                         }
                     }
                 }
@@ -2086,9 +2065,7 @@ impl ChartApp {
                 // lives once on the bubble, not per-chart.
                 let nid = im.add(Some(group_id), type_id);
                 if let Some(new_id) = nid {
-                    if let Some(inst) = im.instance_mut(new_id) {
-                        inst.origin_id = None;
-                    }
+                    im.clear_origin(new_id);
                 }
                 nid
             };

@@ -747,36 +747,7 @@ impl ChartApp {
                             bid,
                             &ind_snap.type_id,
                         ) {
-                            if let Some(inst) = self.core.indicators_mut().instance_mut(ind_snap.id) {
-                                inst.name = ind_snap.name.clone();
-                                inst.pane = ind_snap.pane;
-                                inst.order = ind_snap.order;
-                                inst.visible = ind_snap.visible;
-                                inst.locked = ind_snap.locked;
-                                inst.origin_id = ind_snap.origin_id;
-                                inst.signals_enabled = ind_snap.signals_enabled;
-                                inst.timeframe_visibility = ind_snap.timeframe_visibility.clone();
-                                for (k, v) in &ind_snap.params {
-                                    if let Ok(iv) = serde_json::from_value(v.clone()) {
-                                        inst.params.insert(k.clone(), iv);
-                                    }
-                                }
-                                // Restore per-output style overrides
-                                for (key, out_snap) in &ind_snap.outputs {
-                                    let entry = inst.outputs.entry(key.clone())
-                                        .or_insert_with(Default::default);
-                                    entry.color = out_snap.color.clone();
-                                    entry.line_width = out_snap.line_width;
-                                    if let Some(vis) = out_snap.visible {
-                                        entry.visible = vis;
-                                    }
-                                }
-                                // Restore cached computed values so indicator lines are
-                                // visible immediately on tab switch, before Step 6b recalc.
-                                if !ind_snap.values.is_empty() {
-                                    inst.values = std::sync::Arc::new(ind_snap.values.clone());
-                                }
-                            }
+                            self.core.indicators_mut().restore_from_snapshot(ind_snap);
                         }
                     }
                     eprintln!("[ChartApp] restored {} indicators", preset.indicators.len());

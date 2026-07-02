@@ -230,21 +230,15 @@ impl ChartApp {
     /// the **indicator** settings modal. Writes directly to the `IndicatorInstance`'s
     /// `timeframe_visibility` field.
     pub(crate) fn apply_ind_dual_slider_value(&mut self, field_id: &str, value: u32, handle: DualSliderHandle) {
-        use mlc_core::drawing::TimeframeVisibilityConfig;
-
         let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id else { return; };
 
         let Some(tf_idx) = field_id.strip_prefix("tf_")
             .and_then(|s| s.strip_suffix("_slider"))
             .and_then(|s| s.parse::<usize>().ok()) else { return; };
 
-        let new_range = {
-            let mut im = self.core.indicators_mut();
-            let Some(inst) = im.instance_mut(ind_id) else { return; };
-
-            let mut tf_config = inst.timeframe_visibility.clone()
-                .unwrap_or_else(TimeframeVisibilityConfig::all);
-
+        let mut new_range = (0u32, 0u32);
+        let mut out_of_range = false;
+        let applied = self.core.indicators_mut().update_timeframe_visibility(ind_id, |tf_config| {
             let (current_min, current_max) = match tf_idx {
                 1 => tf_config.seconds.unwrap_or((1, 59)),
                 2 => tf_config.minutes.unwrap_or((1, 59)),
@@ -252,10 +246,10 @@ impl ChartApp {
                 4 => tf_config.days.unwrap_or((1, 366)),
                 5 => tf_config.weeks.unwrap_or((1, 52)),
                 6 => tf_config.months.unwrap_or((1, 12)),
-                _ => return,
+                _ => { out_of_range = true; return; }
             };
 
-            let new_range = match handle {
+            new_range = match handle {
                 DualSliderHandle::Min => (value.min(current_max), current_max),
                 DualSliderHandle::Max => (current_min, value.max(current_min)),
             };
@@ -269,10 +263,8 @@ impl ChartApp {
                 6 => tf_config.months  = Some(new_range),
                 _ => {}
             }
-
-            inst.timeframe_visibility = Some(tf_config);
-            new_range
-        };
+        });
+        if !applied || out_of_range { return; }
 
         // Keep any active text-editing field in sync with the new range value.
         let edit_field = match handle {
@@ -299,13 +291,8 @@ impl ChartApp {
 
     /// Apply a new minimum value for a timeframe range on the current indicator instance.
     pub(crate) fn apply_ind_tf_min_value(&mut self, tf_idx: usize, val: u32) {
-        use mlc_core::drawing::TimeframeVisibilityConfig;
         let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id else { return; };
-        {
-            let mut im = self.core.indicators_mut();
-            let Some(inst) = im.instance_mut(ind_id) else { return; };
-            let mut tf = inst.timeframe_visibility.clone()
-                .unwrap_or_else(TimeframeVisibilityConfig::all);
+        self.core.indicators_mut().update_timeframe_visibility(ind_id, |tf| {
             match tf_idx {
                 1 => { if let Some((_, max)) = tf.seconds { tf.seconds = Some((val.min(max), max)); } }
                 2 => { if let Some((_, max)) = tf.minutes { tf.minutes = Some((val.min(max), max)); } }
@@ -315,21 +302,15 @@ impl ChartApp {
                 6 => { if let Some((_, max)) = tf.months  { tf.months  = Some((val.min(max), max)); } }
                 _ => {}
             }
-            inst.timeframe_visibility = Some(tf);
-        }
+        });
         eprintln!("[ChartApp] ind_settings tf_{}_min committed: {}", tf_idx, val);
         self.autosave_snapshot();
     }
 
     /// Apply a new maximum value for a timeframe range on the current indicator instance.
     pub(crate) fn apply_ind_tf_max_value(&mut self, tf_idx: usize, val: u32) {
-        use mlc_core::drawing::TimeframeVisibilityConfig;
         let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id else { return; };
-        {
-            let mut im = self.core.indicators_mut();
-            let Some(inst) = im.instance_mut(ind_id) else { return; };
-            let mut tf = inst.timeframe_visibility.clone()
-                .unwrap_or_else(TimeframeVisibilityConfig::all);
+        self.core.indicators_mut().update_timeframe_visibility(ind_id, |tf| {
             match tf_idx {
                 1 => { if let Some((min, _)) = tf.seconds { tf.seconds = Some((min, val.max(min))); } }
                 2 => { if let Some((min, _)) = tf.minutes { tf.minutes = Some((min, val.max(min))); } }
@@ -339,8 +320,7 @@ impl ChartApp {
                 6 => { if let Some((min, _)) = tf.months  { tf.months  = Some((min, val.max(min))); } }
                 _ => {}
             }
-            inst.timeframe_visibility = Some(tf);
-        }
+        });
         eprintln!("[ChartApp] ind_settings tf_{}_max committed: {}", tf_idx, val);
         self.autosave_snapshot();
     }

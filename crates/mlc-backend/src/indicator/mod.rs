@@ -10,5 +10,5 @@
 
 mod facade;
 mod manager;
-pub use facade::{BubbleIndicatorView, Indicators, IndicatorsMut};
+pub use facade::{BubbleIndicatorView, IndicatorFullConfig, Indicators, IndicatorsMut};
 pub use manager::IndicatorManager;

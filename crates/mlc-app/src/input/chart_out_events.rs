@@ -2044,9 +2044,7 @@ impl ChartApp {
                         };
 
                         for id in &to_hide {
-                            if let Some(inst) = self.core.indicators_mut().instance_mut(*id) {
-                                inst.visible = false;
-                            }
+                            self.core.indicators_mut().set_visible(*id, false);
                         }
                         eprintln!(
                             "[BubbleStore] sync_indicators ON: hid {} home indicators",
@@ -2067,9 +2065,7 @@ impl ChartApp {
                         };
 
                         for id in &to_show {
-                            if let Some(inst) = self.core.indicators_mut().instance_mut(*id) {
-                                inst.visible = true;
-                            }
+                            self.core.indicators_mut().set_visible(*id, true);
                         }
                         eprintln!(
                             "[BubbleStore] sync_indicators OFF: unhid {} window-local indicators",
