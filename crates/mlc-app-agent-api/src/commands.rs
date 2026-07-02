@@ -186,8 +186,8 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                 // SAFETY: see AddIndicator above.
                 let chart: &mut mlc_app::ChartApp = unsafe { &mut *chart_ptr };
 
-                let found = chart.core.indicators().instance(indicator_id).is_some();
-                let wid_opt = chart.core.indicators().instance(indicator_id).and_then(|inst| inst.bubble_id);
+                let found = chart.core.indicators().exists(indicator_id);
+                let wid_opt = chart.core.indicators().bubble_id_of(indicator_id).flatten();
                 if found {
                     for (k, v) in &params {
                         let iv = match v {

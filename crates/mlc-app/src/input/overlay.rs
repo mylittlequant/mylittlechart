@@ -679,8 +679,7 @@ impl ChartApp {
                             .and_then(|_w| None::<&mlc_core::Bar>)
                             .map(|b| b.close)
                             .unwrap_or(0.0);
-                        let label = self.core.indicators().instance(id)
-                            .map(|inst| inst.name.clone())
+                        let label = self.core.indicators().name_of(id)
                             .unwrap_or_else(|| format!("Indicator {}", id));
                         let symbol = self.panel_app.panel_grid.active_container_id()
                             .and_then(|cid| self.symbol_for_chart(cid))
@@ -744,8 +743,7 @@ impl ChartApp {
                             .and_then(|_w| None::<&mlc_core::Bar>)
                             .map(|b| b.close)
                             .unwrap_or(0.0);
-                        let label = self.core.indicators().instance(id)
-                            .map(|inst| inst.name.clone())
+                        let label = self.core.indicators().name_of(id)
                             .unwrap_or_else(|| format!("Indicator {}", id));
                         let symbol = self.panel_app.panel_grid.active_container_id()
                             .and_then(|cid| self.symbol_for_chart(cid))
@@ -781,8 +779,8 @@ impl ChartApp {
     /// of the same `type_id` across ALL group member windows are removed so that
     /// peer windows do not keep stale renders alive.
     pub(super) fn delete_indicator_instance(&mut self, id: u64) {
-        let type_id = match self.core.indicators().instance(id) {
-            Some(inst) => inst.type_id.clone(),
+        let type_id = match self.core.indicators().type_id_of(id) {
+            Some(type_id) => type_id,
             None => return,
         };
 

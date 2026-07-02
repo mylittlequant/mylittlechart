@@ -1056,11 +1056,10 @@ impl ChartApp {
                                     if sync_on {
                                         let (inst_pane, inst_name) = {
                                             let im = self.core.indicators();
-                                            let inst_pane = im.instance(new_id)
-                                                .map(|i| i.pane as u32)
+                                            let inst_pane = im.pane_of(new_id)
+                                                .map(|p| p as u32)
                                                 .unwrap_or(0);
-                                            let inst_name = im.instance(new_id)
-                                                .map(|i| i.name.clone())
+                                            let inst_name = im.name_of(new_id)
                                                 .unwrap_or_else(|| item_id.to_string());
                                             (inst_pane, inst_name)
                                         };
@@ -1470,8 +1469,7 @@ impl ChartApp {
                             .map(|b| b.close)
                             .unwrap_or(0.0);
                         let label = self.core.indicators()
-                                .instance(instance_id)
-                            .map(|inst| inst.name.clone())
+                            .name_of(instance_id)
                             .unwrap_or_else(|| format!("Indicator #{}", instance_id));
                         let source = mlc_core::alert::AlertSource::Indicator {
                             indicator_id: instance_id,

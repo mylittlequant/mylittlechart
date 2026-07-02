@@ -59,6 +59,35 @@ impl From<&IndicatorInstance> for IndicatorFullConfig {
     }
 }
 
+/// Snapshot of the fields callers most commonly read off an instance in one
+/// shot (id-keyed CRUD summaries: agent API, daemon REST DTOs, sidebar tree
+/// items). Replaces ad-hoc `.instance(id).map(|inst| (inst.a, inst.b, ...))`
+/// call sites — see [`Indicators::summary`] / [`IndicatorsMut::summary`].
+#[derive(Debug, Clone)]
+pub struct IndicatorSummary {
+    pub id: u64,
+    pub type_id: String,
+    pub name: String,
+    pub visible: bool,
+    pub locked: bool,
+    pub pane: usize,
+    pub bubble_id: Option<u64>,
+}
+
+impl From<&IndicatorInstance> for IndicatorSummary {
+    fn from(src: &IndicatorInstance) -> Self {
+        Self {
+            id: src.id,
+            type_id: src.type_id.clone(),
+            name: src.name.clone(),
+            visible: src.visible,
+            locked: src.locked,
+            pane: src.pane,
+            bubble_id: src.bubble_id,
+        }
+    }
+}
+
 /// One bubble's indicator state, bundled for the render path — the
 /// bubble-scoped `IndicatorSource` implementation chart rendering functions
 /// consume. Mirrors Drawing's `BubbleDrawingView`
@@ -144,9 +173,76 @@ impl<'a> Indicators<'a> {
         self.mgr.get_definition(type_id)
     }
 
-    /// Instance by ID.
-    pub fn instance(&self, id: u64) -> Option<&IndicatorInstance> {
-        self.mgr.get_instance(id)
+    /// Whether an instance with this id exists.
+    pub fn exists(&self, id: u64) -> bool {
+        self.mgr.get_instance(id).is_some()
+    }
+
+    /// CRUD-summary snapshot (id, type_id, name, visible, locked, pane,
+    /// bubble_id) — the fields agent-API/daemon-REST/sidebar-tree call
+    /// sites need together.
+    pub fn summary(&self, id: u64) -> Option<IndicatorSummary> {
+        self.mgr.get_instance(id).map(IndicatorSummary::from)
+    }
+
+    /// Full owned clone of the instance. For sync-group / tag-join clone
+    /// flows that build an [`IndicatorFullConfig`] from the source instance
+    /// and need `id` + `type_id` alongside the config — anything narrower
+    /// would just re-fetch the same instance twice.
+    pub fn full_clone(&self, id: u64) -> Option<IndicatorInstance> {
+        self.mgr.get_instance(id).cloned()
+    }
+
+    /// Type ID (references `IndicatorDefinition`).
+    pub fn type_id_of(&self, id: u64) -> Option<String> {
+        self.mgr.get_instance(id).map(|inst| inst.type_id.clone())
+    }
+
+    /// Display name.
+    pub fn name_of(&self, id: u64) -> Option<String> {
+        self.mgr.get_instance(id).map(|inst| inst.name.clone())
+    }
+
+    /// Pane index (0 = main chart, 1+ = separate panes).
+    pub fn pane_of(&self, id: u64) -> Option<usize> {
+        self.mgr.get_instance(id).map(|inst| inst.pane)
+    }
+
+    /// Whether the instance's bubble id matches a live bubble — the raw
+    /// `bubble_id` field, not existence-checked against `BubbleStore`.
+    pub fn bubble_id_of(&self, id: u64) -> Option<Option<u64>> {
+        self.mgr.get_instance(id).map(|inst| inst.bubble_id)
+    }
+
+    /// Whether signal generation is enabled for this instance.
+    pub fn signals_enabled_of(&self, id: u64) -> Option<bool> {
+        self.mgr.get_instance(id).map(|inst| inst.signals_enabled)
+    }
+
+    /// Snapshot of the signal-marker display config.
+    pub fn signal_display_of(&self, id: u64) -> Option<mlc_core::indicator_source::SignalDisplayConfig> {
+        self.mgr.get_instance(id).map(|inst| inst.signal_display.clone())
+    }
+
+    /// Snapshot of the timeframe-visibility config (`None` = not set —
+    /// distinct from "instance not found", hence the outer `Option`).
+    pub fn timeframe_visibility_of(&self, id: u64) -> Option<Option<TimeframeVisibilityConfig>> {
+        self.mgr.get_instance(id).map(|inst| inst.timeframe_visibility.clone())
+    }
+
+    /// Single calculation parameter's current value.
+    pub fn param_value(&self, id: u64, name: &str) -> Option<IndicatorParamValue> {
+        self.mgr.get_instance(id).and_then(|inst| inst.params.get(name).cloned())
+    }
+
+    /// Snapshot of every calculation parameter.
+    pub fn params_snapshot(&self, id: u64) -> Option<std::collections::HashMap<String, IndicatorParamValue>> {
+        self.mgr.get_instance(id).map(|inst| inst.params.clone())
+    }
+
+    /// Color override for one output.
+    pub fn output_color(&self, id: u64, output_name: &str) -> Option<String> {
+        self.mgr.get_instance(id).and_then(|inst| inst.outputs.get(output_name)).and_then(|o| o.color.clone())
     }
 
     /// Full render data for a single instance by ID. Id-keyed — no bubble
@@ -257,9 +353,35 @@ impl<'a> IndicatorsMut<'a> {
         self.mgr.get_definition(type_id)
     }
 
-    /// Instance by ID.
-    pub fn instance(&self, id: u64) -> Option<&IndicatorInstance> {
-        self.mgr.get_instance(id)
+    /// Whether an instance with this id exists.
+    pub fn exists(&self, id: u64) -> bool {
+        self.mgr.get_instance(id).is_some()
+    }
+
+    /// CRUD-summary snapshot (id, type_id, name, visible, locked, pane,
+    /// bubble_id).
+    pub fn summary(&self, id: u64) -> Option<IndicatorSummary> {
+        self.mgr.get_instance(id).map(IndicatorSummary::from)
+    }
+
+    /// Full owned clone of the instance.
+    pub fn full_clone(&self, id: u64) -> Option<IndicatorInstance> {
+        self.mgr.get_instance(id).cloned()
+    }
+
+    /// Type ID (references `IndicatorDefinition`).
+    pub fn type_id_of(&self, id: u64) -> Option<String> {
+        self.mgr.get_instance(id).map(|inst| inst.type_id.clone())
+    }
+
+    /// Display name.
+    pub fn name_of(&self, id: u64) -> Option<String> {
+        self.mgr.get_instance(id).map(|inst| inst.name.clone())
+    }
+
+    /// Pane index (0 = main chart, 1+ = separate panes).
+    pub fn pane_of(&self, id: u64) -> Option<usize> {
+        self.mgr.get_instance(id).map(|inst| inst.pane)
     }
 
     /// All instances bound to a bubble.

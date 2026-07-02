@@ -194,8 +194,8 @@ async fn create_indicator(
     }
 
     let (type_id, name) = guard
-        .instance(id)
-        .map(|inst| (inst.type_id.clone(), inst.name.clone()))
+        .summary(id)
+        .map(|s| (s.type_id, s.name))
         .unwrap_or_default();
 
     (StatusCode::CREATED, Json(IndicatorCreatedOut { id, type_id, name })).into_response()
@@ -207,7 +207,7 @@ async fn patch_indicator(
     Json(body): Json<PatchIndicatorIn>,
 ) -> impl IntoResponse {
     let mut guard = s.core.indicators_mut();
-    if guard.instance(id).is_none() {
+    if !guard.exists(id) {
         return StatusCode::NOT_FOUND.into_response();
     }
     if let Some(v) = body.visible {
@@ -224,17 +224,15 @@ async fn patch_indicator(
             guard.set_param(id, k, iv);
         }
     }
-    let out = guard
-        .instance(id)
-        .map(|inst| IndicatorUpdatedOut {
-            id: inst.id,
-            type_id: inst.type_id.clone(),
-            name: inst.name.clone(),
-            visible: inst.visible,
-            locked: inst.locked,
-            pane: inst.pane,
-            bubble_id: inst.bubble_id,
-        });
+    let out = guard.summary(id).map(|s| IndicatorUpdatedOut {
+        id: s.id,
+        type_id: s.type_id,
+        name: s.name,
+        visible: s.visible,
+        locked: s.locked,
+        pane: s.pane,
+        bubble_id: s.bubble_id,
+    });
     match out {
         Some(dto) => Json(dto).into_response(),
         None => StatusCode::NOT_FOUND.into_response(),

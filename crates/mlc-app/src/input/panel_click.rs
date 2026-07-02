@@ -2749,7 +2749,7 @@ impl ChartApp {
         if widget_id.contains("_ind_delete_") || widget_id.starts_with("ind_delete_") {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 // Try live indicator_manager first (Active + WindowOtherKey).
-                if self.core.indicators().instance(id).is_some() {
+                if self.core.indicators().exists(id) {
                     self.delete_indicator_instance(id);
                     return;
                 }
@@ -2959,8 +2959,7 @@ impl ChartApp {
                     .and_then(|_w| None::<&mlc_core::Bar>)
                     .map(|b| b.close)
                     .unwrap_or(0.0);
-                let source_name = self.core.indicators().instance(id)
-                    .map(|inst| inst.name.clone())
+                let source_name = self.core.indicators().name_of(id)
                     .unwrap_or_else(|| format!("Indicator {}", id));
                 // S2.7.1e: read symbol via branch_meta (B1).
                 let symbol: String = self.panel_app.panel_grid.active_container_id()

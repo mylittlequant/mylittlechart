@@ -2094,12 +2094,11 @@ impl ChartApp {
                 let name = self.input_coordinator.borrow().text_fields().text(&field_id).to_string();
                 if !name.is_empty() {
                     if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
-                        let type_id = self.core.indicators().instance(ind_id)
-                            .map(|inst| inst.type_id.to_string())
+                        let type_id = self.core.indicators().type_id_of(ind_id)
                             .unwrap_or_default();
-                        let params = self.core.indicators().instance(ind_id)
-                            .map(|inst| {
-                                inst.params.iter().map(|(k, v): (&String, &mlc_backend_indicator_engine::IndicatorParamValue)| {
+                        let params = self.core.indicators().params_snapshot(ind_id)
+                            .map(|params| {
+                                params.iter().map(|(k, v): (&String, &mlc_backend_indicator_engine::IndicatorParamValue)| {
                                     let json_val = match v {
                                         mlc_backend_indicator_engine::IndicatorParamValue::Int(i) => serde_json::json!(i),
                                         mlc_backend_indicator_engine::IndicatorParamValue::Float(f) => serde_json::json!(f),
@@ -2715,8 +2714,8 @@ impl ChartApp {
             "signals_toggle" => {
                 if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
                     let new_val = self.core.indicators()
-                                .instance(ind_id)
-                        .map(|inst| !inst.signals_enabled);
+                        .signals_enabled_of(ind_id)
+                        .map(|enabled| !enabled);
                     if let Some(enabled) = new_val {
                         self.core.indicators_mut().set_signals_enabled(ind_id, enabled);
                         if let Some(active_bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id) {
@@ -2816,10 +2815,7 @@ impl ChartApp {
             let screen_w = self.width as f64;
             let screen_h = self.height as f64;
             let current_color: Option<String> = if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
-                self.core.indicators()
-                                .instance(ind_id)
-                    .and_then(|inst| inst.outputs.get(output_name))
-                    .and_then(|o| o.color.clone())
+                self.core.indicators().output_color(ind_id, output_name)
             } else {
                 None
             };
@@ -2857,11 +2853,9 @@ impl ChartApp {
             if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
                 // Collect what we need with an immutable borrow first.
                 let cycle_info: Option<(String, Vec<String>)> = {
-                    self.core.indicators().instance(ind_id).and_then(|inst| {
-                        let type_id = inst.type_id.clone();
-                        let current_val = inst.params.get(param_name)
-                            .and_then(|v| v.as_string())
-                            .map(|s| s.to_string());
+                    self.core.indicators().type_id_of(ind_id).and_then(|type_id| {
+                        let current_val = self.core.indicators().param_value(ind_id, param_name)
+                            .and_then(|v| v.as_string().map(|s| s.to_string()));
                         self.core.indicators().definition(&type_id).and_then(|def| {
                             def.params.iter().find(|p| p.name == param_name).map(|p| {
                                 let options = p.get_options_as_strings();
@@ -2920,8 +2914,7 @@ impl ChartApp {
         if let Some(param_name) = item_id.strip_prefix("toggle:") {
             if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
                 let current_bool: Option<bool> = self.core.indicators()
-                                .instance(ind_id)
-                    .and_then(|inst| inst.params.get(param_name))
+                    .param_value(ind_id, param_name)
                     .and_then(|v| v.as_bool());
 
                 if let Some(cur) = current_bool {
@@ -2977,9 +2970,8 @@ impl ChartApp {
                 .and_then(|s| s.parse::<usize>().ok())
             {
                 self.panel_app.indicator_settings_state.indicator_id
-                    .and_then(|ind_id| self.core.indicators().instance(ind_id).map(|inst| {
-                        let tf = inst.timeframe_visibility.clone()
-                            .unwrap_or_else(TimeframeVisibilityConfig::all);
+                    .and_then(|ind_id| self.core.indicators().timeframe_visibility_of(ind_id).map(|tf_cfg| {
+                        let tf = tf_cfg.unwrap_or_else(TimeframeVisibilityConfig::all);
                         let range = match tf_idx {
                             1 => tf.seconds.unwrap_or((1, 59)),
                             2 => tf.minutes.unwrap_or((1, 59)),
@@ -3004,12 +2996,8 @@ impl ChartApp {
         if let Some(param_name_str) = item_id.strip_prefix("input:") {
             let param_name = param_name_str.to_string();
             let current_value: String = self.panel_app.indicator_settings_state.indicator_id
-                .and_then(|ind_id| {
-                    let im = self.core.indicators();
-                    im.instance(ind_id)
-                        .and_then(|inst| inst.params.get(&param_name))
-                        .map(|v| v.to_display_string())
-                })
+                .and_then(|ind_id| self.core.indicators().param_value(ind_id, &param_name))
+                .map(|v| v.to_display_string())
                 .unwrap_or_default();
             let field_id = format!("indicator_param:{}", param_name);
             self.start_ind_field_editing(&field_id, &current_value, false);
@@ -3040,8 +3028,8 @@ impl ChartApp {
                     let screen_w = self.width as f64;
                     let screen_h = self.height as f64;
                     let current_color = self.core.indicators()
-                                .instance(ind_id)
-                        .map(|inst| inst.signal_display.bullish_color.clone());
+                        .signal_display_of(ind_id)
+                        .map(|sd| sd.bullish_color);
                     let widget_id_str = format!("ind_settings:item:{}", item_id);
                     let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId::from(widget_id_str));
                     let (anchor_x, anchor_y, anchor_w, anchor_h) = rect
@@ -3059,8 +3047,8 @@ impl ChartApp {
                     let screen_w = self.width as f64;
                     let screen_h = self.height as f64;
                     let current_color = self.core.indicators()
-                                .instance(ind_id)
-                        .map(|inst| inst.signal_display.bearish_color.clone());
+                        .signal_display_of(ind_id)
+                        .map(|sd| sd.bearish_color);
                     let widget_id_str = format!("ind_settings:item:{}", item_id);
                     let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId::from(widget_id_str));
                     let (anchor_x, anchor_y, anchor_w, anchor_h) = rect
@@ -3075,28 +3063,28 @@ impl ChartApp {
                     );
                     eprintln!("[ChartApp] ind_settings opened color picker for signal_bearish_color");
                 } else if item_id == "ind_set:signal_size_inc" {
-                    let cur = self.core.indicators().instance(ind_id).map(|i| i.signal_display.size).unwrap_or(0.0);
+                    let cur = self.core.indicators().signal_display_of(ind_id).map(|sd| sd.size).unwrap_or(0.0);
                     let new_size = (cur + 2.0).min(24.0);
                     self.core.indicators_mut().set_signal_size(ind_id, new_size);
                     eprintln!("[ChartApp] ind_settings signal_size = {}", new_size);
                     self.autosave_snapshot();
                     self.snapshot_indicator_settings_to_user_manager();
                 } else if item_id == "ind_set:signal_size_dec" {
-                    let cur = self.core.indicators().instance(ind_id).map(|i| i.signal_display.size).unwrap_or(0.0);
+                    let cur = self.core.indicators().signal_display_of(ind_id).map(|sd| sd.size).unwrap_or(0.0);
                     let new_size = (cur - 2.0).max(8.0);
                     self.core.indicators_mut().set_signal_size(ind_id, new_size);
                     eprintln!("[ChartApp] ind_settings signal_size = {}", new_size);
                     self.autosave_snapshot();
                     self.snapshot_indicator_settings_to_user_manager();
                 } else if item_id == "ind_set:signal_offset_inc" {
-                    let cur = self.core.indicators().instance(ind_id).map(|i| i.signal_display.offset).unwrap_or(0.0);
+                    let cur = self.core.indicators().signal_display_of(ind_id).map(|sd| sd.offset).unwrap_or(0.0);
                     let new_offset = (cur + 2.0).min(16.0);
                     self.core.indicators_mut().set_signal_offset(ind_id, new_offset);
                     eprintln!("[ChartApp] ind_settings signal_offset = {}", new_offset);
                     self.autosave_snapshot();
                     self.snapshot_indicator_settings_to_user_manager();
                 } else if item_id == "ind_set:signal_offset_dec" {
-                    let cur = self.core.indicators().instance(ind_id).map(|i| i.signal_display.offset).unwrap_or(0.0);
+                    let cur = self.core.indicators().signal_display_of(ind_id).map(|sd| sd.offset).unwrap_or(0.0);
                     let new_offset = (cur - 2.0).max(0.0);
                     self.core.indicators_mut().set_signal_offset(ind_id, new_offset);
                     eprintln!("[ChartApp] ind_settings signal_offset = {}", new_offset);

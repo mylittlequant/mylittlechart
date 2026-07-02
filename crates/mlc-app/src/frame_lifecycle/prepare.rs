@@ -570,16 +570,16 @@ impl ChartApp {
                     }
 
                     for &iid in &pre_tag_ids {
-                        if let Some(inst) = self.core.indicators().instance(iid)
+                        if let Some(summary) = self.core.indicators().summary(iid)
                         {
                             let item = mlc_app_sidebar_content::types::ObjectTreeItem::new(
-                                inst.id,
-                                &inst.name,
+                                summary.id,
+                                &summary.name,
                                 mlc_core::ObjectCategory::Indicator,
-                                &inst.type_id,
+                                &summary.type_id,
                             )
-                            .with_visible(inst.visible)
-                            .with_locked(inst.locked)
+                            .with_visible(summary.visible)
+                            .with_locked(summary.locked)
                             .with_section("Window")
                             .with_key(&active_window_sym, &active_window_exchange, &active_window_account_type)
                             // Home-stash indicators are memory-overlay only:

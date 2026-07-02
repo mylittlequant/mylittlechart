@@ -8604,9 +8604,9 @@ impl ChartApp {
     /// app-level snapshot store, keyed by the indicator's `type_id`.
     pub fn snapshot_indicator_settings_to_user_manager(&mut self) {
         if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
-            if let Some(inst) = self.core.indicators().instance(ind_id) {
+            if let Some(inst) = self.core.indicators().full_clone(ind_id) {
                 let type_id = inst.type_id.to_string();
-                if let Ok(val) = serde_json::to_value(inst) {
+                if let Ok(val) = serde_json::to_value(&inst) {
                     self.snapshot_actions.push(SnapshotAction::IndicatorSettings { type_id, data: val });
                 }
             }

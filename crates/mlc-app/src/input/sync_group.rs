@@ -422,7 +422,7 @@ impl ChartApp {
                     let clones = {
                         let im = self.core.indicators();
                         pre_tag_ids.iter().filter_map(|iid| {
-                            im.instance(*iid).cloned()
+                            im.full_clone(*iid)
                         }).collect::<Vec<_>>()
                     };
                     for src in clones {
@@ -735,7 +735,7 @@ impl ChartApp {
             if !is_retag {
                 let clones = {
                     let im = self.core.indicators();
-                    pre_tag_ids.iter().filter_map(|iid| im.instance(*iid).cloned()).collect::<Vec<_>>()
+                    pre_tag_ids.iter().filter_map(|iid| im.full_clone(*iid)).collect::<Vec<_>>()
                 };
                 for src in clones {
                     let mut config = mlc_backend::IndicatorFullConfig::from(&src);
@@ -1204,7 +1204,7 @@ impl ChartApp {
                     // whose contents are a clone of the source auto-bubble.
                     let clones = {
                         let im = self.core.indicators();
-                        pre_tag_ids.iter().filter_map(|iid| im.instance(*iid).cloned()).collect::<Vec<_>>()
+                        pre_tag_ids.iter().filter_map(|iid| im.full_clone(*iid)).collect::<Vec<_>>()
                     };
                     for src in clones {
                         let mut config = mlc_backend::IndicatorFullConfig::from(&src);

@@ -2146,9 +2146,9 @@ impl ChartApp {
                                             .and_then(|s| s.strip_suffix("_slider"))
                                             .and_then(|s| s.parse::<usize>().ok())
                                         {
-                                            self.core.indicators().instance(ind_id)
-                                                .and_then(|inst| {
-                                                    let tf_config = inst.timeframe_visibility.clone()
+                                            self.core.indicators().timeframe_visibility_of(ind_id)
+                                                .and_then(|tf_cfg| {
+                                                    let tf_config = tf_cfg
                                                         .unwrap_or_else(mlc_core::drawing::TimeframeVisibilityConfig::all);
                                                     let (cur_min, cur_max): (u32, u32) = match tf_idx {
                                                         1 => tf_config.seconds.unwrap_or((1, 59)),
