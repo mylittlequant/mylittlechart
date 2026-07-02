@@ -312,15 +312,10 @@ pub use scale_settings::{
 pub use state::{
     // Object category (full terminal version with all categories)
     ObjectCategory,
-    // Object info (legacy command support)
-    ObjectInfo,
     // Timeframe
     Timeframe,
     // Command pattern (undo/redo)
-    Command, CommandResult, StateChange, ViewportState,
-    PropertyValue, Position, CommandHistory,
-    // Timeframe visibility for object tree
-    TimeframeVisibility,
+    Command, CommandResult, StateChange, ViewportState, CommandHistory,
     // ChartId / ChartPanelId / ConnectionStatus — ID-newtypes + domain-data
     // enum consumed directly by mlc-backend / mlc-app-layout, live in
     // mlc-core::ids (re-exported here via mlc-core::state for compatibility).

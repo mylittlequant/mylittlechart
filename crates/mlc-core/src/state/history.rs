@@ -128,8 +128,8 @@ mod tests {
     fn test_push_and_undo() {
         let mut history = CommandHistory::new(10);
 
-        history.push(Command::SetVisibility {
-            object_id: 1,
+        history.push(Command::SetPrimitiveVisibility {
+            prim_id: 1,
             visible: false,
             previous: true,
         });
@@ -147,8 +147,8 @@ mod tests {
     fn test_redo() {
         let mut history = CommandHistory::new(10);
 
-        history.push(Command::SetVisibility {
-            object_id: 1,
+        history.push(Command::SetPrimitiveVisibility {
+            prim_id: 1,
             visible: false,
             previous: true,
         });
@@ -166,8 +166,8 @@ mod tests {
     fn test_new_action_clears_redo() {
         let mut history = CommandHistory::new(10);
 
-        history.push(Command::SetVisibility {
-            object_id: 1,
+        history.push(Command::SetPrimitiveVisibility {
+            prim_id: 1,
             visible: false,
             previous: true,
         });
@@ -176,8 +176,8 @@ mod tests {
         assert!(history.can_redo());
 
         // New action should clear redo
-        history.push(Command::SetVisibility {
-            object_id: 2,
+        history.push(Command::SetPrimitiveVisibility {
+            prim_id: 2,
             visible: false,
             previous: true,
         });
@@ -190,8 +190,8 @@ mod tests {
         let mut history = CommandHistory::new(3);
 
         for i in 0..5 {
-            history.push(Command::SetVisibility {
-                object_id: i,
+            history.push(Command::SetPrimitiveVisibility {
+                prim_id: i,
                 visible: false,
                 previous: true,
             });

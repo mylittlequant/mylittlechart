@@ -5,7 +5,7 @@
 //!
 //! # Integration with DrawingManager
 //!
-//! New commands work with primitive indices (as used by DrawingManager):
+//! Commands work with primitive indices (as used by DrawingManager):
 //! - `SetPrimitiveVisibility` - uses index
 //! - `SetPrimitiveLock` - uses index
 //! - `CreatePrimitive` - stores type_id, points, data for recreation
@@ -13,64 +13,19 @@
 //! - `MovePrimitive` - stores before/after points
 //! - `ViewportChange` - stores before/after viewport state
 //!
-//! Legacy commands work with object IDs (for backward compatibility):
-//! - `SetVisibility` - uses object_id
-//! - `SetLock` - uses object_id
-//!
-//! Step 4 audit finding (2026-07-02, not fixed here — out of this step's
-//! scope): the entire "legacy ID-based commands" family (`ObjectInfo`,
+//! The pre-`ChartContainer` object-ID-based command family (`ObjectInfo`,
 //! `SetVisibility`, `SetLock`, `SetGlobalLock`, `SetCategoryVisibility`,
 //! `DeleteObject`, `DeleteCategory`, `DeleteAll`, `CreateObject`,
-//! `ModifyObject`, `MoveObject`, `SetTimeframe` (the legacy variant),
-//! `PropertyValue`, `Position`) is constructed nowhere in the workspace
-//! outside this file's own `#[cfg(test)]` block (`history.rs` tests). Only
-//! the `.inverse()` / `.description()` match arms keep them "used". Dead
-//! surface from the pre-`ChartContainer` object-ID API era.
+//! `ModifyObject`, `MoveObject`, the legacy `SetTimeframe`, `PropertyValue`,
+//! `Position`, `TimeframeVisibility`) was deleted 2026-07-02 (tail wave of
+//! `docs/mlc/plans/doctrine-cutover-2026-06-27.md`) — audit confirmed zero
+//! constructors anywhere in the workspace outside test placeholders.
 
-use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 use crate::drawing::PrimitiveData;
 use crate::chart::CompareSeries;
 use crate::state::Timeframe;
 use crate::alert::AlertItem;
-
-// =============================================================================
-// TimeframeVisibility - controls on which timeframes an object is shown
-// =============================================================================
-
-/// Timeframe visibility configuration for chart objects
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
-pub enum TimeframeVisibility {
-    /// Visible on all timeframes
-    #[default]
-    All,
-    /// Visible only on specific timeframes
-    Specific(Vec<Timeframe>),
-    /// Visible on timeframes >= specified weight
-    MinimumWeight(i64),
-    /// Visible on timeframes <= specified weight
-    MaximumWeight(i64),
-    /// Visible in a range of timeframe weights
-    WeightRange { min: i64, max: i64 },
-}
-
-impl TimeframeVisibility {
-    /// Check if visible on a specific timeframe
-    pub fn is_visible_on(&self, tf: &Timeframe) -> bool {
-        match self {
-            TimeframeVisibility::All => true,
-            TimeframeVisibility::Specific(tfs) => tfs.contains(tf),
-            TimeframeVisibility::MinimumWeight(min) => tf.weight() >= *min,
-            TimeframeVisibility::MaximumWeight(max) => tf.weight() <= *max,
-            TimeframeVisibility::WeightRange { min, max } => {
-                let w = tf.weight();
-                w >= *min && w <= *max
-            }
-        }
-    }
-}
-
 
 // =============================================================================
 // ObjectCategory - full terminal version (with all categories)
@@ -128,93 +83,6 @@ impl ObjectCategory {
             ObjectCategory::Compare,
             ObjectCategory::Custom,
         ]
-    }
-}
-
-// =============================================================================
-// ObjectInfo - information about a chart object (used by legacy commands)
-// =============================================================================
-
-/// Information about a chart object (used by legacy commands for undo/redo)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ObjectInfo {
-    /// Unique object ID
-    pub id: u64,
-    /// Display name
-    pub name: String,
-    /// Object category
-    pub category: ObjectCategory,
-    /// Sub-type (e.g., "TrendLine", "SMA", "BuySignal")
-    pub object_type: String,
-    /// Current visibility state
-    pub visible: bool,
-    /// Current lock state
-    pub locked: bool,
-    /// Timeframe visibility configuration
-    pub timeframe_visibility: TimeframeVisibility,
-    /// Position in the tree (for ordering)
-    pub order: i32,
-    /// Parent object ID (for grouping)
-    pub parent_id: Option<u64>,
-    /// Creation timestamp
-    pub created_at: u64,
-    /// Last modified timestamp
-    pub modified_at: u64,
-    /// Symbol this object is associated with (if any)
-    pub symbol: Option<String>,
-    /// Custom properties
-    pub properties: HashMap<String, String>,
-    /// Position (for movable objects)
-    pub position: Option<Position>,
-}
-
-impl ObjectInfo {
-    /// Create a new object info
-    pub fn new(id: u64, name: &str, category: ObjectCategory) -> Self {
-        let now = web_time::SystemTime::now()
-            .duration_since(web_time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-
-        Self {
-            id,
-            name: name.to_string(),
-            category,
-            object_type: String::new(),
-            visible: true,
-            locked: false,
-            timeframe_visibility: TimeframeVisibility::All,
-            order: 0,
-            parent_id: None,
-            created_at: now,
-            modified_at: now,
-            symbol: None,
-            properties: HashMap::new(),
-            position: None,
-        }
-    }
-
-    /// Set object type
-    pub fn with_type(mut self, object_type: &str) -> Self {
-        self.object_type = object_type.to_string();
-        self
-    }
-
-    /// Set timeframe visibility
-    pub fn with_timeframe_visibility(mut self, visibility: TimeframeVisibility) -> Self {
-        self.timeframe_visibility = visibility;
-        self
-    }
-
-    /// Set symbol
-    pub fn with_symbol(mut self, symbol: &str) -> Self {
-        self.symbol = Some(symbol.to_string());
-        self
-    }
-
-    /// Check if object should be visible on a specific timeframe
-    pub fn is_visible_on_timeframe(&self, tf: &Timeframe) -> bool {
-        self.timeframe_visibility.is_visible_on(tf)
     }
 }
 
@@ -443,95 +311,6 @@ pub enum Command {
         new_type: String,
     },
 
-    // =========================================================================
-    // Legacy ID-based commands (for backward compatibility)
-    // =========================================================================
-
-    /// Set visibility by object ID
-    SetVisibility {
-        object_id: u64,
-        visible: bool,
-        previous: bool,
-    },
-
-    /// Set category visibility
-    SetCategoryVisibility {
-        category: ObjectCategory,
-        visible: bool,
-        previous_states: Vec<(u64, bool)>,
-    },
-
-    /// Set lock by object ID
-    SetLock {
-        object_id: u64,
-        locked: bool,
-        previous: bool,
-    },
-
-    /// Set global lock state
-    SetGlobalLock {
-        locked: bool,
-        previous: bool,
-    },
-
-    /// Change timeframe (legacy - uses state::Timeframe)
-    SetTimeframe {
-        timeframe: Timeframe,
-        previous: Timeframe,
-    },
-
-    /// Delete object by ID (legacy)
-    DeleteObject {
-        object_id: u64,
-        object_info: ObjectInfo,
-    },
-
-    /// Delete all objects in a category
-    DeleteCategory {
-        category: ObjectCategory,
-        objects: Vec<ObjectInfo>,
-    },
-
-    /// Delete all objects
-    DeleteAll {
-        objects: Vec<ObjectInfo>,
-    },
-
-    /// Create object (for undo of delete)
-    CreateObject {
-        object_info: ObjectInfo,
-    },
-
-    /// Modify object properties
-    ModifyObject {
-        object_id: u64,
-        changes: HashMap<String, PropertyValue>,
-        previous: HashMap<String, PropertyValue>,
-    },
-
-    /// Move object
-    MoveObject {
-        object_id: u64,
-        new_position: Position,
-        previous_position: Position,
-    },
-}
-
-/// Property value for generic object modifications
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum PropertyValue {
-    Bool(bool),
-    Int(i64),
-    Float(f64),
-    String(String),
-    Color(u32), // RGBA as u32
-}
-
-/// Position for move operations
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct Position {
-    pub x: f64,
-    pub y: f64,
 }
 
 /// Viewport state snapshot for undo/redo
@@ -750,87 +529,6 @@ impl Command {
                     new_type: previous_type.clone(),
                 }
             }
-
-            // Legacy commands
-            Command::SetVisibility { object_id, visible, previous } => {
-                Command::SetVisibility {
-                    object_id: *object_id,
-                    visible: *previous,
-                    previous: *visible,
-                }
-            }
-
-            Command::SetCategoryVisibility { category, visible, previous_states } => {
-                Command::SetCategoryVisibility {
-                    category: *category,
-                    visible: !visible,
-                    previous_states: previous_states.clone(),
-                }
-            }
-
-            Command::SetLock { object_id, locked, previous } => {
-                Command::SetLock {
-                    object_id: *object_id,
-                    locked: *previous,
-                    previous: *locked,
-                }
-            }
-
-            Command::SetGlobalLock { locked, previous } => {
-                Command::SetGlobalLock {
-                    locked: *previous,
-                    previous: *locked,
-                }
-            }
-
-            Command::SetTimeframe { timeframe, previous } => {
-                Command::SetTimeframe {
-                    timeframe: previous.clone(),
-                    previous: timeframe.clone(),
-                }
-            }
-
-            Command::DeleteObject { object_id: _, object_info } => {
-                Command::CreateObject {
-                    object_info: object_info.clone(),
-                }
-            }
-
-            Command::DeleteCategory { category, objects } => {
-                Command::DeleteCategory {
-                    category: *category,
-                    objects: objects.clone(),
-                }
-            }
-
-            Command::DeleteAll { objects } => {
-                Command::DeleteAll {
-                    objects: objects.clone(),
-                }
-            }
-
-            Command::CreateObject { object_info } => {
-                Command::DeleteObject {
-                    object_id: object_info.id,
-                    object_info: object_info.clone(),
-                }
-            }
-
-            Command::ModifyObject { object_id, changes, previous } => {
-                Command::ModifyObject {
-                    object_id: *object_id,
-                    changes: previous.clone(),
-                    previous: changes.clone(),
-                }
-            }
-
-            Command::MoveObject { object_id, new_position, previous_position } => {
-                Command::MoveObject {
-                    object_id: *object_id,
-                    new_position: *previous_position,
-                    previous_position: *new_position,
-                }
-            }
         }
     }
 
@@ -879,27 +577,6 @@ impl Command {
             Command::ChangeSymbol { .. } => "Change Symbol",
             Command::ChangeTimeframe { .. } => "Change Timeframe",
             Command::ChangeChartType { .. } => "Change Chart Type",
-
-            // Legacy commands
-            Command::SetVisibility { visible, .. } => {
-                if *visible { "Show" } else { "Hide" }
-            }
-            Command::SetCategoryVisibility { visible, .. } => {
-                if *visible { "Show Category" } else { "Hide Category" }
-            }
-            Command::SetLock { locked, .. } => {
-                if *locked { "Lock" } else { "Unlock" }
-            }
-            Command::SetGlobalLock { locked, .. } => {
-                if *locked { "Lock All" } else { "Unlock All" }
-            }
-            Command::SetTimeframe { .. } => "Change Timeframe",
-            Command::DeleteObject { .. } => "Delete",
-            Command::DeleteCategory { .. } => "Delete Category",
-            Command::DeleteAll { .. } => "Delete All",
-            Command::CreateObject { .. } => "Create",
-            Command::ModifyObject { .. } => "Modify",
-            Command::MoveObject { .. } => "Move",
         }
     }
 
