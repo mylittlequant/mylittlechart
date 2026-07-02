@@ -8,6 +8,21 @@
 //! `ChartToolbarState`, `ToolbarConfig`, `ChartToolbarRenderResult`, and supporting types
 //! moved from `panel_app.rs` (Phase X.4 back-edge removal) so that `state/chart_container.rs`
 //! can hold these fields without importing from `panel_app`.
+//!
+//! Step 5 (UI-proxies, `docs/mlc/plans/doctrine-cutover-2026-06-27.md`) note:
+//! `ChartToolbarState` (below, `active_tool_id`/`primed_id`/`open_dropdown_id`)
+//! IS the `DrawingToolState` proxy the Step 5 spec text describes — under
+//! its pre-existing name. Step 5's original field list ("active tool, drag
+//! state, hover target, current pane") pre-dates doctrine §1A (2026-07-01,
+//! "supersedes any earlier reading"), which explicitly assigns
+//! active-tool/drag/hover/current-pane to the backend `DrawingManager`
+//! (`core.drawings_mut().set_tool/start_drag/set_current_pane`, all live and
+//! working). `handle_toolbar_click_with_chart`/`handle_dropdown_select_with_chart`
+//! below already implement the proxy pattern exactly: local UI-flow draft
+//! fields (which button is primed/active/hovered) + dispatch through
+//! `drawing_manager: &mut impl DrawingSession` in the same call. Creating a
+//! second `DrawingToolState` struct duplicating those fields would
+//! re-introduce the state-duplication bug §1A closed. Do not create one.
 
 use std::collections::HashMap;
 
