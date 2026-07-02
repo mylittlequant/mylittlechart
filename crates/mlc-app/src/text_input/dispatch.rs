@@ -275,8 +275,8 @@ impl ChartApp {
     fn text_action_watchlist_search(&mut self, action: TextAction) {
         match action {
             TextAction::TextChanged(ref new_text) | TextAction::Commit(ref new_text) => {
-                self.watchlist_modal.search_query = new_text.clone();
-                self.watchlist_modal.scroll.reset();
+                self.standalone_panels.watchlist_modal.search_query = new_text.clone();
+                self.standalone_panels.watchlist_modal.scroll.reset();
             }
             TextAction::Cancel | TextAction::None | TextAction::RawInput(_) => {}
         }
@@ -288,7 +288,7 @@ impl ChartApp {
                 let name = name.trim().to_string();
                 if !name.is_empty() {
                     use mlc_app_layout::ui::modal_settings::WatchlistGroupNameMode;
-                    match self.wl_group_name_input.mode.clone() {
+                    match self.standalone_panels.wl_group_name_input.mode.clone() {
                         WatchlistGroupNameMode::CreateNew => {
                             let new_id = self.core.watchlists_mut().create_list(name.clone());
                             self.watchlist_ui.active_list_id = new_id;
@@ -316,11 +316,11 @@ impl ChartApp {
                         }
                     }
                 }
-                self.wl_group_name_input.close();
+                self.standalone_panels.wl_group_name_input.close();
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
             }
             TextAction::Cancel => {
-                self.wl_group_name_input.close();
+                self.standalone_panels.wl_group_name_input.close();
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
             }
             TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}

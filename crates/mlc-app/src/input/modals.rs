@@ -291,7 +291,7 @@ impl ChartApp {
     pub(super) fn handle_watchlist_modal_click(&mut self, rest: &str, x: f64, y: f64) {
         match rest {
             "close" => {
-                self.watchlist_modal.close();
+                self.standalone_panels.watchlist_modal.close();
                 eprintln!("[WatchlistModal] closed");
             }
             "modal_bg" | "header_drag" | "list_scroll" => {
@@ -306,9 +306,9 @@ impl ChartApp {
                 use mlc_app_layout::ui::modal_settings::WatchlistModalTab;
                 let tab = &rest["tab:".len()..];
                 match tab {
-                    "overview" => self.watchlist_modal.active_tab = WatchlistModalTab::Overview,
-                    "groups"   => self.watchlist_modal.active_tab = WatchlistModalTab::Groups,
-                    "settings" => self.watchlist_modal.active_tab = WatchlistModalTab::Settings,
+                    "overview" => self.standalone_panels.watchlist_modal.active_tab = WatchlistModalTab::Overview,
+                    "groups"   => self.standalone_panels.watchlist_modal.active_tab = WatchlistModalTab::Groups,
+                    "settings" => self.standalone_panels.watchlist_modal.active_tab = WatchlistModalTab::Settings,
                     _ => {}
                 }
                 eprintln!("[WatchlistModal] tab: {}", tab);
@@ -422,7 +422,7 @@ impl ChartApp {
                 }
                 self.autosave_snapshot();
                 eprintln!("[WatchlistModal] symbol selected: {} @ {}", sym_part, exchange_part);
-                self.watchlist_modal.close();
+                self.standalone_panels.watchlist_modal.close();
             }
             _ if rest.starts_with("delete:") => {
                 let key = &rest["delete:".len()..];
@@ -501,7 +501,7 @@ impl ChartApp {
                     .max()
                     .unwrap_or(0);
                 let default_name = format!("Watchlist {}", max_n + 1);
-                self.wl_group_name_input.open_create_new_with_name(&default_name);
+                self.standalone_panels.wl_group_name_input.open_create_new_with_name(&default_name);
                 {
                     let wgn_id = uzor::WidgetId::from(crate::text_input::WATCHLIST_GROUP_NAME);
                     self.input_coordinator.borrow_mut().text_fields_mut().set_text(&wgn_id, &default_name);
@@ -516,7 +516,7 @@ impl ChartApp {
                 if let Ok(id) = id_str.parse::<u64>() {
                     if let Some(list) = self.core.watchlists().find(id) {
                         let name = list.name.clone();
-                        self.wl_group_name_input.open_rename(id, &name);
+                        self.standalone_panels.wl_group_name_input.open_rename(id, &name);
                         {
                             let wgn_id = uzor::WidgetId::from(crate::text_input::WATCHLIST_GROUP_NAME);
                             self.input_coordinator.borrow_mut().text_fields_mut().set_text(&wgn_id, &name);
@@ -2046,12 +2046,12 @@ impl ChartApp {
                 }
                 // Watchlist group name input L2 modal — close only this layer.
                 "wl_group_name_input" => {
-                    self.wl_group_name_input.close();
+                    self.standalone_panels.wl_group_name_input.close();
                     eprintln!("[ChartApp] close_topmost_modal_layer: wl_group_name_input closed");
                 }
                 // Watchlist modal — close when user clicks outside it.
                 "watchlist_modal" => {
-                    self.watchlist_modal.close();
+                    self.standalone_panels.watchlist_modal.close();
                     eprintln!("[ChartApp] close_topmost_modal_layer: watchlist_modal closed");
                 }
                 _ => {

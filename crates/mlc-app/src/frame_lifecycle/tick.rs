@@ -178,9 +178,11 @@ impl ChartApp {
                 }
                 BubbleEvent::OrderbookDeltaForMultiDom { exchange_id, symbol, bids, asks, .. } => {
                     let ex_label = exchange_id.as_str().to_string();
-                    let sym_ref = symbol.as_str();
-                    for state in self.panels_store.multi_dom.values_mut() {
-                        if state.symbol != sym_ref { continue; }
+                    let target_ids: Vec<mlc_core::state::PanelId> = crate::standalone_panel::StandalonePanelRegistry::multi_dom_ids_for_symbol(
+                        &self.panels_store.multi_dom, symbol.as_str(),
+                    ).collect();
+                    for pid in target_ids {
+                        let Some(state) = self.panels_store.multi_dom.get_mut(&pid) else { continue };
                         if let Some(idx) = state.exchange_idx(&ex_label) {
                             let bids_v: Vec<(f64, f64)> = bids.iter().map(|(p, q)| (*p, *q)).collect();
                             let asks_v: Vec<(f64, f64)> = asks.iter().map(|(p, q)| (*p, *q)).collect();

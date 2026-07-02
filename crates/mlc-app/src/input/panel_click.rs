@@ -118,7 +118,7 @@ impl ChartApp {
         // === Watchlist panel header buttons ===
 
         if widget_id == "watchlist_open_modal" {
-            self.watchlist_modal.open();
+            self.standalone_panels.watchlist_modal.open();
             {
                 let wl_id = WidgetId::from(crate::text_input::WATCHLIST_SEARCH);
                 self.input_coordinator.borrow_mut().text_fields_mut().clear(&wl_id);
@@ -3664,7 +3664,7 @@ impl ChartApp {
                     let name = self.input_coordinator.borrow().text_fields().text(&wl_gn_id).trim().to_string();
                     if !name.is_empty() {
                         use mlc_app_layout::ui::modal_settings::WatchlistGroupNameMode;
-                        match self.wl_group_name_input.mode.clone() {
+                        match self.standalone_panels.wl_group_name_input.mode.clone() {
                             WatchlistGroupNameMode::CreateNew => {
                                 let new_id = self.core.watchlists_mut().create_list(name.clone());
                                 self.watchlist_ui.active_list_id = new_id;
@@ -3692,11 +3692,11 @@ impl ChartApp {
                             }
                         }
                     }
-                    self.wl_group_name_input.close();
+                    self.standalone_panels.wl_group_name_input.close();
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 }
                 "cancel" | "close" => {
-                    self.wl_group_name_input.close();
+                    self.standalone_panels.wl_group_name_input.close();
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     eprintln!("[WatchlistGroupName] cancelled");
                 }
@@ -3719,8 +3719,8 @@ impl ChartApp {
         if let Some(rest) = widget_id.strip_prefix("wl_modal:") {
             // Clear any leftover drag state so a click (< 5px movement) can
             // always dispatch through this handler properly.
-            self.watchlist_modal.drag_reorder = None;
-            self.watchlist_modal.drag_reorder_pending = None;
+            self.standalone_panels.watchlist_modal.drag_reorder = None;
+            self.standalone_panels.watchlist_modal.drag_reorder_pending = None;
             self.handle_watchlist_modal_click(rest, x, y);
             return;
         }

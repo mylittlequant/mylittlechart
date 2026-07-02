@@ -34,6 +34,7 @@ pub mod panel_grid;
 pub mod panels_render;
 pub mod panels_store;
 pub mod scroll_dispatch;
+pub mod standalone_panel;
 pub mod tag_ui;
 pub mod text_input;
 pub mod ui_container;
@@ -119,7 +120,7 @@ use mlc_app_layout::layout::ModalSearchResult;
 use mlc_app_layout::layout::render_ui::IndicatorOverlayInfo;
 use mlc_core::indicator_source::{IndicatorSource, AlertRenderData, AlertRenderStatus};
 use mlc_core::state::modal_state::{ModalState, IndicatorCatalogItem};
-use mlc_app_layout::ui::modal_settings::{ChartScreenArea, WatchlistModalState, WatchlistGroupNameInputState};
+use mlc_app_layout::ui::modal_settings::ChartScreenArea;
 use mlc_app_layout::layout::modals::watchlist_modal::{render_watchlist_modal, WatchlistEntry, WatchlistGroupInfo, render_wl_group_name_input, WlGroupNameInputResult};
 use mlc_app_layout::layout::modals::clock_popup::render_clock_popup;
 use mlc_backend_data_bridge::{DataBridge, LiveDataProvider};
@@ -422,18 +423,16 @@ pub struct ChartApp {
     /// clicks on a primitive or on empty chart background.
     pub selected_indicator_id: Option<u64>,
 
-    /// Expanded watchlist overlay modal state.
-    ///
-    /// Open/closed by the watchlist sidebar header button or a keyboard shortcut.
-    /// Displays all watchlist symbols in a searchable, scrollable list with
-    /// price data and delete buttons.
-    pub watchlist_modal: WatchlistModalState,
+    /// Standalone outer-dock panel registry (Step 10 doctrine cutover) —
+    /// owns the watchlist overlay modal singletons. See
+    /// `standalone_panel::StandalonePanelRegistry` module docs for why the
+    /// tag-following multi-instance case (Dom/L2Tape/Footprint/...) is NOT
+    /// here — it's already correctly owned by
+    /// `mlc_backend::tag::TagManager::panel_members`.
+    pub standalone_panels: standalone_panel::StandalonePanelRegistry,
 
     /// Render result from the last watchlist modal frame (hit zones for click/scroll dispatch).
     pub(crate) last_watchlist_modal_result: Option<mlc_app_layout::layout::modals::watchlist_modal::WatchlistModalResult>,
-
-    /// State for the watchlist group name input modal (create new / rename).
-    pub wl_group_name_input: WatchlistGroupNameInputState,
 
     /// Render result from the last watchlist group name input modal frame (hit zones for drag dispatch).
     pub(crate) last_wl_group_name_result: Option<WlGroupNameInputResult>,
@@ -1416,9 +1415,8 @@ impl ChartApp {
             split_without_group: false,
             right_toolbar_left_x: 0.0,
             selected_indicator_id: None,
-            watchlist_modal: WatchlistModalState::new(),
+            standalone_panels: standalone_panel::StandalonePanelRegistry::new(),
             last_watchlist_modal_result: None,
-            wl_group_name_input: WatchlistGroupNameInputState::new(),
             last_wl_group_name_result: None,
             needs_initial_viewport_fit: false,
             core,
@@ -1761,9 +1759,8 @@ impl ChartApp {
             split_without_group: false,
             right_toolbar_left_x: 0.0,
             selected_indicator_id: None,
-            watchlist_modal: WatchlistModalState::new(),
+            standalone_panels: standalone_panel::StandalonePanelRegistry::new(),
             last_watchlist_modal_result: None,
-            wl_group_name_input: WatchlistGroupNameInputState::new(),
             last_wl_group_name_result: None,
             needs_initial_viewport_fit: false,
             core,
@@ -2281,9 +2278,8 @@ impl ChartApp {
             split_without_group: false,
             right_toolbar_left_x: 0.0,
             selected_indicator_id: None,
-            watchlist_modal: WatchlistModalState::new(),
+            standalone_panels: standalone_panel::StandalonePanelRegistry::new(),
             last_watchlist_modal_result: None,
-            wl_group_name_input: WatchlistGroupNameInputState::new(),
             last_wl_group_name_result: None,
             needs_initial_viewport_fit: false,
             core,
@@ -6330,7 +6326,7 @@ impl ChartApp {
 
         // 8b. Watchlist modal
         let last_watchlist_modal_result: Option<mlc_app_layout::layout::modals::watchlist_modal::WatchlistModalResult> =
-            if self.watchlist_modal.is_open() {
+            if self.standalone_panels.watchlist_modal.is_open() {
                 let active_list_id = self.watchlist_ui.active_list_id;
                 let wl_guard = self.core.watchlists();
                 let color_flags: Vec<String> = self.sidebar_state.watchlist_items.iter()
@@ -6377,7 +6373,7 @@ impl ChartApp {
                     ctx,
                     modal_right_edge,
                     h,
-                    &self.watchlist_modal,
+                    &self.standalone_panels.watchlist_modal,
                     &entries,
                     &groups_info,
                     &frame_theme,
@@ -6391,12 +6387,12 @@ impl ChartApp {
 
         // 8c. Watchlist group name input modal
         let last_wl_group_name_result: Option<WlGroupNameInputResult> =
-            if self.wl_group_name_input.is_open() {
+            if self.standalone_panels.wl_group_name_input.is_open() {
                 Some(render_wl_group_name_input(
                     ctx,
                     modal_right_edge,
                     h,
-                    &self.wl_group_name_input,
+                    &self.standalone_panels.wl_group_name_input,
                     &frame_theme,
                     &toolbar_theme,
                     current_time_ms,

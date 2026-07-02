@@ -488,8 +488,8 @@ impl ChartApp {
         // Suppress context menu when any modal is open — right-clicks inside
         // modals must not bleed through to the chart background.
         if self.modal_state.is_open()
-            || self.watchlist_modal.is_open()
-            || self.wl_group_name_input.is_open()
+            || self.standalone_panels.watchlist_modal.is_open()
+            || self.standalone_panels.wl_group_name_input.is_open()
             || self.panel_app.primitive_settings_state.is_open()
             || self.panel_app.indicator_settings_state.is_open()
             || self.panel_app.alert_settings_state.is_open()
@@ -1497,13 +1497,13 @@ impl ChartApp {
                     }
                     "wl_group_name" => {
                         if let Some(ref gni) = self.last_wl_group_name_result {
-                            self.wl_group_name_input.start_drag(x, y, gni.modal_rect.x, gni.modal_rect.y);
+                            self.standalone_panels.wl_group_name_input.start_drag(x, y, gni.modal_rect.x, gni.modal_rect.y);
                             true
                         } else { false }
                     }
                     "watchlist_modal" => {
                         if let Some(ref wl) = self.last_watchlist_modal_result {
-                            self.watchlist_modal.start_drag(x, y, wl.modal_rect.x, wl.modal_rect.y);
+                            self.standalone_panels.watchlist_modal.start_drag(x, y, wl.modal_rect.x, wl.modal_rect.y);
                             true
                         } else { false }
                     }
@@ -1595,7 +1595,7 @@ impl ChartApp {
                     self.modal_state.scroll.start_drag(y);
                     true
                 } else if prefix == "watchlist_modal" {
-                    self.watchlist_modal.scroll.start_drag(y);
+                    self.standalone_panels.watchlist_modal.scroll.start_drag(y);
                     true
                 } else if prefix == "chart_browser" {
                     self.panel_app.chart_browser.scroll.start_drag(y);
@@ -1886,7 +1886,7 @@ impl ChartApp {
         }
 
         // Watchlist group name input — text select drag on the input field (TextFieldStore).
-        if self.wl_group_name_input.is_open() {
+        if self.standalone_panels.wl_group_name_input.is_open() {
             if let Some(ref gni) = self.last_wl_group_name_result {
                 if gni.input_rect.contains(x, y) {
                     self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
@@ -1896,9 +1896,9 @@ impl ChartApp {
         }
 
         // Watchlist modal — text select drag on the search input field (Overview tab only, TextFieldStore).
-        if self.watchlist_modal.is_open() {
+        if self.standalone_panels.watchlist_modal.is_open() {
             use mlc_app_layout::ui::modal_settings::WatchlistModalTab;
-            if self.watchlist_modal.active_tab == WatchlistModalTab::Overview {
+            if self.standalone_panels.watchlist_modal.active_tab == WatchlistModalTab::Overview {
                 if let Some(ref wl) = self.last_watchlist_modal_result {
                     if wl.search_input_rect.contains(x, y) {
                         self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
@@ -1909,7 +1909,7 @@ impl ChartApp {
         }
 
         // Watchlist modal item row drag — begin drag-to-reorder.
-        if self.watchlist_modal.is_open() {
+        if self.standalone_panels.watchlist_modal.is_open() {
             if let Some(ref wl) = self.last_watchlist_modal_result {
                 // Watchlist modal item row drag — begin drag-to-reorder.
                 // Guard: if the pointer is over a delete button, don't start drag — let it be a click.
@@ -1922,7 +1922,7 @@ impl ChartApp {
                 let over_delete = over_delete_hovered || over_delete_rect;
                 // Guard: if the group name input modal is open on top of the watchlist
                 // modal, don't start row drag — the click belongs to that modal.
-                if !self.wl_group_name_input.is_open() && !over_delete && wl.list_viewport_rect.contains(x, y) {
+                if !self.standalone_panels.wl_group_name_input.is_open() && !over_delete && wl.list_viewport_rect.contains(x, y) {
                     // Find the row index (in the filtered/displayed list) that was
                     // clicked.  We match item_rects against (x, y) directly.
                     let mut found_idx: Option<usize> = None;
@@ -1936,7 +1936,7 @@ impl ChartApp {
                         // Store as pending — only promote to actual drag_reorder
                         // in on_mouse_move once the pointer moves >= 5 px.
                         // This ensures short clicks reach on_click properly.
-                        self.watchlist_modal.drag_reorder_pending = Some((idx, x, y));
+                        self.standalone_panels.watchlist_modal.drag_reorder_pending = Some((idx, x, y));
                         eprintln!("[WatchlistModal] drag-reorder pending: row {}", idx);
                         // Do NOT return early — let the drag-start flow continue
                         // so other drag handlers (e.g. modal header) get checked.
@@ -2318,13 +2318,13 @@ impl ChartApp {
         }
 
         // Watchlist modal scrollbar track click (handle drag via InputCoordinator)
-        if self.watchlist_modal.is_open() {
+        if self.standalone_panels.watchlist_modal.is_open() {
             if let Some(ref wmr) = self.last_watchlist_modal_result {
                 if let Some(ref track_rect) = wmr.scrollbar_track_rect {
                     let hit = x >= track_rect.x && x <= track_rect.x + track_rect.width
                         && y >= track_rect.y && y <= track_rect.y + track_rect.height;
                     if hit {
-                        self.watchlist_modal.scroll.handle_track_click(
+                        self.standalone_panels.watchlist_modal.scroll.handle_track_click(
                             y, track_rect.y, track_rect.height,
                             wmr.total_content_height,
                             wmr.list_viewport_rect.height,
@@ -2839,31 +2839,31 @@ impl ChartApp {
         }
 
         // Watchlist modal drag-to-reorder: promote pending drag once mouse moves >= 5px.
-        if let Some((pending_idx, start_x, start_y)) = self.watchlist_modal.drag_reorder_pending {
+        if let Some((pending_idx, start_x, start_y)) = self.standalone_panels.watchlist_modal.drag_reorder_pending {
             let dx = x - start_x;
             let dy = y - start_y;
             if dx * dx + dy * dy >= 25.0 {
                 // Promote: clear pending, begin actual drag.
-                self.watchlist_modal.drag_reorder_pending = None;
-                self.watchlist_modal.drag_reorder = Some((pending_idx, y));
-                self.watchlist_modal.drop_index = Some(pending_idx);
+                self.standalone_panels.watchlist_modal.drag_reorder_pending = None;
+                self.standalone_panels.watchlist_modal.drag_reorder = Some((pending_idx, y));
+                self.standalone_panels.watchlist_modal.drop_index = Some(pending_idx);
                 self.ui_drag_active = true;
                 eprintln!("[WatchlistModal] drag-reorder promoted: row {}", pending_idx);
             }
         }
 
         // Watchlist modal drag-to-reorder: update drop index from mouse Y.
-        if self.watchlist_modal.drag_reorder.is_some() {
+        if self.standalone_panels.watchlist_modal.drag_reorder.is_some() {
             // Update Y coordinate in drag state.
-            if let Some((drag_idx, _)) = self.watchlist_modal.drag_reorder {
-                self.watchlist_modal.drag_reorder = Some((drag_idx, y));
+            if let Some((drag_idx, _)) = self.standalone_panels.watchlist_modal.drag_reorder {
+                self.standalone_panels.watchlist_modal.drag_reorder = Some((drag_idx, y));
             }
             // Compute drop index from Y position using the modal list geometry.
             if let Some(ref wl) = self.last_watchlist_modal_result {
                 // Modal list layout constants (must match render_overview_tab).
                 let item_h = 28.0_f64;
                 let list_top = wl.list_viewport_rect.y;
-                let scroll = self.watchlist_modal.scroll.offset;
+                let scroll = self.standalone_panels.watchlist_modal.scroll.offset;
                 let relative_y = y - list_top + scroll;
                 let row_count = wl.item_rects.len();
                 let drop = if relative_y < 0.0 {
@@ -2871,7 +2871,7 @@ impl ChartApp {
                 } else {
                     ((relative_y / item_h).round() as usize).min(row_count)
                 };
-                self.watchlist_modal.drop_index = Some(drop);
+                self.standalone_panels.watchlist_modal.drop_index = Some(drop);
             }
             return;
         }
@@ -3085,8 +3085,8 @@ impl ChartApp {
             }
             return;
         }
-        if self.watchlist_modal.is_dragging {
-            self.watchlist_modal.update_drag(x, y);
+        if self.standalone_panels.watchlist_modal.is_dragging {
+            self.standalone_panels.watchlist_modal.update_drag(x, y);
             return;
         }
         // Watchlist / wl_group_name / preset_name / search overlay drag move
@@ -3101,8 +3101,8 @@ impl ChartApp {
         // text_select_dragging for all 4 settings modals is now handled by the
         // TextFieldStore drag_active() check above (Wave 2b migration).
         // The old per-modal blocks have been removed.
-        if self.wl_group_name_input.is_dragging {
-            self.wl_group_name_input.update_drag(x, y);
+        if self.standalone_panels.wl_group_name_input.is_dragging {
+            self.standalone_panels.wl_group_name_input.update_drag(x, y);
             return;
         }
 
@@ -3345,10 +3345,10 @@ impl ChartApp {
         }
 
         // === Watchlist modal scrollbar drag move ===
-        if self.watchlist_modal.scroll.is_dragging {
+        if self.standalone_panels.watchlist_modal.scroll.is_dragging {
             if let Some(ref wmr) = self.last_watchlist_modal_result {
                 if let Some(ref track_rect) = wmr.scrollbar_track_rect {
-                    self.watchlist_modal.scroll.handle_drag(
+                    self.standalone_panels.watchlist_modal.scroll.handle_drag(
                         y,
                         track_rect.height,
                         wmr.total_content_height,
@@ -3626,11 +3626,11 @@ impl ChartApp {
         }
 
         // End watchlist modal drag-to-reorder: clear any pending drag that never promoted.
-        self.watchlist_modal.drag_reorder_pending = None;
+        self.standalone_panels.watchlist_modal.drag_reorder_pending = None;
 
         // End watchlist modal drag-to-reorder: apply the reorder then clear drag state.
-        if let Some((from_idx, _)) = self.watchlist_modal.drag_reorder.take() {
-            let to_idx = self.watchlist_modal.drop_index.take().unwrap_or(from_idx);
+        if let Some((from_idx, _)) = self.standalone_panels.watchlist_modal.drag_reorder.take() {
+            let to_idx = self.standalone_panels.watchlist_modal.drop_index.take().unwrap_or(from_idx);
             if from_idx != to_idx {
                 let active_list_id = self.watchlist_ui.active_list_id;
                 // Clamp to the ungrouped length to avoid panics.
@@ -3802,16 +3802,16 @@ impl ChartApp {
             eprintln!("[ChartApp] chart_browser modal drag ended");
             return;
         }
-        if self.watchlist_modal.is_dragging {
-            self.watchlist_modal.end_drag();
+        if self.standalone_panels.watchlist_modal.is_dragging {
+            self.standalone_panels.watchlist_modal.end_drag();
             eprintln!("[ChartApp] watchlist_modal drag ended");
             return;
         }
         // text_select_dragging for all 4 settings modals is handled by
         // text_fields_mut().on_drag_end() which is called unconditionally at line ~3632.
         // The old per-modal blocks have been removed (Wave 2b migration).
-        if self.wl_group_name_input.is_dragging {
-            self.wl_group_name_input.end_drag();
+        if self.standalone_panels.wl_group_name_input.is_dragging {
+            self.standalone_panels.wl_group_name_input.end_drag();
             eprintln!("[ChartApp] wl_group_name_input modal drag ended");
             return;
         }
@@ -3982,8 +3982,8 @@ impl ChartApp {
         }
 
         // === Watchlist modal scrollbar drag end ===
-        if self.watchlist_modal.scroll.is_dragging {
-            self.watchlist_modal.scroll.end_drag();
+        if self.standalone_panels.watchlist_modal.scroll.is_dragging {
+            self.standalone_panels.watchlist_modal.scroll.end_drag();
             return;
         }
 
@@ -4143,7 +4143,7 @@ impl ChartApp {
         self.panel_app.toolbar_state.hovered_dropdown_item = None;
         self.panel_app.toolbar_state.hovered_inline_id = None;
         self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
-        self.watchlist_modal.hovered_widget = None;
+        self.standalone_panels.watchlist_modal.hovered_widget = None;
         self.panel_app.clock_popup_state.hovered_item = None;
         // Reset agent/slot hover highlights each frame; re-set below if still hovering.
         self.sidebar_state.hovered_agent_leaf = None;
@@ -4207,7 +4207,7 @@ impl ChartApp {
                     self.panel_app.clock_popup_state.hovered_item = Some(item.to_string());
                 }
             } else if id_str.starts_with("wl_modal:") || id_str.starts_with("wl_group_name:") {
-                self.watchlist_modal.hovered_widget = Some(id_str.to_string());
+                self.standalone_panels.watchlist_modal.hovered_widget = Some(id_str.to_string());
             } else if let Some(rest) = id_str.strip_prefix("ind_search:") {
                 // Indicator search sets view — "set_create" or "set:{id}"
                 self.modal_state.hovered_item_id = Some(rest.to_string());
@@ -4278,7 +4278,7 @@ impl ChartApp {
         self.panel_app.indicator_settings_state.hovered_footer_button = None;
         self.panel_app.user_settings_state.hovered_item_id = None;
         self.panel_app.chart_browser.hovered_preset_id = None;
-        self.watchlist_modal.hovered_item_id = None;
+        self.standalone_panels.watchlist_modal.hovered_item_id = None;
         self.panel_app.overlay_settings_state.hovered_item_id = None;
 
         {
@@ -4330,7 +4330,7 @@ impl ChartApp {
                 } else if let Some(local) = id.strip_prefix("chart_browser:delete:") {
                     self.panel_app.chart_browser.hovered_preset_id = Some(local.to_string());
                 } else if let Some(local) = id.strip_prefix("wl_modal:item:") {
-                    self.watchlist_modal.hovered_item_id = Some(local.to_string());
+                    self.standalone_panels.watchlist_modal.hovered_item_id = Some(local.to_string());
                 } else if id.starts_with("tags_tabs:") || id.starts_with("overlay_settings:") {
                     self.panel_app.overlay_settings_state.hovered_item_id = Some(id_str.clone());
                 }
@@ -4389,7 +4389,7 @@ impl ChartApp {
 
         // When a watchlist modal or group name input is open, suppress the crosshair
         // over the entire screen — modals should capture all interaction.
-        if self.watchlist_modal.is_open() || self.wl_group_name_input.is_open() {
+        if self.standalone_panels.watchlist_modal.is_open() || self.standalone_panels.wl_group_name_input.is_open() {
             if self.panel_app.panel_grid.is_split() {
                 self.hide_all_split_crosshairs();
             } else {
@@ -4928,7 +4928,7 @@ impl ChartApp {
 
         // When a watchlist modal or group name input is open, the entire screen
         // should show the default cursor — modals capture all interaction.
-        if self.watchlist_modal.is_open() || self.wl_group_name_input.is_open() {
+        if self.standalone_panels.watchlist_modal.is_open() || self.standalone_panels.wl_group_name_input.is_open() {
             return CursorStyle::Default;
         }
 
@@ -5164,7 +5164,7 @@ impl ChartApp {
                         }
                         "watchlist:list_viewport" => {
                             if let Some(ref wl) = self.last_watchlist_modal_result {
-                                self.watchlist_modal.scroll.handle_wheel(
+                                self.standalone_panels.watchlist_modal.scroll.handle_wheel(
                                     -dy,
                                     wl.total_content_height,
                                     wl.list_viewport_rect.height,
@@ -5819,8 +5819,8 @@ impl ChartApp {
         }
 
         // If watchlist group name input is open, close it.
-        if self.wl_group_name_input.is_open() {
-            self.wl_group_name_input.close();
+        if self.standalone_panels.wl_group_name_input.is_open() {
+            self.standalone_panels.wl_group_name_input.close();
             eprintln!("[ChartApp] wl_group_name_input cancelled");
             return;
         }
