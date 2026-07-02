@@ -46,7 +46,7 @@ impl BubbleStore {
     /// members live on the paired `Tag` — caller pairs one via
     /// `core.tags_mut().insert(Tag::new(bid, color))` immediately after
     /// (Step 6 doctrine cutover).
-    pub fn create_group(
+    pub fn create_bubble(
         &mut self,
         symbol: String,
         timeframe: Timeframe,
@@ -89,8 +89,8 @@ impl BubbleStore {
 
     /// Create an invisible default bubble (no color tag in UI). Caller pairs
     /// a `Tag::new_auto(bid, color)` immediately after — see
-    /// [`Self::create_group`].
-    pub fn create_group_auto(
+    /// [`Self::create_bubble`].
+    pub fn create_bubble_auto(
         &mut self,
         symbol: String,
         timeframe: Timeframe,
@@ -134,7 +134,7 @@ impl BubbleStore {
     /// Remove a data bubble. Caller is responsible for unmapping its members
     /// via `core.tags_mut().remove(id)` (member routing lives on
     /// `TagManager`, not here).
-    pub fn remove_group(&mut self, id: BubbleId) {
+    pub fn remove_bubble(&mut self, id: BubbleId) {
         self.bubbles.remove(&id);
     }
 
@@ -315,7 +315,7 @@ impl BubbleStore {
     ///
     /// Private — the only caller is [`Self::restore_from_snapshots`]. External
     /// callers use that instead (Step 3.2, doctrine-cutover-2026-06-27.md §1A).
-    fn insert_group_raw(&mut self, bubble: DataBubble) {
+    fn insert_bubble_raw(&mut self, bubble: DataBubble) {
         let bubble_id = bubble.id;
         self.bubbles.insert(bubble_id, bubble);
     }
@@ -341,13 +341,13 @@ impl BubbleStore {
     ) -> Vec<BubbleId> {
         let mut restored_ids = Vec::with_capacity(snaps.len());
         for snap in snaps {
-            let mut group = DataBubble::from_snapshot(snap);
+            let mut bubble = DataBubble::from_snapshot(snap);
             if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
                 for ps in &snap.primitives {
                     if let Some(mut prim) = reg.from_json(&ps.type_id, &ps.json) {
                         // Backfill symbol/exchange/account_type for primitives
                         // saved before these fields existed (serde(default)
-                        // gives empty string). Use the group's shared
+                        // gives empty string). Use the bubble's shared
                         // instrument as source of truth.
                         if prim.data().symbol.is_empty() && !snap.symbol.is_empty() {
                             prim.data_mut().symbol = snap.symbol.clone();
@@ -358,13 +358,13 @@ impl BubbleStore {
                         if prim.data().account_type.is_empty() && !snap.account_type.is_empty() {
                             prim.data_mut().account_type = snap.account_type.clone();
                         }
-                        group.primitives.push(prim);
+                        bubble.primitives.push(prim);
                     }
                 }
             }
-            let gid = group.id;
-            self.insert_group_raw(group);
-            restored_ids.push(gid);
+            let bid = bubble.id;
+            self.insert_bubble_raw(bubble);
+            restored_ids.push(bid);
         }
         restored_ids
     }

@@ -325,7 +325,7 @@ impl ChartApp {
                     auto_bid, chart_id, sym, exch_join, at_join, tf
                 );
                 let new_gid = self.create_tagged_bubble(color, sym.clone(), tf.clone());
-                // create_group only takes (color, symbol, timeframe) — fill exchange + account_type explicitly.
+                // create_bubble only takes (color, symbol, timeframe) — fill exchange + account_type explicitly.
                 self.core.bubbles_mut().set_bubble_instrument(new_gid, exch_join.clone(), at_join.clone());
                 sglog!(
                     "[sync_join_color_group] new gid={:?} seeded sym='{}' exch='{}' at='{}'",
@@ -531,7 +531,7 @@ impl ChartApp {
                 // home auto_bubble so the chart paints immediately under the
                 // group view.  Without this seed the chart's
                 // `current_tag_id = group_id` points at an empty
-                // `bubble.bars` (create_group initialises it empty), and the
+                // `bubble.bars` (create_bubble initialises it empty), and the
                 // chart sits blank until the next live BarsLoaded happens to
                 // run against `bubbles_for_instrument` — which only fires when
                 // the REST sweep is re-issued, not on tag.  Owner repro
@@ -989,7 +989,7 @@ impl ChartApp {
                     split_untagged_sym.clone(),
                     split_untagged_tf.clone(),
                 );
-                // Complete the identity record (create_group_auto only takes
+                // Complete the identity record (create_bubble_auto only takes
                 // symbol + timeframe; exchange + account_type stay blank
                 // unless filled here).  Without these the post-untag retag
                 // flow seeds the new color group with an empty exchange key,
@@ -1088,7 +1088,7 @@ impl ChartApp {
                 self.create_tagged_bubble(color, first_leaf_symbol, first_leaf_timeframe)
             };
 
-            // create_group leaves exchange/account_type empty — complete the
+            // create_bubble leaves exchange/account_type empty — complete the
             // identity record from the source instrument for groups born here.
             // (Existing user-tagged groups keep their own identity untouched.)
             // Scoped block ensures the write guard drops before the next read
@@ -1102,7 +1102,7 @@ impl ChartApp {
                     // bubble snapshot taken at the top of do_split.  Without
                     // this, every new sibling chart renders blank until the
                     // next live tick because `bars_for_chart` reads
-                    // `bubble.bars` which `create_group` initialises empty.
+                    // `bubble.bars` which `create_bubble` initialises empty.
                     if !source_bars.is_empty() && bubble.bars.is_empty() {
                         bubble.bars = source_bars.clone();
                     }

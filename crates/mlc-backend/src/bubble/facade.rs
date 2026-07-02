@@ -313,16 +313,16 @@ impl<'a> BubblesMut<'a> {
 
     // ---- Registry — lifecycle ----------------------------------------------
 
-    pub fn create_group(&mut self, symbol: String, timeframe: Timeframe) -> BubbleId {
-        self.store.create_group(symbol, timeframe)
+    pub fn create_bubble(&mut self, symbol: String, timeframe: Timeframe) -> BubbleId {
+        self.store.create_bubble(symbol, timeframe)
     }
 
-    pub fn create_group_auto(&mut self, symbol: String, timeframe: Timeframe) -> BubbleId {
-        self.store.create_group_auto(symbol, timeframe)
+    pub fn create_bubble_auto(&mut self, symbol: String, timeframe: Timeframe) -> BubbleId {
+        self.store.create_bubble_auto(symbol, timeframe)
     }
 
-    pub fn remove_group(&mut self, bid: BubbleId) {
-        self.store.remove_group(bid)
+    pub fn remove_bubble(&mut self, bid: BubbleId) {
+        self.store.remove_bubble(bid)
     }
 
     // ---- Writes -------------------------------------------------------------

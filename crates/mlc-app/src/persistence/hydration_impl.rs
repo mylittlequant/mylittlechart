@@ -559,7 +559,7 @@ impl ChartApp {
                     let rebind_us = 0u128;
 
                     // Bump BubbleId counter past any restored bubble IDs so
-                    // future create_group / create_group_auto calls never collide.
+                    // future create_bubble / create_bubble_auto calls never collide.
                     let _t_seed_ids = web_time::Instant::now();
                     for sg_snap in &preset.bubbles {
                         mlc_core::ids::BubbleId::bump_past(sg_snap.id);

@@ -189,7 +189,7 @@ mod json_compat_tests {
     fn round_trips_current_split_format() {
         let bid = BubbleId(7);
         let mut bubbles = BubbleStore::new();
-        let created_bid = bubbles.create_group("ETHUSDT".to_string(), mlc_core::state::Timeframe::m1());
+        let created_bid = bubbles.create_bubble("ETHUSDT".to_string(), mlc_core::state::Timeframe::m1());
         // Re-key to a known id for the assertions below.
         mlc_core::ids::BubbleId::bump_past(bid.0);
 

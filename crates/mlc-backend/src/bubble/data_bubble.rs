@@ -9,7 +9,8 @@ use mlc_core::instrument::InstrumentAddress;
 use mlc_core::state::CommandHistory;
 use mlc_core::state::Timeframe;
 
-/// A group of chart windows and trading panels that synchronize shared state.
+/// A mathematical data space: bars, primitives, indicator configs, alerts,
+/// and derived series for one instrument+timeframe.
 ///
 /// `color`, `auto_created`, `members`, `member_overrides` live on the paired
 /// `Tag` (`mlc_backend::tag::TagManager`), not here — bubble grouping /

@@ -1089,7 +1089,7 @@ impl ChartApp {
         let bid = self
             .core
             .bubbles_mut()
-            .create_group(symbol, timeframe);
+            .create_bubble(symbol, timeframe);
         self.core.tags_mut().insert(mlc_core::tag::Tag::new(bid, color));
         bid
     }
@@ -1104,14 +1104,14 @@ impl ChartApp {
         let bid = self
             .core
             .bubbles_mut()
-            .create_group_auto(symbol, timeframe);
+            .create_bubble_auto(symbol, timeframe);
         self.core.tags_mut().insert(mlc_core::tag::Tag::new_auto(bid, color));
         bid
     }
 
     /// Remove a bubble + its paired tag.
     pub fn remove_tag(&mut self, bid: mlc_core::ids::BubbleId) {
-        self.core.bubbles_mut().remove_group(bid);
+        self.core.bubbles_mut().remove_bubble(bid);
         // §6.7 cross-manager gap: indicator instances live in IndicatorManager,
         // not on DataBubble, so removing the bubble doesn't automatically drop
         // its indicators the way alerts/primitives (bubble data) do.

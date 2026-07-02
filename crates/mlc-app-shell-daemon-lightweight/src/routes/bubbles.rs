@@ -148,7 +148,7 @@ async fn create_bubble(
     let ms = timeframe_ms(&body.timeframe);
     let tf = Timeframe::new(&body.timeframe, ms as i64);
     let color = body.color;
-    let bid = s.core.bubbles_mut().create_group_auto(body.symbol, tf);
+    let bid = s.core.bubbles_mut().create_bubble_auto(body.symbol, tf);
     // Set exchange + account_type on the newly created bubble. This is a bare
     // bubble creation with no chart member attached yet, hence the bid-keyed
     // `set_bubble_instrument` rather than the member-keyed `set_instrument`.
@@ -197,7 +197,7 @@ async fn delete_bubble(
     if !s.core.bubbles().exists(bid_typed) {
         return StatusCode::NOT_FOUND;
     }
-    s.core.bubbles_mut().remove_group(bid_typed);
+    s.core.bubbles_mut().remove_bubble(bid_typed);
     s.core.tags_mut().remove(bid_typed);
     // §6.7 cross-manager gap: indicator instances live in IndicatorManager,
     // not on DataBubble, so removing the bubble doesn't automatically drop
