@@ -1037,7 +1037,7 @@ impl ChartApp {
         if !new_leaves.is_empty() {
             // Determine whether the pre-existing group is auto_created.
             let pre_split_is_auto = pre_split_group_id
-                .and_then(|gid| self.with_bubble(gid, |g| g.auto_created))
+                .and_then(|gid| self.core.tags().get(gid).map(|t| t.auto_created))
                 .unwrap_or(false);
 
             // Disconnect the old chart from its group (leaf destroyed by split).
@@ -1053,7 +1053,8 @@ impl ChartApp {
                 // auto-created.  Scoped to keep wasm32 RwLock contract.
                 // NEVER remove the chart's permanent home auto_bubble — see
                 // `disconnect_from_current_group` for full reasoning.
-                let should_remove = self.with_bubble(old_gid, |g| g.auto_created && g.members.is_empty())
+                let should_remove = self.core.tags().get(old_gid)
+                    .map(|t| t.auto_created && t.members.is_empty())
                     .unwrap_or(false)
                     && old_cid_auto_home != Some(old_gid);
                 if should_remove {
@@ -1125,14 +1126,19 @@ impl ChartApp {
             // --- Shared group path (user-tagged groups or brand-new groups) ---
 
             // Assign the group's color to leaf_color_tags for UI display.
-            let group_color = self.core.bubbles().color(group_id)
+            let group_color = self.core.tags().get(group_id)
+                .map(|t| t.color)
                 .unwrap_or([0.5, 0.5, 0.5, 0.9]);
             for &leaf_id in &new_leaves {
                 self.panel_app.leaf_color_tags.insert(leaf_id, group_color);
             }
             // Determine if this is a truly new group (just created, has no state yet).
-            let is_new_group = self.with_bubble(group_id, |g| g.members.is_empty() && g.indicator_configs.is_empty() && g.primitives.is_empty())
+            let group_has_no_members = self.core.tags().get(group_id)
+                .map(|t| t.members.is_empty())
                 .unwrap_or(true);
+            let is_new_group = group_has_no_members
+                && self.with_bubble(group_id, |g| g.indicator_configs.is_empty() && g.primitives.is_empty())
+                    .unwrap_or(true);
             // Collect (leaf_id, chart_id) first to avoid mixed borrow when setting group_id.
             let leaf_chart_ids: Vec<(mlc_core::LeafId, mlc_core::ChartId)> = new_leaves
                 .iter()
@@ -1803,9 +1809,10 @@ impl ChartApp {
                     let peer_should_sync = group_id
                         .zip(peer_chart_id)
                         .and_then(|(gid2, cid)| {
-                            self.with_bubble(gid2, |g| {
-                                g.effective_sync_crosshair(
+                            self.core.tags().get(gid2).map(|t| {
+                                t.effective_sync_crosshair(
                                     mlc_core::ids::SyncMemberId::Chart(cid.0),
+                                    should_sync,
                                 )
                             })
                         })
@@ -1900,8 +1907,10 @@ impl ChartApp {
         // If sync_drawings is OFF for this group, leave stamping to whatever
         // wrote the primitive in the first place — matches the previous
         // early-return semantics for consistency.
-        let (sync_drawings_on, is_auto_mono) = self.with_bubble(bid, |g| (g.sync_flags.sync_drawings, g.auto_created && g.members.len() <= 1))
-            .unwrap_or((true, false));
+        let sync_drawings_on = self.with_bubble(bid, |g| g.sync_flags.sync_drawings).unwrap_or(true);
+        let is_auto_mono = self.core.tags().get(bid)
+            .map(|t| t.auto_created && t.members.len() <= 1)
+            .unwrap_or(false);
         if !sync_drawings_on || is_auto_mono {
             return false;
         }
@@ -1959,7 +1968,8 @@ impl ChartApp {
         let _ = self.detach_chart_from_tag(chart_id);
         // Remove the old group if it is now empty and was auto-created — but
         // NEVER remove the chart's permanent home auto_bubble.
-        let should_remove = self.with_bubble(old_gid, |g| g.auto_created && g.members.is_empty())
+        let should_remove = self.core.tags().get(old_gid)
+            .map(|t| t.auto_created && t.members.is_empty())
             .unwrap_or(false)
             && auto_bid_home != Some(old_gid);
         if should_remove {

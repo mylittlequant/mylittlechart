@@ -18,6 +18,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{BubbleId, MemberSyncOverride, SyncMemberId};
+use crate::preset::snapshots::DataBubbleSnapshot;
 
 /// `Tag` and its paired `DataBubble` share the same raw id. In Phase 8 the
 /// rename sweep makes `TagId` a distinct newtype; until then this alias
@@ -69,6 +70,48 @@ impl Tag {
             auto_created: true,
             members: HashSet::new(),
             member_overrides: HashMap::new(),
+        }
+    }
+
+    /// Reconstruct a `Tag` from a [`DataBubbleSnapshot`]'s embedded tag
+    /// fields (`color`, `auto_created`, `members`, `panel_members`,
+    /// `member_overrides`). The on-disk JSON keeps these fields on
+    /// `DataBubbleSnapshot` for backward compatibility (pre-Step-6 files
+    /// wrote them there) — the domain owner in memory is `Tag`, not
+    /// `DataBubble`, since the Step 6 doctrine cutover.
+    pub fn from_snapshot(snap: &DataBubbleSnapshot) -> Self {
+        let mut members = HashSet::new();
+        for &raw in &snap.members {
+            members.insert(SyncMemberId::Chart(raw));
+        }
+        for &raw in &snap.panel_members {
+            members.insert(SyncMemberId::Panel(raw));
+        }
+
+        let member_overrides: HashMap<SyncMemberId, MemberSyncOverride> = snap
+            .member_overrides
+            .iter()
+            .map(|o| {
+                let member = if o.kind == 0 {
+                    SyncMemberId::Chart(o.id)
+                } else {
+                    SyncMemberId::Panel(o.id)
+                };
+                let override_val = MemberSyncOverride {
+                    sync_symbol: o.sync_symbol,
+                    sync_crosshair: o.sync_crosshair,
+                };
+                (member, override_val)
+            })
+            .collect();
+
+        Self {
+            id: BubbleId(snap.id),
+            data_bubble_id: BubbleId(snap.id),
+            color: snap.color,
+            auto_created: snap.auto_created,
+            members,
+            member_overrides,
         }
     }
 

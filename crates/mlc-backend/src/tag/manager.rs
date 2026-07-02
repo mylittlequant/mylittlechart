@@ -329,4 +329,39 @@ impl TagManager {
         self.synced_panels.clear();
         self.active_chart_tag = None;
     }
+
+    /// Rebuild the tag registry from the same persisted snapshot list
+    /// `BubbleStore::restore_from_snapshots` consumes.
+    ///
+    /// For each snapshot: reconstructs a `Tag` via `Tag::from_snapshot`
+    /// (color, auto_created, members, member_overrides), inserts it,
+    /// rebuilds `member_to_tag`, and marks any `synced_panel_ids` from the
+    /// snapshot as Synced (mirrors the old `synced_panel_restorer` callback
+    /// — `BubbleStore` no longer owns that concern, Step 6 doctrine
+    /// cutover). Does NOT call [`Self::clear`] — callers that want a full
+    /// wipe-and-rebuild call `clear()` first.
+    ///
+    /// Returns the `(SyncMemberId, TagId)` pairs that were marked Synced, so
+    /// the caller can drive any additional app-level Synced-panel wiring
+    /// (mirrors the pre-Step-6 `synced_panel_restorer` callback shape).
+    pub fn restore_from_snapshots(
+        &mut self,
+        snaps: &[mlc_core::preset::snapshots::DataBubbleSnapshot],
+    ) -> Vec<(SyncMemberId, TagId)> {
+        let mut panel_syncs = Vec::new();
+        for snap in snaps {
+            let tag = Tag::from_snapshot(snap);
+            let tag_id = tag.id;
+            for &member_id in &tag.members {
+                self.member_to_tag.insert(member_id, tag_id);
+            }
+            self.tags.insert(tag_id, tag);
+            for &pid in &snap.synced_panel_ids {
+                let member = SyncMemberId::Panel(pid);
+                self.synced_panels.insert(member);
+                panel_syncs.push((member, tag_id));
+            }
+        }
+        panel_syncs
+    }
 }

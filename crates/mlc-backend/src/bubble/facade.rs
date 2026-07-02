@@ -58,15 +58,6 @@ impl<'a> BubbleView<'a> {
     pub fn max_primitive_id(&self) -> Option<u64> {
         self.primitive_ids().max()
     }
-    pub fn color(&self) -> [f32; 4] {
-        self.bubble.color
-    }
-    pub fn auto_created(&self) -> bool {
-        self.bubble.auto_created
-    }
-    pub fn members_count(&self) -> usize {
-        self.bubble.members.len()
-    }
     pub fn sync_flags(&self) -> SyncFlags {
         self.bubble.sync_flags.clone()
     }
@@ -78,18 +69,15 @@ impl<'a> BubbleView<'a> {
     pub fn primitive_symbols(&self) -> impl Iterator<Item = &str> + '_ {
         self.bubble.primitives.iter().map(|p| p.data().symbol.as_str())
     }
-    pub fn members(&self) -> impl Iterator<Item = SyncMemberId> + '_ {
-        self.bubble.members.iter().copied()
-    }
-    pub fn effective_sync_symbol(&self, member: SyncMemberId) -> bool {
-        self.bubble.effective_sync_symbol(member)
-    }
-    pub fn effective_sync_crosshair(&self, member: SyncMemberId) -> bool {
-        self.bubble.effective_sync_crosshair(member)
-    }
-    /// Persistence snapshot of this bubble (preset save).
-    pub fn to_snapshot(&self, synced_panels: &[SyncMemberId]) -> mlc_core::preset::snapshots::DataBubbleSnapshot {
-        self.bubble.to_snapshot(synced_panels)
+    /// Persistence snapshot of this bubble, joined with its paired `Tag`
+    /// (Step 6 doctrine cutover — color/auto_created/members/
+    /// member_overrides live on `Tag`, not `DataBubble`).
+    pub fn to_snapshot(
+        &self,
+        tag: &mlc_core::tag::Tag,
+        synced_panels: &[SyncMemberId],
+    ) -> mlc_core::preset::snapshots::DataBubbleSnapshot {
+        super::snapshot::to_snapshot(self.bubble, tag, synced_panels)
     }
 }
 
@@ -203,10 +191,6 @@ impl<'a> Bubbles<'a> {
         self.store.instrument(bid)
     }
 
-    pub fn color(&self, bid: BubbleId) -> Option<[f32; 4]> {
-        self.store.color(bid)
-    }
-
     pub fn scale_mode(&self, bid: BubbleId) -> Option<ScaleMode> {
         self.store.scale_mode(bid)
     }
@@ -229,10 +213,6 @@ impl<'a> Bubbles<'a> {
 
     pub fn indicator_configs(&self, bid: BubbleId) -> &[IndicatorGroupConfig] {
         self.store.indicator_configs(bid)
-    }
-
-    pub fn auto_created(&self, bid: BubbleId) -> bool {
-        self.store.auto_created(bid)
     }
 
     pub fn pre_tag_indicator_ids(&self, bid: BubbleId) -> &[u64] {
@@ -281,10 +261,21 @@ impl<'a> Bubbles<'a> {
         self.store.bubble(bid).map(f)
     }
 
-    /// Persistence snapshot of every bubble (preset save).
-    pub fn snapshot_all(&self, synced_panels: &[SyncMemberId]) -> Vec<mlc_core::preset::snapshots::DataBubbleSnapshot> {
+    /// Persistence snapshot of every bubble, joined with its paired `Tag`
+    /// (preset save). `tags` is the sibling `Tags` facade — LOCK ORDER:
+    /// caller acquires `bubble` first, then `tag` (this method takes both
+    /// already-acquired facades, doesn't acquire locks itself).
+    pub fn snapshot_all(
+        &self,
+        tags: &crate::tag::Tags<'_>,
+        synced_panels: &[SyncMemberId],
+    ) -> Vec<mlc_core::preset::snapshots::DataBubbleSnapshot> {
         let mut out = Vec::new();
-        self.each_bubble(|bv| out.push(bv.to_snapshot(synced_panels)));
+        self.each_bubble(|bv| {
+            if let Some(tag) = tags.get(bv.id()) {
+                out.push(bv.to_snapshot(tag, synced_panels));
+            }
+        });
         out
     }
 }
@@ -320,12 +311,12 @@ impl<'a> BubblesMut<'a> {
 
     // ---- Registry — lifecycle ----------------------------------------------
 
-    pub fn create_group(&mut self, color: [f32; 4], symbol: String, timeframe: Timeframe) -> BubbleId {
-        self.store.create_group(color, symbol, timeframe)
+    pub fn create_group(&mut self, symbol: String, timeframe: Timeframe) -> BubbleId {
+        self.store.create_group(symbol, timeframe)
     }
 
-    pub fn create_group_auto(&mut self, color: [f32; 4], symbol: String, timeframe: Timeframe) -> BubbleId {
-        self.store.create_group_auto(color, symbol, timeframe)
+    pub fn create_group_auto(&mut self, symbol: String, timeframe: Timeframe) -> BubbleId {
+        self.store.create_group_auto(symbol, timeframe)
     }
 
     pub fn remove_group(&mut self, bid: BubbleId) {
@@ -395,9 +386,8 @@ impl<'a> BubblesMut<'a> {
     pub fn restore_from_snapshots(
         &mut self,
         snaps: &[mlc_core::preset::snapshots::DataBubbleSnapshot],
-        synced_panel_restorer: impl FnMut(SyncMemberId, BubbleId),
     ) -> Vec<BubbleId> {
-        self.store.restore_from_snapshots(snaps, synced_panel_restorer)
+        self.store.restore_from_snapshots(snaps)
     }
 
     // ---- Transitional escape hatch (mirrors Drawing's `with_bubble_mut`) --

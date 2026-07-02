@@ -69,7 +69,7 @@ pub fn data_plane_bars_loaded() -> HarnessResult<()> {
     let bid = {
         let mut mgr = h.core.bubbles_mut();
         let bid = mgr
-            .create_group_auto([1.0, 0.0, 0.0, 1.0], "BTCUSDT".to_string(), Timeframe::h1());
+            .create_group_auto("BTCUSDT".to_string(), Timeframe::h1());
         // bubbles_for_instrument matches on the lowercase id string and the
         // short-label account type — these are what tick_writers passes in.
         mgr.set_bubble_instrument(
@@ -275,8 +275,8 @@ pub fn drawing_registry_basic() -> HarnessResult<()> {
 
     let (bubble_a, bubble_b) = {
         let mut mgr = h.core.bubbles_mut();
-        let a = mgr.create_group_auto([1.0, 0.0, 0.0, 1.0], "BTCUSDT".to_string(), Timeframe::h1());
-        let b = mgr.create_group_auto([0.0, 1.0, 0.0, 1.0], "ETHUSDT".to_string(), Timeframe::h1());
+        let a = mgr.create_group_auto("BTCUSDT".to_string(), Timeframe::h1());
+        let b = mgr.create_group_auto("ETHUSDT".to_string(), Timeframe::h1());
         (a, b)
     };
 
@@ -350,8 +350,8 @@ pub fn drawing_registry_basic() -> HarnessResult<()> {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn indicator_atomic_window_id() -> HarnessResult<()> {
     let h = BackendHarness::fresh();
-    let bubble_a = h.core.bubbles_mut().create_group([1.0, 0.0, 0.0, 1.0], "BTCUSDT".to_string(), mlc_core::state::Timeframe::h1());
-    let bubble_b = h.core.bubbles_mut().create_group([0.0, 1.0, 0.0, 1.0], "ETHUSDT".to_string(), mlc_core::state::Timeframe::h1());
+    let bubble_a = h.core.bubbles_mut().create_group("BTCUSDT".to_string(), mlc_core::state::Timeframe::h1());
+    let bubble_b = h.core.bubbles_mut().create_group("ETHUSDT".to_string(), mlc_core::state::Timeframe::h1());
 
     if !h.core.indicators().instances_for_bubble(bubble_a).is_empty() {
         return Err(err("indicator-scope", "fresh bubble_a already has instances"));
@@ -879,7 +879,7 @@ fn locate_cli_binary() -> HarnessResult<std::path::PathBuf> {
 
 pub fn register_bubble(h: &BackendHarness, exchange: ExchangeId, account: AccountType, symbol: &str, tf: Timeframe) -> BubbleId {
     let mut mgr = h.core.bubbles_mut();
-    let bid = mgr.create_group_auto([1.0, 0.0, 0.0, 1.0], symbol.to_string(), tf);
+    let bid = mgr.create_group_auto(symbol.to_string(), tf);
     mgr.set_bubble_instrument(bid, exchange.as_str().to_string(), account.short_label().to_string());
     bid
 }

@@ -7210,8 +7210,9 @@ impl ChartApp {
 
         // Snapshot sync groups (with synced_panels cross-reference so each
         // group's persisted synced_panel_ids list survives restore).
-        let synced_snapshot = self.core.tags().synced_panels_snapshot();
-        for group_snap in self.core.bubbles().snapshot_all(&synced_snapshot) {
+        let tags_for_snapshot = self.core.tags();
+        let synced_snapshot = tags_for_snapshot.synced_panels_snapshot();
+        for group_snap in self.core.bubbles().snapshot_all(&tags_for_snapshot, &synced_snapshot) {
             preset.bubbles.push(group_snap);
         }
 

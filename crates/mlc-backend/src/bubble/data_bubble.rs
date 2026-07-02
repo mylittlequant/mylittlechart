@@ -3,7 +3,7 @@ use std::sync::{Arc, RwLock};
 
 use mlc_core::chart::types::price_scale::ScaleMode;
 use mlc_core::drawing::primitives_v2::config::TemplateStyle;
-use mlc_core::ids::{BubbleId, MemberSyncOverride, SyncFlags, SyncMemberId};
+use mlc_core::ids::{BubbleId, SyncFlags};
 use mlc_core::indicator_types::IndicatorGroupConfig;
 use mlc_core::instrument::InstrumentAddress;
 use mlc_core::state::chart_container::ConnectionStatus;
@@ -11,10 +11,14 @@ use mlc_core::state::CommandHistory;
 use mlc_core::state::Timeframe;
 
 /// A group of chart windows and trading panels that synchronize shared state.
+///
+/// `color`, `auto_created`, `members`, `member_overrides` live on the paired
+/// `Tag` (`mlc_backend::tag::TagManager`), not here — bubble grouping /
+/// color identity / member routing is Tag's domain (Step 6 doctrine
+/// cutover, `docs/mlc/plans/doctrine-cutover-2026-06-27.md`). `DataBubble.id
+/// == Tag.id` by the 1:1 pairing invariant.
 pub struct DataBubble {
     pub id: BubbleId,
-    /// Display color used in the UI to identify this bubble.
-    pub color: [f32; 4],
 
     // Owned state shared across all member windows
     pub primitives: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>>,
@@ -36,12 +40,6 @@ pub struct DataBubble {
     /// When `sync_viewport = false` each window manages its own mode independently.
     pub scale_mode: ScaleMode,
 
-    /// All members of this bubble: charts AND trading panels.
-    pub members: std::collections::HashSet<SyncMemberId>,
-
-    /// Per-member flag overrides. Absent = use bubble defaults.
-    pub member_overrides: std::collections::HashMap<SyncMemberId, MemberSyncOverride>,
-
     /// Shared undo/redo history for operations that affect all members
     /// (primitives, indicator configs). Window-local operations (viewport,
     /// symbol, timeframe, chart type) are stored on the individual window's
@@ -52,10 +50,6 @@ pub struct DataBubble {
     /// color-tag sync group.  Populated at join time so desync can restore and
     /// unhide them.  Cleared after desync.
     pub pre_tag_indicator_ids: Vec<u64>,
-
-    /// Invisible default bubble — auto-created so every window has a bubble.
-    /// No color tag shown in UI. Set to false when user manually tags.
-    pub auto_created: bool,
 
     /// Bubble-level last-used drawing style per tool type.
     ///
@@ -152,32 +146,13 @@ impl DataBubble {
     /// The resulting bubble starts with an empty `primitives` list — primitives
     /// are restored separately via the `PrimitiveRegistry` and pushed in by the
     /// caller ([`crate::bubble::BubbleStore::restore_from_snapshots`]).
+    ///
+    /// Tag fields on the snapshot (`color`, `auto_created`, `members`,
+    /// `panel_members`, `member_overrides`) are NOT read here — the paired
+    /// `Tag` is reconstructed separately by
+    /// `crate::tag::TagManager::restore_from_snapshots` from the same
+    /// snapshot list (Step 6 doctrine cutover).
     pub fn from_snapshot(snap: &mlc_core::preset::snapshots::DataBubbleSnapshot) -> Self {
-        let mut members = std::collections::HashSet::new();
-        for &raw in &snap.members {
-            members.insert(SyncMemberId::Chart(raw));
-        }
-        for &raw in &snap.panel_members {
-            members.insert(SyncMemberId::Panel(raw));
-        }
-
-        let member_overrides: std::collections::HashMap<SyncMemberId, MemberSyncOverride> = snap
-            .member_overrides
-            .iter()
-            .map(|o| {
-                let member = if o.kind == 0 {
-                    SyncMemberId::Chart(o.id)
-                } else {
-                    SyncMemberId::Panel(o.id)
-                };
-                let override_val = MemberSyncOverride {
-                    sync_symbol: o.sync_symbol,
-                    sync_crosshair: o.sync_crosshair,
-                };
-                (member, override_val)
-            })
-            .collect();
-
         let mut style_map = HashMap::new();
         for (type_id, raw) in &snap.last_used_style {
             if let Ok(style) = serde_json::from_value::<TemplateStyle>(raw.clone()) {
@@ -187,7 +162,6 @@ impl DataBubble {
 
         Self {
             id: BubbleId(snap.id),
-            color: snap.color,
             primitives: Vec::new(),
             indicator_configs: snap.indicator_configs.clone(),
             address: InstrumentAddress::new(
@@ -198,11 +172,8 @@ impl DataBubble {
             timeframe: snap.timeframe.clone(),
             sync_flags: snap.sync_flags.clone(),
             scale_mode: snap.scale_mode,
-            members,
-            member_overrides,
             command_history: snap.command_history.clone().unwrap_or_else(|| CommandHistory::new(250)),
             pre_tag_indicator_ids: Vec::new(),
-            auto_created: snap.auto_created,
             last_used_style: Arc::new(RwLock::new(style_map)),
             prev_close_price: None,
             connection_status: ConnectionStatus::default(),
@@ -223,24 +194,6 @@ impl DataBubble {
             alerts: snap.alerts.clone(),
             alert_next_id: snap.alerts.iter().map(|a| a.id).max().unwrap_or(0) + 1,
         }
-    }
-
-    /// Effective `sync_symbol` for a specific member.
-    ///
-    /// The per-member override (if present) wins over the bubble-level flag.
-    pub fn effective_sync_symbol(&self, member: SyncMemberId) -> bool {
-        self.member_overrides
-            .get(&member)
-            .and_then(|o| o.sync_symbol)
-            .unwrap_or(self.sync_flags.sync_symbol)
-    }
-
-    /// Effective `sync_crosshair` for a specific member.
-    pub fn effective_sync_crosshair(&self, member: SyncMemberId) -> bool {
-        self.member_overrides
-            .get(&member)
-            .and_then(|o| o.sync_crosshair)
-            .unwrap_or(self.sync_flags.sync_crosshair)
     }
 
     // =========================================================================
@@ -340,18 +293,14 @@ impl Clone for DataBubble {
     fn clone(&self) -> Self {
         Self {
             id: self.id,
-            color: self.color,
             primitives: self.primitives.iter().map(|p| p.clone_box()).collect(),
             indicator_configs: self.indicator_configs.clone(),
             address: self.address.clone(),
             timeframe: self.timeframe.clone(),
             sync_flags: self.sync_flags.clone(),
             scale_mode: self.scale_mode,
-            members: self.members.clone(),
-            member_overrides: self.member_overrides.clone(),
             command_history: CommandHistory::new(250),
             pre_tag_indicator_ids: self.pre_tag_indicator_ids.clone(),
-            auto_created: self.auto_created,
             // Clone the Arc — both copies point to the same shared store.
             last_used_style: Arc::clone(&self.last_used_style),
             prev_close_price: self.prev_close_price,
@@ -381,13 +330,11 @@ impl std::fmt::Debug for DataBubble {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DataBubble")
             .field("id", &self.id)
-            .field("color", &self.color)
             .field("primitives_count", &self.primitives.len())
             .field("indicator_configs", &self.indicator_configs)
             .field("address", &self.address)
             .field("timeframe", &self.timeframe)
             .field("sync_flags", &self.sync_flags)
-            .field("members", &self.members)
             .field("command_history_size", &self.command_history.size())
             .finish()
     }

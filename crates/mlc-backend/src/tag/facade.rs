@@ -281,4 +281,13 @@ impl<'a> TagsMut<'a> {
     pub fn clear(&mut self) {
         self.mgr.clear();
     }
+
+    /// Rebuild the tag registry from a persisted snapshot list — call
+    /// alongside `BubblesMut::restore_from_snapshots` with the same slice.
+    pub fn restore_from_snapshots(
+        &mut self,
+        snaps: &[mlc_core::preset::snapshots::DataBubbleSnapshot],
+    ) -> Vec<(SyncMemberId, TagId)> {
+        self.mgr.restore_from_snapshots(snaps)
+    }
 }

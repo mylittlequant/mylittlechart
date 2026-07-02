@@ -40,7 +40,7 @@ fn add_charts(app: &mut ChartApp, count: usize, symbol: &str, exchange: &str, tf
         let chart_id = generate_chart_id();
         let color = [0.0; 4];
         let bid = app.core.bubbles_mut().create_group_auto(
-            color, symbol.to_string(), tf.clone(),
+            symbol.to_string(), tf.clone(),
         );
         app.core.bubbles_mut().set_bubble_instrument(bid, exchange.to_string(), "S".to_string());
         app.core.tags_mut().insert(mlc_core::tag::Tag::new_auto(bid, color));
@@ -70,7 +70,7 @@ fn add_chart_plus_phantom(
     // Phantom — no chart attached.
     let phantom_color = [0.0; 4];
     let phantom_bid = app.core.bubbles_mut().create_group_auto(
-        phantom_color, symbol.to_string(), tf.clone(),
+        symbol.to_string(), tf.clone(),
     );
     app.core.bubbles_mut().set_bubble_instrument(phantom_bid, exchange.to_string(), "S".to_string());
     app.core.tags_mut().insert(mlc_core::tag::Tag::new_auto(phantom_bid, phantom_color));

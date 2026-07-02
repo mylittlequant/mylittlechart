@@ -1065,17 +1065,15 @@ pub struct RenderOutput {
 impl ChartApp {
     // -------------------------------------------------------------------------
     // Tag lifecycle facade (Phase 2B-2 of the Tag/Bubble/UiContainer cutover;
-    // promoted to backend in Step 3.6b).
+    // promoted to backend in Step 3.6b; single-write since Step 6).
     //
     // Every operation that creates / removes a `DataBubble` or connects /
-    // disconnects a member must go through these helpers so that the paired
-    // `core.tags()` entry stays in sync with the bubble.
-    //
-    // Today's helpers DUAL-WRITE: they update `core.bubble` AND `core.tag`
-    // so the legacy `bubble.color` / `bubble.members` / `bubble.auto_created`
-    // / `bubble.member_overrides` fields stay consistent during the
-    // call-site migration.  Step 6 deletes the bubble-side dupes once
-    // every reader has been switched to the tag-side.
+    // disconnects a member goes through these helpers so that the paired
+    // `core.tags()` entry stays in sync with the bubble. `color`,
+    // `auto_created`, `members`, `member_overrides` live solely on `Tag`
+    // (`core.tags()`/`core.tags_mut()`) — `DataBubble` no longer carries
+    // them (Step 6 doctrine cutover,
+    // `docs/mlc/plans/doctrine-cutover-2026-06-27.md`).
     // -------------------------------------------------------------------------
 
     /// Create a user-tagged bubble + paired tag and return its id.
@@ -1088,7 +1086,7 @@ impl ChartApp {
         let bid = self
             .core
             .bubbles_mut()
-            .create_group(color, symbol, timeframe);
+            .create_group(symbol, timeframe);
         self.core.tags_mut().insert(mlc_core::tag::Tag::new(bid, color));
         bid
     }
@@ -1103,7 +1101,7 @@ impl ChartApp {
         let bid = self
             .core
             .bubbles_mut()
-            .create_group_auto(color, symbol, timeframe);
+            .create_group_auto(symbol, timeframe);
         self.core.tags_mut().insert(mlc_core::tag::Tag::new_auto(bid, color));
         bid
     }
@@ -5086,22 +5084,24 @@ impl ChartApp {
                 std::collections::HashMap<u64, mlc_app_sidebar_content::render::PanelSyncFlagsSnapshot>,
             ) = {
                 use mlc_core::ids::SyncMemberId;
-                let mgr = self.core.bubbles();
+                let bubbles = self.core.bubbles();
+                let tags = self.core.tags();
                 let mut colors = std::collections::HashMap::new();
                 let mut flags = std::collections::HashMap::new();
-                mgr.each_bubble(|bubble| {
-                    for member in bubble.members() {
+                for (tag_id, tag) in tags.iter() {
+                    let bubble_default = bubbles.sync_flags(*tag_id).unwrap_or_default();
+                    for &member in &tag.members {
                         if let SyncMemberId::Panel(pid) = member {
-                            if !bubble.auto_created() {
-                                colors.insert(pid, bubble.color());
+                            if !tag.auto_created {
+                                colors.insert(pid, tag.color);
                             }
                             flags.insert(pid, mlc_app_sidebar_content::render::PanelSyncFlagsSnapshot {
-                                sync_symbol: bubble.effective_sync_symbol(member),
-                                sync_crosshair: bubble.effective_sync_crosshair(member),
+                                sync_symbol: tag.effective_sync_symbol(member, bubble_default.sync_symbol),
+                                sync_crosshair: tag.effective_sync_crosshair(member, bubble_default.sync_crosshair),
                             });
                         }
                     }
-                });
+                }
                 (colors, flags)
             };
 
@@ -5624,22 +5624,24 @@ impl ChartApp {
             std::collections::HashMap<u64, mlc_app_sidebar_content::render::PanelSyncFlagsSnapshot>,
         ) = {
             use mlc_core::ids::SyncMemberId;
-            let mgr = self.core.bubbles();
+            let bubbles = self.core.bubbles();
+            let tags = self.core.tags();
             let mut colors = std::collections::HashMap::new();
             let mut flags = std::collections::HashMap::new();
-            mgr.each_bubble(|bubble| {
-                for member in bubble.members() {
+            for (tag_id, tag) in tags.iter() {
+                let bubble_default = bubbles.sync_flags(*tag_id).unwrap_or_default();
+                for &member in &tag.members {
                     if let SyncMemberId::Panel(pid) = member {
-                        if !bubble.auto_created() {
-                            colors.insert(pid, bubble.color());
+                        if !tag.auto_created {
+                            colors.insert(pid, tag.color);
                         }
                         flags.insert(pid, mlc_app_sidebar_content::render::PanelSyncFlagsSnapshot {
-                            sync_symbol: bubble.effective_sync_symbol(member),
-                            sync_crosshair: bubble.effective_sync_crosshair(member),
+                            sync_symbol: tag.effective_sync_symbol(member, bubble_default.sync_symbol),
+                            sync_crosshair: tag.effective_sync_crosshair(member, bubble_default.sync_crosshair),
                         });
                     }
                 }
-            });
+            }
             (colors, flags)
         };
 
@@ -6142,13 +6144,18 @@ impl ChartApp {
         let indicator_view_modals = indicator_guard_modals.with_bubble(mlc_core::ids::BubbleId(0));
 
         let bubble_guard_modals = self.core.bubbles();
+        let tags_guard_modals = self.core.tags();
         let tm_guard_modals = self.core.template_manager();
         let presets_guard_modals = self.core.presets();
         // Build GroupView slice for the render layer (it no longer reads
         // BubbleStore directly).  Selected_group is the one Details tab
         // currently focuses on (state.selected_group_id).
         let mut groups_for_modals: Vec<mlc_core::GroupView> = Vec::new();
-        bubble_guard_modals.each_bubble(|bv| groups_for_modals.push(crate::tag_ui::build_group_view(bv)));
+        bubble_guard_modals.each_bubble(|bv| {
+            if let Some(tag) = tags_guard_modals.get(bv.id()) {
+                groups_for_modals.push(crate::tag_ui::build_group_view(bv, tag));
+            }
+        });
         let selected_group_for_modals: Option<&mlc_core::GroupView> = self
             .panel_app
             .tags_tabs_state
@@ -6174,6 +6181,7 @@ impl ChartApp {
             &*presets_guard_modals,
         );
         drop(bubble_guard_modals);
+        drop(tags_guard_modals);
         drop(tm_guard_modals);
         drop(presets_guard_modals);
         let mut frame_result: Option<ChartModalRenderResult> = Some(modal_result);

@@ -385,16 +385,17 @@ impl ChartApp {
             }
             let tagged_group: Option<TaggedGroupSnapshot> = active_cid
                 .and_then(|cid| self.bubble_for_chart(cid))
-                .and_then(|gid| self.with_bubble(gid, |g| {
-                    if g.auto_created {
+                .and_then(|gid| {
+                    let is_auto_created = self.core.tags().get(gid).map(|t| t.auto_created).unwrap_or(true);
+                    if is_auto_created {
                         None
                     } else {
-                        Some(TaggedGroupSnapshot {
+                        self.with_bubble(gid, |g| TaggedGroupSnapshot {
                             sync_flags: g.sync_flags.clone(),
                             primitives: g.primitives.iter().map(|p| p.clone_box()).collect(),
                         })
                     }
-                }).flatten());
+                });
 
             // Helper: convert a PrimitiveKind into an ObjectCategory.
             let prim_category = |kind: mlc_core::PrimitiveKind| match kind {

@@ -6,18 +6,20 @@
 //! dep on `mlc-backend`).
 //!
 //! This helper does the aggregation work (per-symbol indicator +
-//! primitive counts) that used to live inside the modal renderer. Pure
-//! read over `BubbleView` — no `Tag` / `TagManager` coupling; lives under
-//! `tag_ui` because `GroupView` is tag-presentation for the Tags & Tabs
-//! modal.
+//! primitive counts) that used to live inside the modal renderer. Reads
+//! both the `BubbleView` (symbol/timeframe/indicator_configs/primitives —
+//! data) and the paired `Tag` (color/auto_created/members — domain
+//! routing, Step 6 doctrine cutover); lives under `tag_ui` because
+//! `GroupView` is tag-presentation for the Tags & Tabs modal.
 
 use mlc_backend::bubble::BubbleView;
+use mlc_core::tag::Tag;
 use mlc_core::GroupView;
 use std::collections::HashMap;
 
-/// Project a backend [`BubbleView`] into the app/render-side
-/// `GroupView`.  Pure read, no state.
-pub fn build_group_view(bubble: BubbleView<'_>) -> GroupView {
+/// Project a backend [`BubbleView`] + its paired [`Tag`] into the
+/// app/render-side `GroupView`.  Pure read, no state.
+pub fn build_group_view(bubble: BubbleView<'_>, tag: &Tag) -> GroupView {
     let mut per_symbol: HashMap<String, (usize, usize)> = HashMap::new();
     if !bubble.symbol().is_empty() {
         per_symbol.insert(bubble.symbol().to_string(), (0, 0));
@@ -42,11 +44,11 @@ pub fn build_group_view(bubble: BubbleView<'_>) -> GroupView {
 
     GroupView {
         id: bubble.id(),
-        color: bubble.color(),
-        auto_created: bubble.auto_created(),
+        color: tag.color,
+        auto_created: tag.auto_created,
         symbol: bubble.symbol().to_string(),
         timeframe_name: bubble.timeframe().name.clone(),
-        members_count: bubble.members_count(),
+        members_count: tag.members.len(),
         sync_flags: bubble.sync_flags(),
         per_symbol_counts,
     }

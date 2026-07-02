@@ -46,7 +46,7 @@ pub fn n_charts_same_instrument(
     for _ in 0..n {
         let chart_id = generate_chart_id();
         let color = [0.0, 0.0, 0.0, 0.0];
-        let bid = store.create_group_auto(color, symbol.to_string(), tf.clone());
+        let bid = store.create_group_auto(symbol.to_string(), tf.clone());
         store.set_bubble_instrument(bid, exchange.to_string(), account_type.to_string());
         tags.insert(Tag::new_auto(bid, color));
         tags.attach_chart_to_tag(chart_id, bid).expect("attach");
@@ -76,13 +76,13 @@ pub fn chart_with_phantom_instrument_bubble(
     let color = [0.0; 4];
 
     // Chart's attached bubble — empty instrument identity (live bug shape).
-    let attached_bid = store.create_group_auto(color, String::new(), tf.clone());
+    let attached_bid = store.create_group_auto(String::new(), tf.clone());
     tags.insert(Tag::new_auto(attached_bid, color));
     tags.attach_chart_to_tag(chart_id, attached_bid).expect("attach");
 
     // A SEPARATE bubble that carries the matching instrument identity but
     // no chart attached. This is what `bubble_for_instrument` would return.
-    let phantom_bid = store.create_group_auto(color, symbol.to_string(), tf);
+    let phantom_bid = store.create_group_auto(symbol.to_string(), tf);
     store.set_bubble_instrument(phantom_bid, exchange.to_string(), account_type.to_string());
     tags.insert(Tag::new_auto(phantom_bid, color));
 

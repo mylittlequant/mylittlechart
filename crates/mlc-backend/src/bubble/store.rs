@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use mlc_core::chart::types::price_scale::ScaleMode;
-use mlc_core::ids::{BubbleId, SyncFlags, SyncMemberId};
+use mlc_core::ids::{BubbleId, SyncFlags};
 use mlc_core::indicator_types::IndicatorGroupConfig;
 use mlc_core::instrument::InstrumentAddress;
 use mlc_core::state::chart_container::ConnectionStatus;
@@ -41,30 +41,28 @@ impl BubbleStore {
     // Bubble lifecycle
     // =========================================================================
 
-    /// Create a new data bubble with the given color, symbol, and timeframe.
+    /// Create a new data bubble with the given symbol and timeframe.
     ///
-    /// Returns the id of the newly created bubble.
+    /// Returns the id of the newly created bubble. Color / auto_created /
+    /// members live on the paired `Tag` — caller pairs one via
+    /// `core.tags_mut().insert(Tag::new(bid, color))` immediately after
+    /// (Step 6 doctrine cutover).
     pub fn create_group(
         &mut self,
-        color: [f32; 4],
         symbol: String,
         timeframe: Timeframe,
     ) -> BubbleId {
         let id = BubbleId::generate();
         let bubble = DataBubble {
             id,
-            color,
             primitives: Vec::new(),
             indicator_configs: Vec::new(),
             address: InstrumentAddress::new(String::new(), symbol, mlc_core::instrument::AccountType::default()),
             timeframe,
             sync_flags: SyncFlags::default(),
             scale_mode: ScaleMode::Auto,
-            members: std::collections::HashSet::new(),
-            member_overrides: std::collections::HashMap::new(),
             command_history: CommandHistory::new(250),
             pre_tag_indicator_ids: Vec::new(),
-            auto_created: false,
             last_used_style: Arc::new(RwLock::new(HashMap::new())),
             prev_close_price: None,
             connection_status: ConnectionStatus::default(),
@@ -90,28 +88,25 @@ impl BubbleStore {
         id
     }
 
-    /// Create an invisible default bubble (no color tag in UI).
+    /// Create an invisible default bubble (no color tag in UI). Caller pairs
+    /// a `Tag::new_auto(bid, color)` immediately after — see
+    /// [`Self::create_group`].
     pub fn create_group_auto(
         &mut self,
-        color: [f32; 4],
         symbol: String,
         timeframe: Timeframe,
     ) -> BubbleId {
         let id = BubbleId::generate();
         let bubble = DataBubble {
             id,
-            color,
             primitives: Vec::new(),
             indicator_configs: Vec::new(),
             address: InstrumentAddress::new(String::new(), symbol, mlc_core::instrument::AccountType::default()),
             timeframe,
             sync_flags: SyncFlags::default(),
             scale_mode: ScaleMode::Auto,
-            members: std::collections::HashSet::new(),
-            member_overrides: std::collections::HashMap::new(),
             command_history: CommandHistory::new(250),
             pre_tag_indicator_ids: Vec::new(),
-            auto_created: true,
             last_used_style: Arc::new(RwLock::new(HashMap::new())),
             prev_close_price: None,
             connection_status: ConnectionStatus::default(),
@@ -331,18 +326,19 @@ impl BubbleStore {
     /// For each snapshot: constructs a [`DataBubble`] via
     /// [`DataBubble::from_snapshot`], backfills primitive `symbol`/`exchange`/
     /// `account_type` from the bubble's own instrument fields (for primitives
-    /// saved before those fields existed), inserts the bubble, and invokes
-    /// `synced_panel_restorer` once per restored `SyncMemberId::Panel` member
-    /// that was in the Synced set at save time.
+    /// saved before those fields existed), and inserts the bubble.
     ///
-    /// Does NOT call [`Self::clear`] — callers that want a full wipe-and-
-    /// rebuild call `clear()` first.
+    /// Pure registry data — the paired `Tag`s (color, auto_created, members,
+    /// member_overrides, synced_panel_ids) are reconstructed separately from
+    /// the same snapshot list by
+    /// `crate::tag::TagManager::restore_from_snapshots` (Step 6 doctrine
+    /// cutover). Does NOT call [`Self::clear`] — callers that want a full
+    /// wipe-and-rebuild call `clear()` first.
     ///
     /// Returns the ids of every bubble restored, in snapshot order.
     pub fn restore_from_snapshots(
         &mut self,
         snaps: &[mlc_core::preset::snapshots::DataBubbleSnapshot],
-        mut synced_panel_restorer: impl FnMut(SyncMemberId, BubbleId),
     ) -> Vec<BubbleId> {
         let mut restored_ids = Vec::with_capacity(snaps.len());
         for snap in snaps {
@@ -369,9 +365,6 @@ impl BubbleStore {
             }
             let gid = group.id;
             self.insert_group_raw(group);
-            for &pid in &snap.synced_panel_ids {
-                synced_panel_restorer(SyncMemberId::Panel(pid), gid);
-            }
             restored_ids.push(gid);
         }
         restored_ids
@@ -482,11 +475,6 @@ impl BubbleStore {
         })
     }
 
-    /// Display color of a bubble known by id directly.
-    pub fn color(&self, bid: BubbleId) -> Option<[f32; 4]> {
-        self.bubbles.get(&bid).map(|b| b.color)
-    }
-
     /// Price-scale corner mode of a bubble known by id directly.
     pub fn scale_mode(&self, bid: BubbleId) -> Option<ScaleMode> {
         self.bubbles.get(&bid).map(|b| b.scale_mode)
@@ -515,12 +503,6 @@ impl BubbleStore {
     /// Indicator configs of a bubble known by id directly. Empty slice if missing.
     pub fn indicator_configs(&self, bid: BubbleId) -> &[IndicatorGroupConfig] {
         self.bubbles.get(&bid).map(|b| b.indicator_configs.as_slice()).unwrap_or(&[])
-    }
-
-    /// Whether a bubble known by id directly is an invisible auto-created
-    /// bubble (no user color tag). `false` if the bubble doesn't exist.
-    pub fn auto_created(&self, bid: BubbleId) -> bool {
-        self.bubbles.get(&bid).map(|b| b.auto_created).unwrap_or(false)
     }
 
     /// Indicator instance ids hidden pre-tag (desync/rejoin bookkeeping).

@@ -37,7 +37,7 @@ fn mk_chart_with_bubble(
 ) -> (ChartContainer, ChartId, BubbleId) {
     let chart_id = generate_chart_id();
     let color = [0.0; 4];
-    let bid = store.create_group_auto(color, symbol.to_string(), tf.clone());
+    let bid = store.create_group_auto(symbol.to_string(), tf.clone());
     store.set_bubble_instrument(bid, exchange.to_string(), account_type.to_string());
     tags.insert(Tag::new_auto(bid, color));
     tags.attach_chart_to_tag(chart_id, bid).expect("attach");

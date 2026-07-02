@@ -561,7 +561,7 @@ impl ChartApp {
                         use mlc_core::ids::SyncMemberId;
                         let member = SyncMemberId::Panel(panel_id);
                         let old_color = self.group_for_member(member)
-                            .and_then(|gid| self.with_bubble(gid, |g| if g.auto_created { None } else { Some(g.color) }).flatten());
+                            .and_then(|gid| self.core.tags().get(gid).and_then(|t| (!t.auto_created).then_some(t.color)));
                         let same_color = old_color.is_some_and(|oc|
                             (oc[0] - new_color[0]).abs() < 0.01
                             && (oc[1] - new_color[1]).abs() < 0.01

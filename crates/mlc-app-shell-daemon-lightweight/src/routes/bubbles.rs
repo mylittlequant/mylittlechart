@@ -148,7 +148,7 @@ async fn create_bubble(
     let ms = timeframe_ms(&body.timeframe);
     let tf = Timeframe::new(&body.timeframe, ms as i64);
     let color = body.color;
-    let bid = s.core.bubbles_mut().create_group_auto(color, body.symbol, tf);
+    let bid = s.core.bubbles_mut().create_group_auto(body.symbol, tf);
     // Set exchange + account_type on the newly created bubble. This is a bare
     // bubble creation with no chart member attached yet, hence the bid-keyed
     // `set_bubble_instrument` rather than the member-keyed `set_instrument`.

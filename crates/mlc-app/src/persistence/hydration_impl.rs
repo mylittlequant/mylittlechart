@@ -537,15 +537,16 @@ impl ChartApp {
                     // ----------------------------------------------------------------
                     let _t_bubbles = web_time::Instant::now();
                     self.core.bubbles_mut().clear();
+                    self.core.tags_mut().clear();
                     // `restore_from_snapshots` builds each bubble (including the
                     // symbol/exchange/account_type primitive backfill) and inserts
-                    // it; the closure below runs once per restored bubble's
-                    // `synced_panel_ids` so `set_panel_synced` (an app-level method,
+                    // it. `TagManager::restore_from_snapshots` rebuilds the paired
+                    // Tags from the same snapshot list (color/auto_created/members/
+                    // member_overrides, Step 6 doctrine cutover) and returns the
+                    // synced-panel pairs so `set_panel_synced` (an app-level method,
                     // not a store method) stays in app code.
-                    let mut panel_syncs: Vec<(mlc_core::ids::SyncMemberId, mlc_core::ids::BubbleId)> = Vec::new();
-                    self.core.bubbles_mut().restore_from_snapshots(&preset.bubbles, |member, gid| {
-                        panel_syncs.push((member, gid));
-                    });
+                    self.core.bubbles_mut().restore_from_snapshots(&preset.bubbles);
+                    let panel_syncs = self.core.tags_mut().restore_from_snapshots(&preset.bubbles);
                     for (member, gid) in panel_syncs {
                         self.set_panel_synced(member, gid);
                     }
@@ -1401,15 +1402,15 @@ impl ChartApp {
                         };
                         // Collect orphans (Panel members in any group with no live state).
                         let mut orphans: Vec<SyncMemberId> = Vec::new();
-                        self.core.bubbles().each_bubble(|group| {
-                            for member in group.members() {
+                        for (_, tag) in self.core.tags().iter() {
+                            for &member in &tag.members {
                                 if let SyncMemberId::Panel(pid) = member {
                                     if !live_panel_ids.contains(&pid) {
                                         orphans.push(SyncMemberId::Panel(pid));
                                     }
                                 }
                             }
-                        });
+                        }
                         let pruned = orphans.len();
                         for member in orphans {
                             self.remove_panel_completely(member);
