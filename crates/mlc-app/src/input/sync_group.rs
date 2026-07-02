@@ -1567,10 +1567,8 @@ impl ChartApp {
             if symbol_owned.is_empty() {
                 continue;
             }
-            let resolved_exchange = self.core.exchange_symbols_read()
-                .keys()
-                .find(|eid| eid.as_str() == exchange_owned)
-                .copied()
+            let resolved_exchange = self.core.exchange_symbols()
+                .find_by_label(&exchange_owned)
                 .unwrap_or(self.active_exchange);
             let eid_str = resolved_exchange.as_str();
             if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
@@ -1708,10 +1706,8 @@ impl ChartApp {
             if symbol.is_empty() {
                 continue;
             }
-            let resolved_exchange = self.core.exchange_symbols_read()
-                .keys()
-                .find(|eid| eid.as_str() == exchange_str)
-                .copied()
+            let resolved_exchange = self.core.exchange_symbols()
+                .find_by_label(&exchange_str)
                 .unwrap_or(self.active_exchange);
             let eid_str = resolved_exchange.as_str();
             if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {

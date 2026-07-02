@@ -34,6 +34,7 @@ pub mod preset;
 pub mod template;
 pub mod user;
 pub mod trading;
+pub mod exchange_symbols;
 
 pub use alert::{Alerts, AlertsMut};
 pub use drawing::{Drawings, DrawingsMut, SwapSymbolResult};
@@ -45,6 +46,7 @@ pub use preset::{Presets, PresetsMut};
 pub use template::{Templates, TemplatesMut};
 pub use user::{User, UserMut};
 pub use trading::{Trading, TradingMut};
+pub use exchange_symbols::{ExchangeSymbols, ExchangeSymbolsMut};
 
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -59,13 +61,14 @@ use crate::bubble::BubbleStore;
 use crate::drawing::DrawingManager;
 use mlc_core::Bar;
 use crate::indicator::IndicatorManager;
-use mlc_backend_data_bridge::{DataBridge, LiveUpdate, LiveUpdateReceiver, OrderbookSource, SymbolInfo};
+use mlc_backend_data_bridge::{DataBridge, LiveUpdate, LiveUpdateReceiver, OrderbookSource};
 use crate::trading::TradingManager;
 use crate::watchlist::WatchlistManager;
 use crate::tag::TagManager;
 use crate::preset::PresetManager;
 use crate::template::TemplateManager;
 use crate::user::UserProfileManager;
+use crate::exchange_symbols::ExchangeSymbolsManager;
 
 /// Cached 24-hour ticker statistics from the WebSocket mini-ticker stream.
 ///
@@ -590,8 +593,10 @@ pub struct BackendCore {
     ///
     /// In single-threaded embedded mode (one main loop = one writer + one
     /// renderer running sequentially) lock contention is zero — guards are
-    /// taken and dropped each tick frame, no waits.
-    pub bubble: std::sync::RwLock<BubbleStore>,
+    /// taken and dropped each tick frame, no waits. Accessed exclusively
+    /// through the `Bubbles` / `BubblesMut` facade (`BackendCore::bubbles` /
+    /// `bubbles_mut`) — Step 7 doctrine cutover.
+    bubble: std::sync::RwLock<BubbleStore>,
 
     /// Alert manager — owns the per-bubble last-tick-price cache used for
     /// crossing detection (`AlertManager::on_tick`). Alert *data*
@@ -602,7 +607,7 @@ pub struct BackendCore {
     /// LOCK ORDER: every facade/accessor that takes both `bubble` and
     /// `alert` MUST acquire `bubble` first, then `alert` — see
     /// `docs/mlc/plans/doctrine-cutover-2026-06-27.md` §1A.
-    pub alert: std::sync::RwLock<AlertManager>,
+    alert: std::sync::RwLock<AlertManager>,
 
     /// Indicator manager — owns all indicator instances + recalc state +
     /// per-window assignment + global definitions catalog. Compute
@@ -610,7 +615,7 @@ pub struct BackendCore {
     /// `mli`) live in `mlc-backend-indicator-engine`; the manager itself
     /// lives in `mlc_backend::indicator::manager` (doctrine 3.7a — engine =
     /// compute, manager = state, managers live in mlc-backend).
-    pub indicators: std::sync::RwLock<IndicatorManager>,
+    indicators: std::sync::RwLock<IndicatorManager>,
 
     /// Live data bridge — owns the tokio runtime, station, connector pool,
     /// broadcast channel. Already internally synchronised; `Arc::clone` is
@@ -634,8 +639,11 @@ pub struct BackendCore {
     /// Symbol catalogue per exchange — populated asynchronously from
     /// `LiveUpdate::SymbolsLoaded`. Same for every consumer of this backend.
     /// `RwLock` because writes are rare (once per exchange) and reads are
-    /// frequent (symbol search overlay, watchlist).
-    pub exchange_symbols: std::sync::RwLock<HashMap<ExchangeId, Vec<SymbolInfo>>>,
+    /// frequent (symbol search overlay, watchlist). Accessed exclusively
+    /// through the `ExchangeSymbols` / `ExchangeSymbolsMut` facade
+    /// (`BackendCore::exchange_symbols` / `exchange_symbols_mut`) — Step 7
+    /// doctrine cutover.
+    exchange_symbols: std::sync::RwLock<ExchangeSymbolsManager>,
 
     /// Order routing + paper engine. `None` when trading is disabled.
     /// Wrapped in `Mutex` because `TradingManager` has `&mut self` methods
@@ -685,8 +693,10 @@ pub struct BackendCore {
     ///
     /// Previously on `SidebarState.watchlist_manager`. Moved here so that the
     /// sidebar render, input handlers, and agent snapshot builder all read from
-    /// one place.
-    pub watchlist_manager: std::sync::RwLock<WatchlistManager>,
+    /// one place. Accessed exclusively through the `Watchlists` /
+    /// `WatchlistsMut` facade (`BackendCore::watchlists` / `watchlists_mut`)
+    /// — Step 7 doctrine cutover.
+    watchlist_manager: std::sync::RwLock<WatchlistManager>,
 
     /// Tag manager — registry of `Tag`s paired 1:1 with bubbles, plus the
     /// member→tag routing table and the synced-panel set.
@@ -698,7 +708,7 @@ pub struct BackendCore {
     ///
     /// LOCK ORDER: `tag` never co-acquires `bubble` — it is a leaf lock,
     /// same shape as `watchlist_manager` (§1A).
-    pub tag: std::sync::RwLock<TagManager>,
+    tag: std::sync::RwLock<TagManager>,
 
     /// Registry of attached `AppSession`s. One per consumer of this backend.
     ///
@@ -709,8 +719,11 @@ pub struct BackendCore {
     /// Sessions are pure metadata for now — `(app_id, label, created_at_secs,
     /// last_heartbeat_secs)`. The reactor logic that runs per session lives
     /// on the per-app side (`ChartApp::react_to_bubble_event`); session id
-    /// is the handle the agent server uses to scope queries.
-    pub sessions: std::sync::RwLock<SessionRegistry>,
+    /// is the handle the agent server uses to scope queries. Accessed only
+    /// through `register_session`/`deregister_session`/`heartbeat_session`/
+    /// `reap_idle_sessions`/`sessions_snapshot` — no facade needed, this
+    /// registry never held a raw-guard escape.
+    sessions: std::sync::RwLock<SessionRegistry>,
 
     /// The drawing manager — one editing session per bubble
     /// (`BubbleDrawingSession`, keyed by `BubbleId` internally).
@@ -722,7 +735,7 @@ pub struct BackendCore {
     ///
     /// In single-threaded embedded mode lock contention is zero — guards are
     /// taken and released within each logical frame / input handler arm.
-    pub drawing: std::sync::RwLock<DrawingManager>,
+    drawing: std::sync::RwLock<DrawingManager>,
 
     /// Optional tokio `Runtime` for native entry points that need to call
     /// `block_on` from sync input handlers (gate4agent PTY ops).
@@ -768,7 +781,7 @@ impl BackendCore {
             broadcast_rx: std::sync::Mutex::new(broadcast_rx),
             bridge,
             mini_ticker: DashMap::new(),
-            exchange_symbols: std::sync::RwLock::new(HashMap::new()),
+            exchange_symbols: std::sync::RwLock::new(ExchangeSymbolsManager::new()),
             trading: trading.map(std::sync::Mutex::new),
             preset: std::sync::RwLock::new(PresetManager::new()),
             template: std::sync::RwLock::new(TemplateManager::new()),
@@ -893,24 +906,6 @@ impl BackendCore {
         IndicatorsMut::new(mgr, bubbles)
     }
 
-    /// INTERNAL: raw read guard for the bubble store. Backend-crate use only
-    /// (`tick_writers`, and the `Alerts`/`AlertsMut`/`Drawings`/`DrawingsMut`
-    /// facade constructors, which co-acquire this alongside their own
-    /// manager lock). App callers must use [`Self::bubbles`] instead — Step
-    /// 3.2, `docs/mlc/plans/doctrine-cutover-2026-06-27.md` §1A. Step 7
-    /// deletes this method once every external caller is swept.
-    #[inline]
-    pub fn bubble(&self) -> std::sync::RwLockReadGuard<'_, BubbleStore> {
-        self.bubble.read().expect("BackendCore.bubble poisoned (read)")
-    }
-
-    /// INTERNAL: raw write guard for the bubble store. See [`Self::bubble`] —
-    /// app callers must use [`Self::bubbles_mut`] instead.
-    #[inline]
-    pub fn bubble_mut(&self) -> std::sync::RwLockWriteGuard<'_, BubbleStore> {
-        self.bubble.write().expect("BackendCore.bubble poisoned (write)")
-    }
-
     /// Read-only facade over the bubble store. The ONLY doctrinally-
     /// sanctioned access path for external (app/daemon/headless) callers
     /// (Step 3.2, `docs/mlc/plans/doctrine-cutover-2026-06-27.md` §1A).
@@ -965,15 +960,18 @@ impl BackendCore {
         self.trading.as_ref().map(|m| TradingMut::new(m.lock().expect("BackendCore.trading poisoned")))
     }
 
-    /// Short alias for the most common read pattern on exchange symbols.
+    /// Read-only facade over the exchange symbols catalogue. The ONLY
+    /// doctrinally-sanctioned access path (Step 7,
+    /// `docs/mlc/plans/doctrine-cutover-2026-06-27.md` §1A).
     #[inline]
-    pub fn exchange_symbols_read(&self) -> std::sync::RwLockReadGuard<'_, HashMap<ExchangeId, Vec<SymbolInfo>>> {
-        self.exchange_symbols.read().expect("BackendCore.exchange_symbols poisoned (read)")
+    pub fn exchange_symbols(&self) -> ExchangeSymbols<'_> {
+        ExchangeSymbols::new(self.exchange_symbols.read().expect("BackendCore.exchange_symbols poisoned (read)"))
     }
 
+    /// Mutable facade over the exchange symbols catalogue.
     #[inline]
-    pub fn exchange_symbols_mut(&self) -> std::sync::RwLockWriteGuard<'_, HashMap<ExchangeId, Vec<SymbolInfo>>> {
-        self.exchange_symbols.write().expect("BackendCore.exchange_symbols poisoned (write)")
+    pub fn exchange_symbols_mut(&self) -> ExchangeSymbolsMut<'_> {
+        ExchangeSymbolsMut::new(self.exchange_symbols.write().expect("BackendCore.exchange_symbols poisoned (write)"))
     }
 
     /// Read-only facade over the preset manager. The ONLY doctrinally-
@@ -1109,7 +1107,7 @@ impl BackendCore {
             match update {
                 // ── BarsLoaded ─────────────────────────────────────────────────
                 LiveUpdate::BarsLoaded { exchange_id, account_type, symbol, timeframe: tf_name, bars } => {
-                    let bids_for_instrument = self.bubble()
+                    let bids_for_instrument = self.bubbles()
                         .bubbles_for_instrument(exchange_id.as_str(), account_type.short_label(), &symbol);
                     if bids_for_instrument.is_empty() {
                         // No registered bubble for this instrument yet; skip bubble write.
@@ -1131,7 +1129,7 @@ impl BackendCore {
                             // OLD bars (otherwise `prev` == `new` and the
                             // anchor collapses, leaving the viewport pinned to
                             // the historic index whenever bars grow underneath).
-                            let mut mgr = self.bubble_mut();
+                            let mut mgr = self.bubbles_mut();
                             let prev_bars = mgr.bars(bid).to_vec();
                             mgr.replace_bars(bid, bars.clone());
                             drop(mgr);
@@ -1150,13 +1148,13 @@ impl BackendCore {
 
                 // ── BackfillComplete ────────────────────────────────────────────
                 LiveUpdate::BackfillComplete { exchange_id, account_type, symbol, timeframe: tf_name, bars } => {
-                    let bids = self.bubble()
+                    let bids = self.bubbles()
                         .bubbles_for_instrument(exchange_id.as_str(), account_type.short_label(), &symbol);
                     for bid in bids {
                         // Same rationale as BarsLoaded above: snapshot the OLD
                         // bubble.bars before overwrite so the reactor's
                         // capture_view_anchor sees real prior state.
-                        let mut mgr = self.bubble_mut();
+                        let mut mgr = self.bubbles_mut();
                         let prev_bars = mgr.bars(bid).to_vec();
                         mgr.replace_bars(bid, bars.clone());
                         drop(mgr);
@@ -1183,10 +1181,10 @@ impl BackendCore {
                 // branch is the merge that path used to do for us.
                 LiveUpdate::ScrollBarsLoaded { exchange_id, account_type, symbol, timeframe: tf_name, bars, prepend_count } => {
                     let at_label = account_type.short_label().to_string();
-                    let bids = self.bubble()
+                    let bids = self.bubbles()
                         .bubbles_for_instrument(exchange_id.as_str(), &at_label, &symbol);
                     for bid in bids {
-                        let mut mgr = self.bubble_mut();
+                        let mut mgr = self.bubbles_mut();
                         let merged = mgr.merge_scroll_bars(bid, &bars);
                         drop(mgr);
                         events.push(BubbleEvent::ScrollBarsAppended {
@@ -1263,7 +1261,7 @@ impl BackendCore {
                 // ── SymbolsLoaded ───────────────────────────────────────────────
                 LiveUpdate::SymbolsLoaded { exchange_id, symbols } => {
                     let count = symbols.len();
-                    self.exchange_symbols_mut().insert(exchange_id, symbols);
+                    self.exchange_symbols_mut().set_symbols(exchange_id, symbols);
                     self.bridge.prewarm_wire_symbol_cache(exchange_id);
                     events.push(BubbleEvent::SymbolsLoaded { exchange_id, count });
                 }
@@ -1371,12 +1369,11 @@ impl BackendCore {
                         new_bar_with_static.close,
                         new_bar_with_static.volume,
                     );
-                    let bids = self.bubble()
+                    let bids = self.bubbles()
                         .bubbles_for_instrument(exchange_id.as_str(), &fp_at_label, fp_sym.as_str());
                     for bid in bids {
                         {
-                            let mut mgr = self.bubble_mut();
-                            if let Some(bubble) = mgr.bubble_mut(bid) {
+                            self.bubbles_mut().with_bubble_mut(bid, |bubble| {
                                 let prev_cvd = {
                                     let store = bubble.footprint_bars.get_or_insert_with(Vec::new);
                                     match store.last() {
@@ -1404,7 +1401,7 @@ impl BackendCore {
                                 } else {
                                     bubble.append_bar(ohlc_bar.clone());
                                 }
-                            }
+                            });
                         }
                         events.push(BubbleEvent::FootprintBarAppended {
                             bid,
@@ -1426,14 +1423,13 @@ impl BackendCore {
                         volume: point.volume,
                         trades_count: point.trades_count,
                     };
-                    let bids = self.bubble()
+                    let bids = self.bubbles()
                         .bubbles_for_instrument(exchange_id.as_str(), &at_label, sym.as_str());
                     for bid in bids {
                         {
-                            let mut mgr = self.bubble_mut();
-                            if let Some(bubble) = mgr.bubble_mut(bid) {
+                            self.bubbles_mut().with_bubble_mut(bid, |bubble| {
                                 bubble.append_renko(brick.clone());
-                            }
+                            });
                         }
                         events.push(BubbleEvent::RenkoBarAppended {
                             bid,
@@ -1457,18 +1453,17 @@ impl BackendCore {
                         trades_count: point.trades_count,
                         box_size: bs,
                     };
-                    let bids = self.bubble()
+                    let bids = self.bubbles()
                         .bubbles_for_instrument(exchange_id.as_str(), &at_label, sym.as_str());
                     for bid in bids {
                         {
-                            let mut mgr = self.bubble_mut();
-                            if let Some(bubble) = mgr.bubble_mut(bid) {
+                            self.bubbles_mut().with_bubble_mut(bid, |bubble| {
                                 let store = bubble.pnf_columns.get_or_insert_with(Vec::new);
                                 match store.last_mut() {
                                     Some(last) if last.column_id == col.column_id => *last = col.clone(),
                                     _ => store.push(col.clone()),
                                 }
-                            }
+                            });
                         }
                         events.push(BubbleEvent::PnfBarAppended {
                             bid,
@@ -1490,14 +1485,13 @@ impl BackendCore {
                         yang: point.yang,
                         is_connector: point.is_connector,
                     };
-                    let bids = self.bubble()
+                    let bids = self.bubbles()
                         .bubbles_for_instrument(exchange_id.as_str(), &at_label, sym.as_str());
                     for bid in bids {
                         {
-                            let mut mgr = self.bubble_mut();
-                            if let Some(bubble) = mgr.bubble_mut(bid) {
+                            self.bubbles_mut().with_bubble_mut(bid, |bubble| {
                                 bubble.append_kagi(seg.clone());
-                            }
+                            });
                         }
                         events.push(BubbleEvent::KagiBarAppended {
                             bid,
@@ -1515,14 +1509,13 @@ impl BackendCore {
                         ts_ms: point.ts_ms,
                         value: point.value,
                     };
-                    let bids = self.bubble()
+                    let bids = self.bubbles()
                         .bubbles_for_instrument(exchange_id.as_str(), &at_label, sym.as_str());
                     for bid in bids {
                         {
-                            let mut mgr = self.bubble_mut();
-                            if let Some(bubble) = mgr.bubble_mut(bid) {
+                            self.bubbles_mut().with_bubble_mut(bid, |bubble| {
                                 bubble.append_cvd(sample);
-                            }
+                            });
                         }
                         events.push(BubbleEvent::CvdSampleAppended {
                             bid,
@@ -1546,12 +1539,11 @@ impl BackendCore {
                         val_price: point.val_price,
                         rows: point.rows.clone(),
                     };
-                    let bids = self.bubble()
+                    let bids = self.bubbles()
                         .bubbles_for_instrument(exchange_id.as_str(), &at_label, sym.as_str());
                     for bid in bids {
                         {
-                            let mut mgr = self.bubble_mut();
-                            if let Some(bubble) = mgr.bubble_mut(bid) {
+                            self.bubbles_mut().with_bubble_mut(bid, |bubble| {
                                 let store = bubble.tpo_sessions.get_or_insert_with(Vec::new);
                                 match store.last_mut() {
                                     Some(last) if last.open_time == session.open_time => *last = session.clone(),
@@ -1563,7 +1555,7 @@ impl BackendCore {
                                         }
                                     }
                                 }
-                            }
+                            });
                         }
                         events.push(BubbleEvent::TpoSessionUpdated {
                             bid,
@@ -1585,14 +1577,13 @@ impl BackendCore {
                         volume: point.volume,
                         direction: point.direction,
                     };
-                    let bids = self.bubble()
+                    let bids = self.bubbles()
                         .bubbles_for_instrument(exchange_id.as_str(), &at_label, sym.as_str());
                     for bid in bids {
                         {
-                            let mut mgr = self.bubble_mut();
-                            if let Some(bubble) = mgr.bubble_mut(bid) {
+                            self.bubbles_mut().with_bubble_mut(bid, |bubble| {
                                 bubble.append_three_line_break(line.clone());
-                            }
+                            });
                         }
                         events.push(BubbleEvent::TlbLineAppended {
                             bid,

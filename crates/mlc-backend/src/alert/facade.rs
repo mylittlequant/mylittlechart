@@ -126,4 +126,15 @@ impl<'a> AlertsMut<'a> {
     pub fn restore_one(&mut self, bid: BubbleId, item: AlertItem) {
         self.mgr.restore_one(&mut self.bubbles, bid, item)
     }
+
+    /// Replace the entire manager with `new`, returning the previous one.
+    ///
+    /// Used exclusively by preset tab park/unpark (`mlc-app/src/persistence/
+    /// profile.rs`), which swaps the whole live-state bundle for a tab in one
+    /// shot — no bubble threading needed for the swap itself (the
+    /// co-acquired `bubbles` guard is unused here; it is swapped
+    /// independently via `BubblesMut::swap`).
+    pub fn swap(&mut self, new: AlertManager) -> AlertManager {
+        std::mem::replace(&mut self.mgr, new)
+    }
 }

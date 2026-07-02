@@ -179,34 +179,19 @@ impl ChartApp {
         );
         let pk_grid_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
-        let bubble_store = std::mem::replace(
-            &mut *self.core.bubble_mut(),
-            mlc_backend::bubble::BubbleStore::new(),
-        );
-        let tag_manager = std::mem::replace(
-            &mut *self.core.tag.write().expect("BackendCore.tag poisoned (write)"),
-            mlc_backend::tag::TagManager::new(),
-        );
+        let bubble_store = self.core.bubbles_mut().swap(mlc_backend::bubble::BubbleStore::new());
+        let tag_manager = self.core.tags_mut().swap(mlc_backend::tag::TagManager::new());
         let pk_bubble_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
         let indicator_manager = self.core.indicators_mut().swap(IndicatorManager::new());
         let pk_ind_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
-        // Raw lock access (not the `alerts_mut()` facade) — park/unpark
-        // swaps the whole manager in one shot, no bubble threading needed.
-        let alert_manager = std::mem::replace(
-            &mut *self.core.alert.write().expect("BackendCore.alert poisoned (write)"),
-            mlc_backend::alert::AlertManager::default(),
-        );
+        // Per-bubble drawing sessions (Step 3.1) must travel with
+        // tag_manager since both are keyed by the same BubbleIds.
+        let alert_manager = self.core.alerts_mut().swap(mlc_backend::alert::AlertManager::default());
         let pk_alert_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
-        // Raw lock access — same reasoning as alert_manager above. Per-bubble
-        // drawing sessions (Step 3.1) must travel with tag_manager since
-        // both are keyed by the same BubbleIds.
-        let drawing_manager = std::mem::replace(
-            &mut *self.core.drawing.write().expect("BackendCore.drawing poisoned (write)"),
-            mlc_backend::drawing::DrawingManager::default(),
-        );
+        let drawing_manager = self.core.drawings_mut().swap(mlc_backend::drawing::DrawingManager::default());
         let pk_drawing_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
         let leaf_color_tags = std::mem::take(&mut self.panel_app.leaf_color_tags);
@@ -267,17 +252,17 @@ impl ChartApp {
         self.panel_app.panel_grid = state.panel_grid;
         let up_grid_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
-        *self.core.bubble_mut() = state.bubble_store;
-        *self.core.tag.write().expect("BackendCore.tag poisoned (write)") = state.tag_manager;
+        self.core.bubbles_mut().swap(state.bubble_store);
+        self.core.tags_mut().swap(state.tag_manager);
         let up_bubble_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
         self.core.indicators_mut().swap(state.indicator_manager);
         let up_ind_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
-        *self.core.alert.write().expect("BackendCore.alert poisoned (write)") = state.alert_manager;
+        self.core.alerts_mut().swap(state.alert_manager);
         let up_alert_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
-        *self.core.drawing.write().expect("BackendCore.drawing poisoned (write)") = state.drawing_manager;
+        self.core.drawings_mut().swap(state.drawing_manager);
         let up_drawing_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
         self.panel_app.leaf_color_tags = state.leaf_color_tags;

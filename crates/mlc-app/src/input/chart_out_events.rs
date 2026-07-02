@@ -670,7 +670,7 @@ impl ChartApp {
             ChartOutEvent::OpenSymbolSearch => {
                 self.modal_state.open(OpenModal::SymbolSearch);
                 self.modal_state.symbol_search_results =
-                    crate::ChartApp::build_demo_symbol_results("", self.core.watchlists().find(self.watchlist_ui.active_list_id), &self.core.exchange_symbols_read());
+                    crate::ChartApp::build_demo_symbol_results("", self.core.watchlists().find(self.watchlist_ui.active_list_id), self.core.exchange_symbols().as_map());
                 {
                     let sym_id = uzor::WidgetId::from(crate::text_input::SYMBOL_SEARCH);
                     self.input_coordinator.borrow_mut().text_fields_mut().clear(&sym_id);
@@ -683,10 +683,8 @@ impl ChartApp {
                 use mlc_core::state::ChartId;
                 let target_cid = ChartId(chart_id);
 
-                let resolved_exchange = self.core.exchange_symbols_read()
-                    .keys()
-                    .find(|eid| eid.as_str() == exchange.as_str())
-                    .copied()
+                let resolved_exchange = self.core.exchange_symbols()
+                    .find_by_label(exchange.as_str())
                     .unwrap_or(self.active_exchange);
 
                 let previous_symbol: String = self.symbol_for_chart(target_cid)
@@ -696,7 +694,7 @@ impl ChartApp {
                     .map(|s| crate::account_type_from_label(&s))
                     .unwrap_or(digdigdig3::AccountType::Spot);
                 let old_trade_exchange = self.exchange_for_chart(target_cid)
-                    .and_then(|s| self.core.exchange_symbols_read().keys().find(|eid| eid.as_str() == s.as_str()).copied())
+                    .and_then(|s| self.core.exchange_symbols().find_by_label(s.as_str()))
                     .unwrap_or(self.active_exchange);
 
                 let timeframe = self.timeframe_for_chart(target_cid)
@@ -786,7 +784,7 @@ impl ChartApp {
             ChartOutEvent::OpenCompareSearch => {
                 self.modal_state.open(OpenModal::CompareSearch);
                 self.modal_state.symbol_search_results =
-                    crate::ChartApp::build_demo_symbol_results("", self.core.watchlists().find(self.watchlist_ui.active_list_id), &self.core.exchange_symbols_read());
+                    crate::ChartApp::build_demo_symbol_results("", self.core.watchlists().find(self.watchlist_ui.active_list_id), self.core.exchange_symbols().as_map());
                 {
                     let cmp_id = uzor::WidgetId::from(crate::text_input::COMPARE_SEARCH);
                     self.input_coordinator.borrow_mut().text_fields_mut().clear(&cmp_id);

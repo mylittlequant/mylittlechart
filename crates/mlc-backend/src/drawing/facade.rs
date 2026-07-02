@@ -711,4 +711,15 @@ impl<'a> DrawingsMut<'a> {
     pub fn with_bubble_mut<R>(&mut self, f: impl FnOnce(&mut DrawingManager, &mut BubbleStore) -> R) -> R {
         f(&mut self.mgr, &mut self.bubbles)
     }
+
+    /// Replace the entire manager with `new`, returning the previous one.
+    ///
+    /// Used exclusively by preset tab park/unpark (`mlc-app/src/persistence/
+    /// profile.rs`), which swaps the whole live-state bundle for a tab in
+    /// one shot — no bubble threading needed for the swap itself (the
+    /// co-acquired `bubbles` guard is unused here; it is swapped
+    /// independently via `BubblesMut::swap`).
+    pub fn swap(&mut self, new: DrawingManager) -> DrawingManager {
+        std::mem::replace(&mut self.mgr, new)
+    }
 }

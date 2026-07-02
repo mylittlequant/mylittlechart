@@ -1250,10 +1250,8 @@ impl ChartApp {
                         let mut depth_subs: Vec<(digdigdig3::ExchangeId, String, digdigdig3::AccountType)> = Vec::new();
 
                         let resolve_eid = |exchange_str: &str| -> digdigdig3::ExchangeId {
-                            self.core.exchange_symbols_read()
-                                .keys()
-                                .find(|e| e.as_str() == exchange_str)
-                                .copied()
+                            self.core.exchange_symbols()
+                                .find_by_label(exchange_str)
                                 .unwrap_or(self.active_exchange)
                         };
 

@@ -1716,8 +1716,7 @@ impl ChartApp {
         // Seed exchange_symbols cache from the bridge's session-long catalogue
         // so windows created after the connect wave start populated.
         {
-            let mut es = core.exchange_symbols_mut();
-            *es = exchange_symbols_seed;
+            core.exchange_symbols_mut().replace_all(exchange_symbols_seed);
         }
 
         let mut app = Self {
@@ -2238,8 +2237,7 @@ impl ChartApp {
         let exchange_symbols_seed = bridge.symbols_snapshot();
         let core = mlc_backend::BackendCore::new(bridge.clone(), None);
         {
-            let mut es = core.exchange_symbols_mut();
-            *es = exchange_symbols_seed;
+            core.exchange_symbols_mut().replace_all(exchange_symbols_seed);
         }
         let mut app = Self {
             panel_app: ChartPanelApp::new(""),
@@ -6891,10 +6889,8 @@ impl ChartApp {
             if old_sym == &symbol && old_exch == &exchange && old_at_label == &account_type {
                 continue;
             }
-            let old_eid = self.core.exchange_symbols_read()
-                .keys()
-                .find(|e| e.as_str() == old_exch.as_str())
-                .copied()
+            let old_eid = self.core.exchange_symbols()
+                .find_by_label(old_exch.as_str())
                 .unwrap_or(self.active_exchange);
             let old_at = crate::account_type_from_label(old_at_label);
             self.core.bridge.unsubscribe_depth(old_eid, old_sym, old_at);
@@ -6907,10 +6903,8 @@ impl ChartApp {
         // If any panel needs orderbook data for the new symbol, subscribe the depth
         // WebSocket stream so live updates start arriving for it.
         if needs_depth_sub && !symbol.is_empty() {
-            let eid = self.core.exchange_symbols_read()
-                .keys()
-                .find(|e| e.as_str() == exchange)
-                .copied()
+            let eid = self.core.exchange_symbols()
+                .find_by_label(&exchange)
                 .unwrap_or(self.active_exchange);
             let at = crate::account_type_from_label(&account_type);
             self.core.bridge.subscribe_depth(eid, &symbol, at);

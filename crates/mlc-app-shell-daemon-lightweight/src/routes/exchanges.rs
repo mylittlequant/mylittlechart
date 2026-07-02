@@ -13,8 +13,7 @@ struct ExchangeListOut {
 }
 
 async fn list_exchanges(State(s): State<AppState>) -> impl IntoResponse {
-    let guard = s.core.exchange_symbols_read();
-    let exchanges: Vec<String> = guard.keys().map(|e| e.as_str().to_string()).collect();
+    let exchanges: Vec<String> = s.core.exchange_symbols().exchange_labels().collect();
     Json(ExchangeListOut { exchanges })
 }
 

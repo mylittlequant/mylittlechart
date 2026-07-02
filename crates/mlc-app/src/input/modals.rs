@@ -342,10 +342,8 @@ impl ChartApp {
                         (composite, self.active_exchange.as_str(), "S".to_string())
                     };
                 // Resolve ExchangeId from string.
-                let resolved_exchange = self.core.exchange_symbols_read()
-                    .keys()
-                    .find(|eid| eid.as_str() == exchange_part)
-                    .copied()
+                let resolved_exchange = self.core.exchange_symbols()
+                    .find_by_label(exchange_part)
                     .unwrap_or(self.active_exchange);
                 // Switch the active chart to this symbol+exchange.
                 // Capture old trade-stream identity BEFORE mutating window state.
@@ -819,10 +817,8 @@ impl ChartApp {
                 let resolved_exchange = if exchange_id_part.is_empty() {
                     self.active_exchange
                 } else {
-                    self.core.exchange_symbols_read()
-                        .keys()
-                        .find(|eid| eid.as_str() == exchange_id_part)
-                        .copied()
+                    self.core.exchange_symbols()
+                        .find_by_label(exchange_id_part)
                         .unwrap_or(self.active_exchange)
                 };
 
@@ -2292,7 +2288,7 @@ impl ChartApp {
                     "symbol_search" => {
                         self.modal_state.open(OpenModal::SymbolSearch);
                         self.modal_state.symbol_search_results =
-                            crate::ChartApp::build_demo_symbol_results("", self.core.watchlists().find(self.watchlist_ui.active_list_id), &self.core.exchange_symbols_read());
+                            crate::ChartApp::build_demo_symbol_results("", self.core.watchlists().find(self.watchlist_ui.active_list_id), self.core.exchange_symbols().as_map());
                         {
                             let sym_id = uzor::WidgetId::from(crate::text_input::SYMBOL_SEARCH);
                             self.input_coordinator.borrow_mut().text_fields_mut().clear(&sym_id);

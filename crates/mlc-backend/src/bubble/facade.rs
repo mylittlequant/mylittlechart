@@ -403,4 +403,13 @@ impl<'a> BubblesMut<'a> {
     pub fn with_bubble_mut<R>(&mut self, bid: BubbleId, f: impl FnOnce(&mut DataBubble) -> R) -> Option<R> {
         self.store.bubble_mut(bid).map(f)
     }
+
+    /// Replace the entire store with `new`, returning the previous one.
+    ///
+    /// Used exclusively by preset tab park/unpark (`mlc-app/src/persistence/
+    /// profile.rs`), which swaps the whole live-state bundle for a tab in
+    /// one shot.
+    pub fn swap(&mut self, new: BubbleStore) -> BubbleStore {
+        std::mem::replace(&mut self.store, new)
+    }
 }

@@ -991,7 +991,7 @@ impl ChartApp {
         {
             let query = self.modal_state.search_query.clone();
             self.modal_state.symbol_search_results =
-                Self::build_demo_symbol_results(&query, self.core.watchlists().find(self.watchlist_ui.active_list_id), &self.core.exchange_symbols_read());
+                Self::build_demo_symbol_results(&query, self.core.watchlists().find(self.watchlist_ui.active_list_id), self.core.exchange_symbols().as_map());
         }
 
         // --- Split-pane layout and viewport sync ---

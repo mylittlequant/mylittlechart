@@ -586,7 +586,7 @@ impl ChartApp {
                 {
                     let q = self.modal_state.search_query.clone();
                     self.modal_state.symbol_search_results =
-                        crate::ChartApp::build_demo_symbol_results(&q, self.core.watchlists().find(self.watchlist_ui.active_list_id), &self.core.exchange_symbols_read());
+                        crate::ChartApp::build_demo_symbol_results(&q, self.core.watchlists().find(self.watchlist_ui.active_list_id), self.core.exchange_symbols().as_map());
                 }
             }
             TextAction::Cancel => {

@@ -290,4 +290,13 @@ impl<'a> TagsMut<'a> {
     ) -> Vec<(SyncMemberId, TagId)> {
         self.mgr.restore_from_snapshots(snaps)
     }
+
+    /// Replace the entire manager with `new`, returning the previous one.
+    ///
+    /// Used exclusively by preset tab park/unpark (`mlc-app/src/persistence/
+    /// profile.rs`), which swaps the whole live-state bundle for a tab in
+    /// one shot.
+    pub fn swap(&mut self, new: TagManager) -> TagManager {
+        std::mem::replace(&mut self.mgr, new)
+    }
 }

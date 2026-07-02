@@ -324,10 +324,8 @@ impl ChartApp {
                     eprintln!("[Sidebar] Watchlist click: {} @ {} ({})", symbol, item_exchange, idx);
 
                     // Resolve ExchangeId from the item's exchange string.
-                    let resolved_exchange = self.core.exchange_symbols_read()
-                        .keys()
-                        .find(|eid| eid.as_str() == item_exchange)
-                        .copied()
+                    let resolved_exchange = self.core.exchange_symbols()
+                        .find_by_label(&item_exchange)
                         .unwrap_or(self.active_exchange);
 
                     // S2.7.1e: read prev instrument fields via branch_meta (B1).
@@ -1277,12 +1275,8 @@ impl ChartApp {
                         let account_type_str = resolved.as_ref().map(|r| r.account_type.clone())
                             .unwrap_or_else(|| digdigdig3::AccountType::Spot.short_label().to_string());
 
-                        let resolved_tick_size = self.core.exchange_symbols_read()
-                            .iter()
-                            .find(|(eid, _)| eid.as_str() == exchange_str)
-                            .and_then(|(_, syms)| {
-                                syms.iter().find(|s| s.symbol == symbol).and_then(|s| s.tick_size)
-                            })
+                        let resolved_tick_size = self.core.exchange_symbols()
+                            .tick_size_for(&exchange_str, &symbol)
                             .filter(|t| *t > 0.0)
                             .unwrap_or(0.01);
 
@@ -1503,10 +1497,8 @@ impl ChartApp {
                         // above, which internally calls subscribe_depth().
                         let needs_depth = matches!(kind_str, "l2_tape" | "liquidity_heatmap");
                         if needs_depth {
-                            let eid = self.core.exchange_symbols_read()
-                                .keys()
-                                .find(|e| e.as_str() == exchange_str)
-                                .copied()
+                            let eid = self.core.exchange_symbols()
+                                .find_by_label(&exchange_str)
                                 .unwrap_or(self.active_exchange);
                             let at = crate::account_type_from_label(&account_type_str);
                             self.core.bridge.subscribe_depth(eid, &symbol, at);
