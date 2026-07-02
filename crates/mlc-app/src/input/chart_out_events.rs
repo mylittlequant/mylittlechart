@@ -1509,6 +1509,10 @@ impl ChartApp {
                 eprintln!("[ChartApp] delete preset: {}", id);
                 // Also remove from open_tabs when deleting.
                 self.panel_app.open_tabs.retain(|t| t != &id);
+                // Release this window's claim (if any) — a deleted preset
+                // can never be claimed again, so there is nothing left to
+                // guard against a two-window collision on.
+                self.core.release_preset(&id, &self.window_id);
                 if self.core.presets_mut().remove(&id).is_some() {
                     self.preset_actions.push(crate::PresetAction::Delete { id: id.clone() });
                     self.persist_profile();
@@ -1527,6 +1531,12 @@ impl ChartApp {
                 self.panel_app.open_tabs.retain(|t| t != &id);
                 // Drop live cache entry for the closed tab.
                 self.live_preset_cache.remove(&id);
+                // Release this window's claim — the tab is fully closing in
+                // this window, so the invariant "live in exactly one window"
+                // (§5.3.5) no longer applies to it here. No-op if another
+                // window's app_id holds it (release_preset only releases
+                // your own claim).
+                self.core.release_preset(&id, &self.window_id);
                 // If the closed tab was active, switch to another.
                 if self.panel_app.active_preset_id == id {
                     if let Some(next) = self.panel_app.open_tabs.last().cloned() {

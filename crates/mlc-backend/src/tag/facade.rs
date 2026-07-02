@@ -290,12 +290,17 @@ impl<'a> TagsMut<'a> {
         self.mgr.restore_from_snapshots(snaps)
     }
 
-    /// Replace the entire manager with `new`, returning the previous one.
-    ///
-    /// Used exclusively by preset tab park/unpark (`mlc-app/src/persistence/
-    /// profile.rs`), which swaps the whole live-state bundle for a tab in
-    /// one shot.
-    pub fn swap(&mut self, new: TagManager) -> TagManager {
-        std::mem::replace(&mut self.mgr, new)
+    /// Remove and return only the tags belonging to `bubble_ids`, plus their
+    /// routing rows. `synced_panels`/`active_chart_tag` stay on `self` —
+    /// domain-wide, never part of a park/unpark payload (§4.2). Used
+    /// exclusively by preset tab park.
+    pub fn extract_tags_for_bubbles(&mut self, bubble_ids: &[BubbleId]) -> TagManager {
+        self.mgr.extract_tags_for_bubbles(bubble_ids)
+    }
+
+    /// Re-insert every tag and routing row from `other`. Used exclusively
+    /// by preset tab unpark.
+    pub fn merge_tags(&mut self, other: TagManager) {
+        self.mgr.merge_tags(other)
     }
 }

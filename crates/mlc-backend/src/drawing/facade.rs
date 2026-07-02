@@ -697,14 +697,18 @@ impl<'a> DrawingsMut<'a> {
         self.mgr.drop_bubble(bid)
     }
 
-    /// Replace the entire manager with `new`, returning the previous one.
-    ///
-    /// Used exclusively by preset tab park/unpark (`mlc-app/src/persistence/
-    /// profile.rs`), which swaps the whole live-state bundle for a tab in
-    /// one shot — no bubble threading needed for the swap itself (the
-    /// co-acquired `bubbles` guard is unused here; it is swapped
-    /// independently via `BubblesMut::swap`).
-    pub fn swap(&mut self, new: DrawingManager) -> DrawingManager {
-        std::mem::replace(&mut self.mgr, new)
+    /// Remove and return only the editing sessions for `bubble_ids` as a
+    /// fresh, small `DrawingManager`. Used exclusively by preset tab park
+    /// (shared-BackendCore arc §5.3) — replaces whole-manager `swap()`,
+    /// which under a shared core would drop every other window's drawing
+    /// sessions too.
+    pub fn extract_for_bubbles(&mut self, bubble_ids: &[BubbleId]) -> DrawingManager {
+        self.mgr.extract_for_bubbles(bubble_ids)
+    }
+
+    /// Re-insert every editing session from `other`. Used exclusively by
+    /// preset tab unpark.
+    pub fn merge_for_bubbles(&mut self, other: DrawingManager) {
+        self.mgr.merge_for_bubbles(other)
     }
 }

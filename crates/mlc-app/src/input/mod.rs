@@ -7002,9 +7002,14 @@ impl ChartApp {
             sglog!("[execute_new_chart_with_name] parked outgoing preset '{}'", outgoing_id);
         }
 
-        // After park_active_preset every session-scoped manager has been
-        // replaced with a fresh placeholder, so the reset below is operating
-        // on an already-empty world — no need to `bubble.clear()` etc.
+        // After park_active_preset the OUTGOING preset's own bubbles/tags/
+        // indicators/alerts/drawings have been extracted out of `self.core`
+        // into `live_preset_cache` (scoped extraction, shared-BackendCore
+        // arc §5.3 — NOT a whole-manager clear; other presets' bubbles in
+        // `self.core` are untouched). The reset below creates a brand-new
+        // auto-bubble for the new chart rather than relying on any
+        // clear-the-world state, so no `bubble.clear()` etc is needed either
+        // way.
         self.panel_app.panel_grid.set_layout_single();
         self.panel_app.panel_grid.reassign_active_chart_id();
         self.panel_app.indicator_overlay_states.clear();

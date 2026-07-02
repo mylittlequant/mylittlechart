@@ -13,10 +13,11 @@
 //!
 //! Methods are `pub` (not `pub(crate)`) mirroring `WatchlistManager`: the
 //! `Tags`/`TagsMut` facade governs access while the manager sits behind
-//! `BackendCore`'s `RwLock`; once a caller owns the manager directly
-//! (parked-preset swap via `mem::replace` in `mlc-app::persistence`), its
-//! `pub` API is the normal way to query it — no facade needed for an
-//! unlocked, directly-owned instance.
+//! `BackendCore`'s `RwLock`; once a caller owns an extracted subset directly
+//! (preset park/unpark via `extract_tags_for_bubbles`/`merge_tags` in
+//! `mlc-app::persistence` — shared-BackendCore arc §5.3), its `pub` API is
+//! the normal way to query it — no facade needed for an unlocked,
+//! directly-owned instance.
 
 use std::collections::{HashMap, HashSet};
 
@@ -362,5 +363,131 @@ impl TagManager {
             }
         }
         panel_syncs
+    }
+
+    // =========================================================================
+    // Scoped park/unpark — bubble-id-subset extraction (shared-BackendCore
+    // arc, §5.3). Replaces whole-manager `swap()`: under a single
+    // process-wide `BackendCore`, `synced_panels` and `active_chart_tag`
+    // are domain-wide state (§4.2 verdict) and must NEVER travel in a
+    // park/unpark payload — only the tags themselves (keyed 1:1 by
+    // `BubbleId`, per the `TagId == BubbleId` invariant) and their
+    // `member_to_tag` routing rows move.
+    // =========================================================================
+
+    /// Remove and return only the tags whose id is in `bubble_ids`
+    /// (`TagId == BubbleId` by invariant), plus their `member_to_tag`
+    /// routing rows. `synced_panels` and `active_chart_tag` are left
+    /// untouched on `self` — they are global, not part of any one preset's
+    /// state (§4.2).
+    ///
+    /// Used exclusively by preset tab park (`mlc-app/src/persistence/
+    /// profile.rs::park_active_preset`).
+    pub fn extract_tags_for_bubbles(&mut self, bubble_ids: &[BubbleId]) -> TagManager {
+        let mut out = TagManager::default();
+        for &id in bubble_ids {
+            let Some(tag) = self.tags.remove(&id) else { continue };
+            for &member_id in &tag.members {
+                if let Some(&owner) = self.member_to_tag.get(&member_id) {
+                    if owner == id {
+                        self.member_to_tag.remove(&member_id);
+                        out.member_to_tag.insert(member_id, id);
+                    }
+                }
+            }
+            out.tags.insert(id, tag);
+        }
+        out
+    }
+
+    /// Re-insert every tag and routing row from `other` into `self`.
+    /// `other.synced_panels`/`active_chart_tag` are discarded (always
+    /// default/empty on an extracted `TagManager` — see
+    /// [`Self::extract_tags_for_bubbles`]).
+    ///
+    /// Used exclusively by preset tab unpark (`mlc-app/src/persistence/
+    /// profile.rs::unpark_preset`).
+    pub fn merge_tags(&mut self, other: TagManager) {
+        for (id, tag) in other.tags {
+            self.tags.insert(id, tag);
+        }
+        for (member_id, tag_id) in other.member_to_tag {
+            self.member_to_tag.insert(member_id, tag_id);
+        }
+    }
+}
+
+#[cfg(test)]
+mod park_unpark_tests {
+    //! Round-trip coverage for `extract_tags_for_bubbles`/`merge_tags` — the
+    //! shared-BackendCore-arc scoped-park replacement for whole-manager
+    //! `swap()` (`docs/mlc/plans/shared-backend-core-2026-07-03.md` §5.3).
+
+    use super::*;
+
+    #[test]
+    fn extract_then_merge_round_trips_to_identical_manager() {
+        let mut mgr = TagManager::new();
+        let a = BubbleId(1);
+        let b = BubbleId(2);
+        let c = BubbleId(3);
+        mgr.insert(Tag::new(a, [1.0, 0.0, 0.0, 1.0]));
+        mgr.insert(Tag::new(b, [0.0, 1.0, 0.0, 1.0]));
+        mgr.insert(Tag::new(c, [0.0, 0.0, 1.0, 1.0]));
+        mgr.connect(SyncMemberId::Chart(10), a).expect("connect a");
+        mgr.connect(SyncMemberId::Chart(20), b).expect("connect b");
+        mgr.connect(SyncMemberId::Chart(30), c).expect("connect c");
+
+        let extracted = mgr.extract_tags_for_bubbles(&[a, b]);
+        assert!(!mgr.contains(a));
+        assert!(!mgr.contains(b));
+        assert!(mgr.contains(c), "non-extracted tag must remain in the source manager");
+        assert!(extracted.contains(a));
+        assert!(extracted.contains(b));
+        assert_eq!(extracted.tag_for_member(SyncMemberId::Chart(10)), Some(a));
+        assert_eq!(mgr.tag_for_member(SyncMemberId::Chart(30)), Some(c));
+        assert_eq!(mgr.tag_for_member(SyncMemberId::Chart(10)), None, "routing row must move with the tag");
+
+        mgr.merge_tags(extracted);
+        assert!(mgr.contains(a));
+        assert!(mgr.contains(b));
+        assert!(mgr.contains(c));
+        assert_eq!(mgr.tag_for_member(SyncMemberId::Chart(10)), Some(a));
+        assert_eq!(mgr.tag_for_member(SyncMemberId::Chart(20)), Some(b));
+    }
+
+    #[test]
+    fn extract_leaves_synced_panels_and_active_chart_tag_global() {
+        // §4.2 verdict: synced_panels/active_chart_tag are domain-wide and
+        // must NEVER travel in a park/unpark payload.
+        let mut mgr = TagManager::new();
+        let a = BubbleId(1);
+        mgr.insert(Tag::new(a, [1.0, 0.0, 0.0, 1.0]));
+        mgr.set_synced(SyncMemberId::Panel(99), a);
+        mgr.reassign_synced_panels(a);
+        assert_eq!(mgr.active_chart_tag(), Some(a));
+        assert!(mgr.is_synced(SyncMemberId::Panel(99)));
+
+        let extracted = mgr.extract_tags_for_bubbles(&[a]);
+
+        // Global state stays on `mgr`, is NOT reset or moved into `extracted`.
+        assert_eq!(mgr.active_chart_tag(), Some(a));
+        assert!(mgr.is_synced(SyncMemberId::Panel(99)));
+        assert!(extracted.synced_panels().is_empty());
+        assert_eq!(extracted.active_chart_tag(), None);
+    }
+
+    #[test]
+    fn extract_other_windows_tags_are_untouched() {
+        let mut mgr = TagManager::new();
+        let window_a_bid = BubbleId(1);
+        let window_b_bid = BubbleId(2);
+        mgr.insert(Tag::new(window_a_bid, [1.0, 0.0, 0.0, 1.0]));
+        mgr.insert(Tag::new(window_b_bid, [0.0, 1.0, 0.0, 1.0]));
+
+        let parked_b = mgr.extract_tags_for_bubbles(&[window_b_bid]);
+
+        assert!(mgr.contains(window_a_bid), "window A's tag must survive parking window B's preset");
+        assert!(!parked_b.contains(window_a_bid), "extraction must not leak window A's tag into window B's payload");
     }
 }

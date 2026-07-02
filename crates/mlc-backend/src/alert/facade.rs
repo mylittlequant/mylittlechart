@@ -127,14 +127,19 @@ impl<'a> AlertsMut<'a> {
         self.mgr.restore_one(&mut self.bubbles, bid, item)
     }
 
-    /// Replace the entire manager with `new`, returning the previous one.
-    ///
-    /// Used exclusively by preset tab park/unpark (`mlc-app/src/persistence/
-    /// profile.rs`), which swaps the whole live-state bundle for a tab in one
-    /// shot — no bubble threading needed for the swap itself (the
-    /// co-acquired `bubbles` guard is unused here; it is swapped
-    /// independently via `BubblesMut::swap`).
-    pub fn swap(&mut self, new: AlertManager) -> AlertManager {
-        std::mem::replace(&mut self.mgr, new)
+    /// Remove and return only the `last_price` entries for `bubble_ids` as a
+    /// fresh, small `AlertManager`. Used exclusively by preset tab park
+    /// (shared-BackendCore arc §5.3) — replaces whole-manager `swap()`,
+    /// which under a shared core would drop every other window's crossing-
+    /// detection cache too. Alert *data* itself travels via
+    /// `BubblesMut::extract_bubbles`, not through this call.
+    pub fn extract_for_bubbles(&mut self, bubble_ids: &[BubbleId]) -> AlertManager {
+        self.mgr.extract_for_bubbles(bubble_ids)
+    }
+
+    /// Re-insert every `last_price` entry from `other`. Used exclusively by
+    /// preset tab unpark.
+    pub fn merge_for_bubbles(&mut self, other: AlertManager) {
+        self.mgr.merge_for_bubbles(other)
     }
 }

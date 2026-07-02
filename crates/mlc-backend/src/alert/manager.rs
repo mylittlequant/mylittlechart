@@ -411,4 +411,93 @@ impl AlertManager {
 
         triggered_ids
     }
+
+    #[cfg(test)]
+    pub(crate) fn set_last_price_for_test(&mut self, bid: BubbleId, price: f64) {
+        self.last_price.insert(bid, price);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn last_price_for_test(&self, bid: BubbleId) -> Option<f64> {
+        self.last_price.get(&bid).copied()
+    }
+
+    // =========================================================================
+    // Scoped park/unpark — bubble-id-subset extraction (shared-BackendCore
+    // arc, §5.3). Replaces whole-manager `swap()`. Alert *data* lives on
+    // `DataBubble` (travels automatically with `BubbleStore` extraction);
+    // this manager only owns the tick-to-tick `last_price` cache, so
+    // extraction is a simple key-subset move.
+    // =========================================================================
+
+    /// Remove and return only the `last_price` entries for `bubble_ids` as a
+    /// fresh, small `AlertManager`.
+    ///
+    /// Used exclusively by preset tab park (`mlc-app/src/persistence/
+    /// profile.rs::park_active_preset`).
+    pub(crate) fn extract_for_bubbles(&mut self, bubble_ids: &[BubbleId]) -> AlertManager {
+        let mut out = AlertManager::default();
+        for bid in bubble_ids {
+            if let Some(price) = self.last_price.remove(bid) {
+                out.last_price.insert(*bid, price);
+            }
+        }
+        out
+    }
+
+    /// Re-insert every `last_price` entry from `other`.
+    ///
+    /// Used exclusively by preset tab unpark (`mlc-app/src/persistence/
+    /// profile.rs::unpark_preset`).
+    pub(crate) fn merge_for_bubbles(&mut self, other: AlertManager) {
+        for (bid, price) in other.last_price {
+            self.last_price.insert(bid, price);
+        }
+    }
+}
+
+#[cfg(test)]
+mod park_unpark_tests {
+    //! Round-trip coverage for `extract_for_bubbles`/`merge_for_bubbles` —
+    //! the shared-BackendCore-arc scoped-park replacement for whole-manager
+    //! `swap()` (`docs/mlc/plans/shared-backend-core-2026-07-03.md` §5.3).
+
+    use super::*;
+
+    #[test]
+    fn extract_then_merge_round_trips_to_identical_manager() {
+        let mut mgr = AlertManager::default();
+        let a = BubbleId(1);
+        let b = BubbleId(2);
+        let c = BubbleId(3);
+        mgr.set_last_price_for_test(a, 100.0);
+        mgr.set_last_price_for_test(b, 200.0);
+        mgr.set_last_price_for_test(c, 300.0);
+
+        let extracted = mgr.extract_for_bubbles(&[a, b]);
+        assert_eq!(mgr.last_price_for_test(a), None);
+        assert_eq!(mgr.last_price_for_test(b), None);
+        assert_eq!(mgr.last_price_for_test(c), Some(300.0), "non-extracted entry must remain in the source manager");
+        assert_eq!(extracted.last_price_for_test(a), Some(100.0));
+        assert_eq!(extracted.last_price_for_test(b), Some(200.0));
+
+        mgr.merge_for_bubbles(extracted);
+        assert_eq!(mgr.last_price_for_test(a), Some(100.0));
+        assert_eq!(mgr.last_price_for_test(b), Some(200.0));
+        assert_eq!(mgr.last_price_for_test(c), Some(300.0));
+    }
+
+    #[test]
+    fn extract_other_windows_prices_are_untouched() {
+        let mut mgr = AlertManager::default();
+        let window_a_bid = BubbleId(1);
+        let window_b_bid = BubbleId(2);
+        mgr.set_last_price_for_test(window_a_bid, 42.0);
+        mgr.set_last_price_for_test(window_b_bid, 99.0);
+
+        let parked_b = mgr.extract_for_bubbles(&[window_b_bid]);
+
+        assert_eq!(mgr.last_price_for_test(window_a_bid), Some(42.0), "window A's price must survive parking window B's preset");
+        assert_eq!(parked_b.last_price_for_test(window_a_bid), None, "extraction must not leak window A's price into window B's payload");
+    }
 }

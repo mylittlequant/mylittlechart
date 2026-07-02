@@ -572,16 +572,20 @@ impl<'a> IndicatorsMut<'a> {
         self.mgr.clear_all();
     }
 
-    /// Replace the entire manager with `new`, returning the previous one.
-    ///
-    /// Used exclusively by preset tab park/unpark (`mlc-app/src/persistence/
-    /// profile.rs`), which swaps the whole live-state bundle for a tab in one
-    /// shot — no bubble threading needed, unlike every other method here.
-    /// This is the facade-widening the doctrine calls for in place of a raw
-    /// lock-guard escape (`docs/mlc/plans/doctrine-cutover-2026-06-27.md`
-    /// §1A: "extend the facade with concrete methods, not a guard").
-    pub fn swap(&mut self, new: IndicatorManager) -> IndicatorManager {
-        std::mem::replace(&mut self.mgr, new)
+    /// Remove and return only the indicator instances bound to `bubble_ids`
+    /// as a fresh, small `IndicatorManager`. Used exclusively by preset tab
+    /// park (shared-BackendCore arc §5.3) — replaces whole-manager `swap()`,
+    /// which under a shared core would rip out every other window's
+    /// indicators too.
+    pub fn extract_for_bubbles(&mut self, bubble_ids: &[BubbleId]) -> IndicatorManager {
+        let ids: Vec<u64> = bubble_ids.iter().map(|b| b.0).collect();
+        self.mgr.extract_for_bubbles(&ids)
+    }
+
+    /// Re-insert every instance and cache entry from `other`. Used
+    /// exclusively by preset tab unpark.
+    pub fn merge_for_bubbles(&mut self, other: IndicatorManager) {
+        self.mgr.merge_for_bubbles(other)
     }
 
     // =========================================================================

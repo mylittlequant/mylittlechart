@@ -1767,6 +1767,87 @@ impl DrawingManager {
     pub(crate) fn drop_bubble(&mut self, bid: BubbleId) {
         self.sessions.remove(&bid);
     }
+
+    // =========================================================================
+    // Scoped park/unpark — bubble-id-subset extraction (shared-BackendCore
+    // arc, §5.3). Replaces whole-manager `swap()`: under a single
+    // process-wide `BackendCore`, wholesale-swapping would drop every OTHER
+    // window's drawing sessions too.
+    // =========================================================================
+
+    /// Remove and return only the editing sessions for `bubble_ids` as a
+    /// fresh, small `DrawingManager`.
+    ///
+    /// Used exclusively by preset tab park (`mlc-app/src/persistence/
+    /// profile.rs::park_active_preset`).
+    pub(crate) fn extract_for_bubbles(&mut self, bubble_ids: &[BubbleId]) -> DrawingManager {
+        let mut out = DrawingManager::default();
+        for &bid in bubble_ids {
+            if let Some(session) = self.sessions.remove(&bid) {
+                out.sessions.insert(bid, session);
+            }
+        }
+        out
+    }
+
+    /// Re-insert every editing session from `other`.
+    ///
+    /// Used exclusively by preset tab unpark (`mlc-app/src/persistence/
+    /// profile.rs::unpark_preset`).
+    pub(crate) fn merge_for_bubbles(&mut self, other: DrawingManager) {
+        for (bid, session) in other.sessions {
+            self.sessions.insert(bid, session);
+        }
+    }
+}
+
+#[cfg(test)]
+mod park_unpark_tests {
+    //! Round-trip coverage for `extract_for_bubbles`/`merge_for_bubbles` —
+    //! the shared-BackendCore-arc scoped-park replacement for whole-manager
+    //! `swap()` (`docs/mlc/plans/shared-backend-core-2026-07-03.md` §5.3).
+
+    use super::*;
+
+    #[test]
+    fn extract_then_merge_round_trips_to_identical_manager() {
+        let mut mgr = DrawingManager::default();
+        let a = BubbleId(1);
+        let b = BubbleId(2);
+        let c = BubbleId(3);
+        // `set_locked` implicitly creates a session (session_mut is
+        // entry-or-default) — use distinct locked flags to identify which
+        // session traveled where.
+        mgr.set_locked(a, true);
+        mgr.set_locked(b, true);
+        mgr.set_locked(c, false);
+
+        let extracted = mgr.extract_for_bubbles(&[a, b]);
+        assert!(!mgr.is_locked(a), "extracted session must be gone from source (is_locked defaults to false when absent)");
+        assert!(!mgr.is_locked(b));
+        assert!(!mgr.is_locked(c), "non-extracted session must be untouched (still false)");
+        assert!(extracted.is_locked(a));
+        assert!(extracted.is_locked(b));
+
+        mgr.merge_for_bubbles(extracted);
+        assert!(mgr.is_locked(a));
+        assert!(mgr.is_locked(b));
+        assert!(!mgr.is_locked(c));
+    }
+
+    #[test]
+    fn extract_other_windows_sessions_are_untouched() {
+        let mut mgr = DrawingManager::default();
+        let window_a_bid = BubbleId(1);
+        let window_b_bid = BubbleId(2);
+        mgr.set_locked(window_a_bid, true);
+        mgr.set_locked(window_b_bid, true);
+
+        let parked_b = mgr.extract_for_bubbles(&[window_b_bid]);
+
+        assert!(mgr.is_locked(window_a_bid), "window A's session must survive parking window B's preset");
+        assert!(!parked_b.is_locked(window_a_bid), "extraction must not leak window A's session into window B's payload");
+    }
 }
 
 /// Item for primitive list (Object Tree).

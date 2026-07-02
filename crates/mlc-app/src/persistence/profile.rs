@@ -5,7 +5,6 @@ use crate::agent as gate4agent;
 
 use crate::ChartApp;
 use crate::persistence::live_cache as preset_cache;
-use mlc_backend::indicator::IndicatorManager;
 use mlc_core::ScaleMode;
 
 impl ChartApp {
@@ -173,30 +172,85 @@ impl ChartApp {
         self.profile_dirty = true;
     }
 
+    /// Collect every `BubbleId` a `ChartPanelGrid` references — both the
+    /// permanent home bubble (`auto_tag_id`) and the bubble currently
+    /// displayed (`current_tag_id`, which differs from `auto_tag_id` while
+    /// the window is in a color-tag sync group) for every chart window in
+    /// the grid.
+    ///
+    /// Shared by [`Self::park_active_preset`] (scoped extraction under the
+    /// shared-BackendCore arc) and the cold-load path
+    /// (`hydration_impl.rs::apply_preset_cold`, which walks the same two
+    /// fields while rebuilding `new_containers`) — this is the single
+    /// collection routine for "which bubbles belong to this panel grid",
+    /// per `docs/mlc/plans/shared-backend-core-2026-07-03.md` §5.3.2.
+    pub(crate) fn bubble_ids_for_panel_grid(
+        panel_grid: &crate::panel_grid::ChartPanelGrid,
+    ) -> Vec<mlc_core::ids::BubbleId> {
+        let mut seen = std::collections::HashSet::new();
+        let mut ids = Vec::new();
+        for window in panel_grid.containers().values() {
+            if seen.insert(window.auto_tag_id) {
+                ids.push(window.auto_tag_id);
+            }
+            if seen.insert(window.current_tag_id) {
+                ids.push(window.current_tag_id);
+            }
+        }
+        ids
+    }
+
     /// Park the active preset's live state into the cache.
     /// Active fields are replaced with cheap placeholders.
+    ///
+    /// Bubble/tag/indicator/alert/drawing managers are SCOPED extractions
+    /// (`extract_bubbles` / `extract_tags_for_bubbles` / `extract_for_bubbles`
+    /// ×3), not whole-manager swaps — under the shared-BackendCore arc,
+    /// `self.core` is the SAME `Arc<BackendCore>` every other open window
+    /// reads from, so a whole-manager `swap()` would blank every other
+    /// window's bubbles/tags/indicators/alerts/drawings for as long as this
+    /// preset stays parked (`docs/mlc/plans/shared-backend-core-2026-07-03.md`
+    /// §5.1-§5.3).
     pub(crate) fn park_active_preset(&mut self, id: &str) {
+        // Claim (or reaffirm) ownership of this preset id before parking its
+        // bubbles into this window's cache. Re-claiming a preset THIS window
+        // already owns always succeeds (see `try_claim_preset`). A `false`
+        // return means a DIFFERENT window's `window_id` already holds the
+        // claim — the same-preset-two-windows hazard the shared-BackendCore
+        // arc introduced (§5.3.5). Logged loudly and NOT enforced yet: full
+        // enforcement (refuse the park / release-on-close) needs Phase F's
+        // session lifecycle wiring to avoid a stale claim permanently
+        // wedging a preset — tracked there, not silently fixed here.
+        if !self.core.try_claim_preset(id, &self.window_id) {
+            eprintln!(
+                "[ChartApp] WARNING: preset '{}' parked by window '{}' while claim registry \
+                 shows a different owner — same-preset-two-windows hazard, \
+                 see shared-backend-core-2026-07-03.md §5.3.5",
+                id, self.window_id,
+            );
+        }
         let pk_total = web_time::Instant::now();
         let t0 = web_time::Instant::now();
         let panel_grid = std::mem::replace(
             &mut self.panel_app.panel_grid,
             crate::panel_grid::ChartPanelGrid::placeholder(),
         );
+        let bubble_ids = Self::bubble_ids_for_panel_grid(&panel_grid);
         let pk_grid_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
-        let bubble_store = self.core.bubbles_mut().swap(mlc_backend::bubble::BubbleStore::new());
-        let tag_manager = self.core.tags_mut().swap(mlc_backend::tag::TagManager::new());
+        let bubble_store = self.core.bubbles_mut().extract_bubbles(&bubble_ids);
+        let tag_manager = self.core.tags_mut().extract_tags_for_bubbles(&bubble_ids);
         let pk_bubble_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
-        let indicator_manager = self.core.indicators_mut().swap(IndicatorManager::new());
+        let indicator_manager = self.core.indicators_mut().extract_for_bubbles(&bubble_ids);
         let pk_ind_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
         // Per-bubble drawing sessions (Step 3.1) must travel with
         // tag_manager since both are keyed by the same BubbleIds.
-        let alert_manager = self.core.alerts_mut().swap(mlc_backend::alert::AlertManager::default());
+        let alert_manager = self.core.alerts_mut().extract_for_bubbles(&bubble_ids);
         let pk_alert_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
-        let drawing_manager = self.core.drawings_mut().swap(mlc_backend::drawing::DrawingManager::default());
+        let drawing_manager = self.core.drawings_mut().extract_for_bubbles(&bubble_ids);
         let pk_drawing_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
         let leaf_color_tags = std::mem::take(&mut self.panel_app.leaf_color_tags);
@@ -249,6 +303,20 @@ impl ChartApp {
         let up_total = web_time::Instant::now();
         let t0 = web_time::Instant::now();
         let Some(state) = self.live_preset_cache.remove(id) else { return false; };
+        // Reaffirm ownership — see the matching comment in
+        // `park_active_preset`. This preset was already parked in THIS
+        // window's own cache (we just removed it above), so the claim
+        // should always already belong to `self.window_id`; the warning
+        // path exists only to surface a bug if that invariant is ever
+        // violated.
+        if !self.core.try_claim_preset(id, &self.window_id) {
+            eprintln!(
+                "[ChartApp] WARNING: preset '{}' unparked by window '{}' while claim registry \
+                 shows a different owner — same-preset-two-windows hazard, \
+                 see shared-backend-core-2026-07-03.md §5.3.5",
+                id, self.window_id,
+            );
+        }
         let up_remove_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
         // Each of the following lines DROPS whatever lives in the field
@@ -257,17 +325,17 @@ impl ChartApp {
         self.panel_app.panel_grid = state.panel_grid;
         let up_grid_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
-        self.core.bubbles_mut().swap(state.bubble_store);
-        self.core.tags_mut().swap(state.tag_manager);
+        self.core.bubbles_mut().merge_bubbles(state.bubble_store);
+        self.core.tags_mut().merge_tags(state.tag_manager);
         let up_bubble_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
-        self.core.indicators_mut().swap(state.indicator_manager);
+        self.core.indicators_mut().merge_for_bubbles(state.indicator_manager);
         let up_ind_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
-        self.core.alerts_mut().swap(state.alert_manager);
+        self.core.alerts_mut().merge_for_bubbles(state.alert_manager);
         let up_alert_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
-        self.core.drawings_mut().swap(state.drawing_manager);
+        self.core.drawings_mut().merge_for_bubbles(state.drawing_manager);
         let up_drawing_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
         self.panel_app.leaf_color_tags = state.leaf_color_tags;

@@ -308,6 +308,42 @@ impl BubbleStore {
         self.next_indicator_config_id = 1;
     }
 
+    // =========================================================================
+    // Scoped park/unpark — bubble-id-subset extraction (shared-BackendCore arc,
+    // §5.3). Replaces whole-store `swap()` for preset park/unpark: under a
+    // single process-wide `BackendCore`, wholesale-swapping the store would
+    // blank every OTHER window's bubbles too. Extraction removes only the
+    // named ids into a small, fresh `BubbleStore`; merge re-inserts them.
+    // =========================================================================
+
+    /// Remove and return only the bubbles named in `ids` as a fresh, small
+    /// `BubbleStore`. Ids not present in `self` are silently skipped.
+    ///
+    /// Used exclusively by preset tab park (`mlc-app/src/persistence/
+    /// profile.rs::park_active_preset`).
+    pub fn extract_bubbles(&mut self, ids: &[BubbleId]) -> BubbleStore {
+        let mut out = BubbleStore::new();
+        for &id in ids {
+            if let Some(bubble) = self.bubbles.remove(&id) {
+                out.bubbles.insert(id, bubble);
+            }
+        }
+        out
+    }
+
+    /// Re-insert every bubble from `other` into `self`. `other` is consumed
+    /// (its own `next_indicator_config_id` counter is discarded — that field
+    /// is whole-store scoped and not currently used per-bubble; see
+    /// `mlc-backend/src/bubble/store.rs` field doc).
+    ///
+    /// Used exclusively by preset tab unpark (`mlc-app/src/persistence/
+    /// profile.rs::unpark_preset`).
+    pub fn merge_bubbles(&mut self, other: BubbleStore) {
+        for (id, bubble) in other.bubbles {
+            self.bubbles.insert(id, bubble);
+        }
+    }
+
     /// Insert a fully-constructed [`DataBubble`] using its own id.
     ///
     /// No new id is generated. If a bubble with the same id already exists it
@@ -598,5 +634,69 @@ pub struct InstrumentKey {
 impl Default for BubbleStore {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod park_unpark_tests {
+    //! Round-trip coverage for `extract_bubbles`/`merge_bubbles` — the
+    //! shared-BackendCore-arc scoped-park replacement for whole-store
+    //! `swap()` (`docs/mlc/plans/shared-backend-core-2026-07-03.md` §5.3).
+
+    use super::*;
+
+    #[test]
+    fn extract_then_merge_round_trips_to_identical_store() {
+        let mut store = BubbleStore::new();
+        let a = store.create_bubble("BTCUSDT".to_string(), Timeframe::h1());
+        let b = store.create_bubble("ETHUSDT".to_string(), Timeframe::h1());
+        let c = store.create_bubble("SOLUSDT".to_string(), Timeframe::h1());
+        store.append_bar(a, mlc_core::Bar {
+            timestamp: 1, open: 1.0, high: 1.0, low: 1.0, close: 1.0, volume: 1.0,
+        });
+
+        // Extract only `a` and `b` — `c` must stay behind untouched.
+        let extracted = store.extract_bubbles(&[a, b]);
+        assert!(!store.exists(a));
+        assert!(!store.exists(b));
+        assert!(store.exists(c), "non-extracted bubble must remain in the source store");
+        assert!(extracted.exists(a));
+        assert!(extracted.exists(b));
+        assert!(!extracted.exists(c));
+        assert_eq!(extracted.bars(a).len(), 1, "bubble data must travel with extraction");
+
+        // Merge back — store must be identical to pre-extraction in content.
+        store.merge_bubbles(extracted);
+        assert!(store.exists(a));
+        assert!(store.exists(b));
+        assert!(store.exists(c));
+        assert_eq!(store.bars(a).len(), 1);
+    }
+
+    #[test]
+    fn extract_skips_ids_not_present() {
+        let mut store = BubbleStore::new();
+        let a = store.create_bubble("BTCUSDT".to_string(), Timeframe::h1());
+        let missing = BubbleId(999_999);
+
+        let extracted = store.extract_bubbles(&[a, missing]);
+        assert!(extracted.exists(a));
+        assert!(!extracted.exists(missing));
+        assert_eq!(extracted.bubble_ids().count(), 1);
+    }
+
+    #[test]
+    fn extract_other_windows_bubbles_are_untouched() {
+        // Simulates the §5.1 hazard directly: window A's bubbles must never
+        // be visible in — or removed from — an extraction scoped to window
+        // B's bubble ids.
+        let mut store = BubbleStore::new();
+        let window_a_bid = store.create_bubble("BTCUSDT".to_string(), Timeframe::h1());
+        let window_b_bid = store.create_bubble("ETHUSDT".to_string(), Timeframe::h1());
+
+        let parked_b = store.extract_bubbles(&[window_b_bid]);
+
+        assert!(store.exists(window_a_bid), "window A's bubble must survive parking window B's preset");
+        assert!(!parked_b.exists(window_a_bid), "extraction must not leak window A's bubble into window B's payload");
     }
 }

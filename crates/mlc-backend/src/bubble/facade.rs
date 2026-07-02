@@ -412,12 +412,17 @@ impl<'a> BubblesMut<'a> {
         self.store.bubble_mut(bid).map(f)
     }
 
-    /// Replace the entire store with `new`, returning the previous one.
-    ///
-    /// Used exclusively by preset tab park/unpark (`mlc-app/src/persistence/
-    /// profile.rs`), which swaps the whole live-state bundle for a tab in
-    /// one shot.
-    pub fn swap(&mut self, new: BubbleStore) -> BubbleStore {
-        std::mem::replace(&mut self.store, new)
+    /// Remove and return only the bubbles named in `ids` as a fresh, small
+    /// `BubbleStore`. Used exclusively by preset tab park (shared-BackendCore
+    /// arc §5.3) — replaces whole-store `swap()`, which under a shared core
+    /// would blank every other window's bubbles too.
+    pub fn extract_bubbles(&mut self, ids: &[BubbleId]) -> BubbleStore {
+        self.store.extract_bubbles(ids)
+    }
+
+    /// Re-insert every bubble from `other` into the store. Used exclusively
+    /// by preset tab unpark.
+    pub fn merge_bubbles(&mut self, other: BubbleStore) {
+        self.store.merge_bubbles(other)
     }
 }

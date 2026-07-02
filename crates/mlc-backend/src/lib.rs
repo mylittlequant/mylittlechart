@@ -725,6 +725,18 @@ pub struct BackendCore {
     /// registry never held a raw-guard escape.
     sessions: std::sync::RwLock<SessionRegistry>,
 
+    /// Claim registry: `preset_id -> owning app_id`, enforcing the
+    /// shared-BackendCore-arc invariant that a preset is either
+    /// parked-nowhere (never opened this session) or live in exactly one
+    /// window (`docs/mlc/plans/shared-backend-core-2026-07-03.md` §5.3.5).
+    /// Before this arc "elsewhere" meant "a different, unrelated
+    /// `BackendCore`" so collision was structurally impossible; under one
+    /// shared core it is now a real hazard park/unpark must guard against.
+    /// Release is tied to the claiming window's lifecycle the same way
+    /// `sessions` is — see `try_claim_preset` / `release_preset` /
+    /// `release_all_presets_for_app`.
+    open_presets: std::sync::RwLock<HashMap<String, String>>,
+
     /// The drawing manager — one editing session per bubble
     /// (`BubbleDrawingSession`, keyed by `BubbleId` internally).
     ///
@@ -789,6 +801,7 @@ impl BackendCore {
             watchlist_manager: std::sync::RwLock::new(WatchlistManager::default()),
             tag: std::sync::RwLock::new(TagManager::new()),
             sessions: std::sync::RwLock::new(SessionRegistry::default()),
+            open_presets: std::sync::RwLock::new(HashMap::new()),
             drawing: std::sync::RwLock::new(DrawingManager::default()),
             #[cfg(not(target_arch = "wasm32"))]
             native_rt: std::sync::RwLock::new(None),
@@ -883,6 +896,60 @@ impl BackendCore {
             .values()
             .cloned()
             .collect()
+    }
+
+    /// Claim `preset_id` for `app_id`. Returns `true` if the claim succeeds
+    /// (preset was unclaimed, or already claimed by this same `app_id` —
+    /// re-claiming your own already-open preset is not a collision).
+    /// Returns `false` if another `app_id` already holds it.
+    ///
+    /// Call before parking a preset into `live_preset_cache` or unparking /
+    /// cold-loading it into `panel_grid` — see `mlc-app/src/persistence/
+    /// profile.rs`. Guards the shared-BackendCore-arc invariant that a
+    /// preset is live in at most one window at a time (§5.3.5).
+    pub fn try_claim_preset(&self, preset_id: &str, app_id: &str) -> bool {
+        let mut reg = self
+            .open_presets
+            .write()
+            .expect("BackendCore.open_presets poisoned (write)");
+        match reg.get(preset_id) {
+            Some(owner) => owner == app_id,
+            None => {
+                reg.insert(preset_id.to_string(), app_id.to_string());
+                true
+            }
+        }
+    }
+
+    /// Release `preset_id`'s claim if it is currently held by `app_id`.
+    /// No-op (and returns `false`) if unclaimed or held by a different
+    /// `app_id` — releasing a preset you don't own is never valid.
+    pub fn release_preset(&self, preset_id: &str, app_id: &str) -> bool {
+        let mut reg = self
+            .open_presets
+            .write()
+            .expect("BackendCore.open_presets poisoned (write)");
+        if reg.get(preset_id).map(String::as_str) == Some(app_id) {
+            reg.remove(preset_id);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Release every preset claimed by `app_id`. Callers tie this to the
+    /// same lifecycle event as `deregister_session` (window close / session
+    /// reap) so a crashed or force-closed window never leaves a preset
+    /// claimed forever (§5.3.5, risk 5 — "do not invent a second cleanup
+    /// mechanism").
+    pub fn release_all_presets_for_app(&self, app_id: &str) -> usize {
+        let mut reg = self
+            .open_presets
+            .write()
+            .expect("BackendCore.open_presets poisoned (write)");
+        let before = reg.len();
+        reg.retain(|_, owner| owner != app_id);
+        before - reg.len()
     }
 
     /// Read-only facade over the indicator manager. The ONLY doctrinally-
@@ -1706,4 +1773,103 @@ fn rand_u64() -> u64 {
         s.set(x);
         x
     })
+}
+
+#[cfg(test)]
+mod open_presets_claim_tests {
+    //! Coverage for the `open_presets` claim registry (shared-BackendCore
+    //! arc §5.3.5): "a preset is either parked-nowhere or live in exactly
+    //! one window" — `try_claim_preset` / `release_preset` /
+    //! `release_all_presets_for_app`.
+
+    use super::*;
+
+    /// Real `BackendCore` construction needs a `DataBridge`, which is async
+    /// (spins up the digdigdig3 station + persistence dirs, no network dial
+    /// until `ensure_connector`). A plain current-thread runtime is enough
+    /// — these tests never touch the bridge itself.
+    fn build_core() -> Arc<BackendCore> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio rt");
+        let (bridge, _live_rx, _connector_ready_rx) = rt.block_on(DataBridge::new());
+        BackendCore::new(Arc::new(bridge), None)
+    }
+
+    #[test]
+    fn first_claim_succeeds() {
+        let core = build_core();
+        assert!(core.try_claim_preset("preset-a", "app-1"));
+    }
+
+    #[test]
+    fn reclaim_by_same_app_succeeds() {
+        let core = build_core();
+        assert!(core.try_claim_preset("preset-a", "app-1"));
+        // Re-claiming your own already-open preset is not a collision —
+        // e.g. park then immediately unpark in the same window.
+        assert!(core.try_claim_preset("preset-a", "app-1"));
+    }
+
+    #[test]
+    fn claim_by_different_app_is_refused() {
+        let core = build_core();
+        assert!(core.try_claim_preset("preset-a", "app-1"));
+        assert!(
+            !core.try_claim_preset("preset-a", "app-2"),
+            "a second window must not be able to claim a preset already live in another window"
+        );
+    }
+
+    #[test]
+    fn release_then_reclaim_by_different_app_succeeds() {
+        let core = build_core();
+        assert!(core.try_claim_preset("preset-a", "app-1"));
+        assert!(core.release_preset("preset-a", "app-1"));
+        assert!(
+            core.try_claim_preset("preset-a", "app-2"),
+            "once released, a different window must be able to claim the preset"
+        );
+    }
+
+    #[test]
+    fn release_by_non_owner_is_a_no_op() {
+        let core = build_core();
+        assert!(core.try_claim_preset("preset-a", "app-1"));
+        assert!(
+            !core.release_preset("preset-a", "app-2"),
+            "releasing a claim you don't own must fail, not steal it"
+        );
+        // Original owner's claim must still be intact.
+        assert!(
+            !core.try_claim_preset("preset-a", "app-2"),
+            "claim must still belong to app-1 after app-2's failed release"
+        );
+    }
+
+    #[test]
+    fn release_unclaimed_preset_is_a_no_op() {
+        let core = build_core();
+        assert!(!core.release_preset("never-claimed", "app-1"));
+    }
+
+    #[test]
+    fn release_all_presets_for_app_releases_only_that_apps_claims() {
+        let core = build_core();
+        assert!(core.try_claim_preset("preset-a", "app-1"));
+        assert!(core.try_claim_preset("preset-b", "app-1"));
+        assert!(core.try_claim_preset("preset-c", "app-2"));
+
+        let released = core.release_all_presets_for_app("app-1");
+        assert_eq!(released, 2);
+
+        // app-1's presets are now claimable by anyone else.
+        assert!(core.try_claim_preset("preset-a", "app-2"));
+        assert!(core.try_claim_preset("preset-b", "app-2"));
+        // app-2's own preset was never touched — re-claiming it as app-2 is
+        // just a reaffirm, not a fresh claim, but a THIRD app must still be
+        // refused.
+        assert!(!core.try_claim_preset("preset-c", "app-3"));
+    }
 }
