@@ -1,16 +1,35 @@
+//! `TradingManager` — the stateful order/position/session registry.
+//!
+//! Owns everything about live trading state: per-`(ExchangeId,
+//! AccountType)` sessions, order managers, position trackers, paper-trading
+//! engines, cached balances, recent fills, and the published
+//! [`TradingSnapshot`]. Compute-free value types
+//! (`Order`/`Position`/`Fill`/`TradingConfig`/`TradingError`/…) live in
+//! `mlc-backend-trading-engine`, re-exported here for construction — this
+//! is the doctrine "manager" half of the trading system (3.7c lift, mirrors
+//! `mlc_backend::indicator::manager` from 3.7a).
+//!
+//! App code never constructs or holds this type directly — access goes
+//! through `mlc_backend::trading::{Trading, TradingMut}`
+//! (`BackendCore::trading` / `trading_mut`).
+
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::path::PathBuf;
 
 use mlc_backend_data_bridge::DataBridge;
 
-use crate::types::*;
-use crate::error::{TradingError, TradingResult};
-use crate::config::TradingConfig;
-use crate::order_manager::OrderManager;
-use crate::position_tracker::PositionTracker;
-use crate::paper_engine::PaperEngine;
-use crate::snapshot::{TradingSnapshot, SharedTradingSnapshot};
+use mlc_backend_trading_engine::{
+    ExchangeId, AccountType,
+    Order, Position, Balance, Fill, MarginType, TimeInForce,
+    OrderRequest, CancelRequest, CancelScope, PlaceOrderResponse, PositionQuery,
+    TradingCapabilities, AccountCapabilities, SessionInfo,
+    TradingConfig, TradingError, TradingResult,
+    TradingSnapshot, SharedTradingSnapshot,
+};
+use crate::trading::order_manager::OrderManager;
+use crate::trading::position_tracker::PositionTracker;
+use crate::trading::paper_engine::PaperEngine;
 
 enum TradingTaskResult {
     OrderPlaced {

@@ -1,5 +1,12 @@
+//! In-memory order registry, keyed by exchange order id.
+//!
+//! Stateful sub-manager owned by [`super::manager::TradingManager`] (one per
+//! `(ExchangeId, AccountType)` session) and by
+//! [`super::paper_engine::PaperEngine`] (paper session's own order book).
+//! Pure registry — no compute, no IO.
+
 use std::collections::HashMap;
-use crate::types::{Order, OrderStatus};
+use mlc_backend_trading_engine::{Order, OrderStatus};
 
 pub struct OrderManager {
     orders: HashMap<String, Order>,
@@ -34,13 +41,5 @@ impl OrderManager {
         self.orders.values().filter(|o| {
             matches!(o.status, OrderStatus::New | OrderStatus::PartiallyFilled)
         })
-    }
-
-    pub fn get(&self, order_id: &str) -> Option<&Order> {
-        self.orders.get(order_id)
-    }
-
-    pub fn clear(&mut self) {
-        self.orders.clear();
     }
 }

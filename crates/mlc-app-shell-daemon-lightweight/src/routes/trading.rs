@@ -20,7 +20,7 @@ struct ConnectorEntry {
 }
 
 async fn list_connectors(State(s): State<AppState>) -> impl IntoResponse {
-    let connectors = match s.core.trading_lock() {
+    let connectors = match s.core.trading() {
         None => Vec::new(),
         Some(guard) => {
             // TradingManager.snapshot() returns Arc<RwLock<TradingSnapshot>>.

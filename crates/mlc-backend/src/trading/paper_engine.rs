@@ -1,13 +1,21 @@
+//! Paper-trading simulation engine — one instance per `(ExchangeId,
+//! AccountType)` paper session, owned by
+//! [`super::manager::TradingManager`].
+//!
+//! Stateful: owns pending (unfilled limit/stop) orders, simulated balances,
+//! and its own [`OrderManager`] / [`PositionTracker`]. Fills orders against
+//! live orderbook mid/bbo pulled from the shared `DataBridge` — no real
+//! exchange order ever leaves the process.
+
 use std::collections::HashMap;
 use web_time::SystemTime;
 use web_time::UNIX_EPOCH;
-use crate::types::{
+use mlc_backend_trading_engine::{
     ExchangeId, AccountType, OrderRequest, OrderType, OrderSide,
-    Order, OrderStatus, Fill,
+    Order, OrderStatus, Fill, TradingError, TradingResult,
 };
-use crate::order_manager::OrderManager;
-use crate::position_tracker::PositionTracker;
-use crate::error::{TradingError, TradingResult};
+use crate::trading::order_manager::OrderManager;
+use crate::trading::position_tracker::PositionTracker;
 use std::sync::Arc;
 use mlc_backend_data_bridge::DataBridge;
 
@@ -412,7 +420,7 @@ fn now_ms() -> i64 {
         .as_millis() as i64
 }
 
-fn sym_to_string(sym: &crate::types::Symbol) -> String {
+fn sym_to_string(sym: &mlc_backend_trading_engine::Symbol) -> String {
     sym.raw().map(|s| s.to_string()).unwrap_or_else(|| sym.to_concat())
 }
 

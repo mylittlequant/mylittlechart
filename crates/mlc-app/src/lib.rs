@@ -1364,7 +1364,7 @@ impl ChartApp {
         let bridge = std::sync::Arc::new(bridge);
         // _first_rx is the broadcast::Receiver from DataBridge::new(). BackendCore::new
         // calls bridge.add_listener() internally, so _first_rx is dropped here.
-        let trading = mlc_backend_trading_engine::TradingManager::new(
+        let trading = mlc_backend::trading::TradingManager::new(
             bridge.clone(),
             std::path::PathBuf::from("."),
             rt_handle,
@@ -1504,7 +1504,7 @@ impl ChartApp {
             compare_add_attempts: 0, compare_add_success: 0, compare_add_queued: 0,
         };
 
-        if let Some(tm) = app.core.trading_lock() {
+        if let Some(tm) = app.core.trading() {
             app.panels_store.set_trading_snapshot(tm.snapshot());
         }
 

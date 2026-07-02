@@ -844,7 +844,7 @@ impl ChartApp {
                         }
                     }
                 }
-                if let Some(mut tm) = self.core.trading_lock() {
+                if let Some(mut tm) = self.core.trading_mut() {
                     tm.on_connector_ready(*exchange_id);
                 }
             }

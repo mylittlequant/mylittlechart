@@ -1,5 +1,12 @@
+//! Per-session position registry + realized-PnL accumulator.
+//!
+//! Stateful sub-manager owned by [`super::manager::TradingManager`] (live
+//! sessions) and [`super::paper_engine::PaperEngine`] (paper sessions).
+//! Builds positions from fills in paper mode; mirrors exchange-reported
+//! positions in live mode.
+
 use std::collections::HashMap;
-use crate::types::{Position, Fill, PositionPnl, PositionSide, OrderSide, MarginType};
+use mlc_backend_trading_engine::{Position, Fill, PositionPnl, PositionSide, OrderSide, MarginType};
 
 pub struct PositionTracker {
     positions: HashMap<String, Position>,

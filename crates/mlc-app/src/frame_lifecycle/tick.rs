@@ -293,7 +293,7 @@ impl ChartApp {
         }
 
         if !trading_updates.is_empty() {
-            if let Some(mut tm) = self.core.trading_lock() {
+            if let Some(mut tm) = self.core.trading_mut() {
                 tm.tick(&trading_updates);
             }
             for state in self.panels_store.order_entry.values_mut() {

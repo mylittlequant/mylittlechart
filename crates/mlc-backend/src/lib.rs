@@ -33,6 +33,7 @@ pub mod tag;
 pub mod preset;
 pub mod template;
 pub mod user;
+pub mod trading;
 
 pub use alert::{Alerts, AlertsMut};
 pub use drawing::{Drawings, DrawingsMut, SwapSymbolResult};
@@ -43,6 +44,7 @@ pub use tag::{Tags, TagsMut};
 pub use preset::{Presets, PresetsMut};
 pub use template::{Templates, TemplatesMut};
 pub use user::{User, UserMut};
+pub use trading::{Trading, TradingMut};
 
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -58,7 +60,7 @@ use crate::drawing::DrawingManager;
 use mlc_core::Bar;
 use crate::indicator::IndicatorManager;
 use mlc_backend_data_bridge::{DataBridge, LiveUpdate, LiveUpdateReceiver, OrderbookSource, SymbolInfo};
-use mlc_backend_trading_engine::TradingManager;
+use crate::trading::TradingManager;
 use crate::watchlist::WatchlistManager;
 use crate::tag::TagManager;
 use crate::preset::PresetManager;
@@ -639,7 +641,9 @@ pub struct BackendCore {
     /// Wrapped in `Mutex` because `TradingManager` has `&mut self` methods
     /// (`on_connector_ready`, `tick`, `refresh_balances`, etc) and is mutated
     /// from the tick loop. Single-threaded contention in embedded mode = 0.
-    pub trading: Option<std::sync::Mutex<TradingManager>>,
+    /// Accessed exclusively through the `Trading` / `TradingMut` facade
+    /// (`BackendCore::trading` / `trading_mut`) — doctrine 3.7c.
+    trading: Option<std::sync::Mutex<TradingManager>>,
 
     /// Chart preset registry.
     ///
@@ -944,11 +948,21 @@ impl BackendCore {
         AlertsMut::new(mgr, bubbles)
     }
 
-    /// Lock the trading manager for mutation. Returns `None` if trading is
-    /// disabled, `Some(guard)` otherwise.
+    /// Read-only facade over the trading manager. Returns `None` if trading
+    /// is disabled. The ONLY doctrinally-sanctioned access path to trading
+    /// data (doctrine 3.7c, `docs/mlc/plans/doctrine-cutover-2026-06-27.md`
+    /// §1A). `TradingManager` never touches `BubbleStore` — single guard,
+    /// no co-acquisition.
     #[inline]
-    pub fn trading_lock(&self) -> Option<std::sync::MutexGuard<'_, TradingManager>> {
-        self.trading.as_ref().map(|m| m.lock().expect("BackendCore.trading poisoned"))
+    pub fn trading(&self) -> Option<Trading<'_>> {
+        self.trading.as_ref().map(|m| Trading::new(m.lock().expect("BackendCore.trading poisoned")))
+    }
+
+    /// Mutable facade over the trading manager. Returns `None` if trading is
+    /// disabled.
+    #[inline]
+    pub fn trading_mut(&self) -> Option<TradingMut<'_>> {
+        self.trading.as_ref().map(|m| TradingMut::new(m.lock().expect("BackendCore.trading poisoned")))
     }
 
     /// Short alias for the most common read pattern on exchange symbols.
