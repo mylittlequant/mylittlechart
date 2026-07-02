@@ -2039,6 +2039,86 @@ impl App<'_> {
         self.gpu_thread = Some(handle);
     }
 
+    /// Sync OS window position/size into `ChartApp` fields for every open,
+    /// non-minimized window. Shared by `save_all` and the two `about_to_wait`
+    /// dirty-drain paths — all three read the live OS geometry into
+    /// `ChartApp` right before building a `WindowState` snapshot from it.
+    /// Minimized windows are skipped (Windows reports `(-32000, -32000)` for
+    /// iconic state) so the pre-minimized position/size is preserved.
+    fn sync_window_geometry_from_os(&mut self) {
+        for pw in self.windows.values_mut() {
+            if pw.window.is_minimized().unwrap_or(false) {
+                continue;
+            }
+            if let Ok(pos) = pw.window.outer_position() {
+                if pos.x > -30000 && pos.y > -30000 {
+                    pw.chart.window_x = Some(pos.x);
+                    pw.chart.window_y = Some(pos.y);
+                }
+            }
+            let sz = pw.window.inner_size();
+            if sz.width > 0 && sz.height > 0 {
+                pw.chart.window_width = Some(sz.width);
+                pw.chart.window_height = Some(sz.height);
+            }
+        }
+    }
+
+    /// Build a `UserProfile` ready to save, starting from `self.profile` and
+    /// overlaying the fields that always come from live app/core state:
+    /// window list, connector_enabled, theme/device/app_version, and the
+    /// preferred (last-focused, or first available) window's sidebar/inline
+    /// bar UI state.
+    ///
+    /// This is the ~30-line assembly that used to be duplicated verbatim in
+    /// `save_all` and both `about_to_wait` dirty-drain branches (profile-dirty
+    /// and geometry-only). Callers needing additional domain fields (scale
+    /// mode, server settings, notification settings — currently only
+    /// `save_all`) set them on the returned profile afterward; this helper
+    /// intentionally does NOT set them, so the lighter-weight geometry/
+    /// profile-dirty drains keep writing exactly the same field set as
+    /// before (no new fields added to those paths by this refactor).
+    ///
+    /// `window_states` — already-collected, exclusion-filtered window
+    /// snapshots (callers differ on whether excluded/deleted windows are
+    /// filtered, so collection stays at the call site).
+    fn build_profile_for_save(&self, window_states: Vec<mlc_core::WindowState>) -> mlc_core::UserProfile {
+        let preferred_key = self.last_focused
+            .filter(|id| self.windows.contains_key(id))
+            .or_else(|| self.windows.keys().next().copied());
+
+        let mut profile = self.profile.clone();
+        profile.ui.windows = window_states;
+
+        // Use the shared core as the canonical source for connector_enabled
+        // (Phase C); AppState for theme + device identity (the three §2.3
+        // survivor fields).
+        profile.domain.connector_enabled = self.core.user().connector_enabled().clone();
+        profile.ui.active_theme = self.app_state.theme_preset.clone();
+        profile.ui.device_name = self.app_state.device_name.clone();
+        profile.domain.app_version = self.app_state.app_version.clone();
+        // recalc_mode is now persisted to DeviceSettings, not UserProfile.
+
+        if let Some(key) = preferred_key {
+            if let Some(pw) = self.windows.get(&key) {
+                profile.ui.sidebar_visible = pw.chart.sidebar_state.is_right_open();
+                profile.ui.sidebar_panel = mlc_app::ChartApp::panel_to_str(pw.chart.sidebar_state.right_panel);
+                profile.ui.sidebar_width = Some(pw.chart.sidebar_state.right_sidebar_width);
+                let inline = &pw.chart.panel_app.toolbar_state.floating_inline_bar;
+                profile.ui.inline_bar_x = Some(inline.x);
+                profile.ui.inline_bar_y = Some(inline.y);
+                let dock_str = match inline.dock_edge {
+                    mlc_core::InlineDockEdge::Bottom => "Bottom",
+                    mlc_core::InlineDockEdge::Top => "Top",
+                    mlc_core::InlineDockEdge::Free => "Free",
+                };
+                profile.ui.inline_bar_dock = Some(dock_str.to_string());
+            }
+        }
+
+        profile
+    }
+
     /// Save all window state and the user profile to disk.
     ///
     /// `exclude_window_ids` — window ids to exclude from the saved profile
@@ -2073,23 +2153,7 @@ impl App<'_> {
         }
 
         // 2. Sync OS position/size into ChartApp fields.
-        //    Skip minimized windows — Windows returns (-32000, -32000) for iconic state.
-        for pw in self.windows.values_mut() {
-            if pw.window.is_minimized().unwrap_or(false) {
-                continue; // Keep the pre-minimized position/size already stored.
-            }
-            if let Ok(pos) = pw.window.outer_position() {
-                if pos.x > -30000 && pos.y > -30000 {
-                    pw.chart.window_x = Some(pos.x);
-                    pw.chart.window_y = Some(pos.y);
-                }
-            }
-            let sz = pw.window.inner_size();
-            if sz.width > 0 && sz.height > 0 {
-                pw.chart.window_width = Some(sz.width);
-                pw.chart.window_height = Some(sz.height);
-            }
-        }
+        self.sync_window_geometry_from_os();
 
         // 3. Collect window states, excluding deleted ones.
         let window_states: Vec<mlc_core::WindowState> = self.windows.values()
@@ -2106,23 +2170,12 @@ impl App<'_> {
         // 4. Build profile from in-memory profile base, updating window list and
         //    sidebar/toolbar state from the preferred window (last focused, or first
         //    available as fallback) for deterministic output instead of HashMap order.
-        let preferred_key = self.last_focused
-            .filter(|id| self.windows.contains_key(id))
-            .or_else(|| self.windows.keys().next().copied());
+        let mut profile = self.build_profile_for_save(window_states);
 
-        // Sync profile_manager mutations back into self.profile before saving.
-
-        let mut profile = self.profile.clone();
-        profile.ui.windows = window_states;
-
-        // Use the shared core as the canonical source for connector_enabled,
-        // recalc/scale mode, and server settings (Phase C); AppState for
-        // theme + device identity (the three §2.3 survivor fields).
-        profile.domain.connector_enabled = self.core.user().connector_enabled().clone();
-        profile.ui.active_theme = self.app_state.theme_preset.clone();
-        profile.ui.device_name = self.app_state.device_name.clone();
-        profile.domain.app_version = self.app_state.app_version.clone();
-        // recalc_mode is now persisted to DeviceSettings, not UserProfile.
+        // save_all additionally persists scale mode, server settings, and
+        // notification settings — fields the lighter-weight dirty-drain
+        // paths (profile-dirty / geometry-only in about_to_wait) do not
+        // touch, so they stay out of `build_profile_for_save` itself.
         profile.domain.scale_mode = match self.core.user().scale_mode() {
             mlc_core::ScaleMode::Auto   => "Auto".to_string(),
             mlc_core::ScaleMode::Focus  => "Focus".to_string(),
@@ -2135,23 +2188,6 @@ impl App<'_> {
         if let Some(pw) = self.windows.values().next() {
             profile.domain.notification_settings =
                 pw.chart.panel_app.alert_settings_state.notification_settings.clone();
-        }
-
-        if let Some(key) = preferred_key {
-            if let Some(pw) = self.windows.get(&key) {
-                profile.ui.sidebar_visible = pw.chart.sidebar_state.is_right_open();
-                profile.ui.sidebar_panel = mlc_app::ChartApp::panel_to_str(pw.chart.sidebar_state.right_panel);
-                profile.ui.sidebar_width = Some(pw.chart.sidebar_state.right_sidebar_width);
-                let inline = &pw.chart.panel_app.toolbar_state.floating_inline_bar;
-                profile.ui.inline_bar_x = Some(inline.x);
-                profile.ui.inline_bar_y = Some(inline.y);
-                let dock_str = match inline.dock_edge {
-                    mlc_core::InlineDockEdge::Bottom => "Bottom",
-                    mlc_core::InlineDockEdge::Top => "Top",
-                    mlc_core::InlineDockEdge::Free => "Free",
-                };
-                profile.ui.inline_bar_dock = Some(dock_str.to_string());
-            }
         }
 
         // 5. Save profile.json once.
@@ -2723,23 +2759,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 }
 
                 // Sync OS position/size into ChartApp fields.
-                // Skip minimized windows — Windows returns (-32000, -32000).
-                for pw in self.windows.values_mut() {
-                    if pw.window.is_minimized().unwrap_or(false) {
-                        continue;
-                    }
-                    if let Ok(pos) = pw.window.outer_position() {
-                        if pos.x > -30000 && pos.y > -30000 {
-                            pw.chart.window_x = Some(pos.x);
-                            pw.chart.window_y = Some(pos.y);
-                        }
-                    }
-                    let sz = pw.window.inner_size();
-                    if sz.width > 0 && sz.height > 0 {
-                        pw.chart.window_width = Some(sz.width);
-                        pw.chart.window_height = Some(sz.height);
-                    }
-                }
+                self.sync_window_geometry_from_os();
 
                 // Collect window states from ALL windows.
                 let window_states: Vec<mlc_core::WindowState> = self.windows.values()
@@ -2747,34 +2767,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     .collect();
 
                 // Build profile from the preferred (last-focused) window's UI state.
-                let preferred_key = self.last_focused
-                    .filter(|id| self.windows.contains_key(id))
-                    .or_else(|| self.windows.keys().next().copied());
-
-                let mut profile = self.profile.clone();
-                profile.ui.windows = window_states;
-                profile.domain.connector_enabled = self.core.user().connector_enabled().clone();
-                profile.ui.active_theme = self.app_state.theme_preset.clone();
-                profile.ui.device_name = self.app_state.device_name.clone();
-                profile.domain.app_version = self.app_state.app_version.clone();
-                // recalc_mode is now persisted to DeviceSettings, not UserProfile.
-
-                if let Some(key) = preferred_key {
-                    if let Some(pw) = self.windows.get(&key) {
-                        profile.ui.sidebar_visible = pw.chart.sidebar_state.is_right_open();
-                        profile.ui.sidebar_panel = mlc_app::ChartApp::panel_to_str(pw.chart.sidebar_state.right_panel);
-                        profile.ui.sidebar_width = Some(pw.chart.sidebar_state.right_sidebar_width);
-                        let inline = &pw.chart.panel_app.toolbar_state.floating_inline_bar;
-                        profile.ui.inline_bar_x = Some(inline.x);
-                        profile.ui.inline_bar_y = Some(inline.y);
-                        let dock_str = match inline.dock_edge {
-                            mlc_core::InlineDockEdge::Bottom => "Bottom",
-                            mlc_core::InlineDockEdge::Top => "Top",
-                            mlc_core::InlineDockEdge::Free => "Free",
-                        };
-                        profile.ui.inline_bar_dock = Some(dock_str.to_string());
-                    }
-                }
+                let profile = self.build_profile_for_save(window_states);
 
                 let vault_key = self.core.user().vault_key();
                 if let Err(e) = mlc_core::save_profile(&profile, vault_key.as_ref()) {
@@ -2794,55 +2787,13 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             // but doesn't flood the sync pipeline (~180 events per 3s drag).
             if any_geometry_dirty && !any_profile_dirty {
                 // Sync OS position/size into ChartApp fields.
-                for pw in self.windows.values_mut() {
-                    if pw.window.is_minimized().unwrap_or(false) {
-                        continue;
-                    }
-                    if let Ok(pos) = pw.window.outer_position() {
-                        if pos.x > -30000 && pos.y > -30000 {
-                            pw.chart.window_x = Some(pos.x);
-                            pw.chart.window_y = Some(pos.y);
-                        }
-                    }
-                    let sz = pw.window.inner_size();
-                    if sz.width > 0 && sz.height > 0 {
-                        pw.chart.window_width = Some(sz.width);
-                        pw.chart.window_height = Some(sz.height);
-                    }
-                }
+                self.sync_window_geometry_from_os();
 
                 let window_states: Vec<mlc_core::WindowState> = self.windows.values()
                     .map(|pw| pw.chart.build_window_state())
                     .collect();
 
-                let preferred_key = self.last_focused
-                    .filter(|id| self.windows.contains_key(id))
-                    .or_else(|| self.windows.keys().next().copied());
-
-                let mut profile = self.profile.clone();
-                profile.ui.windows = window_states;
-                profile.domain.connector_enabled = self.core.user().connector_enabled().clone();
-                profile.ui.active_theme = self.app_state.theme_preset.clone();
-                profile.ui.device_name = self.app_state.device_name.clone();
-                profile.domain.app_version = self.app_state.app_version.clone();
-                // recalc_mode is now persisted to DeviceSettings, not UserProfile.
-
-                if let Some(key) = preferred_key {
-                    if let Some(pw) = self.windows.get(&key) {
-                        profile.ui.sidebar_visible = pw.chart.sidebar_state.is_right_open();
-                        profile.ui.sidebar_panel = mlc_app::ChartApp::panel_to_str(pw.chart.sidebar_state.right_panel);
-                        profile.ui.sidebar_width = Some(pw.chart.sidebar_state.right_sidebar_width);
-                        let inline = &pw.chart.panel_app.toolbar_state.floating_inline_bar;
-                        profile.ui.inline_bar_x = Some(inline.x);
-                        profile.ui.inline_bar_y = Some(inline.y);
-                        let dock_str = match inline.dock_edge {
-                            mlc_core::InlineDockEdge::Bottom => "Bottom",
-                            mlc_core::InlineDockEdge::Top => "Top",
-                            mlc_core::InlineDockEdge::Free => "Free",
-                        };
-                        profile.ui.inline_bar_dock = Some(dock_str.to_string());
-                    }
-                }
+                let profile = self.build_profile_for_save(window_states);
 
                 let vault_key = self.core.user().vault_key();
                 if let Err(e) = mlc_core::save_profile(&profile, vault_key.as_ref()) {
