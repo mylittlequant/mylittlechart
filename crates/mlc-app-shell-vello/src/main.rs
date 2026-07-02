@@ -3189,6 +3189,12 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             self.app_state.vault_key = Some(key);
                             self.profile_manager.vault_key = Some(key);
                             self.app_state.template_manager.vault_key = Some(key);
+                            // Push the fresh key into already-open windows' template
+                            // replicas on the next sync tick — otherwise
+                            // core.templates_mut().vault_key stays stale (None) on
+                            // any window alive before this unlock until a full
+                            // rebuild happens (skeleton promote / profile switch).
+                            self.app_state.templates_dirty = true;
                             eprintln!("[App] wizard_complete: vault key derived, saving");
                         }
                         Err(e) => {
@@ -3426,6 +3432,12 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                 self.app_state.vault_key = Some(key);
                                 self.profile_manager.vault_key = Some(key);
                                 self.app_state.template_manager.vault_key = Some(key);
+                                // See wizard_complete above: push the fresh key to
+                                // already-open windows' replicas immediately, don't
+                                // rely solely on the later skeleton-promote rebuild
+                                // (the recovery-key-display sub-branch below can keep
+                                // the same windows alive for a while before rebuild).
+                                self.app_state.templates_dirty = true;
                                 eprintln!("[App] vault key derived and set — promoting skeleton");
                                 self.needs_vault_unlock = false;
                                 self.needs_migration = false;
