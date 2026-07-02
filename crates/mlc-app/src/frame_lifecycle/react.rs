@@ -148,7 +148,7 @@ impl ChartApp {
                             backfill_requests.push((win_sym, win_tf, win_at));
                         }
                     } else {
-                        window.price_scale.scale_mode = self.default_scale_mode;
+                        window.price_scale.scale_mode = self.core.user().scale_mode();
                         window.reconcile_view_fresh(new_bars);
                         window.pending_symbol_load = false;
                         if window.needs_snap_after_backfill

@@ -18,17 +18,35 @@
 //! (`AppState`/`ProfileManager` remain the write authority for encrypted
 //! saves in the shell-vello multi-window flow; see report for detail).
 
+use std::collections::HashMap;
+
+use mlc_backend_indicator_engine::RecalcMode;
+use mlc_core::chart::types::price_scale::ScaleMode;
 use mlc_core::user_profile::{SettingsSnapshots, UserProfile};
 use mlc_vault::vault::VaultKey;
 
 /// Profile metadata + settings snapshots + vault key for one active user
 /// session. One instance lives on `BackendCore`; per-window duplication is
 /// what this promotion removes (step 3.6c, following 3.6a/3.6b/3.6d).
+///
+/// `connector_enabled`/`recalc_mode`/`scale_mode`/`server_enabled`/
+/// `server_port` (shared-BackendCore arc Phase C,
+/// `docs/mlc/plans/shared-backend-core-2026-07-03.md` §2.1) are the
+/// strongly-typed runtime caches of the same-named `profile.domain.*`
+/// fields — kept as separate fields (not re-parsed from `profile` on every
+/// read) mirroring how `vault_key`/`snapshots` already sit alongside
+/// `profile` rather than inside it. `AppState` used to own these; there is
+/// now exactly one process-wide copy here instead of one-per-window.
 #[derive(Debug, Clone, Default)]
 pub struct UserProfileManager {
     profile: UserProfile,
     snapshots: SettingsSnapshots,
     vault_key: Option<VaultKey>,
+    connector_enabled: HashMap<String, bool>,
+    recalc_mode: RecalcMode,
+    scale_mode: ScaleMode,
+    server_enabled: bool,
+    server_port: u16,
 }
 
 impl UserProfileManager {
@@ -38,7 +56,7 @@ impl UserProfileManager {
 
     /// Construct directly from already-loaded parts (startup wiring).
     pub fn from_parts(profile: UserProfile, snapshots: SettingsSnapshots, vault_key: Option<VaultKey>) -> Self {
-        Self { profile, snapshots, vault_key }
+        Self { profile, snapshots, vault_key, ..Default::default() }
     }
 
     // =========================================================================
@@ -96,6 +114,66 @@ impl UserProfileManager {
         self.snapshots = snapshots;
         self.vault_key = vault_key;
     }
+
+    // =========================================================================
+    // Per-exchange connector enable/disable (Phase C)
+    // =========================================================================
+
+    pub fn connector_enabled(&self) -> &HashMap<String, bool> {
+        &self.connector_enabled
+    }
+
+    pub fn set_connector_enabled(&mut self, map: HashMap<String, bool>) {
+        self.connector_enabled = map;
+    }
+
+    pub fn is_connector_enabled(&self, exchange_key: &str) -> bool {
+        self.connector_enabled.get(exchange_key).copied().unwrap_or(true)
+    }
+
+    pub fn set_connector_enabled_one(&mut self, exchange_key: String, enabled: bool) {
+        self.connector_enabled.insert(exchange_key, enabled);
+    }
+
+    // =========================================================================
+    // Performance settings (Phase C)
+    // =========================================================================
+
+    pub fn recalc_mode(&self) -> RecalcMode {
+        self.recalc_mode
+    }
+
+    pub fn set_recalc_mode(&mut self, mode: RecalcMode) {
+        self.recalc_mode = mode;
+    }
+
+    pub fn scale_mode(&self) -> ScaleMode {
+        self.scale_mode
+    }
+
+    pub fn set_scale_mode(&mut self, mode: ScaleMode) {
+        self.scale_mode = mode;
+    }
+
+    // =========================================================================
+    // Agent API server settings (Phase C)
+    // =========================================================================
+
+    pub fn server_enabled(&self) -> bool {
+        self.server_enabled
+    }
+
+    pub fn set_server_enabled(&mut self, enabled: bool) {
+        self.server_enabled = enabled;
+    }
+
+    pub fn server_port(&self) -> u16 {
+        self.server_port
+    }
+
+    pub fn set_server_port(&mut self, port: u16) {
+        self.server_port = port;
+    }
 }
 
 #[cfg(test)]
@@ -131,5 +209,54 @@ mod tests {
         mgr.replace_all(profile, SettingsSnapshots::default(), None);
         assert_eq!(mgr.profile().ui.active_preset_id, "p2");
         assert!(mgr.vault_key().is_none());
+    }
+
+    // ── Phase C: connector_enabled / recalc_mode / scale_mode / server ────
+    // settings, promoted from shell-vello's per-window AppState mirror
+    // (`docs/mlc/plans/shared-backend-core-2026-07-03.md` §2.1).
+
+    #[test]
+    fn connector_enabled_defaults_to_true_when_unset() {
+        let mgr = UserProfileManager::new();
+        assert!(mgr.is_connector_enabled("binance"), "unknown exchange must default to enabled");
+    }
+
+    #[test]
+    fn connector_enabled_one_and_bulk_set_roundtrip() {
+        let mut mgr = UserProfileManager::new();
+        mgr.set_connector_enabled_one("binance".to_string(), false);
+        assert!(!mgr.is_connector_enabled("binance"));
+        assert!(mgr.is_connector_enabled("bybit"), "unrelated exchange untouched");
+
+        let mut map = HashMap::new();
+        map.insert("okx".to_string(), false);
+        mgr.set_connector_enabled(map);
+        assert!(!mgr.is_connector_enabled("okx"));
+        // Bulk set replaces wholesale — the earlier binance=false entry is gone.
+        assert!(mgr.is_connector_enabled("binance"));
+    }
+
+    #[test]
+    fn recalc_mode_and_scale_mode_roundtrip() {
+        let mut mgr = UserProfileManager::new();
+        assert_eq!(mgr.recalc_mode(), RecalcMode::default());
+        mgr.set_recalc_mode(RecalcMode::PerTick);
+        assert_eq!(mgr.recalc_mode(), RecalcMode::PerTick);
+
+        assert_eq!(mgr.scale_mode(), ScaleMode::default());
+        mgr.set_scale_mode(ScaleMode::Manual);
+        assert_eq!(mgr.scale_mode(), ScaleMode::Manual);
+    }
+
+    #[test]
+    fn server_settings_roundtrip() {
+        let mut mgr = UserProfileManager::new();
+        assert!(!mgr.server_enabled());
+        assert_eq!(mgr.server_port(), 0);
+
+        mgr.set_server_enabled(true);
+        mgr.set_server_port(19460);
+        assert!(mgr.server_enabled());
+        assert_eq!(mgr.server_port(), 19460);
     }
 }

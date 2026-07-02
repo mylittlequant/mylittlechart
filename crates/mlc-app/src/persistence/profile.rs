@@ -32,7 +32,7 @@ impl ChartApp {
                 bar_count: existing.domain.bar_count,
                 data_load: existing.domain.data_load.clone(),
                 recalc_mode: existing.domain.recalc_mode.clone(),
-                scale_mode: match self.default_scale_mode {
+                scale_mode: match user_guard.scale_mode() {
                     ScaleMode::Auto   => "Auto".to_string(),
                     ScaleMode::Focus  => "Focus".to_string(),
                     ScaleMode::Manual => "Manual".to_string(),

@@ -379,10 +379,6 @@ pub struct ChartApp {
     /// max_scroll values when dispatching chevron clicks.
     pub(crate) last_toolbar_result: Option<mlc_core::ChartToolbarRenderResult>,
 
-    /// User's preferred default scale mode, synced from profile settings.
-    /// Applied to windows on initial bar load.
-    pub default_scale_mode: ScaleMode,
-
     /// Triggered alert events waiting for delivery (Telegram, toast, etc.)
     pub pending_delivery_events: Vec<mlc_alert_delivery::DeliveryEvent>,
 
@@ -1408,7 +1404,6 @@ impl ChartApp {
             leaf_tab_hover: mlc_app_layout::layout::panel_overlay::LeafTabHoverZone::None,
             leaf_tab_hovered_leaf: None,
             last_toolbar_result: None,
-            default_scale_mode: ScaleMode::Auto,
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
             sidebar_state: mlc_app_sidebar_content::state::SidebarState::new(),
@@ -1743,7 +1738,6 @@ impl ChartApp {
             leaf_tab_hover: mlc_app_layout::layout::panel_overlay::LeafTabHoverZone::None,
             leaf_tab_hovered_leaf: None,
             last_toolbar_result: None,
-            default_scale_mode: ScaleMode::Auto,
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
             sidebar_state: mlc_app_sidebar_content::state::SidebarState::new(),
@@ -2258,7 +2252,6 @@ impl ChartApp {
             leaf_tab_hover: mlc_app_layout::layout::panel_overlay::LeafTabHoverZone::None,
             leaf_tab_hovered_leaf: None,
             last_toolbar_result: None,
-            default_scale_mode: ScaleMode::Auto,
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
             sidebar_state: mlc_app_sidebar_content::state::SidebarState::new(),

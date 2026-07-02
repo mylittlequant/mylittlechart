@@ -590,11 +590,12 @@ fn default_watchlist() -> mlc_app::WatchlistManager {
     ])
 }
 
-/// Seed `core`'s domain managers (presets, templates, watchlists, snapshots)
-/// from disk-loaded profile state.
+/// Seed `core`'s domain managers (presets, templates, watchlists, snapshots,
+/// connector_enabled, recalc_mode, scale_mode, server_enabled, server_port,
+/// vault_key) from disk-loaded profile state.
 ///
 /// Replaces `AppState::from_profile`'s domain half (shared-BackendCore arc,
-/// Phase B): under the Phase A shared `Arc<BackendCore>` there is exactly
+/// Phase B+C): under the Phase A shared `Arc<BackendCore>` there is exactly
 /// ONE copy of each of these managers for the whole process, so seeding
 /// happens here, once, instead of being threaded through a per-process
 /// `AppState` mirror that used to get cloned into every window each frame.
@@ -607,6 +608,8 @@ fn seed_core_from_profile(
     core: &mlc_backend::BackendCore,
     profile_manager: &mlc_app::user_manager::ProfileManager,
 ) {
+    let profile = &profile_manager.profile;
+
     let watchlist_manager = {
         let watchlists_path = mlc_core::user_profile::storage::watchlists_path();
         if watchlists_path.exists() {
@@ -624,6 +627,39 @@ fn seed_core_from_profile(
     core.presets_mut().replace_all(profile_manager.presets.clone());
     core.templates_mut().replace_all(profile_manager.template_manager.clone());
     core.user_mut().set_snapshots(profile_manager.snapshots.clone());
+
+    // Parse recalc_mode from DeviceSettings (authoritative) with profile as fallback.
+    let recalc_mode = {
+        let ds = mlc_core::user_profile::DeviceSettings::load();
+        let src = if ds.recalc_mode == "per_frame" && !profile.domain.recalc_mode.is_empty() {
+            // DeviceSettings has the default value — use the profile value if it
+            // carries a non-default mode so that existing saves are honoured.
+            &profile.domain.recalc_mode
+        } else {
+            &ds.recalc_mode
+        };
+        match src.as_str() {
+            "PerTick" => mlc_app::RecalcMode::PerTick,
+            "PerBar"  => mlc_app::RecalcMode::PerBar,
+            _         => mlc_app::RecalcMode::PerFrame,
+        }
+    };
+
+    // Parse scale_mode from the profile string.
+    let scale_mode = match profile.domain.scale_mode.as_str() {
+        "Focus"  => mlc_core::ScaleMode::Focus,
+        "Manual" => mlc_core::ScaleMode::Manual,
+        _        => mlc_core::ScaleMode::Auto, // default / "Auto"
+    };
+
+    let mut user = core.user_mut();
+    user.set_connector_enabled(profile.domain.connector_enabled.clone());
+    user.set_recalc_mode(recalc_mode);
+    user.set_scale_mode(scale_mode);
+    user.set_server_enabled(profile.domain.server_enabled);
+    user.set_server_port(profile.domain.server_port);
+    drop(user);
+    core.user_mut().set_vault_key(profile_manager.vault_key);
 }
 
 use render::scene_builder::build_window_scene;
@@ -641,7 +677,7 @@ impl App<'_> {
         needs_vault_unlock: bool,
         needs_migration: bool,
     ) -> Self {
-        let app_state = AppState::from_profile(&profile, profile_manager.vault_key);
+        let app_state = AppState::from_profile(&profile);
 
         // Single `Arc<BackendCore>` for the whole process — every window's
         // `ChartApp` shares this one instance (Phase A, shared-backend-core
@@ -794,11 +830,11 @@ impl App<'_> {
         }
 
         // Only start the server if enabled in profile
-        let _server_handle = if app_state.server_enabled {
+        let _server_handle = if core.user().server_enabled() {
             Some(mlc_backend_shell_http::start_server(
                 agent_state.clone(),
                 &live_data_handle,
-                app_state.server_port,
+                core.user().server_port(),
             ))
         } else {
             eprintln!("[App] Agent API server disabled in settings");
@@ -1181,7 +1217,7 @@ impl App<'_> {
         // by `seed_core_from_profile`. `new_window()`'s own "Untitled 1"
         // fresh-profile logic already read/wrote through this same shared
         // `core.presets()`, so there is nothing left to merge or sync back.
-        chart.sidebar_state.connector_enabled = self.app_state.connector_enabled.clone();
+        chart.sidebar_state.connector_enabled = chart.core.user().connector_enabled().clone();
         // Also sync open_tabs and active_preset_id back to profile_manager
         // so save_all() persists them.
         if !chart.panel_app.active_preset_id.is_empty() {
@@ -1204,9 +1240,10 @@ impl App<'_> {
             }
         }
         // Sync server settings so the User Settings modal shows current state.
-        chart.panel_app.user_settings_state.server_enabled = self.app_state.server_enabled;
-        chart.panel_app.user_settings_state.server_port = self.app_state.server_port;
-        chart.panel_app.user_settings_state.server_status = if self.app_state.server_enabled {
+        let server_enabled = chart.core.user().server_enabled();
+        chart.panel_app.user_settings_state.server_enabled = server_enabled;
+        chart.panel_app.user_settings_state.server_port = chart.core.user().server_port();
+        chart.panel_app.user_settings_state.server_status = if server_enabled {
             "running".to_string()
         } else {
             "stopped".to_string()
@@ -1430,7 +1467,7 @@ impl App<'_> {
         let saved_windows = profile.ui.windows.clone();
 
         // 6. Rebuild app-level state from the new profile.
-        self.app_state = AppState::from_profile(&profile, self.profile_manager.vault_key);
+        self.app_state = AppState::from_profile(&profile);
         // 6a. Re-seed the shared core's domain managers from the NEW profile.
         // Every window was just dropped above (step 3) — nothing reads
         // `self.core` between here and the `create_window` calls below, so
@@ -1451,7 +1488,7 @@ impl App<'_> {
                 eprintln!("[App] hot-reload: failed to load vault secrets after pre-switch: {}", e);
             }
             self.profile = self.profile_manager.profile.clone();
-            self.app_state.vault_key = Some(key);
+            self.core.user_mut().set_vault_key(Some(key));
             self.needs_vault_unlock = false;
             eprintln!("[App] hot-reload: pre-validated vault key injected — skipping unlock screen");
         }
@@ -1559,13 +1596,12 @@ impl App<'_> {
         let profile_manager = self.profile_manager.clone();
         // AppState fields needed for the presentation sync block below
         // (read-only in the worker). Domain data (watchlists/presets/
-        // templates/snapshots) needs no capture — `chart.core` built inside
-        // the worker IS `self.core` (Phase A shared Arc<BackendCore>),
-        // already seeded once by `seed_core_from_profile`.
+        // templates/snapshots/connector_enabled/server_enabled/server_port)
+        // needs no capture — `chart.core` built inside the worker IS
+        // `self.core` (Phase A shared Arc<BackendCore>), already seeded
+        // once by `seed_core_from_profile`; the worker reads it directly
+        // via `core.user()` instead of capturing separate clones.
         let theme_preset = self.app_state.theme_preset.clone();
-        let connector_enabled = self.app_state.connector_enabled.clone();
-        let server_enabled = self.app_state.server_enabled;
-        let server_port = self.app_state.server_port;
 
         // Capture window sizes now (on the main thread — winit Arc<Window> is !Send).
         let window_sizes: Vec<(u32, u32, f64)> = window_ids.iter().map(|wid| {
@@ -1618,7 +1654,7 @@ impl App<'_> {
                 if !theme_preset.is_empty() {
                     chart.panel_app.theme_manager.set_preset(&theme_preset);
                 }
-                chart.sidebar_state.connector_enabled = connector_enabled.clone();
+                chart.sidebar_state.connector_enabled = chart.core.user().connector_enabled().clone();
                 {
                     let drawing_styles = chart.core.user().snapshots().last_used_drawing_styles.clone();
                     let all_bids_ls: Vec<_> = chart.core.bubbles().bubble_ids().collect();
@@ -1627,8 +1663,9 @@ impl App<'_> {
                         dreg.load_last_styles(bid, &drawing_styles);
                     }
                 }
+                let server_enabled = chart.core.user().server_enabled();
                 chart.panel_app.user_settings_state.server_enabled = server_enabled;
-                chart.panel_app.user_settings_state.server_port = server_port;
+                chart.panel_app.user_settings_state.server_port = chart.core.user().server_port();
                 chart.panel_app.user_settings_state.server_status = if server_enabled {
                     "running".to_string()
                 } else {
@@ -2017,20 +2054,21 @@ impl App<'_> {
         let mut profile = self.profile.clone();
         profile.ui.windows = window_states;
 
-        // Use AppState as the canonical source for connector_enabled, theme, and
-        // device identity (replaces per-window copies that were previously written here).
-        profile.domain.connector_enabled = self.app_state.connector_enabled.clone();
+        // Use the shared core as the canonical source for connector_enabled,
+        // recalc/scale mode, and server settings (Phase C); AppState for
+        // theme + device identity (the three §2.3 survivor fields).
+        profile.domain.connector_enabled = self.core.user().connector_enabled().clone();
         profile.ui.active_theme = self.app_state.theme_preset.clone();
         profile.ui.device_name = self.app_state.device_name.clone();
         profile.domain.app_version = self.app_state.app_version.clone();
         // recalc_mode is now persisted to DeviceSettings, not UserProfile.
-        profile.domain.scale_mode = match self.app_state.scale_mode {
+        profile.domain.scale_mode = match self.core.user().scale_mode() {
             mlc_core::ScaleMode::Auto   => "Auto".to_string(),
             mlc_core::ScaleMode::Focus  => "Focus".to_string(),
             mlc_core::ScaleMode::Manual => "Manual".to_string(),
         };
-        profile.domain.server_enabled = self.app_state.server_enabled;
-        profile.domain.server_port = self.app_state.server_port;
+        profile.domain.server_enabled = self.core.user().server_enabled();
+        profile.domain.server_port = self.core.user().server_port();
 
         // Persist notification settings from the first window's alert settings state.
         if let Some(pw) = self.windows.values().next() {
@@ -2056,7 +2094,8 @@ impl App<'_> {
         }
 
         // 5. Save profile.json once.
-        let vault_key = self.app_state.vault_key.as_ref();
+        let vault_key = self.core.user().vault_key();
+        let vault_key = vault_key.as_ref();
         if let Err(e) = mlc_core::save_profile(&profile, vault_key) {
             eprintln!("[App] Failed to save profile: {}", e);
         } else {
@@ -2108,7 +2147,7 @@ impl App<'_> {
             match self.app_connector_ready_rx.try_recv() {
                 Ok(exchange_id) => {
                     let eid_str = exchange_id.as_str();
-                    if self.app_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
+                    if self.core.user().is_connector_enabled(eid_str) {
                         self.bridge.request_symbols(exchange_id);
                     }
                 }
@@ -2257,8 +2296,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         eprintln!("[App] watchlist toggle: {}:{}:{} -> in_watchlist={}", symbol, exchange, account_type, now_in);
                         if now_in {
                             if let Some(eid) = mlc_app::ExchangeId::from_str(&exchange) {
-                                let enabled = self.app_state.connector_enabled
-                                    .get(eid.as_str()).copied().unwrap_or(true);
+                                let enabled = self.core.user().is_connector_enabled(eid.as_str());
                                 if enabled {
                                     let at = mlc_app::account_type_from_label(&account_type);
                                     self.bridge.ensure_connector(eid);
@@ -2408,24 +2446,22 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
         }
 
-        // ── Drain connector actions from all windows → AppState ──────────────
-        let mut connectors_had_actions = false;
+        // ── Drain connector actions from all windows → shared core ───────────
+        // Domain value (which exchanges are enabled) lives on core.user() now
+        // (Phase C) — the per-window sidebar_state.connector_enabled
+        // presentation copy is refreshed unconditionally every frame
+        // (see about_to_wait), no dirty flag needed.
         for pw in self.windows.values_mut() {
             for action in pw.chart.connector_actions.drain(..) {
-                connectors_had_actions = true;
                 match action {
                     mlc_app::ConnectorAction::ToggleEnabled { exchange_id } => {
-                        let enabled = self.app_state.connector_enabled
-                            .entry(exchange_id.clone())
-                            .or_insert(true);
-                        *enabled = !*enabled;
-                        eprintln!("[App] connector toggle: {} -> enabled={}", exchange_id, *enabled);
+                        let mut user = self.core.user_mut();
+                        let enabled = !user.is_connector_enabled(&exchange_id);
+                        user.set_connector_enabled_one(exchange_id.clone(), enabled);
+                        eprintln!("[App] connector toggle: {} -> enabled={}", exchange_id, enabled);
                     }
                 }
             }
-        }
-        if connectors_had_actions {
-            self.app_state.connectors_dirty = true;
         }
 
         // ── Drain preset actions from all windows → shared core ─────────
@@ -2537,15 +2573,16 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         eprintln!("[App] MSAA → {}", v);
                     }
                     mlc_app::PerfAction::SetRecalcMode(ref mode) => {
-                        self.app_state.recalc_mode = match mode.as_str() {
+                        let recalc_mode = match mode.as_str() {
                             "PerTick" => mlc_app::RecalcMode::PerTick,
                             "PerBar"  => mlc_app::RecalcMode::PerBar,
                             _         => mlc_app::RecalcMode::PerFrame,
                         };
+                        self.core.user_mut().set_recalc_mode(recalc_mode);
                         let mut ds = mlc_core::user_profile::DeviceSettings::load();
                         ds.recalc_mode = mode.clone();
                         ds.save();
-                        eprintln!("[App] RecalcMode → {:?}", self.app_state.recalc_mode);
+                        eprintln!("[App] RecalcMode → {:?}", recalc_mode);
                     }
                     mlc_app::PerfAction::TogglePerfLog => {
                         self.perf_log_enabled = !self.perf_log_enabled;
@@ -2653,7 +2690,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
 
                 let mut profile = self.profile.clone();
                 profile.ui.windows = window_states;
-                profile.domain.connector_enabled = self.app_state.connector_enabled.clone();
+                profile.domain.connector_enabled = self.core.user().connector_enabled().clone();
                 profile.ui.active_theme = self.app_state.theme_preset.clone();
                 profile.ui.device_name = self.app_state.device_name.clone();
                 profile.domain.app_version = self.app_state.app_version.clone();
@@ -2676,8 +2713,8 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     }
                 }
 
-                let vault_key = self.app_state.vault_key.as_ref();
-                if let Err(e) = mlc_core::save_profile(&profile, vault_key) {
+                let vault_key = self.core.user().vault_key();
+                if let Err(e) = mlc_core::save_profile(&profile, vault_key.as_ref()) {
                     eprintln!("[App] Failed to save profile: {}", e);
                 } else {
                     self.profile = profile;
@@ -2721,7 +2758,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
 
                 let mut profile = self.profile.clone();
                 profile.ui.windows = window_states;
-                profile.domain.connector_enabled = self.app_state.connector_enabled.clone();
+                profile.domain.connector_enabled = self.core.user().connector_enabled().clone();
                 profile.ui.active_theme = self.app_state.theme_preset.clone();
                 profile.ui.device_name = self.app_state.device_name.clone();
                 profile.domain.app_version = self.app_state.app_version.clone();
@@ -2744,8 +2781,8 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     }
                 }
 
-                let vault_key = self.app_state.vault_key.as_ref();
-                if let Err(e) = mlc_core::save_profile(&profile, vault_key) {
+                let vault_key = self.core.user().vault_key();
+                if let Err(e) = mlc_core::save_profile(&profile, vault_key.as_ref()) {
                     eprintln!("[App] Failed to save profile (geometry): {}", e);
                 } else {
                     self.profile = profile;
@@ -2929,22 +2966,21 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
         }
 
-        // ── Drain recalc_mode changes → AppState → all windows ──────────
+        // ── Drain recalc_mode changes → shared core ──────────────────────
         // If any window changed the recalc mode from the User Settings modal,
-        // propagate the change to all windows and update AppState.
+        // write it once to core.user() (Phase C) — every window's next read
+        // sees it immediately, no per-window propagate loop needed.
         {
             let new_mode: Option<String> = self.windows.values_mut()
                 .find_map(|pw| pw.chart.recalc_mode_changed.take());
             if let Some(ref mode_str) = new_mode {
-                self.app_state.recalc_mode = match mode_str.as_str() {
+                let recalc_mode = match mode_str.as_str() {
                     "PerTick" => mlc_app::RecalcMode::PerTick,
                     "PerBar"  => mlc_app::RecalcMode::PerBar,
                     _         => mlc_app::RecalcMode::PerFrame,
                 };
-                let recalc_mode = self.app_state.recalc_mode;
-                for pw in self.windows.values_mut() {
-                    pw.chart.core.indicators_mut().set_recalc_mode(recalc_mode);
-                }
+                self.core.user_mut().set_recalc_mode(recalc_mode);
+                self.core.indicators_mut().set_recalc_mode(recalc_mode);
                 // Persist to DeviceSettings so the choice survives restarts.
                 let mut ds = mlc_core::user_profile::DeviceSettings::load();
                 ds.recalc_mode = mode_str.clone();
@@ -2975,12 +3011,12 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
         }
 
-        // ── Drain server_enabled changes → AppState ──────────────────────
+        // ── Drain server_enabled changes → shared core ────────────────────
         {
             let server_change: Option<bool> = self.windows.values_mut()
                 .find_map(|pw| pw.chart.server_enabled_changed.take());
             if let Some(enabled) = server_change {
-                self.app_state.server_enabled = enabled;
+                self.core.user_mut().set_server_enabled(enabled);
                 // Sync to all windows
                 let status = if enabled { "running" } else { "stopped" };
                 for pw in self.windows.values_mut() {
@@ -3216,13 +3252,13 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             wizard_profile_name.clone();
                     }
 
-                    // Derive vault key via ProfileManager and sync to app_state + the
-                    // shared core's template manager. One write reaches every window
-                    // immediately (Phase A/B: shared Arc<BackendCore>, no per-window
-                    // template-manager replica left to go stale).
+                    // Derive vault key via ProfileManager and sync to the shared core's
+                    // user manager + template manager. One write reaches every window
+                    // immediately (Phase A/B/C: shared Arc<BackendCore>, no per-window
+                    // replica left to go stale).
                     match self.profile_manager.derive_and_set_vault_key(passphrase) {
                         Ok(key) => {
-                            self.app_state.vault_key = Some(key);
+                            self.core.user_mut().set_vault_key(Some(key));
                             self.profile_manager.vault_key = Some(key);
                             self.core.templates_mut().set_vault_key(Some(key));
                             eprintln!("[App] wizard_complete: vault key derived, saving");
@@ -3438,7 +3474,12 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                 if let Err(e) = self.profile_manager.load_vault_secrets() {
                                     eprintln!("[App] failed to load vault secrets: {}", e);
                                 }
-                                self.app_state.vault_key = Some(key);
+                                self.core.user_mut().set_vault_key(Some(key));
+                                // Phase D fix: this unlock path previously never wrote
+                                // templates_mut().vault_key at all — encrypted template
+                                // saves silently used a stale/missing key until the
+                                // later skeleton-promote rebuild picked it up by luck.
+                                self.core.templates_mut().set_vault_key(Some(key));
                                 self.profile_manager.vault_key = Some(key);
                                 self.profile = self.profile_manager.profile.clone();
                                 self.needs_vault_unlock = false;
@@ -3459,9 +3500,9 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         // Fresh E2E setup — derive and store the vault key.
                         match self.profile_manager.derive_and_set_vault_key(passphrase) {
                             Ok(key) => {
-                                self.app_state.vault_key = Some(key);
+                                self.core.user_mut().set_vault_key(Some(key));
                                 self.profile_manager.vault_key = Some(key);
-                                // Shared core (Phase A/B): one write reaches every
+                                // Shared core (Phase A/B/C): one write reaches every
                                 // open window immediately — no per-window replica
                                 // left to go stale before the later skeleton-promote
                                 // rebuild.
@@ -3563,7 +3604,8 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                                         if let Err(e) = self.profile_manager.load_vault_secrets() {
                                                             eprintln!("[App] failed to load vault secrets: {}", e);
                                                         }
-                                                        self.app_state.vault_key = Some(vault_key);
+                                                        self.core.user_mut().set_vault_key(Some(vault_key));
+                                                        self.core.templates_mut().set_vault_key(Some(vault_key));
                                                         self.profile_manager.vault_key = Some(vault_key);
                                                         self.profile = self.profile_manager.profile.clone();
                                                         self.needs_vault_unlock = false;
@@ -3693,9 +3735,13 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                 Ok(new_recovery_key_fmt) => {
                                     eprintln!("[App] set_new_passphrase: vault re-keyed successfully");
 
-                                    // Update app-level vault key reference.
+                                    // Update the shared core's vault key reference. Phase D
+                                    // fix: this rekey path previously never wrote
+                                    // templates_mut().vault_key at all — same bug class as
+                                    // the validate_passphrase path above.
                                     if let Some(new_vk) = self.profile_manager.vault_key {
-                                        self.app_state.vault_key = Some(new_vk);
+                                        self.core.user_mut().set_vault_key(Some(new_vk));
+                                        self.core.templates_mut().set_vault_key(Some(new_vk));
                                     }
 
                                     // Mark that skeleton promote should happen after recovery key is confirmed.
@@ -3772,7 +3818,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             self.profile_manager = mlc_app::user_manager::ProfileManager::load(None);
                             self.profile = self.profile_manager.profile.clone();
                             // Reset shared app state + shared core from the old profile.
-                            self.app_state.vault_key = None;
+                            self.core.user_mut().set_vault_key(None);
                             self.core.presets_mut().replace_all(std::collections::HashMap::new());
                             self.preset_dirty_ids.clear();
                         }
@@ -3918,7 +3964,8 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     }
                     // Persist to profile on disk
                     self.profile.domain.notification_settings = ns;
-                    if let Err(e) = mlc_core::save_profile(&self.profile, self.app_state.vault_key.as_ref()) {
+                    let vault_key = self.core.user().vault_key();
+                    if let Err(e) = mlc_core::save_profile(&self.profile, vault_key.as_ref()) {
                         eprintln!("[App] Failed to persist notification settings: {}", e);
                     }
                 }
@@ -3937,31 +3984,33 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         // background windows that Windows won't deliver WM_PAINT to.
         let _t4 = web_time::Instant::now();
         {
-            // ── Conditional sync: only clone when data actually changed ────────
-            // watchlists/presets/snapshots/templates dirty-flag sync blocks
-            // are GONE (shared-BackendCore arc Phase B) — every window's
+            // watchlists/presets/snapshots/templates/recalc_mode/scale_mode/
+            // server_enabled/server_port dirty-flag sync blocks are GONE
+            // (shared-BackendCore arc Phase B+C) — every window's
             // `chart.core` is the SAME `Arc<BackendCore>` now, so a write
-            // through `core.X_mut()` anywhere is immediately visible to
-            // every window's next read. There is no second copy left to
-            // replicate. `connectors_dirty` survives — `connector_enabled`
-            // is a genuinely per-window `sidebar_state` copy (Phase C
-            // candidate, not this phase's scope).
-            if self.app_state.connectors_dirty {
-                for pw in self.windows.values_mut() {
-                    pw.chart.sidebar_state.connector_enabled =
-                        self.app_state.connector_enabled.clone();
-                }
-                self.app_state.connectors_dirty = false;
+            // through `core.X_mut()`/`core.user_mut()` anywhere is
+            // immediately visible to every window's next read.
+            //
+            // `sidebar_state.connector_enabled` is a HashMap<String,bool>
+            // clone into `mlc-app`'s own read path (~10 call sites there
+            // check it directly, not through `core`) — cheap enough
+            // (small map) to refresh unconditionally every frame like
+            // `recalc_mode` below, no dirty flag needed.
+            let connector_enabled = self.core.user().connector_enabled().clone();
+            for pw in self.windows.values_mut() {
+                pw.chart.sidebar_state.connector_enabled = connector_enabled.clone();
             }
 
-            // Sync recalc_mode to every window's indicator manager.
-            // This is a cheap copy (Copy enum) so no dirty flag is needed.
-            let recalc_mode = self.app_state.recalc_mode;
-            let scale_mode = self.app_state.scale_mode;
-            for pw in self.windows.values_mut() {
-                pw.chart.core.indicators_mut().set_recalc_mode(recalc_mode);
-                pw.chart.default_scale_mode = scale_mode;
-            }
+            // scale_mode lives on core.user() now (Phase C) — every read
+            // site (react.rs, profile.rs) reads through it directly, no
+            // per-window copy or sync needed at all (ChartApp::default_scale_mode
+            // field deleted). recalc_mode still needs a one-way push into
+            // IndicatorManager's own operational copy — that field drives the
+            // manager's internal dirty/recalc scheduling and is a legitimate
+            // second copy (ONE core.user() value kept in sync with the ONE
+            // IndicatorManager, not an N-window duplication).
+            let recalc_mode = self.core.user().recalc_mode();
+            self.core.indicators_mut().set_recalc_mode(recalc_mode);
 
             // Drain the shared broadcast channel exactly ONCE per frame —
             // every window's `core` is the same `Arc<BackendCore>` (Phase A),
@@ -4076,7 +4125,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
         }
 
-        // Capture the active window's scale mode back to AppState so it
+        // Capture the active window's scale mode back to core.user() so it
         // persists across sessions.  Reading after tick() ensures any toggle
         // from this frame is captured.
         if let Some(pw) = self.last_focused
@@ -4084,7 +4133,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             .or_else(|| self.windows.values().next())
         {
             if let Some(w) = pw.chart.panel_app.panel_grid.active_container() {
-                self.app_state.scale_mode = w.price_scale.scale_mode;
+                self.core.user_mut().set_scale_mode(w.price_scale.scale_mode);
             }
         }
 
@@ -4106,7 +4155,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             let fps_limit = self.fps_limit;
             let fps = self.fps_ema;
             let frame_time_ms = self.last_frame_time_ms;
-            let recalc_label = format!("{:?}", self.app_state.recalc_mode);
+            let recalc_label = format!("{:?}", self.core.user().recalc_mode());
             let msaa_samples = self.msaa_samples;
             let perf_log_enabled = self.perf_log_enabled;
             let render_backend = self.render_backend;
