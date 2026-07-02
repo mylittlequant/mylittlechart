@@ -1128,7 +1128,7 @@ impl App<'_> {
             self.profile_manager.profile.open_tabs = chart.panel_app.open_tabs.clone();
             self.profile.open_tabs = chart.panel_app.open_tabs.clone();
         }
-        chart.panel_app.user_manager.snapshots = self.app_state.snapshots.clone();
+        chart.core.user_mut().set_snapshots(self.app_state.snapshots.clone());
         // Apply persisted last-used drawing styles to all bubbles' drawing
         // sessions in this new window (per-bubble model — styles live on
         // DataBubble.last_used_style, loaded once per distinct bubble).
@@ -1564,7 +1564,7 @@ impl App<'_> {
                         presets_mut.insert_if_absent(k.clone(), || v.clone());
                     }
                 }
-                chart.panel_app.user_manager.snapshots = snapshots.clone();
+                chart.core.user_mut().set_snapshots(snapshots.clone());
                 {
                     let drawing_styles = snapshots.last_used_drawing_styles.clone();
                     let all_bids_ls: Vec<_> = chart.core.bubbles().bubble_ids().collect();
@@ -2040,12 +2040,6 @@ impl App<'_> {
         // 8. Save templates from AppState (single canonical source of truth).
         if let Err(e) = self.app_state.template_manager.save_to_default_dir(vault_key) {
             eprintln!("[App] Failed to save templates: {:?}", e);
-        }
-        // Call save_user_state() for any remaining per-window state (snapshots compat).
-        if let Some(key) = preferred_key {
-            if let Some(pw) = self.windows.get_mut(&key) {
-                pw.chart.panel_app.save_user_state();
-            }
         }
 
         // 9. Save all presets from AppState (single canonical source of truth).
@@ -3934,8 +3928,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             if self.app_state.snapshots_dirty {
                 let drawing_styles = self.app_state.snapshots.last_used_drawing_styles.clone();
                 for pw in self.windows.values_mut() {
-                    pw.chart.panel_app.user_manager.snapshots =
-                        self.app_state.snapshots.clone();
+                    pw.chart.core.user_mut().set_snapshots(self.app_state.snapshots.clone());
                     // Apply persisted last-used drawing styles to every bubble's
                     // drawing session so new primitives of each type inherit the
                     // user's last-used style.
@@ -3999,7 +3992,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     if sym.is_empty() && active_cid_rc.is_none() {
                         continue;
                     }
-                    (sym, exch, at, tf, pw.chart.panel_app.user_manager.profile.bar_count as usize)
+                    (sym, exch, at, tf, pw.chart.core.user().profile().bar_count as usize)
                 };
 
                 // disk persistence removed — delete_storage flag is a no-op now

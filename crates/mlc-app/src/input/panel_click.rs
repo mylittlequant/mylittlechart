@@ -411,7 +411,7 @@ impl ChartApp {
                         } else {
                             let item_at = crate::account_type_from_label(&item_account_type);
                             self.core.bridge.ensure_connector(resolved_exchange);
-                            self.core.bridge.request_bars(resolved_exchange, &symbol, &timeframe, item_at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), false);
+                            self.core.bridge.request_bars(resolved_exchange, &symbol, &timeframe, item_at, None, Some(self.core.user().profile().bar_count as usize), false);
                         }
                         // Propagate the new symbol+exchange+account_type to all other windows
                         // in the same sync group so the full instrument key is consistent.

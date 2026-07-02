@@ -14,7 +14,7 @@ impl ChartApp {
     pub fn drain_pending_cure_after_preset_load(&mut self) {
         if self.pending_cure_after_preset_load.is_empty() { return; }
         let work = std::mem::take(&mut self.pending_cure_after_preset_load);
-        let bar_count = self.panel_app.user_manager.profile.bar_count as usize;
+        let bar_count = self.core.user().profile().bar_count as usize;
         let drain_t0 = web_time::Instant::now();
         let n = work.len();
         for (eid, sym, tf, at, force) in work {
@@ -260,7 +260,7 @@ impl ChartApp {
                                 self.core.bridge.request_tick_bars(self.active_exchange, &symbol, at, count);
                             } else {
                                 self.core.bridge.abort_tick_bars(self.active_exchange, &symbol, at);
-                                self.core.bridge.request_bars(self.active_exchange, &symbol, &tf, at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), true);
+                                self.core.bridge.request_bars(self.active_exchange, &symbol, &tf, at, None, Some(self.core.user().profile().bar_count as usize), true);
                             }
                         }
                     }
@@ -536,7 +536,7 @@ impl ChartApp {
                                                 self.core.bridge.request_bars(
                                                     self.active_exchange, &symbol, &tf, at,
                                                     None,
-                                                    Some(self.panel_app.user_manager.profile.bar_count as usize),
+                                                    Some(self.core.user().profile().bar_count as usize),
                                                     true,
                                                 );
                                             }
@@ -757,7 +757,7 @@ impl ChartApp {
                     self.core.bridge.ensure_connector(resolved_exchange);
                     self.core.bridge.request_bars(
                         resolved_exchange, &symbol, &timeframe, at, None,
-                        Some(self.panel_app.user_manager.profile.bar_count as usize), false,
+                        Some(self.core.user().profile().bar_count as usize), false,
                     );
                 }
 
@@ -1407,7 +1407,7 @@ impl ChartApp {
                     // common "I'm flipping between presets I just looked at"
                     // case. The handful of empty-window cases still resync
                     // properly via the force=true fallback.
-                    let bar_count = self.panel_app.user_manager.profile.bar_count as usize;
+                    let bar_count = self.core.user().profile().bar_count as usize;
                     // Phase 4 S2.7.1c: read via branch_meta (B6 tuple-collect flip).
                     let window_bar_data: Vec<(String, String, mlc_core::state::Timeframe, String, bool)> = self
                         .panel_app

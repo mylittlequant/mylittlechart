@@ -144,7 +144,8 @@ impl ChartApp {
         // Only update the cached values when the slider is not being dragged so the
         // handle does not snap back to the committed value on every frame during drag.
         if !self.panel_app.user_settings_state.is_data_slider_dragging() {
-            let dl = &self.panel_app.user_manager.profile.data_load;
+            let user_guard = self.core.user();
+            let dl = &user_guard.profile().data_load;
             self.panel_app.user_settings_state.data_bg_bars      = dl.background_bar_count;
             self.panel_app.user_settings_state.data_max_bars     = dl.max_loaded_bars;
             self.panel_app.user_settings_state.data_store_size_mb = dl.max_store_size_mb;

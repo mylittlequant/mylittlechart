@@ -119,13 +119,6 @@ pub struct ChartPanelApp {
     pub chart_browser: ChartBrowserState,
     /// Whether autosave is enabled for presets.
     pub autosave_enabled: bool,
-
-    /// Unified user state manager — owns profile and settings snapshots.
-    ///
-    /// Templates and presets are the source of truth in `template_manager` and
-    /// `presets` respectively. `user_manager` holds the remainder: profile
-    /// metadata (`active_preset_id`, sidebar state) and `SettingsSnapshots`.
-    pub user_manager: UserManager,
 }
 
 impl ChartPanelApp {
@@ -160,15 +153,16 @@ impl ChartPanelApp {
             preset_name_input: PresetNameInputState::default(),
             chart_browser: ChartBrowserState::default(),
             autosave_enabled: true,
-            user_manager: UserManager::new(),
         }
     }
 
     /// Load all user state from disk.
     ///
-    /// Call once at startup after construction. Populates `active_preset_id`,
-    /// `open_tabs`, and `user_manager` on self. Returns the loaded presets and
-    /// template manager so the caller can write them into `BackendCore`.
+    /// Call once at startup after construction. Populates `active_preset_id`
+    /// and `open_tabs` on self. Returns the loaded presets, template manager,
+    /// profile, settings snapshots, and vault key so the caller can write
+    /// them into `BackendCore` (presets/templates/user profile no longer
+    /// live on `ChartPanelApp` — step 3.6c).
     ///
     /// All errors are logged but non-fatal: missing files produce defaults.
     pub fn load_user_state(
@@ -176,18 +170,22 @@ impl ChartPanelApp {
     ) -> (
         std::collections::HashMap<String, mlc_core::preset::preset::ChartPreset>,
         TemplateManager,
+        mlc_core::UserProfile,
+        mlc_core::user_profile::SettingsSnapshots,
+        Option<mlc_vault::vault::VaultKey>,
     ) {
         let um = UserManager::load();
 
         let presets = um.presets;
         let template_manager = um.template_manager;
+        let mut profile = um.profile;
 
-        if !um.profile.active_preset_id.is_empty() {
-            self.active_preset_id = um.profile.active_preset_id.clone();
+        if !profile.active_preset_id.is_empty() {
+            self.active_preset_id = profile.active_preset_id.clone();
         }
 
         // Restore open_tabs and filter out any stale IDs (presets no longer on disk).
-        self.open_tabs = um.profile.open_tabs.clone();
+        self.open_tabs = profile.open_tabs.clone();
         self.open_tabs.retain(|id| presets.contains_key(id));
 
         // Migration: old data has no open_tabs — open only the active preset.
@@ -205,15 +203,13 @@ impl ChartPanelApp {
             }
         }
 
-        // Keep profile + snapshots in user_manager.
-        self.user_manager.profile = um.profile;
-        self.user_manager.snapshots = um.snapshots;
-
         // Record this launch.
-        self.user_manager.profile.record_launch(env!("CARGO_PKG_VERSION"));
+        profile.record_launch(env!("CARGO_PKG_VERSION"));
 
         // Save profile immediately to persist the updated launch record.
-        self.user_manager.save_profile();
+        if let Err(e) = mlc_core::user_profile::storage::save_profile(&profile, um.vault_key.as_ref()) {
+            eprintln!("[ChartPanelApp] failed to save profile: {}", e);
+        }
 
         eprintln!(
             "[ChartPanelApp] user state loaded: {} presets, {} prim-templates, {} ind-templates",
@@ -222,30 +218,7 @@ impl ChartPanelApp {
             template_manager.indicator_templates.len(),
         );
 
-        (presets, template_manager)
-    }
-
-    /// Sync the current in-memory state into `user_manager` and persist everything to disk.
-    ///
-    /// Saves profile, templates, presets, and settings snapshots. Errors are
-    /// logged but non-fatal so that a save failure never crashes the app.
-    pub fn save_user_state(&mut self) {
-        // NOTE: Do NOT call self.user_manager.save_profile() here!
-        // The per-window UserManager holds a stale copy of UserProfile
-        // (with outdated window positions/sizes). The authoritative profile
-        // save happens in App::save_all() which has the correct multi-window
-        // state.
-
-        // Templates are saved by App::save_all() from AppState.template_manager
-        // (single source of truth shared across all windows via action queue).
-
-        // Presets are saved by App::save_all() from AppState (single source of truth).
-
-        // Settings snapshots are saved by App::save_all() from AppState.snapshots
-        // (single source of truth for multi-window). Do NOT call save_snapshots()
-        // here — the per-window UserManager holds a copy that may be stale.
-
-        eprintln!("[ChartPanelApp] user state saved to disk (templates/presets/snapshots handled by App::save_all)");
+        (presets, template_manager, profile, um.snapshots, um.vault_key)
     }
 
     /// Return a mutable reference to the per-leaf indicator overlay state.

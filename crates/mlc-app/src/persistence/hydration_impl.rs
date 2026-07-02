@@ -1339,7 +1339,7 @@ impl ChartApp {
                     // trigger the fetches here.
                     // ----------------------------------------------------------------
                     let _t_request_bars = web_time::Instant::now();
-                    let bar_count = self.panel_app.user_manager.profile.bar_count as usize;
+                    let bar_count = self.core.user().profile().bar_count as usize;
                     let mut bars_requested: usize = 0;
                     // Phase 4 S2.7.1c: read via branch_meta (B6 tuple-collect flip).
                     let window_bar_data: Vec<(String, String, mlc_core::state::Timeframe, String)> = self

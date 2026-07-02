@@ -17,7 +17,8 @@ impl ChartApp {
     pub fn build_user_profile(&self) -> mlc_core::UserProfile {
         // Preserve device identity and telemetry from the currently loaded
         // profile so that we don't clobber counters on every save.
-        let existing = &self.panel_app.user_manager.profile;
+        let user_guard = self.core.user();
+        let existing = user_guard.profile();
         let inline = &self.panel_app.toolbar_state.floating_inline_bar;
         let inline_dock_str = match inline.dock_edge {
             mlc_core::InlineDockEdge::Bottom => "Bottom",
@@ -151,7 +152,7 @@ impl ChartApp {
     /// Update the in-memory profile's windows list.  Call this before
     /// `save_user_profile()` when multiple OS windows are open.
     pub fn set_profile_windows(&mut self, windows: Vec<mlc_core::WindowState>) {
-        self.panel_app.user_manager.profile.windows = windows;
+        self.core.user_mut().profile_mut().windows = windows;
     }
 
     // =========================================================================

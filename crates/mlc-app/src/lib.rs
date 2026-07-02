@@ -1512,9 +1512,11 @@ impl ChartApp {
         // Must happen before toolbar_config override so that the active_preset_id
         // from the profile is respected during the first render.
         {
-            let (loaded_presets, loaded_tm) = app.panel_app.load_user_state();
+            let (loaded_presets, loaded_tm, loaded_profile, loaded_snapshots, loaded_vault_key) =
+                app.panel_app.load_user_state();
             app.core.presets_mut().replace_all(loaded_presets);
             app.core.templates_mut().replace_all(loaded_tm);
+            app.core.user_mut().replace_all(loaded_profile, loaded_snapshots, loaded_vault_key);
         }
 
         // Restore user profile (sidebar state) and watchlist from disk.
@@ -1600,7 +1602,7 @@ impl ChartApp {
                 }
                 let at = account_type_from_label(at_label);
                 bridge.ensure_connector(eid);
-                bridge.request_bars(eid, sym, tf, at, None, Some(app.panel_app.user_manager.profile.bar_count as usize), false);
+                bridge.request_bars(eid, sym, tf, at, None, Some(app.core.user().profile().bar_count as usize), false);
             }
 
             // Defer viewport positioning until the first resize() when chart_width is known.
@@ -1608,7 +1610,7 @@ impl ChartApp {
             // Preset restored successfully.
         } else {
             // ── Fresh state — Binance default ──────────────────────────────
-            let bar_count = app.panel_app.user_manager.profile.bar_count as usize;
+            let bar_count = app.core.user().profile().bar_count as usize;
             app.seed_default_chart(
                 digdigdig3::ExchangeId::Binance,
                 "BTCUSDT",
@@ -1870,7 +1872,7 @@ impl ChartApp {
         app.panel_app.active_preset_id = untitled_id;
 
         // Seed active window with Binance/BTCUSDT/1H defaults.
-        let bar_count = app.panel_app.user_manager.profile.bar_count as usize;
+        let bar_count = app.core.user().profile().bar_count as usize;
         app.seed_default_chart(
             digdigdig3::ExchangeId::Binance,
             "BTCUSDT",
@@ -2419,9 +2421,12 @@ impl ChartApp {
             }
         }
 
-        // Keep profile + snapshots in user_manager.
-        app.panel_app.user_manager.profile = user_manager.profile.clone();
-        app.panel_app.user_manager.snapshots = user_manager.snapshots.clone();
+        // Keep profile + snapshots in BackendCore's UserProfileManager.
+        app.core.user_mut().replace_all(
+            user_manager.profile.clone(),
+            user_manager.snapshots.clone(),
+            user_manager.vault_key,
+        );
 
         {
             let presets_guard = app.core.presets();
@@ -2563,7 +2568,7 @@ impl ChartApp {
                     }
                     let at = account_type_from_label(at_label);
                     bridge.ensure_connector(eid);
-                    bridge.request_bars(eid, sym, tf, at, None, Some(app.panel_app.user_manager.profile.bar_count as usize), false);
+                    bridge.request_bars(eid, sym, tf, at, None, Some(app.core.user().profile().bar_count as usize), false);
                     nw_reqbars_n += 1;
                 }
                 let nw_reqbars_us = _t_nw_reqbars.elapsed().as_micros();
@@ -2657,7 +2662,7 @@ impl ChartApp {
                     &mlc_core::state::Timeframe::h1(),
                     digdigdig3::AccountType::Spot,
                     None,
-                    Some(app.panel_app.user_manager.profile.bar_count as usize),
+                    Some(app.core.user().profile().bar_count as usize),
                     false,
                 );
                 eprintln!(
@@ -3034,7 +3039,7 @@ impl ChartApp {
             window.data_provider = provider;
             let at = account_type_from_label(&cur_at_label_exc);
             mirror_args = Some((cur_sym_exc.clone(), cur_tf_exc.clone(), exchange_name.clone(), cur_at_label_exc.clone()));
-            bridge.request_bars(exchange_id, &cur_sym_exc, &cur_tf_exc, at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), false);
+            bridge.request_bars(exchange_id, &cur_sym_exc, &cur_tf_exc, at, None, Some(self.core.user().profile().bar_count as usize), false);
         }
         if let (Some(chart_id), Some((_, _, exch, _))) = (active_chart_id, mirror_args) {
             if let Some(bid) = self.bubble_for_chart(chart_id) {
@@ -6925,7 +6930,7 @@ impl ChartApp {
     /// (i.e. after `LoadPreset` completes in `new_window`).
     pub fn warm_background_tabs(&mut self) {
         let active_id = self.panel_app.active_preset_id.clone();
-        let bar_count = self.panel_app.user_manager.profile.bar_count as usize;
+        let bar_count = self.core.user().profile().bar_count as usize;
         let presets_guard = self.core.presets();
         let warm_targets: Vec<(String, String, mlc_core::state::Timeframe, String)> = self
             .panel_app
@@ -7007,7 +7012,7 @@ impl ChartApp {
     /// post-promote warm-up).
     pub fn warm_one_background_tab(&mut self, target: &(String, String, mlc_core::state::Timeframe, String)) {
         let (sym, exch, tf, at_label) = target;
-        let bar_count = self.panel_app.user_manager.profile.bar_count as usize;
+        let bar_count = self.core.user().profile().bar_count as usize;
         let eid = digdigdig3::ExchangeId::from_str(&exch)
             .unwrap_or(digdigdig3::ExchangeId::Binance);
         let at = account_type_from_label(at_label);
