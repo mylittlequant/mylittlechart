@@ -3993,7 +3993,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         .map(String::from).unwrap_or_default();
                     let at = active_cid_rc
                         .and_then(|cid| pw.chart.account_type_for_chart(cid))
-                        .map(String::from).unwrap_or_else(|| "S".to_string());
+                        .map(|at| at.to_string()).unwrap_or_else(|| "S".to_string());
                     let tf = active_cid_rc
                         .and_then(|cid| pw.chart.timeframe_for_chart(cid))
                         .unwrap_or_else(mlc_core::state::Timeframe::h1);
@@ -4024,6 +4024,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 if let Some((active_cid, group_id)) = group_info {
                     let sync_symbol_on = pw.chart.with_bubble(group_id, |g| g.sync_flags.sync_symbol).unwrap_or(false);
                     if sync_symbol_on {
+                        let account_type_typed: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                         let peer_ids: Vec<mlc_core::ChartId> = pw.chart.core.tags()
                             .chart_member_ids(group_id)
                             .into_iter()
@@ -4034,7 +4035,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                 .filter(|&&pid| {
                                     pw.chart.symbol_for_chart(pid).map_or(false, |s| s == symbol.as_str())
                                     && pw.chart.exchange_for_chart(pid).map_or(false, |e| e == exchange.as_str())
-                                    && pw.chart.account_type_for_chart(pid).map_or(false, |a| a == account_type.as_str())
+                                    && pw.chart.account_type_for_chart(pid).map_or(false, |a| a == account_type_typed)
                                 })
                                 .copied()
                                 .collect()

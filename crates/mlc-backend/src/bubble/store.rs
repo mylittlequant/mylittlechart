@@ -459,6 +459,13 @@ impl BubbleStore {
         self.bubbles.get(&bid).map(|b| b.address.account_type.as_label()).filter(|s| !s.is_empty())
     }
 
+    /// Typed account type of a bubble known by id directly. `None` only if
+    /// the bubble is missing — unlike the label form, a typed `AccountType`
+    /// has no "empty" state to filter.
+    pub fn account_type_typed(&self, bid: BubbleId) -> Option<mlc_core::instrument::AccountType> {
+        self.bubbles.get(&bid).map(|b| b.address.account_type)
+    }
+
     /// Timeframe of a bubble known by id directly.
     pub fn timeframe(&self, bid: BubbleId) -> Option<&Timeframe> {
         self.bubbles.get(&bid).map(|b| &b.timeframe)

@@ -215,7 +215,6 @@ impl ChartApp {
                         .unwrap_or_default();
                     let at_tf: mlc_core::instrument::AccountType = active_chart_id
                         .and_then(|cid| self.account_type_for_chart(cid))
-                        .map(|s| s.parse().unwrap_or_default())
                         .unwrap_or_default();
                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         {};
@@ -370,8 +369,7 @@ impl ChartApp {
                     if let Some(active_leaf) = self.panel_app.panel_grid.active_container() {
                         let cid = active_leaf.id;
                         let symbol_opt = self.symbol_for_chart(cid);
-                        let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid)
-                            .map(|s| s.parse().unwrap_or_default());
+                        let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid);
                         let tf_opt = self.timeframe_for_chart(cid);
                         if let (Some(symbol), Some(at), Some(tf)) = (symbol_opt, at_opt, tf_opt) {
                             if !symbol.is_empty() {
@@ -572,8 +570,7 @@ impl ChartApp {
                 if let Some(active_leaf) = self.panel_app.panel_grid.active_container() {
                     let cid = active_leaf.id;
                     let symbol_opt = self.symbol_for_chart(cid);
-                    let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid)
-                        .map(|s| s.parse().unwrap_or_default());
+                    let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid);
                     if let (Some(symbol), Some(at)) = (symbol_opt, at_opt) {
                         if !symbol.is_empty() {
                             let eid_str = self.active_exchange.as_str();
@@ -641,8 +638,7 @@ impl ChartApp {
                 if let Some(active_leaf) = self.panel_app.panel_grid.active_container() {
                     let cid = active_leaf.id;
                     let symbol_opt = self.symbol_for_chart(cid);
-                    let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid)
-                        .map(|s| s.parse().unwrap_or_default());
+                    let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid);
                     if let (Some(symbol), Some(at)) = (symbol_opt, at_opt) {
                         if !symbol.is_empty() {
                             let eid_str = self.active_exchange.as_str();
@@ -693,9 +689,9 @@ impl ChartApp {
                 let previous_symbol: String = self.symbol_for_chart(target_cid)
                     .map(String::from)
                     .unwrap_or_default();
-                let old_at_search = self.account_type_for_chart(target_cid)
-                    .map(String::from).unwrap_or_else(|| "S".to_string());
-                let old_trade_at: mlc_core::instrument::AccountType = old_at_search.parse().unwrap_or_default();
+                let old_trade_at: mlc_core::instrument::AccountType = self.account_type_for_chart(target_cid)
+                    .unwrap_or_default();
+                let old_at_search = old_trade_at.to_string();
                 let old_trade_at = mlc_backend_data_bridge::account_type_to_dig3(old_trade_at);
                 let old_trade_exchange = self.exchange_for_chart(target_cid)
                     .and_then(|s| self.core.exchange_symbols().find_by_label(s.as_str()))
@@ -869,8 +865,7 @@ impl ChartApp {
                 let cid_opt = self.panel_app.panel_grid.active_container().map(|w| w.id);
                 if let Some(cid) = cid_opt {
                     let symbol_opt = self.symbol_for_chart(cid);
-                    let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid)
-                        .map(|s| s.parse().unwrap_or_default());
+                    let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid);
                     if let (Some(symbol), Some(at)) = (symbol_opt, at_opt) {
                         if !symbol.is_empty() {
                             let eid_str = self.active_exchange.as_str();
@@ -905,8 +900,7 @@ impl ChartApp {
                 let cid_opt = self.panel_app.panel_grid.active_container().map(|w| w.id);
                 if let Some(cid) = cid_opt {
                     let symbol_opt = self.symbol_for_chart(cid);
-                    let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid)
-                        .map(|s| s.parse().unwrap_or_default());
+                    let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid);
                     if let (Some(symbol), Some(at)) = (symbol_opt, at_opt) {
                         if !symbol.is_empty() {
                             let eid_str = self.active_exchange.as_str();
@@ -1424,7 +1418,7 @@ impl ChartApp {
                                 .map(String::from).unwrap_or_default();
                             let tf = self.timeframe_for_chart(cid).unwrap_or_else(mlc_core::state::Timeframe::h1);
                             let at: mlc_core::instrument::AccountType = self.account_type_for_chart(cid)
-                                .map(|s| s.parse().unwrap_or_default()).unwrap_or_default();
+                                .unwrap_or_default();
                             // Was `let has_bars = !true;` — cutover sweep stub that
                             // pinned `force=true` on the cure path always (every
                             // preset switch re-issued Phase A even on warm cache).
@@ -1776,7 +1770,7 @@ impl ChartApp {
                             .unwrap_or_default();
                         let account_type = active_cid
                             .and_then(|cid| self.account_type_for_chart(cid))
-                            .map(String::from)
+                            .map(|at| at.to_string())
                             .unwrap_or_default();
                         if !symbol.is_empty() {
                             self.propagate_symbol_to_sync_group(leaf, &symbol, &exchange, &account_type);

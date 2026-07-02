@@ -338,7 +338,7 @@ impl ChartApp {
                         .map(String::from);
                     let prev_account_type: Option<String> = wl_active_cid
                         .and_then(|cid| self.account_type_for_chart(cid))
-                        .map(String::from);
+                        .map(|at| at.to_string());
                     if prev_symbol.as_deref() != Some(&symbol) || prev_exchange.as_deref() != Some(&item_exchange) || prev_account_type.as_deref() != Some(&item_account_type) {
                         // Capture old trade-stream identity BEFORE mutating window state.
                         let old_trade_exchange = self.active_exchange;
@@ -348,7 +348,7 @@ impl ChartApp {
                             .unwrap_or_default();
                         let old_trade_at = wl_active_cid
                             .and_then(|cid| self.account_type_for_chart(cid))
-                            .map(|at| crate::account_type_from_label(&at))
+                            .map(mlc_backend_data_bridge::account_type_to_dig3)
                             .unwrap_or(digdigdig3::AccountType::Spot);
                         let timeframe = wl_active_cid
                             .and_then(|cid| self.timeframe_for_chart(cid))
@@ -366,7 +366,7 @@ impl ChartApp {
                             .unwrap_or_default();
                         let old_at_pc = active_chart_id
                             .and_then(|cid| self.account_type_for_chart(cid))
-                            .map(String::from)
+                            .map(|at| at.to_string())
                             .unwrap_or_else(|| "S".to_string());
                         let active_bid_pc = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
                         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
@@ -1234,7 +1234,7 @@ impl ChartApp {
                                     .unwrap_or_else(|| self.active_exchange.as_str().to_string());
                                 let at: String = spawn_active_cid
                                     .and_then(|cid| self.account_type_for_chart(cid))
-                                    .map(String::from)
+                                    .map(|at| at.to_string())
                                     .unwrap_or_else(|| digdigdig3::AccountType::Spot.short_label().to_string());
                                 SymbolSource::Fixed { symbol: sym, exchange: exch, account_type: at }
                             }
@@ -1249,7 +1249,7 @@ impl ChartApp {
                                 exchange: self.exchange_for_chart(cid)
                                     .map(String::from).unwrap_or_default(),
                                 account_type: self.account_type_for_chart(cid)
-                                    .map(String::from).unwrap_or_default(),
+                                    .map(|at| at.to_string()).unwrap_or_default(),
                             }
                         });
                         let resolve_leaf = |lid: u64| -> Option<mlc_app_panels::trading::ResolvedSymbol> {
@@ -1261,7 +1261,7 @@ impl ChartApp {
                                 exchange: self.exchange_for_chart(leaf_cid)
                                     .map(String::from).unwrap_or_default(),
                                 account_type: self.account_type_for_chart(leaf_cid)
-                                    .map(String::from).unwrap_or_default(),
+                                    .map(|at| at.to_string()).unwrap_or_default(),
                             })
                         };
                         let resolved = source.resolve(active_resolved.as_ref(), &resolve_leaf);
@@ -1722,7 +1722,7 @@ impl ChartApp {
                                                 .unwrap_or_default();
                                             let account_type: String = toggle_u_cid
                                                 .and_then(|cid| self.account_type_for_chart(cid))
-                                                .map(String::from)
+                                                .map(|at| at.to_string())
                                                 .unwrap_or_default();
                                             let src = SymbolSource::Fixed { symbol, exchange, account_type };
                                             match &item {
@@ -2387,7 +2387,7 @@ impl ChartApp {
                                                 .unwrap_or_default();
                                             let account_type: String = source_cycle_cid
                                                 .and_then(|cid| self.account_type_for_chart(cid))
-                                                .map(String::from)
+                                                .map(|at| at.to_string())
                                                 .unwrap_or_default();
                                             Some(SymbolSource::Fixed { symbol, exchange, account_type })
                                         }

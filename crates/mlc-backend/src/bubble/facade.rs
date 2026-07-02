@@ -182,6 +182,12 @@ impl<'a> Bubbles<'a> {
         self.store.account_type(bid)
     }
 
+    /// Typed account type — canonical form, see
+    /// `docs/mlc/plans/doctrine-cutover-2026-06-27.md` §1C.
+    pub fn account_type_typed(&self, bid: BubbleId) -> Option<mlc_core::instrument::AccountType> {
+        self.store.account_type_typed(bid)
+    }
+
     pub fn timeframe(&self, bid: BubbleId) -> Option<&Timeframe> {
         self.store.timeframe(bid)
     }

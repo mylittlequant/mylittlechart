@@ -534,7 +534,7 @@ impl ChartApp {
                         let sym = self.symbol_for_chart(*cid)?;
                         let tf = self.timeframe_for_chart(*cid)?;
                         let exch = self.exchange_for_chart(*cid)?;
-                        let at: mlc_core::instrument::AccountType = self.account_type_for_chart(*cid)?.parse().unwrap_or_default();
+                        let at: mlc_core::instrument::AccountType = self.account_type_for_chart(*cid)?;
                         Some((*cid, (sym, tf, exch, at)))
                     })
                     .collect()

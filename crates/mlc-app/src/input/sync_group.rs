@@ -315,7 +315,7 @@ impl ChartApp {
                 } else {
                     let s = self.symbol_for_chart(chart_id).map(String::from).unwrap_or_default();
                     let e = self.exchange_for_chart(chart_id).map(String::from).unwrap_or_default();
-                    let a = self.account_type_for_chart(chart_id).map(String::from).unwrap_or_else(|| "S".to_string());
+                    let a = self.account_type_for_chart(chart_id).map(|at| at.to_string()).unwrap_or_else(|| "S".to_string());
                     let t = self.timeframe_for_chart(chart_id).unwrap_or_else(mlc_core::state::Timeframe::h1);
                     (s, e, a, t)
                 };
@@ -452,7 +452,7 @@ impl ChartApp {
                         .map(String::from)
                         .unwrap_or_default();
                     let at = self.account_type_for_chart(chart_id)
-                        .map(String::from)
+                        .map(|at| at.to_string())
                         .unwrap_or_else(|| "S".to_string());
                     (sym, exch, at)
                 };
@@ -554,7 +554,7 @@ impl ChartApp {
                 let cure_eid = self.exchange_for_chart(chart_id)
                     .and_then(|e| digdigdig3::ExchangeId::from_str(&e));
                 let cure_sym = self.symbol_for_chart(chart_id).map(String::from).unwrap_or_default();
-                let cure_at_label = self.account_type_for_chart(chart_id).map(String::from).unwrap_or_else(|| "S".to_string());
+                let cure_at_label = self.account_type_for_chart(chart_id).map(|at| at.to_string()).unwrap_or_else(|| "S".to_string());
                 let cure_tf = self.timeframe_for_chart(chart_id).unwrap_or_else(mlc_core::state::Timeframe::h1);
                 if let Some(eid) = cure_eid {
                     if !cure_sym.is_empty()
@@ -580,7 +580,7 @@ impl ChartApp {
                         .map(String::from)
                         .unwrap_or_default();
                     let at = self.account_type_for_chart(chart_id)
-                        .map(String::from)
+                        .map(|at| at.to_string())
                         .unwrap_or_else(|| "S".to_string());
                     (sym, exch, at)
                 };
@@ -677,7 +677,7 @@ impl ChartApp {
                 let cure_eid = self.exchange_for_chart(chart_id)
                     .and_then(|e| digdigdig3::ExchangeId::from_str(&e));
                 let cure_sym = self.symbol_for_chart(chart_id).map(String::from).unwrap_or_default();
-                let cure_at_label = self.account_type_for_chart(chart_id).map(String::from).unwrap_or_else(|| "S".to_string());
+                let cure_at_label = self.account_type_for_chart(chart_id).map(|at| at.to_string()).unwrap_or_else(|| "S".to_string());
                 let cure_tf = self.timeframe_for_chart(chart_id).unwrap_or_else(mlc_core::state::Timeframe::h1);
                 if let Some(eid) = cure_eid {
                     if !cure_sym.is_empty()
@@ -879,7 +879,7 @@ impl ChartApp {
             .unwrap_or_default();
         let source_at = pre_split_chart_id
             .and_then(|cid| self.account_type_for_chart(cid))
-            .map(String::from)
+            .map(|at| at.to_string())
             .unwrap_or_else(|| "S".to_string());
 
         sglog!(
@@ -975,7 +975,7 @@ impl ChartApp {
                 .unwrap_or_default();
             let split_untagged_at = pre_split_chart_id
                 .and_then(|c| self.account_type_for_chart(c))
-                .map(String::from)
+                .map(|at| at.to_string())
                 .unwrap_or_else(|| "S".to_string());
 
             for &leaf_id in new_leaves.iter().skip(1) {
@@ -1249,7 +1249,7 @@ impl ChartApp {
                         .map(String::from)
                         .unwrap_or_default();
                     let at = cid.and_then(|c| self.account_type_for_chart(c))
-                        .map(String::from)
+                        .map(|at| at.to_string())
                         .unwrap_or_else(|| "S".to_string());
                     (sym, exch, at)
                 };
@@ -1303,7 +1303,7 @@ impl ChartApp {
                             .map(String::from)
                             .unwrap_or_default();
                         let at = cid.and_then(|c| self.account_type_for_chart(c))
-                            .map(String::from)
+                            .map(|at| at.to_string())
                             .unwrap_or_else(|| "S".to_string());
                         (sym, exch, at)
                     };
@@ -1372,7 +1372,7 @@ impl ChartApp {
         for cid in &cure_chart_ids {
             let sym = self.symbol_for_chart(*cid).map(String::from).unwrap_or_default();
             let exch = self.exchange_for_chart(*cid).map(String::from).unwrap_or_default();
-            let at_label = self.account_type_for_chart(*cid).map(String::from).unwrap_or_else(|| "S".to_string());
+            let at_label = self.account_type_for_chart(*cid).map(|at| at.to_string()).unwrap_or_else(|| "S".to_string());
             let tf = self.timeframe_for_chart(*cid).unwrap_or_else(mlc_core::state::Timeframe::h1);
             if sym.is_empty() || exch.is_empty() { continue; }
             let eid = match digdigdig3::ExchangeId::from_str(&exch) {
@@ -1477,7 +1477,7 @@ impl ChartApp {
                 .map(String::from)
                 .unwrap_or_default();
             let at = cid.and_then(|c| self.account_type_for_chart(c))
-                .map(String::from)
+                .map(|at| at.to_string())
                 .unwrap_or_else(|| "S".to_string());
             let tf = cid.and_then(|c| self.timeframe_for_chart(c))
                 .unwrap_or_else(mlc_core::state::Timeframe::h1);
@@ -1573,7 +1573,7 @@ impl ChartApp {
                 .map(String::from)
                 .unwrap_or_default();
             let source_account_type = self.account_type_for_chart(chart_id)
-                .map(String::from)
+                .map(|at| at.to_string())
                 .unwrap_or_else(|| "S".to_string());
 
             let group_id = self.panel_app.panel_grid.container_id_for_leaf(source_leaf)
@@ -1647,7 +1647,7 @@ impl ChartApp {
                 .map(String::from)
                 .unwrap_or_default();
             let at = cid.and_then(|c| self.account_type_for_chart(c))
-                .map(String::from)
+                .map(|at| at.to_string())
                 .unwrap_or_else(|| "S".to_string());
             peer_requests.push((exch, sym, at));
         }
@@ -1899,7 +1899,7 @@ impl ChartApp {
                 .map(String::from)
                 .unwrap_or_default();
             let at = self.account_type_for_chart(chart_id)
-                .map(String::from)
+                .map(|at| at.to_string())
                 .unwrap_or_else(|| "S".to_string());
             (sym, exch, at)
         };

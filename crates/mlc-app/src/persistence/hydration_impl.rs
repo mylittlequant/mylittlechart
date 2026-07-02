@@ -1311,7 +1311,7 @@ impl ChartApp {
                     let bar_count = self.core.user().profile().domain.bar_count as usize;
                     let mut bars_requested: usize = 0;
                     // Phase 4 S2.7.1c: read via branch_meta (B6 tuple-collect flip).
-                    let window_bar_data: Vec<(String, String, mlc_core::state::Timeframe, String)> = self
+                    let window_bar_data: Vec<(String, String, mlc_core::state::Timeframe, mlc_core::instrument::AccountType)> = self
                         .panel_app
                         .panel_grid
                         .iter_containers()
@@ -1322,18 +1322,17 @@ impl ChartApp {
                             let exch = self.exchange_for_chart(cid)
                                 .map(String::from).unwrap_or_default();
                             let tf = self.timeframe_for_chart(cid).unwrap_or_else(mlc_core::state::Timeframe::h1);
-                            let at = self.account_type_for_chart(cid)
-                                .map(String::from).unwrap_or_default();
+                            let at = self.account_type_for_chart(cid).unwrap_or_default();
                             (sym, exch, tf, at)
                         })
                         .collect();
-                    for (sym, exch, tf, at_label) in &window_bar_data {
+                    for (sym, exch, tf, at_typed) in &window_bar_data {
                         let eid = digdigdig3::ExchangeId::from_str(&exch)
                             .unwrap_or(digdigdig3::ExchangeId::Binance);
                         if !self.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
                             continue;
                         }
-                        let at = crate::account_type_from_label(at_label);
+                        let at = mlc_backend_data_bridge::account_type_to_dig3(*at_typed);
                         self.core.bridge.ensure_connector(eid);
                         self.core.bridge.request_bars(eid, sym, tf, at, None, Some(bar_count), true);
                         bars_requested += 1;

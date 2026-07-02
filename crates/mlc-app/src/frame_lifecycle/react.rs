@@ -43,7 +43,7 @@ impl ChartApp {
                             let sym = self.symbol_for_chart(*cid)?;
                             let tf = self.timeframe_for_chart(*cid)?;
                             let exch = self.exchange_for_chart(*cid)?;
-                            let at: mlc_core::instrument::AccountType = self.account_type_for_chart(*cid)?.parse().unwrap_or_default();
+                            let at: mlc_core::instrument::AccountType = self.account_type_for_chart(*cid)?;
                             Some((*cid, (sym, tf, exch, at)))
                         })
                         .collect()
@@ -236,7 +236,7 @@ impl ChartApp {
                             self.symbol_for_chart(**cid).map_or(false, |s| s == *symbol)
                                 && self.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
                                 && self.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == *tf_name)
-                                && self.account_type_for_chart(**cid).map_or(false, |at| at == account_type.as_str())
+                                && self.account_type_for_chart(**cid).map_or(false, |at| at == event_account_type)
                         })
                         .map(|(_, w)| w)
                     {
@@ -351,9 +351,10 @@ impl ChartApp {
             // ── BackfillCompleted ───────────────────────────────────────────────
             BubbleEvent::BackfillCompleted { bid, exchange_id, symbol, account_type, timeframe: tf_name, bars, prev_bars } => {
                 let new_bars = bars;
+                let event_account_type: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                 let mut prev_close_mirrors: Vec<(mlc_core::state::ChartId, Option<f64>)> = Vec::new();
 
-                let instrument_by_cid: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::state::Timeframe, String, String)> = {
+                let instrument_by_cid: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::state::Timeframe, String, mlc_core::instrument::AccountType)> = {
                     self.panel_app.panel_grid.containers().keys()
                         .filter_map(|cid| {
                             let sym = self.symbol_for_chart(*cid)?;
@@ -385,7 +386,7 @@ impl ChartApp {
                         && win_sym.as_str() == symbol.as_str()
                         && win_exch.as_str() == exchange_id.as_str()
                         && win_tf.name == *tf_name
-                        && win_at.as_str() == account_type.as_str())
+                        && *win_at == event_account_type)
                     {
                         continue;
                     }
@@ -430,7 +431,7 @@ impl ChartApp {
                         self.symbol_for_chart(**cid).map_or(false, |s| s == *symbol)
                             && self.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
                             && self.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == *tf_name)
-                            && self.account_type_for_chart(**cid).map_or(false, |at| at == account_type.as_str())
+                            && self.account_type_for_chart(**cid).map_or(false, |at| at == event_account_type)
                     })
                     .map(|(cid, _)| cid.0)
                     .collect();
@@ -443,10 +444,11 @@ impl ChartApp {
             BubbleEvent::ScrollBarsAppended { bid: _, exchange_id, symbol, account_type, timeframe: tf_name, bars, .. } => {
                 let new_bars = bars;
                 let at_label = account_type.as_str();
+                let event_account_type: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                 let mut prev_close_mirrors: Vec<(mlc_core::state::ChartId, Option<f64>)> = Vec::new();
                 let mut any_matched = false;
 
-                let instrument_by_cid: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::state::Timeframe, String, String)> = {
+                let instrument_by_cid: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::state::Timeframe, String, mlc_core::instrument::AccountType)> = {
                     self.panel_app.panel_grid.containers().keys()
                         .filter_map(|cid| {
                             let sym = self.symbol_for_chart(*cid)?;
@@ -474,7 +476,7 @@ impl ChartApp {
                     if !(win_sym.as_str() == symbol.as_str()
                         && win_exch.as_str() == exchange_id.as_str()
                         && win_tf.name == *tf_name
-                        && win_at.as_str() == at_label)
+                        && *win_at == event_account_type)
                     {
                         continue;
                     }
@@ -516,9 +518,9 @@ impl ChartApp {
 
             // ── BarUpdatePassthrough ────────────────────────────────────────────
             BubbleEvent::BarUpdatePassthrough { exchange_id: _bar_exch, account_type: bar_account_type, symbol: bar_symbol, bar } => {
-                let bar_at_label = bar_account_type.as_str();
+                let bar_event_at: mlc_core::instrument::AccountType = bar_account_type.parse().unwrap_or_default();
 
-                let instrument_by_cid_bu: std::collections::HashMap<mlc_core::state::ChartId, (String, String, bool)> = {
+                let instrument_by_cid_bu: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::instrument::AccountType, bool)> = {
                     let panels_store = &self.panels_store;
                     self.panel_app.panel_grid.containers().iter()
                         .filter_map(|(cid, win)| {
@@ -543,10 +545,9 @@ impl ChartApp {
                 let mut bu_is_new_bar = false;
 
                 // Bubble writes for derived windows.
-                let bar_at_str = bar_at_label;
                 let target_bubbles_bu: std::collections::HashSet<mlc_core::ids::BubbleId> =
                     instrument_by_cid_bu.iter()
-                        .filter(|(_, (sym, at, is_derived))| *is_derived && sym == bar_symbol && at == bar_at_str)
+                        .filter(|(_, (sym, at, is_derived))| *is_derived && sym == bar_symbol && *at == bar_event_at)
                         .filter_map(|(cid, _)| self.bubble_for_chart(*cid))
                         .collect();
 
@@ -584,7 +585,7 @@ impl ChartApp {
                     if !is_derived {
                         continue;
                     }
-                    if win_sym.as_str() != bar_symbol || win_at.as_str() != bar_at_label {
+                    if win_sym.as_str() != bar_symbol || *win_at != bar_event_at {
                         continue;
                     }
                     if window.pending_symbol_load {
@@ -642,8 +643,9 @@ impl ChartApp {
                 self.last_trade_event_count += 1;
 
                 let _bar_apply_start = web_time::Instant::now();
+                let trade_event_at: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
 
-                let instrument_by_cid_tu: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::state::Timeframe, String, String)> = {
+                let instrument_by_cid_tu: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::state::Timeframe, String, mlc_core::instrument::AccountType)> = {
                     self.panel_app.panel_grid.containers().keys()
                         .filter_map(|cid| {
                             let sym = self.symbol_for_chart(*cid)?;
@@ -670,7 +672,7 @@ impl ChartApp {
                         Some(t) => t,
                         None => continue,
                     };
-                    if win_sym_tu.as_str() != symbol || win_at_tu.as_str() != account_type {
+                    if win_sym_tu.as_str() != symbol || *win_at_tu != trade_event_at {
                         continue;
                     }
                     let period_secs = win_tf_tu.interval_ms / 1000;
@@ -727,7 +729,7 @@ impl ChartApp {
                         Some(t) => t,
                         None => continue,
                     };
-                    if !(win_sym_tu.as_str() == symbol && win_at_tu.as_str() == account_type) {
+                    if !(win_sym_tu.as_str() == symbol && *win_at_tu == trade_event_at) {
                         continue;
                     }
                     window.viewport.bar_count = window.viewport.bar_count.saturating_add(if is_new_bar { 1 } else { 0 });
@@ -751,11 +753,10 @@ impl ChartApp {
                     let bridge = self.core.bridge.clone();
                     for cid in self.panel_app.panel_grid.containers().keys() {
                         let sym_match = self.symbol_for_chart(*cid).map_or(false, |s| s == *symbol);
-                        let win_at_label = self.account_type_for_chart(*cid);
-                        let at_match = win_at_label.as_deref().map_or(false, |at| at == account_type.as_str());
+                        let win_at = self.account_type_for_chart(*cid);
+                        let at_match = win_at.map_or(false, |at| at == trade_event_at);
                         if sym_match && at_match {
-                            let at_val: mlc_core::instrument::AccountType = win_at_label.unwrap_or_default().parse().unwrap_or_default();
-                            let at_val = mlc_backend_data_bridge::account_type_to_dig3(at_val);
+                            let at_val = mlc_backend_data_bridge::account_type_to_dig3(win_at.unwrap_or_default());
                             if let Some(tf) = self.timeframe_for_chart(*cid) {
                                 bridge.request_bars(*exchange_id, symbol, &tf, at_val, None, None, false);
                             }
@@ -769,7 +770,7 @@ impl ChartApp {
                     let follow = window.price_scale.scale_mode.is_follow() || window.price_scale.scale_mode == ScaleMode::Auto;
                     if !follow { continue; }
                     if let Some((win_sym, _, _, win_at)) = instrument_by_cid_tu.get(cid_tu) {
-                        if win_sym.as_str() == symbol && win_at.as_str() == account_type {
+                        if win_sym.as_str() == symbol && *win_at == trade_event_at {
                             window.viewport.snap_time_to_end(*timestamp, 50.0);
                         }
                     }
@@ -842,7 +843,7 @@ impl ChartApp {
                     let win_eid = digdigdig3::ExchangeId::from_str(&exch)
                         .unwrap_or(digdigdig3::ExchangeId::Binance);
                     if win_eid == *exchange_id {
-                        let at: mlc_core::instrument::AccountType = self.account_type_for_chart(*cid).unwrap_or_default().parse().unwrap_or_default();
+                        let at: mlc_core::instrument::AccountType = self.account_type_for_chart(*cid).unwrap_or_default();
                         let at = mlc_backend_data_bridge::account_type_to_dig3(at);
                         if let Some(tf) = self.timeframe_for_chart(*cid) {
                             bridge.request_bars(*exchange_id, &sym, &tf, at, None, None, false);
@@ -857,7 +858,7 @@ impl ChartApp {
             // ── ErrorReported ──────────────────────────────────────────────────
             BubbleEvent::ErrorReported { exchange_id, symbol, account_type, timeframe, message } => {
                 if !symbol.is_empty() {
-                    let at_label = account_type.as_str();
+                    let event_account_type: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                     let error_instrument_map: std::collections::HashMap<mlc_core::state::ChartId, bool> = {
                         self.panel_app.panel_grid.containers().keys()
                             .filter_map(|cid| {
@@ -867,7 +868,7 @@ impl ChartApp {
                                 let win_tf = self.timeframe_for_chart(*cid)?;
                                 let matches = win_exch == exchange_id.as_str()
                                     && win_sym == *symbol
-                                    && win_at == at_label
+                                    && win_at == event_account_type
                                     && win_tf.name == *timeframe;
                                 if matches { Some((*cid, true)) } else { None }
                             })
@@ -904,14 +905,14 @@ impl ChartApp {
 
             // ── OI / Funding pass-throughs ─────────────────────────────────────
             BubbleEvent::OiUpdatePassthrough { exchange_id: _, account_type, symbol, point } => {
-                let at_label = account_type.as_str();
+                let event_account_type: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                 let target_cids: std::collections::HashSet<mlc_core::state::ChartId> =
                     self.panel_app.panel_grid.containers().iter()
                         .filter_map(|(cid, win)| {
                             if !win.oi_show { return None; }
                             let s = self.symbol_for_chart(*cid)?;
                             let a = self.account_type_for_chart(*cid)?;
-                            if s != *symbol || a != at_label { return None; }
+                            if s != *symbol || a != event_account_type { return None; }
                             Some(*cid)
                         }).collect();
                 let bids: std::collections::HashSet<mlc_core::ids::BubbleId> =
@@ -922,14 +923,14 @@ impl ChartApp {
             }
 
             BubbleEvent::FundingRatePassthrough { exchange_id: _, account_type, symbol, point } => {
-                let at_label = account_type.as_str();
+                let event_account_type: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                 let target_cids: std::collections::HashSet<mlc_core::state::ChartId> =
                     self.panel_app.panel_grid.containers().iter()
                         .filter_map(|(cid, win)| {
                             if !win.funding_show { return None; }
                             let s = self.symbol_for_chart(*cid)?;
                             let a = self.account_type_for_chart(*cid)?;
-                            if s != *symbol || a != at_label { return None; }
+                            if s != *symbol || a != event_account_type { return None; }
                             Some(*cid)
                         }).collect();
                 let bids: std::collections::HashSet<mlc_core::ids::BubbleId> =
@@ -942,6 +943,7 @@ impl ChartApp {
             // ── DOM heatmap pass-throughs ──────────────────────────────────────
             BubbleEvent::DomHeatmapSnapshotPassthrough { exchange_id, account_type, symbol, ts_ms, bids, asks } => {
                 let at_label = account_type.as_str();
+                let event_account_type: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                 let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
                     let panels_store = &self.panels_store;
                     self.panel_app.panel_grid.containers().iter()
@@ -951,7 +953,7 @@ impl ChartApp {
                             let is_dom = panels_store.chart_panel.get(&win.chart_panel_id)
                                 .map(|p| p.chart_type == "dom_heatmap")
                                 .unwrap_or(false);
-                            if !is_dom || s != *symbol || a != at_label { return None; }
+                            if !is_dom || s != *symbol || a != event_account_type { return None; }
                             Some(*cid)
                         }).collect()
                 };
@@ -981,7 +983,7 @@ impl ChartApp {
             }
 
             BubbleEvent::DomTradeDotPassthrough { exchange_id: _, account_type, symbol, dot } => {
-                let at_label = account_type.as_str();
+                let event_account_type: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                 let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
                     let panels_store = &self.panels_store;
                     self.panel_app.panel_grid.containers().iter()
@@ -991,7 +993,7 @@ impl ChartApp {
                             let is_dom = panels_store.chart_panel.get(&win.chart_panel_id)
                                 .map(|p| p.chart_type == "dom_heatmap")
                                 .unwrap_or(false);
-                            if !is_dom || s != *symbol || a != at_label { return None; }
+                            if !is_dom || s != *symbol || a != event_account_type { return None; }
                             Some(*cid)
                         }).collect()
                 };
@@ -1010,6 +1012,7 @@ impl ChartApp {
             // ── Liquidation pass-throughs ──────────────────────────────────────
             BubbleEvent::LiquidationEventPassthrough { exchange_id, account_type, symbol, ts_ms, price, value_usd, side } => {
                 let at_label = account_type.as_str();
+                let event_account_type: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                 let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
                     let panels_store = &self.panels_store;
                     self.panel_app.panel_grid.containers().iter()
@@ -1019,7 +1022,7 @@ impl ChartApp {
                             let is_liq = panels_store.chart_panel.get(&win.chart_panel_id)
                                 .map(|p| p.chart_type == "liquidation_heatmap")
                                 .unwrap_or(false);
-                            if !is_liq || s != *symbol || a != at_label { return None; }
+                            if !is_liq || s != *symbol || a != event_account_type { return None; }
                             Some(*cid)
                         }).collect()
                 };
@@ -1058,6 +1061,7 @@ impl ChartApp {
 
             BubbleEvent::LiquidationBucketPassthrough { exchange_id, account_type, symbol, ts_ms, long_liq_usd, short_liq_usd } => {
                 let at_label = account_type.as_str();
+                let event_account_type: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                 let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
                     let panels_store = &self.panels_store;
                     self.panel_app.panel_grid.containers().iter()
@@ -1067,7 +1071,7 @@ impl ChartApp {
                             let is_liq = panels_store.chart_panel.get(&win.chart_panel_id)
                                 .map(|p| p.chart_type == "liquidation_heatmap")
                                 .unwrap_or(false);
-                            if !is_liq || s != *symbol || a != at_label { return None; }
+                            if !is_liq || s != *symbol || a != event_account_type { return None; }
                             Some(*cid)
                         }).collect()
                 };

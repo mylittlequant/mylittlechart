@@ -356,7 +356,7 @@ impl ChartApp {
                     .unwrap_or_default();
                 let old_trade_at = active_chart_id
                     .and_then(|cid| self.account_type_for_chart(cid))
-                    .map(|at| crate::account_type_from_label(&at))
+                    .map(mlc_backend_data_bridge::account_type_to_dig3)
                     .unwrap_or(digdigdig3::AccountType::Spot);
                 let timeframe = active_chart_id
                     .and_then(|cid| self.timeframe_for_chart(cid))
@@ -371,7 +371,7 @@ impl ChartApp {
                     .unwrap_or_default();
                 let old_account_type = active_chart_id
                     .and_then(|cid| self.account_type_for_chart(cid))
-                    .map(String::from)
+                    .map(|at| at.to_string())
                     .unwrap_or_else(|| "S".to_string());
                 let active_bid_wl = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
@@ -818,7 +818,7 @@ impl ChartApp {
                         let old_trade_exchange = self.active_exchange;
                         let old_trade_at = active_chart_id
                             .and_then(|cid| self.account_type_for_chart(cid))
-                            .map(|at| crate::account_type_from_label(&at))
+                            .map(mlc_backend_data_bridge::account_type_to_dig3)
                             .unwrap_or(digdigdig3::AccountType::Spot);
                         let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
                         let new_symbol_str = symbol_part.to_string();
@@ -838,7 +838,7 @@ impl ChartApp {
                             .unwrap_or_default();
                         let old_at_search = active_chart_id
                             .and_then(|cid| self.account_type_for_chart(cid))
-                            .map(String::from)
+                            .map(|at| at.to_string())
                             .unwrap_or_else(|| "S".to_string());
                         let active_bid_srch = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
                         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {

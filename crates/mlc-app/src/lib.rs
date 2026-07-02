@@ -1255,11 +1255,14 @@ impl ChartApp {
         self.core.bubbles().exchange(bid).map(String::from)
     }
 
-    /// Account-type label (`"S"`, `"FC"`, ...) of the bubble attached to this chart (cloned).
+    /// Account type of the bubble attached to this chart. Callers that need
+    /// the persisted/display label go through `Display`/`AccountType::as_label`
+    /// at the point of use — this is the canonical typed key, see
+    /// `docs/mlc/plans/doctrine-cutover-2026-06-27.md` §1C.
     #[inline]
-    pub fn account_type_for_chart(&self, chart_id: mlc_core::state::ChartId) -> Option<String> {
+    pub fn account_type_for_chart(&self, chart_id: mlc_core::state::ChartId) -> Option<mlc_core::instrument::AccountType> {
         let bid = self.bubble_for_chart(chart_id)?;
-        self.core.bubbles().account_type(bid).map(String::from)
+        self.core.bubbles().account_type_typed(bid)
     }
 
     /// Timeframe of the bubble attached to this chart (cloned).
@@ -1549,34 +1552,34 @@ impl ChartApp {
 
             // Ensure all windows have a data_provider and toolbar config.
             // Phase 4 B: read exchange/account_type from branch_meta (no longer on struct).
-            let window_data: Vec<(String, String, mlc_core::state::Timeframe, String)> = {
+            let window_data: Vec<(String, String, mlc_core::state::Timeframe, mlc_core::instrument::AccountType)> = {
                 let containers = app.panel_app.panel_grid.containers();
                 containers.keys()
                     .filter_map(|cid| {
                         let sym = app.symbol_for_chart(*cid).unwrap_or_default();
                         let exch = app.exchange_for_chart(*cid).unwrap_or_default();
                         let tf = app.timeframe_for_chart(*cid).unwrap_or_else(mlc_core::state::Timeframe::h1);
-                        let at = app.account_type_for_chart(*cid).unwrap_or_else(|| "S".to_string());
+                        let at = app.account_type_for_chart(*cid).unwrap_or_default();
                         Some((sym, exch, tf, at))
                     })
                     .collect()
             };
 
             // Pre-collect (chart_id → exchange, account_type) for data_provider seeding.
-            let provider_seeds: Vec<(mlc_core::state::ChartId, String, String)> = {
+            let provider_seeds: Vec<(mlc_core::state::ChartId, String, mlc_core::instrument::AccountType)> = {
                 app.panel_app.panel_grid.containers().keys()
                     .map(|cid| {
                         let exch = app.exchange_for_chart(*cid).unwrap_or_default();
-                        let at = app.account_type_for_chart(*cid).unwrap_or_else(|| "S".to_string());
+                        let at = app.account_type_for_chart(*cid).unwrap_or_default();
                         (*cid, exch, at)
                     })
                     .collect()
             };
-            for (cid, exch, at_label) in provider_seeds {
+            for (cid, exch, at_typed) in provider_seeds {
                 if let Some(window) = app.panel_app.panel_grid.containers_mut().get_mut(&cid) {
                     let win_exchange_id = digdigdig3::ExchangeId::from_str(&exch)
                         .unwrap_or(digdigdig3::ExchangeId::Binance);
-                    let win_at = account_type_from_label(&at_label);
+                    let win_at = mlc_backend_data_bridge::account_type_to_dig3(at_typed);
                     let win_provider: SharedDataProvider = std::sync::Arc::new(
                         LiveDataProvider::new(win_exchange_id, &exch, win_at, bridge.clone()),
                     );
@@ -1595,13 +1598,13 @@ impl ChartApp {
             }
 
             // Ensure connectors are ready and request bars for each window's own exchange.
-            for (sym, exch, tf, at_label) in &window_data {
+            for (sym, exch, tf, at_typed) in &window_data {
                 let eid = digdigdig3::ExchangeId::from_str(&exch)
                     .unwrap_or(digdigdig3::ExchangeId::Binance);
                 if !app.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
                     continue;
                 }
-                let at = account_type_from_label(at_label);
+                let at = mlc_backend_data_bridge::account_type_to_dig3(*at_typed);
                 bridge.ensure_connector(eid);
                 bridge.request_bars(eid, sym, tf, at, None, Some(app.core.user().profile().domain.bar_count as usize), false);
             }
@@ -2512,33 +2515,33 @@ impl ChartApp {
 
                 // Ensure all windows have data_provider and toolbar config.
                 // Phase 4 B: read exchange/account_type from branch_meta.
-                let window_data: Vec<(String, String, mlc_core::state::Timeframe, String)> = {
+                let window_data: Vec<(String, String, mlc_core::state::Timeframe, mlc_core::instrument::AccountType)> = {
                     let containers = app.panel_app.panel_grid.containers();
                     containers.keys()
                         .filter_map(|cid| {
                             let sym = app.symbol_for_chart(*cid).unwrap_or_default();
                             let exch = app.exchange_for_chart(*cid).unwrap_or_default();
                             let tf = app.timeframe_for_chart(*cid).unwrap_or_else(mlc_core::state::Timeframe::h1);
-                            let at = app.account_type_for_chart(*cid).unwrap_or_else(|| "S".to_string());
+                            let at = app.account_type_for_chart(*cid).unwrap_or_default();
                             Some((sym, exch, tf, at))
                         })
                         .collect()
                 };
 
-                let provider_seeds_win: Vec<(mlc_core::state::ChartId, String, String)> = {
+                let provider_seeds_win: Vec<(mlc_core::state::ChartId, String, mlc_core::instrument::AccountType)> = {
                     app.panel_app.panel_grid.containers().keys()
                         .map(|cid| {
                             let exch = app.exchange_for_chart(*cid).unwrap_or_default();
-                            let at = app.account_type_for_chart(*cid).unwrap_or_else(|| "S".to_string());
+                            let at = app.account_type_for_chart(*cid).unwrap_or_default();
                             (*cid, exch, at)
                         })
                         .collect()
                 };
-                for (cid, exch, at_label) in provider_seeds_win {
+                for (cid, exch, at_typed) in provider_seeds_win {
                     if let Some(window) = app.panel_app.panel_grid.containers_mut().get_mut(&cid) {
                         let win_exchange_id = digdigdig3::ExchangeId::from_str(&exch)
                             .unwrap_or(digdigdig3::ExchangeId::Binance);
-                        let win_at = account_type_from_label(&at_label);
+                        let win_at = mlc_backend_data_bridge::account_type_to_dig3(at_typed);
                         let win_provider: SharedDataProvider = std::sync::Arc::new(
                             LiveDataProvider::new(win_exchange_id, &exch, win_at, bridge.clone()),
                         );
@@ -2557,13 +2560,13 @@ impl ChartApp {
 
                 let _t_nw_reqbars = web_time::Instant::now();
                 let mut nw_reqbars_n: usize = 0;
-                for (sym, exch, tf, at_label) in &window_data {
+                for (sym, exch, tf, at_typed) in &window_data {
                     let eid = digdigdig3::ExchangeId::from_str(&exch)
                         .unwrap_or(digdigdig3::ExchangeId::Binance);
                     if !app.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
                         continue;
                     }
-                    let at = account_type_from_label(at_label);
+                    let at = mlc_backend_data_bridge::account_type_to_dig3(*at_typed);
                     bridge.ensure_connector(eid);
                     bridge.request_bars(eid, sym, tf, at, None, Some(app.core.user().profile().domain.bar_count as usize), false);
                     nw_reqbars_n += 1;
@@ -2981,7 +2984,7 @@ impl ChartApp {
             .unwrap_or_default();
         let old_trade_at = old_chart_id
             .and_then(|cid| self.account_type_for_chart(cid))
-            .map(|at_str| account_type_from_label(&at_str))
+            .map(mlc_backend_data_bridge::account_type_to_dig3)
             .unwrap_or(digdigdig3::AccountType::Spot);
 
         let bridge = self.core.bridge.clone();
@@ -2997,7 +3000,7 @@ impl ChartApp {
         // S2.7.1: read account_type via branch_meta.
         let switch_at = self.panel_app.panel_grid.active_container_id()
             .and_then(|cid| self.account_type_for_chart(cid))
-            .map(|at| account_type_from_label(&at))
+            .map(mlc_backend_data_bridge::account_type_to_dig3)
             .unwrap_or(digdigdig3::AccountType::Spot);
 
         // Build a LiveDataProvider backed by this bridge.
@@ -3029,7 +3032,7 @@ impl ChartApp {
             .unwrap_or_else(mlc_core::state::Timeframe::h1);
         let cur_at_label_exc = active_cid_exc
             .and_then(|cid| self.account_type_for_chart(cid))
-            .map(String::from)
+            .map(|at| at.to_string())
             .unwrap_or_else(|| "S".to_string());
         let mut mirror_args: Option<(String, mlc_core::state::Timeframe, String, String)> = None;
         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
@@ -3747,7 +3750,7 @@ impl ChartApp {
                     .unwrap_or_default();
                 let split_account_type: String = leaf_chart_id
                     .and_then(|cid| self.account_type_for_chart(cid))
-                    .map(String::from)
+                    .map(|at| at.to_string())
                     .unwrap_or_default();
                 let split_tf = leaf_chart_id
                     .and_then(|cid| self.timeframe_for_chart(cid));
@@ -4287,7 +4290,7 @@ impl ChartApp {
                     let exch = self.exchange_for_chart(chart_id)
                         .map(String::from).unwrap_or_default();
                     let at = self.account_type_for_chart(chart_id)
-                        .map(String::from).unwrap_or_default();
+                        .map(|at| at.to_string()).unwrap_or_default();
                     (sym, tf_name, exch, at)
                 })
             };

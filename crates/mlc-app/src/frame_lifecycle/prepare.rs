@@ -361,7 +361,7 @@ impl ChartApp {
                     let exch = self.exchange_for_chart(active_cid_sync)
                         .map(String::from).unwrap_or_default();
                     let at = self.account_type_for_chart(active_cid_sync)
-                        .map(String::from).unwrap_or_else(|| "S".to_string());
+                        .map(|at| at.to_string()).unwrap_or_else(|| "S".to_string());
                     self.core.bubbles_mut().set_bubble_instrument(new_active_group, exch, at);
                     self.core.bubbles_mut().with_bubble_mut(new_active_group, |g| g.address.symbol = sym);
                 }
@@ -418,7 +418,7 @@ impl ChartApp {
                     .map(String::from).unwrap_or_default();
                 let at = active_cid_obj
                     .and_then(|cid| self.account_type_for_chart(cid))
-                    .map(String::from).unwrap_or_else(|| "S".to_string());
+                    .map(|at| at.to_string()).unwrap_or_else(|| "S".to_string());
                 (sym, exch, at)
             };
 
@@ -771,7 +771,7 @@ impl ChartApp {
                 for address in &watchlist_entries {
                     let sym_name = address.symbol.as_str();
                     let sym_exchange = address.exchange.as_str();
-                    let sym_account_type = address.account_type.as_label();
+                    let sym_account_type = address.account_type;
                     let price_data = self.panel_app.panel_grid.containers().iter()
                         .find(|(cid, _)| {
                             self.symbol_for_chart(**cid)

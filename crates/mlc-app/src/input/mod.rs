@@ -6199,7 +6199,7 @@ impl ChartApp {
                     .unwrap_or_else(mlc_core::state::Timeframe::h1);
                 let cur_at_label = active_chart_id
                     .and_then(|cid| self.account_type_for_chart(cid))
-                    .map(String::from)
+                    .map(|at| at.to_string())
                     .unwrap_or_else(|| "S".to_string());
                 let mut new_exch: Option<String> = None;
                 let mut bars_for_bubble: Option<Vec<mlc_core::Bar>> = None;
@@ -6756,7 +6756,7 @@ impl ChartApp {
                         .unwrap_or_default();
                     let account_type: String = active_cid_prop
                         .and_then(|cid| self.account_type_for_chart(cid))
-                        .map(String::from)
+                        .map(|at| at.to_string())
                         .unwrap_or_default();
                     self.propagate_symbol_to_sync_group(leaf, new_symbol, &exchange, &account_type);
                 }
@@ -7191,7 +7191,7 @@ impl ChartApp {
                 let snap_exchange = self.exchange_for_chart(chart_id)
                     .map(String::from).unwrap_or_default();
                 let snap_account_type = self.account_type_for_chart(chart_id)
-                    .map(String::from)
+                    .map(|at| at.to_string())
                     .unwrap_or_else(|| "S".to_string());
                 // Phase 4 C: panel state (18 display/series fields) is in panels_store.
                 let snap_panel_id = window.chart_panel_id;
