@@ -25,7 +25,6 @@ use crate::ui::Icon;
 use crate::ui::z_order::ZLayer;
 use uzor::panels::{LeafId, BranchId, PanelNode, Leaf};
 use uzor::panels::DockPanel;
-use mlc_core::state::panel_grid::ChartPanelGrid;
 use mlc_core::state::panel::Panel;
 use mlc_core::i18n::{ModalKey, TextKey, t_modal, t_text};
 
@@ -89,7 +88,8 @@ pub fn render_tags_tabs_modal(
     overlay_state: &OverlaySettingsState,
     frame_theme: &FrameTheme,
     toolbar_theme: &ToolbarTheme,
-    panel_grid: &ChartPanelGrid,
+    docking: &uzor::layout::DockState<Panel>,
+    expanded: bool,
     groups: &[GroupView],
     selected_group: Option<&GroupView>,
     _leaf_color_tags: &HashMap<LeafId, [f32; 4]>,
@@ -292,7 +292,8 @@ pub fn render_tags_tabs_modal(
                 frame_theme,
                 toolbar_theme,
                 theme_manager,
-                panel_grid,
+                docking,
+                expanded,
                 chart_area_w,
                 chart_area_h,
                 modal_x,
@@ -347,7 +348,8 @@ pub fn render_tags_tabs_modal(
                 frame_theme,
                 toolbar_theme,
                 theme_manager,
-                panel_grid,
+                docking,
+                expanded,
                 groups,
                 _leaf_color_tags,
                 chart_area_w,
@@ -576,7 +578,8 @@ fn render_tabs_section(
     frame_theme: &FrameTheme,
     toolbar_theme: &ToolbarTheme,
     theme_manager: &ThemeManager,
-    panel_grid: &ChartPanelGrid,
+    docking: &uzor::layout::DockState<Panel>,
+    expanded: bool,
     _chart_area_w: f64,
     _chart_area_h: f64,
     modal_x: f64,
@@ -650,17 +653,17 @@ fn render_tabs_section(
     ctx.stroke();
 
     // =========================================================================
-    // Data gathering from panel_grid
+    // Data gathering from docking
     // =========================================================================
-    let tree = panel_grid.docking().tree();
+    let tree = docking.tree();
     let all_leaves: Vec<&Leaf<Panel>> = tree.leaves();
     let hidden_leaves: Vec<&Leaf<Panel>> = all_leaves.iter()
         .filter(|l| l.hidden)
         .copied()
         .collect();
 
-    let expanded_leaf_id: Option<LeafId> = if panel_grid.is_expanded() {
-        panel_grid.docking().active_leaf()
+    let expanded_leaf_id: Option<LeafId> = if expanded {
+        docking.active_leaf()
     } else {
         None
     };
@@ -915,7 +918,8 @@ fn render_map_section(
     frame_theme: &FrameTheme,
     toolbar_theme: &ToolbarTheme,
     theme_manager: &ThemeManager,
-    panel_grid: &ChartPanelGrid,
+    docking: &uzor::layout::DockState<Panel>,
+    expanded: bool,
     groups: &[GroupView],
     leaf_color_tags: &HashMap<LeafId, [f32; 4]>,
     chart_area_w: f64,
@@ -935,10 +939,10 @@ fn render_map_section(
     let content_left = content_x + MODAL_PADDING;
     let mut row_y = content_y + MODAL_PADDING;
 
-    let tree = panel_grid.docking().tree();
+    let tree = docking.tree();
     let all_leaves: Vec<&Leaf<Panel>> = tree.leaves();
-    let expanded_leaf_id: Option<LeafId> = if panel_grid.is_expanded() {
-        panel_grid.docking().active_leaf()
+    let expanded_leaf_id: Option<LeafId> = if expanded {
+        docking.active_leaf()
     } else {
         None
     };

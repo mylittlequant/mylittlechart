@@ -19,7 +19,6 @@ use crate::ui::Icon;
 use crate::ui::z_order::ZLayer;
 use mlc_core::render::{TextAlign, TextBaseline};
 use uzor::panels::DockPanel;
-use mlc_core::state::panel_grid::ChartPanelGrid;
 use mlc_core::state::panel::Panel;
 use mlc_core::theme::ThemeManager;
 use uzor::types::Rect as WidgetRect;
@@ -234,7 +233,10 @@ fn render_tree_nodes(
 /// - `frame_theme` — chart frame theme (toolbar_bg, toolbar_border, etc.).
 /// - `toolbar_theme` — toolbar theme (item colors, accent, background, etc.).
 /// - `theme_manager` — theme manager for RuntimeUIColors (danger, success, etc.).
-/// - `panel_grid` — the chart panel grid for querying tree structure.
+/// - `docking` — the chart panel grid's docking tree (structure only — no
+///   `ChartContainer` access; `ChartPanelGrid` lives in `mlc-app`, which this
+///   crate cannot depend on).
+/// - `expanded` — whether the panel grid is in expand mode.
 /// - `chart_area_w` / `chart_area_h` — chart content area dimensions (for minimap).
 /// - `input_coordinator` — input coordinator for registering interactive zones.
 pub fn render_overlay_settings_modal(
@@ -247,7 +249,8 @@ pub fn render_overlay_settings_modal(
     frame_theme: &FrameTheme,
     toolbar_theme: &ToolbarTheme,
     theme_manager: &ThemeManager,
-    panel_grid: &ChartPanelGrid,
+    docking: &uzor::layout::DockState<Panel>,
+    expanded: bool,
     chart_area_w: f64,
     chart_area_h: f64,
     input_coordinator: &mut uzor::input::InputCoordinator,
@@ -269,15 +272,15 @@ pub fn render_overlay_settings_modal(
     // =========================================================================
     // Data gathering
     // =========================================================================
-    let tree = panel_grid.docking().tree();
+    let tree = docking.tree();
     let all_leaves: Vec<&Leaf<Panel>> = tree.leaves();
     let hidden_leaves: Vec<&Leaf<Panel>> = all_leaves.iter()
         .filter(|l| l.hidden)
         .copied()
         .collect();
 
-    let expanded_leaf_id: Option<LeafId> = if panel_grid.is_expanded() {
-        panel_grid.docking().active_leaf()
+    let expanded_leaf_id: Option<LeafId> = if expanded {
+        docking.active_leaf()
     } else {
         None
     };
