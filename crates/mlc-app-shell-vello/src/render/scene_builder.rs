@@ -151,7 +151,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                     .panel_app
                     .panel_grid
                     .iter_containers()
-                    .any(|(_, w)| !pw.chart.core.bubbles().bars(w.current_bubble_id).is_empty());
+                    .any(|(_, w)| !pw.chart.core.bubbles().bars(w.current_tag_id).is_empty());
                 if chart_populated {
                     pw.awaiting_first_live_frame = false;
                     pw.spinner_start = None;
@@ -711,7 +711,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 .panel_app
                 .panel_grid
                 .iter_containers()
-                .any(|(_, w)| !pw.chart.core.bubbles().bars(w.current_bubble_id).is_empty());
+                .any(|(_, w)| !pw.chart.core.bubbles().bars(w.current_tag_id).is_empty());
             if chart_populated {
                 pw.awaiting_first_live_frame = false;
                 pw.spinner_start = None;

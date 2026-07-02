@@ -158,7 +158,7 @@ impl ChartApp {
                                         // Restored drawings are written into the window's
                                         // bubble further below, once `auto_bid` is known
                                         // (the per-bubble drawing model reads directly off
-                                        // `window.current_bubble_id`, which isn't assigned
+                                        // `window.current_tag_id`, which isn't assigned
                                         // yet at this point in the restore sequence).
                                     }
 
@@ -175,15 +175,15 @@ impl ChartApp {
                                         snap.symbol.clone(),
                                         snap.timeframe.clone(),
                                     );
-                                    window.auto_bubble_id = auto_bid;
-                                    // current_bubble_id is set later when we attach to the
+                                    window.auto_tag_id = auto_bid;
+                                    // current_tag_id is set later when we attach to the
                                     // color-bubble (Step 5); default to auto_bid for now.
-                                    window.current_bubble_id = auto_bid;
+                                    window.current_tag_id = auto_bid;
                                     self.attach_chart_to_tag(chart_id, auto_bid);
 
                                     // Restore drawings into `auto_bid`'s primitives — under
                                     // the per-bubble drawing model this bubble IS what the
-                                    // window renders (`current_bubble_id == auto_bid` above).
+                                    // window renders (`current_tag_id == auto_bid` above).
                                     // `snap.drawings.primitives` is the window's live/active
                                     // set; `snap.stashed_primitives` is the pre-tag home stash
                                     // for windows that were tagged when saved (empty for
@@ -385,14 +385,14 @@ impl ChartApp {
                                         window.command_history = history.clone();
                                     }
 
-                                    // Pre-auto-bubble presets serialised no auto_bubble_id —
+                                    // Pre-auto-bubble presets serialised no auto_tag_id —
                                     // a placeholder of BubbleId(0) is patched up by the
                                     // post-loop pass below.  Use whatever the window
                                     // currently knows; if it is BubbleId(0) the
                                     // `bubble_mut` lookup misses and stashed_primitives
                                     // restoration is deferred until the post-loop pass
                                     // re-runs the same body with a real auto_bid.
-                                    let auto_bid_for_window = window.auto_bubble_id;
+                                    let auto_bid_for_window = window.auto_tag_id;
                                     self.core.bubbles_mut().with_bubble_mut(auto_bid_for_window, |auto_bub| {
                                         auto_bub.primitives.clear();
                                         if !snap.stashed_primitives.is_empty() {
@@ -470,7 +470,7 @@ impl ChartApp {
                                     // directly — no separate per-window DrawingManager
                                     // under the per-bubble model.
                                     {
-                                        let bid = window.current_bubble_id;
+                                        let bid = window.current_tag_id;
                                         let mut guard = self.core.drawings_mut();
                                         guard.delete_all(bid);
                                         if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
@@ -509,7 +509,7 @@ impl ChartApp {
                             self.panels_store.chart_panel.insert(chart_panel_id, ps);
                         }
                         // Post-loop pass: mint auto-bubbles for any windows whose
-                        // preset carried no auto_bubble_id (legacy presets).  Done
+                        // preset carried no auto_tag_id (legacy presets).  Done
                         // here instead of inside the windows-mut loop because
                         // create_auto_bubble + attach_chart_to_tag take &mut self
                         // and would conflict with the live windows borrow.
@@ -517,15 +517,15 @@ impl ChartApp {
                             preset.windows.iter().filter_map(|snap| {
                                 let chart_id = mlc_core::ids::ChartId(snap.window_id);
                                 let win = self.panel_app.panel_grid.containers().get(&chart_id)?;
-                                if win.auto_bubble_id == mlc_core::ids::BubbleId(0) {
+                                if win.auto_tag_id == mlc_core::ids::BubbleId(0) {
                                     Some((chart_id, snap.symbol.clone(), snap.timeframe.clone()))
                                 } else { None }
                             }).collect();
                         for (chart_id, sym, tf) in needs_auto {
                             let fresh = self.create_auto_bubble([0.0, 0.0, 0.0, 0.0], sym, tf);
                             if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&chart_id) {
-                                window.auto_bubble_id = fresh;
-                                window.current_bubble_id = fresh;
+                                window.auto_tag_id = fresh;
+                                window.current_tag_id = fresh;
                             }
                             self.attach_chart_to_tag(chart_id, fresh);
                         }
@@ -604,7 +604,7 @@ impl ChartApp {
                         for (chart_id, _gid, group_ids) in &collision_info {
                             let auto_bid = self.panel_app.panel_grid.containers()
                                 .get(chart_id)
-                                .map(|w| w.auto_bubble_id);
+                                .map(|w| w.auto_tag_id);
                             let reid_count = auto_bid.and_then(|bid| {
                                 self.core.bubbles_mut().with_bubble_mut(bid, |auto_bub| {
                                     let mut reid_count = 0u32;
@@ -657,15 +657,15 @@ impl ChartApp {
                         for &(_leaf_id, chart_id) in &leaf_chart_ids {
                             self.attach_chart_to_tag(chart_id, group_id);
                             // Sync the window-side bubble pointer so the renderer's
-                            // `window.current_bubble_id` lookup matches the writer's
+                            // `window.current_tag_id` lookup matches the writer's
                             // `bubble_for_chart` lookup. Without this, the BubbleStore
                             // member_to_bubble map points at the new group while the
                             // window still carries the sentinel BubbleId(0) — the
                             // writer fills group_id, the renderer reads sentinel,
                             // chart stays empty.
                             if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&chart_id) {
-                                window.auto_bubble_id = group_id;
-                                window.current_bubble_id = group_id;
+                                window.auto_tag_id = group_id;
+                                window.current_tag_id = group_id;
                             }
                         }
                         eprintln!("[ChartApp] Auto-created invisible sync group {:?} for {} orphaned windows", group_id, leaf_chart_ids.len());
@@ -710,8 +710,8 @@ impl ChartApp {
                             self.attach_chart_to_tag(chart_id, group_id);
                             // Sync window-side bubble pointer (see Step 5b for rationale).
                             if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&chart_id) {
-                                window.auto_bubble_id = group_id;
-                                window.current_bubble_id = group_id;
+                                window.auto_tag_id = group_id;
+                                window.current_tag_id = group_id;
                             }
                             if let Some(pid) = self.panel_app.panel_grid.container_for_leaf(leaf_id).map(|w| w.chart_panel_id) {
                                 let _panel = crate::chart_panel_bridge::ensure_chart_panel_state(
@@ -1393,9 +1393,9 @@ impl ChartApp {
         // ── Window↔bubble pointer sync sweep ─────────────────────────────
         // Many code paths attach a chart to a bubble via
         // `attach_chart_to_bubble` (which updates BubbleStore.member_to_bubble)
-        // WITHOUT also writing `window.auto_bubble_id / current_bubble_id`.
+        // WITHOUT also writing `window.auto_tag_id / current_tag_id`.
         // The writer reads `bubble_for_chart(cid)` (canonical); the renderer
-        // reads `window.current_bubble_id`. When they diverge, the writer
+        // reads `window.current_tag_id`. When they diverge, the writer
         // fills the right bubble and the renderer reads the wrong (empty)
         // one — the chart stays blank forever.
         //
@@ -1410,11 +1410,11 @@ impl ChartApp {
                     .collect();
             for (cid, bid) in &bid_by_chart {
                 if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(cid) {
-                    if window.current_bubble_id != *bid {
-                        window.current_bubble_id = *bid;
+                    if window.current_tag_id != *bid {
+                        window.current_tag_id = *bid;
                     }
-                    if window.auto_bubble_id != *bid && window.auto_bubble_id == mlc_core::ids::BubbleId(0) {
-                        window.auto_bubble_id = *bid;
+                    if window.auto_tag_id != *bid && window.auto_tag_id == mlc_core::ids::BubbleId(0) {
+                        window.auto_tag_id = *bid;
                     }
                 }
             }

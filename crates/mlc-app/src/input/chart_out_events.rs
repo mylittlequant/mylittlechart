@@ -713,7 +713,7 @@ impl ChartApp {
                     .map(|(lid, _)| lid);
                 let target_bid = self.panel_app.panel_grid.containers().values()
                     .find(|w| w.id == target_cid)
-                    .map(|w| w.current_bubble_id);
+                    .map(|w| w.current_tag_id);
 
                 if let Some(window) = self.panel_app.panel_grid.containers_mut().values_mut()
                     .find(|w| w.id == target_cid)
@@ -1385,7 +1385,7 @@ impl ChartApp {
                     let containers = self.panel_app.panel_grid.containers();
                     let active_cid = self.panel_app.panel_grid.active_container_id();
                     let summary: Vec<(u64, u64, u64)> = containers.iter()
-                        .map(|(cid, w)| (cid.0, w.auto_bubble_id.0, w.current_bubble_id.0))
+                        .map(|(cid, w)| (cid.0, w.auto_tag_id.0, w.current_tag_id.0))
                         .collect();
                     let active_sym = active_cid
                         .and_then(|cid| self.symbol_for_chart(cid))
@@ -1946,14 +1946,14 @@ impl ChartApp {
                         None => return,
                     };
 
-                    // Get auto_bubble_id and current bubble id before any mutable borrows.
+                    // Get auto_tag_id and current bubble id before any mutable borrows.
                     let auto_bid = chart_id.and_then(|cid| {
-                        self.panel_app.panel_grid.containers().get(&cid).map(|w| w.auto_bubble_id)
+                        self.panel_app.panel_grid.containers().get(&cid).map(|w| w.auto_tag_id)
                     });
-                    let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                    let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
 
                     // NOTE (Step 3.1): under the per-bubble drawing model, the
-                    // window's `current_bubble_id` is always the tag bubble
+                    // window's `current_tag_id` is always the tag bubble
                     // once tagged — there is no separate per-window
                     // DrawingManager to stash/restore from any more.
                     // `sync_drawings` toggling the *drawing* dimension is now
@@ -2014,7 +2014,7 @@ impl ChartApp {
 
                     let auto_bid_raw: Option<u64> = self.panel_app.panel_grid.containers()
                         .get(&chart_id)
-                        .map(|w| w.auto_bubble_id.0);
+                        .map(|w| w.auto_tag_id.0);
                     let pre_tag_ids: Vec<u64> = auto_bid_raw
                         .and_then(|bid| self.with_bubble(
                             mlc_core::ids::BubbleId(bid),

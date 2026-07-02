@@ -105,11 +105,11 @@ impl HeadlessChartApp {
         self.app.panel_app.panel_grid.active_container_id()
     }
 
-    /// The bubble the renderer reads for this chart (via current_bubble_id).
+    /// The bubble the renderer reads for this chart (via current_tag_id).
     pub fn chart_bubble(&self, cid: ChartId) -> Option<BubbleId> {
         self.app.panel_app.panel_grid.containers()
             .get(&cid)
-            .map(|w| w.current_bubble_id)
+            .map(|w| w.current_tag_id)
     }
 
     /// Number of bars in the renderer-read bubble for this chart.
@@ -119,7 +119,7 @@ impl HeadlessChartApp {
             .unwrap_or(0)
     }
 
-    /// `(chart_id, current_bubble_id, bubble.bars.len)` for every chart.
+    /// `(chart_id, current_tag_id, bubble.bars.len)` for every chart.
     pub fn dump_chart_bubbles(&self) -> Vec<(ChartId, BubbleId, usize)> {
         self.chart_ids().into_iter().map(|cid| {
             let bid = self.chart_bubble(cid).unwrap_or(BubbleId(0));

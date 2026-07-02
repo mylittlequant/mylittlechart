@@ -57,7 +57,7 @@ impl ChartApp {
 
                 // Collect matched windows + anchor info.
                 //
-                // Match by `window.current_bubble_id == *bid` (NOT by instrument).
+                // Match by `window.current_tag_id == *bid` (NOT by instrument).
                 // tick_writers emits one BarsLoaded per matching bubble; if we
                 // matched by instrument key (sym/exch/tf/at) here, every BarsLoaded
                 // would touch EVERY chart on the same instrument — N charts × M
@@ -76,7 +76,7 @@ impl ChartApp {
                         Some(t) => t,
                         None => continue,
                     };
-                    let matched = window.current_bubble_id == *bid
+                    let matched = window.current_tag_id == *bid
                         && win_sym.as_str() == symbol.as_str()
                         && win_exch.as_str() == exchange_id.as_str()
                         && win_tf.name == *tf_name
@@ -377,11 +377,11 @@ impl ChartApp {
                         Some(t) => t,
                         None => continue,
                     };
-                    // Match by current_bubble_id == *bid (see BarsLoaded branch
+                    // Match by current_tag_id == *bid (see BarsLoaded branch
                     // for the rationale — broadcasting backfill events across
                     // unrelated charts of the same instrument was leaking Y-axis
                     // moves on any tag op).
-                    if !(window.current_bubble_id == *bid
+                    if !(window.current_tag_id == *bid
                         && win_sym.as_str() == symbol.as_str()
                         && win_exch.as_str() == exchange_id.as_str()
                         && win_tf.name == *tf_name
@@ -892,7 +892,7 @@ impl ChartApp {
                 let bubble_bars: Vec<mlc_core::Bar> = self.with_bubble(*bid, |b| b.bars.clone()).unwrap_or_default();
                 let at_label = account_type.as_str();
                 for (_cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
-                    if window.current_bubble_id != *bid { continue; }
+                    if window.current_tag_id != *bid { continue; }
                     let _ = (exchange_id, symbol, at_label);
                     if window.pending_symbol_load { window.pending_symbol_load = false; }
                     if window.needs_snap_after_backfill && window.viewport.chart_width > 0.0 {

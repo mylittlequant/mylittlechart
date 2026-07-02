@@ -14,7 +14,7 @@ impl ChartApp {
         self.panel_app
             .panel_grid
             .active_container()
-            .map(|w| drawings.is_drawing(w.current_bubble_id))
+            .map(|w| drawings.is_drawing(w.current_tag_id))
             .unwrap_or(false)
     }
 
@@ -27,7 +27,7 @@ impl ChartApp {
             .panel_grid
             .active_container()
             .map(|w| {
-                let bid = w.current_bubble_id;
+                let bid = w.current_tag_id;
                 drawings.current_tool(bid).is_some() && !drawings.is_freehand_tool(bid)
             })
             .unwrap_or(false)

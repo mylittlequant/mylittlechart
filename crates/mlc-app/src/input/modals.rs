@@ -27,7 +27,7 @@ impl ChartApp {
         // The selected primitive id comes from the drawing manager, not from
         // a settings-state field, because the primitive may not be open in a
         // modal yet.
-        let active_bid_inline = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+        let active_bid_inline = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
         let selected_id = active_bid_inline
             .and_then(|bid| self.core.drawings().selected(bid));
 
@@ -373,7 +373,7 @@ impl ChartApp {
                     .and_then(|cid| self.account_type_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_else(|| "S".to_string());
-                let active_bid_wl = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                let active_bid_wl = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     if let Some(bid) = active_bid_wl {
                         let restore_snaps = window.take_drawings_snapshot_for_symbol(sym_part, exchange_part, &wl_at_label);
@@ -602,7 +602,7 @@ impl ChartApp {
         };
 
         // Indicator ownership is by bubble — target the active chart's current bubble.
-        let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+        let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
 
         // Remove all existing indicators (exclusive deployment, like preset)
         let existing_ids: Vec<u64> = {
@@ -623,7 +623,7 @@ impl ChartApp {
             let auto_bids: Vec<mlc_core::ids::BubbleId> = self.panel_app.panel_grid
                 .containers()
                 .values()
-                .map(|w| w.auto_bubble_id)
+                .map(|w| w.auto_tag_id)
                 .filter(|&bid| bid != mlc_core::ids::BubbleId(0))
                 .collect();
             for bid in auto_bids {
@@ -684,7 +684,7 @@ impl ChartApp {
         use mlc_core::templates::{IndicatorTemplate, OutputStyleConfig};
 
         // Indicator ownership is by bubble — target the active chart's current bubble.
-        let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+        let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
 
         let templates: Vec<IndicatorTemplate> = {
             let im = self.core.indicators();
@@ -840,7 +840,7 @@ impl ChartApp {
                             .and_then(|cid| self.account_type_for_chart(cid))
                             .map(String::from)
                             .unwrap_or_else(|| "S".to_string());
-                        let active_bid_srch = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                        let active_bid_srch = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
                         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                             if let Some(bid) = active_bid_srch {
                                 let restore_snaps = window.take_drawings_snapshot_for_symbol(symbol_part, resolved_exchange.as_str(), &search_at_label);
@@ -1030,7 +1030,7 @@ impl ChartApp {
                             .and_then(|leaf| self.panel_app.panel_grid.container_id_for_leaf(leaf));
                         let bid = active_container_id
                             .and_then(|cid| self.panel_app.panel_grid.containers().get(&cid))
-                            .map(|w| w.current_bubble_id);
+                            .map(|w| w.current_tag_id);
                         // Determine auto-color for overlay duplicates BEFORE add()
                         // (borrowck: add() needs &mut, query needs &).
                         let auto_color: Option<String> = bid
@@ -1038,7 +1038,7 @@ impl ChartApp {
                         let new_id_opt = self.core.indicators_mut().add(bid, item_id);
                         if let Some(new_id) = new_id_opt {
                             crate::sglog!(
-                                "[indicator-create] type='{}' new_id={} chart_id={:?} current_bubble_id={:?}",
+                                "[indicator-create] type='{}' new_id={} chart_id={:?} current_tag_id={:?}",
                                 item_id, new_id, active_container_id, bid
                             );
                             // Apply auto-color when this is a duplicate overlay indicator.
@@ -1096,7 +1096,7 @@ impl ChartApp {
                                         if let Some(cid) = active_container_id {
                                             let auto_bid = self.panel_app.panel_grid.containers()
                                                 .get(&cid)
-                                                .map(|w| w.auto_bubble_id);
+                                                .map(|w| w.auto_tag_id);
                                             if let Some(bid) = auto_bid {
                                                 self.core.bubbles_mut().with_bubble_mut(bid, |auto_bub| {
                                                     auto_bub.pre_tag_indicator_ids.push(new_id);
@@ -1303,7 +1303,7 @@ impl ChartApp {
                                         let root_id = window.inner_docking.tree().root().id;
                                         window.inner_docking.tree_mut().reorder_children(root_id, from, to);
                                     }
-                                    if let (Some(nbr_id), Some(bid)) = (neighbor_id, self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id)) {
+                                    if let (Some(nbr_id), Some(bid)) = (neighbor_id, self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id)) {
                                         self.core.indicators_mut().swap_pane_order(bid, instance_id, nbr_id);
                                     }
                                 }
@@ -1339,7 +1339,7 @@ impl ChartApp {
                                             let root_id = window.inner_docking.tree().root().id;
                                             window.inner_docking.tree_mut().reorder_children(root_id, from, to);
                                         }
-                                        if let (Some(nbr_id), Some(bid)) = (neighbor_id, self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id)) {
+                                        if let (Some(nbr_id), Some(bid)) = (neighbor_id, self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id)) {
                                             self.core.indicators_mut().swap_pane_order(bid, instance_id, nbr_id);
                                         }
                                     }
@@ -1393,7 +1393,7 @@ impl ChartApp {
                                             let root_id = window.inner_docking.tree().root().id;
                                             window.inner_docking.tree_mut().reorder_children(root_id, from, to);
                                         }
-                                        if let (Some(nbr_id), Some(bid)) = (neighbor_id, self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id)) {
+                                        if let (Some(nbr_id), Some(bid)) = (neighbor_id, self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id)) {
                                             self.core.indicators_mut().swap_pane_order(bid, instance_id, nbr_id);
                                         }
                                     }
@@ -1414,7 +1414,7 @@ impl ChartApp {
                                         let root_id = window.inner_docking.tree().root().id;
                                         window.inner_docking.tree_mut().reorder_children(root_id, from, to);
                                     }
-                                    if let (Some(nbr_id), Some(bid)) = (neighbor_id, self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id)) {
+                                    if let (Some(nbr_id), Some(bid)) = (neighbor_id, self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id)) {
                                         self.core.indicators_mut().swap_pane_order(bid, instance_id, nbr_id);
                                     }
                                 }
@@ -1513,7 +1513,7 @@ impl ChartApp {
             };
             let chart_rect = extended.main_chart.chart;
 
-            let active_bid_tool = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+            let active_bid_tool = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
             let is_freehand = active_bid_tool
                 .map(|bid| self.core.drawings().is_freehand_tool(bid))
                 .unwrap_or(false);
@@ -1781,7 +1781,7 @@ impl ChartApp {
             let local_y = y - chart_rect.y;
 
             // -- Main chart primitive hit test --
-            let active_bid_hit = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+            let active_bid_hit = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
             if local_x >= 0.0 && local_x <= chart_rect.width
                 && local_y >= 0.0 && local_y <= chart_rect.height
             {
@@ -1799,7 +1799,7 @@ impl ChartApp {
                         self.selected_indicator_id = None;
                         // Deselect all other bubbles first so control points don't accumulate.
                         let all_bids: Vec<_> = self.panel_app.panel_grid.containers().values()
-                            .map(|w| w.current_bubble_id)
+                            .map(|w| w.current_tag_id)
                             .collect();
                         for bid in all_bids {
                             if Some(bid) != active_bid_hit {
@@ -1851,7 +1851,7 @@ impl ChartApp {
                         self.selected_indicator_id = None;
                         // Deselect all other bubbles.
                         let all_bids2: Vec<_> = self.panel_app.panel_grid.containers().values()
-                            .map(|w| w.current_bubble_id)
+                            .map(|w| w.current_tag_id)
                             .collect();
                         for bid in all_bids2 {
                             if Some(bid) != active_bid_hit {
@@ -1919,7 +1919,7 @@ impl ChartApp {
                 let ind_hit = self.panel_app.panel_grid.active_container()
                     .and_then(|window| {
                         self.core.indicators().hit_test_overlay(
-                            window.current_bubble_id,
+                            window.current_tag_id,
                             local_x,
                             local_y,
                             &window.viewport,
@@ -2108,7 +2108,7 @@ impl ChartApp {
 
         match target {
             ContextMenuTarget::Primitive(prim_id) => {
-                let active_bid_ctx = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                let active_bid_ctx = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
                 match action {
                     "settings" => {
                         self.panel_app.primitive_settings_state.open(prim_id);

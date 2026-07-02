@@ -34,7 +34,7 @@ fn mk_bars(n: usize) -> Vec<Bar> {
 /// Add `count` charts to `app`, each in its own auto-bubble for the given
 /// instrument. Returns the list of chart IDs that were added (so the test
 /// can ignore the initial chart that `ChartApp::new_empty` created with no
-/// attached bubble — its `current_bubble_id` is the sentinel `BubbleId(0)`).
+/// attached bubble — its `current_tag_id` is the sentinel `BubbleId(0)`).
 fn add_charts(app: &mut ChartApp, count: usize, symbol: &str, exchange: &str, tf: Timeframe) -> Vec<mlc_core::state::ChartId> {
     let mut out = Vec::new();
     for _ in 0..count {
@@ -49,8 +49,8 @@ fn add_charts(app: &mut ChartApp, count: usize, symbol: &str, exchange: &str, tf
 
         let mut chart = ChartContainer::new(symbol, tf.clone());
         chart.id = chart_id;
-        chart.auto_bubble_id = bid;
-        chart.current_bubble_id = bid;
+        chart.auto_tag_id = bid;
+        chart.current_tag_id = bid;
         app.panel_app.panel_grid.containers_mut().insert(chart_id, chart);
         out.push(chart_id);
     }
@@ -117,13 +117,13 @@ fn four_tabs_same_instrument_all_bubbles_get_bars_after_tick() {
     //    bubble whose instrument matches.
     app.tick(0);
 
-    // 5. Every chart's renderer reads bars via its current_bubble_id. After
+    // 5. Every chart's renderer reads bars via its current_tag_id. After
     //    the new (plural) writer, all four bubbles must carry 300 bars.
     let mut empty: Vec<mlc_core::state::ChartId> = Vec::new();
     let mut filled = 0;
     for cid in &chart_ids {
         let win = app.panel_app.panel_grid.containers().get(cid).expect("chart");
-        let bubble_bars = app.core.bubbles().bars(win.current_bubble_id).len();
+        let bubble_bars = app.core.bubbles().bars(win.current_tag_id).len();
         if bubble_bars == 300 { filled += 1; } else { empty.push(*cid); }
     }
     assert!(empty.is_empty(), "no bubble should remain empty — bug repro left {:?} empty", empty);
@@ -160,9 +160,9 @@ fn live_bug_repro_chart_with_phantom_bubble_still_gets_bars() {
     app.tick(0);
 
     let win = app.panel_app.panel_grid.containers().get(&chart_id).expect("chart");
-    let renderer_bars = app.core.bubbles().bars(win.current_bubble_id).len();
+    let renderer_bars = app.core.bubbles().bars(win.current_tag_id).len();
     assert_eq!(renderer_bars, 300,
-        "chart's renderer (which reads via current_bubble_id) must see 300 bars \
+        "chart's renderer (which reads via current_tag_id) must see 300 bars \
          — the phantom bubble must NOT swallow the write");
 }
 
@@ -196,11 +196,11 @@ fn bars_loaded_for_different_instrument_does_not_pollute_eth_tab() {
     let mut eth_filled = 0;
     for cid in &btc_ids {
         let win = app.panel_app.panel_grid.containers().get(cid).unwrap();
-        if app.core.bubbles().bars(win.current_bubble_id).len() == 300 { btc_filled += 1; }
+        if app.core.bubbles().bars(win.current_tag_id).len() == 300 { btc_filled += 1; }
     }
     for cid in &eth_ids {
         let win = app.panel_app.panel_grid.containers().get(cid).unwrap();
-        if !app.core.bubbles().bars(win.current_bubble_id).is_empty() { eth_filled += 1; }
+        if !app.core.bubbles().bars(win.current_tag_id).is_empty() { eth_filled += 1; }
     }
     assert_eq!(btc_filled, 2, "both BTC tabs filled");
     assert_eq!(eth_filled, 0, "ETH tabs not polluted by BTC BarsLoaded");

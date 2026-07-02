@@ -172,7 +172,7 @@ impl ChartApp {
             let bars_by_chart_pre: std::collections::HashMap<ChartId, Vec<mlc_core::Bar>> =
                 self.panel_app.panel_grid.containers().iter()
                     .map(|(cid, w)| {
-                        let bars = self.core.bubbles().bars(w.current_bubble_id).to_vec();
+                        let bars = self.core.bubbles().bars(w.current_tag_id).to_vec();
                         (*cid, bars)
                     })
                     .collect();
@@ -248,19 +248,19 @@ impl ChartApp {
         };
 
         // Diagnostic: dump per-container bubble pointers + bar counts ONCE per
-        // dirty render so we can see whether `window.current_bubble_id` lines
+        // dirty render so we can see whether `window.current_tag_id` lines
         // up with the bubble that actually has bars.  Owner repro: split or
         // new-preset sibling chart renders empty even though
         // `[do_split-key]` shows the auto_bubble was seeded with the source's
-        // identity.  Suspicion: window.current_bubble_id points at a stale
+        // identity.  Suspicion: window.current_tag_id points at a stale
         // bubble id while the data lands in a different bubble.
         {
             let mut dump: Vec<String> = Vec::new();
             let bubble_mgr = self.core.bubbles();
             let tags_mgr = self.core.tags();
             for (cid, w) in self.panel_app.panel_grid.containers().iter() {
-                let cur_bid = w.current_bubble_id;
-                let auto_bid = w.auto_bubble_id;
+                let cur_bid = w.current_tag_id;
+                let auto_bid = w.auto_tag_id;
                 let bid_via_chart = tags_mgr.tag_for_chart(*cid);
                 let cur_bars = bubble_mgr.bars(cur_bid).len();
                 let cur_sym  = bubble_mgr.symbol(cur_bid).unwrap_or_default().to_string();
@@ -310,7 +310,7 @@ impl ChartApp {
                 .map(|p| p.chart_type == "heikin_ashi")
                 .unwrap_or(false);
             let bubble_bars: &[mlc_core::Bar] = bubble_snapshot
-                .get(&window.current_bubble_id)
+                .get(&window.current_tag_id)
                 .map(|(b,)| b.as_slice())
                 .unwrap_or(&[]);
             if is_ha {
@@ -502,7 +502,7 @@ impl ChartApp {
 
                 // --- Section "Window": chart's auto-bubble stash ---
                 // Show the home stash (auto_bubble.primitives + indicators
-                // whose `bubble_id == auto_bubble_id`) whenever the active
+                // whose `bubble_id == auto_tag_id`) whenever the active
                 // chart is in a tagged bubble distinct from its home auto.
                 // Owner rule: Window section reflects the chart's own
                 // stash; current Group section reflects the bubble the
@@ -510,7 +510,7 @@ impl ChartApp {
                 // (untagged), only the Group section is shown.
                 let (active_auto_bid, active_cur_bid) = active_cid
                     .and_then(|cid| self.panel_app.panel_grid.containers().get(&cid))
-                    .map(|w| (Some(w.auto_bubble_id), Some(w.current_bubble_id)))
+                    .map(|w| (Some(w.auto_tag_id), Some(w.current_tag_id)))
                     .unwrap_or((None, None));
                 let show_home_overlay = match (active_auto_bid, active_cur_bid) {
                     (Some(a), Some(c)) => a != c,
@@ -535,7 +535,7 @@ impl ChartApp {
                 };
 
                 // Home indicators live IN the auto-bubble: their bubble_id
-                // matches auto_bubble_id.  Collect them live from the
+                // matches auto_tag_id.  Collect them live from the
                 // indicator manager, not from the stale pre_tag_indicator_ids
                 // list which the bubble-cutover obsoleted.
                 let pre_tag_ids: Vec<u64> = if show_home_overlay {
@@ -600,7 +600,7 @@ impl ChartApp {
 
                 // Primitives from the bubble's drawing data — all symbols, annotated by state.
                 let local_prims: Vec<_> = self.panel_app.panel_grid.active_container()
-                    .map(|w| w.current_bubble_id)
+                    .map(|w| w.current_tag_id)
                     .map(|bid| {
                         let guard = self.core.drawings();
                         guard.primitives(bid).iter()
@@ -1078,7 +1078,7 @@ impl ChartApp {
                 let bars_by_chart_split: std::collections::HashMap<ChartId, Vec<mlc_core::Bar>> =
                     self.panel_app.panel_grid.containers().iter()
                         .map(|(cid, w)| {
-                            let bars = self.core.bubbles().bars(w.current_bubble_id).to_vec();
+                            let bars = self.core.bubbles().bars(w.current_tag_id).to_vec();
                             (*cid, bars)
                         })
                         .collect();
@@ -1107,8 +1107,8 @@ impl ChartApp {
 
             // Group primitive sync into split windows — DEAD under the
             // per-bubble drawing model (Step 3.1). Peer windows sharing a
-            // tag already share `current_bubble_id` (`do_split` sets
-            // `window.current_bubble_id = group_id` for every peer leaf),
+            // tag already share `current_tag_id` (`do_split` sets
+            // `window.current_tag_id = group_id` for every peer leaf),
             // so `drawings().primitives(bid)` already returns the exact
             // same `DataBubble.primitives` Vec for every peer — no clone,
             // no pane_id remap, no per-frame copy needed. Indicator
@@ -1121,7 +1121,7 @@ impl ChartApp {
                     .map(|w| !w.compare_overlay.series.is_empty())
                     .unwrap_or(false);
                 let bid = self.panel_app.panel_grid.container_for_leaf(leaf_id)
-                    .map(|w| w.current_bubble_id);
+                    .map(|w| w.current_tag_id);
                 let has_indicators = bid
                     .map(|b| !self.core.indicators().instances_for_bubble(b).is_empty())
                     .unwrap_or(false);
@@ -1130,7 +1130,7 @@ impl ChartApp {
             }
         } else {
             // Single pane: group-primitive sync — DEAD under the per-bubble
-            // drawing model (Step 3.1). The active window's `current_bubble_id`
+            // drawing model (Step 3.1). The active window's `current_tag_id`
             // already equals `group_id`; `drawings().primitives(bid)` reads
             // `group.primitives` directly, no per-frame clone needed.
 
@@ -1139,7 +1139,7 @@ impl ChartApp {
                 .map(|w| !w.compare_overlay.series.is_empty())
                 .unwrap_or(false);
             let has_indicators = self.panel_app.panel_grid.active_container()
-                .map(|w| !self.core.indicators().instances_for_bubble(w.current_bubble_id).is_empty())
+                .map(|w| !self.core.indicators().instances_for_bubble(w.current_tag_id).is_empty())
                 .unwrap_or(false);
             self.panel_app.indicator_overlay_state.visible = has_indicators || has_compare;
         }

@@ -608,7 +608,7 @@ impl ChartApp {
             Some(i) => i,
             None => return,
         };
-        let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+        let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
         if let Some(bid) = active_bid {
             let data_opt = self.core.drawings().get_data(bid, prim_id);
             if let Some(mut data) = data_opt {

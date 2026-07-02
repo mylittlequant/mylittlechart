@@ -1997,8 +1997,8 @@ impl ChartApp {
             );
             self.attach_chart_to_tag(chart_id, auto_bid);
             if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                window.auto_bubble_id = auto_bid;
-                window.current_bubble_id = auto_bid;
+                window.auto_tag_id = auto_bid;
+                window.current_tag_id = auto_bid;
             }
             self.core.bubbles_mut().set_bid_instrument_full(
                 auto_bid,
@@ -2605,8 +2605,8 @@ impl ChartApp {
                     );
                     app.attach_chart_to_tag(chart_id, auto_bid);
                     if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
-                        window.auto_bubble_id = auto_bid;
-                        window.current_bubble_id = auto_bid;
+                        window.auto_tag_id = auto_bid;
+                        window.current_tag_id = auto_bid;
                     }
                     app.core.bubbles_mut().set_bid_instrument_full(
                         auto_bid,
@@ -2648,7 +2648,7 @@ impl ChartApp {
                 if let Some(chart_id) = active_chart_id {
                     let bid = app.panel_app.panel_grid.containers()
                         .get(&chart_id)
-                        .map(|w| w.current_bubble_id);
+                        .map(|w| w.current_tag_id);
                     app.core.indicators_mut().add(bid, "builtin_volume");
                 }
 
@@ -3219,7 +3219,7 @@ impl ChartApp {
             let bars_by_chart: std::collections::HashMap<mlc_core::state::ChartId, Vec<mlc_core::Bar>> =
                 self.panel_app.panel_grid.containers().iter()
                     .map(|(cid, w)| {
-                        let bars = self.core.bubbles().bars(w.current_bubble_id).to_vec();
+                        let bars = self.core.bubbles().bars(w.current_tag_id).to_vec();
                         (*cid, bars)
                     })
                     .collect();
@@ -3433,7 +3433,7 @@ impl ChartApp {
                     funding_show: window.funding_show,
                 };
                 if let Some(render_state) = overlay_bubble_mgr.render_state_for(
-                    window.current_bubble_id,
+                    window.current_tag_id,
                     overlay_window_inputs,
                     chart_rect,
                     &chart_theme,
@@ -3452,7 +3452,7 @@ impl ChartApp {
                     };
 
                     let overlay_drawings_guard = self.core.drawings();
-                    let overlay_view = overlay_drawings_guard.with_bubble(window.current_bubble_id);
+                    let overlay_view = overlay_drawings_guard.with_bubble(window.current_tag_id);
                     render_chart_overlay(
                         ctx,
                         &render_state,
@@ -3520,7 +3520,7 @@ impl ChartApp {
                 funding_show: window.funding_show,
             };
             if let Some(render_state) = single_overlay_bubble_mgr.render_state_for(
-                window.current_bubble_id,
+                window.current_tag_id,
                 single_overlay_window_inputs,
                 chart_rect,
                 &chart_theme,
@@ -3539,7 +3539,7 @@ impl ChartApp {
                 };
 
                 let single_drawings_guard = self.core.drawings();
-                let single_view = single_drawings_guard.with_bubble(window.current_bubble_id);
+                let single_view = single_drawings_guard.with_bubble(window.current_tag_id);
                 render_chart_overlay(
                     ctx,
                     &render_state,
@@ -3701,9 +3701,9 @@ impl ChartApp {
                 self.panel_app.panel_grid.containers()
                     .iter()
                     .map(|(&chart_id, w)| {
-                        let bars_vec: Vec<mlc_core::Bar> = self.core.bubbles().bars(w.current_bubble_id).to_vec();
+                        let bars_vec: Vec<mlc_core::Bar> = self.core.bubbles().bars(w.current_tag_id).to_vec();
                         let bars = &bars_vec[..];
-                        let prims_iter = drawings_guard.primitives(w.current_bubble_id);
+                        let prims_iter = drawings_guard.primitives(w.current_tag_id);
                         let pts: Vec<(u64, Vec<(f64, f64)>, mlc_core::alert::DrawingExtendMode)> = prims_iter
                             .iter()
                             .map(|p| {
@@ -3787,7 +3787,7 @@ impl ChartApp {
                     funding_show: window.funding_show,
                 };
                 let render_state = match split_bubble_mgr.render_state_for(
-                    window.current_bubble_id,
+                    window.current_tag_id,
                     split_window_inputs,
                     chart_rect,
                     &chart_theme,
@@ -3844,8 +3844,8 @@ impl ChartApp {
                 let inner_proportions_vec = crate::chart_container::collect_inner_proportions(&window.inner_docking);
                 let inner_sub_ids_vec = crate::chart_container::collect_inner_instance_ids(&window.inner_docking);
                 let split_drawings_guard = self.core.drawings();
-                let split_view = split_drawings_guard.with_bubble(window.current_bubble_id);
-                let split_indicator_view = indicator_guard_split.with_bubble(window.current_bubble_id);
+                let split_view = split_drawings_guard.with_bubble(window.current_tag_id);
+                let split_indicator_view = indicator_guard_split.with_bubble(window.current_tag_id);
                 let panel_data = ChartPanelRenderData {
                     state: &render_state,
                     config: &render_config,
@@ -3893,11 +3893,11 @@ impl ChartApp {
                     // Sub-pane order + proportions both come from the
                     // container's own InnerLayout -- single source of truth.
                     // indicator_manager visibility is a filter applied on top.
-                    // Indicator ownership is by bubble — `window.current_bubble_id`
+                    // Indicator ownership is by bubble — `window.current_tag_id`
                     // is this leaf's bubble regardless of whether leaf_chart_id
                     // resolved (S2.7.1).
                     let visible_set: std::collections::HashSet<u64> = self.core.indicators()
-                        .instances_for_bubble(window.current_bubble_id)
+                        .instances_for_bubble(window.current_tag_id)
                         .into_iter()
                         .filter(|i| i.visible && i.pane > 0)
                         .map(|i| i.id)
@@ -3945,15 +3945,15 @@ impl ChartApp {
                     // alert-bell filter is by bubble (indicator ownership)
                     let window_id = leaf_chart_id.and_then(|cid|
                         self.panel_app.panel_grid.containers()
-                            .get(&cid).map(|w| w.current_bubble_id.0));
+                            .get(&cid).map(|w| w.current_tag_id.0));
 
                     // S2.7.1: pass split_symbol/exchange/account_type from branch_meta.
                     // Skip chart-anchored bells when the main chart is collapsed
                     // (maximized sub-pane covers the container).
                     if chart_area.height >= 1.0 {
-                        let split_bars_vec: Vec<mlc_core::Bar> = self.core.bubbles().bars(window.current_bubble_id).to_vec();
+                        let split_bars_vec: Vec<mlc_core::Bar> = self.core.bubbles().bars(window.current_tag_id).to_vec();
                         let split_bell_drawings_guard = self.core.drawings();
-                        let split_bell_prims = split_bell_drawings_guard.primitives(window.current_bubble_id);
+                        let split_bell_prims = split_bell_drawings_guard.primitives(window.current_tag_id);
                         let bells = Self::draw_alert_bell_icons(
                             ctx,
                             chart_area,
@@ -4064,7 +4064,7 @@ impl ChartApp {
                         .map(|s| (s.symbol.clone(), s.visible, s.color.clone()))
                         .collect();
                     let instances_empty = self.core.indicators()
-                        .instances_for_bubble(window.current_bubble_id)
+                        .instances_for_bubble(window.current_tag_id)
                         .is_empty();
                     let _has_indicators = !instances_empty;
                     let _has_compare = !compare_series_info.is_empty();
@@ -4081,7 +4081,7 @@ impl ChartApp {
                     if leaf_tab_visible && (overlay_state.visible || overlay_state.is_open) {
                         let mut indicators: Vec<IndicatorOverlayInfo> = {
                             let im = self.core.indicators();
-                            let instances = im.instances_for_bubble(window.current_bubble_id);
+                            let instances = im.instances_for_bubble(window.current_tag_id);
                             instances
                                 .iter()
                                 .map(|inst| {
@@ -4302,11 +4302,11 @@ impl ChartApp {
             // Group primitive sync was done in prepare_frame; use the already-synced drawing_manager here.
 
             let (single_alert_current_bar, single_alert_drawing_points) = if let Some(window) = self.panel_app.panel_grid.active_container() {
-                let single_bars_vec: Vec<mlc_core::Bar> = self.core.bubbles().bars(window.current_bubble_id).to_vec();
+                let single_bars_vec: Vec<mlc_core::Bar> = self.core.bubbles().bars(window.current_tag_id).to_vec();
                 let cb = single_bars_vec.len().saturating_sub(1) as f64;
                 let bars = &single_bars_vec[..];
                 let single_drawings_alert_guard = self.core.drawings();
-                let prims2_iter = single_drawings_alert_guard.primitives(window.current_bubble_id);
+                let prims2_iter = single_drawings_alert_guard.primitives(window.current_tag_id);
                 let pts: Vec<(u64, Vec<(f64, f64)>, mlc_core::alert::DrawingExtendMode)> = prims2_iter
                     .iter()
                     .map(|p| {
@@ -4390,7 +4390,7 @@ impl ChartApp {
                     funding_show: window.funding_show,
                 };
                 single_window_bubble_mgr.render_state_for(
-                    window.current_bubble_id,
+                    window.current_tag_id,
                     single_window_inputs,
                     chart_rect,
                     &chart_theme,
@@ -4405,8 +4405,8 @@ impl ChartApp {
                 let inner_proportions_vec = crate::chart_container::collect_inner_proportions(&window.inner_docking);
                 let inner_sub_ids_vec = crate::chart_container::collect_inner_instance_ids(&window.inner_docking);
                 let single_window_drawings_guard = self.core.drawings();
-                let single_window_view = single_window_drawings_guard.with_bubble(window.current_bubble_id);
-                let single_indicator_view = indicator_guard_single.with_bubble(window.current_bubble_id);
+                let single_window_view = single_window_drawings_guard.with_bubble(window.current_tag_id);
+                let single_indicator_view = indicator_guard_single.with_bubble(window.current_tag_id);
                 let panel_data = ChartPanelRenderData {
                     state: &render_state,
                     config: &render_config,
@@ -4455,10 +4455,10 @@ impl ChartApp {
                 {
                     // Compute the corrected chart area rect (same logic as
                     // render_full_chart_panel's internal ExtendedFrameLayout).
-                    // Indicator ownership is by bubble — `window.current_bubble_id`
+                    // Indicator ownership is by bubble — `window.current_tag_id`
                     // is this window's bubble.
                     let visible_set: std::collections::HashSet<u64> = self.core.indicators()
-                        .instances_for_bubble(window.current_bubble_id)
+                        .instances_for_bubble(window.current_tag_id)
                         .into_iter()
                         .filter(|i| i.visible && i.pane > 0)
                         .map(|i| i.id)
@@ -4504,15 +4504,15 @@ impl ChartApp {
                     corrected_vp.chart_height = main.chart.height;
 
                     // alert-bell filter is by bubble
-                    let window_id = Some(window.current_bubble_id.0);
+                    let window_id = Some(window.current_tag_id.0);
 
                     // S2.7.1: use single_sym/exch/at from branch_meta.
                     // Skip chart-anchored bells when the main chart is collapsed
                     // (maximized sub-pane covers the container).
                     if chart_area.height >= 1.0 {
-                        let single_bars_vec2: Vec<mlc_core::Bar> = self.core.bubbles().bars(window.current_bubble_id).to_vec();
+                        let single_bars_vec2: Vec<mlc_core::Bar> = self.core.bubbles().bars(window.current_tag_id).to_vec();
                         let single_bell_drawings_guard = self.core.drawings();
-                        let single_bell_prims = single_bell_drawings_guard.primitives(window.current_bubble_id);
+                        let single_bell_prims = single_bell_drawings_guard.primitives(window.current_tag_id);
                         let bells = Self::draw_alert_bell_icons(
                             ctx,
                             chart_area,
@@ -4679,7 +4679,7 @@ impl ChartApp {
         // the selected primitive's data in one call, returning None when nothing
         // is selected.  The result is a cheap owned value so no borrow escapes.
         let selected_config: Option<mlc_core::state::selected_config::SelectedPrimitiveConfig> = {
-            let bid = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+            let bid = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
             let drawings_guard = self.core.drawings();
             bid.and_then(|bid| drawings_guard.selected_config(bid))
         };
@@ -4727,7 +4727,7 @@ impl ChartApp {
                         .unwrap_or_default();
 
                 let ind_overlay_bid = self.panel_app.panel_grid.active_container()
-                    .map(|w| w.current_bubble_id);
+                    .map(|w| w.current_tag_id);
                 let mut indicators: Vec<IndicatorOverlayInfo> = {
                     let im = self.core.indicators();
                     let instances = match ind_overlay_bid {
@@ -5532,7 +5532,7 @@ impl ChartApp {
         let panel_layout = ChartPanelLayout::compute(&window_rect, &self.panel_app.toolbar_config);
 
         let selected_config: Option<mlc_core::state::selected_config::SelectedPrimitiveConfig> = {
-            let bid2 = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+            let bid2 = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
             let drawings_guard2 = self.core.drawings();
             bid2.and_then(|bid| drawings_guard2.selected_config(bid))
         };
@@ -6058,7 +6058,7 @@ impl ChartApp {
         // bubble's drawing render view for the primitive settings modal.
         let active_dm_bid = self.panel_app.panel_grid
             .active_container()
-            .map(|w| w.current_bubble_id);
+            .map(|w| w.current_tag_id);
         let drawings_guard_modals = self.core.drawings();
         let dm_view_modals = active_dm_bid.map(|bid| drawings_guard_modals.with_bubble(bid));
         let dm_ref: Option<&dyn mlc_core::drawing::DrawingRenderView> = dm_view_modals
@@ -7077,8 +7077,8 @@ impl ChartApp {
             .panel_grid
             .iter_containers()
             .map(|(leaf_id, window)| {
-                // Indicators are scoped by bubble — pass current_bubble_id.
-                let bubble_id_val = window.current_bubble_id.0;
+                // Indicators are scoped by bubble — pass current_tag_id.
+                let bubble_id_val = window.current_tag_id.0;
                 let (vs, ve) = window.viewport.visible_range();
                 (leaf_id, bubble_id_val, vs, ve)
             })
@@ -7780,7 +7780,7 @@ impl ChartApp {
                         }
                         UndoAction::PrimitiveCreated { prim_id } => {
                             // For creation we need full primitive data from the drawing manager.
-                            let active_bid_oa = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                            let active_bid_oa = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
                             let snapshot = {
                                 let drawings_oa = self.core.drawings();
                                 active_bid_oa
@@ -7813,7 +7813,7 @@ impl ChartApp {
 
                 // ── Drawing interaction ─────────────────────────────────────
                 ChartOutputAction::SelectPrimitive { id } => {
-                    let active_bid_sp = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                    let active_bid_sp = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
                     if let Some(bid) = active_bid_sp {
                         let mut drawings_sp = self.core.drawings_mut();
                         match id {
@@ -7827,7 +7827,7 @@ impl ChartApp {
                     }
                 }
                 ChartOutputAction::StartPrimitiveDrag { id, bar: screen_x, price: screen_y } => {
-                    let active_bid_pd = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                    let active_bid_pd = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
                     // `bar` and `price` from DefaultChartInputHandler are raw screen (x, y).
                     // Look up the primitive's pane_id to choose the right coordinate system.
                     let primitive_pane_id = active_bid_pd
@@ -7876,7 +7876,7 @@ impl ChartApp {
                     }
                 }
                 ChartOutputAction::StartControlPointDrag { primitive_id, control_point, bar: screen_x, price: screen_y } => {
-                    let active_bid_cpd = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                    let active_bid_cpd = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
                     // Look up the primitive's pane_id to choose the right coordinate system.
                     let primitive_pane_id = active_bid_cpd
                         .and_then(|bid| self.core.drawings().pane_id_of(bid, primitive_id));
@@ -7926,7 +7926,7 @@ impl ChartApp {
                     }
                 }
                 ChartOutputAction::UpdatePrimitiveDrag { bar: screen_x, price: screen_y } => {
-                    let active_bid_ud = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                    let active_bid_ud = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
                     // Use the dragging primitive's pane_id for coordinate conversion.
                     let primitive_pane_id = active_bid_ud
                         .and_then(|bid| {
@@ -7984,7 +7984,7 @@ impl ChartApp {
                     }
                 }
                 ChartOutputAction::EndPrimitiveDrag => {
-                    let active_bid_ed = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                    let active_bid_ed = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
                     // Snapshot the dragged primitive's id BEFORE end_drag() clears it.
                     let dragged_prim_id = active_bid_ed
                         .and_then(|bid| self.core.drawings().dragging(bid));
@@ -8029,7 +8029,7 @@ impl ChartApp {
                     }
                 }
                 ChartOutputAction::FinishMultipointDrawing => {
-                    let active_bid_fm = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                    let active_bid_fm = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
                     // Record CreatePrimitive if finish_multipoint creates a new primitive.
                     let prev_count = active_bid_fm
                         .map(|bid| self.core.drawings().count(bid))
@@ -8065,7 +8065,7 @@ impl ChartApp {
                     }
                 }
                 ChartOutputAction::DrawingClick { bar, price, .. } => {
-                    let active_bid_dc = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                    let active_bid_dc = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
                     // Record CreatePrimitive if the click completes a new primitive.
                     let prev_count = active_bid_dc
                         .map(|bid| self.core.drawings().count(bid))
@@ -8196,7 +8196,7 @@ impl ChartApp {
             .get(&chart_id)
             .and_then(|w| {
                 let guard = self.core.drawings();
-                guard.primitives(w.current_bubble_id).iter()
+                guard.primitives(w.current_tag_id).iter()
                     .find(|p| p.data().id == primitive_id)
                     .map(|p| p.clone_box())
             });
@@ -8571,7 +8571,7 @@ impl ChartApp {
     /// Capture primitive settings for the active primitive into the app-level
     /// snapshot store, keyed by the primitive's `type_id`.
     pub fn snapshot_primitive_settings_to_user_manager(&mut self, prim_id: u64) {
-        let active_bid_snap = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+        let active_bid_snap = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
         let data_opt = active_bid_snap
             .and_then(|bid| self.core.drawings().get_data(bid, prim_id));
         if let Some(data) = data_opt {

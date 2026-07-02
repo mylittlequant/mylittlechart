@@ -376,7 +376,7 @@ pub struct IndicatorInstance {
     pub values: Arc<HashMap<String, Vec<f64>>>,
     /// Bubble id the indicator lives in (i.e. the color tag / sync group /
     /// home auto-bubble).  Indicator ownership is by bubble, NOT by chart
-    /// window — every chart whose `current_bubble_id` matches this value
+    /// window — every chart whose `current_tag_id` matches this value
     /// renders this indicator with its own per-chart render rules
     /// (overlay vs sub-pane).  When a chart switches tags, its render set
     /// switches with it without touching indicator state.

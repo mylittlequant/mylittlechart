@@ -70,7 +70,7 @@ impl ChartApp {
         let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id else { return; };
 
         if field_id == "stroke_width" {
-            let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+            let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
             if let Some(bid) = active_bid {
                 let data_opt = self.core.drawings().get_data(bid, prim_id)
                     .map(|mut d| { d.width = value; d });
@@ -87,7 +87,7 @@ impl ChartApp {
         if let Some(prop_id) = field_id.strip_prefix("style_prop:") {
             use mlc_core::drawing::primitives_v2::config::PropertyValue;
             let new_val = PropertyValue::Number(value);
-            let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+            let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
             if let Some(bid) = active_bid {
                 self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Style, prop_id, &new_val);
             }
@@ -99,7 +99,7 @@ impl ChartApp {
         if let Some(prop_id) = field_id.strip_prefix("text_prop:") {
             use mlc_core::drawing::primitives_v2::config::PropertyValue;
             let new_val = PropertyValue::Number(value);
-            let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+            let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
             if let Some(bid) = active_bid {
                 self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Text, prop_id, &new_val);
             }
@@ -115,7 +115,7 @@ impl ChartApp {
         let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id else { return; };
 
         let Some(data) = self.panel_app.panel_grid.active_container()
-            .map(|w| w.current_bubble_id)
+            .map(|w| w.current_tag_id)
             .and_then(|bid| self.core.drawings().get_data(bid, prim_id)) else { return; };
 
         if let Some(tf_idx) = field_id.strip_prefix("tf_")
@@ -152,7 +152,7 @@ impl ChartApp {
             }
 
             new_data.timeframe_visibility = Some(tf_config);
-            let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+            let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
             if let Some(bid) = active_bid {
                 self.core.drawings_mut().set_data(bid, prim_id, &new_data);
             }
@@ -401,7 +401,7 @@ impl ChartApp {
     /// Apply a new minimum value for the timeframe range at `tf_idx` on primitive `prim_id`.
     pub(crate) fn apply_tf_min_value(&mut self, prim_id: u64, tf_idx: usize, val: u32) {
         use mlc_core::drawing::TimeframeVisibilityConfig;
-        let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+        let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
         if let Some(bid) = active_bid {
             let data_opt = self.core.drawings().get_data(bid, prim_id);
             if let Some(mut data) = data_opt {
@@ -426,7 +426,7 @@ impl ChartApp {
     /// Apply a new maximum value for the timeframe range at `tf_idx` on primitive `prim_id`.
     pub(crate) fn apply_tf_max_value(&mut self, prim_id: u64, tf_idx: usize, val: u32) {
         use mlc_core::drawing::TimeframeVisibilityConfig;
-        let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+        let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
         if let Some(bid) = active_bid {
             let data_opt = self.core.drawings().get_data(bid, prim_id);
             if let Some(mut data) = data_opt {

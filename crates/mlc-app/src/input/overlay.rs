@@ -854,7 +854,7 @@ impl ChartApp {
             let auto_bids: Vec<mlc_core::ids::BubbleId> = self.panel_app.panel_grid
                 .containers()
                 .values()
-                .map(|w| w.auto_bubble_id)
+                .map(|w| w.auto_tag_id)
                 .filter(|&bid| bid != mlc_core::ids::BubbleId(0))
                 .collect();
             for bid in auto_bids {

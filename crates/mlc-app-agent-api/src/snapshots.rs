@@ -99,7 +99,7 @@ pub fn update_terminal_snapshot<H: AgentHost>(host: &H, agent_state: &AgentState
                     .map(|tf| tf.name.clone()).unwrap_or_default();
 
                 let indicators: Vec<IndicatorSummary> = chart.core.indicators()
-                    .instances_for_bubble(cw.current_bubble_id)
+                    .instances_for_bubble(cw.current_tag_id)
                     .into_iter()
                     .map(|inst| IndicatorSummary {
                         id: inst.id,
@@ -110,7 +110,7 @@ pub fn update_terminal_snapshot<H: AgentHost>(host: &H, agent_state: &AgentState
 
                 let primitives: Vec<PrimitiveSummary> = {
                     let dreg_snap = chart.core.drawings();
-                    dreg_snap.primitives(cw.current_bubble_id).iter()
+                    dreg_snap.primitives(cw.current_tag_id).iter()
                         .map(|p| {
                             let d = p.data();
                             PrimitiveSummary { id: d.id, type_id: d.type_id.clone() }
@@ -118,7 +118,7 @@ pub fn update_terminal_snapshot<H: AgentHost>(host: &H, agent_state: &AgentState
                         .collect()
                 };
 
-                let (bar_count, derived) = chart.with_bubble(cw.current_bubble_id, |b| (b.bars.len(), DerivedSeriesCounts {
+                let (bar_count, derived) = chart.with_bubble(cw.current_tag_id, |b| (b.bars.len(), DerivedSeriesCounts {
                     footprint_bars:      b.footprint_bars.as_ref().map(|v| v.len()).unwrap_or(0),
                     renko_bars:          b.renko_bars.as_ref().map(|v| v.len()).unwrap_or(0),
                     three_line_break:    b.three_line_break.as_ref().map(|v| v.len()).unwrap_or(0),

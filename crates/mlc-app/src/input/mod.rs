@@ -571,7 +571,7 @@ impl ChartApp {
             }
         };
 
-        let overlay_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+        let overlay_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
         let indicator_overlay_hit = |lx: f64, ly: f64, chart_height: f64| {
             let bid = overlay_bid?;
             self.core.indicators().hit_test_overlay(
@@ -589,7 +589,7 @@ impl ChartApp {
             )
         };
 
-        let active_bid_rc = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+        let active_bid_rc = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
         let active_bars: Vec<mlc_core::Bar> = active_bid_rc
             .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()))
             .unwrap_or_default();
@@ -1677,7 +1677,7 @@ impl ChartApp {
                 if let Some((fid, track_x, track_width, min_val, max_val)) = track_data {
                     if fid.starts_with("tf_") && fid.ends_with("_slider") {
                         let t = ((x - track_x) / track_width).clamp(0.0, 1.0);
-                        let active_bid_tf = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                        let active_bid_tf = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
                         let handle = if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
                             if let Some(data) = active_bid_tf
                                 .and_then(|bid| self.core.drawings().get_data(bid, prim_id))
@@ -2456,7 +2456,7 @@ impl ChartApp {
                 .map(|w| crate::chart_container::collect_inner_instance_ids(&w.inner_docking))
                 .unwrap_or_default();
             let inst_dump: Vec<String> = active_cid
-                .and_then(|cid| self.panel_app.panel_grid.containers().get(&cid).map(|w| w.current_bubble_id))
+                .and_then(|cid| self.panel_app.panel_grid.containers().get(&cid).map(|w| w.current_tag_id))
                 .map(|bid| {
                     self.core.indicators()
                         .instances_for_bubble(bid)
@@ -2474,7 +2474,7 @@ impl ChartApp {
             );
         }
 
-        let active_bid_ds = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+        let active_bid_ds = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
         let ds_bars = self.active_chart_bars();
         let drag_start_hit = if let Some(bid) = active_bid_ds {
             let mut dreg = self.core.drawings_mut();
@@ -3382,7 +3382,7 @@ impl ChartApp {
                 Some(e) => e,
                 None => { _fallback_fh = self.build_extended_layout(); &_fallback_fh }
             };
-            let active_bid_fh = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+            let active_bid_fh = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
             let fh_bars: Vec<mlc_core::Bar> = self.active_chart_bars();
             let freehand_extended = if let Some(bid) = active_bid_fh {
                 let mut dreg = self.core.drawings_mut();
@@ -3418,7 +3418,7 @@ impl ChartApp {
                         }
                     }
                 } else {
-                    let active_bid_ch1 = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                    let active_bid_ch1 = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
                     if let Some(bid) = active_bid_ch1 {
                         let is_over_separator = matches!(
                             ExtendedLayoutHitTester::new(extended).hit_test(x, y),
@@ -3503,7 +3503,7 @@ impl ChartApp {
                 }
             }
         } else if let Some((timestamp, price, crosshair_visible, pane_index)) = {
-            let active_bid_ch2 = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+            let active_bid_ch2 = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
             let is_over_separator2 = matches!(
                 ExtendedLayoutHitTester::new(extended2).hit_test(x, y),
                 mlc_core::engine::input::HitResult::PaneSeparator { .. }
@@ -3988,7 +3988,7 @@ impl ChartApp {
         }
 
         // Freehand drawing (brush/highlighter) — complete stroke on drag end
-        let active_bid_cf = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+        let active_bid_cf = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
         if let Some(freehand) = active_bid_cf.and_then(|bid| {
             let mut dreg = self.core.drawings_mut();
             let mut session = crate::input::drawing_session::DrawingSessionView::new(&mut dreg, bid);
@@ -4029,7 +4029,7 @@ impl ChartApp {
             }
             // propagate_drawing_state_to_sync_group is a no-op stub under the
             // per-bubble model (Step 3.1) — peer windows sharing a tag already
-            // share `current_bubble_id`, so the finalized freehand primitive
+            // share `current_tag_id`, so the finalized freehand primitive
             // (now in `DataBubble.primitives`) is immediately visible to all
             // of them without any propagation step. Kept as a call-site marker.
             if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
@@ -4447,12 +4447,12 @@ impl ChartApp {
             let is_drawing = if let Some(hovered) = split_hovered_leaf {
                 // Split mode: read from hovered leaf's window.
                 self.panel_app.panel_grid.container_for_leaf(hovered)
-                    .map(|w| self.core.drawings().is_drawing(w.current_bubble_id))
+                    .map(|w| self.core.drawings().is_drawing(w.current_tag_id))
                     .unwrap_or(false)
             } else {
                 // Single-window mode: active leaf == hovered leaf.
                 self.panel_app.panel_grid.active_container()
-                    .map(|w| self.core.drawings().is_drawing(w.current_bubble_id))
+                    .map(|w| self.core.drawings().is_drawing(w.current_tag_id))
                     .unwrap_or(false)
             };
 
@@ -4569,11 +4569,11 @@ impl ChartApp {
         // not, the split crosshair block should still run for the hovered leaf (F9).
         let is_drawing_skip = if let Some(hovered) = split_hovered_leaf {
             self.panel_app.panel_grid.container_for_leaf(hovered)
-                .map(|w| self.core.drawings().is_drawing(w.current_bubble_id))
+                .map(|w| self.core.drawings().is_drawing(w.current_tag_id))
                 .unwrap_or(false)
         } else {
             self.panel_app.panel_grid.active_container()
-                .map(|w| self.core.drawings().is_drawing(w.current_bubble_id))
+                .map(|w| self.core.drawings().is_drawing(w.current_tag_id))
                 .unwrap_or(false)
         };
         if self.panel_app.panel_grid.is_split() && !is_drawing_skip {
@@ -4709,7 +4709,7 @@ impl ChartApp {
         // --- Update crosshair (only when not over any UI element, or when
         // actively drawing a primitive so the preview follows the cursor) ---
         // Read from the frame-cached layout — no need to rebuild on every mouse event.
-        let active_bid_is_drawing = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+        let active_bid_is_drawing = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
         let is_drawing = active_bid_is_drawing
             .map(|bid| self.core.drawings().is_drawing(bid))
             .unwrap_or(false);
@@ -4729,7 +4729,7 @@ impl ChartApp {
             mlc_core::engine::input::HitResult::PaneSeparator { .. }
         );
         if let Some((timestamp, price, crosshair_visible, pane_index)) = {
-            let active_bid_ch3 = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+            let active_bid_ch3 = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
             let active_bars_ch3: Vec<mlc_core::Bar> = self.active_chart_bars();
             active_bid_ch3
                 .and_then(|bid| {
@@ -4801,12 +4801,12 @@ impl ChartApp {
                 .collect();
             leaf_ids.iter().any(|&lid| {
                 self.panel_app.panel_grid.container_for_leaf(lid)
-                    .map(|w| self.core.drawings().is_drawing(w.current_bubble_id))
+                    .map(|w| self.core.drawings().is_drawing(w.current_tag_id))
                     .unwrap_or(false)
             })
         } else {
             self.panel_app.panel_grid.active_container()
-                .map(|w| self.core.drawings().is_drawing(w.current_bubble_id))
+                .map(|w| self.core.drawings().is_drawing(w.current_tag_id))
                 .unwrap_or(false)
         };
         if !is_drawing {
@@ -5272,7 +5272,7 @@ impl ChartApp {
                                 let min_val = track.min_val;
                                 let max_val = track.max_val;
 
-                                let active_bid_sl = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                                let active_bid_sl = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
                                 if field_id == "stroke_width" {
                                     if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
                                         if let Some(data) = active_bid_sl
@@ -5899,7 +5899,7 @@ impl ChartApp {
 
         // Deselect drawing tool.
         self.panel_app.toolbar_state.deselect_tool();
-        let active_bid_key = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+        let active_bid_key = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
         if let Some(bid) = active_bid_key {
             self.core.drawings_mut().set_tool(bid, None);
         }
@@ -6090,7 +6090,7 @@ impl ChartApp {
         // anything" — silent no-op rather than visible error.
         let group_id = self.panel_app.panel_grid.active_container_id()
             .and_then(|cid| self.shared_group_for_chart(cid));
-        let active_bid_cmd = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+        let active_bid_cmd = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
 
         match cmd {
             Command::CreatePrimitive { prim_id: _, type_id, points, data } => {
@@ -6332,14 +6332,14 @@ impl ChartApp {
                 };
                 let bid = self.panel_app.panel_grid.containers()
                     .get(&chart_id_val)
-                    .map(|w| w.current_bubble_id);
+                    .map(|w| w.current_tag_id);
                 if self.core.indicators_mut().restore_with_id(*instance_id, bid, type_id) {
                     let bars_snapshot = self.bars_for_chart(chart_id_val);
                     self.core.indicators_mut().calculate(*instance_id, &bars_snapshot);
                     // Re-add to auto_bubble.pre_tag_indicator_ids for Object Tree visibility.
                     let auto_bid = self.panel_app.panel_grid.containers()
                         .get(&chart_id_val)
-                        .map(|w| w.auto_bubble_id);
+                        .map(|w| w.auto_tag_id);
                     if let Some(bid) = auto_bid {
                         self.core.bubbles_mut().with_bubble_mut(bid, |auto_bub| {
                             if !auto_bub.pre_tag_indicator_ids.contains(instance_id) {
@@ -6360,7 +6360,7 @@ impl ChartApp {
                     let auto_bids: Vec<mlc_core::ids::BubbleId> = self.panel_app.panel_grid
                         .containers()
                         .values()
-                        .map(|w| w.auto_bubble_id)
+                        .map(|w| w.auto_tag_id)
                         .filter(|&bid| bid != mlc_core::ids::BubbleId(0))
                         .collect();
                     for bid in auto_bids {
@@ -6464,7 +6464,7 @@ impl ChartApp {
         // S2.7.1e: read symbol via branch_meta (B1).
         let visible_set: std::collections::HashSet<u64> = {
             let active_bid = self.panel_app.panel_grid.active_container()
-                .map(|w| w.current_bubble_id);
+                .map(|w| w.current_tag_id);
             let indicators_guard = self.core.indicators();
             active_bid
                 .map(|bid| indicators_guard.instances_for_bubble(bid))
@@ -6555,7 +6555,7 @@ impl ChartApp {
         // Build visible set from indicator_manager (single source of truth).
         // S2.7.1e: read symbol via branch_meta (B1).
         let visible_set: std::collections::HashSet<u64> = self.core.indicators()
-            .instances_for_bubble(window.current_bubble_id)
+            .instances_for_bubble(window.current_tag_id)
             .into_iter()
             .filter(|i| i.visible && i.pane > 0)
             .map(|i| i.id)
@@ -7030,13 +7030,13 @@ impl ChartApp {
                 self.attach_chart_to_tag(chart_id, group_id);
                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     // Mirrors seed_default_chart: react.rs writes BarsLoaded /
-                    // *BarAppended events into `window.current_bubble_id`.
+                    // *BarAppended events into `window.current_tag_id`.
                     // Without binding the new group here every incoming bar
                     // landed in the deleted preset's stale bubble id and the
                     // chart stayed empty (PresetNameInput modal then kept
                     // waiting for the chart to "load").
-                    window.auto_bubble_id = group_id;
-                    window.current_bubble_id = group_id;
+                    window.auto_tag_id = group_id;
+                    window.current_tag_id = group_id;
                 }
                 self.core.bubbles_mut().set_bid_instrument_full(
                     group_id,
@@ -7083,9 +7083,9 @@ impl ChartApp {
                     true,
                 );
                 sglog!(
-                    "[execute_new_chart_with_name] Auto-created auto group {:?} chart_id={:?} window.current_bubble_id={:?}",
+                    "[execute_new_chart_with_name] Auto-created auto group {:?} chart_id={:?} window.current_tag_id={:?}",
                     group_id, chart_id,
-                    self.panel_app.panel_grid.containers().get(&chart_id).map(|w| w.current_bubble_id)
+                    self.panel_app.panel_grid.containers().get(&chart_id).map(|w| w.current_tag_id)
                 );
             }
         }
@@ -7165,7 +7165,7 @@ impl ChartApp {
                 let gid = self.bubble_for_chart(chart_id)
                     .map(|g| g.0);
                 // Read stash data from the chart's permanent auto-bubble.
-                let auto_bid = window.auto_bubble_id;
+                let auto_bid = window.auto_tag_id;
                 let (ptids, stashed_ch, stashed_prims_snap) = self.with_bubble(auto_bid, |auto_bub| {
                     let ptids = auto_bub.pre_tag_indicator_ids.clone();
                     // The auto_bubble holds the stashed command_history only while
@@ -7200,7 +7200,7 @@ impl ChartApp {
                     .get(&snap_panel_id)
                     .unwrap_or(&snap_default_panel);
                 let dreg_snap = self.core.drawings();
-                let snap_prims = dreg_snap.primitives(window.current_bubble_id);
+                let snap_prims = dreg_snap.primitives(window.current_tag_id);
                 preset.windows.push(crate::persistence::build_chart_window_snapshot(
                     window, snap_panel_state, snap_prims, leaf_id.0, gid, ptids, stashed_ch, stashed_prims_snap,
                     snap_symbol, snap_timeframe, snap_exchange, snap_account_type,

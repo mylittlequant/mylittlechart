@@ -82,14 +82,14 @@ pub struct ChartContainer {
     /// `BubbleId(0)` is a construction-time sentinel only.  Every code path
     /// that uses a `ChartContainer` must ensure this has been set to a real
     /// bubble before the container is active.
-    pub auto_bubble_id: BubbleId,
+    pub auto_tag_id: BubbleId,
 
-    /// The bubble this chart currently displays.  Equal to `auto_bubble_id`
+    /// The bubble this chart currently displays.  Equal to `auto_tag_id`
     /// when ungrouped; flipped to the color-tag bubble on sync join; flipped
-    /// back to `auto_bubble_id` on desync.
+    /// back to `auto_tag_id` on desync.
     ///
-    /// `BubbleId(0)` is a construction-time sentinel (same as `auto_bubble_id`).
-    pub current_bubble_id: BubbleId,
+    /// `BubbleId(0)` is a construction-time sentinel (same as `auto_tag_id`).
+    pub current_tag_id: BubbleId,
 
     // === Data ===
     // Phase X0 / C5c (2026-06-19): per-Kind series storage moved to DataBubble.
@@ -399,10 +399,10 @@ impl ChartContainer {
         Self {
             id,
             chart_panel_id: panel_id,
-            // Sentinel — caller must set auto_bubble_id / current_bubble_id
+            // Sentinel — caller must set auto_tag_id / current_tag_id
             // immediately after construction via post-construction mutation.
-            auto_bubble_id: BubbleId(0),
-            current_bubble_id: BubbleId(0),
+            auto_tag_id: BubbleId(0),
+            current_tag_id: BubbleId(0),
             ha_cache: None,
             ha_cache_stamp: None,
             vp_overlay: None,
@@ -882,7 +882,7 @@ impl ChartContainer {
     ///
     /// Unlike `clone_for_split`, this variant does **not** take a source
     /// `ChartPanelState`.  It creates a fresh `ChartContainer` shell whose
-    /// `current_bubble_id` is set by the caller — under the per-bubble
+    /// `current_tag_id` is set by the caller — under the per-bubble
     /// drawing model (Step 3.1) no separate `DrawingManager` seeding is
     /// needed: the new leaf either shares the source bubble (peer window)
     /// or is bound to a freshly created bubble, and `DrawingManager`
@@ -906,8 +906,8 @@ impl ChartContainer {
             chart_panel_id: new_panel_id,
             // Sentinel — do_split must detect BubbleId(0) and create a fresh
             // auto-bubble for every chart that clone_for_split_shell produces.
-            auto_bubble_id: BubbleId(0),
-            current_bubble_id: BubbleId(0),
+            auto_tag_id: BubbleId(0),
+            current_tag_id: BubbleId(0),
 
             // Phase X0 / C5c: per-Kind series live on the bubble.
             ha_cache: None,

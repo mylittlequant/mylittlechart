@@ -4131,7 +4131,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             for pw in self.windows.values_mut() {
                 let total_bars: usize = pw.chart.panel_app.panel_grid.containers()
                     .values()
-                    .map(|w| pw.chart.core.bubbles().bars(w.current_bubble_id).len())
+                    .map(|w| pw.chart.core.bubbles().bars(w.current_tag_id).len())
                     .sum();
                 let lag_events = pw.chart.lag_event_count;
 

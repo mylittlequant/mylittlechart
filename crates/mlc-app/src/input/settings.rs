@@ -1011,7 +1011,7 @@ impl ChartApp {
         let wid = uzor::WidgetId::from(crate::text_input::PRIMITIVE_SETTINGS_FIELD);
         let text = self.input_coordinator.borrow().text_fields().text(&wid).to_string();
         self.input_coordinator.borrow_mut().text_fields_mut().blur();
-        let active_bid_prim = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+        let active_bid_prim = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
 
         if field == "text_content" {
             if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
@@ -1228,7 +1228,7 @@ impl ChartApp {
     fn handle_prim_settings_item(&mut self, item_id: &str, x: f64, _y: f64) {
         use mlc_core::drawing::primitives_v2::{LineStyle, TextAlign};
         use mlc_core::drawing::primitives_v2::config::{PropertyValue, PropertyType};
-        let active_bid_prim = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+        let active_bid_prim = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
 
         // Close template dropdown on any non-dropdown click
         if !item_id.starts_with("template_") {
@@ -2061,7 +2061,7 @@ impl ChartApp {
                         return;
                     }
                 };
-                let active_bid_tmpl = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                let active_bid_tmpl = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
                 if !name.is_empty() {
                     if let Some(data) = active_bid_tmpl
                         .and_then(|bid| self.core.drawings().get_data(bid, prim_id))
@@ -2660,7 +2660,7 @@ impl ChartApp {
                         if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
                             self.core.indicators_mut().reset_to_defaults(ind_id);
                             // Recalculate
-                            if let Some(active_bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id) {
+                            if let Some(active_bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id) {
                                 let bars = self.active_chart_bars();
                                 self.core.indicators_mut().recalc_bubble(active_bid, &bars);
                             }
@@ -2698,7 +2698,7 @@ impl ChartApp {
                                     };
                                     self.core.indicators_mut().set_param(ind_id, k, pv);
                                 }
-                                if let Some(active_bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id) {
+                                if let Some(active_bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id) {
                                     let bars = self.active_chart_bars();
                                     self.core.indicators_mut().recalc_bubble(active_bid, &bars);
                                 }
@@ -2719,7 +2719,7 @@ impl ChartApp {
                         .map(|inst| !inst.signals_enabled);
                     if let Some(enabled) = new_val {
                         self.core.indicators_mut().set_signals_enabled(ind_id, enabled);
-                        if let Some(active_bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id) {
+                        if let Some(active_bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id) {
                             let bars = self.active_chart_bars();
                             self.core.indicators_mut().recalc_bubble(active_bid, &bars);
                         }
@@ -2756,7 +2756,7 @@ impl ChartApp {
                     IndValue::String(text.trim().to_string())
                 };
                 self.core.indicators_mut().set_param(ind_id, param_name, value);
-                if let Some(active_bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id) {
+                if let Some(active_bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id) {
                     let bars = self.active_chart_bars();
                     self.core.indicators_mut().recalc_bubble(active_bid, &bars);
                 }
@@ -2881,7 +2881,7 @@ impl ChartApp {
                 if let Some((next_val, _options)) = cycle_info {
                     self.core.indicators_mut().set_param(ind_id, param_name, IndValue::String(next_val.clone()));
                     // Recalculate.
-                    if let Some(active_bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id) {
+                    if let Some(active_bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id) {
                         let bars = self.active_chart_bars();
                         self.core.indicators_mut().recalc_bubble(active_bid, &bars);
                     }
@@ -2905,7 +2905,7 @@ impl ChartApp {
 
             if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
                 self.core.indicators_mut().set_param(ind_id, &param_name, IndValue::String(value.clone()));
-                if let Some(active_bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id) {
+                if let Some(active_bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id) {
                     let bars = self.active_chart_bars();
                     self.core.indicators_mut().recalc_bubble(active_bid, &bars);
                 }
@@ -2926,7 +2926,7 @@ impl ChartApp {
 
                 if let Some(cur) = current_bool {
                     self.core.indicators_mut().set_param(ind_id, param_name, IndValue::Bool(!cur));
-                    if let Some(active_bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id) {
+                    if let Some(active_bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id) {
                         let bars = self.active_chart_bars();
                         self.core.indicators_mut().recalc_bubble(active_bid, &bars);
                     }

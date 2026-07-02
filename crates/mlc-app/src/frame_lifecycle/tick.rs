@@ -348,7 +348,7 @@ impl ChartApp {
             let bubble_data: Vec<BubbleAlertData> = self.panel_app.panel_grid.containers()
                 .iter()
                 .filter_map(|(_cid, window)| {
-                    let bid = window.current_bubble_id;
+                    let bid = window.current_tag_id;
                     if !seen_bids.insert(bid) {
                         return None;
                     }
@@ -433,7 +433,7 @@ impl ChartApp {
 
             // Use the active window's price for delivery event messages.
             let current_price = self.panel_app.panel_grid.active_container()
-                .map(|w| w.current_bubble_id)
+                .map(|w| w.current_tag_id)
                 .and_then(|bid| self.with_bubble(bid, |b| b.bars.last().map(|bar| bar.close)).flatten())
                 .unwrap_or(0.0);
 
@@ -492,7 +492,7 @@ impl ChartApp {
 
                 for window_id in matching_ids {
                     let chart_id = ChartId(window_id);
-                    let bid_opt = self.panel_app.panel_grid.containers().get(&chart_id).map(|w| w.current_bubble_id);
+                    let bid_opt = self.panel_app.panel_grid.containers().get(&chart_id).map(|w| w.current_tag_id);
                     if let Some(bid) = bid_opt {
                         let bars_recalc: Vec<mlc_core::Bar> = self.with_bubble(bid, |b| b.bars.clone()).unwrap_or_default();
                         self.core.indicators_mut().recalc_bubble(bid, &bars_recalc);
@@ -542,7 +542,7 @@ impl ChartApp {
 
             let bar_counts_by_chart: std::collections::HashMap<mlc_core::state::ChartId, usize> =
                 self.panel_app.panel_grid.containers().iter()
-                    .map(|(cid, w)| (*cid, self.core.bubbles().bars(w.current_bubble_id).len()))
+                    .map(|(cid, w)| (*cid, self.core.bubbles().bars(w.current_tag_id).len()))
                     .collect();
 
             for (cid_scroll, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
@@ -590,7 +590,7 @@ impl ChartApp {
                 // EVERY scroll-fetch — left/scroll backfill silently no-op'd.
                 let oldest_ts = self.panel_app.panel_grid.containers()
                     .get(&cid_req)
-                    .and_then(|w| self.core.bubbles().bars(w.current_bubble_id).first().map(|bar| bar.timestamp))
+                    .and_then(|w| self.core.bubbles().bars(w.current_tag_id).first().map(|bar| bar.timestamp))
                     .unwrap_or(0);
 
                 if oldest_ts == 0 { continue; }
@@ -680,7 +680,7 @@ impl ChartApp {
             let attempted = &self.indicator_heal_attempted;
             let im = self.core.indicators();
             self.panel_app.panel_grid.iter_containers().any(|(_, w)| {
-                im.instances_for_bubble(w.current_bubble_id)
+                im.instances_for_bubble(w.current_tag_id)
                     .iter()
                     .any(|i| i.values.is_empty() && !attempted.contains(&i.id))
             })
@@ -690,7 +690,7 @@ impl ChartApp {
                 .panel_app
                 .panel_grid
                 .iter_containers()
-                .map(|(_, w)| (w.current_bubble_id.0, w.id))
+                .map(|(_, w)| (w.current_tag_id.0, w.id))
                 .collect();
             for (bid, cid) in window_ids {
                 let bubble_id = mlc_core::ids::BubbleId(bid);

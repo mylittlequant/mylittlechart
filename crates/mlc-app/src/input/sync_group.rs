@@ -66,7 +66,7 @@ impl ChartApp {
         {
             let cid_dbg = self.panel_app.panel_grid.container_id_for_leaf(leaf_id);
             let auto_bid_dbg = cid_dbg
-                .and_then(|cid| self.panel_app.panel_grid.containers().get(&cid).map(|w| w.auto_bubble_id));
+                .and_then(|cid| self.panel_app.panel_grid.containers().get(&cid).map(|w| w.auto_tag_id));
             let cur_bid_dbg = cid_dbg.and_then(|cid| self.bubble_for_chart(cid));
             let auto_snap = auto_bid_dbg
                 .and_then(|bid| self.with_bubble(bid, |b| (b.address.symbol.clone(), b.address.exchange.clone(), b.address.account_type)));
@@ -94,11 +94,11 @@ impl ChartApp {
             }
         };
 
-        // Read auto_bubble_id BEFORE disconnect so we can re-attach.
-        let auto_bubble_id = self.panel_app.panel_grid
+        // Read auto_tag_id BEFORE disconnect so we can re-attach.
+        let auto_tag_id = self.panel_app.panel_grid
             .containers()
             .get(&chart_id)
-            .map(|w| w.auto_bubble_id);
+            .map(|w| w.auto_tag_id);
 
         // 1b. Disconnect from current color-tag group.
         // The write guard from `self.core.bubble_mut()` lives in the if-let
@@ -125,7 +125,7 @@ impl ChartApp {
         }
 
         // 2. Re-attach chart to its permanent home auto-bubble and restore state.
-        if let Some(auto_bid) = auto_bubble_id {
+        if let Some(auto_bid) = auto_tag_id {
             // Re-attach to home auto-bubble.
             self.attach_chart_to_tag(chart_id, auto_bid);
 
@@ -152,7 +152,7 @@ impl ChartApp {
 
                 // Restore state onto the auto-bubble. Under the per-bubble
                 // drawing model the auto-bubble's `primitives` ARE what the
-                // window will read once `current_bubble_id` flips below — no
+                // window will read once `current_tag_id` flips below — no
                 // separate per-window DrawingManager to write into.
                 let restored_count = restored_prims.len();
                 self.core.drawings_mut().adopt(auto_bid, restored_prims);
@@ -170,12 +170,12 @@ impl ChartApp {
                     }
                 }
 
-                // Update current_bubble_id on the window.  Also clear the
+                // Update current_tag_id on the window.  Also clear the
                 // home-overlay flag — the chart is back in its untagged home
                 // state; the next tag entry decides afresh whether to surface
                 // the overlay.
                 if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
-                    window.current_bubble_id = auto_bid;
+                    window.current_tag_id = auto_bid;
                     window.tag_inherits_home_overlay = false;
                 }
 
@@ -207,20 +207,20 @@ impl ChartApp {
                 let _ = &pre_tag_ids;
                 eprintln!("[BubbleStore] Desync: pointer-flip to home auto_bubble {:?}", auto_bid);
             } else {
-                // Was not in a color group — the window's `current_bubble_id`
+                // Was not in a color group — the window's `current_tag_id`
                 // simply flips to `auto_bid`; `auto_bid`'s own primitives are
                 // already authoritative (no per-window synced copy to purge
                 // under the per-bubble model).
                 self.core.indicators_mut().purge_for_bubble(mlc_core::ids::BubbleId(chart_id.0));
                 if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
-                    window.current_bubble_id = auto_bid;
+                    window.current_tag_id = auto_bid;
                 }
             }
 
             eprintln!("[BubbleStore] Desync: chart {:?} re-attached to auto-bubble {:?}", chart_id, auto_bid);
         } else {
             eprintln!(
-                "[BubbleStore] Desync: chart {:?} has sentinel auto_bubble_id — construction site missed post-init. Skipping desync.",
+                "[BubbleStore] Desync: chart {:?} has sentinel auto_tag_id — construction site missed post-init. Skipping desync.",
                 chart_id
             );
             return;
@@ -262,7 +262,7 @@ impl ChartApp {
         {
             let cid_dbg = self.panel_app.panel_grid.container_id_for_leaf(joining_leaf);
             let auto_bid_dbg = cid_dbg
-                .and_then(|cid| self.panel_app.panel_grid.containers().get(&cid).map(|w| w.auto_bubble_id));
+                .and_then(|cid| self.panel_app.panel_grid.containers().get(&cid).map(|w| w.auto_tag_id));
             let cur_bid_dbg = cid_dbg.and_then(|cid| self.bubble_for_chart(cid));
             let auto_snap = auto_bid_dbg
                 .and_then(|bid| self.with_bubble(bid, |b| (b.address.symbol.clone(), b.address.exchange.clone(), b.address.account_type)));
@@ -300,12 +300,12 @@ impl ChartApp {
                 //
                 // The home auto_bubble is the source of truth: it is created
                 // and populated in do_split / the constructor flows and is
-                // never detached from the chart's container (window.auto_bubble_id
+                // never detached from the chart's container (window.auto_tag_id
                 // is a permanent home pointer).  Read identity straight from
                 // there so a transient detach in the middle of a re-tag
                 // cannot blank the new tag-group's key.
                 let auto_bid = self.panel_app.panel_grid.containers().get(&chart_id)
-                    .map(|w| w.auto_bubble_id);
+                    .map(|w| w.auto_tag_id);
                 let auto_view: Option<(String, String, String, mlc_core::state::Timeframe)> = auto_bid
                     .and_then(|bid| self.with_bubble(bid, |b| {
                         (b.address.symbol.clone(), b.address.exchange.clone(), b.address.account_type.as_label().to_string(), b.timeframe.clone())
@@ -343,14 +343,14 @@ impl ChartApp {
             // `DrawingManager::effective_color` already reads
             // `bubble.last_used_style` directly for the bubble the window
             // points at (bid-keyed sessions, no per-window Arc to rebind).
-            let pid_join = self.panel_app.panel_grid.container_for_leaf(joining_leaf).map(|w| w.current_bubble_id);
+            let pid_join = self.panel_app.panel_grid.container_for_leaf(joining_leaf).map(|w| w.current_tag_id);
 
             // Snapshot pre-tag indicator ids (these survive desync).
             // Indicators owned by the chart's home auto-bubble are the
             // pre-tag set under the bubble-ownership model.
             let auto_bid_raw_pre = self.panel_app.panel_grid.containers()
                 .get(&chart_id)
-                .map(|w| w.auto_bubble_id.0);
+                .map(|w| w.auto_tag_id.0);
             let pre_tag_ids: Vec<u64> = self.core.indicators()
                                 .all_instances()
                 .into_iter()
@@ -372,11 +372,11 @@ impl ChartApp {
                     self.core.bubbles_mut().set_scale_mode(group_id, mode);
                 }
 
-                // Get auto_bubble_id before taking mutable window borrow.
+                // Get auto_tag_id before taking mutable window borrow.
                 let auto_bid = self.panel_app.panel_grid
                     .containers()
                     .get(&chart_id)
-                    .map(|w| w.auto_bubble_id);
+                    .map(|w| w.auto_tag_id);
 
                 // Stash command_history and pre_tag_ids into auto_bubble.
                 // Replace window.command_history with a fresh one so group ops are independent.
@@ -389,7 +389,7 @@ impl ChartApp {
                 // back into auto_bubble would clobber the home history).
                 if is_retag {
                     if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(joining_leaf) {
-                        window.current_bubble_id = group_id;
+                        window.current_tag_id = group_id;
                         // Re-tag: this chart did NOT bring home content into
                         // the new tag (the previous tag owned it).  Do not
                         // render home stash as a Memory overlay in this tag.
@@ -406,8 +406,8 @@ impl ChartApp {
                             auto_bub.pre_tag_indicator_ids = pre_tag_ids.clone();
                         });
                     }
-                    // Update current_bubble_id to the new color group.
-                    window.current_bubble_id = group_id;
+                    // Update current_tag_id to the new color group.
+                    window.current_tag_id = group_id;
                     // First tag entry from untagged: the chart's home stash
                     // does flow into this tag's Memory overlay.
                     window.tag_inherits_home_overlay = true;
@@ -521,7 +521,7 @@ impl ChartApp {
                 }
                 } // end if !is_retag
                 // NOTE (Step 3.1): no separate per-window DrawingManager to
-                // clear any more — once `window.current_bubble_id` flips to
+                // clear any more — once `window.current_tag_id` flips to
                 // `group_id` below, the window reads `group.primitives`
                 // directly. `auto_bid`'s primitives were already stashed
                 // above and must NOT be cleared here (that stash is what
@@ -530,7 +530,7 @@ impl ChartApp {
                 // Seed bars into the brand-new color group from the chart's
                 // home auto_bubble so the chart paints immediately under the
                 // group view.  Without this seed the chart's
-                // `current_bubble_id = group_id` points at an empty
+                // `current_tag_id = group_id` points at an empty
                 // `bubble.bars` (create_group initialises it empty), and the
                 // chart sits blank until the next live BarsLoaded happens to
                 // run against `bubbles_for_instrument` — which only fires when
@@ -586,7 +586,7 @@ impl ChartApp {
                 };
                 let auto_bid_raw_cfg = self.panel_app.panel_grid.containers()
                     .get(&chart_id)
-                    .map(|w| w.auto_bubble_id);
+                    .map(|w| w.auto_tag_id);
                 let indicators_guard_cfg = self.core.indicators();
                 let mut configs: Vec<mlc_core::indicator_types::IndicatorGroupConfig> = auto_bid_raw_cfg
                     .map(|bid| indicators_guard_cfg.instances_for_bubble(bid))
@@ -623,7 +623,7 @@ impl ChartApp {
             }
 
             // EXISTING GROUP: auto_bubble holds home drawings untouched; the
-            // window's `current_bubble_id` flip to `group_id` (below) is all
+            // window's `current_tag_id` flip to `group_id` (below) is all
             // that's needed for it to read the group's own primitives.
 
             // When sync_viewport is ON for this group, stash the window's current
@@ -661,7 +661,7 @@ impl ChartApp {
             let existing_bars_empty = self.with_bubble(group_id, |g| g.bars.is_empty()).unwrap_or(true);
             if existing_bars_empty {
                 let auto_bid_existing = self.panel_app.panel_grid.containers().get(&chart_id)
-                    .map(|w| w.auto_bubble_id);
+                    .map(|w| w.auto_tag_id);
                 let auto_bars: Vec<mlc_core::Bar> = auto_bid_existing
                     .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()))
                     .unwrap_or_default();
@@ -690,11 +690,11 @@ impl ChartApp {
                 }
             }
 
-            // Get auto_bubble_id before taking mutable window borrow.
+            // Get auto_tag_id before taking mutable window borrow.
             let auto_bid_existing = self.panel_app.panel_grid
                 .containers()
                 .get(&chart_id)
-                .map(|w| w.auto_bubble_id);
+                .map(|w| w.auto_tag_id);
 
             // Stash command_history and pre_tag_ids into auto_bubble.
             //
@@ -703,7 +703,7 @@ impl ChartApp {
             // tag entry; preserve it and do not overwrite command_history.
             if is_retag {
                 if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(joining_leaf) {
-                    window.current_bubble_id = group_id;
+                    window.current_tag_id = group_id;
                     window.tag_inherits_home_overlay = false;
                 }
             } else if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(joining_leaf) {
@@ -724,8 +724,8 @@ impl ChartApp {
                         );
                     }
                 }
-                // Update current_bubble_id to the existing color group.
-                window.current_bubble_id = group_id;
+                // Update current_tag_id to the existing color group.
+                window.current_tag_id = group_id;
                 window.tag_inherits_home_overlay = true;
             }
 
@@ -815,7 +815,7 @@ impl ChartApp {
                 .filter(|&cid| {
                     self.panel_app.panel_grid.containers()
                         .get(&cid)
-                        .map(|w| w.auto_bubble_id == mlc_core::ids::BubbleId(0))
+                        .map(|w| w.auto_tag_id == mlc_core::ids::BubbleId(0))
                         .unwrap_or(false)
                 })
                 .collect();
@@ -841,8 +841,8 @@ impl ChartApp {
                 }
                 {
                     if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&cid) {
-                        window.auto_bubble_id = auto_bid;
-                        window.current_bubble_id = auto_bid;
+                        window.auto_tag_id = auto_bid;
+                        window.current_tag_id = auto_bid;
                     }
                 }
                 self.attach_chart_to_tag(cid, auto_bid);
@@ -1029,10 +1029,10 @@ impl ChartApp {
             // Disconnect the old chart from its group (leaf destroyed by split).
             if let (Some(old_cid), Some(old_gid)) = (pre_split_chart_id, pre_split_group_id) {
                 // Whether `old_gid` is the chart's permanent HOME auto_bubble.
-                // Read BEFORE detach so the auto_bubble_id is still resolvable
-                // via window.auto_bubble_id (which persists across detach).
+                // Read BEFORE detach so the auto_tag_id is still resolvable
+                // via window.auto_tag_id (which persists across detach).
                 let old_cid_auto_home = self.panel_app.panel_grid.containers().get(&old_cid)
-                    .map(|w| w.auto_bubble_id);
+                    .map(|w| w.auto_tag_id);
                 let _ = self.detach_chart_from_tag(old_cid);
                 sglog!("[BubbleStore] Disconnected destroyed chart {:?} from group {:?} (home auto_bid={:?})", old_cid, old_gid, old_cid_auto_home);
                 // Bug C fix: remove the old group if it became empty and was
@@ -1136,18 +1136,18 @@ impl ChartApp {
             for &(_, chart_id) in &leaf_chart_ids {
                 self.attach_chart_to_tag(chart_id, group_id);
             }
-            // Point every leaf's `window.current_bubble_id` at the shared
+            // Point every leaf's `window.current_tag_id` at the shared
             // group bubble.  Without this, sibling leaves born by the split
-            // keep their freshly-created auto_bubble as `current_bubble_id`
+            // keep their freshly-created auto_bubble as `current_tag_id`
             // while `BubbleStore.bubble_for_chart` (= reverse map) returns
             // group_id — the two paths get out of sync and the renderer +
             // sub_pane geometry read the wrong bucket, so the sibling shows
             // no group indicators / drawings while the Object Tree shows
             // them (Object Tree uses bubble_for_chart, canvas uses
-            // window.current_bubble_id via the atomic).
+            // window.current_tag_id via the atomic).
             for &(leaf_id, _) in &leaf_chart_ids {
                 if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
-                    window.current_bubble_id = group_id;
+                    window.current_tag_id = group_id;
                 }
             }
             for &(leaf_id, _) in &leaf_chart_ids {
@@ -1163,7 +1163,7 @@ impl ChartApp {
                 if let Some(&(source_leaf, source_cid)) = leaf_chart_ids.first() {
                     let source_auto_bid_raw = self.panel_app.panel_grid.containers()
                         .get(&source_cid)
-                        .map(|w| w.auto_bubble_id);
+                        .map(|w| w.auto_tag_id);
                     let pre_tag_ids: Vec<u64> = {
                         let indicators_guard = self.core.indicators();
                         source_auto_bid_raw
@@ -1175,11 +1175,11 @@ impl ChartApp {
                             .collect()
                     };
 
-                    // Read auto_bubble_id before taking mutable window borrow.
+                    // Read auto_tag_id before taking mutable window borrow.
                     let source_auto_bid = self.panel_app.panel_grid
                         .containers()
                         .get(&source_cid)
-                        .map(|w| w.auto_bubble_id);
+                        .map(|w| w.auto_tag_id);
 
                     if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(source_leaf) {
                         // Stash command_history into auto_bubble; window gets a fresh one.
@@ -1193,8 +1193,8 @@ impl ChartApp {
                                 auto_bub.pre_tag_indicator_ids = pre_tag_ids.clone();
                             });
                         }
-                        // Update current_bubble_id to the new group.
-                        window.current_bubble_id = group_id;
+                        // Update current_tag_id to the new group.
+                        window.current_tag_id = group_id;
                     }
                     // auto_bubble.primitives already holds the source's home drawings —
                     // no explicit stash needed.
@@ -1225,7 +1225,7 @@ impl ChartApp {
 
             // NOTE (Step 3.1): no legacy-cloned primitives to purge from
             // non-source windows any more — every leaf in `leaf_chart_ids`
-            // now has `current_bubble_id == group_id` (set above), so they
+            // now has `current_tag_id == group_id` (set above), so they
             // all read `group.primitives` directly.
 
             // For EXISTING group: primitives are synced per-frame via pre-render,
@@ -1253,13 +1253,13 @@ impl ChartApp {
                         .unwrap_or_else(|| "S".to_string());
                     (sym, exch, at)
                 };
-                // NOTE (Step 3.1): the source window's `current_bubble_id`
+                // NOTE (Step 3.1): the source window's `current_tag_id`
                 // was already flipped to `group_id` in the block above —
-                // read from its home `auto_bubble_id` instead, since that's
+                // read from its home `auto_tag_id` instead, since that's
                 // where the "window's current drawings" actually still live.
                 let seed_auto_bid = first_leaf_chart_id
                     .and_then(|cid| self.panel_app.panel_grid.containers().get(&cid))
-                    .map(|w| w.auto_bubble_id);
+                    .map(|w| w.auto_tag_id);
                 let mut source_prims: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> =
                     seed_auto_bid
                         .map(|bid| self.core.drawings().primitives(bid).iter()
@@ -1309,7 +1309,7 @@ impl ChartApp {
                     };
                     let source_chart_auto_bid_raw = self.panel_app.panel_grid.containers()
                         .get(&source_chart_id)
-                        .map(|w| w.auto_bubble_id);
+                        .map(|w| w.auto_tag_id);
                     let indicators_guard_split = self.core.indicators();
                     let mut configs: Vec<mlc_core::indicator_types::IndicatorGroupConfig> = source_chart_auto_bid_raw
                         .map(|bid| indicators_guard_split.instances_for_bubble(bid))
@@ -1496,7 +1496,7 @@ impl ChartApp {
         // Apply the full instrument key change (symbol + exchange + account_type).
         //
         // NOTE (Step 3.1): under the per-bubble drawing model, sync leaves
-        // that share a tag also share `current_bubble_id` — calling
+        // that share a tag also share `current_tag_id` — calling
         // `swap_symbol` once per leaf would clear + restore the SAME
         // bubble's primitives N times (idempotent-redundant at best, a
         // double-restore risk at worst). Deduplicate by bid: call
@@ -1504,7 +1504,7 @@ impl ChartApp {
         // viewport reset (genuinely per-window state) for every leaf.
         let mut swapped_bids: std::collections::HashSet<mlc_core::ids::BubbleId> = std::collections::HashSet::new();
         for (leaf_id, (old_symbol, old_exchange, old_account_type, _)) in sync_leaves.iter().zip(peer_info.iter()) {
-            let bid_opt = self.panel_app.panel_grid.container_for_leaf(*leaf_id).map(|w| w.current_bubble_id);
+            let bid_opt = self.panel_app.panel_grid.container_for_leaf(*leaf_id).map(|w| w.current_tag_id);
             if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(*leaf_id) {
                 if let Some(bid) = bid_opt {
                     if swapped_bids.insert(bid) {
@@ -1863,7 +1863,7 @@ impl ChartApp {
     /// freehand drag-end, finish_multipoint). Under the per-bubble drawing
     /// model there is no separate per-window `DrawingManager` to move the
     /// primitive OUT of — the completed primitive already lives on
-    /// `window.current_bubble_id`'s `DataBubble.primitives`, which IS the
+    /// `window.current_tag_id`'s `DataBubble.primitives`, which IS the
     /// group's authoritative list once the window is tagged. This just
     /// applies the instrument-key stamp that used to happen as part of the
     /// pop/push dance.
@@ -1933,9 +1933,9 @@ impl ChartApp {
         // split (auto-tag) -> untag -> tag-in-new-color landed with sym=''
         // because `disconnect_from_current_group` saw the auto_bubble empty
         // after detach and removed it as "an empty auto group", taking the
-        // chart's home with it.  Skip removal when `old_gid == auto_bubble_id`.
+        // chart's home with it.  Skip removal when `old_gid == auto_tag_id`.
         let auto_bid_home = self.panel_app.panel_grid.containers().get(&chart_id)
-            .map(|w| w.auto_bubble_id);
+            .map(|w| w.auto_tag_id);
         sglog!(
             "[disconnect_from_current_group] leaf={:?} cid={:?} old_gid={:?} auto_bid_home={:?}",
             leaf_id, chart_id, old_gid, auto_bid_home
@@ -1959,7 +1959,7 @@ impl ChartApp {
     }
 
     /// DEAD (Step 3.1): under the per-bubble drawing model, a grouped
-    /// window's `current_bubble_id` already equals the group's bid — any
+    /// window's `current_tag_id` already equals the group's bid — any
     /// mutation made through `core.drawings_mut()` on that bid writes
     /// directly into `DataBubble.primitives`, which IS the group's
     /// authoritative primitive list. There is no separate per-window
@@ -2073,7 +2073,7 @@ impl ChartApp {
                 // Real bars from the peer chart's bubble (cutover sweep stub'd this empty).
                 let bars: Option<Vec<mlc_core::Bar>> = self.panel_app.panel_grid
                     .containers().get(&peer_cid)
-                    .map(|w| w.current_bubble_id)
+                    .map(|w| w.current_tag_id)
                     .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()));
                 if let Some(bars) = bars {
                     self.core.indicators_mut().recalc_bubble(group_id, &bars);

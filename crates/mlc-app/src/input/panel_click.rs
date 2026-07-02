@@ -368,7 +368,7 @@ impl ChartApp {
                             .and_then(|cid| self.account_type_for_chart(cid))
                             .map(String::from)
                             .unwrap_or_else(|| "S".to_string());
-                        let active_bid_pc = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                        let active_bid_pc = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
                         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                             if let Some(bid) = active_bid_pc {
                                 let restore_snaps = window.take_drawings_snapshot_for_symbol(&symbol, &item_exchange, &item_account_type);
@@ -2692,7 +2692,7 @@ impl ChartApp {
         if widget_id.contains("_drw_delete_") || widget_id.starts_with("drw_delete_") {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 // 1. Try active bubble first (handles Active + WindowOtherKey).
-                let active_bid_del = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                let active_bid_del = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
                 let removed_from_dm = active_bid_del
                     .map(|bid| self.core.drawings_mut().delete(bid, id))
                     .unwrap_or(false);
@@ -2710,7 +2710,7 @@ impl ChartApp {
                 let removed_from_auto_bubble = if let Some(cid) = active_chart_id {
                     let auto_bid = self.panel_app.panel_grid.containers()
                         .get(&cid)
-                        .map(|w| w.auto_bubble_id);
+                        .map(|w| w.auto_tag_id);
                     if let Some(bid) = auto_bid {
                         self.core.drawings_mut().delete(bid, id)
                     } else {
@@ -2776,7 +2776,7 @@ impl ChartApp {
         // --- Drawing settings ---
         if widget_id.contains("_drw_settings_") || widget_id.starts_with("drw_settings_") {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
-                let active_bid_settings = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                let active_bid_settings = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
                 if let Some(bid) = active_bid_settings {
                     if self.core.drawings().get_data(bid, id).is_some() {
                         self.panel_app.primitive_settings_state.open(id);
@@ -2797,7 +2797,7 @@ impl ChartApp {
         // --- Drawing visibility ---
         if widget_id.contains("_drw_vis_") || widget_id.starts_with("drw_vis_") {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
-                let active_bid_vis = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                let active_bid_vis = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
                 if let Some(bid) = active_bid_vis {
                     self.core.drawings_mut().toggle_visibility(bid, id);
                 }
@@ -2818,7 +2818,7 @@ impl ChartApp {
         // --- Drawing lock ---
         if widget_id.contains("_drw_lock_") || widget_id.starts_with("drw_lock_") {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
-                let active_bid_lock = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                let active_bid_lock = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
                 if let Some(bid) = active_bid_lock {
                     self.core.drawings_mut().toggle_lock_primitive(bid, id);
                 }
@@ -2927,7 +2927,7 @@ impl ChartApp {
                     .map(|b| b.close)
                     .unwrap_or(0.0);
                 let mut source_name = format!("Drawing {}", id);
-                let active_bid_alert = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                let active_bid_alert = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
                 if let Some(bid) = active_bid_alert {
                     let guard = self.core.drawings();
                     if let Some(prim) = guard.primitives(bid).iter().find(|p| p.data().id == id) {
@@ -3051,7 +3051,7 @@ impl ChartApp {
                     // copying a price band that would be meaningless on a peer
                     // (and without the old Manual-mode force that broke peers).
                     if is_drw_row {
-                        let active_bid_center = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                        let active_bid_center = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
                         let center_bars: Vec<mlc_core::Bar> = self.active_chart_bars();
                         // Mid timestamp from the primitive's anchor points. Price
                         // anchors (the `.1`) are no longer used for framing — Auto
@@ -3248,7 +3248,7 @@ impl ChartApp {
 
             // Split borrows: toolbar_state and panel_grid are separate fields of panel_app,
             // and panels_store is a separate field of self.
-            let active_bid_tb = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+            let active_bid_tb = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
             let window_ptr: *mut _ = self.panel_app.panel_grid.active_container_mut()
                 .map(|w| w as *mut _)
                 .unwrap_or(std::ptr::null_mut::<crate::chart_container::ChartContainer>());
@@ -3301,7 +3301,7 @@ impl ChartApp {
                 let dropdown_id = dropdown_id.to_string();
                 let item_id = item_id.to_string();
 
-                let active_bid_dd = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
+                let active_bid_dd = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
                 let window_ptr: *mut _ = self.panel_app.panel_grid.active_container_mut()
                     .map(|w| w as *mut _)
                     .unwrap_or(std::ptr::null_mut::<crate::chart_container::ChartContainer>());

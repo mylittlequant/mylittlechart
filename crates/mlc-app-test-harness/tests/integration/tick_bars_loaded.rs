@@ -45,8 +45,8 @@ fn mk_chart_with_bubble(
 
     let mut chart = ChartContainer::new(symbol, tf);
     chart.id = chart_id;
-    chart.auto_bubble_id = bid;
-    chart.current_bubble_id = bid;
+    chart.auto_tag_id = bid;
+    chart.current_tag_id = bid;
     (chart, chart_id, bid)
 }
 
@@ -105,9 +105,9 @@ fn bars_loaded_fills_every_bubble_when_four_tabs_share_instrument() {
         &new_bars,
     );
 
-    // Every chart's current_bubble_id → bubble.bars must equal new_bars.
+    // Every chart's current_tag_id → bubble.bars must equal new_bars.
     for (chart, cid, _) in &charts {
-        let bid = chart.current_bubble_id;
+        let bid = chart.current_tag_id;
         let bars = store.bars(bid);
         assert_eq!(
             bars.len(),
@@ -144,12 +144,12 @@ fn bars_loaded_does_not_leak_to_unrelated_instrument() {
 
     // BTC charts: 300 bars each.
     for (chart, _, _) in charts.iter().take(2) {
-        let bars = store.bars(chart.current_bubble_id);
+        let bars = store.bars(chart.current_tag_id);
         assert_eq!(bars.len(), 300, "BTC tab gets bars");
     }
     // ETH charts: still empty.
     for (chart, _, _) in charts.iter().skip(2) {
-        let bars = store.bars(chart.current_bubble_id);
+        let bars = store.bars(chart.current_tag_id);
         assert_eq!(bars.len(), 0, "ETH tab is NOT polluted by BTC write");
     }
 }
@@ -173,6 +173,6 @@ fn bars_loaded_with_timeframe_mismatch_no_matched_windows_no_write() {
     );
 
     let (chart, _, _) = &charts[0];
-    let bars = store.bars(chart.current_bubble_id);
+    let bars = store.bars(chart.current_tag_id);
     assert_eq!(bars.len(), 0, "mismatched timeframe must not trigger write");
 }

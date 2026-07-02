@@ -102,7 +102,7 @@ fn live_bug_repro_writer_via_instrument_misses_chart_bubble() {
     // Live bug repro: chart is attached to a bubble whose instrument fields
     // are unset; a SEPARATE phantom bubble holds the matching instrument.
     // Writer routed via `bubble_for_instrument` writes into the phantom and
-    // the chart's renderer (which reads via current_bubble_id) sees zero bars.
+    // the chart's renderer (which reads via current_tag_id) sees zero bars.
     let (mut store, tags, chart_id, attached_bid, phantom_bid) =
         chart_with_phantom_instrument_bubble("binance", "S", "BTCUSDT", Timeframe::m1());
     let new_bars = mk_bars(300);
@@ -130,7 +130,7 @@ fn new_writer_via_bubble_for_chart_fills_renderer_bubble() {
     assert_eq!(bid, attached_bid);
     store.set_bars(bid, new_bars.clone());
 
-    // Renderer reads via current_bubble_id (same path) — populated.
+    // Renderer reads via current_tag_id (same path) — populated.
     let renderer_bid = tags.tag_for_chart(chart_id).expect("chart attached");
     let bars = store.bars(renderer_bid);
     assert_eq!(bars.len(), 300, "spinner retires");
@@ -138,7 +138,7 @@ fn new_writer_via_bubble_for_chart_fills_renderer_bubble() {
 
 #[test]
 fn renderer_read_path_after_new_writer() {
-    // Renderer reads bars via window.current_bubble_id (here simulated as
+    // Renderer reads bars via window.current_tag_id (here simulated as
     // tag_for_chart). After the new writer, every chart's read sees bars.
     let (mut store, tags, charts) = n_charts_same_instrument(
         4, "binance", "S", "BTCUSDT", Timeframe::m1()

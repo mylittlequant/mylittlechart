@@ -31,7 +31,7 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                 let chart = &mut *w.chart;
                 let target_bubble_id = chart.panel_app.panel_grid.containers()
                     .values().find(|cw| cw.id.0 == chart_id)
-                    .map(|cw| cw.current_bubble_id);
+                    .map(|cw| cw.current_tag_id);
                 let bar_count = target_bubble_id
                     .and_then(|bid| chart.with_bubble(bid, |b| b.bars.len()))
                     .unwrap_or(0);
@@ -145,7 +145,7 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
 
                 let bars: Vec<mlc_core::Bar> = chart.panel_app.panel_grid.containers()
                     .values().find(|cw| cw.id.0 == chart_id)
-                    .map(|cw| cw.current_bubble_id)
+                    .map(|cw| cw.current_tag_id)
                     .and_then(|bid| chart.with_bubble(bid, |b| b.bars.clone()))
                     .unwrap_or_default();
 
@@ -253,7 +253,7 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     drop(registry);
                     let cw_bid = chart.panel_app.panel_grid.containers().values()
                         .find(|cw| cw.id.0 == chart_id)
-                        .map(|cw| cw.current_bubble_id);
+                        .map(|cw| cw.current_tag_id);
                     if let Some(bid) = cw_bid {
                         chart.core.drawings_mut().add_external(bid, prim);
                         eprintln!("[AgentCommand] AddPrimitive: type={}, chart={}", type_id, chart_id);
@@ -275,7 +275,7 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                 let chart = &mut *w.chart;
                 let cw_bid = chart.panel_app.panel_grid.containers().values()
                     .find(|cw| cw.id.0 == chart_id)
-                    .map(|cw| cw.current_bubble_id);
+                    .map(|cw| cw.current_tag_id);
                 if let Some(bid) = cw_bid {
                     let mut dreg = chart.core.drawings_mut();
                     if let Some(mut data) = dreg.get_data(bid, primitive_id) {
@@ -309,7 +309,7 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                 let chart = &mut *w.chart;
                 let cw_bid = chart.panel_app.panel_grid.containers().values()
                     .find(|cw| cw.id.0 == chart_id)
-                    .map(|cw| cw.current_bubble_id);
+                    .map(|cw| cw.current_tag_id);
                 let removed = if let Some(bid) = cw_bid {
                     chart.core.drawings_mut().delete(bid, primitive_id)
                 } else { false };
