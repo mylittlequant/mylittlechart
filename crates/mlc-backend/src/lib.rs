@@ -868,23 +868,6 @@ impl BackendCore {
             .collect()
     }
 
-    /// INTERNAL: raw read guard for the indicator manager. Backend-crate use
-    /// only (park/unpark `mem::replace` in `mlc-app/src/persistence/profile.rs`
-    /// — design §6.6). App callers must use [`Self::indicators`] instead.
-    /// Step 7 deletes this method once every external caller is swept.
-    #[inline]
-    pub fn indicators_raw(&self) -> std::sync::RwLockReadGuard<'_, IndicatorManager> {
-        self.indicators.read().expect("BackendCore.indicators poisoned (read)")
-    }
-
-    /// INTERNAL: raw write guard for the indicator manager. See
-    /// [`Self::indicators_raw`] — app callers must use
-    /// [`Self::indicators_mut`] instead.
-    #[inline]
-    pub fn indicators_mut_raw(&self) -> std::sync::RwLockWriteGuard<'_, IndicatorManager> {
-        self.indicators.write().expect("BackendCore.indicators poisoned (write)")
-    }
-
     /// Read-only facade over the indicator manager. The ONLY doctrinally-
     /// sanctioned access path to indicator data (Step 3.3,
     /// `docs/mlc/plans/doctrine-cutover-2026-06-27.md` §1A). Does not

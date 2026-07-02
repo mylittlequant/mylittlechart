@@ -189,12 +189,7 @@ impl ChartApp {
         );
         let pk_bubble_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
-        // Raw lock access (not the `indicators_mut()` facade) — park/unpark
-        // swaps the whole manager in one shot, no bubble threading needed.
-        let indicator_manager = std::mem::replace(
-            &mut *self.core.indicators_mut_raw(),
-            IndicatorManager::new(),
-        );
+        let indicator_manager = self.core.indicators_mut().swap(IndicatorManager::new());
         let pk_ind_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
         // Raw lock access (not the `alerts_mut()` facade) — park/unpark
@@ -276,7 +271,7 @@ impl ChartApp {
         *self.core.tag.write().expect("BackendCore.tag poisoned (write)") = state.tag_manager;
         let up_bubble_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
-        *self.core.indicators_mut_raw() = state.indicator_manager;
+        self.core.indicators_mut().swap(state.indicator_manager);
         let up_ind_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
         *self.core.alert.write().expect("BackendCore.alert poisoned (write)") = state.alert_manager;

@@ -384,4 +384,16 @@ impl<'a> IndicatorsMut<'a> {
     pub fn clear_all(&mut self) {
         self.mgr.clear_all();
     }
+
+    /// Replace the entire manager with `new`, returning the previous one.
+    ///
+    /// Used exclusively by preset tab park/unpark (`mlc-app/src/persistence/
+    /// profile.rs`), which swaps the whole live-state bundle for a tab in one
+    /// shot — no bubble threading needed, unlike every other method here.
+    /// This is the facade-widening the doctrine calls for in place of a raw
+    /// lock-guard escape (`docs/mlc/plans/doctrine-cutover-2026-06-27.md`
+    /// §1A: "extend the facade with concrete methods, not a guard").
+    pub fn swap(&mut self, new: IndicatorManager) -> IndicatorManager {
+        std::mem::replace(&mut self.mgr, new)
+    }
 }
