@@ -697,21 +697,6 @@ impl<'a> DrawingsMut<'a> {
         self.mgr.drop_bubble(bid)
     }
 
-    // ---- Transitional escape hatch (Step 4/5 removes this) ---------------
-
-    /// TRANSITIONAL — Step 4/5 removes the `&mut DrawingManager` parameter
-    /// from the handful of external functions in
-    /// `mlc-core::state::{action_executor,toolbar_state,panel_grid}` (moving
-    /// to `mlc-app` in Step 4) that still take the manager directly. Until
-    /// then those callers reach the manager through this closure; this is
-    /// their only legal way to get one without a raw `RwLockWriteGuard`.
-    ///
-    /// Also used as the general mechanical-sweep escape hatch for call
-    /// sites not yet rewritten to individual intent methods above.
-    pub fn with_bubble_mut<R>(&mut self, f: impl FnOnce(&mut DrawingManager, &mut BubbleStore) -> R) -> R {
-        f(&mut self.mgr, &mut self.bubbles)
-    }
-
     /// Replace the entire manager with `new`, returning the previous one.
     ///
     /// Used exclusively by preset tab park/unpark (`mlc-app/src/persistence/
