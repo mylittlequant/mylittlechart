@@ -3988,7 +3988,15 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 pw.chart.default_scale_mode = scale_mode;
             }
 
+            // Drain the shared broadcast channel exactly ONCE per frame —
+            // every window's `core` is the same `Arc<BackendCore>` (Phase A),
+            // so draining per-window here would each only see a fraction of
+            // the events. The resulting slice is handed to every open
+            // window's `react_to_events`, which runs everything `tick` used
+            // to run internally (viewport/indicator/panel reactions, alert
+            // checking, scroll-fetch, etc) minus the drain itself.
             let frame_time = screenshot::now_ms();
+            let events = self.core.tick_writers(frame_time);
             for pw in self.windows.values_mut() {
                 // Skip tick for minimized windows — no point updating viewport
                 // or processing trades for an invisible surface.  On restore,
@@ -3996,7 +4004,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 if pw.was_minimized {
                     continue;
                 }
-                pw.chart.tick(frame_time);
+                pw.chart.react_to_events(&events, frame_time);
             }
         }
 

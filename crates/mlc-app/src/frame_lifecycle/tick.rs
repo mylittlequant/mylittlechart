@@ -1,5 +1,7 @@
-//! Live update tick loop: drives `BackendCore::tick_writers` to drain the
-//! broadcast channel, then runs per-app reactions on the emitted `BubbleEvent`s.
+//! Live update tick loop: `BackendCore::tick_writers` drains the broadcast
+//! channel (called once per frame by the host — see [`ChartApp::tick`] /
+//! [`ChartApp::react_to_events`]), then each window runs its own per-app
+//! reactions on the emitted `BubbleEvent`s.
 #[cfg(target_arch = "wasm32")]
 use crate::agent as gate4agent;
 
@@ -14,12 +16,30 @@ use mlc_backend_indicator_engine::RecalcMode;
 impl ChartApp {
     /// Called every frame with the current wall-clock time in milliseconds.
     ///
-    /// Drives `BackendCore::tick_writers` to drain the broadcast channel and
-    /// write incoming data into the shared bubble store (bars, derived series,
-    /// mini-ticker, exchange-symbols). Returns one `BubbleEvent` per write so
-    /// per-app reactions can run viewport/indicator/panel side-effects.
+    /// Single-window convenience wrapper: drains `BackendCore::tick_writers`
+    /// itself, then reacts to the drained events. Only correct when exactly
+    /// one `ChartApp` reads this `core` (wasm shell, single-window native
+    /// test harnesses). Multi-window hosts (vello shell) MUST call
+    /// `core.tick_writers` once per frame themselves and fan the same
+    /// `&[BubbleEvent]` slice into every open window's
+    /// [`Self::react_to_events`] instead — calling `tick` per window would
+    /// drain the shared broadcast channel N times, each window only seeing
+    /// its own fraction of the events.
     pub fn tick(&mut self, current_time_ms: u64) {
-        let _ = current_time_ms;
+        let events = self.core.tick_writers(current_time_ms);
+        self.react_to_events(&events, current_time_ms);
+    }
+
+    /// Per-window reaction pass over an already-drained `BubbleEvent` slice.
+    ///
+    /// Caller (the host — `App::about_to_wait` in the vello shell, or
+    /// [`Self::tick`] for single-window hosts) drains `core.tick_writers`
+    /// ONCE per frame and passes the same slice to every open window's
+    /// `ChartApp`. This runs every per-window side-effect that used to live
+    /// inline in the drain loop (viewport/indicator/panel reactions, alert
+    /// checking, scroll-fetch, connector warm-up, agent autostart, etc) —
+    /// everything from the old `tick` body except the drain itself.
+    pub fn react_to_events(&mut self, events: &[BubbleEvent], current_time_ms: u64) {
         let tick_start = web_time::Instant::now();
 
         // Connector warm-up: dial all enabled connectors once (bridge-guarded).
@@ -60,11 +80,12 @@ impl ChartApp {
         self.last_ob_event_count = 0;
         self.last_trade_event_count = 0;
 
-        // ── Live data: drive backend writers ─────────────────────────────────
-        // BackendCore::tick_writers drains the broadcast channel and writes
-        // incoming data into the shared bubble store (bars, derived series,
-        // mini-ticker, exchange-symbols). It returns one BubbleEvent per write
-        // so per-app reactors can run viewport/indicator/panel side-effects.
+        // ── Live data: react to backend writers ──────────────────────────────
+        // `events` was drained once this frame by the host's single
+        // `core.tick_writers` call (one BubbleEvent per write into the shared
+        // bubble store — bars, derived series, mini-ticker, exchange-symbols)
+        // and handed to every open window's `react_to_events`. What follows
+        // is this window's own reaction pass over that shared slice.
         let mut had_trade_update = false;
         // had_ticker_update — same idea but for MiniTickerUpdated. Watchlist /
         // sidebar prices come straight out of `core.mini_ticker` (DashMap) at
@@ -118,11 +139,10 @@ impl ChartApp {
 
         let events_start = web_time::Instant::now();
 
-        let events = self.core.tick_writers(current_time_ms);
         _drain_count = events.len() as u32;
 
         // ── Per-event reactor loop ────────────────────────────────────────────
-        for event in &events {
+        for event in events {
             // Census.
             match event {
                 BubbleEvent::BarsLoaded { .. } => n_bars += 1,
