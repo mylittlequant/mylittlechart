@@ -21,9 +21,10 @@ use mlc_core::indicator_source::{
     IndicatorInfo, IndicatorRenderInstance, IndicatorSettingsData, IndicatorSource,
 };
 use mlc_backend_indicator_engine::managers::indicator_manager::{IndicatorDefinition, IndicatorInstance};
-use mlc_backend_indicator_engine::{IndicatorManager, RecalcMode};
+use mlc_backend_indicator_engine::RecalcMode;
 
 use crate::bubble::BubbleStore;
+use super::manager::IndicatorManager;
 
 /// One bubble's indicator state, bundled for the render path — the
 /// bubble-scoped `IndicatorSource` implementation chart rendering functions

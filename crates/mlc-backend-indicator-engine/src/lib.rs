@@ -89,13 +89,16 @@ pub use signals::{
     Signal, Direction, BarConfirmation, SignalSource,
 };
 
-// Manager types: IndicatorManager + support types. SignalManager and
-// TradeManager were dead duplicates of `mlc_core::drawing::{SignalManager,
-// TradeManager}` — deleted in K2.1.
+// Indicator value types + compute primitives. `IndicatorManager` (the
+// stateful registry) moved to `mlc_backend::indicator::manager` in the
+// 3.7a manager lift — this crate keeps only the compute-side shell:
+// catalog bridge, calculator, and the value types both sides speak.
+// SignalManager and TradeManager were dead duplicates of
+// `mlc_core::drawing::{SignalManager, TradeManager}` — deleted in K2.1.
 pub mod managers;
 
 pub use managers::{
-    IndicatorManager, IndicatorDefinition,
+    IndicatorDefinition,
     IndicatorInstance as IndicatorMgrInstance,
     IndicatorParam, IndicatorParamType,
     IndicatorValue as IndicatorParamValue,

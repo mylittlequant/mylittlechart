@@ -590,10 +590,8 @@ impl App<'_> {
             use mlc_backend_agent_server::state::{
                 IndicatorCatalogSnapshot, CatalogIndicator, CatalogParam, CatalogOutput,
             };
-            use mlc_backend_indicator_engine::{
-                IndicatorManager as TmpMgr,
-                IndicatorParamType, IndicatorParamValue,
-            };
+            use mlc_backend::indicator::IndicatorManager as TmpMgr;
+            use mlc_backend_indicator_engine::{IndicatorParamType, IndicatorParamValue};
 
             let tmp_mgr = TmpMgr::new();
             let defs = tmp_mgr.get_definitions();

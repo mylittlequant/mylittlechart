@@ -5,7 +5,7 @@ use crate::agent as gate4agent;
 
 use crate::ChartApp;
 use crate::persistence::live_cache as preset_cache;
-use mlc_backend_indicator_engine::IndicatorManager;
+use mlc_backend::indicator::IndicatorManager;
 use mlc_core::ScaleMode;
 
 impl ChartApp {

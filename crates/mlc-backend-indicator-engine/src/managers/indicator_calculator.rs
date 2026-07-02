@@ -2,6 +2,12 @@
 //!
 //! Bridges indicator instances with the computational engine.
 //! Uses BarIndicatorId directly for fast access (no string parsing!).
+//!
+//! `build_compute_instance` / `feed_bar` / `extract_single_outputs` /
+//! `params_fingerprint` are `pub` (not `pub(crate)`) because their sole
+//! caller, `IndicatorManager`, moved out to `mlc-backend` in the 3.7a
+//! manager lift — this crate now exposes them as its incremental-recalc
+//! compute primitives.
 
 use std::collections::HashMap;
 use crate::{
@@ -267,7 +273,7 @@ impl IndicatorCalculator {
 
     /// Build a fresh ComputeInstance from indicator_id + params snapshot.
     /// Returns None if the indicator is not found in the catalog.
-    pub(crate) fn build_compute_instance(
+    pub fn build_compute_instance(
         indicator_id: BarIndicatorId,
         params: &HashMap<String, IndicatorValue>,
     ) -> Option<ComputeInstance> {
@@ -282,7 +288,7 @@ impl IndicatorCalculator {
     }
 
     /// Feed one bar into an existing ComputeInstance and return the output value.
-    pub(crate) fn feed_bar(
+    pub fn feed_bar(
         instance: &mut ComputeInstance,
         bar: &crate::Bar,
     ) -> ComputeValue {
@@ -293,7 +299,7 @@ impl IndicatorCalculator {
     ///
     /// Returns a HashMap of output_name -> f64.  Falls back to `"value"` key
     /// when no rendering metadata is available.
-    pub(crate) fn extract_single_outputs(
+    pub fn extract_single_outputs(
         indicator_id: BarIndicatorId,
         value: ComputeValue,
     ) -> HashMap<String, f64> {
@@ -314,7 +320,7 @@ impl IndicatorCalculator {
     /// Compute a stable FNV-1a fingerprint over an indicator's id + sorted params.
     ///
     /// Used to detect parameter changes without storing a full params clone.
-    pub(crate) fn params_fingerprint(
+    pub fn params_fingerprint(
         indicator_id: BarIndicatorId,
         params: &HashMap<String, IndicatorValue>,
     ) -> u64 {

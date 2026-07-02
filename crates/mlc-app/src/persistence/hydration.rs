@@ -25,7 +25,7 @@ use mlc_core::state::panel_grid::ChartPanelGrid;
 use mlc_backend::bubble::BubbleStore;
 use mlc_backend::tag::TagManager;
 use mlc_core::LeafId;
-use mlc_backend_indicator_engine::IndicatorManager;
+use mlc_backend::indicator::IndicatorManager;
 
 /// Build-result of a pure preset hydration pass.
 ///

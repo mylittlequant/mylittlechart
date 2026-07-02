@@ -56,7 +56,7 @@ use crate::alert::AlertManager;
 use crate::bubble::BubbleStore;
 use crate::drawing::DrawingManager;
 use mlc_core::Bar;
-use mlc_backend_indicator_engine::IndicatorManager;
+use crate::indicator::IndicatorManager;
 use mlc_backend_data_bridge::{DataBridge, LiveUpdate, LiveUpdateReceiver, OrderbookSource, SymbolInfo};
 use mlc_backend_trading_engine::TradingManager;
 use crate::watchlist::WatchlistManager;
@@ -603,9 +603,11 @@ pub struct BackendCore {
     pub alert: std::sync::RwLock<AlertManager>,
 
     /// Indicator manager — owns all indicator instances + recalc state +
-    /// per-window assignment + global definitions catalog. Cannot live inside
-    /// `Managers` (mlc-core) because mlc-backend-indicator-engine is above mlc-core in the
-    /// dep graph; that's the architectural reason BackendCore exists.
+    /// per-window assignment + global definitions catalog. Compute
+    /// primitives it calls into (`IndicatorCalculator`, catalog bridge,
+    /// `mli`) live in `mlc-backend-indicator-engine`; the manager itself
+    /// lives in `mlc_backend::indicator::manager` (doctrine 3.7a — engine =
+    /// compute, manager = state, managers live in mlc-backend).
     pub indicators: std::sync::RwLock<IndicatorManager>,
 
     /// Live data bridge — owns the tokio runtime, station, connector pool,

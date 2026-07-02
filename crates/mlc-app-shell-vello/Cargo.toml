@@ -32,6 +32,7 @@ reqwest = { version = "0.12", features = ["json", "multipart"] }
 mlc-backend-agent-server = { path = "../mlc-backend-agent-server", package = "mylittlechart-backend-agent-server" }
 mlc-app-agent-api = { path = "../mlc-app-agent-api", package = "mylittlechart-app-agent-api" }
 mlc-backend-indicator-engine = { path = "../mlc-backend-indicator-engine", package = "mylittlechart-backend-indicator-engine" }
+mlc-backend = { path = "../mlc-backend", package = "mylittlechart-backend" }
 sysinfo = "0.34"
 mlc-app-render-context-instanced = { path = "../mlc-app-render-context-instanced", package = "mylittlechart-app-render-context-instanced" }
 uzor-render-wgpu-instanced = "=1.4.15"
