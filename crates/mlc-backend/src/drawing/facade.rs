@@ -666,8 +666,8 @@ impl<'a> DrawingsMut<'a> {
 
     // ---- Symbol swap (Audit-A N6) --------------------------------------
 
-    pub fn swap_symbol(&mut self, bid: BubbleId, symbol: &str, exchange: &str, account_type: &str, restore_snaps: Option<&[PrimitiveSnapshot]>) -> SwapSymbolResult {
-        self.mgr.swap_symbol(&mut self.bubbles, bid, symbol, exchange, account_type, restore_snaps)
+    pub fn swap_symbol(&mut self, bid: BubbleId, address: &mlc_core::instrument::InstrumentAddress, restore_snaps: Option<&[PrimitiveSnapshot]>) -> SwapSymbolResult {
+        self.mgr.swap_symbol(&mut self.bubbles, bid, address, restore_snaps)
     }
 
     // ---- Cross-bubble adoption (desync) --------------------------------

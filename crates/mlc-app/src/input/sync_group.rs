@@ -1463,6 +1463,11 @@ impl ChartApp {
         let symbol_owned = symbol.to_string();
         let exchange_owned = exchange.to_string();
         let account_type_owned = account_type.to_string();
+        let new_address = mlc_core::instrument::InstrumentAddress::new(
+            exchange_owned.clone(),
+            symbol_owned.clone(),
+            account_type_owned.parse().unwrap_or_default(),
+        );
 
         // Collect (old_symbol, old_exchange, old_account_type, timeframe) for each peer BEFORE
         // mutating windows so we can restore drawings and request bars after the mutations.
@@ -1510,7 +1515,7 @@ impl ChartApp {
                     if swapped_bids.insert(bid) {
                         let restore_snaps = window.take_drawings_snapshot_for_symbol(&symbol_owned, &exchange_owned, &account_type_owned);
                         let result = self.core.drawings_mut().swap_symbol(
-                            bid, &symbol_owned, &exchange_owned, &account_type_owned, restore_snaps.as_deref(),
+                            bid, &new_address, restore_snaps.as_deref(),
                         );
                         let old_key = format!("{}:{}:{}", old_symbol, old_exchange, old_account_type);
                         if result.old_primitives.is_empty() {

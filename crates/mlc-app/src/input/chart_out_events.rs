@@ -727,8 +727,13 @@ impl ChartApp {
                 {
                     if let Some(bid) = target_bid {
                         let restore_snaps = window.take_drawings_snapshot_for_symbol(&symbol, resolved_exchange.as_str(), &account_type);
+                        let new_address = mlc_core::instrument::InstrumentAddress::new(
+                            resolved_exchange.as_str(),
+                            symbol.clone(),
+                            account_type.parse().unwrap_or_default(),
+                        );
                         let result = self.core.drawings_mut().swap_symbol(
-                            bid, &symbol, resolved_exchange.as_str(), &account_type, restore_snaps.as_deref(),
+                            bid, &new_address, restore_snaps.as_deref(),
                         );
                         let old_key = format!("{}:{}:{}", old_sym_search, old_exch_search, old_at_search);
                         if result.old_primitives.is_empty() {

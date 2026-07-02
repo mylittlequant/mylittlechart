@@ -372,8 +372,13 @@ impl ChartApp {
                         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                             if let Some(bid) = active_bid_pc {
                                 let restore_snaps = window.take_drawings_snapshot_for_symbol(&symbol, &item_exchange, &item_account_type);
+                                let new_address = mlc_core::instrument::InstrumentAddress::new(
+                                    item_exchange.clone(),
+                                    symbol.clone(),
+                                    item_account_type.parse().unwrap_or_default(),
+                                );
                                 let result = self.core.drawings_mut().swap_symbol(
-                                    bid, &symbol, &item_exchange, &item_account_type, restore_snaps.as_deref(),
+                                    bid, &new_address, restore_snaps.as_deref(),
                                 );
                                 let old_key = format!("{}:{}:{}", old_sym_pc, old_exch_pc, old_at_pc);
                                 if result.old_primitives.is_empty() {

@@ -31,6 +31,7 @@ use mlc_core::drawing::primitives_v2::{
 };
 use mlc_core::drawing::{alloc_primitive_id, PrimitiveSnapshot};
 use mlc_core::ids::BubbleId;
+use mlc_core::instrument::InstrumentAddress;
 use mlc_core::state::selected_config::SelectedPrimitiveConfig;
 use mlc_core::{Bar, PriceScale, Viewport};
 
@@ -1651,9 +1652,7 @@ impl DrawingManager {
         &mut self,
         bubbles: &mut BubbleStore,
         bid: BubbleId,
-        symbol: &str,
-        exchange: &str,
-        account_type: &str,
+        address: &InstrumentAddress,
         restore_snaps: Option<&[PrimitiveSnapshot]>,
     ) -> SwapSymbolResult {
         let Some(b) = bubbles.bubble_mut(bid) else {
@@ -1661,9 +1660,7 @@ impl DrawingManager {
         };
         let old_primitives: Vec<PrimitiveSnapshot> = b.primitives.iter().map(|p| PrimitiveSnapshot::from_primitive(p.as_ref())).collect();
 
-        b.address.symbol = symbol.to_string();
-        b.address.exchange = exchange.to_string();
-        b.address.account_type = account_type.parse().unwrap_or_default();
+        b.address = address.clone();
         b.primitives.clear();
 
         let mut restored = 0usize;

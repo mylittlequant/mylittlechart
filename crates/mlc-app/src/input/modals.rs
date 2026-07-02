@@ -377,8 +377,13 @@ impl ChartApp {
                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     if let Some(bid) = active_bid_wl {
                         let restore_snaps = window.take_drawings_snapshot_for_symbol(sym_part, exchange_part, &wl_at_label);
+                        let new_address = mlc_core::instrument::InstrumentAddress::new(
+                            exchange_part,
+                            sym_part,
+                            wl_at_label.parse().unwrap_or_default(),
+                        );
                         let result = self.core.drawings_mut().swap_symbol(
-                            bid, sym_part, exchange_part, &wl_at_label, restore_snaps.as_deref(),
+                            bid, &new_address, restore_snaps.as_deref(),
                         );
                         let old_key = format!("{}:{}:{}", old_sym, old_exchange, old_account_type);
                         if result.old_primitives.is_empty() {
@@ -844,8 +849,13 @@ impl ChartApp {
                         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                             if let Some(bid) = active_bid_srch {
                                 let restore_snaps = window.take_drawings_snapshot_for_symbol(symbol_part, resolved_exchange.as_str(), &search_at_label);
+                                let new_address = mlc_core::instrument::InstrumentAddress::new(
+                                    resolved_exchange.as_str(),
+                                    symbol_part,
+                                    search_at_label.parse().unwrap_or_default(),
+                                );
                                 let result = self.core.drawings_mut().swap_symbol(
-                                    bid, symbol_part, resolved_exchange.as_str(), &search_at_label, restore_snaps.as_deref(),
+                                    bid, &new_address, restore_snaps.as_deref(),
                                 );
                                 let old_key = format!("{}:{}:{}", old_sym_search, old_exch_search, old_at_search);
                                 if result.old_primitives.is_empty() {
