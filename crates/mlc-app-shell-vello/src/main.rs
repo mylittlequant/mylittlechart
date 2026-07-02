@@ -259,6 +259,14 @@ struct SpawnRequest {
 }
 
 
+/// Minimum interval between two `templates/*` disk writes triggered by the
+/// per-frame dirty drain. Template writes are heavier than a single-preset
+/// write (encryption + several files under `templates/`); this keeps rapid
+/// successive edits (e.g. dragging a color picker that upserts a template
+/// per tick) from re-encrypting the whole set every frame while still
+/// guaranteeing a write happens shortly after the last edit.
+const TEMPLATES_WRITE_DEBOUNCE_MS: u128 = 2_000;
+
 /// Application state — owns all per-window state and the shared render context.
 struct App<'s> {
     render_cx: RenderContext,
@@ -317,6 +325,24 @@ struct App<'s> {
     /// value is" (that lives on `core.presets()`, one shared copy per
     /// Phase A/B — nothing left here to mirror).
     preset_dirty_ids: std::collections::HashSet<String>,
+    /// `true` when `core.user().snapshots()` changed since the last
+    /// `settings_snapshots.json` write. Same disk-write-trigger class as
+    /// `preset_dirty_ids` — drained every frame in `about_to_wait`, cleared
+    /// after a successful write. Closes the crash-loses-data gap `save_all`
+    /// alone left (settings_snapshots.json previously wrote only on exit/
+    /// close/switch/wizard).
+    snapshots_disk_dirty: bool,
+    /// `true` when any template CRUD (primitive/indicator/compare/chart/
+    /// indicator-set) or a vault-key change touched `core.templates()`
+    /// since the last on-disk write. Same class as `snapshots_disk_dirty`.
+    /// Template writes are heavier (encryption + multiple files under
+    /// `templates/`), so the drain below debounces: it only writes when at
+    /// least `TEMPLATES_WRITE_DEBOUNCE_MS` elapsed since the previous write,
+    /// deferring (not dropping) the flag otherwise.
+    templates_disk_dirty: bool,
+    /// Wall-clock time of the last `templates` disk write, used by the
+    /// debounce check above. `None` before the first write this session.
+    templates_last_write_at: Option<web_time::Instant>,
     /// Dedicated mpsc receiver for `ConnectorReady` events.
     ///
     /// Using mpsc instead of a broadcast subscription avoids holding back the
@@ -935,6 +961,9 @@ impl App<'_> {
             last_focused: None,
             app_state,
             preset_dirty_ids: std::collections::HashSet::new(),
+            snapshots_disk_dirty: false,
+            templates_disk_dirty: false,
+            templates_last_write_at: None,
             app_connector_ready_rx,
             _phantom: std::marker::PhantomData,
             agent_state: Some(agent_state),
@@ -2544,6 +2573,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     }
                 }
                 self.core.user_mut().set_snapshots(snapshots);
+                self.snapshots_disk_dirty = true;
             }
         }
 
@@ -2582,6 +2612,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         let _ = self.core.templates_mut().remove_indicator_set(&id);
                     }
                 }
+                self.templates_disk_dirty = true;
             }
         }
 
@@ -2838,6 +2869,46 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 // Clear dirty flags.
                 for pw in self.windows.values_mut() {
                     pw.chart.watchlists_dirty = false;
+                }
+            }
+
+            // ── Flush dirty settings snapshots to disk ───────────────────
+            // Same durability class as preset/watchlist dirty-drain above —
+            // closes the gap where settings_snapshots.json only ever wrote
+            // on exit/close/switch/wizard via save_all, so a crash between
+            // an edit (e.g. changing a primitive's default style) and the
+            // next full save silently lost it. Always plaintext, no vault
+            // key needed, cheap enough to write every dirty frame.
+            if self.snapshots_disk_dirty {
+                let path = mlc_core::active_profile_data_dir().join("settings_snapshots.json");
+                if let Err(e) = mlc_core::save_json(&path, self.core.user().snapshots(), None) {
+                    eprintln!("[App] Failed to save settings snapshots: {}", e);
+                } else {
+                    self.snapshots_disk_dirty = false;
+                }
+            }
+
+            // ── Flush dirty templates to disk (debounced) ────────────────
+            // Templates are heavier than snapshots (vault-key encryption +
+            // multiple files under `templates/`), so unlike snapshots this
+            // drain debounces: it only writes once at least
+            // `TEMPLATES_WRITE_DEBOUNCE_MS` has elapsed since the previous
+            // write, so a burst of edits in the same second doesn't
+            // re-encrypt the whole set on every frame. The flag stays set
+            // (deferred, not dropped) until the debounce window passes.
+            if self.templates_disk_dirty {
+                let now = web_time::Instant::now();
+                let debounce_elapsed = self.templates_last_write_at
+                    .map(|t| now.duration_since(t).as_millis() >= TEMPLATES_WRITE_DEBOUNCE_MS)
+                    .unwrap_or(true);
+                if debounce_elapsed {
+                    let vault_key = self.core.user().vault_key();
+                    if let Err(e) = self.core.templates().save_to_default_dir(vault_key.as_ref()) {
+                        eprintln!("[App] Failed to save templates: {:?}", e);
+                    } else {
+                        self.templates_disk_dirty = false;
+                        self.templates_last_write_at = Some(now);
+                    }
                 }
             }
         }
@@ -3782,6 +3853,14 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                     if let Some(new_vk) = self.profile_manager.vault_key {
                                         self.core.user_mut().set_vault_key(Some(new_vk));
                                         self.core.templates_mut().set_vault_key(Some(new_vk));
+                                        // Templates on disk are still encrypted under the OLD
+                                        // key until rewritten — force an immediate (debounce
+                                        // bypassed below via disk_dirty + last_write_at reset)
+                                        // re-encrypt so `templates/*` never sits stale relative
+                                        // to `vault.enc`, which `rekey_vault` above already
+                                        // re-encrypted synchronously.
+                                        self.templates_disk_dirty = true;
+                                        self.templates_last_write_at = None;
                                     }
 
                                     // Mark that skeleton promote should happen after recovery key is confirmed.
