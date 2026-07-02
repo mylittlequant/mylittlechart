@@ -11,7 +11,7 @@
 //! After the backend-cutover (`Arc<BackendCore>` lifted bubbles / indicators
 //! / drawings / presets / templates / watchlists / mini-ticker / exchanges
 //! / trading / sessions into a shared data plane), the natural Mode-2 build
-//! is `mlc-app-shell-daemon-lightweight` — a real *no-ChartApp* HTTP server that owns
+//! is `mlc-backend-shell-daemon` — a real *no-ChartApp* HTTP server that owns
 //! only `BackendCore` and exposes its CRUD over `/v1/...`. That is the
 //! right shape for "1 backend = N apps".
 //!
@@ -34,7 +34,7 @@ use std::time::Duration;
 use web_time::Instant;
 
 use mlc_app::ChartApp;
-use mlc_backend_agent_server::AgentState;
+use mlc_backend_shell_http::AgentState;
 use mlc_app_agent_api::host::{AgentHost, WindowRef, WindowRefMut};
 use mlc_app_agent_api::{commands, snapshots};
 
@@ -109,7 +109,7 @@ fn main() {
     let agent_state = Arc::new(AgentState::new(bridge, env!("CARGO_PKG_VERSION")));
     agent_state.attach_core(core);
 
-    let _server_handle = mlc_backend_agent_server::start_server(agent_state.clone(), server_rt.handle(), port);
+    let _server_handle = mlc_backend_shell_http::start_server(agent_state.clone(), server_rt.handle(), port);
     eprintln!("[mlc-app-shell-headless] HTTP server spawned on http://127.0.0.1:{}", port);
 
     // Ctrl+C handler — flips an AtomicBool so the tick loop exits cleanly.

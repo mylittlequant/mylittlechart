@@ -1,4 +1,4 @@
-//! `mlc-app-shell-daemon-lightweight` — Mode-2 backend.
+//! `mlc-backend-shell-daemon` — Mode-2 backend.
 //!
 //! Owns one `Arc<BackendCore>`, no embedded `ChartApp`. Drives a 60Hz tick
 //! loop that drains the live-data broadcast and writes into the shared
@@ -131,7 +131,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // bridge_rt kept in scope until end of main so spawned bridge tasks live.
     let _bridge_rt = bridge_rt;
 
-    tracing::info!(target: "mlc-app-shell-daemon-lightweight", "backend constructed, tick loop starting");
+    tracing::info!(target: "mlc-backend-shell-daemon", "backend constructed, tick loop starting");
 
     let (events_tx, _) = broadcast::channel::<BubbleEvent>(EVENTS_CHANNEL_CAP);
 
@@ -145,7 +145,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let http_rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .worker_threads(2)
-        .thread_name("mlc-app-shell-daemon-lightweight-http")
+        .thread_name("mlc-backend-shell-daemon-http")
         .build()?;
 
     let tick_state = state.clone();
@@ -191,11 +191,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     http_rt.block_on(async move {
         let listener = tokio::net::TcpListener::bind(addr).await?;
-        tracing::info!(target: "mlc-app-shell-daemon-lightweight", "listening on http://{addr}");
+        tracing::info!(target: "mlc-backend-shell-daemon", "listening on http://{addr}");
         tokio::select! {
             res = axum::serve(listener, app) => res?,
             _ = tokio::signal::ctrl_c() => {
-                tracing::info!(target: "mlc-app-shell-daemon-lightweight", "ctrl-c received, shutting down");
+                tracing::info!(target: "mlc-backend-shell-daemon", "ctrl-c received, shutting down");
             }
         }
         Ok::<(), Box<dyn std::error::Error>>(())

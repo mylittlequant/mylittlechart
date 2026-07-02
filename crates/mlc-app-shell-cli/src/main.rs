@@ -1,6 +1,6 @@
 //! `mlc` — CLI for the mlc backend.
 //!
-//! Default mode talks HTTP to a running `mlc-app-shell-daemon-lightweight` on
+//! Default mode talks HTTP to a running `mlc-backend-shell-daemon` on
 //! `127.0.0.1:19470` (override with `--remote URL` or `MLC_REMOTE` env).
 //! Every Mode-2 control-plane endpoint has a flat sub-command. Output is
 //! human-formatted unless `--json` is passed.
@@ -217,7 +217,7 @@ enum TradingCmd {
 struct DaemonSpawnArgs {
     #[arg(long, default_value_t = 19470)]
     port: u16,
-    /// Path to the daemon binary. Defaults to ./target/debug/mlc-app-shell-daemon-lightweight[.exe].
+    /// Path to the daemon binary. Defaults to ./target/debug/mlc-backend-shell-daemon[.exe].
     #[arg(long)]
     binary: Option<String>,
     /// Wait this many seconds for /health to answer.
@@ -609,9 +609,9 @@ async fn cmd_events(
 
 async fn cmd_daemon_spawn(_ctx: &Ctx, args: DaemonSpawnArgs) -> anyhow::Result<()> {
     let exe_name = if cfg!(windows) {
-        "mlc-app-shell-daemon-lightweight.exe"
+        "mlc-backend-shell-daemon.exe"
     } else {
-        "mlc-app-shell-daemon-lightweight"
+        "mlc-backend-shell-daemon"
     };
     let binary = match args.binary {
         Some(b) => std::path::PathBuf::from(b),

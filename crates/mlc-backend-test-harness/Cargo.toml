@@ -2,7 +2,7 @@
 name = "mylittlechart-backend-test-harness"
 version.workspace = true
 edition.workspace = true
-description = "Test harness for mlc-backend + mlc-app-shell-daemon-lightweight + mlc-backend-agent-server. Spins a real BackendCore, drives it with synthetic LiveUpdates, talks to the daemon over HTTP. Not a tests/ folder — a real lib crate so it can be reused by other consumers."
+description = "Test harness for mlc-backend + mlc-backend-shell-daemon + mlc-backend-shell-http. Spins a real BackendCore, drives it with synthetic LiveUpdates, talks to the daemon over HTTP. Not a tests/ folder — a real lib crate so it can be reused by other consumers."
 
 [lib]
 name = "mlc_backend_test_harness"
@@ -23,9 +23,9 @@ serde_json = "1"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "process"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-# agentic-server tugs in axum + full tokio; native-only because both fail to
+# shell-http tugs in axum + full tokio; native-only because both fail to
 # compile to wasm32 (mio / socket2 dependencies).
-mlc-backend-agent-server = { path = "../mlc-backend-agent-server", package = "mylittlechart-backend-agent-server" }
+mlc-backend-shell-http = { path = "../mlc-backend-shell-http", package = "mylittlechart-backend-shell-http" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 tokio = { version = "1", default-features = false, features = ["sync", "macros"] }

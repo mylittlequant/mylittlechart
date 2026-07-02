@@ -161,7 +161,7 @@ impl HeadlessChartApp {
     }
 
     /// Element counts for every Phase X0 derived series on this chart's
-    /// bubble. Mirrors `mlc_backend_agent_server::state::DerivedSeriesCounts` so
+    /// bubble. Mirrors `mlc_backend_shell_http::state::DerivedSeriesCounts` so
     /// HeadlessChartApp asserts and the agent-server HTTP snapshot agree.
     pub fn derived_counts(&self, cid: ChartId) -> DerivedCounts {
         let Some(bid) = self.chart_bubble(cid) else { return DerivedCounts::default(); };
@@ -184,7 +184,7 @@ impl HeadlessChartApp {
     }
 }
 
-/// Same shape as `mlc_backend_agent_server::state::DerivedSeriesCounts` plus the
+/// Same shape as `mlc_backend_shell_http::state::DerivedSeriesCounts` plus the
 /// primary `bars` count. Returned by `HeadlessChartApp::derived_counts`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DerivedCounts {

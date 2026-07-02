@@ -13,7 +13,7 @@
 //! resolve their owning bubble via `find_owner` since the route does not
 //! carry it directly.
 //!
-//! `mlc-app-shell-daemon-lightweight` HTTP/WS service surface is out of scope for the
+//! `mlc-backend-shell-daemon` HTTP/WS service surface is out of scope for the
 //! doctrine cutover wave (full REST bubble-scoping is deferred) — see
 //! `docs/mlc/plans/step-3.0-alert-manager-design.md` §5.
 

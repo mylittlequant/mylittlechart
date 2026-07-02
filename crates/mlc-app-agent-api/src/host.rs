@@ -3,7 +3,7 @@
 //! upcoming headless backend.
 
 use mlc_app::ChartApp;
-use mlc_backend_agent_server::state::ScreenshotData;
+use mlc_backend_shell_http::state::ScreenshotData;
 
 /// One window owned by the host.
 pub struct WindowRef<'a> {

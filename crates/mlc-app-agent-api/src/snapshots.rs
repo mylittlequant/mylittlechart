@@ -6,8 +6,8 @@
 
 use std::collections::HashMap as StdHashMap;
 
-use mlc_backend_agent_server::AgentState;
-use mlc_backend_agent_server::state::{
+use mlc_backend_shell_http::AgentState;
+use mlc_backend_shell_http::state::{
     TerminalSnapshot, WindowSnapshot, TabSnapshot, ChartSnapshot,
     ViewportSnapshot, IndicatorSummary, PrimitiveSummary, LayoutNode,
     DerivedSeriesCounts,

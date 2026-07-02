@@ -1,6 +1,6 @@
 //! `mlc-backend-test-harness` — programmatic test infrastructure for
-//! `mlc-backend`, `mlc-app-shell-daemon-lightweight`, and the `/api/v1/apps` surface in
-//! `mlc-backend-agent-server`.
+//! `mlc-backend`, `mlc-backend-shell-daemon`, and the `/api/v1/apps` surface in
+//! `mlc-backend-shell-http`.
 //!
 //! This is **not** a `tests/` folder. It's a reusable library crate. Two
 //! consumers today:
@@ -133,8 +133,8 @@ impl BackendHarness {
     }
 }
 
-/// Spawn the `mlc-app-shell-daemon-lightweight` binary in the background. The binary is
-/// expected to have been built (cargo `--bin mlc-app-shell-daemon-lightweight`).
+/// Spawn the `mlc-backend-shell-daemon` binary in the background. The binary is
+/// expected to have been built (cargo `--bin mlc-backend-shell-daemon`).
 /// Native-only — wasm has no process / filesystem spawn surface.
 ///
 /// Returns a guard that kills the process on drop and the chosen port.
@@ -155,9 +155,9 @@ impl DaemonGuard {
 
     pub async fn spawn_with_port(port: u16) -> HarnessResult<Self> {
         let exe_name = if cfg!(windows) {
-            "mlc-app-shell-daemon-lightweight.exe"
+            "mlc-backend-shell-daemon.exe"
         } else {
-            "mlc-app-shell-daemon-lightweight"
+            "mlc-backend-shell-daemon"
         };
 
         // Try `target/debug/<exe>` then `target/release/<exe>`.
@@ -177,7 +177,7 @@ impl DaemonGuard {
             return Err(HarnessError {
                 scenario: "daemon-spawn",
                 message: format!(
-                    "daemon binary not found at {debug:?} or {release:?} — run cargo build -p mylittlechart-app-shell-daemon-lightweight first",
+                    "daemon binary not found at {debug:?} or {release:?} — run cargo build -p mylittlechart-backend-shell-daemon first",
                     debug = debug_path,
                     release = release_path,
                 ),

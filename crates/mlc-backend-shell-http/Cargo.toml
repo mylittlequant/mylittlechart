@@ -1,10 +1,10 @@
 [package]
-name = "mylittlechart-backend-agent-server"
+name = "mylittlechart-backend-shell-http"
 version.workspace = true
 edition.workspace = true
 
 [lib]
-name = "mlc_backend_agent_server"
+name = "mlc_backend_shell_http"
 
 [dependencies]
 web-time = "1"

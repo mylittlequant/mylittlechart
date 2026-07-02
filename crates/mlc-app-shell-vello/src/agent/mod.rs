@@ -4,8 +4,8 @@
 //! headless backend uses the same code path. This module only wires
 //! `App<'_>` into the `AgentHost` trait and forwards through.
 
-use mlc_backend_agent_server::AgentState;
-use mlc_backend_agent_server::state::ScreenshotData;
+use mlc_backend_shell_http::AgentState;
+use mlc_backend_shell_http::state::ScreenshotData;
 use mlc_app_agent_api::{AgentHost, commands, snapshots};
 use mlc_app_agent_api::host::{WindowRef, WindowRefMut};
 

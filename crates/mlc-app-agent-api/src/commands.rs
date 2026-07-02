@@ -6,8 +6,8 @@
 
 use std::sync::Arc;
 
-use mlc_backend_agent_server::AgentState;
-use mlc_backend_agent_server::state::AgentCommand;
+use mlc_backend_shell_http::AgentState;
+use mlc_backend_shell_http::state::AgentCommand;
 use mlc_backend_indicator_engine::IndicatorParamValue;
 
 use crate::host::AgentHost;

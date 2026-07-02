@@ -133,7 +133,7 @@ pub(crate) fn submit_window_gpu(pw: &mut PerWindowState, render_cx: &RenderConte
                                 "[AgentScreenshot] Captured {}x{} PNG ({} bytes) for chart {}",
                                 w, h, png_bytes.len(), chart_id
                             );
-                            let _ = tx.send(Ok(mlc_backend_agent_server::state::ScreenshotData {
+                            let _ = tx.send(Ok(mlc_backend_shell_http::state::ScreenshotData {
                                 png_bytes,
                                 width: w,
                                 height: h,
@@ -341,7 +341,7 @@ pub(crate) fn submit_window_gpu_from_gpu_scene(
                                 "[AgentScreenshot] Captured {}x{} PNG ({} bytes) for chart {}",
                                 w, h, png_bytes.len(), chart_id
                             );
-                            let _ = tx.send(Ok(mlc_backend_agent_server::state::ScreenshotData {
+                            let _ = tx.send(Ok(mlc_backend_shell_http::state::ScreenshotData {
                                 png_bytes,
                                 width: w,
                                 height: h,

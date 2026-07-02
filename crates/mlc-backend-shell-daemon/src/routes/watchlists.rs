@@ -2,7 +2,7 @@
 //!
 //! - `GET /v1/watchlists` — list all watchlists with their symbol items
 //!
-//! Response shape mirrors `mlc-backend-agent-server`'s `/api/v1/watchlists` so
+//! Response shape mirrors `mlc-backend-shell-http`'s `/api/v1/watchlists` so
 //! consumers can parse one shape from both binaries.
 
 use axum::{extract::State, response::IntoResponse, routing::get, Json, Router};

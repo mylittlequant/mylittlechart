@@ -1,7 +1,7 @@
 //! `POST /api/v1/apps` and friends — `AppSession` lifecycle.
 //!
 //! These routes manage attached AppSessions on the per-process `BackendCore`.
-//! Same surface as the Mode-2 daemon (`mlc-app-shell-daemon-lightweight`'s `/v1/apps`) so
+//! Same surface as the Mode-2 daemon (`mlc-backend-shell-daemon`'s `/v1/apps`) so
 //! external clients can speak one shape against either binary.
 //!
 //! Returns `503 Service Unavailable` if the host did not attach a backend

@@ -153,7 +153,7 @@ struct PerWindowState {
     ///
     /// Accumulated by [`drain_agent_commands`] and processed at the end of
     /// each render pass, after the GPU frame has been submitted.
-    pending_agent_screenshots: Vec<(u64, tokio::sync::oneshot::Sender<Result<mlc_backend_agent_server::state::ScreenshotData, String>>)>,
+    pending_agent_screenshots: Vec<(u64, tokio::sync::oneshot::Sender<Result<mlc_backend_shell_http::state::ScreenshotData, String>>)>,
     modifiers: winit::keyboard::ModifiersState,
     drawing_capture: bool,
     // Chrome
@@ -302,7 +302,7 @@ struct App<'s> {
     _phantom: std::marker::PhantomData<&'s ()>,
 
     /// Shared state for the internal Agent API server.
-    agent_state: Option<std::sync::Arc<mlc_backend_agent_server::AgentState>>,
+    agent_state: Option<std::sync::Arc<mlc_backend_shell_http::AgentState>>,
     /// Wall-clock time of the last per-second maintenance pass (snapshots, sysinfo).
     last_indicator_snapshot: web_time::Instant,
     /// Round-robin cursor for agent snapshot rebuilds. The four snapshots
@@ -581,13 +581,13 @@ impl App<'_> {
         let app_state = AppState::from_profile(&profile, profile_manager.presets.clone(), profile_manager.snapshots.clone(), profile_manager.template_manager.clone(), profile_manager.vault_key);
 
         // Start the internal Agent API server on the DataBridge's tokio runtime.
-        let agent_state = std::sync::Arc::new(mlc_backend_agent_server::AgentState::new(
+        let agent_state = std::sync::Arc::new(mlc_backend_shell_http::AgentState::new(
             bridge.clone(),
             env!("CARGO_PKG_VERSION").to_string(),
         ));
         // ── Populate indicator catalog (one-time, at startup) ─────────────────
         {
-            use mlc_backend_agent_server::state::{
+            use mlc_backend_shell_http::state::{
                 IndicatorCatalogSnapshot, CatalogIndicator, CatalogParam, CatalogOutput,
             };
             use mlc_backend::indicator::IndicatorManager as TmpMgr;
@@ -671,7 +671,7 @@ impl App<'_> {
 
         // ── Populate primitive catalog (one-time, at startup) ─────────────────
         {
-            use mlc_backend_agent_server::state::{PrimitiveCatalogSnapshot, CatalogPrimitive};
+            use mlc_backend_shell_http::state::{PrimitiveCatalogSnapshot, CatalogPrimitive};
             use mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry;
             use mlc_core::drawing::primitives_v2::{PrimitiveKind, ClickBehavior};
 
@@ -721,7 +721,7 @@ impl App<'_> {
 
         // Only start the server if enabled in profile
         let _server_handle = if app_state.server_enabled {
-            Some(mlc_backend_agent_server::start_server(
+            Some(mlc_backend_shell_http::start_server(
                 agent_state.clone(),
                 &live_data_handle,
                 app_state.server_port,
@@ -2971,7 +2971,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 .find_map(|pw| pw.chart.key_create_request.take());
             if let Some((label, tier)) = create_req {
                 if let Some(ref agent_state) = self.agent_state {
-                    use mlc_backend_agent_server::state::AgentCommand;
+                    use mlc_backend_shell_http::state::AgentCommand;
                     agent_state.push_command(AgentCommand::CreateKey { label, tier });
                 }
             }
@@ -2983,7 +2983,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 .find_map(|pw| pw.chart.key_delete_request.take());
             if let Some(label) = delete_req {
                 if let Some(ref agent_state) = self.agent_state {
-                    use mlc_backend_agent_server::state::AgentCommand;
+                    use mlc_backend_shell_http::state::AgentCommand;
                     agent_state.push_command(AgentCommand::DeleteKey { label });
                 }
             }
