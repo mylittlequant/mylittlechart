@@ -11,9 +11,8 @@
 use std::sync::{RwLockReadGuard, RwLockWriteGuard};
 
 use mlc_core::chart::types::price_scale::ScaleMode;
-use mlc_core::ids::{BubbleId, SyncFlags, SyncMemberId};
+use mlc_core::ids::{BubbleId, ConnectionStatus, SyncFlags, SyncMemberId};
 use mlc_core::indicator_types::IndicatorGroupConfig;
-use mlc_core::state::chart_container::ConnectionStatus;
 use mlc_core::state::{CommandHistory, Timeframe};
 
 use super::data_bubble::DataBubble;

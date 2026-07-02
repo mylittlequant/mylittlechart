@@ -20,8 +20,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use mlc_core::ids::{BubbleId, SyncMemberId};
-use mlc_core::state::chart_container::ChartId;
+use mlc_core::ids::{BubbleId, ChartId, SyncMemberId};
 use mlc_core::tag::{Tag, TagId};
 
 #[derive(Debug, Default)]

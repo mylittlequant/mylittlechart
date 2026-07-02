@@ -14,7 +14,7 @@
 //! `split_leaf` / `remove_leaf` on the inner docking tree.
 
 use uzor::panels::DockPanel;
-use crate::state::ChartId;
+use crate::ids::{ChartId, ChartPanelId};
 
 /// Identifier of a `ChartContainer`.
 ///
@@ -24,30 +24,6 @@ use crate::state::ChartId;
 /// use in container-level code; `ChartId` is the historical name kept for
 /// compatibility.
 pub type ChartContainerId = ChartId;
-
-/// Identifier of a `ChartPanel` (the candle canvas leaf inside a container).
-///
-/// Distinct from `ChartId` (which identifies a `ChartContainer`). Plan D1:
-/// containers keep the `ChartId` name because external systems (presets,
-/// TagManager, alerts) already key by it; the canvas gets its own id.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct ChartPanelId(pub u64);
-
-impl std::fmt::Display for ChartPanelId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-static NEXT_CHART_PANEL_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-
-pub fn generate_chart_panel_id() -> ChartPanelId {
-    ChartPanelId(NEXT_CHART_PANEL_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst))
-}
-
-pub fn bump_chart_panel_id_past(min_id: u64) {
-    NEXT_CHART_PANEL_ID.fetch_max(min_id + 1, std::sync::atomic::Ordering::SeqCst);
-}
 
 /// Leaf payload inside `ChartContainer.inner_docking`.
 #[derive(Clone, Debug)]

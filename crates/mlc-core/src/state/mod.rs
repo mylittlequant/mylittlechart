@@ -29,6 +29,7 @@ pub mod branch;
 pub mod chart_panel_state;
 pub mod panel;
 pub mod sub_pane_overlay;
+pub mod sub_pane_y_state;
 pub mod toolbar_state;
 pub mod chart_settings_data;
 pub mod icons;
@@ -59,33 +60,35 @@ pub use history::CommandHistory;
 // DrawingManager physical move (it took `&mut DrawingManager` by value,
 // which no longer resolves from mlc-core).
 
+// ID types (ChartId, ConnectionStatus) moved to `mlc-core::ids` — both are
+// referenced directly by `mlc-backend` (Tag routing / DataBubble field),
+// which cannot depend on wherever `ChartContainer` itself lives.
+pub use crate::ids::{ChartId, ConnectionStatus};
+
 // Phase 1 hardcut of the chart-container cut: the former `ChartWindow` is
 // renamed in place to `ChartContainer`. It currently still owns ALL fields
 // (canvas + container-level + sub-panes); Phase 2 carves a thin `ChartPanel`
 // out of it for the canvas-only fields.
 pub use chart_container::{
     ChartContainer,
-    ChartId,
-    ConnectionStatus,
     WindowRect,
     WINDOW_GAP,
-    generate_chart_id,
-    bump_chart_id_past,
     DEFAULT_SNAP_MARGIN,
-    SubPaneYState,
 };
+pub use crate::ids::{generate_chart_id, bump_chart_id_past};
 
+// Per-instance Y-axis state for indicator sub-panes — pure value type,
+// referenced by `mlc-app-layout` render code (see sub_pane_y_state.rs doc).
+pub use sub_pane_y_state::SubPaneYState;
 
 // Inner-docking leaf payload for ChartContainer (Phase 1 of chart-container cut).
 // `ChartContainerId` is an alias for `ChartId` (plan D1); the canvas gets its
-// own `ChartPanelId`.
+// own `ChartPanelId` (moved to `mlc-core::ids` — see chart_container_leaf.rs doc).
 pub use chart_container_leaf::{
     ChartContainerId,
     ChartContainerLeaf,
-    ChartPanelId,
-    generate_chart_panel_id,
-    bump_chart_panel_id_past,
 };
+pub use crate::ids::{ChartPanelId, generate_chart_panel_id, bump_chart_panel_id_past};
 
 // Inner 1D vertical stack layout (own math, no uzor docking).
 pub use inner_layout::InnerLayout;

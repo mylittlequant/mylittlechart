@@ -30,7 +30,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::state::chart_container::ChartId;
+use crate::ids::ChartId;
 
 // =============================================================================
 // PanelId

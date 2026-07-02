@@ -45,7 +45,7 @@ use mlc_core::chart::types::compare::CompareOverlay;
 use mlc_core::drawing::{DrawingRenderView, draw_control_points};
 use mlc_core::apply_opacity;
 use mlc_core::scale_settings::ScaleSettings;
-use mlc_core::state::chart_container::SubPaneYState;
+use mlc_core::state::sub_pane_y_state::SubPaneYState;
 use crate::ui::icons::Icon;
 use crate::ui::modal_settings::SubPaneOverlayState;
 use super::rects::{ChartAreaLayout, FrameLayout, LayoutRect, SubPaneLayout};

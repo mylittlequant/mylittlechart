@@ -36,6 +36,78 @@ impl BubbleId {
 }
 
 // =============================================================================
+// ChartId
+// =============================================================================
+
+/// Unique identifier for a `ChartContainer` (chart window).  Referenced by
+/// both `mlc-app` (owns `ChartContainer`) and `mlc-backend::tag` (routes
+/// chart members by id) — kept in `mlc-core::ids` alongside the other
+/// cross-layer identifiers.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ChartId(pub u64);
+
+impl std::fmt::Display for ChartId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+static NEXT_CHART_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// Generate a globally unique chart ID.
+pub fn generate_chart_id() -> ChartId {
+    ChartId(NEXT_CHART_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst))
+}
+
+pub fn bump_chart_id_past(min_id: u64) {
+    NEXT_CHART_ID.fetch_max(min_id + 1, std::sync::atomic::Ordering::SeqCst);
+}
+
+// =============================================================================
+// ChartPanelId
+// =============================================================================
+
+/// Identifier of a `ChartPanel` (the candle canvas leaf inside a
+/// `ChartContainer`).  Distinct from `ChartId` (which identifies the whole
+/// container).  Also used as the key into `TradingPanelsStore.chart_panel`
+/// by `mlc-app-layout` / `mlc-app-panels` render code below `mlc-app`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ChartPanelId(pub u64);
+
+impl std::fmt::Display for ChartPanelId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+static NEXT_CHART_PANEL_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+pub fn generate_chart_panel_id() -> ChartPanelId {
+    ChartPanelId(NEXT_CHART_PANEL_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst))
+}
+
+pub fn bump_chart_panel_id_past(min_id: u64) {
+    NEXT_CHART_PANEL_ID.fetch_max(min_id + 1, std::sync::atomic::Ordering::SeqCst);
+}
+
+// =============================================================================
+// ConnectionStatus
+// =============================================================================
+
+/// Connection/data feed status for a bubble.  Lives on `DataBubble`
+/// (`mlc-backend`) as a plain field — a domain-data enum, not UI state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ConnectionStatus {
+    /// Live real-time data feed
+    #[default]
+    Live,
+    /// Delayed data feed
+    Delayed,
+    /// Disconnected / no data
+    Disconnected,
+}
+
+// =============================================================================
 // SyncFlags
 // =============================================================================
 

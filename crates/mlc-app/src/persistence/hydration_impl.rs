@@ -93,7 +93,7 @@ impl ChartApp {
 
                                 for snap in &preset.windows {
                                     let leaf_id = mlc_core::LeafId(snap.leaf_id);
-                                    let chart_id = mlc_core::state::chart_container::ChartId(snap.window_id);
+                                    let chart_id = mlc_core::ids::ChartId(snap.window_id);
 
                                     let mut window = mlc_core::state::chart_container::ChartContainer::with_id(
                                         chart_id,
@@ -362,7 +362,7 @@ impl ChartApp {
                         {
                             let windows = self.panel_app.panel_grid.containers_mut();
                             for snap in &preset.windows {
-                                let chart_id = mlc_core::state::chart_container::ChartId(snap.window_id);
+                                let chart_id = mlc_core::ids::ChartId(snap.window_id);
                                 if let Some(window) = windows.get_mut(&chart_id) {
                                     // Rebuild data_provider for this window's (possibly new) exchange.
                                     let patch_exchange_id = digdigdig3::ExchangeId::from_str(&snap.exchange)
@@ -491,7 +491,7 @@ impl ChartApp {
                         } // windows (panel_grid borrow) dropped here
                         // Restore instrument fields into the bubble for each window.
                         for snap in &preset.windows {
-                            let chart_id = mlc_core::state::chart_container::ChartId(snap.window_id);
+                            let chart_id = mlc_core::ids::ChartId(snap.window_id);
                             if let Some(bid) = self.bubble_for_chart(chart_id) {
                                 self.core.bubbles_mut().set_bid_instrument_full(
                                     bid,
@@ -515,7 +515,7 @@ impl ChartApp {
                         // and would conflict with the live windows borrow.
                         let needs_auto: Vec<(mlc_core::ChartId, String, mlc_core::state::Timeframe)> =
                             preset.windows.iter().filter_map(|snap| {
-                                let chart_id = mlc_core::state::chart_container::ChartId(snap.window_id);
+                                let chart_id = mlc_core::ids::ChartId(snap.window_id);
                                 let win = self.panel_app.panel_grid.containers().get(&chart_id)?;
                                 if win.auto_bubble_id == mlc_core::ids::BubbleId(0) {
                                     Some((chart_id, snap.symbol.clone(), snap.timeframe.clone()))

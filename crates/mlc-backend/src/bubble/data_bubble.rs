@@ -3,10 +3,9 @@ use std::sync::{Arc, RwLock};
 
 use mlc_core::chart::types::price_scale::ScaleMode;
 use mlc_core::drawing::primitives_v2::config::TemplateStyle;
-use mlc_core::ids::{BubbleId, SyncFlags};
+use mlc_core::ids::{BubbleId, ConnectionStatus, SyncFlags};
 use mlc_core::indicator_types::IndicatorGroupConfig;
 use mlc_core::instrument::InstrumentAddress;
-use mlc_core::state::chart_container::ConnectionStatus;
 use mlc_core::state::CommandHistory;
 use mlc_core::state::Timeframe;
 

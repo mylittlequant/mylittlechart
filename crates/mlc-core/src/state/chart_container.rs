@@ -15,13 +15,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::ids::BubbleId;
+use crate::ids::{BubbleId, ChartId, ChartPanelId, generate_chart_id, generate_chart_panel_id};
 use crate::{Bar, Viewport, PriceScale, TimeScale};
 use crate::chart::types::price_scale::ScaleMode;
 use crate::state::Timeframe;
 use crate::{Crosshair, KineticState, DragMode};
 use crate::{Legend, Watermark, PriceLine};
 use crate::state::chart_panel_state::ChartPanelState;
+use crate::state::sub_pane_y_state::SubPaneYState;
 use crate::chart::{CompareOverlay, CompareSeries, get_compare_color};
 use crate::state::{CommandHistory, Command};
 use crate::data_provider::{SharedDataProvider, NullDataProvider};
@@ -29,71 +30,6 @@ use crate::scale_settings::ScaleSettings;
 use crate::state::toolbar_state::{ChartToolbarState, ToolbarConfig};
 use crate::state::modal_data::SubPaneOverlayState;
 use crate::state::sub_pane_overlay::SubPaneOverlayResult;
-
-/// Per-instance Y-axis state for indicator sub-panes.
-///
-/// Replaces the Y-axis fields that used to live on `SubPane`
-/// (`price_min`, `price_max`, `auto_scale`, drag start state).
-/// Keyed by `instance_id` in `ChartContainer.sub_pane_y_state`.
-#[derive(Clone, Debug)]
-pub struct SubPaneYState {
-    /// Current Y-axis bottom price.
-    pub price_min: f64,
-    /// Current Y-axis top price.
-    pub price_max: f64,
-    /// Whether auto-scale is enabled for this sub-pane.
-    pub auto_scale: bool,
-    /// Saved price_min at drag start (for y-axis drag operations).
-    pub drag_start_price_min: f64,
-    /// Saved price_max at drag start (for y-axis drag operations).
-    pub drag_start_price_max: f64,
-}
-
-impl Default for SubPaneYState {
-    fn default() -> Self {
-        Self {
-            price_min: 0.0,
-            price_max: 100.0,
-            auto_scale: true,
-            drag_start_price_min: 0.0,
-            drag_start_price_max: 0.0,
-        }
-    }
-}
-
-/// Unique identifier for a chart window
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct ChartId(pub u64);
-
-impl std::fmt::Display for ChartId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-/// Counter for generating unique chart IDs
-static NEXT_CHART_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-
-/// Generate a globally unique chart ID.
-pub fn generate_chart_id() -> ChartId {
-    ChartId(NEXT_CHART_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst))
-}
-
-pub fn bump_chart_id_past(min_id: u64) {
-    NEXT_CHART_ID.fetch_max(min_id + 1, std::sync::atomic::Ordering::SeqCst);
-}
-
-/// Connection/data feed status for a chart window
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum ConnectionStatus {
-    /// Live real-time data feed
-    #[default]
-    Live,
-    /// Delayed data feed
-    Delayed,
-    /// Disconnected / no data
-    Disconnected,
-}
 
 /// Rectangle defining a window's position and size (f32 coordinates)
 #[derive(Clone, Copy, Debug, Default)]
@@ -137,7 +73,7 @@ pub struct ChartContainer {
     /// `ChartPanelState` in `TradingPanelsStore.chart_panel` after the
     /// Phase 4 S2.6 canvas-state migration. Allocated fresh on every
     /// construction (including `clone_for_split`).
-    pub chart_panel_id: crate::state::chart_container_leaf::ChartPanelId,
+    pub chart_panel_id: ChartPanelId,
 
     /// Permanent home bubble for this chart, created at chart birth and never
     /// changed.  Holds home-state primitives and command history while the
@@ -372,7 +308,7 @@ pub const DEFAULT_SNAP_MARGIN: f64 = 5.0;
 /// `chart_panel_id` matches `ChartContainer.chart_panel_id` so that lookups
 /// in `TradingPanelsStore.chart_panel` remain consistent.
 pub fn make_inner_docking_with_main_chart(
-    panel_id: crate::state::chart_container_leaf::ChartPanelId,
+    panel_id: ChartPanelId,
 ) -> uzor::layout::DockState<crate::state::chart_container_leaf::ChartContainerLeaf> {
     let mut ds = uzor::layout::DockState::new();
     ds.tree_mut().add_leaf(
@@ -458,7 +394,7 @@ impl ChartContainer {
     /// Create a new chart window with a data provider.
     pub fn new_with_provider(_symbol: &str, _timeframe: Timeframe, data_provider: SharedDataProvider) -> Self {
         let id = generate_chart_id();
-        let panel_id = crate::state::chart_container_leaf::generate_chart_panel_id();
+        let panel_id = generate_chart_panel_id();
 
         Self {
             id,
@@ -963,7 +899,7 @@ impl ChartContainer {
         &self,
         new_chart_id: ChartId,
     ) -> Self {
-        let new_panel_id = crate::state::chart_container_leaf::generate_chart_panel_id();
+        let new_panel_id = generate_chart_panel_id();
 
         Self {
             id: new_chart_id,

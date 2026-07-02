@@ -13,7 +13,7 @@
 //! the data bubble rather than the chart panel.
 
 use crate::chart::{CrosshairOptions, GridOptions, Legend, Tooltip, Watermark};
-use crate::state::chart_container_leaf::ChartPanelId;
+use crate::ids::ChartPanelId;
 
 /// State of one chart canvas leaf.
 ///
