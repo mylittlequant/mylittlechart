@@ -119,3 +119,58 @@ pub fn build_chart_window_snapshot(
         stashed_scale_mode: window.stashed_scale_mode,
     }
 }
+
+#[cfg(test)]
+mod json_compat_tests {
+    //! Persistence fixture gate for the Step 4 state-lift move: this
+    //! constructor moved from `mlc-core::preset::snapshots` to
+    //! `mlc-app::persistence::window_snapshot`, but `ChartWindowSnapshot`'s
+    //! on-disk JSON shape must be byte-identical — the field definitions
+    //! never moved, only the builder function's crate.
+    use super::*;
+    use mlc_core::ids::ChartPanelId;
+    use mlc_core::state::Timeframe;
+
+    #[test]
+    fn round_trips_current_shape() {
+        let window = ChartContainer::new("BTCUSDT", Timeframe::h1());
+        let panel = ChartPanelState::new(ChartPanelId(1));
+
+        let snap = build_chart_window_snapshot(
+            &window,
+            &panel,
+            &[],
+            /* leaf_id */ 7,
+            /* bubble_id */ Some(42),
+            /* pre_tag_indicator_ids */ vec![1, 2, 3],
+            /* stashed_command_history */ None,
+            /* stashed_primitives_snap */ vec![],
+            "BTCUSDT".to_string(),
+            Timeframe::h1(),
+            "binance".to_string(),
+            "S".to_string(),
+        );
+
+        let json = serde_json::to_string(&snap).expect("snapshot must serialize");
+
+        // Spot-check the flat on-disk field names a preset-loading consumer
+        // depends on — regressions here mean old preset files stop loading.
+        assert!(json.contains("\"window_id\""));
+        assert!(json.contains("\"leaf_id\":7"));
+        assert!(json.contains("\"symbol\":\"BTCUSDT\""));
+        assert!(json.contains("\"exchange\":\"binance\""));
+        assert!(json.contains("\"account_type\":\"S\""));
+        assert!(json.contains("\"bubble_id\":42"));
+        assert!(json.contains("\"chart_type\":\"candles\""));
+        assert!(json.contains("\"show_candles\":true"));
+        assert!(json.contains("\"pre_tag_indicator_ids\":[1,2,3]"));
+
+        let restored: mlc_core::preset::snapshots::ChartWindowSnapshot =
+            serde_json::from_str(&json).expect("snapshot must deserialize");
+        assert_eq!(restored.window_id, snap.window_id);
+        assert_eq!(restored.leaf_id, 7);
+        assert_eq!(restored.symbol, "BTCUSDT");
+        assert_eq!(restored.bubble_id, Some(42));
+        assert_eq!(restored.pre_tag_indicator_ids, vec![1, 2, 3]);
+    }
+}
