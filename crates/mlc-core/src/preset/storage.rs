@@ -130,10 +130,12 @@ fn presets_prefix() -> String {
 
 /// Save preset — always plaintext JSON.
 ///
-/// The `key` parameter is accepted for API compatibility but is ignored.
 /// Presets contain no sensitive data and are always stored as `{id}.json`.
 /// Any existing `{id}.enc` (from a previous encrypted session) is removed.
-pub fn save_preset(preset: &ChartPreset, _key: Option<&VaultKey>) -> Result<PathBuf, PresetError> {
+/// Unlike [`load_preset`], this never takes a vault key — there is nothing
+/// to encrypt on write. (If presets should be encrypted like templates,
+/// that is a separate product decision, not covered here.)
+pub fn save_preset(preset: &ChartPreset) -> Result<PathBuf, PresetError> {
     let dir = presets_dir();
     let path = dir.join(format!("{}.json", preset.id));
 

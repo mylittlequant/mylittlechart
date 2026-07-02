@@ -2042,7 +2042,7 @@ impl App<'_> {
 
         // 9. Save all presets from AppState (single canonical source of truth).
         for preset in self.app_state.presets.values() {
-            if let Err(e) = mlc_core::preset::storage::save_preset(preset, vault_key) {
+            if let Err(e) = mlc_core::preset::storage::save_preset(preset) {
                 eprintln!("[App] failed to save preset {}: {}", preset.id, e);
             }
         }
@@ -2562,10 +2562,9 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         // Presets are plaintext — always safe to save.
         if !self.app_state.preset_dirty_ids.is_empty() {
             let ids: Vec<String> = self.app_state.preset_dirty_ids.drain().collect();
-            let vault_key = self.app_state.vault_key.as_ref();
             for id in ids {
                 if let Some(preset) = self.app_state.presets.get(&id) {
-                    if let Err(e) = mlc_core::preset::storage::save_preset(preset, vault_key) {
+                    if let Err(e) = mlc_core::preset::storage::save_preset(preset) {
                         eprintln!("[App] failed to save preset {}: {}", id, e);
                     }
                 }
@@ -2773,10 +2772,9 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
             if second_pass_dirty && !self.app_state.preset_dirty_ids.is_empty() {
                 let ids: Vec<String> = self.app_state.preset_dirty_ids.drain().collect();
-                let vault_key = self.app_state.vault_key.as_ref();
                 for id in ids {
                     if let Some(preset) = self.app_state.presets.get(&id) {
-                        if let Err(e) = mlc_core::preset::storage::save_preset(preset, vault_key) {
+                        if let Err(e) = mlc_core::preset::storage::save_preset(preset) {
                             eprintln!("[App] failed to save preset {}: {}", id, e);
                         }
                     }
