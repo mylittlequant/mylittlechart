@@ -270,12 +270,22 @@ struct App<'s> {
     ///
     /// Kept alive for the lifetime of `App` so that background tasks spawned by
     /// the bridge continue running. Dropped when `App` drops (on process exit).
-    live_data_rt: tokio::runtime::Runtime,
+    ///
+    /// `Arc`-wrapped so the same runtime can also be handed to `core` via
+    /// `BackendCore::new_with_runtime` — `core.native_rt()` then resolves for
+    /// gate4agent PTY / blocking input handlers instead of always returning
+    /// `None` (native_rt was never wired for the vello shell pre-arc).
+    live_data_rt: std::sync::Arc<tokio::runtime::Runtime>,
     /// Handle into `live_data_rt` — cheap to clone, used for spawning tasks and
     /// as an executor context for blocking calls like Telegram get_updates.
     live_data_handle: tokio::runtime::Handle,
     /// Shared DataBridge — connector pool, created once at startup.
     bridge: std::sync::Arc<mlc_backend_data_bridge::DataBridge>,
+    /// Shared backend core — one instance per process, handed to every
+    /// `ChartApp::new_window` call so all windows read/write the same
+    /// domain managers (bubbles, tags, indicators, alerts, drawings,
+    /// presets, templates, watchlists, user profile, sessions).
+    core: std::sync::Arc<mlc_backend::BackendCore>,
     /// Saved window states loaded from profile at startup — used in resumed() to restore windows.
     saved_windows: Vec<mlc_core::WindowState>,
     /// User profile loaded once at startup.
@@ -580,6 +590,16 @@ impl App<'_> {
     ) -> Self {
         let app_state = AppState::from_profile(&profile, profile_manager.presets.clone(), profile_manager.snapshots.clone(), profile_manager.template_manager.clone(), profile_manager.vault_key);
 
+        // Single `Arc<BackendCore>` for the whole process — every window's
+        // `ChartApp` shares this one instance (Phase A, shared-backend-core
+        // arc). Seed the exchange_symbols cache once here instead of per
+        // window (previously each `new_window`/`new_empty` call re-seeded
+        // its own fresh core from the bridge's session-long catalogue).
+        let live_data_rt = std::sync::Arc::new(live_data_rt);
+        let exchange_symbols_seed = bridge.symbols_snapshot();
+        let core = mlc_backend::BackendCore::new_with_runtime(bridge.clone(), None, live_data_rt.clone());
+        core.exchange_symbols_mut().replace_all(exchange_symbols_seed);
+
         // Start the internal Agent API server on the DataBridge's tokio runtime.
         let agent_state = std::sync::Arc::new(mlc_backend_shell_http::AgentState::new(
             bridge.clone(),
@@ -805,6 +825,7 @@ impl App<'_> {
             live_data_rt,
             live_data_handle,
             bridge,
+            core,
             saved_windows,
             profile,
             profile_manager,
@@ -1081,6 +1102,7 @@ impl App<'_> {
 
         // All windows are equal — all use the shared bridge and profile.
         let mut chart = mlc_app::ChartApp::new_window(
+            self.core.clone(),
             self.bridge.clone(),
             window_id.clone(),
             restore,
@@ -1488,6 +1510,7 @@ impl App<'_> {
         let saved = self.saved_windows.clone();
 
         // Capture clones of everything the worker needs to build ChartApp.
+        let core = self.core.clone();
         let bridge = self.bridge.clone();
         let profile = self.profile.clone();
         let profile_manager = self.profile_manager.clone();
@@ -1540,6 +1563,7 @@ impl App<'_> {
 
                 // Build the live ChartApp (the heavy ~1.7s part).
                 let mut chart = mlc_app::ChartApp::new_window(
+                    core.clone(),
                     bridge.clone(),
                     window_id.clone(),
                     restore,

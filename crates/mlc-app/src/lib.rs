@@ -1707,22 +1707,13 @@ impl ChartApp {
     ///
     /// Use this when spawning additional windows in a multi-window setup.
     /// The window starts with Binance, "BTCUSDT", "1H" and default indicators.
-    /// Create a new chart application that shares an existing [`DataBridge`].
     ///
     /// Unlike [`new`], this does **not** spin up a second tokio runtime or
-    /// connector pool.  The provided `bridge` is shared with the caller (and
-    /// any other windows created from the same bridge). A new independent
-    /// broadcast receiver is created via [`DataBridge::add_listener`] so that
-    /// this window gets its own queue of live updates.
-    pub fn new_empty(bridge: std::sync::Arc<DataBridge>) -> Self {
-        let exchange_symbols_seed = bridge.symbols_snapshot();
-        let core = mlc_backend::BackendCore::new(bridge.clone(), None);
-        // Seed exchange_symbols cache from the bridge's session-long catalogue
-        // so windows created after the connect wave start populated.
-        {
-            core.exchange_symbols_mut().replace_all(exchange_symbols_seed);
-        }
-
+    /// connector pool. `core` is the single process-wide `Arc<BackendCore>`
+    /// (constructed once by the caller, shared with every other window built
+    /// from the same core) — this window reads live updates through
+    /// `core.tick_writers`, no independent broadcast receiver of its own.
+    pub fn new_empty(core: std::sync::Arc<mlc_backend::BackendCore>) -> Self {
         let mut app = Self {
             panel_app: ChartPanelApp::new(""),
             input_coordinator: RefCell::new(InputCoordinator::new()),
@@ -2230,6 +2221,7 @@ impl ChartApp {
     /// so that presets, templates, and profile data are not re-read from disk
     /// for each window.
     pub fn new_window(
+        core: std::sync::Arc<mlc_backend::BackendCore>,
         bridge: std::sync::Arc<DataBridge>,
         window_id: String,
         restore: Option<&mlc_core::WindowState>,
@@ -2237,11 +2229,6 @@ impl ChartApp {
         user_manager: &crate::user_manager::ProfileManager,
         skeleton: bool,
     ) -> Self {
-        let exchange_symbols_seed = bridge.symbols_snapshot();
-        let core = mlc_backend::BackendCore::new(bridge.clone(), None);
-        {
-            core.exchange_symbols_mut().replace_all(exchange_symbols_seed);
-        }
         let mut app = Self {
             panel_app: ChartPanelApp::new(""),
             input_coordinator: RefCell::new(InputCoordinator::new()),

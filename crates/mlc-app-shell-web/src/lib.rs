@@ -17,9 +17,9 @@
 //! # Architecture sketch
 //!
 //! ```text
-//! DataBridge::new().await        → Arc<DataBridge>
-//! BackendCore::new(bridge, None) → Arc<BackendCore>   (no trading mgr on wasm)
-//! ChartApp::new_empty(bridge)    → ChartApp
+//! DataBridge::new().await               → Arc<DataBridge>
+//! BackendCore::new(bridge, None)        → Arc<BackendCore>   (no trading mgr on wasm)
+//! ChartApp::new_empty(core)             → ChartApp
 //!
 //! WebWindowProvider::from_id("chart")   ← DOM event source
 //! Canvas2dChartRenderContext            ← render surface (mlc_core::RenderContext impl)
@@ -123,7 +123,8 @@ async fn run() -> Result<(), JsValue> {
     let bridge = Arc::new(bridge);
     web_sys::console::log_1(&"[mlc-app-shell-web] bridge ready".into());
 
-    let mut app = ChartApp::new_empty(bridge.clone());
+    let core = mlc_backend::BackendCore::new(bridge.clone(), None);
+    let mut app = ChartApp::new_empty(core);
     app.seed_default_chart(
         digdigdig3::ExchangeId::Binance,
         "BTCUSDT",

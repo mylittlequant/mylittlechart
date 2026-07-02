@@ -96,7 +96,8 @@ fn four_tabs_same_instrument_all_bubbles_get_bars_after_tick() {
     // 2. Build a ChartApp on this bridge. new_empty does NOT preload a chart,
     //    so we add the 4 BTCUSDT 1m Spot charts manually to mirror the live
     //    "4 tabs same instrument" symptom.
-    let mut app = ChartApp::new_empty(bridge.clone());
+    let core = mlc_backend::BackendCore::new(bridge.clone(), None);
+    let mut app = ChartApp::new_empty(core);
     let chart_ids = add_charts(&mut app, 4, "BTCUSDT", "binance", Timeframe::m1());
     assert_eq!(chart_ids.len(), 4, "expected 4 attached BTCUSDT charts");
 
@@ -144,7 +145,8 @@ fn live_bug_repro_chart_with_phantom_bubble_still_gets_bars() {
     let bridge = Arc::new(bridge);
     let tx = bridge.debug_broadcast_tx();
 
-    let mut app = ChartApp::new_empty(bridge.clone());
+    let core = mlc_backend::BackendCore::new(bridge.clone(), None);
+    let mut app = ChartApp::new_empty(core);
     let chart_id = add_chart_plus_phantom(&mut app, "BTCUSDT", "binance", Timeframe::m1());
 
     let bars = mk_bars(300);
@@ -176,7 +178,8 @@ fn bars_loaded_for_different_instrument_does_not_pollute_eth_tab() {
     let bridge = Arc::new(bridge);
     let tx = bridge.debug_broadcast_tx();
 
-    let mut app = ChartApp::new_empty(bridge.clone());
+    let core = mlc_backend::BackendCore::new(bridge.clone(), None);
+    let mut app = ChartApp::new_empty(core);
     let btc_ids = add_charts(&mut app, 2, "BTCUSDT", "binance", Timeframe::m1());
     let eth_ids = add_charts(&mut app, 2, "ETHUSDT", "binance", Timeframe::m1());
 

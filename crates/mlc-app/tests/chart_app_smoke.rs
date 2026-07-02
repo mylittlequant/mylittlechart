@@ -135,7 +135,8 @@ async fn chart_app_tick_sustains_trade_flow_1m() {
     let bridge = Arc::new(bridge);
     let mut probe_rx = bridge.add_listener();
 
-    let mut app = ChartApp::new_empty(bridge.clone());
+    let core = mlc_backend::BackendCore::new(bridge.clone(), None);
+    let mut app = ChartApp::new_empty(core);
     app.seed_default_chart(
         ExchangeId::Binance, "BTCUSDT", tf_m1(), AccountType::Spot, 500,
     );
@@ -283,7 +284,8 @@ async fn chart_app_scroll_backfill_triggers_on_view_shift() {
     let bridge = Arc::new(bridge);
     let mut probe_rx = bridge.add_listener();
 
-    let mut app = ChartApp::new_empty(bridge.clone());
+    let core = mlc_backend::BackendCore::new(bridge.clone(), None);
+    let mut app = ChartApp::new_empty(core);
     app.seed_default_chart(
         ExchangeId::Binance, "BTCUSDT", tf_m1(), AccountType::Spot, 500,
     );
