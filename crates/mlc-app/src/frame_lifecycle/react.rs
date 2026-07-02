@@ -188,10 +188,11 @@ impl ChartApp {
                                     .containers()
                                     .keys()
                                     .filter(|cid| {
-                                        parked.tag_manager.symbol_for_chart(**cid).map_or(false, |s| s == *symbol)
-                                            && parked.tag_manager.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
-                                            && parked.tag_manager.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == *tf_name)
-                                            && parked.tag_manager.account_type_for_chart(**cid).map_or(false, |at| at == account_type.as_str())
+                                        let Some(bid) = parked.tag_manager.tag_for_chart(**cid) else { return false };
+                                        parked.bubble_store.symbol(bid).map_or(false, |s| s == *symbol)
+                                            && parked.bubble_store.exchange(bid).map_or(false, |e| e == exchange_id.as_str())
+                                            && parked.bubble_store.timeframe(bid).map_or(false, |tf| tf.name == *tf_name)
+                                            && parked.bubble_store.account_type(bid).map_or(false, |at| at == account_type.as_str())
                                     })
                                     .copied()
                                     .collect();
@@ -203,12 +204,12 @@ impl ChartApp {
                     for (preset_key, cids) in matching_parked {
                         if let Some(parked) = self.live_preset_cache.get_mut(&preset_key) {
                             let parked_bubble_ids: Vec<mlc_core::ids::BubbleId> = cids.iter()
-                                .filter_map(|cid| parked.tag_manager.bubble_for_chart(*cid))
+                                .filter_map(|cid| parked.tag_manager.tag_for_chart(*cid))
                                 .collect::<std::collections::HashSet<_>>()
                                 .into_iter()
                                 .collect();
                             for bid_p in &parked_bubble_ids {
-                                parked.tag_manager.set_bars(*bid_p, new_bars.clone());
+                                parked.bubble_store.set_bars(*bid_p, new_bars.clone());
                             }
                             for cid in cids {
                                 if let Some(window) = parked.panel_grid.containers_mut().get_mut(&cid) {

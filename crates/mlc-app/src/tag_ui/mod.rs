@@ -7,13 +7,19 @@
 //! headless daemon needs to work correctly. They live here, sidecar-keyed
 //! by the domain id (`TagId`, owned by `mlc_backend::tag::TagManager`).
 //!
-//! `active_chart_tag` (which tag the currently-active chart shows) is also
-//! presentation and lives here as a plain runtime field — NOT persisted.
-//!
 //! Hard cutover: the old `Tag` struct (pre-3.6b) declared
 //! `ui_container_ids` / `standalone_panel_ids` directly but neither field
 //! was ever populated beyond `Vec::new()` nor read by any renderer/persist
 //! path (audited 2026-07-02) — no seed-from-legacy migration needed.
+//!
+//! `active_chart_tag` does NOT live here (corrected 2026-07-02, Step 6):
+//! it turned out to be live, actively-written state
+//! (`BubbleStore::active_chart_bubble`, set inside `reassign_synced_panels`)
+//! that the original 3.6b audit missed because it lived on `BubbleStore`,
+//! not the old `TagStore`. It drives which tag Synced panels follow — a
+//! headless daemon UI needs this to route correctly — so it is domain
+//! routing, not presentation. It now lives on
+//! `mlc_backend::tag::TagManager::active_chart_tag`.
 
 use std::collections::HashMap;
 
@@ -36,16 +42,11 @@ pub struct TagUiState {
     pub standalone_panel_ids: Vec<PanelId>,
 }
 
-/// Top-level tag UI/presentation state — per-tag sidecars plus which tag
-/// the active chart currently shows.
+/// Top-level tag UI/presentation state — per-tag sidecars.
 #[derive(Clone, Debug, Default)]
 pub struct TagUiRegistry {
     /// Per-tag presentation state, keyed by `TagId`.
     tags: HashMap<TagId, TagUiState>,
-
-    /// The tag whose member is the currently-active chart. Updated when the
-    /// active chart changes. Runtime-only, never persisted.
-    pub active_chart_tag: Option<TagId>,
 }
 
 impl TagUiRegistry {
@@ -69,8 +70,5 @@ impl TagUiRegistry {
     /// `TagsMut::remove`).
     pub fn remove_tag(&mut self, tag_id: TagId) {
         self.tags.remove(&tag_id);
-        if self.active_chart_tag == Some(tag_id) {
-            self.active_chart_tag = None;
-        }
     }
 }

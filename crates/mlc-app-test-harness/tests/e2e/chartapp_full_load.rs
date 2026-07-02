@@ -38,11 +38,13 @@ fn add_charts(app: &mut ChartApp, count: usize, symbol: &str, exchange: &str, tf
     let mut out = Vec::new();
     for _ in 0..count {
         let chart_id = generate_chart_id();
+        let color = [0.0; 4];
         let bid = app.core.bubbles_mut().create_group_auto(
-            [0.0; 4], symbol.to_string(), tf.clone(),
+            color, symbol.to_string(), tf.clone(),
         );
         app.core.bubbles_mut().set_bubble_instrument(bid, exchange.to_string(), "S".to_string());
-        let _ = app.core.bubbles_mut().attach_chart_to_bubble(chart_id, bid);
+        app.core.tags_mut().insert(mlc_core::tag::Tag::new_auto(bid, color));
+        let _ = app.core.tags_mut().attach_chart_to_tag(chart_id, bid);
 
         let mut chart = ChartContainer::new(symbol, tf.clone());
         chart.id = chart_id;
@@ -66,10 +68,12 @@ fn add_chart_plus_phantom(
     tf: Timeframe,
 ) -> mlc_core::state::ChartId {
     // Phantom — no chart attached.
+    let phantom_color = [0.0; 4];
     let phantom_bid = app.core.bubbles_mut().create_group_auto(
-        [0.0; 4], symbol.to_string(), tf.clone(),
+        phantom_color, symbol.to_string(), tf.clone(),
     );
     app.core.bubbles_mut().set_bubble_instrument(phantom_bid, exchange.to_string(), "S".to_string());
+    app.core.tags_mut().insert(mlc_core::tag::Tag::new_auto(phantom_bid, phantom_color));
 
     // Real chart in its own auto-bubble, also carrying matching instrument.
     let cids = add_charts(app, 1, symbol, exchange, tf);

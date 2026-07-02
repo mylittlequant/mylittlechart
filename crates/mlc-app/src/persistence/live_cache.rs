@@ -14,6 +14,7 @@ use std::collections::{HashMap, HashSet};
 
 use mlc_core::state::panel_grid::ChartPanelGrid;
 use mlc_backend::bubble::BubbleStore;
+use mlc_backend::tag::TagManager;
 use mlc_core::LeafId;
 use mlc_backend_indicator_engine::IndicatorManager;
 
@@ -23,13 +24,19 @@ use mlc_backend_indicator_engine::IndicatorManager;
 /// No serialization needed — just pointer swaps.
 pub struct LivePresetState {
     pub panel_grid: ChartPanelGrid,
-    pub tag_manager: BubbleStore,
+    pub bubble_store: BubbleStore,
+    /// Tag registry + member routing paired 1:1 with `bubble_store` (Step 6
+    /// doctrine cutover). Must travel with `bubble_store` — both are keyed by
+    /// the same `BubbleId`s; parking one without the other orphans routing
+    /// for this preset's bubbles.
+    pub tag_manager: TagManager,
     pub indicator_manager: IndicatorManager,
     pub alert_manager: mlc_backend::alert::AlertManager,
-    /// Per-bubble drawing sessions (Step 3.1). Must travel with `tag_manager`
-    /// — `DrawingManager::sessions` is keyed by the same `BubbleId`s that
-    /// live in this preset's `BubbleStore`; parking one without the other
-    /// orphans sessions in the (fresh, empty) active `DrawingManager`.
+    /// Per-bubble drawing sessions (Step 3.1). Must travel with
+    /// `bubble_store` — `DrawingManager::sessions` is keyed by the same
+    /// `BubbleId`s that live in this preset's `BubbleStore`; parking one
+    /// without the other orphans sessions in the (fresh, empty) active
+    /// `DrawingManager`.
     pub drawing_manager: mlc_backend::drawing::DrawingManager,
     pub leaf_color_tags: HashMap<LeafId, [f32; 4]>,
     pub indicator_overlay_states: HashMap<LeafId, mlc_app_layout::ui::modal_settings::IndicatorOverlayState>,

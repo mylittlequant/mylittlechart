@@ -1531,7 +1531,7 @@ impl ChartApp {
                                         // visible color tag so the panel-chart pair shows a
                                         // shared color marker — this is the moment a 1-member
                                         // untagged group becomes a 2+-member tagged one.
-                                        let group_id = self.core.bubbles().active_chart_bubble()
+                                        let group_id = self.core.tags().active_chart_tag()
                                             .or_else(|| {
                                                 self.panel_app.panel_grid
                                                     .active_container_id()
@@ -1539,7 +1539,8 @@ impl ChartApp {
                                             });
                                         if let Some(gid) = group_id {
                                             // Promote if currently auto-created.
-                                            let was_auto = self.with_bubble(gid, |g| g.auto_created)
+                                            let was_auto = self.core.tags().get(gid)
+                                                .map(|t| t.auto_created)
                                                 .unwrap_or(false);
                                             if was_auto {
                                                 if let Some(new_color) = self.promote_to_tagged(gid) {
@@ -1547,7 +1548,7 @@ impl ChartApp {
                                                     // chart member of this group so chart leaf
                                                     // headers also show the new color marker.
                                                     let chart_member_ids: Vec<mlc_core::ChartId> =
-                                                        self.core.bubbles().chart_member_ids(gid)
+                                                        self.core.tags().chart_member_ids(gid)
                                                             .into_iter()
                                                             .collect();
                                                     for cid in chart_member_ids {
@@ -1950,10 +1951,12 @@ impl ChartApp {
                                 );
                                 if is_market_data {
                                     let member = SyncMemberId::Panel(item.panel_id().0);
-                                    let is_untagged = self.core.bubbles()
-                                        .group_for_member(member)
-                                        .and_then(|gid| self.with_bubble(gid, |g| g.auto_created))
-                                        .unwrap_or(true);
+                                    let is_untagged = {
+                                        let tags = self.core.tags();
+                                        tags.tag_for_member(member)
+                                            .and_then(|gid| tags.get(gid).map(|t| t.auto_created))
+                                            .unwrap_or(true)
+                                    };
                                     self.sidebar_state.slot_source_mode = if is_untagged {
                                         SlotSourceMode::Untagged
                                     } else {
@@ -2120,7 +2123,7 @@ impl ChartApp {
                                     let src_member = mlc_core::ids::SyncMemberId::Panel(src_item.panel_id().0);
                                     let new_member = mlc_core::ids::SyncMemberId::Panel(new_item.panel_id().0);
                                     let src_gid = self.group_for_member(src_member);
-                                    let src_was_synced = self.core.bubbles().is_synced(src_member);
+                                    let src_was_synced = self.core.tags().is_synced(src_member);
                                     if let Some(gid) = src_gid {
                                         if src_was_synced {
                                             self.set_panel_synced(new_member, gid);
@@ -2583,10 +2586,12 @@ impl ChartApp {
                                     );
                                     if is_market_data {
                                         let member = SyncMemberId::Panel(item.panel_id().0);
-                                        let is_untagged = self.core.bubbles()
-                                            .group_for_member(member)
-                                            .and_then(|gid| self.with_bubble(gid, |g| g.auto_created))
-                                            .unwrap_or(true);
+                                        let is_untagged = {
+                                            let tags = self.core.tags();
+                                            tags.tag_for_member(member)
+                                                .and_then(|gid| tags.get(gid).map(|t| t.auto_created))
+                                                .unwrap_or(true)
+                                        };
                                         self.sidebar_state.slot_source_mode = if is_untagged {
                                             SlotSourceMode::Untagged
                                         } else {

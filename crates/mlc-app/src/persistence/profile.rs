@@ -178,9 +178,13 @@ impl ChartApp {
         );
         let pk_grid_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
-        let tag_manager = std::mem::replace(
+        let bubble_store = std::mem::replace(
             &mut *self.core.bubble_mut(),
             mlc_backend::bubble::BubbleStore::new(),
+        );
+        let tag_manager = std::mem::replace(
+            &mut *self.core.tag.write().expect("BackendCore.tag poisoned (write)"),
+            mlc_backend::tag::TagManager::new(),
         );
         let pk_bubble_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
@@ -229,6 +233,7 @@ impl ChartApp {
         let pk_panels_us = t0.elapsed().as_micros();
         let state = preset_cache::LivePresetState {
             panel_grid,
+            bubble_store,
             tag_manager,
             indicator_manager,
             alert_manager,
@@ -266,7 +271,8 @@ impl ChartApp {
         self.panel_app.panel_grid = state.panel_grid;
         let up_grid_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
-        *self.core.bubble_mut() = state.tag_manager;
+        *self.core.bubble_mut() = state.bubble_store;
+        *self.core.tag.write().expect("BackendCore.tag poisoned (write)") = state.tag_manager;
         let up_bubble_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
         *self.core.indicators_mut_raw() = state.indicator_manager;

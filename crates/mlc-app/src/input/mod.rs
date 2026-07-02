@@ -6246,7 +6246,7 @@ impl ChartApp {
                 if changed {
                     if let Some(chart_id) = active_chart_id {
                         if let Some(bid) = self.bubble_for_chart(chart_id) {
-                            self.core.bubbles_mut().set_timeframe(chart_id, new_timeframe.clone());
+                            self.core.bubbles_mut().set_timeframe(bid, new_timeframe.clone());
                             // Phase X0 / C4: mirror bars into bubble storage.
                             if let Some(b) = bars_for_bubble {
                                 self.core.bubbles_mut().set_bars(bid, b);
@@ -7210,7 +7210,7 @@ impl ChartApp {
 
         // Snapshot sync groups (with synced_panels cross-reference so each
         // group's persisted synced_panel_ids list survives restore).
-        let synced_snapshot = self.core.bubbles().synced_panels_snapshot();
+        let synced_snapshot = self.core.tags().synced_panels_snapshot();
         for group_snap in self.core.bubbles().snapshot_all(&synced_snapshot) {
             preset.bubbles.push(group_snap);
         }

@@ -233,7 +233,9 @@ impl ChartApp {
                         // NOT set time_axis here (it has no bars to anchor from yet).
                     }
                     if let Some(chart_id) = active_chart_id {
-                        self.core.bubbles_mut().set_timeframe(chart_id, tf.clone());
+                        if let Some(bid) = self.core.tags().tag_for_chart(chart_id) {
+                            self.core.bubbles_mut().set_timeframe(bid, tf.clone());
+                        }
                     }
                     // Fetch data for the new timeframe. A tick TF subscribes to the
                     // dig3 TickBar stream (N trades/bar); a time TF fetches klines.
@@ -1879,7 +1881,7 @@ impl ChartApp {
                         // scale_mode argument; stash happens here before the call.
                         if let Some(gid) = gid {
                             let peer_leaves: Vec<mlc_core::LeafId> =
-                                self.core.bubbles().chart_member_ids(gid)
+                                self.core.tags().chart_member_ids(gid)
                                     .into_iter()
                                     .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
                                     .filter(|&lid| lid != active_leaf)
@@ -1911,7 +1913,7 @@ impl ChartApp {
                 if newly_disabled {
                     if let Some(gid) = gid {
                         let all_leaves: Vec<mlc_core::LeafId> =
-                            self.core.bubbles().chart_member_ids(gid)
+                            self.core.tags().chart_member_ids(gid)
                                 .into_iter()
                                 .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
                                 .collect();

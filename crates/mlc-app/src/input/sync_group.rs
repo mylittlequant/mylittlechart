@@ -115,8 +115,8 @@ impl ChartApp {
         };
         if let Some(old_group_id) = detached_group {
             let remaining = {
-                let bm = self.core.bubbles();
-                bm.members(old_group_id).map_or(0, |m| m.len())
+                let tags = self.core.tags();
+                tags.members(old_group_id).map_or(0, |m| m.len())
             };
             eprintln!(
                 "[BubbleStore] Disconnected chart {:?} from group {:?} ({} remaining)",
@@ -1459,7 +1459,7 @@ impl ChartApp {
         let group_id_for_peers = source_chart_id_for_peers
             .and_then(|cid| self.bubble_for_chart(cid));
         let sync_leaves: Vec<mlc_core::LeafId> = if let Some(gid) = group_id_for_peers {
-            self.core.bubbles()
+            self.core.tags()
                 .chart_member_ids(gid)
                 .into_iter()
                 .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
@@ -1596,13 +1596,14 @@ impl ChartApp {
             let group_id = self.panel_app.panel_grid.container_id_for_leaf(source_leaf)
                 .and_then(|cid| self.bubble_for_chart(cid));
 
-            let member = mlc_core::ids::SyncMemberId::Chart(chart_id.0);
-            self.core.bubbles_mut().set_instrument(
-                member,
-                symbol.to_string(),
-                source_exchange,
-                source_account_type,
-            );
+            if let Some(bid) = group_id {
+                self.core.bubbles_mut().set_instrument(
+                    bid,
+                    symbol.to_string(),
+                    source_exchange,
+                    source_account_type,
+                );
+            }
             eprintln!(
                 "[BubbleStore] Updated group symbol to '{}' via chart {:?}",
                 symbol, chart_id
@@ -1634,7 +1635,7 @@ impl ChartApp {
         let group_id_for_tf = source_chart_id_for_tf
             .and_then(|cid| self.bubble_for_chart(cid));
         let sync_leaves: Vec<mlc_core::LeafId> = if let Some(gid) = group_id_for_tf {
-            self.core.bubbles()
+            self.core.tags()
                 .chart_member_ids(gid)
                 .into_iter()
                 .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
@@ -1732,7 +1733,9 @@ impl ChartApp {
         // Also update the TagManager group's canonical timeframe so the group
         // state stays consistent with the displayed windows.
         if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(source_leaf) {
-            self.core.bubbles_mut().set_timeframe(chart_id, tf.clone());
+            if let Some(bid) = self.core.tags().tag_for_chart(chart_id) {
+                self.core.bubbles_mut().set_timeframe(bid, tf.clone());
+            }
             eprintln!(
                 "[BubbleStore] Updated group timeframe to {:?} via chart {:?}",
                 tf, chart_id
@@ -1788,7 +1791,7 @@ impl ChartApp {
         // not receive updates even when the group default is enabled.
         // Use TagManager membership so untagged groups propagate too.
         let sync_leaves: Vec<mlc_core::LeafId> = if let Some(gid) = group_id {
-            self.core.bubbles()
+            self.core.tags()
                 .chart_member_ids(gid)
                 .into_iter()
                 .filter_map(|cid| self.panel_app.panel_grid.leaf_for_container_id(cid))
@@ -1828,7 +1831,7 @@ impl ChartApp {
 
         // Propagate crosshair price to all order-flow panels that belong to the same sync group.
         if let Some(gid) = group_id {
-            let panel_ids = self.core.bubbles().panel_members(gid);
+            let panel_ids = self.core.tags().panel_members(gid);
             let crosshair_price = if visible { Some(price) } else { None };
             for pid in panel_ids {
                 let panel_id = mlc_app_sidebar_content::free_slot::PanelId(pid);
@@ -2054,7 +2057,7 @@ impl ChartApp {
         // Collect peer chart_ids (excluding source). Symbol no longer matters
         // — each peer recalculates indicators against its own bars.
         let source_chart_id = self.panel_app.panel_grid.container_id_for_leaf(source_leaf);
-        let peer_cids: Vec<mlc_core::ChartId> = self.core.bubbles()
+        let peer_cids: Vec<mlc_core::ChartId> = self.core.tags()
             .chart_member_ids(group_id)
             .into_iter()
             .filter(|&cid| Some(cid) != source_chart_id)

@@ -61,16 +61,16 @@ fn headless_btcusdt_loads_bars_into_active_chart_bubble() {
     );
 
     // Stronger assertion: every chart that is attached to a bubble (via
-    // BubbleStore.member_to_bubble) must see those bars in the renderer
+    // TagManager's member routing) must see those bars in the renderer
     // path (via window.current_bubble_id). They are the same authoritative
     // bubble per the apply_preset_cold sync sweep.
     for (cid, win_bid, win_bars) in h.dump_chart_bubbles() {
-        let auth_bid = h.app.core.bubbles().bubble_for_chart(cid);
+        let auth_bid = h.app.core.tags().tag_for_chart(cid);
         if let Some(auth_bid) = auth_bid {
             assert_eq!(
                 win_bid, auth_bid,
                 "chart {:?}: window.current_bubble_id ({:?}) must equal \
-                 BubbleStore.bubble_for_chart ({:?}) after sync sweep",
+                 TagManager.tag_for_chart ({:?}) after sync sweep",
                 cid, win_bid, auth_bid
             );
             let auth_bars = h.app.core.bubbles().bars(auth_bid).len();

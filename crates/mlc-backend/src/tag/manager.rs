@@ -2,14 +2,21 @@
 //! `BubbleStore` (every bubble has a paired tag with the same id).
 //!
 //! Also owns the routing table from individual chart / panel members to the
-//! tag (and therefore the bubble) they belong to, and the set of panel
-//! members currently in Synced state. Bubble grouping is domain — a headless
-//! daemon UI cannot sync panels without it — per doctrine 1B.
+//! tag (and therefore the bubble) they belong to, the set of panel members
+//! currently in Synced state, and which tag the active chart shows
+//! (`active_chart_tag`). Bubble grouping is domain — a headless daemon UI
+//! cannot sync panels or route Synced-panel-follow without it — per
+//! doctrine 1B (`docs/mlc/plans/doctrine-cutover-2026-06-27.md`).
 //!
-//! Presentation state (`ui_container_ids`, `standalone_panel_ids`,
-//! `active_chart_tag`) lives on the app-side `mlc-app::tag_ui::TagUiState`
-//! sidecar, NOT here — see `docs/mlc/plans/doctrine-cutover-2026-06-27.md`
-//! §1B.
+//! Presentation state (`ui_container_ids`, `standalone_panel_ids`) lives on
+//! the app-side `mlc-app::tag_ui::TagUiState` sidecar, NOT here.
+//!
+//! Methods are `pub` (not `pub(crate)`) mirroring `WatchlistManager`: the
+//! `Tags`/`TagsMut` facade governs access while the manager sits behind
+//! `BackendCore`'s `RwLock`; once a caller owns the manager directly
+//! (parked-preset swap via `mem::replace` in `mlc-app::persistence`), its
+//! `pub` API is the normal way to query it — no facade needed for an
+//! unlocked, directly-owned instance.
 
 use std::collections::{HashMap, HashSet};
 
@@ -28,6 +35,14 @@ pub struct TagManager {
     /// Panel members currently in Synced state. Their tag membership is
     /// dynamic — reassigned when the active chart changes.
     synced_panels: HashSet<SyncMemberId>,
+
+    /// The tag whose member is the currently-active chart. Updated whenever
+    /// the active chart changes (inside `reassign_synced_panels`). Domain
+    /// routing state — promoted from `BubbleStore::active_chart_bubble`
+    /// (Step 6). Drives which tag Synced panels follow; a headless daemon UI
+    /// needs this to route panel-follow correctly, so it lives here rather
+    /// than on the app-side presentation sidecar.
+    active_chart_tag: Option<TagId>,
 }
 
 #[derive(Debug)]
@@ -54,12 +69,12 @@ impl TagManager {
     // CRUD
     // =========================================================================
 
-    pub(crate) fn insert(&mut self, tag: Tag) {
+    pub fn insert(&mut self, tag: Tag) {
         self.tags.insert(tag.id, tag);
     }
 
     /// Remove a tag and unmap all its members.
-    pub(crate) fn remove(&mut self, id: TagId) -> Option<Tag> {
+    pub fn remove(&mut self, id: TagId) -> Option<Tag> {
         let tag = self.tags.remove(&id)?;
         for member_id in &tag.members {
             self.member_to_tag.remove(member_id);
@@ -67,27 +82,27 @@ impl TagManager {
         Some(tag)
     }
 
-    pub(crate) fn get(&self, id: TagId) -> Option<&Tag> {
+    pub fn get(&self, id: TagId) -> Option<&Tag> {
         self.tags.get(&id)
     }
 
-    pub(crate) fn get_mut(&mut self, id: TagId) -> Option<&mut Tag> {
+    pub fn get_mut(&mut self, id: TagId) -> Option<&mut Tag> {
         self.tags.get_mut(&id)
     }
 
-    pub(crate) fn iter(&self) -> impl Iterator<Item = (&TagId, &Tag)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&TagId, &Tag)> {
         self.tags.iter()
     }
 
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.tags.len()
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.tags.is_empty()
     }
 
-    pub(crate) fn contains(&self, id: TagId) -> bool {
+    pub fn contains(&self, id: TagId) -> bool {
         self.tags.contains_key(&id)
     }
 
@@ -97,7 +112,7 @@ impl TagManager {
 
     /// Connect a member to a tag. If already in another tag, the member is
     /// disconnected first.
-    pub(crate) fn connect(
+    pub fn connect(
         &mut self,
         member: SyncMemberId,
         tag_id: TagId,
@@ -113,7 +128,7 @@ impl TagManager {
     }
 
     /// Disconnect a member. Returns the tag id it was in, or `None`.
-    pub(crate) fn disconnect(&mut self, member: SyncMemberId) -> Option<TagId> {
+    pub fn disconnect(&mut self, member: SyncMemberId) -> Option<TagId> {
         let tag_id = self.member_to_tag.remove(&member)?;
         if let Some(tag) = self.tags.get_mut(&tag_id) {
             tag.members.remove(&member);
@@ -121,7 +136,7 @@ impl TagManager {
         Some(tag_id)
     }
 
-    pub(crate) fn tag_for_member(&self, member: SyncMemberId) -> Option<TagId> {
+    pub fn tag_for_member(&self, member: SyncMemberId) -> Option<TagId> {
         self.member_to_tag.get(&member).copied()
     }
 
@@ -131,7 +146,7 @@ impl TagManager {
     // =========================================================================
 
     /// Attach a chart window to a tag. Wraps `connect(SyncMemberId::Chart(...))`.
-    pub(crate) fn attach_chart_to_tag(
+    pub fn attach_chart_to_tag(
         &mut self,
         chart_id: ChartId,
         tag_id: TagId,
@@ -140,17 +155,17 @@ impl TagManager {
     }
 
     /// Detach a chart window from its current tag.
-    pub(crate) fn detach_chart_from_tag(&mut self, chart_id: ChartId) -> Option<TagId> {
+    pub fn detach_chart_from_tag(&mut self, chart_id: ChartId) -> Option<TagId> {
         self.disconnect(SyncMemberId::Chart(chart_id.0))
     }
 
     /// Return the tag that contains the given chart window, if any.
-    pub(crate) fn tag_for_chart(&self, chart_id: ChartId) -> Option<TagId> {
+    pub fn tag_for_chart(&self, chart_id: ChartId) -> Option<TagId> {
         self.tag_for_member(SyncMemberId::Chart(chart_id.0))
     }
 
     /// Return all chart members of a tag as `ChartId` values.
-    pub(crate) fn chart_member_ids(&self, tag_id: TagId) -> Vec<ChartId> {
+    pub fn chart_member_ids(&self, tag_id: TagId) -> Vec<ChartId> {
         self.tags
             .get(&tag_id)
             .map(|t| t.members.iter().filter_map(|m| m.as_chart().map(ChartId)).collect())
@@ -158,7 +173,7 @@ impl TagManager {
     }
 
     /// Return all panel member IDs of a tag.
-    pub(crate) fn panel_members(&self, tag_id: TagId) -> Vec<u64> {
+    pub fn panel_members(&self, tag_id: TagId) -> Vec<u64> {
         self.tags
             .get(&tag_id)
             .map(|t| t.members.iter().filter_map(|m| m.as_panel()).collect())
@@ -167,13 +182,13 @@ impl TagManager {
 
     /// Return the set of all member `SyncMemberId`s in a tag, or `None` if
     /// the tag does not exist.
-    pub(crate) fn members(&self, tag_id: TagId) -> Option<&HashSet<SyncMemberId>> {
+    pub fn members(&self, tag_id: TagId) -> Option<&HashSet<SyncMemberId>> {
         self.tags.get(&tag_id).map(|t| &t.members)
     }
 
     /// Return all peer chart windows of the given chart (every chart member
     /// of its tag except itself).
-    pub(crate) fn peers(&self, chart_id: ChartId) -> Vec<ChartId> {
+    pub fn peers(&self, chart_id: ChartId) -> Vec<ChartId> {
         let member = SyncMemberId::Chart(chart_id.0);
         let Some(&tag_id) = self.member_to_tag.get(&member) else { return Vec::new() };
         let Some(tag) = self.tags.get(&tag_id) else { return Vec::new() };
@@ -190,7 +205,7 @@ impl TagManager {
 
     /// Find the first user-tagged (non-auto-created) tag with the given
     /// color (within a small epsilon).
-    pub(crate) fn find_tag_by_color(&self, color: [f32; 4]) -> Option<TagId> {
+    pub fn find_tag_by_color(&self, color: [f32; 4]) -> Option<TagId> {
         const EPS: f32 = 1.0e-2;
         self.tags
             .iter()
@@ -206,7 +221,7 @@ impl TagManager {
     /// Pick the next preset palette color that is not already used by a
     /// user-tagged (non-auto-created) tag. Falls back to the first preset
     /// color if all are taken.
-    pub(crate) fn next_unused_color(&self) -> [f32; 4] {
+    pub fn next_unused_color(&self) -> [f32; 4] {
         use mlc_core::state::toolbar_geometry::PRESET_COLORS;
         const EPS: f32 = 1.0e-2;
         let used: Vec<[f32; 4]> = self
@@ -229,17 +244,17 @@ impl TagManager {
     }
 
     /// Read color out of the tag for a given bubble id.
-    pub(crate) fn color_for_bubble(&self, bid: BubbleId) -> Option<[f32; 4]> {
+    pub fn color_for_bubble(&self, bid: BubbleId) -> Option<[f32; 4]> {
         self.get(bid).map(|t| t.color)
     }
 
     /// Read `auto_created` for a given bubble id.
-    pub(crate) fn auto_created_for_bubble(&self, bid: BubbleId) -> bool {
+    pub fn auto_created_for_bubble(&self, bid: BubbleId) -> bool {
         self.get(bid).map(|t| t.auto_created).unwrap_or(false)
     }
 
     /// Set the display color of a tag.
-    pub(crate) fn set_color(&mut self, tag_id: TagId, color: [f32; 4]) {
+    pub fn set_color(&mut self, tag_id: TagId, color: [f32; 4]) {
         if let Some(tag) = self.tags.get_mut(&tag_id) {
             tag.color = color;
         }
@@ -249,48 +264,69 @@ impl TagManager {
     // Synced-panel set
     // =========================================================================
 
-    pub(crate) fn synced_panels(&self) -> &HashSet<SyncMemberId> {
+    pub fn synced_panels(&self) -> &HashSet<SyncMemberId> {
         &self.synced_panels
     }
 
-    pub(crate) fn is_synced(&self, member: SyncMemberId) -> bool {
+    pub fn is_synced(&self, member: SyncMemberId) -> bool {
         self.synced_panels.contains(&member)
     }
 
-    pub(crate) fn mark_synced(&mut self, member: SyncMemberId) {
+    pub fn mark_synced(&mut self, member: SyncMemberId) {
         self.synced_panels.insert(member);
     }
 
-    pub(crate) fn unmark_synced(&mut self, member: SyncMemberId) {
+    pub fn unmark_synced(&mut self, member: SyncMemberId) {
         self.synced_panels.remove(&member);
     }
 
     /// Snapshot the synced_panels set (for persistence).
-    pub(crate) fn synced_panels_snapshot(&self) -> Vec<SyncMemberId> {
+    pub fn synced_panels_snapshot(&self) -> Vec<SyncMemberId> {
         self.synced_panels.iter().copied().collect()
     }
 
     /// Put a panel in Synced state: register in `synced_panels` and connect
     /// to the given tag.
-    pub(crate) fn set_synced(&mut self, panel: SyncMemberId, tag_id: TagId) {
+    pub fn set_synced(&mut self, panel: SyncMemberId, tag_id: TagId) {
         self.synced_panels.insert(panel);
         let _ = self.connect(panel, tag_id);
     }
 
     /// Put a panel in auto-created tag state: remove from `synced_panels`
     /// and connect to its own private auto-created tag.
-    pub(crate) fn set_auto_group(&mut self, panel: SyncMemberId, private_tag_id: TagId) {
+    pub fn set_auto_group(&mut self, panel: SyncMemberId, private_tag_id: TagId) {
         self.synced_panels.remove(&panel);
         let _ = self.connect(panel, private_tag_id);
     }
 
     /// Move all currently-Synced panels to a new tag (called when the active
-    /// chart changes so Synced panels follow it).
-    pub(crate) fn reassign_synced_panels(&mut self, new_tag_id: TagId) {
+    /// chart changes so Synced panels follow it). Also records `new_tag_id`
+    /// as the active chart's tag.
+    pub fn reassign_synced_panels(&mut self, new_tag_id: TagId) {
         let panels: Vec<SyncMemberId> = self.synced_panels.iter().copied().collect();
         for member in panels {
             self.disconnect(member);
             let _ = self.connect(member, new_tag_id);
         }
+        self.active_chart_tag = Some(new_tag_id);
+    }
+
+    /// The tag whose member is the currently-active chart.
+    pub fn active_chart_tag(&self) -> Option<TagId> {
+        self.active_chart_tag
+    }
+
+    // =========================================================================
+    // Preset restore helpers
+    // =========================================================================
+
+    /// Remove all tags and reset routing state. Used during preset restore
+    /// to start from a clean slate before re-inserting tags reconstructed
+    /// from snapshots — call alongside `BubbleStore::clear()`.
+    pub fn clear(&mut self) {
+        self.tags.clear();
+        self.member_to_tag.clear();
+        self.synced_panels.clear();
+        self.active_chart_tag = None;
     }
 }

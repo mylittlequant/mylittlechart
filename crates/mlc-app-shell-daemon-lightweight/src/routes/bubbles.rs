@@ -147,11 +147,16 @@ async fn create_bubble(
 ) -> impl IntoResponse {
     let ms = timeframe_ms(&body.timeframe);
     let tf = Timeframe::new(&body.timeframe, ms as i64);
-    let bid = s.core.bubbles_mut().create_group_auto(body.color, body.symbol, tf);
+    let color = body.color;
+    let bid = s.core.bubbles_mut().create_group_auto(color, body.symbol, tf);
     // Set exchange + account_type on the newly created bubble. This is a bare
     // bubble creation with no chart member attached yet, hence the bid-keyed
     // `set_bubble_instrument` rather than the member-keyed `set_instrument`.
     s.core.bubbles_mut().set_bubble_instrument(bid, body.exchange, body.account_type);
+    // Pair a Tag with the bubble (Step 6 doctrine: bubble grouping / color /
+    // auto_created live on TagManager, not DataBubble) — mirrors
+    // `ChartApp::create_auto_bubble`.
+    s.core.tags_mut().insert(mlc_core::tag::Tag::new_auto(bid, color));
     (StatusCode::CREATED, Json(CreateBubbleOut { bid: bid.0 }))
 }
 
@@ -165,7 +170,9 @@ async fn get_bubble(
         return StatusCode::NOT_FOUND.into_response();
     };
     let scale_mode = guard.scale_mode(bid_typed).unwrap_or_default();
-    let auto_created = guard.auto_created(bid_typed);
+    let tags = s.core.tags();
+    let auto_created = tags.auto_created_for_bubble(bid_typed);
+    let members_count = tags.get(bid_typed).map(|t| t.members.len()).unwrap_or(0);
     let out = BubbleSnapshotOut {
         id: bid,
         symbol: instrument.address.symbol,
@@ -175,7 +182,7 @@ async fn get_bubble(
         bars_len: guard.bars(bid_typed).len(),
         primitives_count: s.core.drawings().count(bid_typed),
         indicator_configs_count: guard.indicator_configs(bid_typed).len(),
-        members_count: guard.members(bid_typed).map(|m| m.len()).unwrap_or(0),
+        members_count,
         auto_created,
         scale_mode: format!("{:?}", scale_mode),
     };
@@ -191,6 +198,7 @@ async fn delete_bubble(
         return StatusCode::NOT_FOUND;
     }
     s.core.bubbles_mut().remove_group(bid_typed);
+    s.core.tags_mut().remove(bid_typed);
     // §6.7 cross-manager gap: indicator instances live in IndicatorManager,
     // not on DataBubble, so removing the bubble doesn't automatically drop
     // its indicators the way alerts/primitives (bubble data) do.

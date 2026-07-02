@@ -109,6 +109,11 @@ impl<'a> Tags<'a> {
     pub fn peers(&self, chart_id: ChartId) -> Vec<ChartId> {
         self.mgr.peers(chart_id)
     }
+
+    /// The tag whose member is the currently-active chart.
+    pub fn active_chart_tag(&self) -> Option<TagId> {
+        self.mgr.active_chart_tag()
+    }
 }
 
 /// Mutable facade over `TagManager`.
@@ -264,5 +269,16 @@ impl<'a> TagsMut<'a> {
     /// Set the display color of a tag.
     pub fn set_color(&mut self, tag_id: TagId, color: [f32; 4]) {
         self.mgr.set_color(tag_id, color);
+    }
+
+    /// The tag whose member is the currently-active chart.
+    pub fn active_chart_tag(&self) -> Option<TagId> {
+        self.mgr.active_chart_tag()
+    }
+
+    /// Remove all tags and reset routing state. Used during preset restore —
+    /// call alongside `BubblesMut::clear()`.
+    pub fn clear(&mut self) {
+        self.mgr.clear();
     }
 }

@@ -23,6 +23,7 @@ use std::collections::{HashMap, HashSet};
 
 use mlc_core::state::panel_grid::ChartPanelGrid;
 use mlc_backend::bubble::BubbleStore;
+use mlc_backend::tag::TagManager;
 use mlc_core::LeafId;
 use mlc_backend_indicator_engine::IndicatorManager;
 
@@ -34,7 +35,10 @@ use mlc_backend_indicator_engine::IndicatorManager;
 /// list that drives [`ignite_subscriptions`].
 pub struct HydratedPresetState {
     pub panel_grid: ChartPanelGrid,
-    pub tag_manager: BubbleStore,
+    pub bubble_store: BubbleStore,
+    /// Tag registry + member routing paired 1:1 with `bubble_store` — see
+    /// `LivePresetState::tag_manager`.
+    pub tag_manager: TagManager,
     pub indicator_manager: IndicatorManager,
     pub alert_manager: mlc_backend::alert::AlertManager,
     /// Per-bubble drawing sessions (Step 3.1) — see `LivePresetState::drawing_manager`.

@@ -579,7 +579,6 @@ impl ChartApp {
                                 ),
                             };
                             self.connect_member(member, target_gid);
-                            self.core.bubbles_mut().synced_panels_remove(member);
                             self.core.tags_mut().unmark_synced(member);
                             eprintln!(
                                 "[ChartApp] Panel {} → color group [{:.2},{:.2},{:.2}]",

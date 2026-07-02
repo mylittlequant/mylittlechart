@@ -132,6 +132,7 @@ impl HeadlessChartApp {
     /// for every bubble in the store.
     pub fn dump_all_bubbles(&self) -> Vec<BubbleSummary> {
         let guard = self.app.core.bubbles();
+        let tags = self.app.core.tags();
         let mut out = Vec::new();
         guard.each_bubble(|bv| {
             out.push(BubbleSummary {
@@ -141,7 +142,7 @@ impl HeadlessChartApp {
                 symbol: bv.symbol().to_string(),
                 timeframe: bv.timeframe().name.clone(),
                 bars_len: bv.bars_len(),
-                attached_charts: guard.chart_member_ids(bv.id()),
+                attached_charts: tags.chart_member_ids(bv.id()),
             });
         });
         out

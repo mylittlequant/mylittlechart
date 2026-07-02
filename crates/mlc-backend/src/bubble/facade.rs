@@ -13,11 +13,11 @@ use std::sync::{RwLockReadGuard, RwLockWriteGuard};
 use mlc_core::chart::types::price_scale::ScaleMode;
 use mlc_core::ids::{BubbleId, SyncFlags, SyncMemberId};
 use mlc_core::indicator_types::IndicatorGroupConfig;
-use mlc_core::state::chart_container::{ChartId, ConnectionStatus};
+use mlc_core::state::chart_container::ConnectionStatus;
 use mlc_core::state::{CommandHistory, Timeframe};
 
 use super::data_bubble::DataBubble;
-use super::store::{BubbleStore, BubbleStoreError, InstrumentKey};
+use super::store::{BubbleStore, InstrumentKey};
 
 /// Bundled read view of one bubble — used by [`Bubbles::each_bubble`] so
 /// callers that need more than just the id don't have to reach `&DataBubble`
@@ -223,10 +223,6 @@ impl<'a> Bubbles<'a> {
         self.store.prev_close(bid)
     }
 
-    pub fn prev_close_price_for_chart(&self, chart_id: ChartId) -> Option<f64> {
-        self.store.prev_close_price_for_chart(chart_id)
-    }
-
     pub fn connection_status(&self, bid: BubbleId) -> Option<ConnectionStatus> {
         self.store.connection_status(bid)
     }
@@ -243,67 +239,7 @@ impl<'a> Bubbles<'a> {
         self.store.pre_tag_indicator_ids(bid)
     }
 
-    // ---- Routing — chart/member <-> bubble ---------------------------------
-
-    pub fn group_for_member(&self, member: SyncMemberId) -> Option<BubbleId> {
-        self.store.group_for_member(member)
-    }
-
-    pub fn bubble_for_chart(&self, chart_id: ChartId) -> Option<BubbleId> {
-        self.store.bubble_for_chart(chart_id)
-    }
-
-    pub fn symbol_for_chart(&self, chart_id: ChartId) -> Option<&str> {
-        self.store.symbol_for_chart(chart_id)
-    }
-
-    pub fn timeframe_for_chart(&self, chart_id: ChartId) -> Option<&Timeframe> {
-        self.store.timeframe_for_chart(chart_id)
-    }
-
-    pub fn exchange_for_chart(&self, chart_id: ChartId) -> Option<&str> {
-        self.store.exchange_for_chart(chart_id)
-    }
-
-    pub fn account_type_for_chart(&self, chart_id: ChartId) -> Option<&str> {
-        self.store.account_type_for_chart(chart_id)
-    }
-
-    pub fn chart_member_ids(&self, bid: BubbleId) -> Vec<ChartId> {
-        self.store.chart_member_ids(bid)
-    }
-
-    pub fn panel_members(&self, bid: BubbleId) -> Vec<u64> {
-        self.store.panel_members(bid)
-    }
-
-    pub fn members(&self, bid: BubbleId) -> Option<&std::collections::HashSet<SyncMemberId>> {
-        self.store.members(bid)
-    }
-
-    pub fn peers(&self, chart_id: ChartId) -> Vec<ChartId> {
-        self.store.peers(chart_id)
-    }
-
-    pub fn is_synced(&self, member: SyncMemberId) -> bool {
-        self.store.is_synced(member)
-    }
-
-    pub fn synced_panels_snapshot(&self) -> Vec<SyncMemberId> {
-        self.store.synced_panels_snapshot()
-    }
-
-    pub fn active_chart_bubble(&self) -> Option<BubbleId> {
-        self.store.active_chart_bubble()
-    }
-
-    pub fn find_group_by_color(&self, color: [f32; 4]) -> Option<BubbleId> {
-        self.store.find_group_by_color(color)
-    }
-
-    pub fn next_unused_color(&self) -> [f32; 4] {
-        self.store.next_unused_color()
-    }
+    // ---- Bundled render-state builder --------------------------------------
 
     /// Bundled render-state builder for one bubble — the only place a
     /// `&DataBubble` momentarily crosses into a backend-owned function
@@ -378,10 +314,6 @@ impl<'a> BubblesMut<'a> {
         self.store.scale_mode(bid)
     }
 
-    pub fn bubble_for_chart(&self, chart_id: ChartId) -> Option<BubbleId> {
-        self.store.bubble_for_chart(chart_id)
-    }
-
     pub fn bubbles_for_instrument(&self, exchange: &str, account_type: &str, symbol: &str) -> Vec<BubbleId> {
         self.store.bubbles_for_instrument(exchange, account_type, symbol)
     }
@@ -398,51 +330,6 @@ impl<'a> BubblesMut<'a> {
 
     pub fn remove_group(&mut self, bid: BubbleId) {
         self.store.remove_group(bid)
-    }
-
-    // ---- Routing ------------------------------------------------------------
-
-    pub fn connect(&mut self, member: SyncMemberId, bid: BubbleId) -> Result<(), BubbleStoreError> {
-        self.store.connect(member, bid)
-    }
-
-    pub fn disconnect(&mut self, member: SyncMemberId) -> Option<BubbleId> {
-        self.store.disconnect(member)
-    }
-
-    pub fn attach_chart_to_bubble(&mut self, chart_id: ChartId, bid: BubbleId) -> Result<(), BubbleStoreError> {
-        self.store.attach_chart_to_bubble(chart_id, bid)
-    }
-
-    pub fn detach_chart_from_bubble(&mut self, chart_id: ChartId) -> Option<BubbleId> {
-        self.store.detach_chart_from_bubble(chart_id)
-    }
-
-    pub fn set_synced(&mut self, panel: SyncMemberId, bid: BubbleId) {
-        self.store.set_synced(panel, bid)
-    }
-
-    pub fn set_auto_group(&mut self, panel: SyncMemberId, private_bid: BubbleId) {
-        self.store.set_auto_group(panel, private_bid)
-    }
-
-    pub fn synced_panels_remove(&mut self, member: SyncMemberId) {
-        self.store.synced_panels_remove(member)
-    }
-
-    pub fn reassign_synced_panels(&mut self, new_bid: BubbleId) {
-        self.store.reassign_synced_panels(new_bid)
-    }
-
-    // ---- Primitive / indicator-config ops keyed by chart (registry-level,
-    // unchanged shape — kept for callers that still route by chart id) ------
-
-    pub fn add_indicator_config(&mut self, chart_id: ChartId, type_id: &str, name: &str, pane: u32) -> Result<u64, BubbleStoreError> {
-        self.store.add_indicator_config(chart_id, type_id, name, pane)
-    }
-
-    pub fn remove_indicator_config(&mut self, chart_id: ChartId, config_id: u64) -> Result<(), BubbleStoreError> {
-        self.store.remove_indicator_config(chart_id, config_id)
     }
 
     // ---- Writes -------------------------------------------------------------
@@ -463,16 +350,12 @@ impl<'a> BubblesMut<'a> {
         self.store.set_bars(bid, bars)
     }
 
-    pub fn set_symbol(&mut self, chart_id: ChartId, symbol: String) -> bool {
-        self.store.set_symbol(chart_id, symbol)
+    pub fn set_timeframe(&mut self, bid: BubbleId, tf: Timeframe) -> bool {
+        self.store.set_timeframe(bid, tf)
     }
 
-    pub fn set_timeframe(&mut self, chart_id: ChartId, tf: Timeframe) -> bool {
-        self.store.set_timeframe(chart_id, tf)
-    }
-
-    pub fn set_instrument(&mut self, member: SyncMemberId, symbol: String, exchange: String, account_type: String) -> bool {
-        self.store.set_instrument(member, symbol, exchange, account_type)
+    pub fn set_instrument(&mut self, bid: BubbleId, symbol: String, exchange: String, account_type: String) -> bool {
+        self.store.set_instrument(bid, symbol, exchange, account_type)
     }
 
     pub fn set_bubble_instrument(&mut self, bid: BubbleId, exchange: String, account_type: String) -> bool {
@@ -485,10 +368,6 @@ impl<'a> BubblesMut<'a> {
 
     pub fn set_exchange_for_bid(&mut self, bid: BubbleId, exchange: String) -> bool {
         self.store.set_exchange_for_bid(bid, exchange)
-    }
-
-    pub fn set_color(&mut self, bid: BubbleId, color: [f32; 4]) {
-        self.store.set_color(bid, color)
     }
 
     pub fn set_scale_mode(&mut self, bid: BubbleId, mode: ScaleMode) {
@@ -505,18 +384,6 @@ impl<'a> BubblesMut<'a> {
 
     pub fn set_pre_tag_indicator_ids(&mut self, bid: BubbleId, ids: Vec<u64>) {
         self.store.set_pre_tag_indicator_ids(bid, ids)
-    }
-
-    pub fn promote_to_tagged(&mut self, bid: BubbleId) -> Option<[f32; 4]> {
-        self.store.promote_to_tagged(bid)
-    }
-
-    pub fn find_group_by_color(&self, color: [f32; 4]) -> Option<BubbleId> {
-        self.store.find_group_by_color(color)
-    }
-
-    pub fn next_unused_color(&self) -> [f32; 4] {
-        self.store.next_unused_color()
     }
 
     // ---- Bulk / restore -----------------------------------------------------

@@ -256,10 +256,11 @@ impl ChartApp {
         {
             let mut dump: Vec<String> = Vec::new();
             let bubble_mgr = self.core.bubbles();
+            let tags_mgr = self.core.tags();
             for (cid, w) in self.panel_app.panel_grid.containers().iter() {
                 let cur_bid = w.current_bubble_id;
                 let auto_bid = w.auto_bubble_id;
-                let bid_via_chart = bubble_mgr.bubble_for_chart(*cid);
+                let bid_via_chart = tags_mgr.tag_for_chart(*cid);
                 let cur_bars = bubble_mgr.bars(cur_bid).len();
                 let cur_sym  = bubble_mgr.symbol(cur_bid).unwrap_or_default().to_string();
                 let cur_exch = bubble_mgr.exchange(cur_bid).unwrap_or_default().to_string();
@@ -363,7 +364,7 @@ impl ChartApp {
                     self.core.bubbles_mut().set_bubble_instrument(new_active_group, exch, at);
                     self.core.bubbles_mut().with_bubble_mut(new_active_group, |g| g.address.symbol = sym);
                 }
-                self.core.bubbles_mut().reassign_synced_panels(new_active_group);
+                self.core.tags_mut().reassign_synced_panels(new_active_group);
                 self.apply_key_to_panels_in_group(new_active_group);
             }
         }

@@ -8,8 +8,10 @@
 //! fix is correct against the real types (not just isolated BubbleStore).
 
 use mlc_backend::bubble::BubbleStore;
+use mlc_backend::tag::TagManager;
 use mlc_core::ids::BubbleId;
 use mlc_core::state::{ChartId, generate_chart_id, Timeframe, ChartContainer};
+use mlc_core::tag::Tag;
 use mlc_core::Bar;
 
 fn mk_bars(n: usize) -> Vec<Bar> {
@@ -27,15 +29,18 @@ fn mk_bars(n: usize) -> Vec<Bar> {
 /// instrument. Returns (chart, chart_id, bubble_id).
 fn mk_chart_with_bubble(
     store: &mut BubbleStore,
+    tags: &mut TagManager,
     exchange: &str,
     account_type: &str,
     symbol: &str,
     tf: Timeframe,
 ) -> (ChartContainer, ChartId, BubbleId) {
     let chart_id = generate_chart_id();
-    let bid = store.create_group_auto([0.0; 4], symbol.to_string(), tf.clone());
+    let color = [0.0; 4];
+    let bid = store.create_group_auto(color, symbol.to_string(), tf.clone());
     store.set_bubble_instrument(bid, exchange.to_string(), account_type.to_string());
-    store.attach_chart_to_bubble(chart_id, bid).expect("attach");
+    tags.insert(Tag::new_auto(bid, color));
+    tags.attach_chart_to_tag(chart_id, bid).expect("attach");
 
     let mut chart = ChartContainer::new(symbol, tf);
     chart.id = chart_id;
@@ -50,6 +55,7 @@ fn mk_chart_with_bubble(
 /// in a multi-chart, same-instrument setup.
 fn bars_loaded_writer_arm(
     store: &mut BubbleStore,
+    tags: &TagManager,
     charts: &[(ChartContainer, ChartId, BubbleId)],
     exchange: &str,
     account_type: &str,
@@ -60,7 +66,7 @@ fn bars_loaded_writer_arm(
     // matched_windows: every chart whose attached bubble matches the instrument.
     let mut matched: Vec<ChartId> = Vec::new();
     for (_, cid, _) in charts {
-        let Some(bid) = store.bubble_for_chart(*cid) else { continue };
+        let Some(bid) = tags.tag_for_chart(*cid) else { continue };
         let Some(instrument) = store.instrument(bid) else { continue };
         if instrument.address.exchange == exchange
             && instrument.address.account_type.as_label() == account_type
@@ -82,17 +88,18 @@ fn bars_loaded_writer_arm(
 #[test]
 fn bars_loaded_fills_every_bubble_when_four_tabs_share_instrument() {
     let mut store = BubbleStore::new();
+    let mut tags = TagManager::new();
     let mut charts = Vec::new();
     for _ in 0..4 {
         let c = mk_chart_with_bubble(
-            &mut store, "binance", "S", "BTCUSDT", Timeframe::m1()
+            &mut store, &mut tags, "binance", "S", "BTCUSDT", Timeframe::m1()
         );
         charts.push(c);
     }
     let new_bars = mk_bars(300);
 
     bars_loaded_writer_arm(
-        &mut store, &charts,
+        &mut store, &tags, &charts,
         "binance", "S", "BTCUSDT", "1m",
         &new_bars,
     );
@@ -113,22 +120,23 @@ fn bars_loaded_fills_every_bubble_when_four_tabs_share_instrument() {
 #[test]
 fn bars_loaded_does_not_leak_to_unrelated_instrument() {
     let mut store = BubbleStore::new();
+    let mut tags = TagManager::new();
     let mut charts = Vec::new();
     // 2 BTC tabs + 2 ETH tabs.
     for _ in 0..2 {
         charts.push(mk_chart_with_bubble(
-            &mut store, "binance", "S", "BTCUSDT", Timeframe::m1()
+            &mut store, &mut tags, "binance", "S", "BTCUSDT", Timeframe::m1()
         ));
     }
     for _ in 0..2 {
         charts.push(mk_chart_with_bubble(
-            &mut store, "binance", "S", "ETHUSDT", Timeframe::m1()
+            &mut store, &mut tags, "binance", "S", "ETHUSDT", Timeframe::m1()
         ));
     }
     let btc_bars = mk_bars(300);
 
     bars_loaded_writer_arm(
-        &mut store, &charts,
+        &mut store, &tags, &charts,
         "binance", "S", "BTCUSDT", "1m",
         &btc_bars,
     );
@@ -148,8 +156,9 @@ fn bars_loaded_does_not_leak_to_unrelated_instrument() {
 #[test]
 fn bars_loaded_with_timeframe_mismatch_no_matched_windows_no_write() {
     let mut store = BubbleStore::new();
+    let mut tags = TagManager::new();
     let (chart, _, bid) = mk_chart_with_bubble(
-        &mut store, "binance", "S", "BTCUSDT", Timeframe::h1()
+        &mut store, &mut tags, "binance", "S", "BTCUSDT", Timeframe::h1()
     );
     let new_bars = mk_bars(300);
     let charts = vec![(chart, ChartId(0), bid)];
@@ -157,7 +166,7 @@ fn bars_loaded_with_timeframe_mismatch_no_matched_windows_no_write() {
     // tf_name "1m" doesn't match the chart's "1H" timeframe → no matched
     // windows → writer must NOT touch the bubble.
     bars_loaded_writer_arm(
-        &mut store, &charts,
+        &mut store, &tags, &charts,
         "binance", "S", "BTCUSDT", "1m",
         &new_bars,
     );
