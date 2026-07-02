@@ -258,7 +258,7 @@ fn run_render_loop(
                 .and_then(|bid| st.chart.with_bubble(bid, |b| {
                     let last = b.bars.last();
                     (
-                        b.symbol.clone(),
+                        b.address.symbol.clone(),
                         b.bars.len() as f64,
                         last.map(|x| x.timestamp as f64).unwrap_or(0.0),
                         last.map(|x| x.close).unwrap_or(0.0),
