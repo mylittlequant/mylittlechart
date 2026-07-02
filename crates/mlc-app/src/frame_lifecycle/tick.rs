@@ -5,7 +5,7 @@ use crate::agent as gate4agent;
 
 
 use crate::ChartApp;
-use crate::{account_type_from_label, parse_timeframe_name};
+use crate::parse_timeframe_name;
 use mlc_backend::BubbleEvent;
 use mlc_backend_data_bridge::LiveUpdate;
 use mlc_core::{ChartId, ScaleMode, timestamp_ms_to_bar_f64};
@@ -523,16 +523,16 @@ impl ChartApp {
 
         // ── Layer 3: trigger scroll-fetch when viewport approaches left edge ───
         {
-            let mut scroll_requests: Vec<(mlc_core::state::ChartId, String, String, String, String)> = Vec::new();
+            let mut scroll_requests: Vec<(mlc_core::state::ChartId, String, String, String, mlc_core::instrument::AccountType)> = Vec::new();
             let max_loaded = self.core.user().profile().data_load.max_loaded_bars;
 
-            let instrument_by_cid_scroll: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::state::Timeframe, String, String)> = {
+            let instrument_by_cid_scroll: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::state::Timeframe, String, mlc_core::instrument::AccountType)> = {
                 self.panel_app.panel_grid.containers().keys()
                     .filter_map(|cid| {
                         let sym = self.symbol_for_chart(*cid)?;
                         let tf = self.timeframe_for_chart(*cid)?;
                         let exch = self.exchange_for_chart(*cid)?;
-                        let at = self.account_type_for_chart(*cid)?;
+                        let at: mlc_core::instrument::AccountType = self.account_type_for_chart(*cid)?.parse().unwrap_or_default();
                         Some((*cid, (sym, tf, exch, at)))
                     })
                     .collect()
@@ -576,11 +576,11 @@ impl ChartApp {
                     win_sym_sc.clone(),
                     win_exch_sc.clone(),
                     win_tf_sc.name.clone(),
-                    win_at_sc.clone(),
+                    *win_at_sc,
                 ));
             }
 
-            for (cid_req, symbol, exchange, tf_name, at_label) in scroll_requests {
+            for (cid_req, symbol, exchange, tf_name, account_type) in scroll_requests {
                 // Read the OLDEST bar's ts from the active bubble for this chart.
                 // The pre-cutover code path stored bars on the window directly;
                 // it now lives on the bubble. The dangling `None::<&Bar>` here
@@ -595,7 +595,7 @@ impl ChartApp {
 
                 let eid = digdigdig3::ExchangeId::from_str(&exchange)
                     .unwrap_or(digdigdig3::ExchangeId::Binance);
-                let at = account_type_from_label(&at_label);
+                let at = mlc_backend_data_bridge::account_type_to_dig3(account_type);
 
                 if let Some(tf) = parse_timeframe_name(&tf_name) {
                     self.core.bridge.request_scroll_bars(eid, &symbol, &tf, at, oldest_ts, 500);

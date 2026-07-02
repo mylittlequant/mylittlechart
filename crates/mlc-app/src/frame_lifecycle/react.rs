@@ -6,7 +6,6 @@
 //! happened inside `tick_writers`. This module is the read/react half.
 
 use crate::ChartApp;
-use crate::account_type_from_label;
 use crate::chart_container::DEFAULT_SNAP_MARGIN;
 use mlc_backend::BubbleEvent;
 use mlc_core::ScaleMode;
@@ -32,18 +31,19 @@ impl ChartApp {
 
                 // Short-circuit: no bars, nothing to do for viewport.
                 let new_bars = bars;
+                let event_account_type: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
 
                 let mut any_matched = false;
-                let mut backfill_requests: Vec<(String, mlc_core::state::Timeframe, digdigdig3::AccountType)> = Vec::new();
+                let mut backfill_requests: Vec<(String, mlc_core::state::Timeframe, mlc_core::instrument::AccountType)> = Vec::new();
                 let mut prev_close_mirrors: Vec<(mlc_core::state::ChartId, Option<f64>)> = Vec::new();
 
-                let instrument_by_cid: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::state::Timeframe, String, String)> = {
+                let instrument_by_cid: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::state::Timeframe, String, mlc_core::instrument::AccountType)> = {
                     self.panel_app.panel_grid.containers().keys()
                         .filter_map(|cid| {
                             let sym = self.symbol_for_chart(*cid)?;
                             let tf = self.timeframe_for_chart(*cid)?;
                             let exch = self.exchange_for_chart(*cid)?;
-                            let at = self.account_type_for_chart(*cid)?;
+                            let at: mlc_core::instrument::AccountType = self.account_type_for_chart(*cid)?.parse().unwrap_or_default();
                             Some((*cid, (sym, tf, exch, at)))
                         })
                         .collect()
@@ -80,7 +80,7 @@ impl ChartApp {
                         && win_sym.as_str() == symbol.as_str()
                         && win_exch.as_str() == exchange_id.as_str()
                         && win_tf.name == *tf_name
-                        && win_at.as_str() == account_type.as_str();
+                        && *win_at == event_account_type;
                     if matched {
                         any_matched = true;
                         // FRESH-LOAD only when the window is explicitly waiting
@@ -111,7 +111,7 @@ impl ChartApp {
                         .map(|t| Some(t))
                         .unwrap_or(None)
                     else { continue; };
-                    let win_at = instrument_by_cid.get(chart_id_key).map(|(_, _, _, at)| at.clone()).unwrap_or_default();
+                    let win_at = instrument_by_cid.get(chart_id_key).map(|(_, _, _, at)| *at).unwrap_or_default();
                     let win_sym = instrument_by_cid.get(chart_id_key).map(|(s, _, _, _)| s.clone()).unwrap_or_default();
                     let win_tf = instrument_by_cid.get(chart_id_key).map(|(_, tf, _, _)| tf.clone()).unwrap_or_else(mlc_core::state::Timeframe::h1);
                     if is_backfill {
@@ -145,7 +145,7 @@ impl ChartApp {
                         }
                         let target = self.core.user().profile().data_load.background_bar_count;
                         if target > 0 && (new_bars.len() as u32) < target {
-                            backfill_requests.push((win_sym, win_tf, account_type_from_label(&win_at)));
+                            backfill_requests.push((win_sym, win_tf, win_at));
                         }
                     } else {
                         window.price_scale.scale_mode = self.default_scale_mode;
@@ -159,7 +159,7 @@ impl ChartApp {
                         }
                         let target = self.core.user().profile().data_load.background_bar_count;
                         if target > 300 {
-                            backfill_requests.push((win_sym, win_tf, account_type_from_label(&win_at)));
+                            backfill_requests.push((win_sym, win_tf, win_at));
                         }
                     }
                     prev_close_mirrors.push((*chart_id_key, new_bars.first().map(|b| b.open)));
@@ -175,6 +175,7 @@ impl ChartApp {
                 // Trigger background backfill.
                 let bg_target = self.core.user().profile().data_load.background_bar_count;
                 for (sym, tf, at) in backfill_requests {
+                    let at = mlc_backend_data_bridge::account_type_to_dig3(at);
                     self.core.bridge.request_background_backfill(*exchange_id, &sym, &tf, at, bg_target);
                 }
 
@@ -252,7 +253,8 @@ impl ChartApp {
                 // Subscribe trades for matched windows.
                 if any_matched {
                     if self.sidebar_state.connector_enabled.get(exchange_id.as_str()).copied().unwrap_or(true) {
-                        self.core.bridge.subscribe_trades(*exchange_id, symbol, account_type_from_label(account_type));
+                        let at = mlc_backend_data_bridge::account_type_to_dig3(event_account_type);
+                        self.core.bridge.subscribe_trades(*exchange_id, symbol, at);
                     }
                 }
 
@@ -749,10 +751,11 @@ impl ChartApp {
                     let bridge = self.core.bridge.clone();
                     for cid in self.panel_app.panel_grid.containers().keys() {
                         let sym_match = self.symbol_for_chart(*cid).map_or(false, |s| s == *symbol);
-                        let at_match = self.account_type_for_chart(*cid).map_or(false, |at| at == *account_type);
+                        let win_at_label = self.account_type_for_chart(*cid);
+                        let at_match = win_at_label.as_deref().map_or(false, |at| at == account_type.as_str());
                         if sym_match && at_match {
-                            let at_label = self.account_type_for_chart(*cid).unwrap_or_default();
-                            let at_val = account_type_from_label(&at_label);
+                            let at_val: mlc_core::instrument::AccountType = win_at_label.unwrap_or_default().parse().unwrap_or_default();
+                            let at_val = mlc_backend_data_bridge::account_type_to_dig3(at_val);
                             if let Some(tf) = self.timeframe_for_chart(*cid) {
                                 bridge.request_bars(*exchange_id, symbol, &tf, at_val, None, None, false);
                             }
@@ -783,7 +786,8 @@ impl ChartApp {
                         && !state.exchange.is_empty()
                     {
                         if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
-                            let at = account_type_from_label(&state.account_type);
+                            let at: mlc_core::instrument::AccountType = state.account_type.parse().unwrap_or_default();
+                            let at = mlc_backend_data_bridge::account_type_to_dig3(at);
                             let h = self.core.bridge.subscribe_trades(eid, &state.symbol, at);
                             state.shared_trades = h;
                             state.last_seen_ts_ms = 0;
@@ -838,8 +842,8 @@ impl ChartApp {
                     let win_eid = digdigdig3::ExchangeId::from_str(&exch)
                         .unwrap_or(digdigdig3::ExchangeId::Binance);
                     if win_eid == *exchange_id {
-                        let at_label = self.account_type_for_chart(*cid).unwrap_or_default();
-                        let at = account_type_from_label(&at_label);
+                        let at: mlc_core::instrument::AccountType = self.account_type_for_chart(*cid).unwrap_or_default().parse().unwrap_or_default();
+                        let at = mlc_backend_data_bridge::account_type_to_dig3(at);
                         if let Some(tf) = self.timeframe_for_chart(*cid) {
                             bridge.request_bars(*exchange_id, &sym, &tf, at, None, None, false);
                         }

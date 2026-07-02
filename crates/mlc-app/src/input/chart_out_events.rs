@@ -213,10 +213,10 @@ impl ChartApp {
                         .and_then(|cid| self.symbol_for_chart(cid))
                         .map(String::from)
                         .unwrap_or_default();
-                    let at_label_tf = active_chart_id
+                    let at_tf: mlc_core::instrument::AccountType = active_chart_id
                         .and_then(|cid| self.account_type_for_chart(cid))
-                        .map(String::from)
-                        .unwrap_or_else(|| "S".to_string());
+                        .map(|s| s.parse().unwrap_or_default())
+                        .unwrap_or_default();
                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         {};
                         window.viewport.bar_count = 0;
@@ -246,7 +246,7 @@ impl ChartApp {
                         if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
                             eprintln!("[ChartApp] Exchange {} is disabled, skipping data fetch (timeframe change)", eid_str);
                         } else {
-                            let at = crate::account_type_from_label(&at_label_tf);
+                            let at = mlc_backend_data_bridge::account_type_to_dig3(at_tf);
                             // Drop the OLD time-TF kline forwarder so it stops piping
                             // 1h BarUpdates to the broadcast after the user switched
                             // to 1m. abort_kline_bars is a no-op for tick TFs (the
@@ -370,15 +370,16 @@ impl ChartApp {
                     if let Some(active_leaf) = self.panel_app.panel_grid.active_container() {
                         let cid = active_leaf.id;
                         let symbol_opt = self.symbol_for_chart(cid);
-                        let at_label_opt = self.account_type_for_chart(cid);
+                        let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid)
+                            .map(|s| s.parse().unwrap_or_default());
                         let tf_opt = self.timeframe_for_chart(cid);
-                        if let (Some(symbol), Some(at_label), Some(tf)) = (symbol_opt, at_label_opt, tf_opt) {
+                        if let (Some(symbol), Some(at), Some(tf)) = (symbol_opt, at_opt, tf_opt) {
                             if !symbol.is_empty() {
                                 let eid_str = self.active_exchange.as_str();
                                 let connector_enabled = self.sidebar_state.connector_enabled
                                     .get(eid_str).copied().unwrap_or(true);
                                 if connector_enabled {
-                                    let at = crate::account_type_from_label(&at_label);
+                                    let at = mlc_backend_data_bridge::account_type_to_dig3(at);
                                     let on_tick_tf = tf.tick_count().is_some();
 
                                     // Step 1: always abort any derived
@@ -571,12 +572,13 @@ impl ChartApp {
                 if let Some(active_leaf) = self.panel_app.panel_grid.active_container() {
                     let cid = active_leaf.id;
                     let symbol_opt = self.symbol_for_chart(cid);
-                    let at_label_opt = self.account_type_for_chart(cid);
-                    if let (Some(symbol), Some(at_label)) = (symbol_opt, at_label_opt) {
+                    let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid)
+                        .map(|s| s.parse().unwrap_or_default());
+                    if let (Some(symbol), Some(at)) = (symbol_opt, at_opt) {
                         if !symbol.is_empty() {
                             let eid_str = self.active_exchange.as_str();
                             if self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
-                                let at = crate::account_type_from_label(&at_label);
+                                let at = mlc_backend_data_bridge::account_type_to_dig3(at);
                                 let scaled = (value * 1e8) as u64;
                                 match active_ct.as_str() {
                                     "range_bar"  => self.core.bridge.request_range_bars(self.active_exchange, &symbol, at, scaled),
@@ -639,12 +641,13 @@ impl ChartApp {
                 if let Some(active_leaf) = self.panel_app.panel_grid.active_container() {
                     let cid = active_leaf.id;
                     let symbol_opt = self.symbol_for_chart(cid);
-                    let at_label_opt = self.account_type_for_chart(cid);
-                    if let (Some(symbol), Some(at_label)) = (symbol_opt, at_label_opt) {
+                    let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid)
+                        .map(|s| s.parse().unwrap_or_default());
+                    if let (Some(symbol), Some(at)) = (symbol_opt, at_opt) {
                         if !symbol.is_empty() {
                             let eid_str = self.active_exchange.as_str();
                             if self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
-                                let at = crate::account_type_from_label(&at_label);
+                                let at = mlc_backend_data_bridge::account_type_to_dig3(at);
                                 self.core.bridge.request_footprint(self.active_exchange, &symbol, at, static_iv);
                             }
                         }
@@ -690,9 +693,10 @@ impl ChartApp {
                 let previous_symbol: String = self.symbol_for_chart(target_cid)
                     .map(String::from)
                     .unwrap_or_default();
-                let old_trade_at = self.account_type_for_chart(target_cid)
-                    .map(|s| crate::account_type_from_label(&s))
-                    .unwrap_or(digdigdig3::AccountType::Spot);
+                let old_at_search = self.account_type_for_chart(target_cid)
+                    .map(String::from).unwrap_or_else(|| "S".to_string());
+                let old_trade_at: mlc_core::instrument::AccountType = old_at_search.parse().unwrap_or_default();
+                let old_trade_at = mlc_backend_data_bridge::account_type_to_dig3(old_trade_at);
                 let old_trade_exchange = self.exchange_for_chart(target_cid)
                     .and_then(|s| self.core.exchange_symbols().find_by_label(s.as_str()))
                     .unwrap_or(self.active_exchange);
@@ -703,8 +707,6 @@ impl ChartApp {
                 let old_sym_search = previous_symbol.clone();
                 let old_exch_search = self.exchange_for_chart(target_cid)
                     .map(String::from).unwrap_or_default();
-                let old_at_search = self.account_type_for_chart(target_cid)
-                    .map(String::from).unwrap_or_else(|| "S".to_string());
 
                 let target_leaf = self.panel_app.panel_grid.iter_containers()
                     .find(|(_, w)| w.id == target_cid)
@@ -751,7 +753,8 @@ impl ChartApp {
                 if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
                     eprintln!("[ChartApp] ApplySymbol: exchange {} disabled, skipping connector call", eid_str);
                 } else {
-                    let at = crate::account_type_from_label(&account_type);
+                    let at_typed: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
+                    let at = mlc_backend_data_bridge::account_type_to_dig3(at_typed);
                     self.core.bridge.ensure_connector(resolved_exchange);
                     self.core.bridge.request_bars(
                         resolved_exchange, &symbol, &timeframe, at, None,
@@ -866,14 +869,15 @@ impl ChartApp {
                 let cid_opt = self.panel_app.panel_grid.active_container().map(|w| w.id);
                 if let Some(cid) = cid_opt {
                     let symbol_opt = self.symbol_for_chart(cid);
-                    let at_label_opt = self.account_type_for_chart(cid);
-                    if let (Some(symbol), Some(at_label)) = (symbol_opt, at_label_opt) {
+                    let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid)
+                        .map(|s| s.parse().unwrap_or_default());
+                    if let (Some(symbol), Some(at)) = (symbol_opt, at_opt) {
                         if !symbol.is_empty() {
                             let eid_str = self.active_exchange.as_str();
                             let connector_enabled = self.sidebar_state.connector_enabled
                                 .get(eid_str).copied().unwrap_or(true);
                             if connector_enabled {
-                                let at = crate::account_type_from_label(&at_label);
+                                let at = mlc_backend_data_bridge::account_type_to_dig3(at);
                                 let oi_show_now = {
                                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                                         w.oi_show = !w.oi_show;
@@ -901,14 +905,15 @@ impl ChartApp {
                 let cid_opt = self.panel_app.panel_grid.active_container().map(|w| w.id);
                 if let Some(cid) = cid_opt {
                     let symbol_opt = self.symbol_for_chart(cid);
-                    let at_label_opt = self.account_type_for_chart(cid);
-                    if let (Some(symbol), Some(at_label)) = (symbol_opt, at_label_opt) {
+                    let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid)
+                        .map(|s| s.parse().unwrap_or_default());
+                    if let (Some(symbol), Some(at)) = (symbol_opt, at_opt) {
                         if !symbol.is_empty() {
                             let eid_str = self.active_exchange.as_str();
                             let connector_enabled = self.sidebar_state.connector_enabled
                                 .get(eid_str).copied().unwrap_or(true);
                             if connector_enabled {
-                                let at = crate::account_type_from_label(&at_label);
+                                let at = mlc_backend_data_bridge::account_type_to_dig3(at);
                                 let funding_show_now = {
                                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                                         w.funding_show = !w.funding_show;
@@ -1407,7 +1412,7 @@ impl ChartApp {
                     // properly via the force=true fallback.
                     let bar_count = self.core.user().profile().bar_count as usize;
                     // Phase 4 S2.7.1c: read via branch_meta (B6 tuple-collect flip).
-                    let window_bar_data: Vec<(String, String, mlc_core::state::Timeframe, String, bool)> = self
+                    let window_bar_data: Vec<(String, String, mlc_core::state::Timeframe, mlc_core::instrument::AccountType, bool)> = self
                         .panel_app
                         .panel_grid
                         .iter_containers()
@@ -1418,8 +1423,8 @@ impl ChartApp {
                             let exch = self.exchange_for_chart(cid)
                                 .map(String::from).unwrap_or_default();
                             let tf = self.timeframe_for_chart(cid).unwrap_or_else(mlc_core::state::Timeframe::h1);
-                            let at = self.account_type_for_chart(cid)
-                                .map(String::from).unwrap_or_default();
+                            let at: mlc_core::instrument::AccountType = self.account_type_for_chart(cid)
+                                .map(|s| s.parse().unwrap_or_default()).unwrap_or_default();
                             // Was `let has_bars = !true;` — cutover sweep stub that
                             // pinned `force=true` on the cure path always (every
                             // preset switch re-issued Phase A even on warm cache).
@@ -1435,13 +1440,13 @@ impl ChartApp {
                     // request_bars sweep instead of staring at the old chart.
                     let mut bars_requested_force: usize = 0;
                     let mut bars_requested_lazy: usize = 0;
-                    for (sym, exch, tf, at_label, has_bars) in &window_bar_data {
-                        let eid = digdigdig3::ExchangeId::from_str(&exch)
+                    for (sym, exch, tf, at, has_bars) in &window_bar_data {
+                        let eid = digdigdig3::ExchangeId::from_str(exch)
                             .unwrap_or(digdigdig3::ExchangeId::Binance);
                         if !self.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
                             continue;
                         }
-                        let at = crate::account_type_from_label(at_label);
+                        let at = mlc_backend_data_bridge::account_type_to_dig3(*at);
                         let force = !*has_bars;
                         self.pending_cure_after_preset_load.push((eid, sym.clone(), tf.clone(), at, force));
                         if force { bars_requested_force += 1; } else { bars_requested_lazy += 1; }
