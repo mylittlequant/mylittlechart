@@ -61,7 +61,7 @@ impl<'a> BubbleView<'a> {
         self.bubble.sync_flags.clone()
     }
     /// `(indicator_config_symbol_or_bubble_symbol, primitive_symbol)` counts
-    /// per symbol, for `GroupView::per_symbol_counts` (Details-tab modal).
+    /// per symbol, for `TagView::per_symbol_counts` (Details-tab modal).
     pub fn indicator_configs(&self) -> &[IndicatorGroupConfig] {
         &self.bubble.indicator_configs
     }

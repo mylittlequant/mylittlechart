@@ -1,6 +1,6 @@
-//! Build the lightweight `mlc_core::GroupView` for render layers.
+//! Build the lightweight `mlc_core::TagView` for render layers.
 //!
-//! `mlc-app-layout` accepts `&[GroupView]` instead of `&BubbleStore` so the
+//! `mlc-app-layout` accepts `&[TagView]` instead of `&BubbleStore` so the
 //! render layer doesn't speak about `DataBubble` as a type — that keeps
 //! the layout crate firmly inside the `mlc-core` dep-graph (no upward
 //! dep on `mlc-backend`).
@@ -10,16 +10,16 @@
 //! both the `BubbleView` (symbol/timeframe/indicator_configs/primitives —
 //! data) and the paired `Tag` (color/auto_created/members — domain
 //! routing, Step 6 doctrine cutover); lives under `tag_ui` because
-//! `GroupView` is tag-presentation for the Tags & Tabs modal.
+//! `TagView` is tag-presentation for the Tags & Tabs modal.
 
 use mlc_backend::bubble::BubbleView;
 use mlc_core::tag::Tag;
-use mlc_core::GroupView;
+use mlc_core::TagView;
 use std::collections::HashMap;
 
 /// Project a backend [`BubbleView`] + its paired [`Tag`] into the
-/// app/render-side `GroupView`.  Pure read, no state.
-pub fn build_group_view(bubble: BubbleView<'_>, tag: &Tag) -> GroupView {
+/// app/render-side `TagView`.  Pure read, no state.
+pub fn build_tag_view(bubble: BubbleView<'_>, tag: &Tag) -> TagView {
     let mut per_symbol: HashMap<String, (usize, usize)> = HashMap::new();
     if !bubble.symbol().is_empty() {
         per_symbol.insert(bubble.symbol().to_string(), (0, 0));
@@ -42,7 +42,7 @@ pub fn build_group_view(bubble: BubbleView<'_>, tag: &Tag) -> GroupView {
         b_current.cmp(&a_current).then(a.0.cmp(&b.0))
     });
 
-    GroupView {
+    TagView {
         id: bubble.id(),
         color: tag.color,
         auto_created: tag.auto_created,

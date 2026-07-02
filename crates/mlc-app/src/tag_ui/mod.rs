@@ -29,7 +29,7 @@ use crate::ui_container::UiContainerId;
 use mlc_core::state::PanelId;
 
 mod view;
-pub use view::build_group_view;
+pub use view::build_tag_view;
 
 /// Presentation state for one `Tag`.
 #[derive(Clone, Debug, Default)]

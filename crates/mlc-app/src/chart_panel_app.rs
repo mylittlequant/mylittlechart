@@ -437,8 +437,8 @@ impl ChartPanelApp {
         toolbar_state: &mlc_app_layout::layout::toolbar_state::ToolbarState,
         current_time_ms: u64,
         input_coordinator: &mut uzor::input::InputCoordinator,
-        groups: &[mlc_core::GroupView],
-        selected_group: Option<&mlc_core::GroupView>,
+        groups: &[mlc_core::TagView],
+        selected_group: Option<&mlc_core::TagView>,
         template_manager: &mlc_backend::template::Templates<'_>,
         presets: impl Iterator<Item = &'a mlc_core::preset::preset::ChartPreset>,
     ) -> ChartModalRenderResult {

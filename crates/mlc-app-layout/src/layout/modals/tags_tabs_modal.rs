@@ -13,7 +13,7 @@ use mlc_core::engine::render::RenderContext;
 use mlc_core::engine::render::draw_svg_icon;
 use crate::layout::render_chart::FrameTheme;
 use mlc_core::render::{TextAlign, TextBaseline};
-use mlc_core::GroupView;
+use mlc_core::TagView;
 use mlc_core::theme::ThemeManager;
 use crate::ui::modal_settings::{OverlaySettingsState, TagsTabsState, TagsTabsSidebar, TagsTabsTagsTab};
 use crate::ui::scroll_state::ScrollState;
@@ -90,8 +90,8 @@ pub fn render_tags_tabs_modal(
     toolbar_theme: &ToolbarTheme,
     docking: &uzor::layout::DockState<Panel>,
     expanded: bool,
-    groups: &[GroupView],
-    selected_group: Option<&GroupView>,
+    groups: &[TagView],
+    selected_group: Option<&TagView>,
     _leaf_color_tags: &HashMap<LeafId, [f32; 4]>,
     screen_w: f64,
     screen_h: f64,
@@ -920,7 +920,7 @@ fn render_map_section(
     theme_manager: &ThemeManager,
     docking: &uzor::layout::DockState<Panel>,
     expanded: bool,
-    groups: &[GroupView],
+    groups: &[TagView],
     leaf_color_tags: &HashMap<LeafId, [f32; 4]>,
     chart_area_w: f64,
     chart_area_h: f64,
@@ -1086,7 +1086,7 @@ fn render_map_section(
         row_y += minimap_h + MODAL_PADDING;
 
         // ── Legend — show group colors ────────────────────────────────────
-        let mut sorted_groups: Vec<&GroupView> = groups.iter().collect();
+        let mut sorted_groups: Vec<&TagView> = groups.iter().collect();
         sorted_groups.sort_by_key(|g| g.id.0);
         if !sorted_groups.is_empty() {
             ctx.set_font("11px sans-serif");
@@ -1445,8 +1445,8 @@ fn render_tags_section(
     frame_theme: &FrameTheme,
     toolbar_theme: &ToolbarTheme,
     theme_manager: &ThemeManager,
-    groups: &[GroupView],
-    selected_group: Option<&GroupView>,
+    groups: &[TagView],
+    selected_group: Option<&TagView>,
     content_x: f64,
     content_y: f64,
     content_width: f64,
@@ -1529,8 +1529,8 @@ fn render_tags_section(
         // ------------------------------------------------------------------ //
         TagsTabsTagsTab::Groups => {
             // Sort groups by id for stable ordering.  Caller built the
-            // GroupView slice; the layer only renders.
-            let mut sorted_groups: Vec<&GroupView> = groups.iter().collect();
+            // TagView slice; the layer only renders.
+            let mut sorted_groups: Vec<&TagView> = groups.iter().collect();
             sorted_groups.sort_by_key(|g| g.id.0);
 
             if sorted_groups.is_empty() {

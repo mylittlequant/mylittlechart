@@ -6197,16 +6197,16 @@ impl ChartApp {
         let tags_guard_modals = self.core.tags();
         let tm_guard_modals = self.core.templates();
         let presets_guard_modals = self.core.presets();
-        // Build GroupView slice for the render layer (it no longer reads
+        // Build TagView slice for the render layer (it no longer reads
         // BubbleStore directly).  Selected_group is the one Details tab
         // currently focuses on (state.selected_group_id).
-        let mut groups_for_modals: Vec<mlc_core::GroupView> = Vec::new();
+        let mut groups_for_modals: Vec<mlc_core::TagView> = Vec::new();
         bubble_guard_modals.each_bubble(|bv| {
             if let Some(tag) = tags_guard_modals.get(bv.id()) {
-                groups_for_modals.push(crate::tag_ui::build_group_view(bv, tag));
+                groups_for_modals.push(crate::tag_ui::build_tag_view(bv, tag));
             }
         });
-        let selected_group_for_modals: Option<&mlc_core::GroupView> = self
+        let selected_group_for_modals: Option<&mlc_core::TagView> = self
             .panel_app
             .tags_tabs_state
             .selected_group_id

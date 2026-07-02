@@ -201,18 +201,19 @@ pub struct MemberSyncOverride {
 }
 
 // =============================================================================
-// GroupView
+// TagView
 // =============================================================================
 
-/// Lightweight view of a sync-group used by render layers
-/// (`mlc-app-layout`).  Built by the caller (`mlc-app`) from
-/// `BubbleStore` + `TagManager` and passed in by value/slice.
+/// Lightweight tag-presentation view used by render layers
+/// (`mlc-app-layout`) for the Tags & Tabs modal.  Built by the caller
+/// (`mlc-app`) from `BubbleStore` + `TagManager` and passed in by
+/// value/slice.
 ///
 /// Render layers MUST NOT depend on `DataBubble` or `BubbleStore` as
 /// types — they accept this view instead.  That keeps `mlc-app-layout` in
 /// the `mlc-core` dep-graph (no upward dep on `mlc-backend`).
 #[derive(Clone, Debug)]
-pub struct GroupView {
+pub struct TagView {
     pub id: BubbleId,
     pub color: [f32; 4],
     pub auto_created: bool,

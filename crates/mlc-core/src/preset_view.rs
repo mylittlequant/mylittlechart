@@ -4,7 +4,7 @@
 //! Layout lives BELOW mlc-app in the dep-graph, so it cannot speak about
 //! the full `ChartPreset` type.  App projects each preset into one of these
 //! and hands a slice to the preset-browser modal — same pattern used by
-//! `GroupView` for bubbles.
+//! `TagView` for bubbles.
 
 #[derive(Clone, Debug)]
 pub struct PresetSummary {

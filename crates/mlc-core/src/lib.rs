@@ -99,7 +99,7 @@ pub mod modal;
 // Shared identifier + sync types — vocabulary used by both backend
 // (mlc-backend::bubble) and app (mlc-app::tag).
 pub mod ids;
-pub use ids::{BubbleId, GroupView, MemberSyncOverride, SyncFlags, SyncMemberId};
+pub use ids::{BubbleId, MemberSyncOverride, SyncFlags, SyncMemberId, TagView};
 
 // Pure value-types for indicators shared between backend and app.
 pub mod indicator_types;
