@@ -62,10 +62,26 @@ async fn delete_preset(
 ) -> impl IntoResponse {
     let exists = s.core.presets().contains_key(&preset_id);
     if !exists {
-        return StatusCode::NOT_FOUND;
+        return StatusCode::NOT_FOUND.into_response();
     }
     s.core.presets_mut().remove(&preset_id);
-    StatusCode::NO_CONTENT
+    // Core removal already succeeded — the preset is gone from every
+    // window's view regardless of what happens below. A failure to also
+    // remove the on-disk `.json`/`.enc` file is reported as a warning, not
+    // a failed request: the caller's DELETE intent (make it disappear) is
+    // satisfied either way, but a leftover file on disk is worth surfacing
+    // instead of silently leaving an orphan a future disk-backed reload
+    // would resurrect.
+    match mlc_core::preset::storage::delete_preset(&preset_id) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "warning": format!("preset '{}' removed from memory but its on-disk file could not be deleted: {}", preset_id, e),
+            })),
+        )
+            .into_response(),
+    }
 }
 
 pub fn routes() -> Router<AppState> {
