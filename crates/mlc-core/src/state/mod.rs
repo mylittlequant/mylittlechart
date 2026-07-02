@@ -3,17 +3,23 @@
 //! Core state types for the standalone chart library.
 //!
 //! This module provides:
-//! - `ChartContainer` - the main chart state aggregate (multi-window)
 //! - `Timeframe` - timeframe representation
 //! - `Command` / `CommandHistory` - undo/redo command pattern
 //!
-//! The legacy single-window `Chart` struct was deleted — all consumers
-//! flow through `ChartContainer`.  The legacy `Pane`/`PaneManager`/`SubPane`
-//! (pre-`ChartContainerLeaf`/`inner_docking` API) and `VisibilityManager`/
-//! `LockManager`/`AppState` (pre-`ChartContainer` object-ID API) were dead
-//! code with zero consumers outside this crate's own re-export chain —
-//! deleted during Step 4 (state lift, see
-//! `docs/mlc/plans/doctrine-cutover-2026-06-27.md`).
+//! `ChartContainer` (the main chart state aggregate), `ChartPanelGrid`,
+//! `ChartContainerLeaf`, and `ChartPanelState` moved to `mlc-app` in Step 4
+//! (state lift, see `docs/mlc/plans/doctrine-cutover-2026-06-27.md`) — they
+//! are UI-window state, not type-dictionary values.  `mlc-backend` (which
+//! reads `ChartId`/`ConnectionStatus` directly) and `mlc-core::preset`
+//! (which builds `ChartWindowSnapshot`) were decoupled from `ChartContainer`
+//! first so the move doesn't create an upward dependency.
+//!
+//! The legacy single-window `Chart` struct, `Pane`/`PaneManager`/`SubPane`
+//! (pre-`ChartContainerLeaf`/`inner_docking` API), `VisibilityManager`/
+//! `LockManager`/`AppState` (pre-`ChartContainer` object-ID API), and
+//! `branch::InstanceId` (superseded by plain `u64` instance ids on
+//! `ChartContainerLeaf::SubPane`) were dead code with zero consumers
+//! outside this crate's own re-export chain — deleted during Step 4.
 
 mod timeframe;
 pub mod geometry;
@@ -21,13 +27,9 @@ pub mod scale_corner;
 pub mod selected_config;
 pub mod command;
 pub mod history;
-pub mod chart_container;
-pub mod panel_grid;
-pub mod chart_container_leaf;
 pub mod inner_layout;
-pub mod branch;
-pub mod chart_panel_state;
 pub mod panel;
+pub mod drawing_session;
 pub mod sub_pane_overlay;
 pub mod sub_pane_y_state;
 pub mod toolbar_state;
@@ -60,47 +62,25 @@ pub use history::CommandHistory;
 // DrawingManager physical move (it took `&mut DrawingManager` by value,
 // which no longer resolves from mlc-core).
 
-// ID types (ChartId, ConnectionStatus) moved to `mlc-core::ids` — both are
-// referenced directly by `mlc-backend` (Tag routing / DataBubble field),
-// which cannot depend on wherever `ChartContainer` itself lives.
-pub use crate::ids::{ChartId, ConnectionStatus};
-
-// Phase 1 hardcut of the chart-container cut: the former `ChartWindow` is
-// renamed in place to `ChartContainer`. It currently still owns ALL fields
-// (canvas + container-level + sub-panes); Phase 2 carves a thin `ChartPanel`
-// out of it for the canvas-only fields.
-pub use chart_container::{
-    ChartContainer,
-    WindowRect,
-    WINDOW_GAP,
-    DEFAULT_SNAP_MARGIN,
+// ID types (ChartId, ConnectionStatus, ChartPanelId) live in `mlc-core::ids` —
+// referenced directly by `mlc-backend` (Tag routing / DataBubble field) and
+// by `mlc-app-layout`/`mlc-app-panels` (TradingPanelsStore keying), neither
+// of which can depend on `mlc-app` (where `ChartContainer` now lives).
+pub use crate::ids::{
+    ChartId, ConnectionStatus, ChartPanelId,
+    generate_chart_id, bump_chart_id_past,
+    generate_chart_panel_id, bump_chart_panel_id_past,
 };
-pub use crate::ids::{generate_chart_id, bump_chart_id_past};
 
 // Per-instance Y-axis state for indicator sub-panes — pure value type,
 // referenced by `mlc-app-layout` render code (see sub_pane_y_state.rs doc).
 pub use sub_pane_y_state::SubPaneYState;
 
-// Inner-docking leaf payload for ChartContainer (Phase 1 of chart-container cut).
-// `ChartContainerId` is an alias for `ChartId` (plan D1); the canvas gets its
-// own `ChartPanelId` (moved to `mlc-core::ids` — see chart_container_leaf.rs doc).
-pub use chart_container_leaf::{
-    ChartContainerId,
-    ChartContainerLeaf,
-};
-pub use crate::ids::{ChartPanelId, generate_chart_panel_id, bump_chart_panel_id_past};
-
 // Inner 1D vertical stack layout (own math, no uzor docking).
 pub use inner_layout::InnerLayout;
 
-// Branch-level docking payload types.
-pub use branch::InstanceId;
-
-// Panel grid — input-aware layout manager
-pub use panel_grid::{ChartPanelGrid, ChartInputTarget, ChartRightClickHit, ChartDragStartHit, SplitHitResult, FreehandCompleteResult, DrawingSession};
-
-// Phase 4 S2.7 — per-canvas display-option + series-visibility state
-pub use chart_panel_state::ChartPanelState;
+// DrawingSession — shared interface trait, see drawing_session.rs doc.
+pub use drawing_session::DrawingSession;
 
 // Pure geometry (no external deps — shared with layout/)
 pub use geometry::{

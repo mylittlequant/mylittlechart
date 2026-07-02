@@ -13,7 +13,9 @@
 
 use mlc_core::drawing::primitives_v2::Primitive;
 use mlc_core::preset::snapshots::{ChartWindowSnapshot, DrawingSnapshot, PrimitiveSnapshot};
-use mlc_core::state::{ChartContainer, ChartPanelState, CommandHistory, Timeframe};
+use mlc_core::state::{CommandHistory, Timeframe};
+use crate::chart_container::ChartContainer;
+use crate::chart_panel_state::ChartPanelState;
 
 /// Capture a full snapshot from a live [`ChartContainer`].
 ///
@@ -93,7 +95,7 @@ pub fn build_chart_window_snapshot(
         // the inner docking tree (single source of truth after S4).
         sub_pane_height_ratios: {
             let proportions = &window.inner_docking.tree().root().proportions;
-            let instance_ids = mlc_core::state::chart_container::collect_inner_instance_ids(
+            let instance_ids = crate::chart_container::collect_inner_instance_ids(
                 &window.inner_docking,
             );
             instance_ids
@@ -108,10 +110,10 @@ pub fn build_chart_window_snapshot(
         },
         // Emit the runtime above-main set so presets round-trip correctly.
         sub_pane_above_main: window.sub_pane_above_main.clone(),
-        sub_pane_order: mlc_core::state::chart_container::collect_inner_instance_ids(
+        sub_pane_order: crate::chart_container::collect_inner_instance_ids(
             &window.inner_docking,
         ),
-        sub_pane_hidden: mlc_core::state::chart_container::collect_hidden_instance_ids(
+        sub_pane_hidden: crate::chart_container::collect_hidden_instance_ids(
             &window.inner_docking,
         ),
         stashed_scale_mode: window.stashed_scale_mode,

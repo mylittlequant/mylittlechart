@@ -14,7 +14,7 @@
 //! `split_leaf` / `remove_leaf` on the inner docking tree.
 
 use uzor::panels::DockPanel;
-use crate::ids::{ChartId, ChartPanelId};
+use mlc_core::ids::{ChartId, ChartPanelId};
 
 /// Identifier of a `ChartContainer`.
 ///

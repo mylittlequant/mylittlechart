@@ -310,7 +310,7 @@ use crate::state::geometry::LayoutRect;
 use crate::state::toolbar_geometry::ToolbarRenderResult;
 use crate::state::toolbar_geometry::WidgetRect;
 use crate::chart::types::crosshair::Crosshair;
-use crate::state::panel_grid::DrawingSession;
+use crate::state::drawing_session::DrawingSession;
 use crate::events::ChartOutEvent;
 
 // =============================================================================

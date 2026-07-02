@@ -11,7 +11,9 @@
 
 use uzor::render::RenderContext;
 
-use mlc_core::state::{ChartPanelGrid, ChartContainer, Timeframe};
+use crate::panel_grid::ChartPanelGrid;
+use crate::chart_container::ChartContainer;
+use mlc_core::state::Timeframe;
 use mlc_core::modal::ChartOpenModal;
 use mlc_core::state::selected_config::SelectedPrimitiveConfig;
 use mlc_backend::template::TemplateManager;

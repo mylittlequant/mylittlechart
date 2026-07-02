@@ -15,21 +15,21 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::ids::{BubbleId, ChartId, ChartPanelId, generate_chart_id, generate_chart_panel_id};
-use crate::{Bar, Viewport, PriceScale, TimeScale};
-use crate::chart::types::price_scale::ScaleMode;
-use crate::state::Timeframe;
-use crate::{Crosshair, KineticState, DragMode};
-use crate::{Legend, Watermark, PriceLine};
-use crate::state::chart_panel_state::ChartPanelState;
-use crate::state::sub_pane_y_state::SubPaneYState;
-use crate::chart::{CompareOverlay, CompareSeries, get_compare_color};
-use crate::state::{CommandHistory, Command};
-use crate::data_provider::{SharedDataProvider, NullDataProvider};
-use crate::scale_settings::ScaleSettings;
-use crate::state::toolbar_state::{ChartToolbarState, ToolbarConfig};
-use crate::state::modal_data::SubPaneOverlayState;
-use crate::state::sub_pane_overlay::SubPaneOverlayResult;
+use mlc_core::ids::{BubbleId, ChartId, ChartPanelId, generate_chart_id, generate_chart_panel_id};
+use mlc_core::{Bar, Viewport, PriceScale, TimeScale};
+use mlc_core::chart::types::price_scale::ScaleMode;
+use mlc_core::state::Timeframe;
+use mlc_core::{Crosshair, KineticState, DragMode};
+use mlc_core::{Legend, Watermark, PriceLine};
+use crate::chart_panel_state::ChartPanelState;
+use mlc_core::state::sub_pane_y_state::SubPaneYState;
+use mlc_core::chart::{CompareOverlay, CompareSeries, get_compare_color};
+use mlc_core::state::{CommandHistory, Command};
+use mlc_core::data_provider::{SharedDataProvider, NullDataProvider};
+use mlc_core::scale_settings::ScaleSettings;
+use mlc_core::state::toolbar_state::{ChartToolbarState, ToolbarConfig};
+use mlc_core::state::modal_data::SubPaneOverlayState;
+use mlc_core::state::sub_pane_overlay::SubPaneOverlayResult;
 
 /// Rectangle defining a window's position and size (f32 coordinates)
 #[derive(Clone, Copy, Debug, Default)]
@@ -104,7 +104,7 @@ pub struct ChartContainer {
     /// cache stamp no longer matches `bars`. The cache stamp is
     /// `(bars.len(), last_ts_ms, last_close_bits, last_high_bits, last_low_bits)`.
     /// Not serialized — recomputed on first frame after deserialize.
-    pub ha_cache: Option<Vec<crate::types::HaBar>>,
+    pub ha_cache: Option<Vec<mlc_core::types::HaBar>>,
     /// Stamp paired with `ha_cache` —
     /// `(len, last_ts_ms, last_close_bits, last_high_bits, last_low_bits)`.
     /// The three `_bits` fields are `f64::to_bits()` — bit-identical comparison
@@ -114,14 +114,14 @@ pub struct ChartContainer {
 
     /// Volume Profile overlay data. Computed by `ensure_vp()` before each
     /// frame when `vp_show == true`. Not serialized — recomputed on load.
-    pub vp_overlay: Option<crate::chart::volume_profile::VolumeProfileData>,
+    pub vp_overlay: Option<mlc_core::chart::volume_profile::VolumeProfileData>,
     /// Stamp paired with `vp_overlay` —
     /// `(bars.len(), last_ts_ms, view_start_idx, visible_count, mode_hash, last_close_bits, last_high_bits, last_low_bits)`.
     /// The three `_bits` fields catch in-place last-bar OHLC mutations on the
     /// still-open bar (same len + ts but different close/high/low).
     pub vp_overlay_stamp: Option<(usize, i64, usize, usize, u64, u64, u64, u64)>,
     /// Which window of bars the VP aggregates over.
-    pub vp_mode: crate::chart::volume_profile::VpMode,
+    pub vp_mode: mlc_core::chart::volume_profile::VpMode,
     /// When `true` the VP histogram overlay is rendered on top of the chart.
     /// Opt-in: defaults to `false` so existing presets are unaffected.
     pub vp_show: bool,
@@ -212,7 +212,7 @@ pub struct ChartContainer {
     /// Per-symbol drawing cache. When the user switches symbols, the current
     /// drawings are snapshotted here keyed by the old symbol, and drawings
     /// for the new symbol are restored (if any).
-    pub symbol_drawings: std::collections::HashMap<String, Vec<crate::drawing::PrimitiveSnapshot>>,
+    pub symbol_drawings: std::collections::HashMap<String, Vec<mlc_core::drawing::PrimitiveSnapshot>>,
 
     /// Deferred viewport / price-scale position to apply once `BarsLoaded` fires.
     /// Set to `true` when a symbol switch is initiated (bars cleared, new request sent).
@@ -287,7 +287,7 @@ pub struct ChartContainer {
     /// Single source of truth for sub-pane identity, proportions, and
     /// separator drag. Replaces `inner_layout` (which is kept only during
     /// the dual-write transition and deleted once all reads migrate here).
-    pub inner_docking: uzor::layout::DockState<crate::state::chart_container_leaf::ChartContainerLeaf>,
+    pub inner_docking: uzor::layout::DockState<crate::chart_container_leaf::ChartContainerLeaf>,
 
     /// Set of sub-pane instance_ids that are positioned ABOVE the main chart.
     /// Runtime state — not backed by the inner_docking tree (which always stores
@@ -309,10 +309,10 @@ pub const DEFAULT_SNAP_MARGIN: f64 = 5.0;
 /// in `TradingPanelsStore.chart_panel` remain consistent.
 pub fn make_inner_docking_with_main_chart(
     panel_id: ChartPanelId,
-) -> uzor::layout::DockState<crate::state::chart_container_leaf::ChartContainerLeaf> {
+) -> uzor::layout::DockState<crate::chart_container_leaf::ChartContainerLeaf> {
     let mut ds = uzor::layout::DockState::new();
     ds.tree_mut().add_leaf(
-        crate::state::chart_container_leaf::ChartContainerLeaf::MainChart { chart_panel_id: panel_id },
+        crate::chart_container_leaf::ChartContainerLeaf::MainChart { chart_panel_id: panel_id },
     );
     pin_vertical_stack_layout(&mut ds);
     ds
@@ -330,7 +330,7 @@ pub fn make_inner_docking_with_main_chart(
 /// mutation of the tree. Writes the field directly — `set_layout` would
 /// clear `proportions` and wipe user drag state.
 pub fn pin_vertical_stack_layout(
-    inner_docking: &mut uzor::layout::DockState<crate::state::chart_container_leaf::ChartContainerLeaf>,
+    inner_docking: &mut uzor::layout::DockState<crate::chart_container_leaf::ChartContainerLeaf>,
 ) {
     let root_id = inner_docking.tree().root().id;
     if let Some(root) = inner_docking.tree_mut().find_branch_mut(root_id) {
@@ -342,7 +342,7 @@ pub fn pin_vertical_stack_layout(
 /// Collect indicator `instance_id`s from an inner docking tree in tree order
 /// (skipping the root MainChart leaf at index 0).
 pub fn collect_inner_instance_ids(
-    inner_docking: &uzor::layout::DockState<crate::state::chart_container_leaf::ChartContainerLeaf>,
+    inner_docking: &uzor::layout::DockState<crate::chart_container_leaf::ChartContainerLeaf>,
 ) -> Vec<u64> {
     inner_docking.tree().root().children
         .iter()
@@ -363,7 +363,7 @@ pub fn collect_inner_instance_ids(
 /// Collect indicator `instance_id`s for hidden sub-pane leaves.
 /// Used by `ChartWindowSnapshot::from_window` to capture the hidden set.
 pub fn collect_hidden_instance_ids(
-    inner_docking: &uzor::layout::DockState<crate::state::chart_container_leaf::ChartContainerLeaf>,
+    inner_docking: &uzor::layout::DockState<crate::chart_container_leaf::ChartContainerLeaf>,
 ) -> std::collections::HashSet<u64> {
     inner_docking.tree().root().children
         .iter()
@@ -385,7 +385,7 @@ pub fn collect_hidden_instance_ids(
 /// Collect proportions from an inner docking tree in parallel with
 /// `collect_inner_instance_ids`.  Index 0 = main chart share, [1..] = sub-panes.
 pub fn collect_inner_proportions(
-    inner_docking: &uzor::layout::DockState<crate::state::chart_container_leaf::ChartContainerLeaf>,
+    inner_docking: &uzor::layout::DockState<crate::chart_container_leaf::ChartContainerLeaf>,
 ) -> Vec<f64> {
     inner_docking.tree().root().proportions.clone()
 }
@@ -407,7 +407,7 @@ impl ChartContainer {
             ha_cache_stamp: None,
             vp_overlay: None,
             vp_overlay_stamp: None,
-            vp_mode: crate::chart::volume_profile::VpMode::default(),
+            vp_mode: mlc_core::chart::volume_profile::VpMode::default(),
             vp_show: false,
             oi_show: false,
             funding_show: false,
@@ -605,12 +605,12 @@ impl ChartContainer {
         symbol: &str,
         exchange: &str,
         account_type: &str,
-        primitives: &[Box<dyn crate::drawing::primitives_v2::Primitive>],
+        primitives: &[Box<dyn mlc_core::drawing::primitives_v2::Primitive>],
     ) {
         let key = format!("{}:{}:{}", symbol, exchange, account_type);
-        let snapshots: Vec<crate::drawing::PrimitiveSnapshot> = primitives
+        let snapshots: Vec<mlc_core::drawing::PrimitiveSnapshot> = primitives
             .iter()
-            .map(|p| crate::drawing::PrimitiveSnapshot::from_primitive(p.as_ref()))
+            .map(|p| mlc_core::drawing::PrimitiveSnapshot::from_primitive(p.as_ref()))
             .collect();
         if !snapshots.is_empty() {
             self.symbol_drawings.insert(key, snapshots);
@@ -630,7 +630,7 @@ impl ChartContainer {
         symbol: &str,
         exchange: &str,
         account_type: &str,
-    ) -> Option<Vec<crate::drawing::PrimitiveSnapshot>> {
+    ) -> Option<Vec<mlc_core::drawing::PrimitiveSnapshot>> {
         let key = format!("{}:{}:{}", symbol, exchange, account_type);
         self.symbol_drawings.get(&key).cloned()
     }
@@ -689,7 +689,7 @@ impl ChartContainer {
     pub fn consume_cold_snap(&mut self, bars: &[Bar]) {
         self.snap_to_end(DEFAULT_SNAP_MARGIN);
         let saved_mode = self.price_scale.scale_mode;
-        self.price_scale.scale_mode = crate::chart::types::price_scale::ScaleMode::Auto;
+        self.price_scale.scale_mode = mlc_core::chart::types::price_scale::ScaleMode::Auto;
         self.calc_auto_scale(bars);
         self.price_scale.scale_mode = saved_mode;
         self.needs_snap_after_backfill = false;
@@ -791,11 +791,11 @@ impl ChartContainer {
             self.ha_cache_stamp = Some(stamp);
             return;
         }
-        let mut out: Vec<crate::types::HaBar> = Vec::with_capacity(bars.len());
+        let mut out: Vec<mlc_core::types::HaBar> = Vec::with_capacity(bars.len());
         let first = &bars[0];
         let mut prev_open = (first.open + first.close) * 0.5;
         let mut prev_close = (first.open + first.high + first.low + first.close) * 0.25;
-        out.push(crate::types::HaBar {
+        out.push(mlc_core::types::HaBar {
             ts_ms: first.ts_ms(),
             open: prev_open,
             high: first.high.max(prev_open).max(prev_close),
@@ -807,7 +807,7 @@ impl ChartContainer {
             let ha_open = (prev_open + prev_close) * 0.5;
             let ha_high = bar.high.max(ha_open).max(ha_close);
             let ha_low = bar.low.min(ha_open).min(ha_close);
-            out.push(crate::types::HaBar {
+            out.push(mlc_core::types::HaBar {
                 ts_ms: bar.ts_ms(),
                 open: ha_open,
                 high: ha_high,
@@ -835,7 +835,7 @@ impl ChartContainer {
         visible_bars: &[Bar],
         bucket_count: usize,
     ) {
-        use crate::chart::volume_profile::{VolumeProfileData, VpMode, filter_bars_for_mode};
+        use mlc_core::chart::volume_profile::{VolumeProfileData, VpMode, filter_bars_for_mode};
 
         let mode = self.vp_mode;
 
@@ -979,8 +979,8 @@ impl ChartContainer {
     }
 
     /// Create ScaleCornerState from this window's data
-    pub fn to_corner_state(&self) -> crate::state::scale_corner::ScaleCornerState {
-        crate::state::scale_corner::ScaleCornerState {
+    pub fn to_corner_state(&self) -> mlc_core::state::scale_corner::ScaleCornerState {
+        mlc_core::state::scale_corner::ScaleCornerState {
             scale_mode: self.price_scale.scale_mode,
             mode_label: self.price_scale.mode.short_label().to_string(),
             am_hovered: false,
@@ -1008,7 +1008,7 @@ impl ChartContainer {
         &mut self,
         global_x: f64,
         global_y: f64,
-        layout: &crate::state::geometry::ExtendedFrameLayout,
+        layout: &mlc_core::state::geometry::ExtendedFrameLayout,
         drag_pane: Option<Option<usize>>,
         bars: &[Bar],
     ) -> bool {
@@ -1419,7 +1419,7 @@ impl ChartContainer {
                     price: prev_close,
                     color: self.scale_settings.prev_close_color.clone(),
                     line_width: 1,
-                    line_style: crate::drawing::LineStyle::Dashed,
+                    line_style: mlc_core::drawing::LineStyle::Dashed,
                     line_visible: true,
                     axis_label_visible: true,
                     title: "Prev Close".to_string(),
@@ -1526,30 +1526,30 @@ impl ChartContainer {
     // =========================================================================
 
     /// Set grid line style for both vertical and horizontal lines.
-    pub fn set_grid_style(&self, panel: &mut ChartPanelState, style: crate::drawing::LineStyle) {
+    pub fn set_grid_style(&self, panel: &mut ChartPanelState, style: mlc_core::drawing::LineStyle) {
         panel.grid_options.vert_lines.style = style;
         panel.grid_options.horz_lines.style = style;
     }
 
     /// Set crosshair mode on both crosshair state and crosshair options.
-    pub fn set_crosshair_mode(&mut self, panel: &mut ChartPanelState, mode: crate::CrosshairMode) {
+    pub fn set_crosshair_mode(&mut self, panel: &mut ChartPanelState, mode: mlc_core::CrosshairMode) {
         self.crosshair.mode = mode;
         panel.crosshair_options.mode = mode;
     }
 
     /// Set crosshair line style for both vertical and horizontal lines.
-    pub fn set_crosshair_style(&self, panel: &mut ChartPanelState, style: crate::drawing::LineStyle) {
+    pub fn set_crosshair_style(&self, panel: &mut ChartPanelState, style: mlc_core::drawing::LineStyle) {
         panel.crosshair_options.vert_line.style = style;
         panel.crosshair_options.horz_line.style = style;
     }
 
     /// Set legend position.
-    pub fn set_legend_position(&self, panel: &mut ChartPanelState, pos: crate::LegendPosition) {
+    pub fn set_legend_position(&self, panel: &mut ChartPanelState, pos: mlc_core::LegendPosition) {
         panel.legend.position = pos;
     }
 
     /// Set watermark position. Creates a default watermark if none exists.
-    pub fn set_watermark_position(&self, panel: &mut ChartPanelState, horz: crate::HorzAlign, vert: crate::VertAlign) {
+    pub fn set_watermark_position(&self, panel: &mut ChartPanelState, horz: mlc_core::HorzAlign, vert: mlc_core::VertAlign) {
         match &mut panel.watermark {
             Some(wm) => {
                 wm.horz_align = horz;

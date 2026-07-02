@@ -7,8 +7,9 @@
 
 use crate::ChartApp;
 use crate::account_type_from_label;
+use crate::chart_container::DEFAULT_SNAP_MARGIN;
 use mlc_backend::BubbleEvent;
-use mlc_core::{ScaleMode, DEFAULT_SNAP_MARGIN};
+use mlc_core::ScaleMode;
 use mlc_backend_indicator_engine::RecalcMode;
 
 impl ChartApp {

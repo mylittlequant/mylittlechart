@@ -95,7 +95,7 @@ impl ChartApp {
                                     let leaf_id = mlc_core::LeafId(snap.leaf_id);
                                     let chart_id = mlc_core::ids::ChartId(snap.window_id);
 
-                                    let mut window = mlc_core::state::chart_container::ChartContainer::with_id(
+                                    let mut window = crate::chart_container::ChartContainer::with_id(
                                         chart_id,
                                         &snap.symbol,
                                         snap.timeframe.clone(),
@@ -135,7 +135,7 @@ impl ChartApp {
                                             "columns"        => "columns",
                                             _                => "candles",
                                         };
-                                        let mut panel_state = mlc_core::ChartPanelState::new(window.chart_panel_id);
+                                        let mut panel_state = crate::chart_panel_state::ChartPanelState::new(window.chart_panel_id);
                                         panel_state.grid_options = snap.grid_options.clone();
                                         panel_state.crosshair_options = snap.crosshair_options.clone();
                                         panel_state.legend = snap.legend.clone();
@@ -358,7 +358,7 @@ impl ChartApp {
                     if !layout_restored {
                         // Collect (chart_panel_id, display/series state) from windows
                         // before the panel_grid mut borrow; apply to panels_store after.
-                        let mut panel_patches: Vec<(mlc_core::state::ChartPanelId, mlc_core::ChartPanelState)> = Vec::new();
+                        let mut panel_patches: Vec<(mlc_core::state::ChartPanelId, crate::chart_panel_state::ChartPanelState)> = Vec::new();
                         {
                             let windows = self.panel_app.panel_grid.containers_mut();
                             for snap in &preset.windows {
@@ -446,7 +446,7 @@ impl ChartApp {
                                         "columns"        => "columns",
                                         _                => "candles",
                                     };
-                                    let mut ps = mlc_core::ChartPanelState::new(window.chart_panel_id);
+                                    let mut ps = crate::chart_panel_state::ChartPanelState::new(window.chart_panel_id);
                                     ps.grid_options = snap.grid_options.clone();
                                     ps.crosshair_options = snap.crosshair_options.clone();
                                     ps.legend = snap.legend.clone();

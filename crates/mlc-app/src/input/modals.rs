@@ -1203,7 +1203,7 @@ impl ChartApp {
                     if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(hit_leaf_id) {
                         window.price_scale.scale_mode = next_mode;
                         if next_mode.is_follow() {
-                            window.snap_to_end(mlc_core::DEFAULT_SNAP_MARGIN);
+                            window.snap_to_end(crate::chart_container::DEFAULT_SNAP_MARGIN);
                         }
                         if next_mode.is_auto_y() {
                             window.calc_auto_scale(&hit_bars);
@@ -1270,7 +1270,7 @@ impl ChartApp {
                 // Find the tree-order index for this instance_id.
                 let real_index = self.panel_app.panel_grid.active_container()
                     .and_then(|w| {
-                        mlc_core::state::chart_container::collect_inner_instance_ids(&w.inner_docking)
+                        crate::chart_container::collect_inner_instance_ids(&w.inner_docking)
                             .iter()
                             .position(|&iid| iid == instance_id)
                     });
@@ -1317,7 +1317,7 @@ impl ChartApp {
                                 if from > 1 {
                                     let to = from - 1;
                                     let all_ids = self.panel_app.panel_grid.active_container()
-                                        .map(|w| mlc_core::state::chart_container::collect_inner_instance_ids(&w.inner_docking))
+                                        .map(|w| crate::chart_container::collect_inner_instance_ids(&w.inner_docking))
                                         .unwrap_or_default();
                                     let neighbor_id = all_ids.get(tree_idx.saturating_sub(1)).copied();
                                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
@@ -1333,7 +1333,7 @@ impl ChartApp {
                                 // "Topmost below" means no other below pane has a lower tree_idx.
                                 let is_topmost_below = self.panel_app.panel_grid.active_container()
                                     .map(|w| {
-                                        let all_ids = mlc_core::state::chart_container::collect_inner_instance_ids(&w.inner_docking);
+                                        let all_ids = crate::chart_container::collect_inner_instance_ids(&w.inner_docking);
                                         // tree_idx is the index of this pane in all_ids.
                                         // It is the topmost below pane if all panes with
                                         // lower tree_idx are already above main.
@@ -1353,7 +1353,7 @@ impl ChartApp {
                                     if from > 1 {
                                         let to = from - 1;
                                         let all_ids = self.panel_app.panel_grid.active_container()
-                                            .map(|w| mlc_core::state::chart_container::collect_inner_instance_ids(&w.inner_docking))
+                                            .map(|w| crate::chart_container::collect_inner_instance_ids(&w.inner_docking))
                                             .unwrap_or_default();
                                         let neighbor_id = all_ids.get(tree_idx.saturating_sub(1)).copied();
                                         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
@@ -1388,7 +1388,7 @@ impl ChartApp {
                                 // after tree_idx are below-main or there are none).
                                 let is_bottommost_above = self.panel_app.panel_grid.active_container()
                                     .map(|w| {
-                                        let all_ids = mlc_core::state::chart_container::collect_inner_instance_ids(&w.inner_docking);
+                                        let all_ids = crate::chart_container::collect_inner_instance_ids(&w.inner_docking);
                                         all_ids.iter().skip(tree_idx + 1).all(|id| !w.sub_pane_above_main.contains(id))
                                     })
                                     .unwrap_or(false);
@@ -1407,7 +1407,7 @@ impl ChartApp {
                                     let to = from + 1;
                                     if to < total {
                                         let all_ids = self.panel_app.panel_grid.active_container()
-                                            .map(|w| mlc_core::state::chart_container::collect_inner_instance_ids(&w.inner_docking))
+                                            .map(|w| crate::chart_container::collect_inner_instance_ids(&w.inner_docking))
                                             .unwrap_or_default();
                                         let neighbor_id = all_ids.get(tree_idx + 1).copied();
                                         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
@@ -1428,7 +1428,7 @@ impl ChartApp {
                                 let to = from + 1;
                                 if to < total {
                                     let all_ids = self.panel_app.panel_grid.active_container()
-                                        .map(|w| mlc_core::state::chart_container::collect_inner_instance_ids(&w.inner_docking))
+                                        .map(|w| crate::chart_container::collect_inner_instance_ids(&w.inner_docking))
                                         .unwrap_or_default();
                                     let neighbor_id = all_ids.get(tree_idx + 1).copied();
                                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
@@ -1454,7 +1454,7 @@ impl ChartApp {
                         // put them back exactly.
                         if let Some(cid) = self.panel_app.panel_grid.active_container_id() {
                             let sub_count = self.panel_app.panel_grid.active_container()
-                                .map(|w| mlc_core::state::chart_container::collect_inner_instance_ids(&w.inner_docking).len())
+                                .map(|w| crate::chart_container::collect_inner_instance_ids(&w.inner_docking).len())
                                 .unwrap_or(0);
                             if sub_count > 0 {
                                 let pre_props = self.panel_app.panel_grid.active_container()

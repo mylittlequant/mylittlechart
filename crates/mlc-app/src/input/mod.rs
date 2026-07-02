@@ -391,7 +391,7 @@ impl ChartApp {
 
         // 4. Split panel routing — route click to the correct leaf.
         if self.panel_app.panel_grid.is_split() {
-            use mlc_core::state::ChartInputTarget;
+            use crate::panel_grid::ChartInputTarget;
             let target = self.panel_app.panel_grid.resolve_input(
                 x, y, self.content_rect.x, self.content_rect.y,
             );
@@ -420,7 +420,7 @@ impl ChartApp {
                             if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
                                 window.price_scale.scale_mode = next_mode;
                                 if next_mode.is_follow() {
-                                    window.snap_to_end(mlc_core::DEFAULT_SNAP_MARGIN);
+                                    window.snap_to_end(crate::chart_container::DEFAULT_SNAP_MARGIN);
                                 }
                                 if next_mode.is_auto_y() {
                                     window.calc_auto_scale(&bars_for_calc);
@@ -511,7 +511,7 @@ impl ChartApp {
         // context menu opens in the hovered window (not whichever was focused).
         // Mirrors the left-click path (resolve_input → set_active_leaf).
         if self.panel_app.panel_grid.is_split() {
-            use mlc_core::state::ChartInputTarget;
+            use crate::panel_grid::ChartInputTarget;
             let target = self.panel_app.panel_grid.resolve_input(
                 x, y, self.content_rect.x, self.content_rect.y,
             );
@@ -604,11 +604,11 @@ impl ChartApp {
                 &active_bars,
             )
         } else {
-            mlc_core::ChartRightClickHit::Miss
+            crate::panel_grid::ChartRightClickHit::Miss
         };
 
         match hit {
-            mlc_core::ChartRightClickHit::Primitive { prim_id } => {
+            crate::panel_grid::ChartRightClickHit::Primitive { prim_id } => {
                 // Right-clicked on a primitive — look up info via primitive_list.
                 let (display_name, is_locked, is_visible) = active_bid_rc
                     .and_then(|bid| {
@@ -637,13 +637,13 @@ impl ChartApp {
                 );
                 eprintln!("[ChartApp] Context menu opened for primitive #{}", prim_id);
             }
-            mlc_core::ChartRightClickHit::Indicator { indicator_id } => {
+            crate::panel_grid::ChartRightClickHit::Indicator { indicator_id } => {
                 // Right-clicked on an indicator line — select it and open its settings.
                 self.selected_indicator_id = Some(indicator_id);
                 self.panel_app.indicator_settings_state.open(indicator_id);
                 eprintln!("[ChartApp] Indicator right-clicked: id={}, settings opened", indicator_id);
             }
-            mlc_core::ChartRightClickHit::Background => {
+            crate::panel_grid::ChartRightClickHit::Background => {
                 // Right-clicked on empty chart background — build chart background menu.
                 let items = build_chart_background_menu();
                 self.panel_app.context_menu_state.open_smart(
@@ -654,7 +654,7 @@ impl ChartApp {
                 );
                 eprintln!("[ChartApp] Context menu opened for chart background");
             }
-            mlc_core::ChartRightClickHit::Miss => {}
+            crate::panel_grid::ChartRightClickHit::Miss => {}
         }
     }
 
@@ -797,7 +797,7 @@ impl ChartApp {
         if let mlc_core::engine::input::HitResult::SubPanePriceScale { pane_index } = hit {
             use mlc_core::ScaleMode;
             if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                let instance_id = mlc_core::state::chart_container::collect_inner_instance_ids(
+                let instance_id = crate::chart_container::collect_inner_instance_ids(
                     &window.inner_docking,
                 ).into_iter().nth(pane_index);
                 if let Some(iid) = instance_id {
@@ -2366,7 +2366,7 @@ impl ChartApp {
         // tool check, so the click lands on the correct leaf.
         // Skip when over UI (dropdown/toolbar) to avoid activating wrong leaf.
         if self.panel_app.panel_grid.is_split() && !self.ui_drag_active {
-            use mlc_core::state::ChartInputTarget;
+            use crate::panel_grid::ChartInputTarget;
             let target = self.panel_app.panel_grid.resolve_input(
                 x, y, self.content_rect.x, self.content_rect.y,
             );
@@ -2438,7 +2438,7 @@ impl ChartApp {
         // Delegate freehand-start and primitive/control-point hit-test to ChartPanelGrid.
         // Freehand: drawing_manager.start_freehand() runs inside handle_drag_start.
         // Background: viewport_before_drag already captured above.
-        use mlc_core::state::ChartDragStartHit;
+        use crate::panel_grid::ChartDragStartHit;
 
         // TEMP-DIAG: fires once per drag gesture; proves whether find_separator_at_y
         // misses because sub_panes is empty or because y coordinates are offset.
@@ -2453,7 +2453,7 @@ impl ChartApp {
             // side of the visible_set intersection drops the panes.
             let active_cid = self.panel_app.panel_grid.active_container_id();
             let inner_ids: Vec<u64> = self.panel_app.panel_grid.active_container()
-                .map(|w| mlc_core::state::chart_container::collect_inner_instance_ids(&w.inner_docking))
+                .map(|w| crate::chart_container::collect_inner_instance_ids(&w.inner_docking))
                 .unwrap_or_default();
             let inst_dump: Vec<String> = active_cid
                 .and_then(|cid| self.panel_app.panel_grid.containers().get(&cid).map(|w| w.current_bubble_id))
@@ -2970,7 +2970,7 @@ impl ChartApp {
                 for leaf_id in leaf_ids {
                     self.panel_app.panel_grid.set_leaf_min_width(
                         leaf_id,
-                        mlc_core::state::panel_grid::ChartPanelGrid::LEAF_MIN_WIDTH,
+                        crate::panel_grid::ChartPanelGrid::LEAF_MIN_WIDTH,
                     );
                 }
             }
@@ -3472,7 +3472,7 @@ impl ChartApp {
         };
         let drag_mode = self.input_handler.state.drag_mode;
         if self.panel_app.panel_grid.is_split() {
-            use mlc_core::state::ChartInputTarget;
+            use crate::panel_grid::ChartInputTarget;
             let hovered_leaf = match self.panel_app.panel_grid.resolve_input(
                 x, y, self.content_rect.x, self.content_rect.y,
             ) {
@@ -4414,7 +4414,7 @@ impl ChartApp {
         // resolve_input calls — I1).
         let split_hovered_leaf: Option<mlc_core::LeafId> =
             if self.panel_app.panel_grid.is_split() {
-                use mlc_core::state::ChartInputTarget;
+                use crate::panel_grid::ChartInputTarget;
                 match self.panel_app.panel_grid.resolve_input(
                     x, y, self.content_rect.x, self.content_rect.y,
                 ) {
@@ -4577,7 +4577,7 @@ impl ChartApp {
                 .unwrap_or(false)
         };
         if self.panel_app.panel_grid.is_split() && !is_drawing_skip {
-            use mlc_core::state::ChartInputTarget;
+            use crate::panel_grid::ChartInputTarget;
             // Reuse split_hovered_leaf resolved above to avoid a redundant
             // resolve_input call (I1 eliminated).  Convert back to a full
             // ChartInputTarget so the Separator/None hide path still works.
@@ -4752,7 +4752,7 @@ impl ChartApp {
         if self.panel_app.toolbar_state.active_tool_id.is_some()
             && self.panel_app.panel_grid.is_split()
         {
-            use mlc_core::state::ChartInputTarget;
+            use crate::panel_grid::ChartInputTarget;
             let target = self.panel_app.panel_grid.resolve_input(
                 x, y, self.content_rect.x, self.content_rect.y,
             );
@@ -4985,7 +4985,7 @@ impl ChartApp {
 
         // Split panel: check for separator cursor first.
         if self.panel_app.panel_grid.is_split() {
-            use mlc_core::state::ChartInputTarget;
+            use crate::panel_grid::ChartInputTarget;
             use mlc_core::SeparatorOrientation;
             let target = self.panel_app.panel_grid.resolve_input(
                 x, y, self.content_rect.x, self.content_rect.y,
@@ -5764,7 +5764,7 @@ impl ChartApp {
 
         // Split panel: route scroll to the correct leaf.
         if self.panel_app.panel_grid.is_split() {
-            use mlc_core::state::ChartInputTarget;
+            use crate::panel_grid::ChartInputTarget;
             let target = self.panel_app.panel_grid.resolve_input(
                 x, y, self.content_rect.x, self.content_rect.y,
             );
@@ -6484,7 +6484,7 @@ impl ChartApp {
         let (sub_pane_ids, sub_proportions, main_proportion): (Vec<u64>, Vec<f64>, Option<f64>) = self.panel_app.panel_grid
             .active_container()
             .map(|win| {
-                use mlc_core::state::chart_container::{collect_inner_instance_ids, collect_inner_proportions};
+                use crate::chart_container::{collect_inner_instance_ids, collect_inner_proportions};
                 let ids = collect_inner_instance_ids(&win.inner_docking);
                 let props = collect_inner_proportions(&win.inner_docking);
                 // props is [main_share, sub0_share, ...]; empty when the uzor
@@ -6561,7 +6561,7 @@ impl ChartApp {
             .map(|i| i.id)
             .collect();
 
-        use mlc_core::state::chart_container::{collect_inner_instance_ids, collect_inner_proportions};
+        use crate::chart_container::{collect_inner_instance_ids, collect_inner_proportions};
         let all_ids = collect_inner_instance_ids(&window.inner_docking);
         let all_props = collect_inner_proportions(&window.inner_docking);
         // Mirror the renderer: only pass sub-proportions when the uzor docking
@@ -7195,7 +7195,7 @@ impl ChartApp {
                     .unwrap_or_else(|| "S".to_string());
                 // Phase 4 C: panel state (18 display/series fields) is in panels_store.
                 let snap_panel_id = window.chart_panel_id;
-                let snap_default_panel = mlc_core::ChartPanelState::new(snap_panel_id);
+                let snap_default_panel = crate::chart_panel_state::ChartPanelState::new(snap_panel_id);
                 let snap_panel_state = self.panels_store.chart_panel
                     .get(&snap_panel_id)
                     .unwrap_or(&snap_default_panel);

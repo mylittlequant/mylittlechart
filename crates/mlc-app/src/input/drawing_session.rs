@@ -1,7 +1,7 @@
 //! `DrawingSessionView` — implements `mlc_core::state::DrawingSession` for
 //! a `(bid, &mut DrawingsMut)` pair.
 //!
-//! `mlc_core::state::ChartPanelGrid::{handle_right_click, handle_drag_start,
+//! `crate::panel_grid::ChartPanelGrid::{handle_right_click, handle_drag_start,
 //! update_crosshair, extend_freehand, complete_freehand}` and
 //! `mlc_core::state::toolbar_state::ToolbarState::{
 //! handle_toolbar_click_with_chart, handle_dropdown_select_with_chart}` are

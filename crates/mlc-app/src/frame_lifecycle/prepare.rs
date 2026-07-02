@@ -195,7 +195,7 @@ impl ChartApp {
                         window.consume_cold_snap(bars_pre);
                     } else {
                         // Snap to end with standard margin.
-                        window.snap_to_end(mlc_core::DEFAULT_SNAP_MARGIN);
+                        window.snap_to_end(crate::chart_container::DEFAULT_SNAP_MARGIN);
                         // No snap_cooldown needed: snap fires in prepare_frame AFTER
                         // sync_viewport_from_layout, so bar_shift cannot undo it this frame.
                         // Next frame old_width == new_width → bar_shift = 0.
@@ -1089,7 +1089,7 @@ impl ChartApp {
                         window.needs_auto_scale_after_bars = false;
                         // Snap to end with standard margin,
                         // using CURRENT bar_spacing (restored from preset).
-                        window.snap_to_end(mlc_core::DEFAULT_SNAP_MARGIN);
+                        window.snap_to_end(crate::chart_container::DEFAULT_SNAP_MARGIN);
                         window.calc_auto_scale(bars_split);
                         if let Some(mode) = window.restore_scale_mode.take() {
                             window.price_scale.scale_mode = mode;

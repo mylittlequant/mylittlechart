@@ -14,8 +14,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use mlc_app::ChartApp;
+use mlc_app::chart_container::ChartContainer;
 use mlc_core::Bar;
-use mlc_core::state::{generate_chart_id, Timeframe, ChartContainer};
+use mlc_core::state::{generate_chart_id, Timeframe};
 use mlc_backend_data_bridge::{DataBridge, LiveUpdate};
 use digdigdig3::{ExchangeId, AccountType};
 

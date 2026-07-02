@@ -3251,7 +3251,7 @@ impl ChartApp {
             let active_bid_tb = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
             let window_ptr: *mut _ = self.panel_app.panel_grid.active_container_mut()
                 .map(|w| w as *mut _)
-                .unwrap_or(std::ptr::null_mut::<mlc_core::ChartContainer>());
+                .unwrap_or(std::ptr::null_mut::<crate::chart_container::ChartContainer>());
 
             if !window_ptr.is_null() {
                 // SAFETY: toolbar_state does not access panel_grid.
@@ -3304,7 +3304,7 @@ impl ChartApp {
                 let active_bid_dd = self.panel_app.panel_grid.active_container().map(|w| w.current_bubble_id);
                 let window_ptr: *mut _ = self.panel_app.panel_grid.active_container_mut()
                     .map(|w| w as *mut _)
-                    .unwrap_or(std::ptr::null_mut::<mlc_core::ChartContainer>());
+                    .unwrap_or(std::ptr::null_mut::<crate::chart_container::ChartContainer>());
 
                 if !window_ptr.is_null() {
                     // SAFETY: toolbar_state does not access panel_grid.

@@ -2,7 +2,7 @@
 //!
 //! Free helpers used by every write site that mutates the 13 series-visibility
 //! fields (`show_candles` / … / `chart_type`) on a
-//! [`mlc_core::state::ChartContainer`]. Each helper mirrors the new
+//! [`crate::chart_container::ChartContainer`]. Each helper mirrors the new
 //! value into `TradingPanelsStore.chart_panel` via
 //! `entry().or_insert_with(...)` so callers do not need to seed the entry
 //! up-front (lazy-insert).
@@ -17,7 +17,7 @@
 //! ends and pass it here (split-block pattern matching S2.2..S2.5).
 //!
 use mlc_core::state::ChartPanelId;
-use mlc_core::ChartPanelState;
+use crate::chart_panel_state::ChartPanelState;
 
 use crate::panels_store::TradingPanelsStore;
 

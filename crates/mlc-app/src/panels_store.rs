@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use mlc_core::state::{PanelId, Panel};
 use mlc_backend_trading_engine::SharedTradingSnapshot;
 use mlc_core::state::ChartPanelId;
-use mlc_core::ChartPanelState;
+use crate::chart_panel_state::ChartPanelState;
 
 use mlc_app_panels::panel_trait::TradingPanel;
 use mlc_app_panels::trading::order_flow::{

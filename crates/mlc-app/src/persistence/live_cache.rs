@@ -12,7 +12,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use mlc_core::state::panel_grid::ChartPanelGrid;
+use crate::panel_grid::ChartPanelGrid;
 use mlc_backend::bubble::BubbleStore;
 use mlc_backend::tag::TagManager;
 use mlc_core::LeafId;

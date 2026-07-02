@@ -175,7 +175,7 @@ impl ChartApp {
         let t0 = web_time::Instant::now();
         let panel_grid = std::mem::replace(
             &mut self.panel_app.panel_grid,
-            mlc_core::state::panel_grid::ChartPanelGrid::placeholder(),
+            crate::panel_grid::ChartPanelGrid::placeholder(),
         );
         let pk_grid_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();

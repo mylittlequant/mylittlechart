@@ -7,10 +7,11 @@
 //! per-chart fan-out. If the integration assertion holds, the routing
 //! fix is correct against the real types (not just isolated BubbleStore).
 
+use mlc_app::chart_container::ChartContainer;
 use mlc_backend::bubble::BubbleStore;
 use mlc_backend::tag::TagManager;
 use mlc_core::ids::BubbleId;
-use mlc_core::state::{ChartId, generate_chart_id, Timeframe, ChartContainer};
+use mlc_core::state::{ChartId, generate_chart_id, Timeframe};
 use mlc_core::tag::Tag;
 use mlc_core::Bar;
 

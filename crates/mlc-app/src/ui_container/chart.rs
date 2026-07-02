@@ -1,7 +1,7 @@
 //! `ChartView` — the persistent half of a `Chart`-kind `UiContainer`.
 //!
 //! Phase 1 stub: empty placeholder.  Phase 4 RENAMES
-//! `mlc_core::state::ChartPanelState` → `ChartView`, MOVES the file
+//! `crate::chart_panel_state::ChartPanelState` → `ChartView`, MOVES the file
 //! here, and GROWS it with `scale_settings`, `inner_docking`,
 //! `sub_pane_above_main`, the `compare_overlay` display half, and
 //! the existing 19 panel-state fields.

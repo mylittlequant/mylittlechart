@@ -305,8 +305,11 @@ pub use scale_settings::{
 };
 
 // State Management - Base chart and layout types
+//
+// ChartContainer, ChartPanelGrid, ChartContainerLeaf, ChartPanelState moved
+// to `mlc-app` in Step 4 (state lift) — consumers now import
+// `mlc_app::state::X` (or the relevant top-level `mlc-app` module).
 pub use state::{
-    // (Legacy single-window `Chart` struct deleted — use `ChartContainer`.)
     // Object category (full terminal version with all categories)
     ObjectCategory,
     // Object info (legacy command support)
@@ -318,18 +321,13 @@ pub use state::{
     PropertyValue, Position, CommandHistory,
     // Timeframe visibility for object tree
     TimeframeVisibility,
-    // ChartContainer - the main chart state aggregate (formerly ChartWindow,
-    // renamed in Phase 1 of the chart-container cut)
-    ChartContainer, ChartId, ConnectionStatus, WindowRect, WINDOW_GAP,
-    // Phase 4 S2.7 — per-canvas display-option + series-visibility state
-    ChartPanelState,
-    // Snap-to-end constant (canonical margin used by ChartContainer::snap_to_end)
-    DEFAULT_SNAP_MARGIN,
-    // Chart-internal split/expand system
-    ChartPanelGrid, SplitHitResult, ChartInputTarget, ChartRightClickHit,
-    ChartDragStartHit, FreehandCompleteResult, DrawingSession,
-    // ChartId for the chart crate's ChartWindow
+    // ChartId / ChartPanelId / ConnectionStatus — ID-newtypes + domain-data
+    // enum consumed directly by mlc-backend / mlc-app-layout, live in
+    // mlc-core::ids (re-exported here via mlc-core::state for compatibility).
+    ChartId, ConnectionStatus, ChartPanelId,
     generate_chart_id, bump_chart_id_past,
+    // DrawingSession — shared interface trait (see state/drawing_session.rs doc)
+    DrawingSession,
 };
 
 // Re-export uzor-panels types so callers don't need a direct dependency.

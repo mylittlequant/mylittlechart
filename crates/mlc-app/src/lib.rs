@@ -22,12 +22,15 @@ pub mod agent;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use agent as gate4agent;
 
+pub mod chart_container;
+pub mod chart_container_leaf;
 pub mod chart_panel_bridge;
 pub mod chart_panel_state;
 pub mod chart_state;
 pub mod frame_lifecycle;
 pub mod input;
 pub mod chart_panel_app;
+pub mod panel_grid;
 pub mod panels_render;
 pub mod panels_store;
 pub mod scroll_dispatch;
@@ -3235,7 +3238,7 @@ impl ChartApp {
             for (cid, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                 let bars = bars_by_chart.get(cid).map(|v| v.as_slice()).unwrap_or(&[]);
                 if window.viewport.chart_width > 0.0 && window.viewport.bar_spacing > 0.0 && !bars.is_empty() {
-                    window.snap_to_end(mlc_core::DEFAULT_SNAP_MARGIN);
+                    window.snap_to_end(crate::chart_container::DEFAULT_SNAP_MARGIN);
                 }
                 window.calc_auto_scale(bars);
             }
@@ -3417,7 +3420,7 @@ impl ChartApp {
                 );
                 // Phase 4 C: get panel state (grid/legend/chart_type/tooltip from panels_store).
                 let overlay_panel_id = window.chart_panel_id;
-                let overlay_default_panel = mlc_core::ChartPanelState::new(overlay_panel_id);
+                let overlay_default_panel = crate::chart_panel_state::ChartPanelState::new(overlay_panel_id);
                 let overlay_panel = self.panels_store.chart_panel
                     .get(&overlay_panel_id)
                     .unwrap_or(&overlay_default_panel);
@@ -3504,7 +3507,7 @@ impl ChartApp {
             );
             // Phase 4 C: panel state for single-window overlay.
             let single_pid = window.chart_panel_id;
-            let single_default_panel = mlc_core::ChartPanelState::new(single_pid);
+            let single_default_panel = crate::chart_panel_state::ChartPanelState::new(single_pid);
             let single_panel = self.panels_store.chart_panel
                 .get(&single_pid)
                 .unwrap_or(&single_default_panel);
@@ -3770,7 +3773,7 @@ impl ChartApp {
                 );
                 // Phase 4 C: get panel state from panels_store.
                 let split_pid = window.chart_panel_id;
-                let split_default_panel = mlc_core::ChartPanelState::new(split_pid);
+                let split_default_panel = crate::chart_panel_state::ChartPanelState::new(split_pid);
                 let split_panel = self.panels_store.chart_panel
                     .get(&split_pid)
                     .unwrap_or(&split_default_panel);
@@ -3842,8 +3845,8 @@ impl ChartApp {
                     })
                     .collect();
 
-                let inner_proportions_vec = mlc_core::state::chart_container::collect_inner_proportions(&window.inner_docking);
-                let inner_sub_ids_vec = mlc_core::state::chart_container::collect_inner_instance_ids(&window.inner_docking);
+                let inner_proportions_vec = crate::chart_container::collect_inner_proportions(&window.inner_docking);
+                let inner_sub_ids_vec = crate::chart_container::collect_inner_instance_ids(&window.inner_docking);
                 let split_drawings_guard = self.core.drawings();
                 let split_view = split_drawings_guard.with_bubble(window.current_bubble_id);
                 let split_indicator_view = indicator_guard_split.with_bubble(window.current_bubble_id);
@@ -3903,8 +3906,8 @@ impl ChartApp {
                         .filter(|i| i.visible && i.pane > 0)
                         .map(|i| i.id)
                         .collect();
-                    let all_ids = mlc_core::state::chart_container::collect_inner_instance_ids(&window.inner_docking);
-                    let all_props = mlc_core::state::chart_container::collect_inner_proportions(&window.inner_docking);
+                    let all_ids = crate::chart_container::collect_inner_instance_ids(&window.inner_docking);
+                    let all_props = crate::chart_container::collect_inner_proportions(&window.inner_docking);
                     let (sub_pane_ids, sub_proportions): (Vec<u64>, Vec<f64>) = all_ids
                         .iter()
                         .enumerate()
@@ -4363,10 +4366,10 @@ impl ChartApp {
 
             // Phase 4 C: get single-window panel state before borrowing window.
             let single_window_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-            let single_fallback_panel = mlc_core::ChartPanelState::new(
+            let single_fallback_panel = crate::chart_panel_state::ChartPanelState::new(
                 single_window_pid.unwrap_or(mlc_core::state::ChartPanelId(0))
             );
-            let single_window_panel: &mlc_core::ChartPanelState = single_window_pid
+            let single_window_panel: &crate::chart_panel_state::ChartPanelState = single_window_pid
                 .and_then(|pid| self.panels_store.chart_panel.get(&pid))
                 .unwrap_or(&single_fallback_panel);
             let window_opt = self.panel_app.panel_grid.active_container();
@@ -4403,8 +4406,8 @@ impl ChartApp {
                 )
             });
             let corner_zones_single = if let (Some(window), Some(render_state)) = (window_opt, single_window_render_state) {
-                let inner_proportions_vec = mlc_core::state::chart_container::collect_inner_proportions(&window.inner_docking);
-                let inner_sub_ids_vec = mlc_core::state::chart_container::collect_inner_instance_ids(&window.inner_docking);
+                let inner_proportions_vec = crate::chart_container::collect_inner_proportions(&window.inner_docking);
+                let inner_sub_ids_vec = crate::chart_container::collect_inner_instance_ids(&window.inner_docking);
                 let single_window_drawings_guard = self.core.drawings();
                 let single_window_view = single_window_drawings_guard.with_bubble(window.current_bubble_id);
                 let single_indicator_view = indicator_guard_single.with_bubble(window.current_bubble_id);
@@ -4464,8 +4467,8 @@ impl ChartApp {
                         .filter(|i| i.visible && i.pane > 0)
                         .map(|i| i.id)
                         .collect();
-                    let all_ids2 = mlc_core::state::chart_container::collect_inner_instance_ids(&window.inner_docking);
-                    let all_props2 = mlc_core::state::chart_container::collect_inner_proportions(&window.inner_docking);
+                    let all_ids2 = crate::chart_container::collect_inner_instance_ids(&window.inner_docking);
+                    let all_props2 = crate::chart_container::collect_inner_proportions(&window.inner_docking);
                     let (sub_pane_ids, sub_proportions): (Vec<u64>, Vec<f64>) = all_ids2
                         .iter()
                         .enumerate()
@@ -5419,7 +5422,7 @@ impl ChartApp {
         // Write back render-computed sub-pane ranges (symmetrization + padding already applied).
         for (leaf_id, pane_idx, min, max) in output.sub_pane_range_writebacks {
             if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
-                let instance_id = mlc_core::state::chart_container::collect_inner_instance_ids(
+                let instance_id = crate::chart_container::collect_inner_instance_ids(
                     &window.inner_docking,
                 ).into_iter().nth(pane_idx);
                 if let Some(iid) = instance_id {
@@ -7069,8 +7072,8 @@ impl ChartApp {
     /// Call after any operation that adds/removes indicators or recalculates
     /// indicator values (init, tick, indicator create/delete).
     pub fn sync_sub_panes_from_manager(&mut self) {
-        use mlc_core::state::chart_container::collect_inner_instance_ids;
-        use mlc_core::state::chart_container_leaf::ChartContainerLeaf;
+        use crate::chart_container::collect_inner_instance_ids;
+        use crate::chart_container_leaf::ChartContainerLeaf;
 
         // Step 1: collect window-level read-only data before taking mutable borrows.
         let window_data: Vec<(mlc_core::LeafId, u64, usize, usize)> = self
@@ -7220,7 +7223,7 @@ impl ChartApp {
             // reconcile above: uzor re-infers HORIZONTAL layouts from child
             // count on every structural change, which breaks separator drag
             // math (see pin_vertical_stack_layout docs).
-            mlc_core::state::chart_container::pin_vertical_stack_layout(&mut window.inner_docking);
+            crate::chart_container::pin_vertical_stack_layout(&mut window.inner_docking);
 
             // Apply preset-restore proportions if available.
             if let Some(ref ratios) = pending_ratios {
@@ -7559,7 +7562,7 @@ impl ChartApp {
     /// Mirrors `TerminalApp::process_output_actions` but simplified:
     /// no multi-window panel manager, no frame layout offset.
     pub(crate) fn process_output_actions(&mut self, actions: Vec<ChartOutputAction>) {
-        fn calc_visible_price_range(window: &mut mlc_core::ChartContainer, bars: &[mlc_core::Bar]) {
+        fn calc_visible_price_range(window: &mut crate::chart_container::ChartContainer, bars: &[mlc_core::Bar]) {
             window.calc_auto_scale(bars);
         }
         // Snapshot bars for the active chart once (read-only borrow), then proceed
@@ -7594,7 +7597,7 @@ impl ChartApp {
                     // anchor, index mode converts via bar_spacing.
                     window.viewport.pan(bar_delta);
                     if let mlc_core::engine::input::DragMode::SubPaneChart { pane_index } = drag_mode {
-                        let instance_id = mlc_core::state::chart_container::collect_inner_instance_ids(
+                        let instance_id = crate::chart_container::collect_inner_instance_ids(
                             &window.inner_docking,
                         ).into_iter().nth(pane_index);
                         let pane_height = self.active_frame_layout.as_ref()
@@ -7685,7 +7688,7 @@ impl ChartApp {
                 ChartOutputAction::ResetPriceScale => {
                     let Some(window) = self.panel_app.panel_grid.active_container_mut() else { continue; };
                     if let mlc_core::engine::input::DragMode::SubPanePriceScale { pane_index } = drag_mode {
-                        let instance_id = mlc_core::state::chart_container::collect_inner_instance_ids(
+                        let instance_id = crate::chart_container::collect_inner_instance_ids(
                             &window.inner_docking,
                         ).into_iter().nth(pane_index);
                         if let Some(iid) = instance_id {
@@ -8108,7 +8111,7 @@ impl ChartApp {
                 ChartOutputAction::ZoomSubPane { pane_index, delta_y } => {
                     let Some(window) = self.panel_app.panel_grid.active_container_mut() else { continue; };
                     {
-                        let instance_id = mlc_core::state::chart_container::collect_inner_instance_ids(
+                        let instance_id = crate::chart_container::collect_inner_instance_ids(
                             &window.inner_docking,
                         ).into_iter().nth(pane_index);
                         let pane_h = self.active_frame_layout.as_ref()
@@ -8471,7 +8474,7 @@ impl ChartApp {
                 "Авто".to_string(),
             ));
         // Panel-owned display fields.
-        let settings_default_panel = settings_pid.map(mlc_core::ChartPanelState::new);
+        let settings_default_panel = settings_pid.map(crate::chart_panel_state::ChartPanelState::new);
         let settings_panel = settings_pid
             .and_then(|pid| self.panels_store.chart_panel.get(&pid))
             .or(settings_default_panel.as_ref());

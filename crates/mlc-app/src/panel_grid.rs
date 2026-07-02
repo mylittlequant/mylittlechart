@@ -11,9 +11,11 @@ use uzor::layout::DockState;
 // DockingManager is DockState in uzor 2.0 (renamed + moved)
 type DockingManager<P> = DockState<P>;
 
-use crate::state::{ChartContainer, ChartId, Timeframe};
-use crate::state::generate_chart_id;
-use crate::state::panel::Panel;
+use crate::chart_container::ChartContainer;
+use mlc_core::ids::{ChartId, generate_chart_id};
+use mlc_core::state::Timeframe;
+use mlc_core::state::panel::Panel;
+use mlc_core::state::drawing_session::DrawingSession;
 
 // Re-export so callers that import from this module get everything they need.
 pub use uzor::panels::SeparatorOrientation as PanelSeparatorOrientation;
@@ -43,7 +45,7 @@ pub enum ChartInputTarget {
     /// Point is on the scale corner button area.
     ScaleCorner {
         leaf_id: LeafId,
-        button: crate::state::scale_corner::ScaleCornerButton,
+        button: mlc_core::state::scale_corner::ScaleCornerButton,
     },
     /// Point is on a separator between sub-charts.
     Separator {
@@ -133,7 +135,7 @@ impl ChartPanelGrid {
 
     /// Minimal grid used as temporary stand-in during `mem::replace` in preset cache swaps.
     pub fn placeholder() -> Self {
-        use crate::state::Timeframe;
+        use mlc_core::state::Timeframe;
         Self::new(ChartContainer::new("PLACEHOLDER", Timeframe::h1()))
     }
 
@@ -261,7 +263,7 @@ impl ChartPanelGrid {
                     .get(&l.id)
                     .and_then(|cid| self.containers.get(cid))
                     .map(|w| w.scale_settings.effective_price_scale_width())
-                    .unwrap_or(crate::scale_settings::DEFAULT_PRICE_SCALE_WIDTH);
+                    .unwrap_or(mlc_core::scale_settings::DEFAULT_PRICE_SCALE_WIDTH);
                 ((scale_w + CHART_AREA_MIN) as f32).max(Self::LEAF_MIN_WIDTH)
             }
             PanelNode::Branch(branch) => {
@@ -332,7 +334,7 @@ impl ChartPanelGrid {
                 .containers
                 .get(&chart_id)
                 .map(|w| w.scale_settings.effective_price_scale_width())
-                .unwrap_or(crate::scale_settings::DEFAULT_PRICE_SCALE_WIDTH);
+                .unwrap_or(mlc_core::scale_settings::DEFAULT_PRICE_SCALE_WIDTH);
             let leaf_w = (scale_w + CHART_AREA_MIN) as f32;
             leaf_min_w.insert(leaf_id, leaf_w.max(Self::LEAF_MIN_WIDTH));
         }
@@ -482,7 +484,7 @@ impl ChartPanelGrid {
                 .containers
                 .get(&chart_id)
                 .map(|w| w.scale_settings.effective_price_scale_width())
-                .unwrap_or(crate::scale_settings::DEFAULT_PRICE_SCALE_WIDTH);
+                .unwrap_or(mlc_core::scale_settings::DEFAULT_PRICE_SCALE_WIDTH);
             let leaf_w = (scale_w + CHART_AREA_MIN) as f32;
             leaf_min_w.insert(leaf_id, leaf_w.max(Self::LEAF_MIN_WIDTH));
         }
@@ -1268,14 +1270,14 @@ impl ChartPanelGrid {
             // Build the absolute LayoutRect for this leaf so that
             // ChartAreaLayout::compute works in absolute screen coordinates
             // (matching the absolute `x`, `y` passed in).
-            let available = crate::state::geometry::LayoutRect {
+            let available = mlc_core::state::geometry::LayoutRect {
                 x: content_origin_x + rect.x as f64,
                 y: content_origin_y + rect.y as f64,
                 width: rect.width as f64,
                 height: rect.height as f64,
             };
 
-            let chart_layout = crate::state::geometry::ChartAreaLayout::compute(
+            let chart_layout = mlc_core::state::geometry::ChartAreaLayout::compute(
                 available,
                 window.scale_settings.price_scale_width,
                 window.scale_settings.time_scale_height,
@@ -1290,14 +1292,14 @@ impl ChartPanelGrid {
                 let mode_width = 20.0_f64;
                 let total_width = am_width + spacing + mode_width;
                 let start_x = corner.center_x() - total_width / 2.0;
-                let zones = crate::state::scale_corner::ScaleCornerHitZones {
-                    am_button: crate::state::geometry::LayoutRect::new(
+                let zones = mlc_core::state::scale_corner::ScaleCornerHitZones {
+                    am_button: mlc_core::state::geometry::LayoutRect::new(
                         start_x,
                         corner.y,
                         am_width,
                         corner.height,
                     ),
-                    mode_button: crate::state::geometry::LayoutRect::new(
+                    mode_button: mlc_core::state::geometry::LayoutRect::new(
                         start_x + am_width + spacing,
                         corner.y,
                         mode_width,
@@ -1328,84 +1330,9 @@ impl ChartPanelGrid {
     }
 }
 
-// =========================================================================
-// DrawingSession — thin trait abstracting over the per-bubble drawing
-// manager for `ChartPanelGrid`'s hit-test / freehand methods below.
-// =========================================================================
-//
-// `DrawingManager` physically lives in `mlc-backend` (Step 3.1 — the
-// type dictionary doesn't hold managers). `ChartPanelGrid` stays in
-// `mlc-core` and cannot depend on `mlc-backend` (that would invert
-// the dep graph: backend-core already depends on core). This trait is the
-// narrow interface these hit-test helpers need; `mlc-app` implements it as
-// a thin per-bubble wrapper around `mlc_backend::drawing::DrawingsMut`
-// (see `mlc-app/src/input/drawing_session.rs`).
-//
-// All methods operate on "the active bubble" implicitly — the implementor
-// closes over `bid` — so the trait surface mirrors what a bubble-scoped
-// `BubbleDrawingSession` view would expose, minus the bubble parameter.
-pub trait DrawingSession {
-    fn is_freehand_tool(&self) -> bool;
-    fn is_drawing(&self) -> bool;
-    fn current_pane(&self) -> Option<u64>;
-    fn set_current_pane(&mut self, pane_id: Option<u64>);
-    fn start_freehand(&mut self, ts_ms: i64, price: f64) -> bool;
-    fn add_freehand_point(&mut self, ts_ms: i64, price: f64, bar_interval_ms: i64) -> bool;
-    fn complete_freehand(&mut self) -> bool;
-    fn selected(&self) -> Option<u64>;
-    fn last_index(&self) -> Option<u64>;
-    fn get_type_id(&self, prim_id: u64) -> Option<String>;
-    fn get_points(&self, prim_id: u64) -> Option<Vec<(i64, f64)>>;
-    fn get_data(&self, prim_id: u64) -> Option<crate::drawing::PrimitiveData>;
-    fn pane_id_of(&self, prim_id: u64) -> Option<u64>;
-    fn toggle_lock(&mut self);
-    fn toggle_visible(&mut self);
-    fn is_visible(&self) -> bool;
-    fn set_tool(&mut self, tool_id: Option<&str>);
-    fn delete_selected(&mut self) -> bool;
-    fn delete_all(&mut self);
-
-    #[allow(clippy::too_many_arguments)]
-    fn hit_test(
-        &self,
-        x: f64,
-        y: f64,
-        bars: &[crate::Bar],
-        viewport: &crate::Viewport,
-        price_scale: &crate::PriceScale,
-    ) -> Option<u64>;
-
-    #[allow(clippy::too_many_arguments)]
-    fn hit_test_in_pane(
-        &self,
-        x: f64,
-        y: f64,
-        pane_id: u64,
-        bars: &[crate::Bar],
-        viewport: &crate::Viewport,
-        price_scale: &crate::PriceScale,
-    ) -> Option<u64>;
-
-    fn hit_test_control_point(
-        &self,
-        x: f64,
-        y: f64,
-        bars: &[crate::Bar],
-        viewport: &crate::Viewport,
-        price_scale: &crate::PriceScale,
-    ) -> Option<crate::drawing::ControlPointType>;
-
-    #[allow(clippy::too_many_arguments)]
-    fn hit_test_control_point_in_pane(
-        &self,
-        x: f64,
-        y: f64,
-        pane_id: u64,
-        bars: &[crate::Bar],
-        viewport: &crate::Viewport,
-        price_scale: &crate::PriceScale,
-    ) -> Option<crate::drawing::ControlPointType>;
-}
+// DrawingSession trait moved to `mlc_core::state::drawing_session` — shared
+// interface between mlc-app::panel_grid and mlc-core::state::toolbar_state,
+// neither of which can depend on the other in the wrong direction.
 
 // =========================================================================
 // Right-click hit-test
@@ -1461,11 +1388,11 @@ impl ChartPanelGrid {
         &mut self,
         screen_x: f64,
         screen_y: f64,
-        extended: &crate::state::geometry::ExtendedFrameLayout,
+        extended: &mlc_core::state::geometry::ExtendedFrameLayout,
         indicator_overlay_hit: impl Fn(f64, f64, f64) -> Option<u64>,
         indicator_subpane_hit: impl Fn(u64, f64, f64, f64) -> bool,
         active_dm: &mut impl DrawingSession,
-        bars: &[crate::Bar],
+        bars: &[mlc_core::Bar],
     ) -> ChartRightClickHit {
         // ----------------------------------------------------------------
         // Step 1 & 2: primitive hit-test (main chart then sub-panes).
@@ -1521,7 +1448,7 @@ impl ChartPanelGrid {
                         })
                         .unwrap_or((0.0, 100.0));
                     let sub_price_scale =
-                        crate::PriceScale::new(price_min, price_max);
+                        mlc_core::PriceScale::new(price_min, price_max);
                     let sub_viewport = self.active_container().map(|w| {
                         let mut vp = w.viewport.clone();
                         vp.chart_height = content.height;
@@ -1634,7 +1561,7 @@ pub enum ChartDragStartHit {
         /// ID of the selected primitive that owns the control point.
         primitive_id: u64,
         /// Which control point was hit.
-        control_point: crate::drawing::ControlPointType,
+        control_point: mlc_core::drawing::ControlPointType,
     },
     /// Hit a primitive body (no control point).
     /// Caller should set `DragMode::Primitive` and emit `StartPrimitiveDrag`.
@@ -1681,9 +1608,9 @@ impl ChartPanelGrid {
         &mut self,
         screen_x: f64,
         screen_y: f64,
-        extended: &crate::state::geometry::ExtendedFrameLayout,
+        extended: &mlc_core::state::geometry::ExtendedFrameLayout,
         active_dm: &mut impl DrawingSession,
-        bars: &[crate::Bar],
+        bars: &[mlc_core::Bar],
     ) -> ChartDragStartHit {
         let chart_rect = extended.main_chart.chart;
         let local_x = screen_x - chart_rect.x;
@@ -1715,7 +1642,7 @@ impl ChartPanelGrid {
                     .unwrap_or(0.0);
                 let ts_ms = self
                     .active_container()
-                    .map(|_w| crate::bar_f64_to_timestamp_ms(bars, bar_f))
+                    .map(|_w| mlc_core::bar_f64_to_timestamp_ms(bars, bar_f))
                     .unwrap_or(0);
                 let price =
                     price_max - (local_y / chart_rect.height) * (price_max - price_min);
@@ -1747,7 +1674,7 @@ impl ChartPanelGrid {
                     .unwrap_or(0.0);
                 let ts_ms = self
                     .active_container()
-                    .map(|_w| crate::bar_f64_to_timestamp_ms(bars, bar_f))
+                    .map(|_w| mlc_core::bar_f64_to_timestamp_ms(bars, bar_f))
                     .unwrap_or(0);
                 let price =
                     price_max - (ply / content.height) * (price_max - price_min);
@@ -1822,7 +1749,7 @@ impl ChartPanelGrid {
                         .map(|s| (s.price_min, s.price_max))
                 })
                 .unwrap_or((0.0, 100.0));
-            let sub_price_scale = crate::PriceScale::new(price_min, price_max);
+            let sub_price_scale = mlc_core::PriceScale::new(price_min, price_max);
             let sub_viewport = self.active_container().map(|w| {
                 let mut vp = w.viewport.clone();
                 vp.chart_height = content.height;
@@ -1905,14 +1832,14 @@ impl ChartPanelGrid {
         &mut self,
         x: f64,
         y: f64,
-        drag_mode: crate::engine::input::DragMode,
+        drag_mode: mlc_core::engine::input::DragMode,
         drawing_active: bool,
-        extended: &crate::state::geometry::ExtendedFrameLayout,
+        extended: &mlc_core::state::geometry::ExtendedFrameLayout,
         is_over_separator: bool,
         active_dm: &impl DrawingSession,
-        bars: &[crate::Bar],
+        bars: &[mlc_core::Bar],
     ) -> Option<(i64, f64, bool, Option<usize>)> {
-        use crate::engine::input::DragMode;
+        use mlc_core::engine::input::DragMode;
 
         if drawing_active {
             // Unclamped crosshair — preview must extend beyond chart area.
@@ -2067,9 +1994,9 @@ impl ChartPanelGrid {
         x: f64,
         y: f64,
         leaf_id: LeafId,
-        extended: &crate::state::geometry::ExtendedFrameLayout,
+        extended: &mlc_core::state::geometry::ExtendedFrameLayout,
         is_over_separator: bool,
-        bars: &[crate::Bar],
+        bars: &[mlc_core::Bar],
     ) -> Option<(i64, f64, bool, Option<usize>)> {
         if is_over_separator {
             if let Some(window) = self.container_for_leaf_mut(leaf_id) {
@@ -2115,7 +2042,7 @@ pub struct FreehandCompleteResult {
     /// Coordinate points of the primitive (ts_ms, price).
     pub points: Vec<(i64, f64)>,
     /// Full primitive data (id, color, style, etc.).
-    pub data: crate::drawing::PrimitiveData,
+    pub data: mlc_core::drawing::PrimitiveData,
 }
 
 impl ChartPanelGrid {
@@ -2131,9 +2058,9 @@ impl ChartPanelGrid {
         &mut self,
         screen_x: f64,
         screen_y: f64,
-        extended: &crate::state::geometry::ExtendedFrameLayout,
+        extended: &mlc_core::state::geometry::ExtendedFrameLayout,
         active_dm: &mut impl DrawingSession,
-        bars: &[crate::Bar],
+        bars: &[mlc_core::Bar],
     ) -> bool {
         let is_active = active_dm.is_drawing() && active_dm.is_freehand_tool();
         let current_pane = active_dm.current_pane();
@@ -2172,8 +2099,8 @@ impl ChartPanelGrid {
                 price_min
             };
             if let Some(_window) = self.active_container() {
-                let ts_ms = crate::bar_f64_to_timestamp_ms(bars, bar_f);
-                let bar_interval_ms = crate::bar_interval_seconds(bars) * 1000;
+                let ts_ms = mlc_core::bar_f64_to_timestamp_ms(bars, bar_f);
+                let bar_interval_ms = mlc_core::bar_interval_seconds(bars) * 1000;
                 active_dm.add_freehand_point(ts_ms, price, bar_interval_ms);
             }
             return true;
@@ -2197,8 +2124,8 @@ impl ChartPanelGrid {
         let price = price_max - (local_y / chart_rect.height) * (price_max - price_min);
 
         if let Some(_window) = self.active_container() {
-            let ts_ms = crate::bar_f64_to_timestamp_ms(bars, bar_f);
-            let bar_interval_ms = crate::bar_interval_seconds(bars) * 1000;
+            let ts_ms = mlc_core::bar_f64_to_timestamp_ms(bars, bar_f);
+            let bar_interval_ms = mlc_core::bar_interval_seconds(bars) * 1000;
             active_dm.add_freehand_point(ts_ms, price, bar_interval_ms);
         }
 
@@ -2246,10 +2173,10 @@ impl ChartPanelGrid {
         &mut self,
         screen_x: f64,
         screen_y: f64,
-        extended: &crate::ExtendedFrameLayout,
-        overlay_results: &[crate::state::sub_pane_overlay::SubPaneOverlayResult],
+        extended: &mlc_core::ExtendedFrameLayout,
+        overlay_results: &[mlc_core::state::sub_pane_overlay::SubPaneOverlayResult],
     ) -> bool {
-        use crate::state::modal_data::SubPaneButton;
+        use mlc_core::state::modal_data::SubPaneButton;
 
         let mut hide_crosshair = false;
         if let Some(window) = self.active_container_mut() {
