@@ -307,22 +307,12 @@ pub use scale_settings::{
 // State Management - Base chart and layout types
 pub use state::{
     // (Legacy single-window `Chart` struct deleted — use `ChartContainer`.)
-    // Visibility (standalone manager)
-    VisibilityManager,
-    // Lock (standalone manager)
-    LockManager,
     // Object category (full terminal version with all categories)
     ObjectCategory,
     // Object info (legacy command support)
     ObjectInfo,
     // Timeframe
-    TimeframeManager, Timeframe,
-    // Pane management (multi-pane charts)
-    PaneManager, Pane, PaneId, PaneGeometry, InteractionRegion, MAIN_PANE,
-    // Sub-pane (unified geometry + Y-axis state for indicator panes)
-    SubPane, SubPaneId, generate_sub_pane_id, bump_sub_pane_id_past,
-    // Coordinate utilities (clamping, boundary policy)
-    coordinate_utils,
+    Timeframe,
     // Command pattern (undo/redo)
     Command, CommandResult, StateChange, ViewportState,
     PropertyValue, Position, CommandHistory,

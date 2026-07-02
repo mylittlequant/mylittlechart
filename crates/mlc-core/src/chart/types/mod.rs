@@ -71,8 +71,3 @@ pub use watermark::{FontStyle, HorzAlign, VertAlign, Watermark, WatermarkLine};
 
 // Re-export compare
 pub use compare::{get_compare_color, CompareOverlay, CompareSeries, COMPARE_COLORS};
-
-// Re-export pane types from state/
-pub use crate::state::{
-    InteractionRegion, Pane, PaneGeometry, PaneId, PaneManager, SubPane, MAIN_PANE,
-};

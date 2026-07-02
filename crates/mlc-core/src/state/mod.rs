@@ -4,24 +4,23 @@
 //!
 //! This module provides:
 //! - `ChartContainer` - the main chart state aggregate (multi-window)
-//! - `SubPane` - sub-pane layout for indicator panels
 //! - `Timeframe` - timeframe representation
-//! - `VisibilityManager` / `LockManager`
 //! - `Command` / `CommandHistory` - undo/redo command pattern
 //!
 //! The legacy single-window `Chart` struct was deleted — all consumers
-//! flow through `ChartContainer`.
+//! flow through `ChartContainer`.  The legacy `Pane`/`PaneManager`/`SubPane`
+//! (pre-`ChartContainerLeaf`/`inner_docking` API) and `VisibilityManager`/
+//! `LockManager`/`AppState` (pre-`ChartContainer` object-ID API) were dead
+//! code with zero consumers outside this crate's own re-export chain —
+//! deleted during Step 4 (state lift, see
+//! `docs/mlc/plans/doctrine-cutover-2026-06-27.md`).
 
-mod pane;
 mod timeframe;
-mod visibility;
-mod lock;
 pub mod geometry;
 pub mod scale_corner;
 pub mod selected_config;
 pub mod command;
 pub mod history;
-pub mod app_state;
 pub mod chart_container;
 pub mod panel_grid;
 pub mod chart_container_leaf;
@@ -41,27 +40,8 @@ pub mod toolbar_geometry;
 // Unified panel taxonomy (K1 — supersedes PanelLeaf + FreeItem)
 pub use panel::{Panel, PanelId, PanelKind};
 
-// Layout types
-pub use pane::{
-    SubPane,
-    SubPaneId,
-    generate_sub_pane_id,
-    bump_sub_pane_id_past,
-    Pane,
-    PaneId,
-    PaneManager,
-    PaneGeometry,
-    InteractionRegion,
-    MAIN_PANE,
-    coordinate_utils,
-};
-
 // Timeframe
-pub use timeframe::{Timeframe, TimeframeManager};
-
-// Visibility and lock management
-pub use visibility::VisibilityManager;
-pub use lock::LockManager;
+pub use timeframe::Timeframe;
 
 // Selected primitive configuration
 pub use selected_config::SelectedPrimitiveConfig;
@@ -72,9 +52,6 @@ pub use command::{
     PropertyValue, Position, ObjectCategory, ObjectInfo, TimeframeVisibility,
 };
 pub use history::CommandHistory;
-
-// App state interface, window layout, window sync mode
-pub use app_state::{AppState, is_action_active, WindowLayout, WindowSyncMode};
 
 // `action_executor` (ActionResult, execute_chart_action[_internal],
 // ChartExternalEvent, OpenModalRequest) was zengeld-terminal-core legacy API
