@@ -190,7 +190,7 @@ impl ChartApp {
     /// `"data_bg_bars"`, `"data_max_bars"`, `"data_store_size_mb"`, `"data_cleanup_days"`.
     pub(crate) fn apply_data_cache_slider_value(&mut self, field_id: &str, value: f64) {
         let mut user_mut = self.core.user_mut();
-        let dl = &mut user_mut.profile_mut().data_load;
+        let dl = &mut user_mut.profile_mut().domain.data_load;
         match field_id {
             "data_bg_bars" => {
                 dl.background_bar_count = (value.round() as u32).clamp(300, 10000);

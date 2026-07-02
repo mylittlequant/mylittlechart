@@ -418,7 +418,7 @@ impl ChartApp {
                 } else {
                     let wl_at = crate::account_type_from_label(&wl_at_label);
                     self.core.bridge.ensure_connector(resolved_exchange);
-                    self.core.bridge.request_bars(resolved_exchange, sym_part, &timeframe, wl_at, None, Some(self.core.user().profile().bar_count as usize), false);
+                    self.core.bridge.request_bars(resolved_exchange, sym_part, &timeframe, wl_at, None, Some(self.core.user().profile().domain.bar_count as usize), false);
                 }
                 self.autosave_snapshot();
                 eprintln!("[WatchlistModal] symbol selected: {} @ {}", sym_part, exchange_part);
@@ -883,7 +883,7 @@ impl ChartApp {
                         } else {
                             let search_at = crate::account_type_from_label(&search_at_label);
                             self.core.bridge.ensure_connector(resolved_exchange);
-                            self.core.bridge.request_bars(resolved_exchange, symbol_part, &timeframe, search_at, None, Some(self.core.user().profile().bar_count as usize), false);
+                            self.core.bridge.request_bars(resolved_exchange, symbol_part, &timeframe, search_at, None, Some(self.core.user().profile().domain.bar_count as usize), false);
                         }
                         // Record ChangeSymbol if it actually changed.
                         if previous_symbol != new_symbol_str {
@@ -976,7 +976,7 @@ impl ChartApp {
                                 &main_tf_for_cmp,
                                 cmp_at,
                                 None,
-                                Some(self.core.user().profile().bar_count as usize),
+                                Some(self.core.user().profile().domain.bar_count as usize),
                                 true,
                             );
                             eprintln!(

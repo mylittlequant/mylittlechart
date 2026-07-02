@@ -526,7 +526,7 @@ impl ChartApp {
         // ── Layer 3: trigger scroll-fetch when viewport approaches left edge ───
         {
             let mut scroll_requests: Vec<(mlc_core::state::ChartId, String, String, String, mlc_core::instrument::AccountType)> = Vec::new();
-            let max_loaded = self.core.user().profile().data_load.max_loaded_bars;
+            let max_loaded = self.core.user().profile().domain.data_load.max_loaded_bars;
 
             let instrument_by_cid_scroll: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::state::Timeframe, String, mlc_core::instrument::AccountType)> = {
                 self.panel_app.panel_grid.containers().keys()

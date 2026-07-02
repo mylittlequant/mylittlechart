@@ -142,7 +142,7 @@ impl ProfileManager {
             Ok(p) => {
                 eprintln!(
                     "[ProfileManager] loaded profile (active_preset={})",
-                    p.active_preset_id
+                    p.ui.active_preset_id
                 );
                 p
             }
@@ -163,8 +163,8 @@ impl ProfileManager {
                 // sync never pushes items with an empty profile_id.
                 if let Some(dir_name) = data_dir.file_name().and_then(|n| n.to_str()) {
                     if !dir_name.is_empty() {
-                        fallback.profile_id = dir_name.to_string();
-                        fallback.display_name = dir_name.to_string();
+                        fallback.domain.profile_id = dir_name.to_string();
+                        fallback.ui.display_name = dir_name.to_string();
                     }
                 }
                 fallback
@@ -172,13 +172,13 @@ impl ProfileManager {
         };
 
         // Generate profile_id for legacy profiles that have none.
-        if profile.profile_id.is_empty() {
+        if profile.domain.profile_id.is_empty() {
             let generated = uuid::Uuid::new_v4().to_string();
             eprintln!(
                 "[ProfileManager] profile_id was empty — generated {}",
                 generated
             );
-            profile.profile_id = generated;
+            profile.domain.profile_id = generated;
         }
 
         // Templates.
@@ -232,7 +232,7 @@ impl ProfileManager {
 
         // Load (or build a fallback) profile index.
         let index = load_profile_index().unwrap_or_else(|| ProfileIndex {
-            active_profile_id: profile.profile_id.clone(),
+            active_profile_id: profile.domain.profile_id.clone(),
             profiles: Vec::new(),
         });
 
@@ -291,9 +291,9 @@ impl ProfileManager {
             return Err("Profile name must not be empty".to_string());
         }
 
-        if id == self.profile.profile_id {
+        if id == self.profile.domain.profile_id {
             // Active profile — update in-memory + save via normal path.
-            self.profile.display_name = new_name.to_string();
+            self.profile.ui.display_name = new_name.to_string();
             save_profile(&self.profile, self.vault_key.as_ref())
                 .map_err(|e| e.to_string())?;
         } else {
@@ -325,8 +325,8 @@ impl ProfileManager {
     /// Follows the same dual-write pattern as [`rename_profile`].
     pub fn set_avatar(&mut self, id: &str, avatar: &str) -> Result<(), String> {
         // If changing the active profile's avatar, update in-memory profile.
-        if id == self.profile.profile_id {
-            self.profile.avatar = avatar.to_string();
+        if id == self.profile.domain.profile_id {
+            self.profile.ui.avatar = avatar.to_string();
             save_profile(&self.profile, self.vault_key.as_ref())
                 .map_err(|e| e.to_string())?;
         }
@@ -593,7 +593,7 @@ impl ProfileManager {
     ) -> Result<SwitchData, String> {
         // Persist current window state into the active profile before saving.
         if !current_windows.is_empty() {
-            self.profile.windows = current_windows.to_vec();
+            self.profile.ui.windows = current_windows.to_vec();
         }
 
         // Save the current profile.
@@ -610,7 +610,7 @@ impl ProfileManager {
 
         let needs_vault_unlock = self.needs_vault_unlock();
         let needs_encryption_setup = self.needs_encryption_setup();
-        let saved_windows = self.profile.windows.clone();
+        let saved_windows = self.profile.ui.windows.clone();
 
         Ok(SwitchData {
             saved_windows,

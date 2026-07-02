@@ -1603,7 +1603,7 @@ impl ChartApp {
                 }
                 let at = account_type_from_label(at_label);
                 bridge.ensure_connector(eid);
-                bridge.request_bars(eid, sym, tf, at, None, Some(app.core.user().profile().bar_count as usize), false);
+                bridge.request_bars(eid, sym, tf, at, None, Some(app.core.user().profile().domain.bar_count as usize), false);
             }
 
             // Defer viewport positioning until the first resize() when chart_width is known.
@@ -1611,7 +1611,7 @@ impl ChartApp {
             // Preset restored successfully.
         } else {
             // ── Fresh state — Binance default ──────────────────────────────
-            let bar_count = app.core.user().profile().bar_count as usize;
+            let bar_count = app.core.user().profile().domain.bar_count as usize;
             app.seed_default_chart(
                 digdigdig3::ExchangeId::Binance,
                 "BTCUSDT",
@@ -1871,7 +1871,7 @@ impl ChartApp {
         app.panel_app.active_preset_id = untitled_id;
 
         // Seed active window with Binance/BTCUSDT/1H defaults.
-        let bar_count = app.core.user().profile().bar_count as usize;
+        let bar_count = app.core.user().profile().domain.bar_count as usize;
         app.seed_default_chart(
             digdigdig3::ExchangeId::Binance,
             "BTCUSDT",
@@ -2385,17 +2385,17 @@ impl ChartApp {
 
         // Always restore active_preset_id from profile (not just on restore).
         // This prevents skeleton launches from creating spurious new Untitled presets.
-        if !user_manager.profile.active_preset_id.is_empty()
-            && app.core.presets().contains_key(&user_manager.profile.active_preset_id)
+        if !user_manager.profile.ui.active_preset_id.is_empty()
+            && app.core.presets().contains_key(&user_manager.profile.ui.active_preset_id)
         {
-            app.panel_app.active_preset_id = user_manager.profile.active_preset_id.clone();
+            app.panel_app.active_preset_id = user_manager.profile.ui.active_preset_id.clone();
         }
 
         // Restore open_tabs from profile — both for saved windows and promote_skeleton().
         // Without this, promote_skeleton (restore=None) would leave open_tabs empty,
         // causing the phantom "__default__" Chart tab to appear.
         {
-            app.panel_app.open_tabs = user_manager.profile.open_tabs.clone();
+            app.panel_app.open_tabs = user_manager.profile.ui.open_tabs.clone();
             {
                 let presets_guard = app.core.presets();
                 app.panel_app.open_tabs.retain(|id| presets_guard.contains_key(id));
@@ -2565,7 +2565,7 @@ impl ChartApp {
                     }
                     let at = account_type_from_label(at_label);
                     bridge.ensure_connector(eid);
-                    bridge.request_bars(eid, sym, tf, at, None, Some(app.core.user().profile().bar_count as usize), false);
+                    bridge.request_bars(eid, sym, tf, at, None, Some(app.core.user().profile().domain.bar_count as usize), false);
                     nw_reqbars_n += 1;
                 }
                 let nw_reqbars_us = _t_nw_reqbars.elapsed().as_micros();
@@ -2659,7 +2659,7 @@ impl ChartApp {
                     &mlc_core::state::Timeframe::h1(),
                     digdigdig3::AccountType::Spot,
                     None,
-                    Some(app.core.user().profile().bar_count as usize),
+                    Some(app.core.user().profile().domain.bar_count as usize),
                     false,
                 );
                 eprintln!(
@@ -2757,16 +2757,16 @@ impl ChartApp {
         // Sidebar width — prefer per-window, fall back to profile flat field.
         let sidebar_width = window_state
             .and_then(|ws| ws.sidebar_width)
-            .or(profile.sidebar_width);
+            .or(profile.ui.sidebar_width);
         if let Some(width) = sidebar_width {
             self.sidebar_state.set_right_width(width);
         }
 
         // Sidebar panel/visibility — prefer per-window, fall back to profile flat fields.
-        let sidebar_visible = window_state.map(|ws| ws.sidebar_visible).unwrap_or(profile.sidebar_visible);
+        let sidebar_visible = window_state.map(|ws| ws.sidebar_visible).unwrap_or(profile.ui.sidebar_visible);
         let sidebar_panel = window_state
             .and_then(|ws| ws.sidebar_panel.as_ref())
-            .or(profile.sidebar_panel.as_ref());
+            .or(profile.ui.sidebar_panel.as_ref());
         if sidebar_visible {
             if let Some(panel_name) = sidebar_panel {
                 let panel = Self::str_to_panel(panel_name);
@@ -2775,20 +2775,20 @@ impl ChartApp {
         }
 
         // Connector enabled/disabled state — always from profile (app-level, not per-window).
-        if !profile.connector_enabled.is_empty() {
-            self.sidebar_state.connector_enabled = profile.connector_enabled.clone();
+        if !profile.domain.connector_enabled.is_empty() {
+            self.sidebar_state.connector_enabled = profile.domain.connector_enabled.clone();
         }
 
         // Inline bar position/dock — prefer per-window, fall back to profile flat fields.
         let inline_bar_x = window_state
             .and_then(|ws| ws.inline_bar_x)
-            .or(profile.inline_bar_x);
+            .or(profile.ui.inline_bar_x);
         let inline_bar_y = window_state
             .and_then(|ws| ws.inline_bar_y)
-            .or(profile.inline_bar_y);
+            .or(profile.ui.inline_bar_y);
         let inline_bar_dock = window_state
             .and_then(|ws| ws.inline_bar_dock.as_ref())
-            .or(profile.inline_bar_dock.as_ref());
+            .or(profile.ui.inline_bar_dock.as_ref());
         if let Some(x) = inline_bar_x {
             self.panel_app.toolbar_state.floating_inline_bar.x = x;
         }
@@ -2806,15 +2806,15 @@ impl ChartApp {
         // Notification settings — load from profile into alert settings state.
         dlog!(
             "[ChartApp] apply_profile_state: tg_enabled={} token_len={} subscribers={}",
-            profile.notification_settings.telegram.enabled,
-            profile.notification_settings.telegram.bot_token.len(),
-            profile.notification_settings.telegram.subscribers.len(),
+            profile.domain.notification_settings.telegram.enabled,
+            profile.domain.notification_settings.telegram.bot_token.len(),
+            profile.domain.notification_settings.telegram.subscribers.len(),
         );
-        self.panel_app.alert_settings_state.notification_settings = profile.notification_settings.clone();
+        self.panel_app.alert_settings_state.notification_settings = profile.domain.notification_settings.clone();
         {
             let tg_wid = uzor::WidgetId::from(crate::text_input::ALERT_TG_TOKEN);
             self.input_coordinator.borrow_mut().text_fields_mut()
-                .set_text(&tg_wid, &profile.notification_settings.telegram.bot_token);
+                .set_text(&tg_wid, &profile.domain.notification_settings.telegram.bot_token);
         }
 
         // Agents docking container restore — per-window profile state.
@@ -3036,7 +3036,7 @@ impl ChartApp {
             window.data_provider = provider;
             let at = account_type_from_label(&cur_at_label_exc);
             mirror_args = Some((cur_sym_exc.clone(), cur_tf_exc.clone(), exchange_name.clone(), cur_at_label_exc.clone()));
-            bridge.request_bars(exchange_id, &cur_sym_exc, &cur_tf_exc, at, None, Some(self.core.user().profile().bar_count as usize), false);
+            bridge.request_bars(exchange_id, &cur_sym_exc, &cur_tf_exc, at, None, Some(self.core.user().profile().domain.bar_count as usize), false);
         }
         if let (Some(chart_id), Some((_, _, exch, _))) = (active_chart_id, mirror_args) {
             if let Some(bid) = self.bubble_for_chart(chart_id) {
@@ -6967,7 +6967,7 @@ impl ChartApp {
     /// (i.e. after `LoadPreset` completes in `new_window`).
     pub fn warm_background_tabs(&mut self) {
         let active_id = self.panel_app.active_preset_id.clone();
-        let bar_count = self.core.user().profile().bar_count as usize;
+        let bar_count = self.core.user().profile().domain.bar_count as usize;
         let presets_guard = self.core.presets();
         let warm_targets: Vec<(String, String, mlc_core::state::Timeframe, String)> = self
             .panel_app
@@ -7049,7 +7049,7 @@ impl ChartApp {
     /// post-promote warm-up).
     pub fn warm_one_background_tab(&mut self, target: &(String, String, mlc_core::state::Timeframe, String)) {
         let (sym, exch, tf, at_label) = target;
-        let bar_count = self.core.user().profile().bar_count as usize;
+        let bar_count = self.core.user().profile().domain.bar_count as usize;
         let eid = digdigdig3::ExchangeId::from_str(&exch)
             .unwrap_or(digdigdig3::ExchangeId::Binance);
         let at = account_type_from_label(at_label);

@@ -181,42 +181,151 @@ impl Default for DataLoadSettings {
 }
 
 // =============================================================================
-// UserProfile
+// ProfileDomainSettings
 // =============================================================================
 
-/// Top-level persistent state for a user session.
+/// Domain half of [`UserProfile`] — settings a headless daemon-CLI consumer
+/// needs to work CORRECTLY, not just prettily (doctrine §1B test,
+/// `docs/mlc/plans/doctrine-cutover-2026-06-27.md`).
 ///
-/// Lightweight metadata — active selections and UI preferences.  Deserializing
-/// this struct should never fail due to missing fields; every field uses
-/// `#[serde(default)]` so that new fields added in future versions are simply
-/// initialized to their defaults when loading an older profile.
+/// `#[serde(flatten)]`ed into `UserProfile` so `profile.json`'s on-disk
+/// layout stays byte-for-byte flat — this is a type-clarity split, not a
+/// format change (verified by `json_compat_tests::round_trips_current_shape`
+/// below) and not an ownership move: `UserProfileManager` (backend) still
+/// owns the whole `UserProfile`, domain and UI halves together. The UI half
+/// moves to `mlc-app` only if/when the shared-core arc lifts app-only state
+/// out of the backend-owned profile.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserProfile {
+pub struct ProfileDomainSettings {
     /// Schema version.  Used for forward-compatible migration.
     #[serde(default = "default_version")]
     pub version: u32,
 
-    // -------------------------------------------------------------------------
-    // Active selections
-    // -------------------------------------------------------------------------
+    /// App version at the time of last launch. Used for migration/diagnostic
+    /// gating, not just display.
+    #[serde(default)]
+    pub app_version: String,
 
-    /// ID of the chart preset that was last active (`"preset_{ts}_{nanos}"`).
+    /// Number of historical bars to load on chart open. Drives the initial
+    /// `request_bars` fetch size — a headless consumer needs this to fetch
+    /// the correct amount of data.
+    #[serde(default = "default_bar_count")]
+    pub bar_count: u16,
+
+    /// Indicator recalculation mode.
     ///
-    /// Empty string means no preset is active (use default state).
+    /// Valid values: `"PerTick"`, `"PerFrame"`, `"PerBar"`. Drives
+    /// recalculation semantics — correctness, not presentation. Defaults to
+    /// `"PerFrame"` when the field is absent (older profiles).
+    #[serde(default = "default_recalc_mode")]
+    pub recalc_mode: String,
+
+    /// Price scale mode preference.
+    ///
+    /// Valid values: `"Auto"`, `"Focus"`, `"Manual"`. Drives chart-open
+    /// scaling behaviour. Defaults to `"Auto"` when the field is absent
+    /// (older profiles).
+    #[serde(default = "default_scale_mode")]
+    pub scale_mode: String,
+
+    /// Whether the internal Agent API server is enabled on startup.
+    #[serde(default = "default_server_enabled")]
+    pub server_enabled: bool,
+
+    /// Port for the Agent API server.
+    #[serde(default = "default_server_port")]
+    pub server_port: u16,
+
+    /// Persisted exchange API key entries.
+    ///
+    /// Each entry holds the public API key and either a plaintext secret
+    /// (legacy) or a [`CredentialRef`] pointing to the OS keychain (preferred).
+    /// An empty vec means no exchange credentials have been saved yet.
+    #[serde(default)]
+    pub exchange_keys: Vec<StoredExchangeKey>,
+
+    /// Per-connector enabled/disabled toggle state.
+    /// Key: exchange id string (e.g. `"binance"`, `"bybit"`).
+    /// Value: `true` = enabled (default when absent), `false` = disabled.
+    /// Drives which connectors the data bridge dials — functional.
+    #[serde(default)]
+    pub connector_enabled: std::collections::HashMap<String, bool>,
+
+    /// Alert notification delivery settings (Telegram bot, toasts, sound,
+    /// webhook). Functional — a daemon needs this to deliver alerts
+    /// correctly, not just to show a settings form.
+    #[serde(default)]
+    pub notification_settings: mlc_alert_delivery::NotificationSettings,
+
+    /// Unique profile identifier (UUID v4). Empty on legacy profiles.
+    ///
+    /// Classified domain conservatively (§1B: unclear -> domain): directory
+    /// resolution today goes through the separate `ProfileIndex` /
+    /// `ProfileMeta` file, not this field, but self-identity consistency is
+    /// correctness-adjacent enough that presentation felt like the wrong
+    /// default.
+    #[serde(default)]
+    pub profile_id: String,
+
+    /// Historical bar data fetch and retention settings. Directly drives
+    /// bridge fetch/eviction behaviour — correctness.
+    #[serde(default)]
+    pub data_load: DataLoadSettings,
+}
+
+impl ProfileDomainSettings {
+    fn new() -> Self {
+        Self {
+            version: PROFILE_VERSION,
+            app_version: String::new(),
+            bar_count: default_bar_count(),
+            recalc_mode: default_recalc_mode(),
+            scale_mode: default_scale_mode(),
+            server_enabled: default_server_enabled(),
+            server_port: default_server_port(),
+            exchange_keys: Vec::new(),
+            connector_enabled: std::collections::HashMap::new(),
+            notification_settings: mlc_alert_delivery::NotificationSettings::default(),
+            profile_id: String::new(),
+            data_load: DataLoadSettings::default(),
+        }
+    }
+}
+
+impl Default for ProfileDomainSettings {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// =============================================================================
+// ProfileUiSettings
+// =============================================================================
+
+/// Presentation half of [`UserProfile`] — desktop-shell-only UI instance
+/// state. Zero consumers in the headless/daemon shells today (verified by
+/// audit — none of these fields are read outside `mlc-app-shell-vello`).
+///
+/// `#[serde(flatten)]`ed into `UserProfile` for byte-identical on-disk
+/// layout — see [`ProfileDomainSettings`] doc for the split rationale.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfileUiSettings {
+    /// ID of the chart preset that was last active (`"preset_{ts}_{nanos}"`).
+    /// Legacy top-level mirror of `windows[0].active_preset_id`; empty
+    /// string means no preset is active (use default state). No daemon
+    /// consumer — desktop tab-bar bookkeeping only.
     #[serde(default)]
     pub active_preset_id: String,
 
     /// Ordered list of preset IDs open as tabs (persisted across sessions).
+    /// Same legacy-mirror status as `active_preset_id`.
     #[serde(default)]
     pub open_tabs: Vec<String>,
 
-    /// Name of the active theme (e.g. `"dark"`, `"light"`).
+    /// Name of the active theme (e.g. `"dark"`, `"light"`). Pure rendering
+    /// cosmetics.
     #[serde(default = "default_theme")]
     pub active_theme: String,
-
-    // -------------------------------------------------------------------------
-    // Sidebar / panel UI state
-    // -------------------------------------------------------------------------
 
     /// Whether the right sidebar is currently visible.
     #[serde(default)]
@@ -231,10 +340,6 @@ pub struct UserProfile {
     #[serde(default)]
     pub sidebar_width: Option<f64>,
 
-    // -------------------------------------------------------------------------
-    // Inline toolbar position
-    // -------------------------------------------------------------------------
-
     /// Horizontal offset of the floating inline toolbar.
     #[serde(default)]
     pub inline_bar_x: Option<f64>,
@@ -247,141 +352,45 @@ pub struct UserProfile {
     #[serde(default)]
     pub inline_bar_dock: Option<String>,
 
-    // -------------------------------------------------------------------------
-    // Device identity
-    // -------------------------------------------------------------------------
-
     /// Human-readable device name (auto-detected or user-set).
-    /// e.g. "VA-PC-WIN10", "MacBook Pro"
+    /// e.g. "VA-PC-WIN10", "MacBook Pro" — cosmetic label in settings UI.
     #[serde(default)]
     pub device_name: String,
 
-    /// App version at the time of last launch.
-    #[serde(default)]
-    pub app_version: String,
-
-    // -------------------------------------------------------------------------
-    // Chart data preferences
-    // -------------------------------------------------------------------------
-
-    /// Number of historical bars to load on chart open.
-    #[serde(default = "default_bar_count")]
-    pub bar_count: u16,
-
-    /// Indicator recalculation mode.
-    ///
-    /// Valid values: `"PerTick"`, `"PerFrame"`, `"PerBar"`.
-    /// Defaults to `"PerFrame"` when the field is absent (older profiles).
-    #[serde(default = "default_recalc_mode")]
-    pub recalc_mode: String,
-
-    /// Price scale mode preference.
-    ///
-    /// Valid values: `"Auto"`, `"Focus"`, `"Manual"`.
-    /// Defaults to `"Auto"` when the field is absent (older profiles).
-    #[serde(default = "default_scale_mode")]
-    pub scale_mode: String,
-
-    /// UI language preference (ISO 639-1 code: "en", "ru").
-    /// Applied at startup via `set_language()`.
+    /// UI language preference (ISO 639-1 code: "en", "ru"). Display-only —
+    /// selects an i18n string table, doesn't change behaviour.
     #[serde(default = "default_language")]
     pub language: String,
 
-    // -------------------------------------------------------------------------
-    // Agent API server
-    // -------------------------------------------------------------------------
-
-    /// Whether the internal Agent API server is enabled on startup.
-    #[serde(default = "default_server_enabled")]
-    pub server_enabled: bool,
-
-    /// Port for the Agent API server.
-    #[serde(default = "default_server_port")]
-    pub server_port: u16,
-
-    // -------------------------------------------------------------------------
-    // Exchange API credentials (keychain-backed)
-    // -------------------------------------------------------------------------
-
-    /// Persisted exchange API key entries.
-    ///
-    /// Each entry holds the public API key and either a plaintext secret
-    /// (legacy) or a [`CredentialRef`] pointing to the OS keychain (preferred).
-    /// An empty vec means no exchange credentials have been saved yet.
-    #[serde(default)]
-    pub exchange_keys: Vec<StoredExchangeKey>,
-
-    // -------------------------------------------------------------------------
-    // Connector enable/disable state
-    // -------------------------------------------------------------------------
-
-    /// Per-connector enabled/disabled toggle state.
-    /// Key: exchange id string (e.g. `"binance"`, `"bybit"`).
-    /// Value: `true` = enabled (default when absent), `false` = disabled.
-    #[serde(default)]
-    pub connector_enabled: std::collections::HashMap<String, bool>,
-
-    // -------------------------------------------------------------------------
-    // Telemetry opt-out
-    // -------------------------------------------------------------------------
-
-    // -------------------------------------------------------------------------
-    // Cloud connectivity
-    // -------------------------------------------------------------------------
-
-    // -------------------------------------------------------------------------
-    // Notification / alert delivery settings
-    // -------------------------------------------------------------------------
-
-    /// Alert notification delivery settings (Telegram bot, toasts, sound, webhook).
-    #[serde(default)]
-    pub notification_settings: mlc_alert_delivery::NotificationSettings,
-
-    // -------------------------------------------------------------------------
-    // Per-window state
-    // -------------------------------------------------------------------------
-
     /// Per-window tab/preset state.  When non-empty, each entry describes one
     /// OS window.  The first entry (`windows[0]`) is the primary window.
-    /// Legacy fields `open_tabs` / `active_preset_id` are kept for backward
-    /// compatibility and always reflect the primary window.
+    /// Whole type is desktop-multi-window bookkeeping — zero concept in a
+    /// headless/daemon shell (audited: no consumer outside
+    /// `mlc-app-shell-vello`), so `WindowState`'s own domain-ish fields
+    /// (`active_preset_id`, `open_tabs`) are NOT split out further — they
+    /// only exist in service of desktop tab management.
     #[serde(default)]
     pub windows: Vec<WindowState>,
 
-    // -------------------------------------------------------------------------
-    // Multi-profile identity
-    // -------------------------------------------------------------------------
-
-    /// Unique profile identifier (UUID v4). Empty on legacy profiles.
-    #[serde(default)]
-    pub profile_id: String,
-
-    /// User-visible profile name ("Default", "Trading", "Debug", etc.)
+    /// User-visible profile name ("Default", "Trading", "Debug", etc.) —
+    /// cosmetic profile-picker label.
     #[serde(default = "default_profile_name")]
     pub display_name: String,
 
-    /// Avatar emoji key ("chart", "rocket", "shield", "fire", "star", "moon", "sun", "ghost")
+    /// Avatar emoji key ("chart", "rocket", "shield", "fire", "star", "moon",
+    /// "sun", "ghost") — cosmetic profile-picker icon.
     #[serde(default = "default_avatar")]
     pub avatar: String,
 
-    /// Profile creation timestamp (unix seconds)
+    /// Profile creation timestamp (unix seconds) — cosmetic metadata
+    /// (sort/display in the profile picker).
     #[serde(default)]
     pub profile_created_at: i64,
-
-    // -------------------------------------------------------------------------
-    // Data load settings
-    // -------------------------------------------------------------------------
-
-    /// Historical bar data fetch and retention settings.
-    #[serde(default)]
-    pub data_load: DataLoadSettings,
 }
 
-impl UserProfile {
-    /// Create a new profile with sensible defaults.
-    pub fn new() -> Self {
+impl ProfileUiSettings {
+    fn new() -> Self {
         Self {
-            version: PROFILE_VERSION,
             active_preset_id: String::new(),
             open_tabs: Vec::new(),
             active_theme: default_theme(),
@@ -391,30 +400,56 @@ impl UserProfile {
             inline_bar_x: None,
             inline_bar_y: None,
             inline_bar_dock: None,
-            // New fields
             device_name: String::new(),
-            app_version: String::new(),
-            bar_count: default_bar_count(),
-            recalc_mode: default_recalc_mode(),
-            scale_mode: default_scale_mode(),
             language: default_language(),
-            server_enabled: default_server_enabled(),
-            server_port: default_server_port(),
-            exchange_keys: Vec::new(),
-            connector_enabled: std::collections::HashMap::new(),
-            notification_settings: mlc_alert_delivery::NotificationSettings::default(),
             windows: Vec::new(),
-            profile_id: String::new(),
             display_name: "Default".to_string(),
             avatar: "chart".to_string(),
             profile_created_at: 0,
-            data_load: DataLoadSettings::default(),
+        }
+    }
+}
+
+impl Default for ProfileUiSettings {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// =============================================================================
+// UserProfile
+// =============================================================================
+
+/// Top-level persistent state for a user session.
+///
+/// Split into [`ProfileDomainSettings`] (`domain`) and [`ProfileUiSettings`]
+/// (`ui`) per doctrine §1B — see their docs for the field classification.
+/// Both halves are `#[serde(flatten)]`ed so `profile.json` keeps its
+/// pre-split flat shape; deserializing this struct should never fail due to
+/// missing fields (every leaf field uses `#[serde(default)]`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserProfile {
+    /// Domain settings — needed for a headless consumer to behave correctly.
+    #[serde(flatten)]
+    pub domain: ProfileDomainSettings,
+
+    /// UI/presentation settings — desktop-shell instance state.
+    #[serde(flatten)]
+    pub ui: ProfileUiSettings,
+}
+
+impl UserProfile {
+    /// Create a new profile with sensible defaults.
+    pub fn new() -> Self {
+        Self {
+            domain: ProfileDomainSettings::new(),
+            ui: ProfileUiSettings::new(),
         }
     }
 
     /// Record a new app launch (update app_version field).
     pub fn record_launch(&mut self, app_version: &str) {
-        self.app_version = app_version.to_string();
+        self.domain.app_version = app_version.to_string();
     }
 }
 
@@ -586,16 +621,16 @@ impl VaultSecrets {
     /// are not written to plaintext storage.
     pub fn extract_from(profile: &mut UserProfile) -> Self {
         Self {
-            exchange_keys: std::mem::take(&mut profile.exchange_keys),
-            notification_settings: std::mem::take(&mut profile.notification_settings),
+            exchange_keys: std::mem::take(&mut profile.domain.exchange_keys),
+            notification_settings: std::mem::take(&mut profile.domain.notification_settings),
         }
     }
 
     /// Merge secrets back into a [`UserProfile`] after decrypting from vault.
     pub fn merge_into(self, profile: &mut UserProfile) {
-        profile.exchange_keys = self.exchange_keys;
-        profile.notification_settings = self.notification_settings;
-        profile.notification_settings.telegram.migrate_legacy();
+        profile.domain.exchange_keys = self.exchange_keys;
+        profile.domain.notification_settings = self.notification_settings;
+        profile.domain.notification_settings.telegram.migrate_legacy();
     }
 }
 
@@ -658,4 +693,134 @@ fn default_max_store_size_mb() -> u32 {
 
 fn default_store_cleanup_days() -> u32 {
     30
+}
+
+// =============================================================================
+// Persistence fixture gates — UserProfile domain/ui split (2026-07-02)
+// =============================================================================
+
+#[cfg(test)]
+mod json_compat_tests {
+    //! `UserProfile` was split into `domain: ProfileDomainSettings` +
+    //! `ui: ProfileUiSettings`, both `#[serde(flatten)]`ed. This is a
+    //! type-clarity split, not a format change: `profile.json` must stay
+    //! byte-for-byte flat before and after.
+    //!
+    //! (1) proves a legacy (pre-split) flat `profile.json` — where every
+    //! field sat directly on `UserProfile` — still deserializes correctly
+    //! into the new nested `domain` / `ui` shape.
+    //! (2) proves the new struct still serializes back to a flat shape (no
+    //! `"domain": {...}` / `"ui": {...}` nesting on disk).
+
+    use super::*;
+
+    /// Literal fixture: a pre-split `profile.json` exactly as it existed
+    /// before this commit — every field flat on the top-level object.
+    const LEGACY_PROFILE_JSON: &str = r#"{
+        "version": 3,
+        "active_preset_id": "preset_123_456",
+        "open_tabs": ["preset_123_456"],
+        "active_theme": "dark",
+        "sidebar_visible": true,
+        "sidebar_panel": "watchlist",
+        "sidebar_width": 340.0,
+        "inline_bar_x": 100.0,
+        "inline_bar_y": 200.0,
+        "inline_bar_dock": "Bottom",
+        "device_name": "VA-PC-WIN10",
+        "app_version": "0.5.100",
+        "bar_count": 2000,
+        "recalc_mode": "PerFrame",
+        "scale_mode": "Auto",
+        "language": "en",
+        "server_enabled": true,
+        "server_port": 17420,
+        "exchange_keys": [],
+        "connector_enabled": {"binance": true},
+        "notification_settings": {},
+        "windows": [],
+        "profile_id": "profile-uuid-1",
+        "display_name": "Default",
+        "avatar": "chart",
+        "profile_created_at": 1700000000,
+        "data_load": {
+            "background_bar_count": 2000,
+            "max_loaded_bars": 10000,
+            "max_store_size_mb": 500,
+            "store_cleanup_days": 30
+        }
+    }"#;
+
+    #[test]
+    fn legacy_flat_profile_deserializes_into_domain_ui_split() {
+        let profile: UserProfile = serde_json::from_str(LEGACY_PROFILE_JSON)
+            .expect("legacy flat profile.json must deserialize");
+
+        // Domain fields landed on `domain`.
+        assert_eq!(profile.domain.version, 3);
+        assert_eq!(profile.domain.app_version, "0.5.100");
+        assert_eq!(profile.domain.bar_count, 2000);
+        assert_eq!(profile.domain.recalc_mode, "PerFrame");
+        assert_eq!(profile.domain.scale_mode, "Auto");
+        assert!(profile.domain.server_enabled);
+        assert_eq!(profile.domain.server_port, 17420);
+        assert_eq!(profile.domain.connector_enabled.get("binance"), Some(&true));
+        assert_eq!(profile.domain.profile_id, "profile-uuid-1");
+        assert_eq!(profile.domain.data_load.background_bar_count, 2000);
+
+        // UI fields landed on `ui`.
+        assert_eq!(profile.ui.active_preset_id, "preset_123_456");
+        assert_eq!(profile.ui.open_tabs, vec!["preset_123_456".to_string()]);
+        assert_eq!(profile.ui.active_theme, "dark");
+        assert!(profile.ui.sidebar_visible);
+        assert_eq!(profile.ui.sidebar_panel.as_deref(), Some("watchlist"));
+        assert_eq!(profile.ui.sidebar_width, Some(340.0));
+        assert_eq!(profile.ui.inline_bar_dock.as_deref(), Some("Bottom"));
+        assert_eq!(profile.ui.device_name, "VA-PC-WIN10");
+        assert_eq!(profile.ui.language, "en");
+        assert_eq!(profile.ui.display_name, "Default");
+        assert_eq!(profile.ui.avatar, "chart");
+        assert_eq!(profile.ui.profile_created_at, 1700000000);
+    }
+
+    #[test]
+    fn round_trips_flat_on_disk_shape() {
+        let profile: UserProfile = serde_json::from_str(LEGACY_PROFILE_JSON)
+            .expect("legacy flat profile.json must deserialize");
+
+        let json = serde_json::to_string(&profile).expect("profile must serialize");
+
+        // The flatten must keep the shape flat — no nested "domain"/"ui" keys
+        // on disk, and every field name from the legacy shape still present
+        // as a direct top-level key.
+        assert!(!json.contains("\"domain\":{"), "domain must not nest: {json}");
+        assert!(!json.contains("\"ui\":{"), "ui must not nest: {json}");
+        for key in [
+            "\"version\"", "\"active_preset_id\"", "\"open_tabs\"", "\"active_theme\"",
+            "\"sidebar_visible\"", "\"sidebar_panel\"", "\"sidebar_width\"",
+            "\"inline_bar_x\"", "\"inline_bar_y\"", "\"inline_bar_dock\"",
+            "\"device_name\"", "\"app_version\"", "\"bar_count\"", "\"recalc_mode\"",
+            "\"scale_mode\"", "\"language\"", "\"server_enabled\"", "\"server_port\"",
+            "\"exchange_keys\"", "\"connector_enabled\"", "\"notification_settings\"",
+            "\"windows\"", "\"profile_id\"", "\"display_name\"", "\"avatar\"",
+            "\"profile_created_at\"", "\"data_load\"",
+        ] {
+            assert!(json.contains(key), "missing flat key {key} in {json}");
+        }
+
+        // Full round-trip: deserialize what we just wrote and compare.
+        let restored: UserProfile = serde_json::from_str(&json).expect("must deserialize back");
+        assert_eq!(restored.domain.profile_id, profile.domain.profile_id);
+        assert_eq!(restored.ui.active_preset_id, profile.ui.active_preset_id);
+        assert_eq!(restored.domain.bar_count, profile.domain.bar_count);
+    }
+
+    #[test]
+    fn new_profile_defaults_round_trip() {
+        let profile = UserProfile::new();
+        let json = serde_json::to_string(&profile).expect("must serialize");
+        let restored: UserProfile = serde_json::from_str(&json).expect("must deserialize");
+        assert_eq!(restored.domain.version, profile.domain.version);
+        assert_eq!(restored.ui.display_name, profile.ui.display_name);
+    }
 }

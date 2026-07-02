@@ -26,39 +26,44 @@ impl ChartApp {
             mlc_core::InlineDockEdge::Free => "Free",
         };
         mlc_core::UserProfile {
-            version: mlc_core::user_profile::profile::PROFILE_VERSION,
-            active_preset_id: self.panel_app.active_preset_id.clone(),
-            open_tabs: self.panel_app.open_tabs.clone(),
-            active_theme: self.panel_app.theme_manager.preset_name().to_string(),
-            sidebar_visible: self.sidebar_state.is_right_open(),
-            sidebar_panel: Self::panel_to_str(self.sidebar_state.right_panel),
-            sidebar_width: Some(self.sidebar_state.right_sidebar_width),
-            inline_bar_x: Some(inline.x),
-            inline_bar_y: Some(inline.y),
-            inline_bar_dock: Some(inline_dock_str.to_string()),
-            // Preserve profile identity fields managed by the profile system
-            profile_id: existing.profile_id.clone(),
-            display_name: existing.display_name.clone(),
-            avatar: existing.avatar.clone(),
-            profile_created_at: existing.profile_created_at,
-            // Preserve fields managed by the profile itself
-            device_name: existing.device_name.clone(),
-            app_version: existing.app_version.clone(),
-            bar_count: existing.bar_count,
-            data_load: existing.data_load.clone(),
-            recalc_mode: existing.recalc_mode.clone(),
-            language: self.panel_app.user_settings_state.language.clone(),
-            scale_mode: match self.default_scale_mode {
-                ScaleMode::Auto   => "Auto".to_string(),
-                ScaleMode::Focus  => "Focus".to_string(),
-                ScaleMode::Manual => "Manual".to_string(),
+            domain: mlc_core::user_profile::profile::ProfileDomainSettings {
+                version: mlc_core::user_profile::profile::PROFILE_VERSION,
+                // Preserve fields managed by the profile itself
+                app_version: existing.domain.app_version.clone(),
+                bar_count: existing.domain.bar_count,
+                data_load: existing.domain.data_load.clone(),
+                recalc_mode: existing.domain.recalc_mode.clone(),
+                scale_mode: match self.default_scale_mode {
+                    ScaleMode::Auto   => "Auto".to_string(),
+                    ScaleMode::Focus  => "Focus".to_string(),
+                    ScaleMode::Manual => "Manual".to_string(),
+                },
+                server_enabled: self.panel_app.user_settings_state.server_enabled,
+                server_port: self.panel_app.user_settings_state.server_port,
+                exchange_keys: existing.domain.exchange_keys.clone(),
+                connector_enabled: self.sidebar_state.connector_enabled.clone(),
+                notification_settings: existing.domain.notification_settings.clone(),
+                // Preserve profile identity fields managed by the profile system
+                profile_id: existing.domain.profile_id.clone(),
             },
-            server_enabled: self.panel_app.user_settings_state.server_enabled,
-            server_port: self.panel_app.user_settings_state.server_port,
-            exchange_keys: existing.exchange_keys.clone(),
-            connector_enabled: self.sidebar_state.connector_enabled.clone(),
-            notification_settings: existing.notification_settings.clone(),
-            windows: existing.windows.clone(),
+            ui: mlc_core::user_profile::profile::ProfileUiSettings {
+                active_preset_id: self.panel_app.active_preset_id.clone(),
+                open_tabs: self.panel_app.open_tabs.clone(),
+                active_theme: self.panel_app.theme_manager.preset_name().to_string(),
+                sidebar_visible: self.sidebar_state.is_right_open(),
+                sidebar_panel: Self::panel_to_str(self.sidebar_state.right_panel),
+                sidebar_width: Some(self.sidebar_state.right_sidebar_width),
+                inline_bar_x: Some(inline.x),
+                inline_bar_y: Some(inline.y),
+                inline_bar_dock: Some(inline_dock_str.to_string()),
+                // Preserve profile identity fields managed by the profile system
+                display_name: existing.ui.display_name.clone(),
+                avatar: existing.ui.avatar.clone(),
+                profile_created_at: existing.ui.profile_created_at,
+                device_name: existing.ui.device_name.clone(),
+                language: self.panel_app.user_settings_state.language.clone(),
+                windows: existing.ui.windows.clone(),
+            },
         }
     }
 
@@ -152,7 +157,7 @@ impl ChartApp {
     /// Update the in-memory profile's windows list.  Call this before
     /// `save_user_profile()` when multiple OS windows are open.
     pub fn set_profile_windows(&mut self, windows: Vec<mlc_core::WindowState>) {
-        self.core.user_mut().profile_mut().windows = windows;
+        self.core.user_mut().profile_mut().ui.windows = windows;
     }
 
     // =========================================================================
@@ -315,35 +320,35 @@ impl ChartApp {
         match mlc_core::load_profile(None) {
             Ok(profile) => {
                 // Restore active preset id.
-                self.panel_app.active_preset_id = profile.active_preset_id;
+                self.panel_app.active_preset_id = profile.ui.active_preset_id;
 
                 // Restore sidebar width first (before opening, so the correct
                 // width is applied when the panel is opened).
-                if let Some(width) = profile.sidebar_width {
+                if let Some(width) = profile.ui.sidebar_width {
                     self.sidebar_state.set_right_width(width);
                 }
 
                 // Restore the open panel (or leave closed if None/unknown).
-                if profile.sidebar_visible {
-                    if let Some(panel_name) = &profile.sidebar_panel {
+                if profile.ui.sidebar_visible {
+                    if let Some(panel_name) = &profile.ui.sidebar_panel {
                         let panel = Self::str_to_panel(panel_name);
                         self.sidebar_state.set_right_panel(panel);
                     }
                 }
 
                 // Restore connector enabled/disabled state.
-                if !profile.connector_enabled.is_empty() {
-                    self.sidebar_state.connector_enabled = profile.connector_enabled.clone();
+                if !profile.domain.connector_enabled.is_empty() {
+                    self.sidebar_state.connector_enabled = profile.domain.connector_enabled.clone();
                 }
 
                 // Restore inline toolbar position.
-                if let Some(x) = profile.inline_bar_x {
+                if let Some(x) = profile.ui.inline_bar_x {
                     self.panel_app.toolbar_state.floating_inline_bar.x = x;
                 }
-                if let Some(y) = profile.inline_bar_y {
+                if let Some(y) = profile.ui.inline_bar_y {
                     self.panel_app.toolbar_state.floating_inline_bar.y = y;
                 }
-                if let Some(ref dock) = profile.inline_bar_dock {
+                if let Some(ref dock) = profile.ui.inline_bar_dock {
                     self.panel_app.toolbar_state.floating_inline_bar.dock_edge = match dock.as_str() {
                         "Top" => mlc_core::InlineDockEdge::Top,
                         "Free" => mlc_core::InlineDockEdge::Free,

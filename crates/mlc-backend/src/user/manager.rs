@@ -106,16 +106,16 @@ mod tests {
     fn default_is_empty_profile() {
         let mgr = UserProfileManager::new();
         assert!(mgr.vault_key().is_none());
-        assert_eq!(mgr.profile().active_preset_id, "");
+        assert_eq!(mgr.profile().ui.active_preset_id, "");
     }
 
     #[test]
     fn set_profile_and_snapshots_roundtrip() {
         let mut mgr = UserProfileManager::new();
         let mut profile = UserProfile::new();
-        profile.active_preset_id = "preset_1".to_string();
+        profile.ui.active_preset_id = "preset_1".to_string();
         mgr.set_profile(profile);
-        assert_eq!(mgr.profile().active_preset_id, "preset_1");
+        assert_eq!(mgr.profile().ui.active_preset_id, "preset_1");
 
         let mut snaps = SettingsSnapshots::default();
         snaps.chart_settings = Some(serde_json::json!({"x": 1}));
@@ -127,9 +127,9 @@ mod tests {
     fn replace_all_swaps_everything() {
         let mut mgr = UserProfileManager::new();
         let mut profile = UserProfile::new();
-        profile.active_preset_id = "p2".to_string();
+        profile.ui.active_preset_id = "p2".to_string();
         mgr.replace_all(profile, SettingsSnapshots::default(), None);
-        assert_eq!(mgr.profile().active_preset_id, "p2");
+        assert_eq!(mgr.profile().ui.active_preset_id, "p2");
         assert!(mgr.vault_key().is_none());
     }
 }

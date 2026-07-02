@@ -47,7 +47,7 @@ pub fn load_user_state_from_disk(
         Ok(p) => {
             eprintln!(
                 "[user_manager] loaded profile (active_preset={})",
-                p.active_preset_id
+                p.ui.active_preset_id
             );
             p
         }
@@ -64,8 +64,8 @@ pub fn load_user_state_from_disk(
             let mut fallback = UserProfile::new();
             if let Some(dir_name) = data_dir.file_name().and_then(|n| n.to_str()) {
                 if !dir_name.is_empty() {
-                    fallback.profile_id = dir_name.to_string();
-                    fallback.display_name = dir_name.to_string();
+                    fallback.domain.profile_id = dir_name.to_string();
+                    fallback.ui.display_name = dir_name.to_string();
                 }
             }
             fallback

@@ -180,12 +180,12 @@ impl ChartPanelApp {
         let (presets, template_manager, mut profile, snapshots, vault_key) =
             load_user_state_from_disk(None);
 
-        if !profile.active_preset_id.is_empty() {
-            self.active_preset_id = profile.active_preset_id.clone();
+        if !profile.ui.active_preset_id.is_empty() {
+            self.active_preset_id = profile.ui.active_preset_id.clone();
         }
 
         // Restore open_tabs and filter out any stale IDs (presets no longer on disk).
-        self.open_tabs = profile.open_tabs.clone();
+        self.open_tabs = profile.ui.open_tabs.clone();
         self.open_tabs.retain(|id| presets.contains_key(id));
 
         // Migration: old data has no open_tabs — open only the active preset.

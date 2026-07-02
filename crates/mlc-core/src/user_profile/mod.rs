@@ -21,7 +21,10 @@ pub mod snapshots;
 pub mod storage;
 
 pub use device_settings::DeviceSettings;
-pub use profile::{UserProfile, VaultSecrets, WindowState, ProfileMeta, ProfileIndex, PersistedAgentLeaf, PersistedAgentCli, PersistedInstanceMode};
+pub use profile::{
+    UserProfile, ProfileDomainSettings, ProfileUiSettings, VaultSecrets, WindowState,
+    ProfileMeta, ProfileIndex, PersistedAgentLeaf, PersistedAgentCli, PersistedInstanceMode,
+};
 pub use snapshots::SettingsSnapshots;
 pub use storage::{
     ProfileError,

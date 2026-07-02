@@ -102,10 +102,10 @@ impl AppState {
         // Parse recalc_mode from DeviceSettings (authoritative) with profile as fallback.
         let recalc_mode = {
             let ds = mlc_core::user_profile::DeviceSettings::load();
-            let src = if ds.recalc_mode == "per_frame" && !profile.recalc_mode.is_empty() {
+            let src = if ds.recalc_mode == "per_frame" && !profile.domain.recalc_mode.is_empty() {
                 // DeviceSettings has the default value — use the profile value if it
                 // carries a non-default mode so that existing saves are honoured.
-                &profile.recalc_mode
+                &profile.domain.recalc_mode
             } else {
                 &ds.recalc_mode
             };
@@ -117,7 +117,7 @@ impl AppState {
         };
 
         // Parse scale_mode from the profile string.
-        let scale_mode = match profile.scale_mode.as_str() {
+        let scale_mode = match profile.domain.scale_mode.as_str() {
             "Focus"  => mlc_core::ScaleMode::Focus,
             "Manual" => mlc_core::ScaleMode::Manual,
             _        => mlc_core::ScaleMode::Auto, // default / "Auto"
@@ -126,14 +126,14 @@ impl AppState {
         Self {
             watchlist_manager,
             watchlist_ui: mlc_app::watchlist_ui::WatchlistUiState::default(),
-            connector_enabled: profile.connector_enabled.clone(),
+            connector_enabled: profile.domain.connector_enabled.clone(),
             presets,
             preset_dirty_ids: std::collections::HashSet::new(),
             snapshots,
             template_manager,
-            theme_preset: profile.active_theme.clone(),
-            device_name: profile.device_name.clone(),
-            app_version: profile.app_version.clone(),
+            theme_preset: profile.ui.active_theme.clone(),
+            device_name: profile.ui.device_name.clone(),
+            app_version: profile.domain.app_version.clone(),
             // Start dirty so the first frame syncs everything to all windows.
             presets_dirty: true,
             templates_dirty: true,
@@ -142,8 +142,8 @@ impl AppState {
             connectors_dirty: true,
             recalc_mode,
             scale_mode,
-            server_enabled: profile.server_enabled,
-            server_port: profile.server_port,
+            server_enabled: profile.domain.server_enabled,
+            server_port: profile.domain.server_port,
             vault_key,
         }
     }

@@ -1541,7 +1541,7 @@ impl ChartApp {
         }
 
         // Request fresh bars for each peer via the bridge using the new exchange + account_type.
-        let bar_count = self.core.user().profile().bar_count as usize;
+        let bar_count = self.core.user().profile().domain.bar_count as usize;
         for (_, _, _, timeframe) in peer_info {
             if symbol_owned.is_empty() {
                 continue;
@@ -1680,7 +1680,7 @@ impl ChartApp {
         }
 
         // Request fresh bars for each peer via the bridge.
-        let bar_count = self.core.user().profile().bar_count as usize;
+        let bar_count = self.core.user().profile().domain.bar_count as usize;
         for (exchange_str, symbol, at_label) in peer_requests {
             if symbol.is_empty() {
                 continue;

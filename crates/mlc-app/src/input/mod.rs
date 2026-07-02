@@ -7068,7 +7068,7 @@ impl ChartApp {
                     window.needs_snap_after_backfill = true;
                 }
                 self.core.bridge.ensure_connector(digdigdig3::ExchangeId::Binance);
-                let bar_count_new = self.core.user().profile().bar_count as usize;
+                let bar_count_new = self.core.user().profile().domain.bar_count as usize;
                 sglog!(
                     "[execute_new_chart_with_name] calling bridge.request_bars Binance BTCUSDT tf={:?} bars={} force=true",
                     default_timeframe, bar_count_new

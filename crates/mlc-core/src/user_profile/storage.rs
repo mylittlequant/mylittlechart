@@ -403,10 +403,10 @@ pub fn create_profile(name: &str, avatar: &str) -> Result<ProfileMeta, String> {
 
     // Build and persist a new profile.
     let mut profile = UserProfile::new();
-    profile.profile_id = id.clone();
-    profile.display_name = name.to_string();
-    profile.avatar = avatar.to_string();
-    profile.profile_created_at = now;
+    profile.domain.profile_id = id.clone();
+    profile.ui.display_name = name.to_string();
+    profile.ui.avatar = avatar.to_string();
+    profile.ui.profile_created_at = now;
 
     let json = serde_json::to_string_pretty(&profile).map_err(|e| e.to_string())?;
     global_storage()

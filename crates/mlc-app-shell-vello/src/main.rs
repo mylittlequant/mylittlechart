@@ -735,18 +735,18 @@ impl App<'_> {
         // task, so we must enter the live-data runtime context first.
         let (alert_delivery_engine, toast_rx) = {
             let _guard = live_data_handle.enter();
-            mlc_alert_delivery::AlertDelivery::new(profile.notification_settings.clone())
+            mlc_alert_delivery::AlertDelivery::new(profile.domain.notification_settings.clone())
         };
 
 
         // Apply saved language preference from profile.
         {
-            let lang = match profile.language.as_str() {
+            let lang = match profile.ui.language.as_str() {
                 "ru" => mlc_core::Language::Ru,
                 _    => mlc_core::Language::En,
             };
             mlc_core::set_language(lang);
-            eprintln!("[App] startup language: {}", profile.language);
+            eprintln!("[App] startup language: {}", profile.ui.language);
         }
 
 
@@ -1119,12 +1119,12 @@ impl App<'_> {
         // Also sync open_tabs and active_preset_id back to profile_manager
         // so save_all() persists them.
         if !chart.panel_app.active_preset_id.is_empty() {
-            self.profile_manager.profile.active_preset_id = chart.panel_app.active_preset_id.clone();
-            self.profile.active_preset_id = chart.panel_app.active_preset_id.clone();
+            self.profile_manager.profile.ui.active_preset_id = chart.panel_app.active_preset_id.clone();
+            self.profile.ui.active_preset_id = chart.panel_app.active_preset_id.clone();
         }
         if !chart.panel_app.open_tabs.is_empty() {
-            self.profile_manager.profile.open_tabs = chart.panel_app.open_tabs.clone();
-            self.profile.open_tabs = chart.panel_app.open_tabs.clone();
+            self.profile_manager.profile.ui.open_tabs = chart.panel_app.open_tabs.clone();
+            self.profile.ui.open_tabs = chart.panel_app.open_tabs.clone();
         }
         chart.core.user_mut().set_snapshots(self.app_state.snapshots.clone());
         // Apply persisted last-used drawing styles to all bubbles' drawing
@@ -1149,18 +1149,18 @@ impl App<'_> {
         };
         // Sync language preference from the loaded profile.
         chart.panel_app.user_settings_state.language =
-            self.profile_manager.profile.language.clone();
+            self.profile_manager.profile.ui.language.clone();
         // Sync profile data into the user settings state.
         {
             let uss = &mut chart.panel_app.user_settings_state;
-            uss.profile_id = self.profile_manager.profile.profile_id.clone();
+            uss.profile_id = self.profile_manager.profile.domain.profile_id.clone();
             // runtime_profile_id tracks the ACTUALLY loaded profile for the life of
             // this session.  It is set once here and never changed — even if the user
             // switches the pending active profile, the running profile stays the same
             // until the app is restarted.
-            uss.runtime_profile_id = self.profile_manager.profile.profile_id.clone();
-            uss.profile_display_name = self.profile_manager.profile.display_name.clone();
-            uss.profile_avatar = self.profile_manager.profile.avatar.clone();
+            uss.runtime_profile_id = self.profile_manager.profile.domain.profile_id.clone();
+            uss.profile_display_name = self.profile_manager.profile.ui.display_name.clone();
+            uss.profile_avatar = self.profile_manager.profile.ui.avatar.clone();
             // Load available profiles from the index.
             if let Some(index) = mlc_core::load_profile_index() {
                 let profiles_dir = mlc_core::active_profile_data_dir()
@@ -1199,8 +1199,8 @@ impl App<'_> {
             chart.panel_app.user_settings_state.needs_vault_unlock = true;
             chart.panel_app.user_settings_state.show_profile_manager = true;
             chart.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::ProfileList;
-            chart.panel_app.user_settings_state.profile_manager_target_id = self.profile.profile_id.clone();
-            chart.panel_app.user_settings_state.profile_manager_target_name = self.profile.display_name.clone();
+            chart.panel_app.user_settings_state.profile_manager_target_id = self.profile.domain.profile_id.clone();
+            chart.panel_app.user_settings_state.profile_manager_target_name = self.profile.ui.display_name.clone();
             // Populate profile vault status list
             if let Some(index) = mlc_core::load_profile_index() {
                 let profiles_dir = mlc_core::active_profile_data_dir()
@@ -1225,8 +1225,8 @@ impl App<'_> {
             chart.panel_app.user_settings_state.needs_vault_unlock = true;
             chart.panel_app.user_settings_state.show_profile_manager = true;
             chart.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreatePassphrase;
-            chart.panel_app.user_settings_state.profile_manager_target_id = self.profile.profile_id.clone();
-            chart.panel_app.user_settings_state.profile_manager_target_name = self.profile.display_name.clone();
+            chart.panel_app.user_settings_state.profile_manager_target_id = self.profile.domain.profile_id.clone();
+            chart.panel_app.user_settings_state.profile_manager_target_name = self.profile.ui.display_name.clone();
         }
 
         let chrome_px = (chrome::CHROME_HEIGHT * window.scale_factor()) as u32;
@@ -1363,7 +1363,7 @@ impl App<'_> {
         //    will resolve to target_id's directory.
         self.profile_manager = mlc_app::user_manager::ProfileManager::load(None);
         let profile = self.profile_manager.profile.clone();
-        let saved_windows = profile.windows.clone();
+        let saved_windows = profile.ui.windows.clone();
 
         // 6. Rebuild app-level state from the new profile.
         self.app_state = AppState::from_profile(
@@ -1414,8 +1414,8 @@ impl App<'_> {
             for pw in self.windows.values_mut() {
                 pw.chart.panel_app.user_settings_state.show_profile_manager = true;
                 pw.chart.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::UnlockPassphrase;
-                pw.chart.panel_app.user_settings_state.profile_manager_target_id = self.profile.profile_id.clone();
-                pw.chart.panel_app.user_settings_state.profile_manager_target_name = self.profile.display_name.clone();
+                pw.chart.panel_app.user_settings_state.profile_manager_target_id = self.profile.domain.profile_id.clone();
+                pw.chart.panel_app.user_settings_state.profile_manager_target_name = self.profile.ui.display_name.clone();
             }
         } else if !has_vault && !self.is_first_run {
             // Existing profile with no encryption — offer to set up
@@ -1425,8 +1425,8 @@ impl App<'_> {
                 pw.chart.panel_app.user_settings_state.show_profile_manager = true;
                 pw.chart.panel_app.user_settings_state.needs_vault_unlock = true;
                 pw.chart.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreatePassphrase;
-                pw.chart.panel_app.user_settings_state.profile_manager_target_id = self.profile.profile_id.clone();
-                pw.chart.panel_app.user_settings_state.profile_manager_target_name = self.profile.display_name.clone();
+                pw.chart.panel_app.user_settings_state.profile_manager_target_id = self.profile.domain.profile_id.clone();
+                pw.chart.panel_app.user_settings_state.profile_manager_target_name = self.profile.ui.display_name.clone();
                 pw.chart.panel_app.user_settings_state.is_open = false;
             }
             eprintln!("[App] hot-reload: profile has no vault — showing passphrase creation");
@@ -1580,13 +1580,13 @@ impl App<'_> {
                     "stopped".to_string()
                 };
                 chart.panel_app.user_settings_state.language =
-                    profile_manager.profile.language.clone();
+                    profile_manager.profile.ui.language.clone();
                 {
                     let uss = &mut chart.panel_app.user_settings_state;
-                    uss.profile_id = profile_manager.profile.profile_id.clone();
-                    uss.runtime_profile_id = profile_manager.profile.profile_id.clone();
-                    uss.profile_display_name = profile_manager.profile.display_name.clone();
-                    uss.profile_avatar = profile_manager.profile.avatar.clone();
+                    uss.profile_id = profile_manager.profile.domain.profile_id.clone();
+                    uss.runtime_profile_id = profile_manager.profile.domain.profile_id.clone();
+                    uss.profile_display_name = profile_manager.profile.ui.display_name.clone();
+                    uss.profile_avatar = profile_manager.profile.ui.avatar.clone();
                     if let Some(index) = mlc_core::load_profile_index() {
                         let profiles_dir = mlc_core::active_profile_data_dir()
                             .parent()
@@ -1685,12 +1685,12 @@ impl App<'_> {
                 self.app_state.presets.entry(k).or_insert(v);
             }
             if !r.active_preset_id.is_empty() {
-                self.profile_manager.profile.active_preset_id = r.active_preset_id.clone();
-                self.profile.active_preset_id = r.active_preset_id;
+                self.profile_manager.profile.ui.active_preset_id = r.active_preset_id.clone();
+                self.profile.ui.active_preset_id = r.active_preset_id;
             }
             if !r.open_tabs.is_empty() {
-                self.profile_manager.profile.open_tabs = r.open_tabs.clone();
-                self.profile.open_tabs = r.open_tabs;
+                self.profile_manager.profile.ui.open_tabs = r.open_tabs.clone();
+                self.profile.ui.open_tabs = r.open_tabs;
             }
 
             if let Some(pw) = self.windows.get_mut(&r.winit_id) {
@@ -1970,43 +1970,43 @@ impl App<'_> {
         // Sync profile_manager mutations back into self.profile before saving.
 
         let mut profile = self.profile.clone();
-        profile.windows = window_states;
+        profile.ui.windows = window_states;
 
         // Use AppState as the canonical source for connector_enabled, theme, and
         // device identity (replaces per-window copies that were previously written here).
-        profile.connector_enabled = self.app_state.connector_enabled.clone();
-        profile.active_theme = self.app_state.theme_preset.clone();
-        profile.device_name = self.app_state.device_name.clone();
-        profile.app_version = self.app_state.app_version.clone();
+        profile.domain.connector_enabled = self.app_state.connector_enabled.clone();
+        profile.ui.active_theme = self.app_state.theme_preset.clone();
+        profile.ui.device_name = self.app_state.device_name.clone();
+        profile.domain.app_version = self.app_state.app_version.clone();
         // recalc_mode is now persisted to DeviceSettings, not UserProfile.
-        profile.scale_mode = match self.app_state.scale_mode {
+        profile.domain.scale_mode = match self.app_state.scale_mode {
             mlc_core::ScaleMode::Auto   => "Auto".to_string(),
             mlc_core::ScaleMode::Focus  => "Focus".to_string(),
             mlc_core::ScaleMode::Manual => "Manual".to_string(),
         };
-        profile.server_enabled = self.app_state.server_enabled;
-        profile.server_port = self.app_state.server_port;
+        profile.domain.server_enabled = self.app_state.server_enabled;
+        profile.domain.server_port = self.app_state.server_port;
 
         // Persist notification settings from the first window's alert settings state.
         if let Some(pw) = self.windows.values().next() {
-            profile.notification_settings =
+            profile.domain.notification_settings =
                 pw.chart.panel_app.alert_settings_state.notification_settings.clone();
         }
 
         if let Some(key) = preferred_key {
             if let Some(pw) = self.windows.get(&key) {
-                profile.sidebar_visible = pw.chart.sidebar_state.is_right_open();
-                profile.sidebar_panel = mlc_app::ChartApp::panel_to_str(pw.chart.sidebar_state.right_panel);
-                profile.sidebar_width = Some(pw.chart.sidebar_state.right_sidebar_width);
+                profile.ui.sidebar_visible = pw.chart.sidebar_state.is_right_open();
+                profile.ui.sidebar_panel = mlc_app::ChartApp::panel_to_str(pw.chart.sidebar_state.right_panel);
+                profile.ui.sidebar_width = Some(pw.chart.sidebar_state.right_sidebar_width);
                 let inline = &pw.chart.panel_app.toolbar_state.floating_inline_bar;
-                profile.inline_bar_x = Some(inline.x);
-                profile.inline_bar_y = Some(inline.y);
+                profile.ui.inline_bar_x = Some(inline.x);
+                profile.ui.inline_bar_y = Some(inline.y);
                 let dock_str = match inline.dock_edge {
                     mlc_core::InlineDockEdge::Bottom => "Bottom",
                     mlc_core::InlineDockEdge::Top => "Top",
                     mlc_core::InlineDockEdge::Free => "Free",
                 };
-                profile.inline_bar_dock = Some(dock_str.to_string());
+                profile.ui.inline_bar_dock = Some(dock_str.to_string());
             }
         }
 
@@ -2618,27 +2618,27 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     .or_else(|| self.windows.keys().next().copied());
 
                 let mut profile = self.profile.clone();
-                profile.windows = window_states;
-                profile.connector_enabled = self.app_state.connector_enabled.clone();
-                profile.active_theme = self.app_state.theme_preset.clone();
-                profile.device_name = self.app_state.device_name.clone();
-                profile.app_version = self.app_state.app_version.clone();
+                profile.ui.windows = window_states;
+                profile.domain.connector_enabled = self.app_state.connector_enabled.clone();
+                profile.ui.active_theme = self.app_state.theme_preset.clone();
+                profile.ui.device_name = self.app_state.device_name.clone();
+                profile.domain.app_version = self.app_state.app_version.clone();
                 // recalc_mode is now persisted to DeviceSettings, not UserProfile.
 
                 if let Some(key) = preferred_key {
                     if let Some(pw) = self.windows.get(&key) {
-                        profile.sidebar_visible = pw.chart.sidebar_state.is_right_open();
-                        profile.sidebar_panel = mlc_app::ChartApp::panel_to_str(pw.chart.sidebar_state.right_panel);
-                        profile.sidebar_width = Some(pw.chart.sidebar_state.right_sidebar_width);
+                        profile.ui.sidebar_visible = pw.chart.sidebar_state.is_right_open();
+                        profile.ui.sidebar_panel = mlc_app::ChartApp::panel_to_str(pw.chart.sidebar_state.right_panel);
+                        profile.ui.sidebar_width = Some(pw.chart.sidebar_state.right_sidebar_width);
                         let inline = &pw.chart.panel_app.toolbar_state.floating_inline_bar;
-                        profile.inline_bar_x = Some(inline.x);
-                        profile.inline_bar_y = Some(inline.y);
+                        profile.ui.inline_bar_x = Some(inline.x);
+                        profile.ui.inline_bar_y = Some(inline.y);
                         let dock_str = match inline.dock_edge {
                             mlc_core::InlineDockEdge::Bottom => "Bottom",
                             mlc_core::InlineDockEdge::Top => "Top",
                             mlc_core::InlineDockEdge::Free => "Free",
                         };
-                        profile.inline_bar_dock = Some(dock_str.to_string());
+                        profile.ui.inline_bar_dock = Some(dock_str.to_string());
                     }
                 }
 
@@ -2686,27 +2686,27 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     .or_else(|| self.windows.keys().next().copied());
 
                 let mut profile = self.profile.clone();
-                profile.windows = window_states;
-                profile.connector_enabled = self.app_state.connector_enabled.clone();
-                profile.active_theme = self.app_state.theme_preset.clone();
-                profile.device_name = self.app_state.device_name.clone();
-                profile.app_version = self.app_state.app_version.clone();
+                profile.ui.windows = window_states;
+                profile.domain.connector_enabled = self.app_state.connector_enabled.clone();
+                profile.ui.active_theme = self.app_state.theme_preset.clone();
+                profile.ui.device_name = self.app_state.device_name.clone();
+                profile.domain.app_version = self.app_state.app_version.clone();
                 // recalc_mode is now persisted to DeviceSettings, not UserProfile.
 
                 if let Some(key) = preferred_key {
                     if let Some(pw) = self.windows.get(&key) {
-                        profile.sidebar_visible = pw.chart.sidebar_state.is_right_open();
-                        profile.sidebar_panel = mlc_app::ChartApp::panel_to_str(pw.chart.sidebar_state.right_panel);
-                        profile.sidebar_width = Some(pw.chart.sidebar_state.right_sidebar_width);
+                        profile.ui.sidebar_visible = pw.chart.sidebar_state.is_right_open();
+                        profile.ui.sidebar_panel = mlc_app::ChartApp::panel_to_str(pw.chart.sidebar_state.right_panel);
+                        profile.ui.sidebar_width = Some(pw.chart.sidebar_state.right_sidebar_width);
                         let inline = &pw.chart.panel_app.toolbar_state.floating_inline_bar;
-                        profile.inline_bar_x = Some(inline.x);
-                        profile.inline_bar_y = Some(inline.y);
+                        profile.ui.inline_bar_x = Some(inline.x);
+                        profile.ui.inline_bar_y = Some(inline.y);
                         let dock_str = match inline.dock_edge {
                             mlc_core::InlineDockEdge::Bottom => "Bottom",
                             mlc_core::InlineDockEdge::Top => "Top",
                             mlc_core::InlineDockEdge::Free => "Free",
                         };
-                        profile.inline_bar_dock = Some(dock_str.to_string());
+                        profile.ui.inline_bar_dock = Some(dock_str.to_string());
                     }
                 }
 
@@ -2935,8 +2935,8 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         mlc_core::ToolbarConfig::standalone();
                 }
                 // Save to active profile
-                self.profile.language = lang_code.clone();
-                self.profile_manager.profile.language = lang_code.clone();
+                self.profile.ui.language = lang_code.clone();
+                self.profile_manager.profile.ui.language = lang_code.clone();
                 eprintln!("[App] language changed to: {}", lang_code);
             }
         }
@@ -3049,13 +3049,13 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         (rest[..idx].to_string(), rest[idx + 1..].to_string())
                     } else {
                         // Fallback for old format "profile_rename:{name}"
-                        (self.profile_manager.profile.profile_id.clone(), rest.to_string())
+                        (self.profile_manager.profile.domain.profile_id.clone(), rest.to_string())
                     };
-                    let is_active = target_id == self.profile_manager.profile.profile_id;
+                    let is_active = target_id == self.profile_manager.profile.domain.profile_id;
                     match self.profile_manager.rename_profile(&target_id, &new_name) {
                         Ok(()) => {
                             if is_active {
-                                self.profile.display_name = new_name.clone();
+                                self.profile.ui.display_name = new_name.clone();
                                 for pw in self.windows.values_mut() {
                                     pw.chart.panel_app.user_settings_state.profile_display_name =
                                         new_name.clone();
@@ -3067,10 +3067,10 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         Err(e) => eprintln!("[App] profile_rename failed: {}", e),
                     }
                 } else if let Some(avatar) = cmd_str.strip_prefix("profile_set_avatar:") {
-                    let active_id = self.profile_manager.profile.profile_id.clone();
+                    let active_id = self.profile_manager.profile.domain.profile_id.clone();
                     match self.profile_manager.set_avatar(&active_id, avatar) {
                         Ok(()) => {
-                            self.profile.avatar = avatar.to_string();
+                            self.profile.ui.avatar = avatar.to_string();
                             self.sync_profiles_to_windows();
                             for pw in self.windows.values_mut() {
                                 pw.chart.panel_app.user_settings_state.profile_avatar =
@@ -3110,7 +3110,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     }
                 } else if let Some(id) = cmd_str.strip_prefix("profile_switch:") {
                     // Guard: if the requested profile is already the running one, do nothing.
-                    if id == self.profile_manager.profile.profile_id.as_str() {
+                    if id == self.profile_manager.profile.domain.profile_id.as_str() {
                         eprintln!("[App] profile_switch: already on this profile, ignoring");
                     } else {
                         let exists = self.profile_manager.available_profiles().iter().any(|p| p.id == id);
@@ -3173,9 +3173,9 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         }
                     }
                     // Apply the user-chosen profile name.
-                    let active_id = self.profile_manager.profile.profile_id.clone();
+                    let active_id = self.profile_manager.profile.domain.profile_id.clone();
                     let _ = self.profile_manager.rename_profile(&active_id, &wizard_profile_name);
-                    self.profile.display_name = wizard_profile_name.clone();
+                    self.profile.ui.display_name = wizard_profile_name.clone();
                     for pw in self.windows.values_mut() {
                         pw.chart.panel_app.user_settings_state.profile_display_name =
                             wizard_profile_name.clone();
@@ -3323,7 +3323,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     let target_id = self.windows.values().next()
                         .map(|pw| pw.chart.panel_app.user_settings_state.profile_manager_target_id.clone())
                         .unwrap_or_default();
-                    let current_id = self.profile_manager.profile.profile_id.clone();
+                    let current_id = self.profile_manager.profile.domain.profile_id.clone();
                     if !target_id.is_empty() && target_id != current_id {
                         // Find the target profile's data dir
                         let profiles_dir = mlc_core::active_profile_data_dir()
@@ -3481,7 +3481,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     let target_id = self.windows.values().next()
                         .map(|pw| pw.chart.panel_app.user_settings_state.profile_manager_target_id.clone())
                         .unwrap_or_default();
-                    let current_id = self.profile_manager.profile.profile_id.clone();
+                    let current_id = self.profile_manager.profile.domain.profile_id.clone();
 
                     // Determine which profile dir to use
                     let profile_dir = if !target_id.is_empty() && target_id != current_id && !self.needs_vault_unlock {
@@ -3888,7 +3888,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         delivery.update_settings(ns.clone());
                     }
                     // Persist to profile on disk
-                    self.profile.notification_settings = ns;
+                    self.profile.domain.notification_settings = ns;
                     if let Err(e) = mlc_core::save_profile(&self.profile, self.app_state.vault_key.as_ref()) {
                         eprintln!("[App] Failed to persist notification settings: {}", e);
                     }
@@ -4000,7 +4000,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     if sym.is_empty() && active_cid_rc.is_none() {
                         continue;
                     }
-                    (sym, exch, at, tf, pw.chart.core.user().profile().bar_count as usize)
+                    (sym, exch, at, tf, pw.chart.core.user().profile().domain.bar_count as usize)
                 };
 
                 // disk persistence removed — delete_storage flag is a no-op now
@@ -4874,7 +4874,7 @@ fn main() {
     }
 
     let profile = profile_manager.profile.clone();
-    let saved_windows = profile.windows.clone();
+    let saved_windows = profile.ui.windows.clone();
 
     let mut app = App::new(bridge, live_data_rt, live_data_handle, saved_windows, profile, profile_manager, connector_ready_rx, is_first_run, needs_vault_unlock, needs_migration);
     // Store the event-loop proxy so the promote worker can send PromoteReady

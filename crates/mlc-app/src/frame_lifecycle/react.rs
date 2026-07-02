@@ -143,7 +143,7 @@ impl ChartApp {
                             // bars — re-snap to keep them on the right edge.
                             window.snap_to_end(DEFAULT_SNAP_MARGIN);
                         }
-                        let target = self.core.user().profile().data_load.background_bar_count;
+                        let target = self.core.user().profile().domain.data_load.background_bar_count;
                         if target > 0 && (new_bars.len() as u32) < target {
                             backfill_requests.push((win_sym, win_tf, win_at));
                         }
@@ -157,7 +157,7 @@ impl ChartApp {
                         {
                             window.consume_cold_snap(new_bars);
                         }
-                        let target = self.core.user().profile().data_load.background_bar_count;
+                        let target = self.core.user().profile().domain.data_load.background_bar_count;
                         if target > 300 {
                             backfill_requests.push((win_sym, win_tf, win_at));
                         }
@@ -173,7 +173,7 @@ impl ChartApp {
                 }
 
                 // Trigger background backfill.
-                let bg_target = self.core.user().profile().data_load.background_bar_count;
+                let bg_target = self.core.user().profile().domain.data_load.background_bar_count;
                 for (sym, tf, at) in backfill_requests {
                     let at = mlc_backend_data_bridge::account_type_to_dig3(at);
                     self.core.bridge.request_background_backfill(*exchange_id, &sym, &tf, at, bg_target);
