@@ -44,6 +44,13 @@ impl<'a> Watchlists<'a> {
     pub fn contains(&self, list_id: u64, address: &mlc_core::InstrumentAddress) -> bool {
         self.mgr.contains(list_id, address)
     }
+
+    /// Owned clone of the whole manager, for wholesale serialization
+    /// (`watchlists.json` — shared-BackendCore arc §2.4, `save_all` reads
+    /// through this instead of a per-window `AppState` mirror).
+    pub fn snapshot(&self) -> WatchlistManager {
+        self.mgr.clone()
+    }
 }
 
 /// Mutable facade over `WatchlistManager`.

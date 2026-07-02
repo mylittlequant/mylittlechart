@@ -1,28 +1,26 @@
 //! Cross-window shared application state.
+//!
+//! Shrunk by the shared-BackendCore arc (Phase B):
+//! `watchlist_manager`/`presets`/`preset_dirty_ids`/`snapshots`/
+//! `template_manager` and their dirty flags are gone — every window's
+//! `ChartApp::core` is now the SAME `Arc<BackendCore>`, so there is no
+//! longer a second copy to keep in sync. Domain reads/writes go through
+//! `core.presets()`/`core.templates()`/`core.watchlists()`/`core.user()`
+//! directly. `watchlist_ui` also dies from here (see the Phase-B verdict in
+//! `docs/mlc/plans/shared-backend-core-2026-07-03.md`'s coordinator
+//! follow-up: it is per-window presentation, already lives correctly on
+//! `ChartApp.watchlist_ui`, and the agent-API snapshot builder
+//! (`mlc-app-agent-api/src/snapshots.rs::update_watchlist_snapshot`)
+//! already reads it that way — this `AppState` copy was a redundant
+//! mirror, never the real source of truth).
 
 /// Application-level shared state — single source of truth for data that is
-/// shared across all windows (watchlist, connector preferences).
-///
-/// These fields were previously duplicated inside each `ChartApp`. Moving them
-/// here means there is one authoritative copy; per-window copies are synced
-/// from/to `AppState` each frame via `sync_app_state_to_window` /
-/// `sync_app_state_from_window`.
+/// legitimately process-wide but does NOT belong on `BackendCore` (visual
+/// chrome, connector on/off flags, performance settings, vault key). See the
+/// module doc for what left this struct and why.
 pub(crate) struct AppState {
-    /// Watchlist manager — all lists, groups, and symbols.
-    pub(crate) watchlist_manager: mlc_app::WatchlistManager,
-    /// Watchlist UI/presentation state — active list tab, column config,
-    /// group color/collapsed, sort-order snapshot (doctrine 1B split).
-    pub(crate) watchlist_ui: mlc_app::watchlist_ui::WatchlistUiState,
     /// Per-exchange enabled/disabled flag (keyed by `ExchangeId::as_str()`).
     pub(crate) connector_enabled: std::collections::HashMap<String, bool>,
-    /// All chart presets loaded at startup (keyed by preset id).
-    pub(crate) presets: std::collections::HashMap<String, mlc_core::preset::preset::ChartPreset>,
-    /// Preset ids that have been modified but not yet persisted.
-    pub(crate) preset_dirty_ids: std::collections::HashSet<String>,
-    /// Settings snapshots — shared across all windows (last-used settings per category).
-    pub(crate) snapshots: mlc_core::user_profile::SettingsSnapshots,
-    /// Template manager — single source of truth for all template types across windows.
-    pub(crate) template_manager: mlc_app::TemplateManager,
     /// Active theme preset name (e.g. "dark", "light").
     /// Single source of truth — synced to all windows each frame.
     pub(crate) theme_preset: String,
@@ -33,14 +31,6 @@ pub(crate) struct AppState {
     // ── Sync dirty flags ──────────────────────────────────────────────────────
     // Set to `true` when the corresponding data changes; reset after syncing to
     // all windows.  Prevents per-frame deep clones when nothing changed.
-    /// Presets map changed — need to clone to all windows.
-    pub(crate) presets_dirty: bool,
-    /// Template manager changed — need to clone to all windows.
-    pub(crate) templates_dirty: bool,
-    /// Settings snapshots changed — need to clone to all windows.
-    pub(crate) snapshots_dirty: bool,
-    /// Watchlist manager changed — need to clone to all windows.
-    pub(crate) watchlists_dirty: bool,
     /// Connector enabled map changed — need to clone to all windows.
     pub(crate) connectors_dirty: bool,
 
@@ -66,39 +56,16 @@ pub(crate) struct AppState {
 }
 
 impl AppState {
-    /// Initialise from a loaded watchlist file and user profile.
+    /// Initialise from a loaded user profile. Domain data (presets,
+    /// templates, watchlists, snapshots) is no longer threaded through here
+    /// — the caller seeds `core` directly (see `main.rs::seed_core_from_profile`).
+    /// `vault_key` is still a plain constructor param — Phase C moves it to
+    /// `core.user()` alongside the rest of the user-domain fields; not this
+    /// phase's scope.
     pub(crate) fn from_profile(
         profile: &mlc_core::UserProfile,
-        presets: std::collections::HashMap<String, mlc_core::preset::preset::ChartPreset>,
-        snapshots: mlc_core::user_profile::SettingsSnapshots,
-        template_manager: mlc_app::TemplateManager,
         vault_key: Option<mlc_vault::vault::VaultKey>,
     ) -> Self {
-        let default_wl = || {
-            mlc_app::WatchlistManager::new(vec![
-                mlc_app::InstrumentAddress::new("binance", "BTCUSDT", mlc_core::instrument::AccountType::Spot),
-                mlc_app::InstrumentAddress::new("binance", "ETHUSDT", mlc_core::instrument::AccountType::Spot),
-                mlc_app::InstrumentAddress::new("binance", "SOLUSDT", mlc_core::instrument::AccountType::Spot),
-                mlc_app::InstrumentAddress::new("binance", "BNBUSDT", mlc_core::instrument::AccountType::Spot),
-                mlc_app::InstrumentAddress::new("bybit", "BTCUSDT", mlc_core::instrument::AccountType::Spot),
-                mlc_app::InstrumentAddress::new("okx", "BTCUSDT", mlc_core::instrument::AccountType::Spot),
-            ])
-        };
-
-        let watchlist_manager = {
-            let watchlists_path = mlc_core::user_profile::storage::watchlists_path();
-            if watchlists_path.exists() {
-                // Watchlists are always plaintext — pass None regardless of vault key.
-                mlc_core::load_json::<mlc_app::WatchlistManager>(&watchlists_path, None)
-                    .unwrap_or_else(|e| {
-                        eprintln!("[AppState] Failed to load watchlists: {}", e);
-                        default_wl()
-                    })
-            } else {
-                default_wl()
-            }
-        };
-
         // Parse recalc_mode from DeviceSettings (authoritative) with profile as fallback.
         let recalc_mode = {
             let ds = mlc_core::user_profile::DeviceSettings::load();
@@ -124,21 +91,11 @@ impl AppState {
         };
 
         Self {
-            watchlist_manager,
-            watchlist_ui: mlc_app::watchlist_ui::WatchlistUiState::default(),
             connector_enabled: profile.domain.connector_enabled.clone(),
-            presets,
-            preset_dirty_ids: std::collections::HashSet::new(),
-            snapshots,
-            template_manager,
             theme_preset: profile.ui.active_theme.clone(),
             device_name: profile.ui.device_name.clone(),
             app_version: profile.domain.app_version.clone(),
             // Start dirty so the first frame syncs everything to all windows.
-            presets_dirty: true,
-            templates_dirty: true,
-            snapshots_dirty: true,
-            watchlists_dirty: true,
             connectors_dirty: true,
             recalc_mode,
             scale_mode,

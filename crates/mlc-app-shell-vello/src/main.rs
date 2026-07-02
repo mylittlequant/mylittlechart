@@ -57,10 +57,6 @@ struct PromoteWindowResult {
     winit_id: WindowId,
     chart: Box<mlc_app::ChartApp>,
     window_id: String,
-    /// Presets that existed only in the chart (new_window created them) but
-    /// were absent from app_state at spawn time — must be merged back on the
-    /// main thread.
-    new_presets: Vec<(String, mlc_core::preset::preset::ChartPreset)>,
     active_preset_id: String,
     open_tabs: Vec<String>,
 }
@@ -300,6 +296,14 @@ struct App<'s> {
     last_focused: Option<WindowId>,
     /// Application-level shared state (watchlist, connector preferences).
     app_state: AppState,
+    /// Preset ids modified this frame but not yet flushed to disk.
+    ///
+    /// App-level (not domain) bookkeeping — batches disk writes so a preset
+    /// mutated N times in one frame is written once, not N times. Not part
+    /// of `AppState`: it tracks "what needs saving", not "what the current
+    /// value is" (that lives on `core.presets()`, one shared copy per
+    /// Phase A/B — nothing left here to mirror).
+    preset_dirty_ids: std::collections::HashSet<String>,
     /// Dedicated mpsc receiver for `ConnectorReady` events.
     ///
     /// Using mpsc instead of a broadcast subscription avoids holding back the
@@ -573,6 +577,55 @@ fn render_toasts(
     }
 }
 
+/// Default watchlist seed — six symbols across three exchanges, used when no
+/// `watchlists.json` exists yet (first run or migration).
+fn default_watchlist() -> mlc_app::WatchlistManager {
+    mlc_app::WatchlistManager::new(vec![
+        mlc_app::InstrumentAddress::new("binance", "BTCUSDT", mlc_core::instrument::AccountType::Spot),
+        mlc_app::InstrumentAddress::new("binance", "ETHUSDT", mlc_core::instrument::AccountType::Spot),
+        mlc_app::InstrumentAddress::new("binance", "SOLUSDT", mlc_core::instrument::AccountType::Spot),
+        mlc_app::InstrumentAddress::new("binance", "BNBUSDT", mlc_core::instrument::AccountType::Spot),
+        mlc_app::InstrumentAddress::new("bybit", "BTCUSDT", mlc_core::instrument::AccountType::Spot),
+        mlc_app::InstrumentAddress::new("okx", "BTCUSDT", mlc_core::instrument::AccountType::Spot),
+    ])
+}
+
+/// Seed `core`'s domain managers (presets, templates, watchlists, snapshots)
+/// from disk-loaded profile state.
+///
+/// Replaces `AppState::from_profile`'s domain half (shared-BackendCore arc,
+/// Phase B): under the Phase A shared `Arc<BackendCore>` there is exactly
+/// ONE copy of each of these managers for the whole process, so seeding
+/// happens here, once, instead of being threaded through a per-process
+/// `AppState` mirror that used to get cloned into every window each frame.
+///
+/// Called both at startup (`App::new`) and on profile hot-reload
+/// (`execute_profile_switch`, after every window has been dropped and
+/// before new ones are created — `core`'s domain data must reflect the
+/// NEWLY loaded profile before any window reads it).
+fn seed_core_from_profile(
+    core: &mlc_backend::BackendCore,
+    profile_manager: &mlc_app::user_manager::ProfileManager,
+) {
+    let watchlist_manager = {
+        let watchlists_path = mlc_core::user_profile::storage::watchlists_path();
+        if watchlists_path.exists() {
+            // Watchlists are always plaintext — pass None regardless of vault key.
+            mlc_core::load_json::<mlc_app::WatchlistManager>(&watchlists_path, None)
+                .unwrap_or_else(|e| {
+                    eprintln!("[App] Failed to load watchlists: {}", e);
+                    default_watchlist()
+                })
+        } else {
+            default_watchlist()
+        }
+    };
+    core.watchlists_mut().replace_all(watchlist_manager);
+    core.presets_mut().replace_all(profile_manager.presets.clone());
+    core.templates_mut().replace_all(profile_manager.template_manager.clone());
+    core.user_mut().set_snapshots(profile_manager.snapshots.clone());
+}
+
 use render::scene_builder::build_window_scene;
 use render::gpu_submit::submit_window_gpu_from_gpu_scene;
 impl App<'_> {
@@ -588,7 +641,7 @@ impl App<'_> {
         needs_vault_unlock: bool,
         needs_migration: bool,
     ) -> Self {
-        let app_state = AppState::from_profile(&profile, profile_manager.presets.clone(), profile_manager.snapshots.clone(), profile_manager.template_manager.clone(), profile_manager.vault_key);
+        let app_state = AppState::from_profile(&profile, profile_manager.vault_key);
 
         // Single `Arc<BackendCore>` for the whole process — every window's
         // `ChartApp` shares this one instance (Phase A, shared-backend-core
@@ -599,6 +652,7 @@ impl App<'_> {
         let exchange_symbols_seed = bridge.symbols_snapshot();
         let core = mlc_backend::BackendCore::new_with_runtime(bridge.clone(), None, live_data_rt.clone());
         core.exchange_symbols_mut().replace_all(exchange_symbols_seed);
+        seed_core_from_profile(&core, &profile_manager);
 
         // Start the internal Agent API server on the DataBridge's tokio runtime.
         let agent_state = std::sync::Arc::new(mlc_backend_shell_http::AgentState::new(
@@ -831,6 +885,7 @@ impl App<'_> {
             profile_manager,
             last_focused: None,
             app_state,
+            preset_dirty_ids: std::collections::HashSet::new(),
             app_connector_ready_rx,
             _phantom: std::marker::PhantomData,
             agent_state: Some(agent_state),
@@ -1120,24 +1175,13 @@ impl App<'_> {
         if !self.app_state.theme_preset.is_empty() {
             chart.panel_app.theme_manager.set_preset(&self.app_state.theme_preset);
         }
-        // Initialise the new window directly from AppState so it has current data
-        // without waiting for the next dirty-flag sync pass.
-        chart.core.watchlists_mut().replace_all(self.app_state.watchlist_manager.clone());
-        chart.watchlist_ui = self.app_state.watchlist_ui.clone();
+        // Domain data (watchlists, presets, templates, snapshots) needs no
+        // sync here anymore — `chart.core` IS `self.core` (Phase A, shared
+        // Arc<BackendCore>), already seeded once at startup / profile-switch
+        // by `seed_core_from_profile`. `new_window()`'s own "Untitled 1"
+        // fresh-profile logic already read/wrote through this same shared
+        // `core.presets()`, so there is nothing left to merge or sync back.
         chart.sidebar_state.connector_enabled = self.app_state.connector_enabled.clone();
-        // Merge AppState presets into window — don't replace, to keep
-        // any Untitled preset that new_window() just created.
-        {
-            let mut presets_mut = chart.core.presets_mut();
-            for (k, v) in self.app_state.presets.iter() {
-                presets_mut.insert_if_absent(k.clone(), || v.clone());
-            }
-        }
-        // Sync back: if new_window() created an Untitled preset for a fresh profile,
-        // propagate it to app_state so chrome tabs and preset list can see it.
-        for (k, v) in chart.core.presets().iter() {
-            self.app_state.presets.entry(k.clone()).or_insert_with(|| v.clone());
-        }
         // Also sync open_tabs and active_preset_id back to profile_manager
         // so save_all() persists them.
         if !chart.panel_app.active_preset_id.is_empty() {
@@ -1148,11 +1192,10 @@ impl App<'_> {
             self.profile_manager.profile.ui.open_tabs = chart.panel_app.open_tabs.clone();
             self.profile.ui.open_tabs = chart.panel_app.open_tabs.clone();
         }
-        chart.core.user_mut().set_snapshots(self.app_state.snapshots.clone());
         // Apply persisted last-used drawing styles to all bubbles' drawing
         // sessions in this new window (per-bubble model — styles live on
         // DataBubble.last_used_style, loaded once per distinct bubble).
-        let drawing_styles = self.app_state.snapshots.last_used_drawing_styles.clone();
+        let drawing_styles = chart.core.user().snapshots().last_used_drawing_styles.clone();
         let all_bids_styles: Vec<_> = chart.core.bubbles().bubble_ids().collect();
         {
             let mut dreg = chart.core.drawings_mut();
@@ -1160,7 +1203,6 @@ impl App<'_> {
                 dreg.load_last_styles(bid, &drawing_styles);
             }
         }
-        chart.core.templates_mut().replace_all(self.app_state.template_manager.clone());
         // Sync server settings so the User Settings modal shows current state.
         chart.panel_app.user_settings_state.server_enabled = self.app_state.server_enabled;
         chart.panel_app.user_settings_state.server_port = self.app_state.server_port;
@@ -1388,13 +1430,14 @@ impl App<'_> {
         let saved_windows = profile.ui.windows.clone();
 
         // 6. Rebuild app-level state from the new profile.
-        self.app_state = AppState::from_profile(
-            &profile,
-            self.profile_manager.presets.clone(),
-            self.profile_manager.snapshots.clone(),
-            self.profile_manager.template_manager.clone(),
-            self.profile_manager.vault_key,
-        );
+        self.app_state = AppState::from_profile(&profile, self.profile_manager.vault_key);
+        // 6a. Re-seed the shared core's domain managers from the NEW profile.
+        // Every window was just dropped above (step 3) — nothing reads
+        // `self.core` between here and the `create_window` calls below, so
+        // this is safe. Without this, the new windows would come up showing
+        // the OLD profile's presets/templates/watchlists/snapshots — `core`
+        // is one shared instance now, not rebuilt per window.
+        seed_core_from_profile(&self.core, &self.profile_manager);
         self.profile = profile;
         self.saved_windows = saved_windows.clone();
         self.needs_vault_unlock = has_vault && has_salt;
@@ -1514,14 +1557,13 @@ impl App<'_> {
         let bridge = self.bridge.clone();
         let profile = self.profile.clone();
         let profile_manager = self.profile_manager.clone();
-        // AppState fields needed for the sync block (read-only in the worker).
+        // AppState fields needed for the presentation sync block below
+        // (read-only in the worker). Domain data (watchlists/presets/
+        // templates/snapshots) needs no capture — `chart.core` built inside
+        // the worker IS `self.core` (Phase A shared Arc<BackendCore>),
+        // already seeded once by `seed_core_from_profile`.
         let theme_preset = self.app_state.theme_preset.clone();
-        let watchlist_manager = self.app_state.watchlist_manager.clone();
-        let watchlist_ui = self.app_state.watchlist_ui.clone();
         let connector_enabled = self.app_state.connector_enabled.clone();
-        let app_presets = self.app_state.presets.clone();
-        let snapshots = self.app_state.snapshots.clone();
-        let template_manager = self.app_state.template_manager.clone();
         let server_enabled = self.app_state.server_enabled;
         let server_port = self.app_state.server_port;
 
@@ -1576,26 +1618,15 @@ impl App<'_> {
                 if !theme_preset.is_empty() {
                     chart.panel_app.theme_manager.set_preset(&theme_preset);
                 }
-                // Sync AppState into the new live window (read-only from captured clones).
-                chart.core.watchlists_mut().replace_all(watchlist_manager.clone());
-                chart.watchlist_ui = watchlist_ui.clone();
                 chart.sidebar_state.connector_enabled = connector_enabled.clone();
                 {
-                    let mut presets_mut = chart.core.presets_mut();
-                    for (k, v) in app_presets.iter() {
-                        presets_mut.insert_if_absent(k.clone(), || v.clone());
-                    }
-                }
-                chart.core.user_mut().set_snapshots(snapshots.clone());
-                {
-                    let drawing_styles = snapshots.last_used_drawing_styles.clone();
+                    let drawing_styles = chart.core.user().snapshots().last_used_drawing_styles.clone();
                     let all_bids_ls: Vec<_> = chart.core.bubbles().bubble_ids().collect();
                     let mut dreg = chart.core.drawings_mut();
                     for bid in all_bids_ls {
                         dreg.load_last_styles(bid, &drawing_styles);
                     }
                 }
-                chart.core.templates_mut().replace_all(template_manager.clone());
                 chart.panel_app.user_settings_state.server_enabled = server_enabled;
                 chart.panel_app.user_settings_state.server_port = server_port;
                 chart.panel_app.user_settings_state.server_status = if server_enabled {
@@ -1640,21 +1671,10 @@ impl App<'_> {
                 let chrome_px = (chrome::CHROME_HEIGHT * scale) as u32;
                 chart.resize(w, h.saturating_sub(chrome_px));
 
-                // Collect presets that new_window created and that were absent
-                // from app_presets — these must be merged back on the main thread.
-                let new_presets: Vec<(String, mlc_core::preset::preset::ChartPreset)> = chart
-                    .core
-                    .presets()
-                    .iter()
-                    .filter(|(k, _)| !app_presets.contains_key(*k))
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect();
-
                 results.push(PromoteWindowResult {
                     winit_id: wid,
                     chart: Box::new(chart),
                     window_id,
-                    new_presets,
                     active_preset_id: String::new(), // filled after chart is built
                     open_tabs: Vec::new(),            // filled after chart is built
                 });
@@ -1703,11 +1723,11 @@ impl App<'_> {
         let existing_count = self.windows.len();
 
         for r in results {
-            // Write-back: merge new presets and profile fields that the worker
-            // could not write because it only had read-only clones.
-            for (k, v) in r.new_presets {
-                self.app_state.presets.entry(k).or_insert(v);
-            }
+            // Write-back: profile fields the worker could not write because
+            // it only had read-only clones. Preset write-back is no longer
+            // needed — `chart.core` built inside the worker IS `self.core`
+            // (Phase A shared Arc<BackendCore>), so any preset `new_window`
+            // created is already visible in `self.core.presets()`.
             if !r.active_preset_id.is_empty() {
                 self.profile_manager.profile.ui.active_preset_id = r.active_preset_id.clone();
                 self.profile.ui.active_preset_id = r.active_preset_id;
@@ -1933,19 +1953,20 @@ impl App<'_> {
             }
         }
 
-        // 1b. Drain preset actions queued by autosave_snapshot into AppState.
+        // 1b. Drain preset actions queued by autosave_snapshot directly into
+        // the shared core (Phase B — no more AppState mirror to stage them in).
         for pw in self.windows.values_mut() {
             for action in pw.chart.preset_actions.drain(..) {
                 match action {
                     mlc_app::PresetAction::Upsert(preset) => {
                         let id = preset.id.clone();
-                        self.app_state.presets.insert(id, preset);
+                        self.core.presets_mut().insert(id, preset);
                     }
                     mlc_app::PresetAction::Delete { id } => {
-                        self.app_state.presets.remove(&id);
+                        self.core.presets_mut().remove(&id);
                     }
                     mlc_app::PresetAction::Rename { id, new_name } => {
-                        if let Some(p) = self.app_state.presets.get_mut(&id) {
+                        if let Some(p) = self.core.presets_mut().get_mut(&id) {
                             p.name = new_name;
                         }
                     }
@@ -2043,29 +2064,29 @@ impl App<'_> {
             self.profile = profile;
         }
 
-        // 6. Save watchlists.json from AppState (always plaintext — no vault key).
+        // 6. Save watchlists.json from the shared core (always plaintext — no vault key).
         {
             let watchlists_path = mlc_core::user_profile::storage::watchlists_path();
-            if let Err(e) = mlc_core::save_json(&watchlists_path, &self.app_state.watchlist_manager, None) {
+            if let Err(e) = mlc_core::save_json(&watchlists_path, &self.core.watchlists().snapshot(), None) {
                 eprintln!("[App] Failed to save watchlists: {}", e);
             }
         }
 
-        // 7. Save settings snapshots from AppState (always plaintext — no vault key).
+        // 7. Save settings snapshots from the shared core (always plaintext — no vault key).
         {
             let path = mlc_core::active_profile_data_dir().join("settings_snapshots.json");
-            if let Err(e) = mlc_core::save_json(&path, &self.app_state.snapshots, None) {
+            if let Err(e) = mlc_core::save_json(&path, self.core.user().snapshots(), None) {
                 eprintln!("[App] Failed to save settings snapshots: {}", e);
             }
         }
 
-        // 8. Save templates from AppState (single canonical source of truth).
-        if let Err(e) = self.app_state.template_manager.save_to_default_dir(vault_key) {
+        // 8. Save templates from the shared core (single canonical source of truth).
+        if let Err(e) = self.core.templates().save_to_default_dir(vault_key) {
             eprintln!("[App] Failed to save templates: {:?}", e);
         }
 
-        // 9. Save all presets from AppState (single canonical source of truth).
-        for preset in self.app_state.presets.values() {
+        // 9. Save all presets from the shared core (single canonical source of truth).
+        for preset in self.core.presets().values() {
             if let Err(e) = mlc_core::preset::storage::save_preset(preset) {
                 eprintln!("[App] failed to save preset {}: {}", preset.id, e);
             }
@@ -2216,18 +2237,23 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         self.tick_app_state();
         let _t1 = web_time::Instant::now();
 
-        // ── Drain watchlist actions from all windows → AppState ────────────
+        // ── Drain watchlist actions from all windows → shared core ──────────
         // Windows queue WatchlistAction instead of mutating directly.
-        // App applies them to the single AppState watchlist.
-        let mut watchlist_had_actions = false;
+        // `watchlist_manager` (symbol data) is domain — goes through the
+        // shared `core.watchlists_mut()` (Phase A/B, one instance for the
+        // whole process). `watchlist_ui` (which tab is active, column
+        // widths, sort snapshot) is per-window PRESENTATION — stays on
+        // `pw.chart.watchlist_ui`, never synced across windows (verdict:
+        // shared-backend-core-2026-07-03.md Phase-B note — the agent-API
+        // snapshot builder already treats it as per-window).
         for pw in self.windows.values_mut() {
-            for action in pw.chart.watchlist_actions.drain(..) {
-                watchlist_had_actions = true;
-                let active_list_id = self.app_state.watchlist_ui.active_list_id;
+            let actions: Vec<mlc_app::WatchlistAction> = pw.chart.watchlist_actions.drain(..).collect();
+            for action in actions {
+                let active_list_id = pw.chart.watchlist_ui.active_list_id;
                 match action {
                     mlc_app::WatchlistAction::Toggle { symbol, exchange, account_type } => {
                         let address = mlc_core::InstrumentAddress::new(exchange.clone(), symbol.clone(), account_type.parse().unwrap_or_default());
-                        let now_in = self.app_state.watchlist_manager.toggle_symbol(active_list_id, &address);
+                        let now_in = self.core.watchlists_mut().toggle_symbol(active_list_id, &address);
                         eprintln!("[App] watchlist toggle: {}:{}:{} -> in_watchlist={}", symbol, exchange, account_type, now_in);
                         if now_in {
                             if let Some(eid) = mlc_app::ExchangeId::from_str(&exchange) {
@@ -2239,49 +2265,49 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                     self.bridge.subscribe_mini_ticker(eid, &symbol, at);
                                 }
                             }
-                            self.app_state.watchlist_ui.list_mut(active_list_id).order_snapshot = None;
+                            pw.chart.watchlist_ui.list_mut(active_list_id).order_snapshot = None;
                         } else {
                             if let Some(eid) = mlc_app::ExchangeId::from_str(&exchange) {
                                 let at = mlc_app::account_type_from_label(&account_type);
                                 self.bridge.unsubscribe_mini_ticker(eid, &symbol, at);
                             }
-                            if let Some(ref mut snap) = self.app_state.watchlist_ui.list_mut(active_list_id).order_snapshot {
+                            if let Some(ref mut snap) = pw.chart.watchlist_ui.list_mut(active_list_id).order_snapshot {
                                 snap.retain(|s| s.symbol != symbol);
                             }
                         }
                     }
                     mlc_app::WatchlistAction::Remove { symbol, exchange, account_type } => {
                         let address = mlc_core::InstrumentAddress::new(exchange, symbol, account_type.parse().unwrap_or_default());
-                        self.app_state.watchlist_manager.remove_symbol(active_list_id, &address);
+                        self.core.watchlists_mut().remove_symbol(active_list_id, &address);
                     }
                     mlc_app::WatchlistAction::ClearOrderSnapshot => {
-                        self.app_state.watchlist_ui.list_mut(active_list_id).order_snapshot = None;
+                        pw.chart.watchlist_ui.list_mut(active_list_id).order_snapshot = None;
                     }
                     mlc_app::WatchlistAction::Reorder { from_idx, to_idx } => {
-                        self.app_state.watchlist_manager.reorder_symbol(active_list_id, from_idx, to_idx);
+                        self.core.watchlists_mut().reorder_symbol(active_list_id, from_idx, to_idx);
                     }
                     mlc_app::WatchlistAction::CreateList { name } => {
-                        let new_id = self.app_state.watchlist_manager.create_list(name);
-                        self.app_state.watchlist_ui.active_list_id = new_id;
+                        let new_id = self.core.watchlists_mut().create_list(name);
+                        pw.chart.watchlist_ui.active_list_id = new_id;
                     }
                     mlc_app::WatchlistAction::RenameList { id, new_name } => {
-                        if let Some(list) = self.app_state.watchlist_manager.lists.iter_mut().find(|l| l.id == id) {
+                        if let Some(list) = self.core.watchlists_mut().find_mut(id) {
                             list.name = new_name;
                         }
                     }
                     mlc_app::WatchlistAction::DeleteList { id } => {
-                        if self.app_state.watchlist_manager.delete_list(id) {
-                            self.app_state.watchlist_ui.remove_list(id);
-                            if self.app_state.watchlist_ui.active_list_id == id {
-                                self.app_state.watchlist_ui.active_list_id = self.app_state.watchlist_manager.lists.first().map(|l| l.id).unwrap_or(0);
+                        if self.core.watchlists_mut().delete_list(id) {
+                            pw.chart.watchlist_ui.remove_list(id);
+                            if pw.chart.watchlist_ui.active_list_id == id {
+                                pw.chart.watchlist_ui.active_list_id = self.core.watchlists().lists().first().map(|l| l.id).unwrap_or(0);
                             }
                         }
                     }
                     mlc_app::WatchlistAction::SetActiveList { id } => {
-                        self.app_state.watchlist_ui.active_list_id = id;
+                        pw.chart.watchlist_ui.active_list_id = id;
                     }
                     mlc_app::WatchlistAction::SetColorFlag { symbol, exchange, account_type, color } => {
-                        if let Some(list) = self.app_state.watchlist_manager.find_mut(active_list_id) {
+                        if let Some(list) = self.core.watchlists_mut().find_mut(active_list_id) {
                             let color_str = color.as_deref().unwrap_or("");
                             let address = mlc_core::InstrumentAddress::new(exchange, symbol, account_type.parse().unwrap_or_default());
                             list.set_color_flag(&address, color_str);
@@ -2289,7 +2315,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     }
                     mlc_app::WatchlistAction::MoveToGroup { symbol, exchange, account_type, group_name } => {
                         let address = mlc_core::InstrumentAddress::new(exchange, symbol, account_type.parse().unwrap_or_default());
-                        if let Some(list) = self.app_state.watchlist_manager.find_mut(active_list_id) {
+                        if let Some(list) = self.core.watchlists_mut().find_mut(active_list_id) {
                             if let Some(group) = list.groups.iter().find(|g| g.name == group_name) {
                                 let group_id = group.id;
                                 list.move_to_group(&address, group_id);
@@ -2298,7 +2324,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     }
                     mlc_app::WatchlistAction::RemoveFromGroup { symbol, exchange, account_type } => {
                         let address = mlc_core::InstrumentAddress::new(exchange, symbol, account_type.parse().unwrap_or_default());
-                        if let Some(list) = self.app_state.watchlist_manager.find_mut(active_list_id) {
+                        if let Some(list) = self.core.watchlists_mut().find_mut(active_list_id) {
                             let mut found: Option<mlc_core::instrument::InstrumentAddress> = None;
                             for g in &mut list.groups {
                                 if let Some(pos) = g.symbols.iter().position(|s| *s == address) {
@@ -2312,13 +2338,13 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         }
                     }
                     mlc_app::WatchlistAction::SetSeparatorOffsets { offsets } => {
-                        self.app_state.watchlist_ui.list_mut(active_list_id).column_config.separator_offsets = Some(offsets);
+                        pw.chart.watchlist_ui.list_mut(active_list_id).column_config.separator_offsets = Some(offsets);
                     }
                     mlc_app::WatchlistAction::ResetSeparatorOffsets => {
-                        self.app_state.watchlist_ui.list_mut(active_list_id).column_config.separator_offsets = None;
+                        pw.chart.watchlist_ui.list_mut(active_list_id).column_config.separator_offsets = None;
                     }
                     mlc_app::WatchlistAction::SetSeparatorOffset { index, value } => {
-                        let list_ui = self.app_state.watchlist_ui.list_mut(active_list_id);
+                        let list_ui = pw.chart.watchlist_ui.list_mut(active_list_id);
                         // Count visible columns to get correct separator count.
                         let n_cols = {
                             let c = &list_ui.column_config;
@@ -2348,7 +2374,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         }
                     }
                     mlc_app::WatchlistAction::ToggleColumnVisibility { column } => {
-                        let list_ui = self.app_state.watchlist_ui.list_mut(active_list_id);
+                        let list_ui = pw.chart.watchlist_ui.list_mut(active_list_id);
                         match column.as_str() {
                             "exchange"     => list_ui.column_config.show_exchange     = !list_ui.column_config.show_exchange,
                             "last_price"   => list_ui.column_config.show_last_price   = !list_ui.column_config.show_last_price,
@@ -2373,16 +2399,13 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     }
                     mlc_app::WatchlistAction::SortCycle => {
                         // Clear order snapshot to trigger re-sort on next render
-                        self.app_state.watchlist_ui.list_mut(active_list_id).order_snapshot = None;
+                        pw.chart.watchlist_ui.list_mut(active_list_id).order_snapshot = None;
                     }
                     mlc_app::WatchlistAction::ResetSort => {
-                        self.app_state.watchlist_ui.list_mut(active_list_id).order_snapshot = None;
+                        pw.chart.watchlist_ui.list_mut(active_list_id).order_snapshot = None;
                     }
                 }
             }
-        }
-        if watchlist_had_actions {
-            self.app_state.watchlists_dirty = true;
         }
 
         // ── Drain connector actions from all windows → AppState ──────────────
@@ -2405,106 +2428,93 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             self.app_state.connectors_dirty = true;
         }
 
-        // ── Drain preset actions from all windows → AppState ────────────
-        let mut presets_had_actions = false;
+        // ── Drain preset actions from all windows → shared core ─────────
         for pw in self.windows.values_mut() {
             for action in pw.chart.preset_actions.drain(..) {
-                presets_had_actions = true;
                 match action {
                     mlc_app::PresetAction::Upsert(preset) => {
                         let id = preset.id.clone();
-                        self.app_state.presets.insert(id.clone(), preset);
-                        self.app_state.preset_dirty_ids.insert(id);
+                        self.core.presets_mut().insert(id.clone(), preset);
+                        self.preset_dirty_ids.insert(id);
                     }
                     mlc_app::PresetAction::Delete { id } => {
-                        self.app_state.presets.remove(&id);
+                        self.core.presets_mut().remove(&id);
                         if let Err(e) = mlc_core::preset::storage::delete_preset(&id) {
                             eprintln!("[App] failed to delete preset file {}: {}", id, e);
                         }
-                        self.app_state.preset_dirty_ids.remove(&id);
+                        self.preset_dirty_ids.remove(&id);
                     }
                     mlc_app::PresetAction::Rename { id, new_name } => {
-                        if let Some(preset) = self.app_state.presets.get_mut(&id) {
+                        if let Some(preset) = self.core.presets_mut().get_mut(&id) {
                             preset.name = new_name;
-                            self.app_state.preset_dirty_ids.insert(id);
+                            self.preset_dirty_ids.insert(id);
                         }
                     }
                 }
             }
         }
-        if presets_had_actions {
-            self.app_state.presets_dirty = true;
-        }
 
-        // ── Drain snapshot actions from all windows → AppState ──────────
-        let mut snapshots_had_actions = false;
+        // ── Drain snapshot actions from all windows → shared core ───────
         for (_wid, pw) in self.windows.iter_mut() {
             for action in pw.chart.snapshot_actions.drain(..) {
-                snapshots_had_actions = true;
+                let mut snapshots = self.core.user().snapshots().clone();
                 match action {
                     mlc_app::SnapshotAction::ChartSettings(data) => {
-                        self.app_state.snapshots.chart_settings = Some(data);
+                        snapshots.chart_settings = Some(data);
                     }
                     mlc_app::SnapshotAction::PrimitiveSettings { type_id, data } => {
-                        self.app_state.snapshots.primitive_settings.insert(type_id, data);
+                        snapshots.primitive_settings.insert(type_id, data);
                     }
                     mlc_app::SnapshotAction::IndicatorSettings { type_id, data } => {
-                        self.app_state.snapshots.indicator_settings.insert(type_id, data);
+                        snapshots.indicator_settings.insert(type_id, data);
                     }
                     mlc_app::SnapshotAction::CompareSettings(data) => {
-                        self.app_state.snapshots.compare_settings = Some(data);
+                        snapshots.compare_settings = Some(data);
                     }
                     mlc_app::SnapshotAction::DrawingStyle { type_id, data } => {
-                        self.app_state.snapshots.last_used_drawing_styles.insert(type_id, data);
+                        snapshots.last_used_drawing_styles.insert(type_id, data);
                     }
                 }
+                self.core.user_mut().set_snapshots(snapshots);
             }
-        }
-        if snapshots_had_actions {
-            self.app_state.snapshots_dirty = true;
         }
 
-        // ── Drain template actions from all windows → AppState ──────────
-        let mut templates_had_actions = false;
+        // ── Drain template actions from all windows → shared core ───────
         for (_wid, pw) in self.windows.iter_mut() {
             for action in pw.chart.template_actions.drain(..) {
-                templates_had_actions = true;
                 match action {
                     mlc_app::TemplateAction::AddPrimitive(tmpl) => {
-                        let _ = self.app_state.template_manager.add_primitive_template(tmpl);
+                        let _ = self.core.templates_mut().add_primitive_template(tmpl);
                     }
                     mlc_app::TemplateAction::RemovePrimitive { id } => {
-                        let _ = self.app_state.template_manager.remove_primitive_template(&id);
+                        let _ = self.core.templates_mut().remove_primitive_template(&id);
                     }
                     mlc_app::TemplateAction::AddIndicator(tmpl) => {
-                        let _ = self.app_state.template_manager.add_indicator_template(tmpl);
+                        let _ = self.core.templates_mut().add_indicator_template(tmpl);
                     }
                     mlc_app::TemplateAction::RemoveIndicator { id } => {
-                        let _ = self.app_state.template_manager.remove_indicator_template(&id);
+                        let _ = self.core.templates_mut().remove_indicator_template(&id);
                     }
                     mlc_app::TemplateAction::AddCompare(tmpl) => {
-                        let _ = self.app_state.template_manager.add_compare_template(tmpl);
+                        let _ = self.core.templates_mut().add_compare_template(tmpl);
                     }
                     mlc_app::TemplateAction::RemoveCompare { id } => {
-                        let _ = self.app_state.template_manager.remove_compare_template(&id);
+                        let _ = self.core.templates_mut().remove_compare_template(&id);
                     }
                     mlc_app::TemplateAction::AddChart(tmpl) => {
-                        let _ = self.app_state.template_manager.add_chart_template(tmpl);
+                        let _ = self.core.templates_mut().add_chart_template(tmpl);
                     }
                     mlc_app::TemplateAction::RemoveChart { id } => {
-                        let _ = self.app_state.template_manager.remove_chart_template(&id);
+                        let _ = self.core.templates_mut().remove_chart_template(&id);
                     }
                     mlc_app::TemplateAction::AddIndicatorSet(set) => {
-                        let _ = self.app_state.template_manager.add_indicator_set(set);
+                        let _ = self.core.templates_mut().add_indicator_set(set);
                     }
                     mlc_app::TemplateAction::RemoveIndicatorSet { id } => {
-                        let _ = self.app_state.template_manager.remove_indicator_set(&id);
+                        let _ = self.core.templates_mut().remove_indicator_set(&id);
                     }
                 }
             }
-        }
-        if templates_had_actions {
-            self.app_state.templates_dirty = true;
         }
 
         // ── Drain performance actions from all windows ─────────────────────
@@ -2584,10 +2594,10 @@ impl ApplicationHandler<UserEvent> for App<'_> {
 
         // ── Flush dirty presets to disk ──────────────────────────────────
         // Presets are plaintext — always safe to save.
-        if !self.app_state.preset_dirty_ids.is_empty() {
-            let ids: Vec<String> = self.app_state.preset_dirty_ids.drain().collect();
+        if !self.preset_dirty_ids.is_empty() {
+            let ids: Vec<String> = self.preset_dirty_ids.drain().collect();
             for id in ids {
-                if let Some(preset) = self.app_state.presets.get(&id) {
+                if let Some(preset) = self.core.presets().get(&id) {
                     if let Err(e) = mlc_core::preset::storage::save_preset(preset) {
                         eprintln!("[App] failed to save preset {}: {}", id, e);
                     }
@@ -2753,7 +2763,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             if any_watchlists_dirty {
                 let watchlists_path = mlc_core::user_profile::storage::watchlists_path();
                 // Watchlists are always plaintext — pass None regardless of vault key.
-                if let Err(e) = mlc_core::save_json(&watchlists_path, &self.app_state.watchlist_manager, None) {
+                if let Err(e) = mlc_core::save_json(&watchlists_path, &self.core.watchlists().snapshot(), None) {
                     eprintln!("[App] Failed to save watchlists: {}", e);
                 }
                 // Clear dirty flags.
@@ -2773,31 +2783,31 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     match action {
                         mlc_app::PresetAction::Upsert(preset) => {
                             let id = preset.id.clone();
-                            self.app_state.presets.insert(id.clone(), preset);
-                            self.app_state.preset_dirty_ids.insert(id);
+                            self.core.presets_mut().insert(id.clone(), preset);
+                            self.preset_dirty_ids.insert(id);
                             second_pass_dirty = true;
                         }
                         mlc_app::PresetAction::Delete { id } => {
-                            self.app_state.presets.remove(&id);
+                            self.core.presets_mut().remove(&id);
                             if let Err(e) = mlc_core::preset::storage::delete_preset(&id) {
                                 eprintln!("[App] failed to delete preset file {}: {}", id, e);
                             }
-                            self.app_state.preset_dirty_ids.remove(&id);
+                            self.preset_dirty_ids.remove(&id);
                         }
                         mlc_app::PresetAction::Rename { id, new_name } => {
-                            if let Some(preset) = self.app_state.presets.get_mut(&id) {
+                            if let Some(preset) = self.core.presets_mut().get_mut(&id) {
                                 preset.name = new_name;
-                                self.app_state.preset_dirty_ids.insert(id);
+                                self.preset_dirty_ids.insert(id);
                                 second_pass_dirty = true;
                             }
                         }
                     }
                 }
             }
-            if second_pass_dirty && !self.app_state.preset_dirty_ids.is_empty() {
-                let ids: Vec<String> = self.app_state.preset_dirty_ids.drain().collect();
+            if second_pass_dirty && !self.preset_dirty_ids.is_empty() {
+                let ids: Vec<String> = self.preset_dirty_ids.drain().collect();
                 for id in ids {
-                    if let Some(preset) = self.app_state.presets.get(&id) {
+                    if let Some(preset) = self.core.presets().get(&id) {
                         if let Err(e) = mlc_core::preset::storage::save_preset(preset) {
                             eprintln!("[App] failed to save preset {}: {}", id, e);
                         }
@@ -3185,10 +3195,11 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             self.profile_manager = mlc_app::user_manager::ProfileManager::load(None);
                             self.profile = self.profile_manager.profile.clone();
                             if !self.is_first_run {
-                                // Adding a second profile — clear stale presets/templates.
-                                self.app_state.presets.clear();
-                                self.app_state.template_manager =
-                                    self.profile_manager.template_manager.clone();
+                                // Adding a second profile — clear stale presets/templates
+                                // on the shared core (Phase A/B: one instance for the
+                                // whole process, not a per-window AppState mirror).
+                                self.core.presets_mut().replace_all(std::collections::HashMap::new());
+                                self.core.templates_mut().replace_all(self.profile_manager.template_manager.clone());
                             }
                         }
                         Err(e) => {
@@ -3205,18 +3216,15 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             wizard_profile_name.clone();
                     }
 
-                    // Derive vault key via ProfileManager and sync to app_state.
+                    // Derive vault key via ProfileManager and sync to app_state + the
+                    // shared core's template manager. One write reaches every window
+                    // immediately (Phase A/B: shared Arc<BackendCore>, no per-window
+                    // template-manager replica left to go stale).
                     match self.profile_manager.derive_and_set_vault_key(passphrase) {
                         Ok(key) => {
                             self.app_state.vault_key = Some(key);
                             self.profile_manager.vault_key = Some(key);
-                            self.app_state.template_manager.vault_key = Some(key);
-                            // Push the fresh key into already-open windows' template
-                            // replicas on the next sync tick — otherwise
-                            // core.templates_mut().vault_key stays stale (None) on
-                            // any window alive before this unlock until a full
-                            // rebuild happens (skeleton promote / profile switch).
-                            self.app_state.templates_dirty = true;
+                            self.core.templates_mut().set_vault_key(Some(key));
                             eprintln!("[App] wizard_complete: vault key derived, saving");
                         }
                         Err(e) => {
@@ -3453,13 +3461,11 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             Ok(key) => {
                                 self.app_state.vault_key = Some(key);
                                 self.profile_manager.vault_key = Some(key);
-                                self.app_state.template_manager.vault_key = Some(key);
-                                // See wizard_complete above: push the fresh key to
-                                // already-open windows' replicas immediately, don't
-                                // rely solely on the later skeleton-promote rebuild
-                                // (the recovery-key-display sub-branch below can keep
-                                // the same windows alive for a while before rebuild).
-                                self.app_state.templates_dirty = true;
+                                // Shared core (Phase A/B): one write reaches every
+                                // open window immediately — no per-window replica
+                                // left to go stale before the later skeleton-promote
+                                // rebuild.
+                                self.core.templates_mut().set_vault_key(Some(key));
                                 eprintln!("[App] vault key derived and set — promoting skeleton");
                                 self.needs_vault_unlock = false;
                                 self.needs_migration = false;
@@ -3765,11 +3771,10 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             // No key — no encrypted data yet.
                             self.profile_manager = mlc_app::user_manager::ProfileManager::load(None);
                             self.profile = self.profile_manager.profile.clone();
-                            // Reset shared app state from the old profile.
+                            // Reset shared app state + shared core from the old profile.
                             self.app_state.vault_key = None;
-                            self.app_state.presets.clear();
-                            self.app_state.preset_dirty_ids.clear();
-                            self.app_state.presets_dirty = true;
+                            self.core.presets_mut().replace_all(std::collections::HashMap::new());
+                            self.preset_dirty_ids.clear();
                         }
                         Err(e) => {
                             eprintln!(
@@ -3933,50 +3938,20 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         let _t4 = web_time::Instant::now();
         {
             // ── Conditional sync: only clone when data actually changed ────────
-            // Each dirty flag is set when the corresponding AppState field is
-            // mutated (drain loops above), and reset here after syncing to all
-            // windows.  This avoids O(windows * data_size) allocations per frame
-            // when nothing has changed.
-            if self.app_state.watchlists_dirty {
-                for pw in self.windows.values_mut() {
-                    pw.chart.core.watchlists_mut().replace_all(self.app_state.watchlist_manager.clone());
-                    pw.chart.watchlist_ui = self.app_state.watchlist_ui.clone();
-                }
-                self.app_state.watchlists_dirty = false;
-            }
+            // watchlists/presets/snapshots/templates dirty-flag sync blocks
+            // are GONE (shared-BackendCore arc Phase B) — every window's
+            // `chart.core` is the SAME `Arc<BackendCore>` now, so a write
+            // through `core.X_mut()` anywhere is immediately visible to
+            // every window's next read. There is no second copy left to
+            // replicate. `connectors_dirty` survives — `connector_enabled`
+            // is a genuinely per-window `sidebar_state` copy (Phase C
+            // candidate, not this phase's scope).
             if self.app_state.connectors_dirty {
                 for pw in self.windows.values_mut() {
                     pw.chart.sidebar_state.connector_enabled =
                         self.app_state.connector_enabled.clone();
                 }
                 self.app_state.connectors_dirty = false;
-            }
-            if self.app_state.presets_dirty {
-                for pw in self.windows.values_mut() {
-                    pw.chart.core.presets_mut().replace_all(self.app_state.presets.clone());
-                }
-                self.app_state.presets_dirty = false;
-            }
-            if self.app_state.snapshots_dirty {
-                let drawing_styles = self.app_state.snapshots.last_used_drawing_styles.clone();
-                for pw in self.windows.values_mut() {
-                    pw.chart.core.user_mut().set_snapshots(self.app_state.snapshots.clone());
-                    // Apply persisted last-used drawing styles to every bubble's
-                    // drawing session so new primitives of each type inherit the
-                    // user's last-used style.
-                    let all_bids_sd: Vec<_> = pw.chart.core.bubbles().bubble_ids().collect();
-                    let mut dreg = pw.chart.core.drawings_mut();
-                    for bid in all_bids_sd {
-                        dreg.load_last_styles(bid, &drawing_styles);
-                    }
-                }
-                self.app_state.snapshots_dirty = false;
-            }
-            if self.app_state.templates_dirty {
-                for pw in self.windows.values_mut() {
-                    pw.chart.core.templates_mut().replace_all(self.app_state.template_manager.clone());
-                }
-                self.app_state.templates_dirty = false;
             }
 
             // Sync recalc_mode to every window's indicator manager.

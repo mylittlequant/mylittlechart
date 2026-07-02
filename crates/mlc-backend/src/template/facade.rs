@@ -91,6 +91,14 @@ impl<'a> TemplatesMut<'a> {
         Self { mgr }
     }
 
+    /// Set the vault key used for encrypting/decrypting template files.
+    /// Shared-BackendCore arc: there is one `TemplateManager` for the whole
+    /// process now, so this only needs setting once per unlock, not per
+    /// window (`docs/mlc/plans/shared-backend-core-2026-07-03.md` §2.5).
+    pub fn set_vault_key(&mut self, key: Option<VaultKey>) {
+        self.mgr.vault_key = key;
+    }
+
     pub fn primitive_templates(&self) -> &[PrimitiveTemplate] {
         &self.mgr.primitive_templates
     }

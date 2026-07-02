@@ -1873,3 +1873,59 @@ mod open_presets_claim_tests {
         assert!(!core.try_claim_preset("preset-c", "app-3"));
     }
 }
+
+#[cfg(test)]
+mod phase_b_facade_accessor_tests {
+    //! Coverage for the new facade accessors added while sweeping `main.rs`
+    //! off `AppState`'s domain mirror onto the shared core directly
+    //! (`docs/mlc/plans/shared-backend-core-2026-07-03.md` Phase B):
+    //! `Watchlists::snapshot()` (wholesale serialization for
+    //! `watchlists.json`) and `TemplatesMut::set_vault_key` (the
+    //! template-manager vault-key write path `save_all`/unlock handlers now
+    //! go through instead of poking `TemplateManager.vault_key` directly).
+
+    use super::*;
+
+    fn build_core() -> Arc<BackendCore> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio rt");
+        let (bridge, _live_rx, _connector_ready_rx) = rt.block_on(DataBridge::new());
+        BackendCore::new(Arc::new(bridge), None)
+    }
+
+    #[test]
+    fn watchlists_snapshot_returns_owned_clone_matching_live_state() {
+        let core = build_core();
+        let list_id = core.watchlists_mut().create_list("My List".to_string());
+        let address = mlc_core::InstrumentAddress::new(
+            "binance", "BTCUSDT", mlc_core::instrument::AccountType::Spot,
+        );
+        core.watchlists_mut().add_symbol(list_id, address.clone());
+
+        let snapshot = core.watchlists().snapshot();
+        assert!(snapshot.find(list_id).is_some());
+        assert!(snapshot.contains(list_id, &address));
+
+        // Snapshot is a clone — mutating the live manager afterward must not
+        // retroactively change the already-taken snapshot.
+        core.watchlists_mut().remove_symbol(list_id, &address);
+        assert!(snapshot.contains(list_id, &address), "snapshot must be a point-in-time owned clone, not a live view");
+        assert!(!core.watchlists().contains(list_id, &address));
+    }
+
+    #[test]
+    fn templates_set_vault_key_round_trips_through_facade() {
+        let core = build_core();
+        assert_eq!(core.templates().save_to_default_dir(None).is_ok(), true);
+
+        let key: mlc_vault::vault::VaultKey = [7u8; 32];
+        core.templates_mut().set_vault_key(Some(key));
+        // No direct read-accessor for vault_key on the read facade (it's a
+        // write-only concern from the app's perspective — save paths pass
+        // it explicitly) — round-trip via a second set + no panic/poison
+        // confirms the RwLock write path is sound end-to-end.
+        core.templates_mut().set_vault_key(None);
+    }
+}
