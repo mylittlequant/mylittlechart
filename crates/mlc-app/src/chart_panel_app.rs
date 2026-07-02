@@ -1,12 +1,13 @@
 //! `ChartPanelApp` — the chart panel autonomous application.
 //!
 //! Owns toolbar state, modal states, and the chart data via
-//! `ChartPanelGrid`.  Holds the in-process `UserManager` for profile +
-//! settings snapshots.  Moved here from `mlc-app-layout::panel_app` because
-//! it is squarely app-level state.  The pure rendering helpers
-//! (`ChartPanelLayout`, `compute_chart_internal_layout`,
-//! `chart_toolbar_render_toolbars`, `render_toolbars_with_theme`) stay
-//! in `mlc-app-layout::panel_app`.
+//! `ChartPanelGrid`.  Profile + settings snapshots live on `BackendCore`'s
+//! `UserProfileManager` (step 3.6c) — `load_user_state` reads them from disk
+//! once at startup and returns them for the caller to write into `core`.
+//! Moved here from `mlc-app-layout::panel_app` because it is squarely
+//! app-level state.  The pure rendering helpers (`ChartPanelLayout`,
+//! `compute_chart_internal_layout`, `chart_toolbar_render_toolbars`,
+//! `render_toolbars_with_theme`) stay in `mlc-app-layout::panel_app`.
 
 use uzor::render::RenderContext;
 
@@ -44,7 +45,7 @@ use mlc_app_layout::panel_app::{
     chart_toolbar_render_toolbars,
 };
 
-use crate::user_manager::UserManager;
+use crate::user_manager::load_user_state_from_disk;
 
 pub struct ChartPanelApp {
     pub toolbar_state: ChartToolbarState,
@@ -174,11 +175,8 @@ impl ChartPanelApp {
         mlc_core::user_profile::SettingsSnapshots,
         Option<mlc_vault::vault::VaultKey>,
     ) {
-        let um = UserManager::load();
-
-        let presets = um.presets;
-        let template_manager = um.template_manager;
-        let mut profile = um.profile;
+        let (presets, template_manager, mut profile, snapshots, vault_key) =
+            load_user_state_from_disk(None);
 
         if !profile.active_preset_id.is_empty() {
             self.active_preset_id = profile.active_preset_id.clone();
@@ -207,7 +205,7 @@ impl ChartPanelApp {
         profile.record_launch(env!("CARGO_PKG_VERSION"));
 
         // Save profile immediately to persist the updated launch record.
-        if let Err(e) = mlc_core::user_profile::storage::save_profile(&profile, um.vault_key.as_ref()) {
+        if let Err(e) = mlc_core::user_profile::storage::save_profile(&profile, vault_key.as_ref()) {
             eprintln!("[ChartPanelApp] failed to save profile: {}", e);
         }
 
@@ -218,7 +216,7 @@ impl ChartPanelApp {
             template_manager.indicator_templates.len(),
         );
 
-        (presets, template_manager, profile, um.snapshots, um.vault_key)
+        (presets, template_manager, profile, snapshots, vault_key)
     }
 
     /// Return a mutable reference to the per-leaf indicator overlay state.

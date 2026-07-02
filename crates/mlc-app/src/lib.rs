@@ -2380,9 +2380,9 @@ impl ChartApp {
             ],
         ));
 
-        // Phase 4: use app-level UserManager (loaded once in main.rs) instead of
-        // calling load_user_state() per-window.  Eliminates redundant disk reads
-        // when multiple windows are opened.
+        // Phase 4: use app-level ProfileManager (loaded once in main.rs) instead
+        // of calling load_user_state() per-window.  Eliminates redundant disk
+        // reads when multiple windows are opened.
         app.core.templates_mut().replace_all(user_manager.template_manager.clone());
         app.core.presets_mut().replace_all(user_manager.presets.clone());
 

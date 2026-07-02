@@ -125,9 +125,9 @@ impl ProfileManager {
 
     /// Load active profile data from disk.
     ///
-    /// Mirrors the logic of [`UserManager::load_with_key`] but also loads and
-    /// caches the profile index.  Pass `Some(key)` for encrypted installs,
-    /// `None` for plaintext / first-run.
+    /// Mirrors the logic of [`crate::user_manager::load_user_state_from_disk`]
+    /// but also loads and caches the profile index.  Pass `Some(key)` for
+    /// encrypted installs, `None` for plaintext / first-run.
     pub fn load(key: Option<VaultKey>) -> Self {
         let data_dir = active_profile_data_dir();
         eprintln!(
