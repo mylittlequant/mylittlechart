@@ -1,17 +1,45 @@
 use mlc_core::chart::render_data::{ChartRect, ChartRenderState, ChartTheme};
-use mlc_core::chart::types::{GridOptions, Legend};
-use mlc_core::state::chart_container::ChartContainer;
+use mlc_core::chart::types::price_scale::PriceScale;
+use mlc_core::chart::types::{Crosshair, GridOptions, Legend, TimeScale, Viewport};
+use mlc_core::scale_settings::ScaleSettings;
+use mlc_core::types::HaBar;
+use mlc_core::chart::volume_profile::VolumeProfileData;
 use mlc_core::TimeFormatSettings;
 
 use super::data_bubble::DataBubble;
 
-/// Build a `ChartRenderState` from a window and its associated bubble.
+/// Window-side render inputs needed to build a `ChartRenderState`.
+///
+/// A narrow struct-of-refs instead of `&ChartContainer` — `mlc-backend`
+/// cannot depend on `mlc-app` (which owns `ChartContainer`), so this
+/// function takes only the handful of fields the render pass actually
+/// reads.  The caller (`mlc-app`) builds this from its own `&ChartContainer`
+/// at the call site (see `mlc-app::lib.rs` `render_state_for` callers).
+pub struct ChartWindowRenderInputs<'a> {
+    pub viewport: &'a Viewport,
+    pub price_scale: &'a PriceScale,
+    pub time_scale: &'a TimeScale,
+    pub crosshair: &'a Crosshair,
+    pub scale_settings: &'a ScaleSettings,
+    /// Heikin Ashi memo cache (window-local, viewport-coupled).
+    pub ha_cache: Option<&'a [HaBar]>,
+    /// Volume Profile overlay, already gated by the window's `vp_show` flag.
+    pub vp_overlay: Option<&'a VolumeProfileData>,
+    /// OI Delta display gate (window-local view state).
+    pub oi_show: bool,
+    /// Funding Rate display gate (window-local view state).
+    pub funding_show: bool,
+}
+
+/// Build a `ChartRenderState` from window render inputs and the associated bubble.
 ///
 /// Lifted out of `ChartContainer::to_render_state` so that `mlc-core` no
 /// longer needs to reference `DataBubble` (which lives in `mlc-backend`)
-/// — breaking the dependency cycle.
+/// — breaking the dependency cycle.  Step 4 (state lift) further narrowed
+/// the `window` parameter from `&ChartContainer` (which now lives in
+/// `mlc-app`) to [`ChartWindowRenderInputs`].
 pub fn build_chart_render_state<'a>(
-    window: &'a ChartContainer,
+    window: ChartWindowRenderInputs<'a>,
     bubble: &'a DataBubble,
     chart_rect: ChartRect,
     theme: &'a ChartTheme,
@@ -22,12 +50,12 @@ pub fn build_chart_render_state<'a>(
     legend: &'a Legend,
 ) -> ChartRenderState<'a> {
     ChartRenderState {
-        viewport: &window.viewport,
-        price_scale: &window.price_scale,
-        time_scale: &window.time_scale,
+        viewport: window.viewport,
+        price_scale: window.price_scale,
+        time_scale: window.time_scale,
         bars: &bubble.bars,
         grid,
-        crosshair: &window.crosshair,
+        crosshair: window.crosshair,
         legend,
         chart_rect,
         theme,
@@ -36,7 +64,7 @@ pub fn build_chart_render_state<'a>(
         disable_clip: false,
         time_format_settings,
         timeframe_interval_ms,
-        scale_settings: Some(&window.scale_settings),
+        scale_settings: Some(window.scale_settings),
         body_enabled: true,
         border_enabled: true,
         wick_enabled: true,
@@ -49,8 +77,8 @@ pub fn build_chart_render_state<'a>(
         cvd_line: bubble.cvd_line.as_deref(),
         tpo_sessions: bubble.tpo_sessions.as_deref(),
         // ha_cache + vp_overlay are window-local derived caches (viewport-coupled).
-        ha_cache: window.ha_cache.as_deref(),
-        vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
+        ha_cache: window.ha_cache,
+        vp_overlay: window.vp_overlay,
         // Display gates (oi_show / funding_show) are per-window view state;
         // storage is unconditional on bubble.
         oi_delta_ref: if window.oi_show { bubble.oi_delta.as_deref() } else { None },

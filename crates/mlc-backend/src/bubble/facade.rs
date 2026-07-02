@@ -225,10 +225,13 @@ impl<'a> Bubbles<'a> {
     /// (`build_chart_render_state`, `mlc-backend::bubble::render`) that
     /// legitimately needs the whole struct for the render pass. Never
     /// exposes `&DataBubble` itself to the caller.
+    ///
+    /// `window` is a narrow struct-of-refs (not `&ChartContainer` — that
+    /// type lives in `mlc-app`, which `mlc-backend` cannot depend on).
     pub fn render_state_for<'w>(
         &'w self,
         bid: BubbleId,
-        window: &'w mlc_core::state::chart_container::ChartContainer,
+        window: super::render::ChartWindowRenderInputs<'w>,
         chart_rect: mlc_core::chart::render_data::ChartRect,
         theme: &'w mlc_core::chart::render_data::ChartTheme,
         current_timeframe: Option<&'w str>,

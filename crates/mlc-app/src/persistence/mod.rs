@@ -25,6 +25,8 @@ pub mod hydration_impl;
 pub mod live_cache;
 pub mod load_state;
 pub mod profile;
+pub mod window_snapshot;
 
 pub use live_cache::LivePresetState;
 pub use load_state::LoadState;
+pub use window_snapshot::build_chart_window_snapshot;

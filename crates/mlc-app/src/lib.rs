@@ -3422,9 +3422,20 @@ impl ChartApp {
                     .get(&overlay_panel_id)
                     .unwrap_or(&overlay_default_panel);
                 let overlay_bubble_mgr = self.core.bubbles();
+                let overlay_window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
+                    viewport: &window.viewport,
+                    price_scale: &window.price_scale,
+                    time_scale: &window.time_scale,
+                    crosshair: &window.crosshair,
+                    scale_settings: &window.scale_settings,
+                    ha_cache: window.ha_cache.as_deref(),
+                    vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
+                    oi_show: window.oi_show,
+                    funding_show: window.funding_show,
+                };
                 if let Some(render_state) = overlay_bubble_mgr.render_state_for(
                     window.current_bubble_id,
-                    window,
+                    overlay_window_inputs,
                     chart_rect,
                     &chart_theme,
                     Some(overlay_tf_name.as_str()),
@@ -3498,9 +3509,20 @@ impl ChartApp {
                 .get(&single_pid)
                 .unwrap_or(&single_default_panel);
             let single_overlay_bubble_mgr = self.core.bubbles();
+            let single_overlay_window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
+                viewport: &window.viewport,
+                price_scale: &window.price_scale,
+                time_scale: &window.time_scale,
+                crosshair: &window.crosshair,
+                scale_settings: &window.scale_settings,
+                ha_cache: window.ha_cache.as_deref(),
+                vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
+                oi_show: window.oi_show,
+                funding_show: window.funding_show,
+            };
             if let Some(render_state) = single_overlay_bubble_mgr.render_state_for(
                 window.current_bubble_id,
-                window,
+                single_overlay_window_inputs,
                 chart_rect,
                 &chart_theme,
                 Some(single_overlay_tf_name.as_str()),
@@ -3754,9 +3776,20 @@ impl ChartApp {
                     .unwrap_or(&split_default_panel);
                 let scale_corner_state = window.to_corner_state();
                 let split_bubble_mgr = self.core.bubbles();
+                let split_window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
+                    viewport: &window.viewport,
+                    price_scale: &window.price_scale,
+                    time_scale: &window.time_scale,
+                    crosshair: &window.crosshair,
+                    scale_settings: &window.scale_settings,
+                    ha_cache: window.ha_cache.as_deref(),
+                    vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
+                    oi_show: window.oi_show,
+                    funding_show: window.funding_show,
+                };
                 let render_state = match split_bubble_mgr.render_state_for(
                     window.current_bubble_id,
-                    window,
+                    split_window_inputs,
                     chart_rect,
                     &chart_theme,
                     Some(split_tf_name.as_str()),
@@ -4346,9 +4379,20 @@ impl ChartApp {
                     content_rect.width,
                     content_rect.height,
                 );
+                let single_window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
+                    viewport: &window.viewport,
+                    price_scale: &window.price_scale,
+                    time_scale: &window.time_scale,
+                    crosshair: &window.crosshair,
+                    scale_settings: &window.scale_settings,
+                    ha_cache: window.ha_cache.as_deref(),
+                    vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
+                    oi_show: window.oi_show,
+                    funding_show: window.funding_show,
+                };
                 single_window_bubble_mgr.render_state_for(
                     window.current_bubble_id,
-                    window,
+                    single_window_inputs,
                     chart_rect,
                     &chart_theme,
                     Some(single_tf_name),

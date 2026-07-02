@@ -7201,7 +7201,7 @@ impl ChartApp {
                     .unwrap_or(&snap_default_panel);
                 let dreg_snap = self.core.drawings();
                 let snap_prims = dreg_snap.primitives(window.current_bubble_id);
-                preset.windows.push(ChartWindowSnapshot::from_window(
+                preset.windows.push(crate::persistence::build_chart_window_snapshot(
                     window, snap_panel_state, snap_prims, leaf_id.0, gid, ptids, stashed_ch, stashed_prims_snap,
                     snap_symbol, snap_timeframe, snap_exchange, snap_account_type,
                 ));
