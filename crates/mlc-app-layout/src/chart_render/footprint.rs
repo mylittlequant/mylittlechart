@@ -160,16 +160,27 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
     // still readable behind the cluster text.
     draw_wicks(ctx, state, bars, start, end, bar_w);
 
-    // Then the per-level cluster grid. Bars with empty levels are SKIPPED
-    // (no fake candle fallback — owner gets honest "no cluster data" for
-    // historical klines-only bars). The wick line drawn above still shows
-    // price excursion so the chart is not a blank canvas.
+    // Then the per-level cluster grid. Bars with empty levels (historical
+    // klines-only window — no per-trade data that far back) fall back to a
+    // plain OHLC candle body so history reads as candles until clusters
+    // exist; wick lines are already drawn above for every bar.
     let mut bars_drawn = 0_usize;
     let mut bars_skipped_empty = 0_usize;
     for i in start..end {
         let bar = &bars[i];
         if bar.levels.is_empty() {
             bars_skipped_empty += 1;
+            let cx = viewport.bar_to_x(i) + rect.x;
+            let body_w = (bar_w * 0.6).max(1.0);
+            if cx + body_w * 0.5 < rect.x || cx - body_w * 0.5 > rect.x + rect.width {
+                continue;
+            }
+            let theme = state.theme;
+            let up = bar.close >= bar.open;
+            let oy = rect.y + price_to_y_local(bar.open, price_scale, rect.height);
+            let cy = rect.y + price_to_y_local(bar.close, price_scale, rect.height);
+            ctx.set_fill_color(if up { &theme.candle_up } else { &theme.candle_down });
+            ctx.fill_rect(cx - body_w * 0.5, oy.min(cy), body_w, (oy - cy).abs().max(1.0));
             continue;
         }
         bars_drawn += 1;
