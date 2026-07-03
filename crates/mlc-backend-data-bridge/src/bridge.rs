@@ -1596,6 +1596,27 @@ impl DataBridge {
         );
     }
 
+    /// Check whether a `Stream::Kline` forwarder for this instrument + TF is
+    /// currently registered as subscribed.
+    ///
+    /// Read-only liveness probe used by callers (e.g. the unpark warm-cure)
+    /// that need to distinguish "bars present + live sub" from "bars present
+    /// + dead sub" — post audit-D4 the dedup gate honestly reflects forwarder
+    /// liveness (it self-evicts on exit), so this check is now meaningful.
+    pub fn is_kline_alive(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        timeframe: &str,
+    ) -> bool {
+        let key: FetchKey = (exchange_id, account_type, symbol.to_string(), timeframe.to_string());
+        self.station_kline_subscribed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(&key)
+    }
+
     /// Subscribe to a range-bar stream (`price_units` price-move per bar, ×1e8 fixed-point).
     ///
     /// The station's `Stream::RangeBar(u64)` aggregates a Trade stream into a

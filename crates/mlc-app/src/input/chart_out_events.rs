@@ -1450,7 +1450,12 @@ impl ChartApp {
                             continue;
                         }
                         let at = mlc_backend_data_bridge::account_type_to_dig3(*at);
-                        let force = !*has_bars;
+                        // A window can have bars but a dead kline forwarder (D4
+                        // fixed the gate so this is now honestly observable) —
+                        // force the refetch+resub in that case too, not only
+                        // when the bubble came back empty (audit D5).
+                        let kline_alive = self.core.bridge.is_kline_alive(eid, sym, at, &tf.name);
+                        let force = !*has_bars || !kline_alive;
                         self.pending_cure_after_preset_load.push((eid, sym.clone(), tf.clone(), at, force));
                         if force { bars_requested_force += 1; } else { bars_requested_lazy += 1; }
                     }
