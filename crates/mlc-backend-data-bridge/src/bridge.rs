@@ -2368,6 +2368,34 @@ impl DataBridge {
                     "[Bridge::derived-bar-fwd subscribed OK] respawn={} {:?} {} wire={} stream={} ok_streams={}",
                     respawn_n, exchange_id, symbol_canonical, symbol_wire, stream_label, report.ok.len(),
                 );
+                // Pull-then-live: on the FIRST subscribe of this task (a fresh
+                // chart-open / re-open), peek the station's own `Series<BarPoint>`
+                // ring for this key and replay it before entering the recv loop.
+                // The ring already holds whatever the warm-seed / prior-session
+                // subscribers put there (register-in-series_handles fix,
+                // dig3 commit 620cda0) — this makes re-open show history
+                // instantly instead of waiting for the first live tick.
+                // Skipped on respawn cycles (respawn_n > 0): those are internal
+                // reconnects of the SAME open, not a new consumer view.
+                if respawn_n == 0 {
+                    if let Some(key) = report.ok.first() {
+                        if let Some(series) = station.series::<BarPoint>(key) {
+                            let points = series.read().await.snapshot();
+                            crate::dlog!(
+                                "[Bridge::derived-bar-fwd ring-peek] {:?} {} stream={} n={}",
+                                exchange_id, symbol_canonical, stream_label, points.len(),
+                            );
+                            for point in &points {
+                                let _ = tx.send(LiveUpdate::BarUpdate {
+                                    exchange_id,
+                                    account_type,
+                                    symbol: symbol_canonical.clone(),
+                                    bar: bar_point_to_bar(point),
+                                });
+                            }
+                        }
+                    }
+                }
                 let mut bar_n_this_cycle: u64 = 0;
                 while let Some(ev) = report.handle.recv().await {
                     if let digdigdig3_station::Event::Bar { point, .. } = ev {
@@ -2467,6 +2495,45 @@ impl DataBridge {
                     "[Bridge::footprint-fwd subscribed OK] respawn={} {:?} {} wire={} stream={} ok_streams={}",
                     respawn_n, exchange_id, symbol_canonical, symbol_wire, stream_label, report.ok.len(),
                 );
+                // Pull-then-live (see spawn_derived_bar_sub for rationale):
+                // replay the station's own Series<FootprintPoint> ring on the
+                // first subscribe of this task, before entering the recv loop.
+                // Also upserts into the bridge's own `series` Vec (same as the
+                // live path) so readers relying on that Vec see the same data.
+                if respawn_n == 0 {
+                    if let Some(key) = report.ok.first() {
+                        if let Some(station_series) = station.series::<digdigdig3_station::data::FootprintPoint>(key) {
+                            let points = station_series.read().await.snapshot();
+                            crate::dlog!(
+                                "[Bridge::footprint-fwd ring-peek] {:?} {} stream={} n={}",
+                                exchange_id, symbol_canonical, stream_label, points.len(),
+                            );
+                            if !points.is_empty() {
+                                let mut w = series.write().await;
+                                for point in &points {
+                                    let ts = point.open_time;
+                                    if let Some(last) = w.last_mut() {
+                                        if last.open_time == ts {
+                                            *last = point.clone();
+                                        } else {
+                                            w.push(point.clone());
+                                        }
+                                    } else {
+                                        w.push(point.clone());
+                                    }
+                                }
+                            }
+                            for point in points {
+                                let _ = tx.send(LiveUpdate::FootprintUpdate {
+                                    exchange_id,
+                                    account_type,
+                                    symbol: symbol_canonical.clone(),
+                                    point,
+                                });
+                            }
+                        }
+                    }
+                }
                 let mut fp_n_this_cycle: u64 = 0;
                 while let Some(ev) = report.handle.recv().await {
                     if let digdigdig3_station::Event::Footprint { point, .. } = ev {
@@ -2546,6 +2613,27 @@ impl DataBridge {
                     }
                 };
                 if !report.failed.is_empty() && report.ok.is_empty() { return; }
+                // Pull-then-live: replay the station's Series<RenkoBrickPoint>
+                // ring on the first subscribe of this task (see
+                // spawn_derived_bar_sub for full rationale).
+                if respawn_n == 0 {
+                    if let Some(key) = report.ok.first() {
+                        if let Some(station_series) = station.series::<digdigdig3_station::data::RenkoBrickPoint>(key) {
+                            let points = station_series.read().await.snapshot();
+                            crate::dlog!(
+                                "[Bridge::renko-fwd ring-peek] {:?} {} n={}",
+                                exchange_id, symbol_canonical, points.len(),
+                            );
+                            for point in points {
+                                let _ = tx.send(LiveUpdate::RenkoBarUpdate {
+                                    exchange_id, account_type,
+                                    symbol: symbol_canonical.clone(),
+                                    point,
+                                });
+                            }
+                        }
+                    }
+                }
                 while let Some(ev) = report.handle.recv().await {
                     if let digdigdig3_station::Event::RenkoBar { point, .. } = ev {
                         let _ = tx.send(LiveUpdate::RenkoBarUpdate {
@@ -2592,6 +2680,27 @@ impl DataBridge {
                     }
                 };
                 if !report.failed.is_empty() && report.ok.is_empty() { return; }
+                // Pull-then-live: replay the station's
+                // Series<ThreeLineBreakLinePoint> ring on the first subscribe
+                // of this task (see spawn_derived_bar_sub for full rationale).
+                if respawn_n == 0 {
+                    if let Some(key) = report.ok.first() {
+                        if let Some(station_series) = station.series::<digdigdig3_station::data::ThreeLineBreakLinePoint>(key) {
+                            let points = station_series.read().await.snapshot();
+                            crate::dlog!(
+                                "[Bridge::tlb-fwd ring-peek] {:?} {} n={}",
+                                exchange_id, symbol_canonical, points.len(),
+                            );
+                            for point in points {
+                                let _ = tx.send(LiveUpdate::ThreeLineBreakUpdate {
+                                    exchange_id, account_type,
+                                    symbol: symbol_canonical.clone(),
+                                    point,
+                                });
+                            }
+                        }
+                    }
+                }
                 while let Some(ev) = report.handle.recv().await {
                     if let digdigdig3_station::Event::ThreeLineBreakUpdate { point, .. } = ev {
                         let _ = tx.send(LiveUpdate::ThreeLineBreakUpdate {
@@ -2637,6 +2746,28 @@ impl DataBridge {
                     }
                 };
                 if !report.failed.is_empty() && report.ok.is_empty() { return; }
+                // Pull-then-live: replay the station's Series<PnfColumnPoint>
+                // ring on the first subscribe of this task (see
+                // spawn_derived_bar_sub for full rationale).
+                if respawn_n == 0 {
+                    if let Some(key) = report.ok.first() {
+                        if let Some(station_series) = station.series::<digdigdig3_station::data::PnfColumnPoint>(key) {
+                            let points = station_series.read().await.snapshot();
+                            crate::dlog!(
+                                "[Bridge::pnf-fwd ring-peek] {:?} {} n={}",
+                                exchange_id, symbol_canonical, points.len(),
+                            );
+                            for point in points {
+                                let _ = tx.send(LiveUpdate::PnfBarUpdate {
+                                    exchange_id, account_type,
+                                    symbol: symbol_canonical.clone(),
+                                    point,
+                                    box_size,
+                                });
+                            }
+                        }
+                    }
+                }
                 while let Some(ev) = report.handle.recv().await {
                     if let digdigdig3_station::Event::PnfBar { point, .. } = ev {
                         let _ = tx.send(LiveUpdate::PnfBarUpdate {
@@ -2682,6 +2813,27 @@ impl DataBridge {
                     }
                 };
                 if !report.failed.is_empty() && report.ok.is_empty() { return; }
+                // Pull-then-live: replay the station's Series<KagiSegmentPoint>
+                // ring on the first subscribe of this task (see
+                // spawn_derived_bar_sub for full rationale).
+                if respawn_n == 0 {
+                    if let Some(key) = report.ok.first() {
+                        if let Some(station_series) = station.series::<digdigdig3_station::data::KagiSegmentPoint>(key) {
+                            let points = station_series.read().await.snapshot();
+                            crate::dlog!(
+                                "[Bridge::kagi-fwd ring-peek] {:?} {} n={}",
+                                exchange_id, symbol_canonical, points.len(),
+                            );
+                            for point in points {
+                                let _ = tx.send(LiveUpdate::KagiBarUpdate {
+                                    exchange_id, account_type,
+                                    symbol: symbol_canonical.clone(),
+                                    point,
+                                });
+                            }
+                        }
+                    }
+                }
                 while let Some(ev) = report.handle.recv().await {
                     if let digdigdig3_station::Event::KagiBar { point, .. } = ev {
                         let _ = tx.send(LiveUpdate::KagiBarUpdate {
@@ -2726,6 +2878,27 @@ impl DataBridge {
                     }
                 };
                 if !report.failed.is_empty() && report.ok.is_empty() { return; }
+                // Pull-then-live: replay the station's Series<ScalarBarPoint>
+                // ring on the first subscribe of this task (see
+                // spawn_derived_bar_sub for full rationale).
+                if respawn_n == 0 {
+                    if let Some(key) = report.ok.first() {
+                        if let Some(station_series) = station.series::<digdigdig3_station::data::ScalarBarPoint>(key) {
+                            let points = station_series.read().await.snapshot();
+                            crate::dlog!(
+                                "[Bridge::cvd-fwd ring-peek] {:?} {} n={}",
+                                exchange_id, symbol_canonical, points.len(),
+                            );
+                            for point in points {
+                                let _ = tx.send(LiveUpdate::CvdLineUpdate {
+                                    exchange_id, account_type,
+                                    symbol: symbol_canonical.clone(),
+                                    point,
+                                });
+                            }
+                        }
+                    }
+                }
                 while let Some(ev) = report.handle.recv().await {
                     if let digdigdig3_station::Event::CvdLine { point, .. } = ev {
                         let _ = tx.send(LiveUpdate::CvdLineUpdate {
@@ -2770,6 +2943,27 @@ impl DataBridge {
                     }
                 };
                 if !report.failed.is_empty() && report.ok.is_empty() { return; }
+                // Pull-then-live: replay the station's Series<TpoSessionPoint>
+                // ring on the first subscribe of this task (see
+                // spawn_derived_bar_sub for full rationale).
+                if respawn_n == 0 {
+                    if let Some(key) = report.ok.first() {
+                        if let Some(station_series) = station.series::<digdigdig3_station::data::TpoSessionPoint>(key) {
+                            let points = station_series.read().await.snapshot();
+                            crate::dlog!(
+                                "[Bridge::tpo-fwd ring-peek] {:?} {} n={}",
+                                exchange_id, symbol_canonical, points.len(),
+                            );
+                            for point in points {
+                                let _ = tx.send(LiveUpdate::TpoProfileUpdate {
+                                    exchange_id, account_type,
+                                    symbol: symbol_canonical.clone(),
+                                    point,
+                                });
+                            }
+                        }
+                    }
+                }
                 while let Some(ev) = report.handle.recv().await {
                     if let digdigdig3_station::Event::TpoProfile { point, .. } = ev {
                         let _ = tx.send(LiveUpdate::TpoProfileUpdate {
