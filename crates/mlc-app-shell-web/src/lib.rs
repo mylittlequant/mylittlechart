@@ -158,6 +158,19 @@ struct WebAppState {
     screenshot_pending: bool,
     /// DOM canvas element for cursor CSS updates.
     canvas_id:          String,
+    /// Settle-debounce for `chart.resize` (audit D2).  `canvas.client_width()/
+    /// client_height()` is measured every RAF frame (cheap), but a raw per-frame
+    /// value can land mid-reflow (47px slivers observed) if it's applied straight
+    /// into viewport geometry — native only resizes on discrete OS events, wasm
+    /// has no such boundary since there's no dedicated resize callback wired to
+    /// `chart.resize` (the DOM `resize` listener only feeds `poll_events`, and
+    /// layout can also change without a `resize` event, e.g. sidebar toggle).
+    /// `last_measured` holds the previous frame's raw reading; `last_applied`
+    /// holds the size actually handed to `chart.resize`. The size is applied
+    /// only once two consecutive frames agree, so a single sliver frame never
+    /// reaches viewport geometry — cost is one frame (~16ms) of extra latency.
+    last_measured:      Option<(u32, u32)>,
+    last_applied:       Option<(u32, u32)>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -177,6 +190,8 @@ impl WebAppState {
             toolbar_tooltip:    mlc_app_input_shell::TooltipState::new(),
             screenshot_pending: false,
             canvas_id:          canvas_id.to_string(),
+            last_measured:      None,
+            last_applied:       None,
         }
     }
 }
@@ -613,15 +628,42 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
 
     raw_ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0)?;
 
-    // Chart owns the area BELOW the chrome strip — shrink by CHROME_HEIGHT so
-    // the chart's panel/toolbar layout doesn't draw under the chrome and the
-    // bottom edge stays visible.
-    let chart_h = css_h.saturating_sub(CHROME_HEIGHT as u32);
+    // ── Settle-debounced resize (audit D2) ─────────────────────────────────
+    // `canvas.client_width()/client_height()` is measured every RAF frame
+    // above (cheap DOM read), but a raw per-frame value can land mid-reflow —
+    // 47px slivers observed — if fed straight into `chart.resize`. Native only
+    // resizes on discrete OS `WindowResized` events; wasm's DOM `resize`
+    // listener alone is not enough because layout can also change without a
+    // `resize` event firing (sidebar toggle, flex/CSS changes). Apply only
+    // once two consecutive frames agree on the same (css_w, css_h) AND that
+    // value differs from what's already applied — one-frame latency (~16ms)
+    // is the cost, and the DOM-reflow sliver class stops reaching viewport
+    // geometry entirely. First frame ever (no previous measurement) applies
+    // immediately so the chart isn't left at 0×0 for a frame.
     {
         let mut st = state.borrow_mut();
-        st.chart.resize(css_w, chart_h);
+        let measured = (css_w, css_h);
+        let is_first_frame = st.last_measured.is_none() && st.last_applied.is_none();
+        let settled = st.last_measured == Some(measured);
+        let already_applied = st.last_applied == Some(measured);
+        if (is_first_frame || settled) && !already_applied {
+            let chart_h = measured.1.saturating_sub(CHROME_HEIGHT as u32);
+            st.chart.resize(measured.0, chart_h);
+            st.last_applied = Some(measured);
+        }
+        st.last_measured = Some(measured);
     }
 
+    // Rendering uses the RAW per-frame css size (not the debounced-applied
+    // size) purely for canvas2d transform/fill extents
+    // (`Canvas2dChartRenderContext::canvas_width/height`) — chart layout
+    // itself reads `chart.width`/`chart.height` (set by the applied resize
+    // above), not from `ctx`, via `prepare_frame`. `set_coordinate_space`
+    // overwrites `chart_width`/`chart_height` on `ctx` per sub-pane before any
+    // primitive draws, so the two dimensions never fight over chart geometry —
+    // the only consumers of the raw ctx dimensions are `canvas_width()`/
+    // `canvas_height()`, used as a cosmetic fallback bound in a couple of
+    // drawing primitives (cycle_lines/time_cycles), not layout-critical.
     let mut ctx = Canvas2dChartRenderContext::new(raw_ctx, dpr, css_w, css_h);
 
     let now_ms = win
