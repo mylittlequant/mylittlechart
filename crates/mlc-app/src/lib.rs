@@ -3223,7 +3223,7 @@ impl ChartApp {
             let any_bars = bars_by_chart.values().any(|v| !v.is_empty());
             for (cid, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                 let bars = bars_by_chart.get(cid).map(|v| v.as_slice()).unwrap_or(&[]);
-                if window.viewport.chart_width > 0.0 && window.viewport.bar_spacing > 0.0 && !bars.is_empty() {
+                if window.viewport().chart_width > 0.0 && window.viewport().bar_spacing > 0.0 && !bars.is_empty() {
                     window.snap_to_end(crate::chart_container::DEFAULT_SNAP_MARGIN);
                 }
                 window.calc_auto_scale(bars);
@@ -3262,29 +3262,13 @@ impl ChartApp {
         let new_width = extended.main_chart.chart.width;
         let new_height = extended.main_chart.chart.height;
         for window in self.panel_app.panel_grid.containers_mut().values_mut() {
-            let old_width = window.viewport.chart_width;
             // Pin right edge: shift view_start so the last visible bars stay
             // anchored when the window is resized, matching terminal behavior.
             // Skip bar_shift for windows still waiting for their initial snap
             // (needs_auto_scale_after_bars = true and old_width = 0) — the
             // deferred snap in prepare_frame() will compute view_start correctly
             // once chart_width is set here.
-            if !window.needs_auto_scale_after_bars
-                && (old_width - new_width).abs() > 0.5
-                && window.viewport.bar_spacing > 0.0
-                && old_width > 0.0
-                && new_width > 0.0
-            {
-                let bar_shift = (old_width - new_width) / window.viewport.bar_spacing;
-                window.viewport.view_start += bar_shift;
-            }
-            // Don't store negative/zero widths — they'd poison the next bar_shift calc.
-            if new_width > 0.0 {
-                window.viewport.chart_width = new_width;
-            }
-            if new_height > 0.0 {
-                window.viewport.chart_height = new_height;
-            }
+            window.resize_geometry(new_width, new_height);
         }
     }
 
@@ -3412,8 +3396,8 @@ impl ChartApp {
                     .unwrap_or(&overlay_default_panel);
                 let overlay_bubble_mgr = self.core.bubbles();
                 let overlay_window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
-                    viewport: &window.viewport,
-                    price_scale: &window.price_scale,
+                    viewport: window.viewport(),
+                    price_scale: window.price_scale(),
                     time_scale: &window.time_scale,
                     crosshair: &window.crosshair,
                     scale_settings: &window.scale_settings,
@@ -3499,8 +3483,8 @@ impl ChartApp {
                 .unwrap_or(&single_default_panel);
             let single_overlay_bubble_mgr = self.core.bubbles();
             let single_overlay_window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
-                viewport: &window.viewport,
-                price_scale: &window.price_scale,
+                viewport: window.viewport(),
+                price_scale: window.price_scale(),
                 time_scale: &window.time_scale,
                 crosshair: &window.crosshair,
                 scale_settings: &window.scale_settings,
@@ -3766,8 +3750,8 @@ impl ChartApp {
                 let scale_corner_state = window.to_corner_state();
                 let split_bubble_mgr = self.core.bubbles();
                 let split_window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
-                    viewport: &window.viewport,
-                    price_scale: &window.price_scale,
+                    viewport: window.viewport(),
+                    price_scale: window.price_scale(),
                     time_scale: &window.time_scale,
                     crosshair: &window.crosshair,
                     scale_settings: &window.scale_settings,
@@ -3928,7 +3912,7 @@ impl ChartApp {
                         width: main.chart.width,
                         height: main.chart.height,
                     };
-                    let mut corrected_vp = window.viewport.clone();
+                    let mut corrected_vp = window.viewport().clone();
                     corrected_vp.chart_width = main.chart.width;
                     corrected_vp.chart_height = main.chart.height;
 
@@ -3948,8 +3932,8 @@ impl ChartApp {
                             ctx,
                             chart_area,
                             &corrected_vp,
-                            window.price_scale.price_min,
-                            window.price_scale.price_max,
+                            window.price_scale().price_min,
+                            window.price_scale().price_max,
                             &split_bars_vec[..],
                             split_bell_prims,
                             &self.core.indicators(),
@@ -4369,8 +4353,8 @@ impl ChartApp {
                     content_rect.height,
                 );
                 let single_window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
-                    viewport: &window.viewport,
-                    price_scale: &window.price_scale,
+                    viewport: window.viewport(),
+                    price_scale: window.price_scale(),
                     time_scale: &window.time_scale,
                     crosshair: &window.crosshair,
                     scale_settings: &window.scale_settings,
@@ -4489,7 +4473,7 @@ impl ChartApp {
                         height: main.chart.height,
                     };
                     // Corrected viewport matching main chart area dimensions.
-                    let mut corrected_vp = window.viewport.clone();
+                    let mut corrected_vp = window.viewport().clone();
                     corrected_vp.chart_width = main.chart.width;
                     corrected_vp.chart_height = main.chart.height;
 
@@ -4507,8 +4491,8 @@ impl ChartApp {
                             ctx,
                             chart_area,
                             &corrected_vp,
-                            window.price_scale.price_min,
-                            window.price_scale.price_max,
+                            window.price_scale().price_min,
+                            window.price_scale().price_max,
                             &single_bars_vec2[..],
                             single_bell_prims,
                             &self.core.indicators(),
@@ -7069,7 +7053,7 @@ impl ChartApp {
             .map(|(leaf_id, window)| {
                 // Indicators are scoped by bubble — pass current_tag_id.
                 let bubble_id_val = window.current_tag_id.0;
-                let (vs, ve) = window.viewport.visible_range();
+                let (vs, ve) = window.viewport().visible_range();
                 (leaf_id, bubble_id_val, vs, ve)
             })
             .collect();
@@ -7581,7 +7565,7 @@ impl ChartApp {
                     // bar_delta is a PIXEL delta (drag distance). Viewport
                     // dispatches internally: time mode shifts the time
                     // anchor, index mode converts via bar_spacing.
-                    window.viewport.pan(bar_delta);
+                    window.pan(bar_delta);
                     if let mlc_core::engine::input::DragMode::SubPaneChart { pane_index } = drag_mode {
                         let instance_id = crate::chart_container::collect_inner_instance_ids(
                             &window.inner_docking,
@@ -7600,17 +7584,19 @@ impl ChartApp {
                                 }
                             }
                         }
-                    } else if window.price_scale.scale_mode.is_auto_y() {
+                    } else if window.price_scale().scale_mode.is_auto_y() {
                         calc_visible_price_range(window, &active_bars);
                     } else {
-                        let price_range = window.price_scale.price_max - window.price_scale.price_min;
-                        let price_delta_scaled = price_delta * price_range / window.viewport.chart_height;
-                        window.price_scale.price_min += price_delta_scaled;
-                        window.price_scale.price_max += price_delta_scaled;
+                        let price_range = window.price_scale().price_max - window.price_scale().price_min;
+                        let price_delta_scaled = price_delta * price_range / window.viewport().chart_height;
+                        window.set_price_range(
+                            window.price_scale().price_min + price_delta_scaled,
+                            window.price_scale().price_max + price_delta_scaled,
+                        );
                     }
                     // Propagate viewport change to sync group.
-                    let view_start = window.viewport.view_start;
-                    let bar_spacing = window.viewport.bar_spacing;
+                    let view_start = window.viewport().view_start;
+                    let bar_spacing = window.viewport().bar_spacing;
                     // End the mutable borrow so we can call propagate_viewport_to_sync_group.
                     let _ = window;
                     let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
@@ -7623,22 +7609,18 @@ impl ChartApp {
                     let local_center_x = center_x - chart_x;
                     let Some(window) = self.panel_app.panel_grid.active_container_mut() else { continue; };
                     if factor_x != 1.0 {
-                        // viewport.zoom_at dispatches axis-aware internally.
-                        window.viewport.zoom_at(local_center_x, factor_x);
-                        if window.price_scale.scale_mode.is_auto_y() {
-                            calc_visible_price_range(window, &active_bars);
-                        }
+                        // zoom_horizontal dispatches the zoom then auto-scales
+                        // when the mode is auto-Y (mirrors calc_visible_price_range).
+                        window.zoom_horizontal(local_center_x, factor_x, &active_bars);
                     }
                     if factor_y != 1.0 {
-                        window.price_scale.scale_mode = ScaleMode::Manual;
-                        let center = (window.price_scale.price_min + window.price_scale.price_max) / 2.0;
-                        let half_range = (window.price_scale.price_max - window.price_scale.price_min) / 2.0 * factor_y;
-                        window.price_scale.price_min = center - half_range;
-                        window.price_scale.price_max = center + half_range;
+                        let center = (window.price_scale().price_min + window.price_scale().price_max) / 2.0;
+                        let half_range = (window.price_scale().price_max - window.price_scale().price_min) / 2.0 * factor_y;
+                        window.set_price_range(center - half_range, center + half_range);
                     }
                     // Propagate viewport change to sync group.
-                    let view_start = window.viewport.view_start;
-                    let bar_spacing = window.viewport.bar_spacing;
+                    let view_start = window.viewport().view_start;
+                    let bar_spacing = window.viewport().bar_spacing;
                     // End the mutable borrow so we can call propagate_viewport_to_sync_group.
                     let _ = window;
                     if factor_x != 1.0 {
@@ -7681,9 +7663,9 @@ impl ChartApp {
                             window.sub_pane_y_state.entry(iid).or_default().auto_scale = true;
                         }
                         // Restore main chart to Auto so the A/M button reflects the true state.
-                        window.price_scale.scale_mode = ScaleMode::Auto;
-                        let view_start = window.viewport.view_start;
-                        let bar_spacing = window.viewport.bar_spacing;
+                        window.set_scale_mode(ScaleMode::Auto);
+                        let view_start = window.viewport().view_start;
+                        let bar_spacing = window.viewport().bar_spacing;
                         let _ = window;
                         let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
                         if let Some(active_leaf) = active_leaf_opt {
@@ -7695,19 +7677,19 @@ impl ChartApp {
                             );
                         }
                     } else {
-                        window.price_scale.scale_mode = ScaleMode::Auto;
+                        window.set_scale_mode(ScaleMode::Auto);
                         calc_visible_price_range(window, &active_bars);
                     }
                 }
                 ChartOutputAction::ResetTimeScale => {
                     let Some(window) = self.panel_app.panel_grid.active_container_mut() else { continue; };
-                    window.viewport.reset_to_default();
-                    window.price_scale.scale_mode = ScaleMode::Auto;
+                    window.reset_time_scale();
+                    window.set_scale_mode(ScaleMode::Auto);
                     calc_visible_price_range(window, &active_bars);
                 }
                 ChartOutputAction::TogglePriceScaleMode => {
                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                        window.price_scale.toggle_mode();
+                        window.toggle_price_scale_mode();
                     }
                 }
                 ChartOutputAction::UpdateCrosshair { .. } => {
@@ -7835,10 +7817,10 @@ impl ChartApp {
                         if let Some(w) = self.panel_app.panel_grid.active_container() {
                             if w.crosshair.is_magnet() {
                                 let local_x = screen_x - chart_x;
-                                let bar_idx = w.viewport.x_to_bar(local_x);
+                                let bar_idx = w.viewport().x_to_bar(local_x);
                                 let (snapped, _) = w.calculate_magnet_snap(
                                     &active_bars, bar_idx, data_price, chart_h,
-                                    w.price_scale.price_min, w.price_scale.price_max,
+                                    w.price_scale().price_min, w.price_scale().price_max,
                                 );
                                 snapped
                             } else {
@@ -7884,10 +7866,10 @@ impl ChartApp {
                         if let Some(w) = self.panel_app.panel_grid.active_container() {
                             if w.crosshair.is_magnet() {
                                 let local_x = screen_x - chart_x;
-                                let bar_idx = w.viewport.x_to_bar(local_x);
+                                let bar_idx = w.viewport().x_to_bar(local_x);
                                 let (snapped, _) = w.calculate_magnet_snap(
                                     &active_bars, bar_idx, data_price, chart_h,
-                                    w.price_scale.price_min, w.price_scale.price_max,
+                                    w.price_scale().price_min, w.price_scale().price_max,
                                 );
                                 snapped
                             } else {
@@ -7938,10 +7920,10 @@ impl ChartApp {
                         if let Some(w) = self.panel_app.panel_grid.active_container() {
                             if w.crosshair.is_magnet() {
                                 let local_x = screen_x - chart_x;
-                                let bar_idx = w.viewport.x_to_bar(local_x);
+                                let bar_idx = w.viewport().x_to_bar(local_x);
                                 let (snapped, _) = w.calculate_magnet_snap(
                                     &active_bars, bar_idx, data_price, chart_h,
-                                    w.price_scale.price_min, w.price_scale.price_max,
+                                    w.price_scale().price_min, w.price_scale().price_max,
                                 );
                                 snapped
                             } else {
@@ -8118,9 +8100,9 @@ impl ChartApp {
                     }
                     // Dragging a sub-pane price scale switches the whole window to
                     // Manual mode so the A/M button reflects the true state.
-                    window.price_scale.scale_mode = ScaleMode::Manual;
-                    let view_start = window.viewport.view_start;
-                    let bar_spacing = window.viewport.bar_spacing;
+                    window.set_scale_mode(ScaleMode::Manual);
+                    let view_start = window.viewport().view_start;
+                    let bar_spacing = window.viewport().bar_spacing;
                     let _ = window;
                     let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
                     if let Some(active_leaf) = active_leaf_opt {
@@ -8260,7 +8242,7 @@ impl ChartApp {
                         Some(source_bars[idx].timestamp)
                     }
                 };
-                (w.viewport.chart_width, ts, view_start - view_start.floor())
+                (w.viewport().chart_width, ts, view_start - view_start.floor())
             }
             None => return,
         };
@@ -8292,14 +8274,6 @@ impl ChartApp {
         for leaf_id in sync_leaves {
             let this_peer_bars: &[mlc_core::Bar] = peer_bars.get(&leaf_id).map(|v| v.as_slice()).unwrap_or(&[]);
             if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
-                // Apply scale_mode BEFORE the auto-scale check so the new mode takes effect.
-                if let Some(mode) = scale_mode {
-                    window.price_scale.scale_mode = mode;
-                    let is_auto = mode.is_auto_y();
-                    for state in window.sub_pane_y_state.values_mut() {
-                        state.auto_scale = is_auto;
-                    }
-                }
                 // Time-based sync: convert source timestamp to peer's bar index so
                 // windows with different bar counts land on the same calendar date.
                 let peer_view_start = anchor_ts
@@ -8308,33 +8282,22 @@ impl ChartApp {
                     .unwrap_or(view_start);
                 // Sync visible bar count: peer gets the same number of bars in view,
                 // but its own bar_spacing adapts to its chart_width.
-                let peer_spacing = if visible_bars > 0.0 && window.viewport.chart_width > 0.0 {
-                    (window.viewport.chart_width / visible_bars).clamp(
-                        window.viewport.min_bar_spacing(),
-                        window.viewport.max_bar_spacing(),
+                let peer_spacing = if visible_bars > 0.0 && window.viewport().chart_width > 0.0 {
+                    (window.viewport().chart_width / visible_bars).clamp(
+                        window.viewport().min_bar_spacing(),
+                        window.viewport().max_bar_spacing(),
                     )
                 } else {
                     bar_spacing
                 };
-                // Only write + rescale when the peer's viewport actually moves.
-                // An unconditional per-frame write made calc_auto_scale here race
-                // the per-tick TradeUpdate autoscale on the same peer: the two
-                // paths compute slightly different price ranges, the last-price
-                // projection lands alternately inside/outside the range, and the
-                // line + scale chip blink (owner report: right window of a
-                // 2-chart sync group ripples).
-                let moved = (window.viewport.view_start - peer_view_start).abs() > 1e-9
-                    || (window.viewport.bar_spacing - peer_spacing).abs() > 1e-9;
-                if moved {
-                    window.viewport.view_start = peer_view_start;
-                    window.viewport.bar_spacing = peer_spacing;
-                    if window.price_scale.scale_mode.is_auto_y() {
-                        window.calc_auto_scale(this_peer_bars);
-                    }
-                } else if scale_mode.is_some() && window.price_scale.scale_mode.is_auto_y() {
-                    // Mode flip without viewport movement still needs one rescale.
-                    window.calc_auto_scale(this_peer_bars);
-                }
+                // set_from_sync only writes + rescales when the peer's viewport
+                // actually moves. An unconditional per-frame write made
+                // calc_auto_scale here race the per-tick TradeUpdate autoscale
+                // on the same peer: the two paths compute slightly different
+                // price ranges, the last-price projection lands alternately
+                // inside/outside the range, and the line + scale chip blink
+                // (owner report: right window of a 2-chart sync group ripples).
+                window.set_from_sync(peer_view_start, peer_spacing, scale_mode, this_peer_bars);
             }
         }
     }
@@ -8439,7 +8402,7 @@ impl ChartApp {
             .map(|w| {
                 let tf = &w.scale_settings.time_format;
                 (
-                    w.price_scale.scale_mode.is_auto_y(),
+                    w.price_scale().scale_mode.is_auto_y(),
                     w.scale_settings.price_scale_width,
                     w.scale_settings.time_scale_height,
                     tf.use_24h,

@@ -409,7 +409,7 @@ impl ChartApp {
                             use mlc_core::ScaleMode;
                             let current_mode = self.panel_app.panel_grid
                                 .container_for_leaf(leaf_id)
-                                .map(|w| w.price_scale.scale_mode)
+                                .map(|w| w.price_scale().scale_mode)
                                 .unwrap_or(ScaleMode::Auto);
                             let next_mode = current_mode.next();
                             let bars_for_calc: Vec<mlc_core::Bar> = self.panel_app.panel_grid
@@ -418,17 +418,7 @@ impl ChartApp {
                                 .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()))
                                 .unwrap_or_default();
                             if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
-                                window.price_scale.scale_mode = next_mode;
-                                if next_mode.is_follow() {
-                                    window.snap_to_end(crate::chart_container::DEFAULT_SNAP_MARGIN);
-                                }
-                                if next_mode.is_auto_y() {
-                                    window.calc_auto_scale(&bars_for_calc);
-                                }
-                                let is_auto = next_mode.is_auto_y();
-                                for state in window.sub_pane_y_state.values_mut() {
-                                    state.auto_scale = is_auto;
-                                }
+                                window.cycle_scale_mode(next_mode, &bars_for_calc);
                             }
                             // Mutate group.scale_mode when sync_viewport is on so the
                             // group remembers the mode for new joiners.
@@ -444,7 +434,7 @@ impl ChartApp {
                             if viewport_sync_on {
                                 let viewport_state = self.panel_app.panel_grid
                                     .container_for_leaf(leaf_id)
-                                    .map(|w| (w.viewport.view_start, w.viewport.bar_spacing));
+                                    .map(|w| (w.viewport().view_start, w.viewport().bar_spacing));
                                 if let Some((view_start, bar_spacing)) = viewport_state {
                                     self.propagate_viewport_to_sync_group(leaf_id, view_start, bar_spacing, Some(next_mode));
                                 }
@@ -558,8 +548,8 @@ impl ChartApp {
                     .map(|(&iid, s)| (iid, s.price_min, s.price_max))
                     .collect();
                 (
-                    window.viewport.clone(),
-                    window.price_scale.clone(),
+                    window.viewport().clone(),
+                    window.price_scale().clone(),
                     ranges,
                 )
             } else {
@@ -804,11 +794,11 @@ impl ChartApp {
                     window.sub_pane_y_state.entry(iid).or_default().auto_scale = true;
                 }
                 // Restore the main chart to Auto so the A/M button reflects the true state.
-                window.price_scale.scale_mode = ScaleMode::Auto;
+                window.set_scale_mode(ScaleMode::Auto);
             }
             // Propagate Auto mode to sync-group peers.
             let viewport_state = self.panel_app.panel_grid.active_container()
-                .map(|w| (w.viewport.view_start, w.viewport.bar_spacing));
+                .map(|w| (w.viewport().view_start, w.viewport().bar_spacing));
             let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
             if let (Some((view_start, bar_spacing)), Some(active_leaf)) = (viewport_state, active_leaf_opt) {
                 self.propagate_viewport_to_sync_group(active_leaf, view_start, bar_spacing, Some(ScaleMode::Auto));
@@ -2416,10 +2406,10 @@ impl ChartApp {
         if !on_widget {
             self.viewport_before_drag = self.panel_app.panel_grid.active_container().map(|w| {
                 mlc_core::ViewportState::new(
-                    w.viewport.view_start,
-                    w.viewport.bar_spacing,
-                    w.price_scale.price_min,
-                    w.price_scale.price_max,
+                    w.viewport().view_start,
+                    w.viewport().bar_spacing,
+                    w.price_scale().price_min,
+                    w.price_scale().price_max,
                 )
             });
         }
@@ -4064,10 +4054,10 @@ impl ChartApp {
         if let Some(previous) = self.viewport_before_drag.take() {
             if let Some(window) = self.panel_app.panel_grid.active_container() {
                 let new_state = mlc_core::ViewportState::new(
-                    window.viewport.view_start,
-                    window.viewport.bar_spacing,
-                    window.price_scale.price_min,
-                    window.price_scale.price_max,
+                    window.viewport().view_start,
+                    window.viewport().bar_spacing,
+                    window.price_scale().price_min,
+                    window.price_scale().price_max,
                 );
                 let changed = (new_state.view_start - previous.view_start).abs() > 0.001
                     || (new_state.bar_spacing - previous.bar_spacing).abs() > 0.001
@@ -6174,10 +6164,7 @@ impl ChartApp {
             // These always act on the window directly regardless of group membership.
             Command::ViewportChange { new, .. } => {
                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                    window.viewport.view_start = new.view_start;
-                    window.viewport.bar_spacing = new.bar_spacing;
-                    window.price_scale.price_min = new.price_min;
-                    window.price_scale.price_max = new.price_max;
+                    window.apply_undo_viewport(new.view_start, new.bar_spacing, new.price_min, new.price_max);
                 }
             }
             Command::ChangeChartType { new_type, .. } => {

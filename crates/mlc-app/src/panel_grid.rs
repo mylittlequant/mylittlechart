@@ -1409,7 +1409,7 @@ impl ChartPanelGrid {
                 && main_local_y <= chart_rect.height
             {
                 if let Some(window) = self.active_container() {
-                    let mut corrected_vp = window.viewport.clone();
+                    let mut corrected_vp = window.viewport().clone();
                     corrected_vp.chart_width = chart_rect.width;
                     corrected_vp.chart_height = chart_rect.height;
                     active_dm.hit_test(
@@ -1417,7 +1417,7 @@ impl ChartPanelGrid {
                         main_local_y,
                         bars,
                         &corrected_vp,
-                        &window.price_scale,
+                        &window.price_scale(),
                     )
                 } else {
                     None
@@ -1450,7 +1450,7 @@ impl ChartPanelGrid {
                     let sub_price_scale =
                         mlc_core::PriceScale::new(price_min, price_max);
                     let sub_viewport = self.active_container().map(|w| {
-                        let mut vp = w.viewport.clone();
+                        let mut vp = w.viewport().clone();
                         vp.chart_height = content.height;
                         vp
                     });
@@ -1634,11 +1634,11 @@ impl ChartPanelGrid {
             if in_main {
                 let (price_min, price_max) = self
                     .active_container()
-                    .map(|w| (w.price_scale.price_min, w.price_scale.price_max))
+                    .map(|w| (w.price_scale().price_min, w.price_scale().price_max))
                     .unwrap_or((0.0, 1.0));
                 let bar_f = self
                     .active_container()
-                    .map(|w| w.viewport.x_to_bar_f64(local_x))
+                    .map(|w| w.viewport().x_to_bar_f64(local_x))
                     .unwrap_or(0.0);
                 let ts_ms = self
                     .active_container()
@@ -1670,7 +1670,7 @@ impl ChartPanelGrid {
                     .unwrap_or((0.0, 100.0));
                 let bar_f = self
                     .active_container()
-                    .map(|w| w.viewport.x_to_bar_f64(plx))
+                    .map(|w| w.viewport().x_to_bar_f64(plx))
                     .unwrap_or(0.0);
                 let ts_ms = self
                     .active_container()
@@ -1697,7 +1697,7 @@ impl ChartPanelGrid {
         // ----------------------------------------------------------------
         if in_main {
             if let Some(window) = self.active_container() {
-                let mut corrected_vp = window.viewport.clone();
+                let mut corrected_vp = window.viewport().clone();
                 corrected_vp.chart_width = chart_rect.width;
                 corrected_vp.chart_height = chart_rect.height;
 
@@ -1707,7 +1707,7 @@ impl ChartPanelGrid {
                     local_y,
                     bars,
                     &corrected_vp,
-                    &window.price_scale,
+                    &window.price_scale(),
                 ) {
                     if let Some(id) = active_dm.selected() {
                         return ChartDragStartHit::ControlPoint {
@@ -1722,7 +1722,7 @@ impl ChartPanelGrid {
                     local_y,
                     bars,
                     &corrected_vp,
-                    &window.price_scale,
+                    &window.price_scale(),
                 ) {
                     return ChartDragStartHit::Primitive { primitive_id: id };
                 }
@@ -1751,7 +1751,7 @@ impl ChartPanelGrid {
                 .unwrap_or((0.0, 100.0));
             let sub_price_scale = mlc_core::PriceScale::new(price_min, price_max);
             let sub_viewport = self.active_container().map(|w| {
-                let mut vp = w.viewport.clone();
+                let mut vp = w.viewport().clone();
                 vp.chart_height = content.height;
                 vp
             });
@@ -1863,8 +1863,8 @@ impl ChartPanelGrid {
                             })
                             .unwrap_or((0.0, 100.0));
                         if let Some(window) = self.active_container_mut() {
-                            let bar_f64 = window.viewport.x_to_bar_f64(local_x);
-                            let bar_idx = window.viewport.x_to_bar(local_x);
+                            let bar_f64 = window.viewport().x_to_bar_f64(local_x);
+                            let bar_idx = window.viewport().x_to_bar(local_x);
                             let price_range = price_max - price_min;
                             let price = if pane_height > 0.0 {
                                 price_max - (local_y / pane_height) * price_range
@@ -1888,13 +1888,13 @@ impl ChartPanelGrid {
                     let local_x = x - chart_rect.x;
                     let local_y = y - chart_rect.y;
                     if let Some(window) = self.active_container_mut() {
-                        let bar_f64 = window.viewport.x_to_bar_f64(local_x);
-                        let bar_idx = window.viewport.x_to_bar(local_x);
-                        let price_range = window.price_scale.price_max - window.price_scale.price_min;
+                        let bar_f64 = window.viewport().x_to_bar_f64(local_x);
+                        let bar_idx = window.viewport().x_to_bar(local_x);
+                        let price_range = window.price_scale().price_max - window.price_scale().price_min;
                         let price = if chart_rect.height > 0.0 {
-                            window.price_scale.price_max - (local_y / chart_rect.height) * price_range
+                            window.price_scale().price_max - (local_y / chart_rect.height) * price_range
                         } else {
-                            window.price_scale.price_min
+                            window.price_scale().price_min
                         };
                         window.crosshair.visible = true;
                         window.crosshair.pane_index = None;
@@ -1906,7 +1906,7 @@ impl ChartPanelGrid {
                         if window.crosshair.is_magnet() {
                             let (snapped_price, snapped_y) = window.calculate_magnet_snap(
                                 bars, bar_idx, price, chart_rect.height,
-                                window.price_scale.price_min, window.price_scale.price_max,
+                                window.price_scale().price_min, window.price_scale().price_max,
                             );
                             window.crosshair.set_snapped(snapped_price, snapped_y);
                         } else {
@@ -2091,7 +2091,7 @@ impl ChartPanelGrid {
             let local_y = screen_y - content.y;
             let bar_f = self
                 .active_container()
-                .map(|w| w.viewport.x_to_bar_f64(local_x))
+                .map(|w| w.viewport().x_to_bar_f64(local_x))
                 .unwrap_or(0.0);
             let price = if content.height > 0.0 {
                 price_max - (local_y / content.height) * (price_max - price_min)
@@ -2113,12 +2113,12 @@ impl ChartPanelGrid {
 
         let (price_min, price_max) = self
             .active_container()
-            .map(|w| (w.price_scale.price_min, w.price_scale.price_max))
+            .map(|w| (w.price_scale().price_min, w.price_scale().price_max))
             .unwrap_or((0.0, 1.0));
 
         let bar_f = self
             .active_container()
-            .map(|w| w.viewport.x_to_bar_f64(local_x))
+            .map(|w| w.viewport().x_to_bar_f64(local_x))
             .unwrap_or(0.0);
 
         let price = price_max - (local_y / chart_rect.height) * (price_max - price_min);

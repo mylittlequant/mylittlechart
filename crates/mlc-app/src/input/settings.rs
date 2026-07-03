@@ -221,7 +221,7 @@ impl ChartApp {
                 w.scale_settings.price_scale_width  = scales.price_scale_width;
                 w.scale_settings.time_scale_height  = scales.time_scale_height;
                 if scales.auto_scale {
-                    w.price_scale.scale_mode = mlc_core::ScaleMode::Auto;
+                    w.set_scale_mode(mlc_core::ScaleMode::Auto);
                 }
                 // 24h format and day-of-week
                 w.scale_settings.time_format.use_24h         = scales.use_24h;
@@ -395,25 +395,18 @@ impl ChartApp {
                 "auto_scale" => {
                     let next = self.panel_app.panel_grid
                         .active_container()
-                        .map(|w| w.price_scale.scale_mode.next());
+                        .map(|w| w.price_scale().scale_mode.next());
                     if let Some(next) = next {
                         let auto_bars: Vec<mlc_core::Bar> = self.active_chart_bars();
                         if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                            w.price_scale.scale_mode = next;
-                            if next.is_auto_y() {
-                                w.calc_auto_scale(&auto_bars);
-                            }
-                            let is_auto = next.is_auto_y();
-                            for state in w.sub_pane_y_state.values_mut() {
-                                state.auto_scale = is_auto;
-                            }
+                            w.set_scale_mode_with_recalc(next, &auto_bars);
                             eprintln!("[ChartApp] scales:auto_scale -> {:?}", next);
                         }
                         // Propagate scale_mode change to sync-group peers.
                         if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
                             let viewport_state = self.panel_app.panel_grid
                                 .active_container()
-                                .map(|w| (w.viewport.view_start, w.viewport.bar_spacing));
+                                .map(|w| (w.viewport().view_start, w.viewport().bar_spacing));
                             if let Some((view_start, bar_spacing)) = viewport_state {
                                 self.propagate_viewport_to_sync_group(active_leaf, view_start, bar_spacing, Some(next));
                             }
@@ -831,7 +824,7 @@ impl ChartApp {
                 "precision" => {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                         w.scale_settings.user_precision = cycle_precision(w.scale_settings.user_precision);
-                        w.price_scale.user_precision = w.scale_settings.user_precision;
+                        w.set_price_precision(w.scale_settings.user_precision);
                         eprintln!("[ChartApp] precision cycled: {:?}", w.scale_settings.user_precision);
                     }
                 }

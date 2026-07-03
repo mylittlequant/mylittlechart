@@ -580,9 +580,9 @@ impl ChartApp {
                 if bar_count_scroll == 0 { continue; }
                 if window.pending_symbol_load { continue; }
 
-                let visible = window.viewport.visible_bars() as f64;
+                let visible = window.viewport().visible_bars() as f64;
                 let threshold = (visible * 0.20).max(5.0);
-                if window.viewport.view_start > threshold { continue; }
+                if window.viewport().view_start > threshold { continue; }
 
                 if max_loaded > 0 && bar_count_scroll >= max_loaded as usize { continue; }
 

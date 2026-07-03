@@ -228,13 +228,10 @@ impl ChartApp {
                         .and_then(|cid| self.account_type_for_chart(cid))
                         .unwrap_or_default();
                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                        {};
-                        window.viewport.bar_count = 0;
-                        window.viewport.view_start = 0.0;
                         // Mark a fresh load so a stray TradeUpdate can't synthesize a
                         // bar before BarsLoaded arrives (which would strand view_start
                         // at 0 = oldest bar at the left edge).
-                        window.pending_symbol_load = true;
+                        window.begin_fresh_load();
                         // Snap to right edge once first batch lands — without this
                         // the last bar sits at view_start=0 (left edge) after TF switch.
                         window.needs_snap_after_backfill = true;
@@ -399,10 +396,7 @@ impl ChartApp {
                                     // X axis is always index-packed (see
                                     // chart-types-xaxis-audit-2026-07-03.md).
                                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                                        {};
-                                        window.viewport.bar_count = 0;
-                                        window.viewport.view_start = 0.0;
-                                        window.pending_symbol_load = true;
+                                        window.begin_fresh_load();
                                         // Mark "snap to end on first data" so
                                         // the new stream lands at the right
                                         // edge of the viewport.
@@ -734,9 +728,7 @@ impl ChartApp {
                             window.symbol_drawings.insert(old_key, result.old_primitives);
                         }
                     }
-                    window.viewport.bar_count = 0;
-                    window.viewport.view_start = 0.0;
-                    window.pending_symbol_load = true;
+                    window.begin_fresh_load();
                 }
 
                 if let Some(bid) = self.bubble_for_chart(target_cid) {
@@ -1894,7 +1886,7 @@ impl ChartApp {
                         // Capture the active window's current scale_mode as the new group mode.
                         let active_mode = self.panel_app.panel_grid
                             .active_container()
-                            .map(|w| w.price_scale.scale_mode);
+                            .map(|w| w.price_scale().scale_mode);
                         if let Some(mode) = active_mode {
                             if let Some(gid) = gid {
                                 self.core.bubbles_mut().set_scale_mode(gid, mode);
@@ -1915,7 +1907,7 @@ impl ChartApp {
                                     // Stash existing mode if not already stashed (preserve
                                     // the window's pre-join mode across multiple sync toggles).
                                     if window.stashed_scale_mode.is_none() {
-                                        window.stashed_scale_mode = Some(window.price_scale.scale_mode);
+                                        window.stashed_scale_mode = Some(window.price_scale().scale_mode);
                                     }
                                 }
                             }
@@ -1923,7 +1915,7 @@ impl ChartApp {
                         let viewport_state = self.panel_app
                             .panel_grid
                             .active_container()
-                            .map(|w| (w.viewport.view_start, w.viewport.bar_spacing));
+                            .map(|w| (w.viewport().view_start, w.viewport().bar_spacing));
                         if let Some((view_start, bar_spacing)) = viewport_state {
                             self.propagate_viewport_to_sync_group(
                                 active_leaf, view_start, bar_spacing,

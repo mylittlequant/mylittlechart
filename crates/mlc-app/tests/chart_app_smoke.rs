@@ -98,7 +98,7 @@ fn read_active_viewport_bar_count(app: &ChartApp) -> usize {
         Some(c) => c, None => return 0,
     };
     app.panel_app.panel_grid.containers().get(&active_cid)
-        .map(|w| w.viewport.bar_count).unwrap_or(0)
+        .map(|w| w.viewport().bar_count).unwrap_or(0)
 }
 
 /// `viewport.view_start` — also ONLY moved by react.rs side-effect arms.
@@ -111,7 +111,7 @@ fn read_active_view_start(app: &ChartApp) -> f64 {
         Some(c) => c, None => return 0.0,
     };
     app.panel_app.panel_grid.containers().get(&active_cid)
-        .map(|w| w.viewport.view_start).unwrap_or(0.0)
+        .map(|w| w.viewport().view_start).unwrap_or(0.0)
 }
 
 fn now_ms() -> u64 {
@@ -316,13 +316,11 @@ async fn chart_app_scroll_backfill_triggers_on_view_shift() {
     {
         let win = app.panel_app.panel_grid.containers_mut()
             .get_mut(&active_cid).expect("active window");
-        if win.viewport.chart_width <= 0.0 { win.viewport.chart_width = 800.0; }
-        if win.viewport.bar_spacing <= 0.0 { win.viewport.bar_spacing = 8.0; }
-        win.viewport.view_start = 0.0;
+        win.force_viewport_for_test(800.0, 8.0, 0.0);
         log(&format!(
             "[smoke-scroll] forced viewport: cw={} bs={} vs={} bars={}",
-            win.viewport.chart_width, win.viewport.bar_spacing,
-            win.viewport.view_start, bars_before
+            win.viewport().chart_width, win.viewport().bar_spacing,
+            win.viewport().view_start, bars_before
         ));
     }
 

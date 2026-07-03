@@ -4125,10 +4125,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
 
                 // Clear bars on the window and mark pending load.
                 if let Some(window) = pw.chart.panel_app.panel_grid.active_container_mut() {
-                    {};
-                    window.viewport.bar_count = 0;
-                    window.viewport.view_start = 0.0;
-                    window.pending_symbol_load = true;
+                    window.begin_fresh_load();
                 }
 
                 // Reset all other windows in the same sync group that share
@@ -4160,9 +4157,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         for peer_id in peers_matching {
                             if let Some(peer_window) = pw.chart.panel_app.panel_grid.containers_mut().get_mut(&peer_id) {
                                 // Phase X0 / C5c: storage on bubble; window cleared via viewport reset only.
-                                peer_window.viewport.bar_count = 0;
-                                peer_window.viewport.view_start = 0.0;
-                                peer_window.pending_symbol_load = true;
+                                peer_window.begin_fresh_load();
                                 eprintln!(
                                     "[App] Reset cache propagated to peer {:?} ({}:{}:{})",
                                     peer_id, symbol, exchange, account_type

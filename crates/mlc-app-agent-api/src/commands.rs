@@ -40,27 +40,7 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     eprintln!("[AgentCommand] chart not found: {} in window {}", chart_id, window_id);
                     continue;
                 };
-                if let Some(mode_str) = &mode {
-                    match mode_str.as_str() {
-                        "focus" => {
-                            if bar_count > 0 {
-                                let visible = if cw.viewport.bar_spacing > 0.0 {
-                                    (cw.viewport.chart_width / cw.viewport.bar_spacing).ceil() as usize
-                                } else { 1 };
-                                cw.viewport.view_start = (bar_count as f64) - (visible as f64);
-                            }
-                        }
-                        "fit" => {
-                            if bar_count > 0 && cw.viewport.chart_width > 0.0 {
-                                cw.viewport.bar_spacing = cw.viewport.chart_width / bar_count as f64;
-                                cw.viewport.view_start = 0.0;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                if let Some(vs) = view_start { cw.viewport.view_start = vs; }
-                if let Some(bs) = bar_spacing { cw.viewport.bar_spacing = bs; }
+                cw.set_from_agent(mode.as_deref(), view_start, bar_spacing, bar_count);
                 eprintln!("[AgentCommand] SetViewport: window={}, chart={}", window_id, chart_id);
             }
 

@@ -183,14 +183,7 @@ impl ChartApp {
                 let leaf_bars_desync: Vec<mlc_core::Bar> = self.bars_for_leaf(leaf_id);
                 if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
                     if let Some(prev_mode) = window.stashed_scale_mode.take() {
-                        window.price_scale.scale_mode = prev_mode;
-                        let is_auto = prev_mode.is_auto_y();
-                        for state in window.sub_pane_y_state.values_mut() {
-                            state.auto_scale = is_auto;
-                        }
-                        if is_auto {
-                            window.calc_auto_scale(&leaf_bars_desync);
-                        }
+                        window.set_scale_mode_with_recalc(prev_mode, &leaf_bars_desync);
                         eprintln!("[BubbleStore] Desync: restored stashed scale mode {:?}", prev_mode);
                     }
                 }
@@ -367,7 +360,7 @@ impl ChartApp {
                 // group starts with the correct A/M/F and any later joiners inherit it.
                 let seed_mode = self.panel_app.panel_grid
                     .container_for_leaf(joining_leaf)
-                    .map(|w| w.price_scale.scale_mode);
+                    .map(|w| w.price_scale().scale_mode);
                 if let Some(mode) = seed_mode {
                     self.core.bubbles_mut().set_scale_mode(group_id, mode);
                 }
@@ -640,16 +633,9 @@ impl ChartApp {
                     self.panel_app.panel_grid.container_for_leaf_mut(joining_leaf),
                 ) {
                     if window.stashed_scale_mode.is_none() {
-                        window.stashed_scale_mode = Some(window.price_scale.scale_mode);
+                        window.stashed_scale_mode = Some(window.price_scale().scale_mode);
                     }
-                    window.price_scale.scale_mode = group_mode;
-                    let is_auto = group_mode.is_auto_y();
-                    for state in window.sub_pane_y_state.values_mut() {
-                        state.auto_scale = is_auto;
-                    }
-                    if is_auto {
-                        window.calc_auto_scale(&joining_bars);
-                    }
+                    window.set_scale_mode_with_recalc(group_mode, &joining_bars);
                 }
             }
 
@@ -1408,8 +1394,8 @@ impl ChartApp {
                         w.crosshair.price,
                         w.crosshair.visible,
                         w.crosshair.pane_index,
-                        w.viewport.view_start,
-                        w.viewport.bar_spacing,
+                        w.viewport().view_start,
+                        w.viewport().bar_spacing,
                     )
                 }
                 None => return,
@@ -1525,9 +1511,7 @@ impl ChartApp {
                         }
                     }
                 }
-                window.viewport.bar_count = 0;
-                window.viewport.view_start = 0.0;
-                window.pending_symbol_load = true;
+                window.begin_fresh_load();
             }
         }
 
@@ -1670,9 +1654,12 @@ impl ChartApp {
         // in the dual-write phase after the panel_grid mut borrow drops.
         for leaf_id in &sync_leaves {
             if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(*leaf_id) {
-                {};
-                window.viewport.bar_count = 0;
-                window.viewport.view_start = 0.0;
+                // Deliberately does NOT set pending_symbol_load (unlike
+                // begin_fresh_load / W31's symbol propagation): the peer TF
+                // switch relies on the subsequent BarsLoaded matching by
+                // instrument only, not the fresh-vs-backfill branch that
+                // pending_symbol_load gates.
+                window.begin_fresh_load_keep_pending();
             }
         }
 

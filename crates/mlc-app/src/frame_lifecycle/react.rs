@@ -8,7 +8,6 @@
 use crate::ChartApp;
 use crate::chart_container::DEFAULT_SNAP_MARGIN;
 use mlc_backend::BubbleEvent;
-use mlc_core::ScaleMode;
 use mlc_backend_indicator_engine::RecalcMode;
 
 impl ChartApp {
@@ -124,18 +123,18 @@ impl ChartApp {
                         // `prev_bars_for_anchor.len()` which already reflects
                         // the post-tick_writers bubble state.
                         let was_at_end = {
-                            let bs = window.viewport.bar_spacing.max(1.0);
-                            let visible_f = window.viewport.chart_width / bs;
-                            let prev_count = window.viewport.bar_count as f64;
+                            let bs = window.viewport().bar_spacing.max(1.0);
+                            let visible_f = window.viewport().chart_width / bs;
+                            let prev_count = window.viewport().bar_count as f64;
                             let right_edge_vs = (prev_count + DEFAULT_SNAP_MARGIN - visible_f).max(0.0);
-                            (window.viewport.view_start - right_edge_vs).abs() < 1.5
-                                && window.viewport.chart_width > 0.0
+                            (window.viewport().view_start - right_edge_vs).abs() < 1.5
+                                && window.viewport().chart_width > 0.0
                                 && prev_count > 0.0
                         };
                         window.reconcile_view_keep_anchor(new_bars, anchor);
                         if window.needs_snap_after_backfill
                             && !new_bars.is_empty()
-                            && window.viewport.chart_width > 0.0
+                            && window.viewport().chart_width > 0.0
                         {
                             window.consume_cold_snap(new_bars);
                         } else if was_at_end && !new_bars.is_empty() {
@@ -152,12 +151,11 @@ impl ChartApp {
                         // SWC arc, 2026-07-03) — fresh loads always seed Auto;
                         // `restore_scale_mode` (set by cold preset-load paths)
                         // overrides this inside `reconcile_view_fresh` when present.
-                        window.price_scale.scale_mode = mlc_core::chart::types::price_scale::ScaleMode::Auto;
-                        window.reconcile_view_fresh(new_bars);
+                        window.seed_fresh_load(new_bars);
                         window.pending_symbol_load = false;
                         if window.needs_snap_after_backfill
                             && !new_bars.is_empty()
-                            && window.viewport.chart_width > 0.0
+                            && window.viewport().chart_width > 0.0
                         {
                             window.consume_cold_snap(new_bars);
                         }
@@ -220,7 +218,7 @@ impl ChartApp {
                             for cid in cids {
                                 if let Some(window) = parked.panel_grid.containers_mut().get_mut(&cid) {
                                     let is_backfill = !window.pending_symbol_load
-                                        && window.viewport.bar_count > 0;
+                                        && window.viewport().bar_count > 0;
                                     if is_backfill {
                                         window.reconcile_view_keep_anchor(new_bars, None);
                                     } else {
@@ -398,12 +396,12 @@ impl ChartApp {
                     // branch for the rationale. Use the still-pre-reconcile
                     // `viewport.bar_count` not `prev_bars.len()`.
                     let was_at_end = {
-                        let bs = window.viewport.bar_spacing.max(1.0);
-                        let visible_f = window.viewport.chart_width / bs;
-                        let prev_count = window.viewport.bar_count as f64;
+                        let bs = window.viewport().bar_spacing.max(1.0);
+                        let visible_f = window.viewport().chart_width / bs;
+                        let prev_count = window.viewport().bar_count as f64;
                         let right_edge_vs = (prev_count + DEFAULT_SNAP_MARGIN - visible_f).max(0.0);
-                        (window.viewport.view_start - right_edge_vs).abs() < 1.5
-                            && window.viewport.chart_width > 0.0
+                        (window.viewport().view_start - right_edge_vs).abs() < 1.5
+                            && window.viewport().chart_width > 0.0
                             && prev_count > 0.0
                     };
                     matched_anchors.push((*chart_id_key, window.capture_view_anchor(prev_bars_for_anchor), was_at_end));
@@ -418,7 +416,7 @@ impl ChartApp {
                         // User was at right edge before backfill prepended
                         // older bars — re-snap so the live tick stays visible.
                         window.snap_to_end(DEFAULT_SNAP_MARGIN);
-                    } else if window.price_scale.scale_mode.is_auto_y() {
+                    } else if window.price_scale().scale_mode.is_auto_y() {
                         window.calc_auto_scale(new_bars);
                     }
                     prev_close_mirrors.push((*chart_id_key, new_bars.first().map(|b| b.open)));
@@ -493,7 +491,7 @@ impl ChartApp {
                     window.scroll_fetch_in_flight = false;
                     window.scroll_fetch_started = None;
                     window.reconcile_view_keep_anchor(new_bars, anchor);
-                    if window.price_scale.scale_mode.is_auto_y() {
+                    if window.price_scale().scale_mode.is_auto_y() {
                         window.calc_auto_scale(new_bars);
                     }
                     prev_close_mirrors.push((*chart_id_key, new_bars.first().map(|b| b.open)));
@@ -595,27 +593,19 @@ impl ChartApp {
                     if window.pending_symbol_load {
                         window.pending_symbol_load = false;
                     }
-                    if window.needs_snap_after_backfill && window.viewport.chart_width > 0.0 {
+                    if window.needs_snap_after_backfill && window.viewport().chart_width > 0.0 {
                         window.consume_cold_snap(&bu_bubble_bars);
                     }
-                    window.viewport.bar_count = bu_bubble_bars.len();
-                    if window.price_scale.scale_mode.is_auto_y() {
+                    window.set_bar_count(bu_bubble_bars.len());
+                    if window.price_scale().scale_mode.is_auto_y() {
                         let _as_start = web_time::Instant::now();
                         window.calc_auto_scale(&bu_bubble_bars);
                         self.last_auto_scale_us += _as_start.elapsed().as_micros() as u64;
                     }
-                    let count = bu_bubble_bars.len();
-                    let visible_f = window.viewport.chart_width / window.viewport.bar_spacing;
-                    if window.price_scale.scale_mode.is_follow() {
-                        window.snap_to_end(DEFAULT_SNAP_MARGIN);
-                    }
-                    if bu_is_new_bar && window.price_scale.scale_mode == ScaleMode::Auto {
-                        let right_edge_bar = window.viewport.view_start + visible_f;
-                        let last_bar = count as f64;
-                        if last_bar >= right_edge_bar {
-                            window.viewport.view_start += 1.0;
-                        }
-                    }
+                    // Live-tick follow: Follow mode snaps every tick; Auto mode
+                    // advances view_start by one bar only when a new bar landed
+                    // AND the prior last bar was already at the right edge.
+                    window.advance_view_on_tick(bu_is_new_bar);
                     bu_symbol_for_recalc = Some(bar_symbol.clone());
                 }
 
@@ -736,19 +726,7 @@ impl ChartApp {
                     if !(win_sym_tu.as_str() == symbol && *win_at_tu == trade_event_at) {
                         continue;
                     }
-                    window.viewport.bar_count = window.viewport.bar_count.saturating_add(if is_new_bar { 1 } else { 0 });
-                    let count = window.viewport.bar_count;
-                    let visible_f = window.viewport.chart_width / window.viewport.bar_spacing;
-                    if window.price_scale.scale_mode.is_follow() {
-                        window.snap_to_end(DEFAULT_SNAP_MARGIN);
-                    }
-                    if is_new_bar && window.price_scale.scale_mode == ScaleMode::Auto {
-                        let right_edge_bar = window.viewport.view_start + visible_f;
-                        let last_bar = count as f64;
-                        if last_bar >= right_edge_bar {
-                            window.viewport.view_start += 1.0;
-                        }
-                    }
+                    window.advance_view_on_tick(is_new_bar);
                 }
 
                 self.last_bar_apply_us += _bar_apply_start.elapsed().as_micros() as u64;
@@ -888,10 +866,10 @@ impl ChartApp {
                     if window.current_tag_id != *bid { continue; }
                     let _ = (exchange_id, symbol, at_label);
                     if window.pending_symbol_load { window.pending_symbol_load = false; }
-                    if window.needs_snap_after_backfill && window.viewport.chart_width > 0.0 {
+                    if window.needs_snap_after_backfill && window.viewport().chart_width > 0.0 {
                         window.consume_cold_snap(&bubble_bars);
                     }
-                    window.viewport.bar_count = bubble_bars.len();
+                    window.set_bar_count(bubble_bars.len());
                 }
             }
 
@@ -968,7 +946,7 @@ impl ChartApp {
                 for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                     if !target_cids.contains(cid_) { continue; }
                     if window.pending_symbol_load { window.pending_symbol_load = false; }
-                    if window.needs_snap_after_backfill && window.viewport.chart_width > 0.0 {
+                    if window.needs_snap_after_backfill && window.viewport().chart_width > 0.0 {
                         window.consume_cold_snap(&dom_bubble_bars);
                     }
                 }
@@ -1045,7 +1023,7 @@ impl ChartApp {
                 for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                     if !target_cids.contains(cid_) { continue; }
                     if window.pending_symbol_load { window.pending_symbol_load = false; }
-                    if window.needs_snap_after_backfill && window.viewport.chart_width > 0.0 {
+                    if window.needs_snap_after_backfill && window.viewport().chart_width > 0.0 {
                         window.consume_cold_snap(&liq_bubble_bars);
                     }
                 }

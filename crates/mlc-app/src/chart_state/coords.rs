@@ -58,10 +58,10 @@ impl ChartApp {
             return (screen_x, screen_y);
         };
         // Snap to bar center (matching crosshair coordinate system).
-        let bar = if let Some(idx) = window.viewport.x_to_bar(local_x) {
+        let bar = if let Some(idx) = window.viewport().x_to_bar(local_x) {
             idx as f64
         } else {
-            window.viewport.x_to_bar_f64(local_x)
+            window.viewport().x_to_bar_f64(local_x)
         };
 
         let price = if let Some(instance_id) = pane_id {
@@ -84,12 +84,12 @@ impl ChartApp {
             } else {
                 // Fallback: use main chart coordinate system.
                 let local_y = screen_y - chart_y;
-                window.price_scale.y_to_price(local_y, chart_h)
+                window.price_scale().y_to_price(local_y, chart_h)
             }
         } else {
             // Main chart.
             let local_y = screen_y - chart_y;
-            window.price_scale.y_to_price(local_y, chart_h)
+            window.price_scale().y_to_price(local_y, chart_h)
         };
 
         (bar, price)

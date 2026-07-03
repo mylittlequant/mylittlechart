@@ -49,14 +49,14 @@ pub fn build_chart_window_snapshot(
     // `price_min`/`price_max`, and `scale_mode` are runtime-only —
     // never serialized (viewport SWC arc, 2026-07-03).
     let saved_viewport = ViewportPersist {
-        bar_spacing: window.viewport.bar_spacing,
+        bar_spacing: window.viewport().bar_spacing,
     };
 
     let saved_price_scale = PriceScalePersist {
-        mode: window.price_scale.mode,
-        base_price: window.price_scale.base_price,
-        width: window.price_scale.width,
-        user_precision: window.price_scale.user_precision,
+        mode: window.price_scale().mode,
+        base_price: window.price_scale().base_price,
+        width: window.price_scale().width,
+        user_precision: window.price_scale().user_precision,
     };
 
     ChartWindowSnapshot {

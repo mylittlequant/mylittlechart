@@ -84,7 +84,7 @@ pub fn update_terminal_snapshot<H: AgentHost>(host: &H, agent_state: &AgentState
         let charts: Vec<ChartSnapshot> = chart_ids_for_snap.iter()
             .filter_map(|(leaf_id, chart_id)| {
                 let cw = chart.panel_app.panel_grid.container_for_leaf(*leaf_id)?;
-                let viewport = &cw.viewport;
+                let viewport = cw.viewport();
                 let bars_visible = if viewport.bar_spacing > 0.0 {
                     (viewport.chart_width / viewport.bar_spacing).ceil() as usize
                 } else {

@@ -387,9 +387,7 @@ impl ChartApp {
                                     window.symbol_drawings.insert(old_key, result.old_primitives);
                                 }
                             }
-                            window.viewport.bar_count = 0;
-                            window.viewport.view_start = 0.0;
-                            window.pending_symbol_load = true;
+                            window.begin_fresh_load();
                         }
                         if let Some(chart_id) = active_chart_id {
                             if let Some(bid) = self.bubble_for_chart(chart_id) {
@@ -3079,13 +3077,7 @@ impl ChartApp {
                             use mlc_core::chart::types::price_scale::ScaleMode;
                             // Center the active leaf on X and switch it to Auto-Y.
                             if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                                let visible_bars = window.viewport.chart_width / window.viewport.bar_spacing;
-                                window.viewport.view_start = (mid_bar - visible_bars / 2.0).max(0.0);
-                                window.price_scale.scale_mode = ScaleMode::Auto;
-                                for state in window.sub_pane_y_state.values_mut() {
-                                    state.auto_scale = true;
-                                }
-                                window.calc_auto_scale(&center_bars);
+                                window.center_on_bar_auto(mid_bar, &center_bars);
                             }
                             // Raise the center intent on the tag: propagate X +
                             // Auto-Y to every sync-viewport peer. The peer applies
@@ -3094,7 +3086,7 @@ impl ChartApp {
                             // Manual; no price band is copied across instruments.
                             if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
                                 let (vs, bsp) = self.panel_app.panel_grid.active_container()
-                                    .map(|w| (w.viewport.view_start, w.viewport.bar_spacing))
+                                    .map(|w| (w.viewport().view_start, w.viewport().bar_spacing))
                                     .unwrap_or((0.0, 8.0));
                                 self.propagate_viewport_to_sync_group(active_leaf, vs, bsp, Some(ScaleMode::Auto));
                                 // Persist Auto into the sync group's stored mode too.
@@ -3127,11 +3119,7 @@ impl ChartApp {
                 if let Ok(bar_index) = parts[1].parse::<i64>() {
                     let signal_bars: Vec<mlc_core::Bar> = self.active_chart_bars();
                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                        let visible_bars = window.viewport.chart_width / window.viewport.bar_spacing;
-                        window.viewport.view_start = (bar_index as f64 - visible_bars / 2.0).max(0.0);
-                        if window.price_scale.scale_mode.is_auto_y() {
-                            window.calc_auto_scale(&signal_bars);
-                        }
+                        window.center_on_bar(bar_index as f64, &signal_bars);
                     }
                     eprintln!("[Sidebar] Signal clicked: center on bar {}", bar_index);
                 }

@@ -226,17 +226,11 @@ impl ChartApp {
 
                                     // Restore bar_spacing (user's zoom level). chart_width is NOT restored  -
                                     // it comes from layout on the first frame; view_start is NOT restored  -
-                                    // snap-to-end always positions to the latest bar.
-                                    if snap.viewport.bar_spacing > 0.0 {
-                                        window.viewport.bar_spacing = snap.viewport.bar_spacing;
-                                    }
-                                    // Restore price-scale display config only (mode, base_price,
-                                    // width, user_precision). price_min/price_max are NOT restored -
-                                    // calc_auto_scale recomputes them from bars after the cold snap.
-                                    window.price_scale.mode = snap.price_scale.mode;
-                                    window.price_scale.base_price = snap.price_scale.base_price;
-                                    window.price_scale.width = snap.price_scale.width;
-                                    window.price_scale.user_precision = snap.price_scale.user_precision;
+                                    // snap-to-end always positions to the latest bar. Price-scale display
+                                    // config only (mode, base_price, width, user_precision) is restored;
+                                    // price_min/price_max are NOT restored - calc_auto_scale recomputes
+                                    // them from bars after the cold snap.
+                                    window.restore_persisted_display(&snap.viewport, &snap.price_scale);
                                     // Cold-load rule (2026-06-24): every cold preset apply must
                                     // land on Auto scale mode — viewport snaps to the right edge
                                     // (`needs_snap_after_backfill = true` below) and the Y axis
@@ -430,17 +424,11 @@ impl ChartApp {
                                     // Restore stashed scale mode (pre-join A/M/F, restored on desync).
                                     window.stashed_scale_mode = snap.stashed_scale_mode;
 
-                                    // Restore bar_spacing (user's zoom level).
-                                    if snap.viewport.bar_spacing > 0.0 {
-                                        window.viewport.bar_spacing = snap.viewport.bar_spacing;
-                                    }
-                                    // Restore price-scale display config only (see twin branch
-                                    // above for rationale). price_min/price_max are left as-is —
+                                    // Restore bar_spacing (user's zoom level) + price-scale
+                                    // display config only (see twin branch above for
+                                    // rationale). price_min/price_max are left as-is —
                                     // calc_auto_scale recomputes them from bars after the cold snap.
-                                    window.price_scale.mode = snap.price_scale.mode;
-                                    window.price_scale.base_price = snap.price_scale.base_price;
-                                    window.price_scale.width = snap.price_scale.width;
-                                    window.price_scale.user_precision = snap.price_scale.user_precision;
+                                    window.restore_persisted_display(&snap.viewport, &snap.price_scale);
                                     // Cold-load rule (2026-06-24): force Auto scale mode on
                                     // cold preset apply — see twin branch above for rationale.
                                     window.restore_scale_mode = Some(ScaleMode::Auto);

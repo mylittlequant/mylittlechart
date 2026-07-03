@@ -135,10 +135,14 @@ pub struct ChartContainer {
     pub funding_show: bool,
 
     // === Viewport & Scales ===
-    /// Viewport state (pan/zoom)
-    pub viewport: Viewport,
-    /// Price scale (Y-axis)
-    pub price_scale: PriceScale,
+    /// Viewport state (pan/zoom). PRIVATE — single-writer: all mutation
+    /// goes through the intent methods below (`pan`, `zoom_at`,
+    /// `begin_fresh_load`, `resize_geometry`, ...). Reads via
+    /// [`ChartContainer::viewport`].
+    viewport: Viewport,
+    /// Price scale (Y-axis). PRIVATE — same single-writer discipline as
+    /// `viewport`. Reads via [`ChartContainer::price_scale`].
+    price_scale: PriceScale,
     /// Time scale (X-axis) - shared visual config
     pub time_scale: TimeScale,
 
@@ -644,6 +648,24 @@ impl ChartContainer {
     // `clone_for_split_shell` instead, which never touched DrawingManager.
     // The DM-aware clone path was dead code blocking the manager's
     // backend-side relocation.
+
+    // =========================================================================
+    // Viewport / price-scale readers (single-writer: no `_mut` counterpart —
+    // all mutation goes through the intent methods in the Viewport Intents
+    // section below).
+    // =========================================================================
+
+    /// Read-only access to the viewport (pan/zoom/geometry state).
+    #[inline]
+    pub fn viewport(&self) -> &Viewport {
+        &self.viewport
+    }
+
+    /// Read-only access to the price scale (Y-axis).
+    #[inline]
+    pub fn price_scale(&self) -> &PriceScale {
+        &self.price_scale
+    }
 
     /// Crosshair state for rendering (respects render flag).
     pub fn crosshair_for_render(&self, render_crosshair: bool) -> Crosshair {
@@ -1681,6 +1703,368 @@ impl ChartContainer {
             self.price_scale.price_min += price_delta;
             self.price_scale.price_max += price_delta;
         }
+    }
+
+    // =========================================================================
+    // Viewport Intents — single-writer entry points for every remaining
+    // W-site from `docs/mlc/audits/viewport-audit-2026-07-03.md`. Callers
+    // outside this file never write `self.viewport` / `self.price_scale`
+    // fields directly; they call one of these.
+    // =========================================================================
+
+    /// Reset viewport + pending-load bookkeeping for a symbol/timeframe/
+    /// chart-type switch: `bar_count = 0`, `view_start = 0.0`,
+    /// `pending_symbol_load = true`.
+    ///
+    /// Replaces the copy-pasted 3-line reset idiom that used to live at 7+
+    /// call sites (W25-W31). Fixes the W29 inconsistency (one sibling site
+    /// forgot to reset `view_start`) by construction — every caller now
+    /// goes through the same body.
+    pub fn begin_fresh_load(&mut self) {
+        self.viewport.bar_count = 0;
+        self.viewport.view_start = 0.0;
+        self.pending_symbol_load = true;
+    }
+
+    /// Same reset as [`begin_fresh_load`] but does NOT set
+    /// `pending_symbol_load`.
+    ///
+    /// Used exactly once (peer timeframe propagation in
+    /// `input::sync_group::propagate_timeframe_to_sync_group`, W32) where
+    /// the peer's `pending_symbol_load` is deliberately left alone — the
+    /// caller relies on the subsequent `BarsLoaded` matching by instrument
+    /// only, not by the `pending_symbol_load` fresh-vs-backfill branch.
+    pub fn begin_fresh_load_keep_pending(&mut self) {
+        self.viewport.bar_count = 0;
+        self.viewport.view_start = 0.0;
+    }
+
+    /// Seed a fresh-load reconcile: force `ScaleMode::Auto` (the global
+    /// scale_mode persistence channel was deleted in the viewport SWC arc —
+    /// every fresh load starts Auto; `restore_scale_mode` from a cold
+    /// preset-load path overrides this inside `reconcile_view_fresh` when
+    /// present), then run the fresh-load viewport reconcile.
+    pub fn seed_fresh_load(&mut self, bars: &[Bar]) {
+        self.price_scale.scale_mode = ScaleMode::Auto;
+        self.reconcile_view_fresh(bars);
+    }
+
+    /// Cycle the A/M/F scale mode to `next` and apply its immediate
+    /// side-effects: follow-mode snaps to the right edge, auto-mode
+    /// recalculates the visible price range, and every sub-pane's
+    /// `auto_scale` flag follows the new mode. Returns `next` so the
+    /// caller can propagate it to a sync group / bubble.
+    pub fn cycle_scale_mode(&mut self, next: ScaleMode, bars: &[Bar]) -> ScaleMode {
+        self.price_scale.scale_mode = next;
+        if next.is_follow() {
+            self.snap_to_end(DEFAULT_SNAP_MARGIN);
+        }
+        if next.is_auto_y() {
+            self.calc_auto_scale(bars);
+        }
+        let is_auto = next.is_auto_y();
+        for state in self.sub_pane_y_state.values_mut() {
+            state.auto_scale = is_auto;
+        }
+        next
+    }
+
+    /// Set the scale mode directly (no cycling), without touching
+    /// sub-pane auto-scale flags. Used by reset buttons / template apply
+    /// / desync-restore sites that already know the target mode.
+    pub fn set_scale_mode(&mut self, mode: ScaleMode) {
+        self.price_scale.scale_mode = mode;
+    }
+
+    /// Set the scale mode to `mode` and mark every sub-pane's Y axis
+    /// auto-scale flag to match (`is_auto_y()`), optionally recalculating
+    /// the main chart's auto-scale range from `bars` when the new mode is
+    /// Auto. Used by reset-to-auto flows that also need to normalize
+    /// sub-panes (double-click sub-pane reset, ResetPriceScale sub-pane
+    /// branch, desync restore).
+    pub fn set_scale_mode_with_recalc(&mut self, mode: ScaleMode, bars: &[Bar]) {
+        self.price_scale.scale_mode = mode;
+        let is_auto = mode.is_auto_y();
+        for state in self.sub_pane_y_state.values_mut() {
+            state.auto_scale = is_auto;
+        }
+        if is_auto {
+            self.calc_auto_scale(bars);
+        }
+    }
+
+    /// Set the price-scale user precision override (dropdown-cycle in
+    /// chart settings). Distinct from `scale_settings.user_precision`
+    /// (the source of truth mirrored into `price_scale` for rendering).
+    pub fn set_price_precision(&mut self, precision: Option<usize>) {
+        self.price_scale.user_precision = precision;
+    }
+
+    /// Toggle the price-scale display mode (Normal / Percent / Logarithmic
+    /// — the corner "Mode" button), independent of the A/M/F scale_mode.
+    pub fn toggle_price_scale_mode(&mut self) {
+        self.price_scale.toggle_mode();
+    }
+
+    /// Reset the X axis (time/bar scale) to the default zoom level and
+    /// scroll to end — the "reset zoom" toolbar button.
+    pub fn reset_time_scale(&mut self) {
+        self.viewport.reset_to_default();
+    }
+
+    /// Directly set the price range (manual price-scale drag) and switch
+    /// to Manual mode.
+    pub fn set_price_range(&mut self, price_min: f64, price_max: f64) {
+        self.price_scale.scale_mode = ScaleMode::Manual;
+        self.price_scale.price_min = price_min;
+        self.price_scale.price_max = price_max;
+    }
+
+    /// Pan the viewport's X axis by a raw pixel delta, with no price-scale
+    /// side effect (the caller handles Y separately — sub-pane drag vs.
+    /// main-chart auto/manual price adjust are two different follow-ups
+    /// depending on drag mode).
+    pub fn pan(&mut self, pixel_delta: f64) {
+        self.viewport.pan(pixel_delta);
+    }
+
+    /// Center the viewport's X axis on `bar_idx`, keeping the current
+    /// scale mode. Recalculates auto-scale if already in an auto-Y mode.
+    /// Used by signal-row clicks (W11).
+    pub fn center_on_bar(&mut self, bar_idx: f64, bars: &[Bar]) {
+        let visible_bars = self.viewport.chart_width / self.viewport.bar_spacing;
+        self.viewport.view_start = (bar_idx - visible_bars / 2.0).max(0.0);
+        if self.price_scale.scale_mode.is_auto_y() {
+            self.calc_auto_scale(bars);
+        }
+    }
+
+    /// Center the viewport's X axis on `bar_idx` and force Auto-Y on both
+    /// the main chart and every sub-pane. Used by drawing-row clicks in
+    /// the Object Tree (W10), where centering on a primitive should also
+    /// re-fit the Y axis regardless of the previous scale mode.
+    pub fn center_on_bar_auto(&mut self, bar_idx: f64, bars: &[Bar]) {
+        let visible_bars = self.viewport.chart_width / self.viewport.bar_spacing;
+        self.viewport.view_start = (bar_idx - visible_bars / 2.0).max(0.0);
+        self.price_scale.scale_mode = ScaleMode::Auto;
+        for state in self.sub_pane_y_state.values_mut() {
+            state.auto_scale = true;
+        }
+        self.calc_auto_scale(bars);
+    }
+
+    /// Apply an undo/redo `ViewportChange` command snapshot verbatim.
+    pub fn apply_undo_viewport(&mut self, view_start: f64, bar_spacing: f64, price_min: f64, price_max: f64) {
+        self.viewport.view_start = view_start;
+        self.viewport.bar_spacing = bar_spacing;
+        self.price_scale.price_min = price_min;
+        self.price_scale.price_max = price_max;
+    }
+
+    /// Apply a sync-group propagation write from the source window.
+    ///
+    /// `peer_view_start` / `peer_spacing` are already resolved into this
+    /// window's own coordinate space by the caller (ts-anchored bar index,
+    /// chart-width-adjusted spacing). Only writes + rescales when the
+    /// viewport actually moves (matches source `>1e-9` epsilon) — an
+    /// unconditional per-frame write raced the per-tick autoscale on the
+    /// same peer and caused visible line/scale-chip flicker. A bare mode
+    /// flip with no movement still triggers exactly one rescale.
+    /// Returns `true` if the viewport moved.
+    pub fn set_from_sync(
+        &mut self,
+        peer_view_start: f64,
+        peer_spacing: f64,
+        scale_mode: Option<ScaleMode>,
+        bars: &[Bar],
+    ) -> bool {
+        if let Some(mode) = scale_mode {
+            self.price_scale.scale_mode = mode;
+            let is_auto = mode.is_auto_y();
+            for state in self.sub_pane_y_state.values_mut() {
+                state.auto_scale = is_auto;
+            }
+        }
+        let moved = (self.viewport.view_start - peer_view_start).abs() > 1e-9
+            || (self.viewport.bar_spacing - peer_spacing).abs() > 1e-9;
+        if moved {
+            self.viewport.view_start = peer_view_start;
+            self.viewport.bar_spacing = peer_spacing;
+            if self.price_scale.scale_mode.is_auto_y() {
+                self.calc_auto_scale(bars);
+            }
+        } else if scale_mode.is_some() && self.price_scale.scale_mode.is_auto_y() {
+            self.calc_auto_scale(bars);
+        }
+        moved
+    }
+
+    /// Apply an `AgentCommand::SetViewport` command from the HTTP/agent
+    /// control surface.
+    ///
+    /// `mode` mirrors the corner-button semantics: `"focus"` scrolls to
+    /// the right edge at the current spacing, `"fit"` fits all `bar_count`
+    /// bars into the current chart width. Explicit `view_start`/
+    /// `bar_spacing` overrides (if present) apply after the mode.
+    pub fn set_from_agent(
+        &mut self,
+        mode: Option<&str>,
+        view_start: Option<f64>,
+        bar_spacing: Option<f64>,
+        bar_count: usize,
+    ) {
+        match mode {
+            Some("focus") => {
+                if bar_count > 0 {
+                    let visible = if self.viewport.bar_spacing > 0.0 {
+                        (self.viewport.chart_width / self.viewport.bar_spacing).ceil() as usize
+                    } else {
+                        1
+                    };
+                    self.viewport.view_start = (bar_count as f64) - (visible as f64);
+                }
+            }
+            Some("fit") => {
+                if bar_count > 0 && self.viewport.chart_width > 0.0 {
+                    self.viewport.bar_spacing = self.viewport.chart_width / bar_count as f64;
+                    self.viewport.view_start = 0.0;
+                }
+            }
+            _ => {}
+        }
+        if let Some(vs) = view_start {
+            self.viewport.view_start = vs;
+        }
+        if let Some(bs) = bar_spacing {
+            self.viewport.bar_spacing = bs;
+        }
+    }
+
+    /// Resize the viewport's chart geometry, pinning the right edge (the
+    /// bars currently visible at the right stay anchored) when the window
+    /// hasn't already deferred its initial snap.
+    ///
+    /// Used by both the non-split (`ChartApp::sync_viewport_from_layout`)
+    /// and split-per-leaf (`prepare_frame`) resize paths — same body,
+    /// different callers.
+    pub fn resize_geometry(&mut self, new_width: f64, new_height: f64) {
+        let old_width = self.viewport.chart_width;
+        if !self.needs_auto_scale_after_bars
+            && (old_width - new_width).abs() > 0.5
+            && self.viewport.bar_spacing > 0.0
+            && old_width > 0.0
+            && new_width > 0.0
+        {
+            let bar_shift = (old_width - new_width) / self.viewport.bar_spacing;
+            self.viewport.view_start += bar_shift;
+        }
+        // Don't store negative/zero widths — they'd poison the next bar_shift calc.
+        if new_width > 0.0 {
+            self.viewport.chart_width = new_width;
+        }
+        if new_height > 0.0 {
+            self.viewport.chart_height = new_height;
+        }
+    }
+
+    /// Consume the deferred viewport snap set by an async bars delivery
+    /// that landed before layout dimensions were known
+    /// (`needs_auto_scale_after_bars` / `needs_snap_after_backfill`).
+    ///
+    /// Returns `Some((view_start, bar_spacing))` when a snap fired (so the
+    /// caller can propagate the new position to sync-group peers);
+    /// `None` when the gate didn't pass (chart_width still 0, bars empty,
+    /// or neither flag set).
+    pub fn consume_deferred_snap(&mut self, bars: &[Bar]) -> Option<(f64, f64)> {
+        if !(self.needs_auto_scale_after_bars || self.needs_snap_after_backfill)
+            || bars.is_empty()
+            || self.viewport.chart_width <= 0.0
+        {
+            return None;
+        }
+        self.needs_auto_scale_after_bars = false;
+        if self.needs_snap_after_backfill {
+            // Cold-restore snap supersedes the plain deferred snap:
+            // consume_cold_snap snaps + force-autoscales + clears the flag.
+            self.consume_cold_snap(bars);
+        } else {
+            self.snap_to_end(DEFAULT_SNAP_MARGIN);
+            self.calc_auto_scale(bars);
+        }
+        // restore_scale_mode is already consumed inside set_bars() for the
+        // eager path; for the deferred path (chart_width was 0 at set_bars
+        // time), consume it here.
+        if let Some(mode) = self.restore_scale_mode.take() {
+            self.price_scale.scale_mode = mode;
+        }
+        Some((self.viewport.view_start, self.viewport.bar_spacing))
+    }
+
+    /// Restore persisted zoom (`bar_spacing`) and price-scale display
+    /// config from a preset snapshot. `view_start`, `chart_width`/
+    /// `chart_height`, `bar_count`, and `scale_mode`/`price_min`/
+    /// `price_max` are never restored raw (RAM-only per the viewport SWC
+    /// arc) — those are left for the cold-load snap + auto-scale to
+    /// (re)compute once fresh bars arrive.
+    pub fn restore_persisted_display(
+        &mut self,
+        viewport_persist: &mlc_core::preset::snapshots::ViewportPersist,
+        price_persist: &mlc_core::preset::snapshots::PriceScalePersist,
+    ) {
+        if viewport_persist.bar_spacing > 0.0 {
+            self.viewport.bar_spacing = viewport_persist.bar_spacing;
+        }
+        self.price_scale.mode = price_persist.mode;
+        self.price_scale.base_price = price_persist.base_price;
+        self.price_scale.width = price_persist.width;
+        self.price_scale.user_precision = price_persist.user_precision;
+    }
+
+    /// Set the viewport's bar count to `new_count` (bookkeeping only, no
+    /// rescale). Used by derived-bar-append reactors (W23) and live-tick
+    /// passthrough reactors, which call [`ChartContainer::calc_auto_scale`]
+    /// /[`ChartContainer::advance_view_on_tick`] themselves afterward.
+    pub fn set_bar_count(&mut self, new_count: usize) {
+        self.viewport.bar_count = new_count;
+    }
+
+    /// Bump `bar_count` by one when `is_new_bar`, then apply the two
+    /// live-tick follow behaviors: Follow mode snaps to the right edge
+    /// every tick; Auto mode advances `view_start` by one bar only when a
+    /// new bar was appended AND the last bar was already at (or past) the
+    /// right edge — so the view tracks new bars without visibly jumping
+    /// mid-bar.
+    pub fn advance_view_on_tick(&mut self, is_new_bar: bool) {
+        self.viewport.bar_count = self.viewport.bar_count.saturating_add(if is_new_bar { 1 } else { 0 });
+        let count = self.viewport.bar_count;
+        let visible_f = self.viewport.chart_width / self.viewport.bar_spacing;
+        if self.price_scale.scale_mode.is_follow() {
+            self.snap_to_end(DEFAULT_SNAP_MARGIN);
+        }
+        if is_new_bar && self.price_scale.scale_mode == ScaleMode::Auto {
+            let right_edge_bar = self.viewport.view_start + visible_f;
+            let last_bar = count as f64;
+            if last_bar >= right_edge_bar {
+                self.viewport.view_start += 1.0;
+            }
+        }
+    }
+
+    /// Test-only: force the viewport into a known geometry/position.
+    ///
+    /// Narrow, explicitly named escape hatch for integration tests (in the
+    /// separate `tests/` crate, so `#[cfg(test)]` cannot gate it) that need
+    /// to synthesize a specific viewport state (e.g. "scrolled to the far
+    /// left") to exercise a reactor path. Not called from production code.
+    #[doc(hidden)]
+    pub fn force_viewport_for_test(&mut self, chart_width: f64, bar_spacing: f64, view_start: f64) {
+        if self.viewport.chart_width <= 0.0 {
+            self.viewport.chart_width = chart_width;
+        }
+        if self.viewport.bar_spacing <= 0.0 {
+            self.viewport.bar_spacing = bar_spacing;
+        }
+        self.viewport.view_start = view_start;
     }
 
     /// Zoom the price scale vertically around the center price.

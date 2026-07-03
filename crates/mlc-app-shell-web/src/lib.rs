@@ -269,10 +269,10 @@ fn run_render_loop(
             let (view_start, bar_spacing, chart_width, bar_count_vp) = active_cid
                 .and_then(|cid| st.chart.panel_app.panel_grid.containers().get(&cid))
                 .map(|w| (
-                    w.viewport.view_start,
-                    w.viewport.bar_spacing,
-                    w.viewport.chart_width,
-                    w.viewport.bar_count as f64,
+                    w.viewport().view_start,
+                    w.viewport().bar_spacing,
+                    w.viewport().chart_width,
+                    w.viewport().bar_count as f64,
                 ))
                 .unwrap_or((0.0, 0.0, 0.0, 0.0));
             let dbg = js_sys::Object::new();

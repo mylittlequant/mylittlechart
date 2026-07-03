@@ -81,7 +81,7 @@ pub fn process_event(
                 if state.was_minimized {
                     state.was_minimized = false;
                     for window in chart.panel_app.panel_grid.containers_mut().values_mut() {
-                        if !true && window.price_scale.scale_mode.is_follow() {
+                        if !true && window.price_scale().scale_mode.is_follow() {
                             window.snap_to_end(mlc_app::chart_container::DEFAULT_SNAP_MARGIN);
                         }
                     }

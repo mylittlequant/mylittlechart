@@ -392,8 +392,7 @@ impl ChartApp {
                             window.symbol_drawings.insert(old_key, result.old_primitives);
                         }
                     }
-                    window.viewport.bar_count = 0;
-                    window.pending_symbol_load = true;
+                    window.begin_fresh_load();
                 }
                 if let Some(chart_id) = active_chart_id {
                     if let Some(bid) = self.bubble_for_chart(chart_id) {
@@ -864,9 +863,7 @@ impl ChartApp {
                                     window.symbol_drawings.insert(old_key, result.old_primitives);
                                 }
                             }
-                            window.viewport.bar_count = 0;
-                            window.viewport.view_start = 0.0;
-                            window.pending_symbol_load = true;
+                            window.begin_fresh_load();
                         }
                         // Phase 1.2: dual-write instrument into branch_meta + bubble.
                         if let Some(chart_id) = active_chart_id {
@@ -1184,22 +1181,12 @@ impl ChartApp {
                 ScaleCornerButton::AutoManual => {
                     let current_mode = self.panel_app.panel_grid
                         .container_for_leaf(hit_leaf_id)
-                        .map(|w| w.price_scale.scale_mode)
+                        .map(|w| w.price_scale().scale_mode)
                         .unwrap_or(ScaleMode::Auto);
                     let next_mode = current_mode.next();
                     let hit_bars: Vec<mlc_core::Bar> = self.bars_for_leaf(hit_leaf_id);
                     if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(hit_leaf_id) {
-                        window.price_scale.scale_mode = next_mode;
-                        if next_mode.is_follow() {
-                            window.snap_to_end(crate::chart_container::DEFAULT_SNAP_MARGIN);
-                        }
-                        if next_mode.is_auto_y() {
-                            window.calc_auto_scale(&hit_bars);
-                        }
-                        let is_auto = next_mode.is_auto_y();
-                        for state in window.sub_pane_y_state.values_mut() {
-                            state.auto_scale = is_auto;
-                        }
+                        window.cycle_scale_mode(next_mode, &hit_bars);
                     }
                     // Mutate group.scale_mode when sync_viewport is on so the group
                     // remembers the mode for new joiners.
@@ -1214,7 +1201,7 @@ impl ChartApp {
                     if viewport_sync_on {
                         let viewport_state = self.panel_app.panel_grid
                             .container_for_leaf(hit_leaf_id)
-                            .map(|w| (w.viewport.view_start, w.viewport.bar_spacing));
+                            .map(|w| (w.viewport().view_start, w.viewport().bar_spacing));
                         if let Some((view_start, bar_spacing)) = viewport_state {
                             self.propagate_viewport_to_sync_group(hit_leaf_id, view_start, bar_spacing, Some(next_mode));
                         }
@@ -1558,17 +1545,17 @@ impl ChartApp {
             if in_main_chart {
                 // Main chart click.
                 let (price_min, price_max) = self.panel_app.panel_grid.active_container()
-                    .map(|w| (w.price_scale.price_min, w.price_scale.price_max))
+                    .map(|w| (w.price_scale().price_min, w.price_scale().price_max))
                     .unwrap_or((0.0, 100.0));
 
                 let chart_height = chart_rect.height;
                 let bar = self.panel_app.panel_grid.active_container()
                     .map(|w| {
                         // Snap to bar center (matching crosshair coordinate system).
-                        if let Some(idx) = w.viewport.x_to_bar(local_x_main) {
+                        if let Some(idx) = w.viewport().x_to_bar(local_x_main) {
                             idx as f64
                         } else {
-                            w.viewport.x_to_bar_f64(local_x_main)
+                            w.viewport().x_to_bar_f64(local_x_main)
                         }
                     })
                     .unwrap_or(0.0);
@@ -1585,7 +1572,7 @@ impl ChartApp {
                 let price = self.panel_app.panel_grid.active_container()
                     .map(|w| {
                         if w.crosshair.is_magnet() {
-                            let bar_idx = w.viewport.x_to_bar(local_x_main);
+                            let bar_idx = w.viewport().x_to_bar(local_x_main);
                             let (snapped_price, _) = w.calculate_magnet_snap(
                                 &magnet_bars, bar_idx, raw_price, chart_height, price_min, price_max,
                             );
@@ -1685,10 +1672,10 @@ impl ChartApp {
                 let bar = self.panel_app.panel_grid.active_container()
                     .map(|w| {
                         // Snap to bar center (matching crosshair coordinate system).
-                        if let Some(idx) = w.viewport.x_to_bar(local_x) {
+                        if let Some(idx) = w.viewport().x_to_bar(local_x) {
                             idx as f64
                         } else {
-                            w.viewport.x_to_bar_f64(local_x)
+                            w.viewport().x_to_bar_f64(local_x)
                         }
                     })
                     .unwrap_or(0.0);
@@ -1797,11 +1784,11 @@ impl ChartApp {
                 if let Some(window) = self.panel_app.panel_grid.active_container() {
                     // Use corrected viewport dimensions from the layout so that
                     // hit-test coordinate mapping matches the render path exactly.
-                    let mut corrected_vp = window.viewport.clone();
+                    let mut corrected_vp = window.viewport().clone();
                     corrected_vp.chart_width = chart_rect.width;
                     corrected_vp.chart_height = chart_rect.height;
                     let hit_prim_id = active_bid_hit
-                        .and_then(|bid| self.core.drawings().hit_test(bid, local_x, local_y, &hit_bars_main[..], &corrected_vp, &window.price_scale));
+                        .and_then(|bid| self.core.drawings().hit_test(bid, local_x, local_y, &hit_bars_main[..], &corrected_vp, &window.price_scale()));
                     if let Some(hit_prim_id) = hit_prim_id {
                         // Select the primitive, clear indicator selection, and return.
                         self.selected_indicator_id = None;
@@ -1846,7 +1833,7 @@ impl ChartApp {
                 // Use a viewport with pane height so hit_test_in_pane coordinate conversion is correct.
                 let sub_viewport = self.panel_app.panel_grid.active_container()
                     .map(|w| {
-                        let mut vp = w.viewport.clone();
+                        let mut vp = w.viewport().clone();
                         vp.chart_height = content.height;
                         vp
                     });
@@ -1898,7 +1885,7 @@ impl ChartApp {
                         self.core.indicators().hit_test_sub_pane(
                             instance_id,
                             plx, ply,
-                            &window.viewport,
+                            &window.viewport(),
                             price_min, price_max,
                             pane_rect.height,
                             8.0,
@@ -1930,8 +1917,8 @@ impl ChartApp {
                             window.current_tag_id,
                             local_x,
                             local_y,
-                            &window.viewport,
-                            &window.price_scale,
+                            &window.viewport(),
+                            &window.price_scale(),
                             chart_rect.height,
                             8.0,
                         )
@@ -2176,9 +2163,9 @@ impl ChartApp {
                             // Convert screen pixels to bar/price coordinates using the viewport.
                             let clone_bars: Vec<mlc_core::Bar> = self.active_chart_bars();
                             if let Some(w) = self.panel_app.panel_grid.active_container() {
-                                let bar_spacing = w.viewport.bar_spacing;
-                                let chart_height = w.viewport.chart_height;
-                                let price_range = w.price_scale.price_max - w.price_scale.price_min;
+                                let bar_spacing = w.viewport().bar_spacing;
+                                let chart_height = w.viewport().chart_height;
+                                let price_range = w.price_scale().price_max - w.price_scale().price_min;
                                 // 20px right = 20 / bar_spacing bars → convert to ms
                                 let bars_delta = 20.0 / bar_spacing.max(0.001);
                                 let bar_interval_ms = mlc_core::bar_interval_seconds(&clone_bars[..]) * 1000;
