@@ -266,6 +266,26 @@ fn run_render_loop(
             st.chart.drain_watchlist_actions();
         }
 
+        // ── Drain deferred cold-preset apply ─────────────────────────────────
+        // Native equivalent: mlc-app-shell-vello/main.rs:4462-4482, gated on
+        // GpuDone (one frame after the promote). Wasm has no such fence — the
+        // RAF callback already IS "one frame later" relative to whatever
+        // dispatch_event call above set `pending_cold_apply` (e.g. a chrome
+        // tab click routing through `LoadPreset`), so draining immediately
+        // here is the correct wasm-shaped equivalent, not a shortcut.
+        //
+        // `pending_cold_apply` is the ONLY place that clears `load_state`
+        // back to `Live` after `LoadPreset` stashes the cold-apply body and
+        // flips to `Loading` (chart_out_events.rs:142). Before this was
+        // wired, wasm never called this drain anywhere — any `LoadPreset`
+        // (chrome tab click, preset load) would stash the body once and then
+        // sit forever on the loading skeleton because nothing ever consumed
+        // the stash. Parity-sweep finding, not cosmetic.
+        {
+            let mut st = state_clone.borrow_mut();
+            st.chart.drain_pending_cold_apply();
+        }
+
         // ── Diag: expose active bubble's last bar timestamp + bars count + close
         //     to JS so `dev-attach --eval window.MLC_DEBUG` can see whether the
         //     live tick actually reaches the bubble (the chart reads from there).
@@ -375,6 +395,18 @@ fn run_render_loop(
         {
             let mut st = state_clone.borrow_mut();
             st.chart.drain_pending_cure_after_preset_load();
+        }
+
+        // ── Background-warm: pre-hydrate open tabs into live_preset_cache ─────
+        // Native equivalent: mlc-app-shell-vello/main.rs:4491-4494. Pure
+        // optimization (self-paced VecDeque, idempotent, exits when empty) —
+        // without it every chrome tab click is a cold load instead of a
+        // zero-flicker cache hit. Same per-frame-drain shape as the cure
+        // drain above.
+        {
+            let mut st = state_clone.borrow_mut();
+            st.chart.seed_background_warm_if_idle();
+            st.chart.drain_one_background_warm();
         }
 
         // ── Schedule next frame ───────────────────────────────────────────────
