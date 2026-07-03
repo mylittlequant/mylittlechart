@@ -339,6 +339,16 @@ impl ChartApp {
                         );
                         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                             window.set_chart_type_with_undo(panel, ct);
+                            // Wave T1 commit 1: some chart types need more
+                            // horizontal room per bar than whatever spacing
+                            // the previous type left behind (footprint's
+                            // text-legibility floor). Clamp up, right-edge
+                            // anchored, so the switch shows real content
+                            // instead of a permanent zoom-in placeholder.
+                            // Switching AWAY never restores the old spacing.
+                            if let Some(min_spacing) = min_usable_bar_spacing(ct) {
+                                window.ensure_min_bar_spacing(min_spacing);
+                            }
                         }
                         (panel.chart_type_param, panel.chart_type_interval)
                     } else {
@@ -2207,4 +2217,29 @@ impl ChartApp {
         }
     }
 
+}
+
+/// Per-chart-type minimum-usable `bar_spacing` (px), enforced on
+/// `ChangeChartType` (Wave T1 commit 1,
+/// `docs/mlc/audits/series-types-ui-audit-2026-07-04.md`).
+///
+/// The default `Viewport::bar_spacing` is 8px (kline-tuned). Some
+/// derived-chart renderers need much more horizontal room per bar before
+/// their content is legible — below the threshold they show a
+/// zoom-in placeholder instead of real content (see
+/// `mlc-app-layout/src/chart_render/footprint.rs` `MIN_BAR_WIDTH_PX`).
+/// Returns `None` when the type is fine with the inherited spacing.
+///
+/// Table is deliberately extensible — new entries only need a match arm.
+pub fn min_usable_bar_spacing(chart_type: &str) -> Option<f64> {
+    match chart_type {
+        // Footprint clusters draw per-level bid/ask numbers inside the bar
+        // column; `footprint.rs::MIN_BAR_WIDTH_PX = 40.0` is the hard floor
+        // for text, `bar_width() = bar_spacing * bar_width_ratio` (default
+        // ratio 0.8) — so `bar_spacing` must clear `40.0 / 0.8 = 50.0` for
+        // the body alone to fit legible text, plus a little headroom for
+        // the per-level number labels so they don't touch the column edges.
+        "footprint" => Some(50.0),
+        _ => None,
+    }
 }

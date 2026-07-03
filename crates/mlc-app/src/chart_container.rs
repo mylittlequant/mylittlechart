@@ -2193,6 +2193,41 @@ impl ChartContainer {
         self.price_scale.price_max = center + half_range;
     }
 
+    /// Clamp `bar_spacing` up to `min_spacing` if it's currently below it,
+    /// keeping the RIGHT EDGE anchored (the bar that currently sits at the
+    /// visible-window's right boundary stays there after the clamp).
+    ///
+    /// Wave T1 commit 1 (`docs/mlc/audits/series-types-ui-audit-2026-07-04.md`):
+    /// chart types with a text-legibility floor (footprint clusters) inherit
+    /// whatever `bar_spacing` the previous chart type left behind — often the
+    /// 8px kline default, well under footprint's 40px `MIN_BAR_WIDTH_PX`
+    /// gate — which renders as a permanent zoom-in placeholder. Called once
+    /// on `ChangeChartType` when switching TO such a type; switching AWAY
+    /// does not restore the old spacing (the user can zoom back out).
+    ///
+    /// Right-edge math mirrors `Viewport::zoom_at`'s "keep the bar under a
+    /// fixed pixel position fixed" identity, evaluated at `x = chart_width`
+    /// (the right edge) instead of the cursor position:
+    /// `bar_under_edge = view_start + chart_width / old_spacing`,
+    /// then re-derive `view_start` from the same `bar_under_edge` at the
+    /// new spacing.
+    pub fn ensure_min_bar_spacing(&mut self, min_spacing: f64) {
+        let old_spacing = self.viewport.bar_spacing;
+        if old_spacing <= 0.0 || old_spacing >= min_spacing {
+            return;
+        }
+        let max_spacing = self.viewport.max_bar_spacing();
+        let new_spacing = min_spacing.min(max_spacing.max(min_spacing));
+        if self.viewport.chart_width > 0.0 {
+            let bar_under_right_edge = self.viewport.view_start + self.viewport.chart_width / old_spacing;
+            self.viewport.bar_spacing = new_spacing;
+            self.viewport.view_start = bar_under_right_edge - self.viewport.chart_width / new_spacing;
+        } else {
+            self.viewport.bar_spacing = new_spacing;
+        }
+        self.needs_y_rescale = true;
+    }
+
     // =========================================================================
     // Action Dispatch
     // =========================================================================
