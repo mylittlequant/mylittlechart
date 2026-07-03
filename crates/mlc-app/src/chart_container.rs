@@ -1990,6 +1990,23 @@ impl ChartContainer {
         if new_height > 0.0 {
             self.viewport.chart_height = new_height;
         }
+        // Beyond-end is never a valid view state — it means an earlier snap
+        // ran against a degenerate transient width (layout mid-settle can
+        // report sliver widths that still pass the `> 0` gates; observed
+        // 47px during wasm tab-return, pinning view_start ≈ bar_count).
+        // Heal at the door: once real dimensions are in, clamp back to the
+        // right edge. Legit user states always sit within this bound.
+        if self.viewport.bar_count > 0
+            && self.viewport.bar_spacing > 0.0
+            && self.viewport.chart_width > 0.0
+        {
+            let visible_f = self.viewport.chart_width / self.viewport.bar_spacing;
+            let max_vs =
+                (self.viewport.bar_count as f64 + DEFAULT_SNAP_MARGIN - visible_f).max(0.0);
+            if self.viewport.view_start > max_vs {
+                self.viewport.view_start = max_vs;
+            }
+        }
         self.log_view_jump("resize_geometry", vs0, bc0);
     }
 
