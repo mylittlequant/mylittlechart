@@ -262,6 +262,15 @@ pub struct ChartContainer {
     /// Runtime-only, not persisted.
     pub needs_snap_after_backfill: bool,
 
+    /// One-shot: viewport width materially changed (split, window resize,
+    /// pane re-proportion) → in Auto mode the Y range must be refit to the
+    /// NEW visible window. Set by `resize_geometry`, consumed by
+    /// `consume_y_rescale` in prepare (after geometry settles, same frame).
+    /// Invariant: Auto-mode Y always wraps the CURRENT visible window —
+    /// panes must never inherit a Y computed for a different width
+    /// (split-Y staleness bug, 2026-07-04). Runtime-only, not persisted.
+    pub needs_y_rescale: bool,
+
     /// Pre-join scale mode: saved when this window enters a group with
     /// `sync_viewport = ON`. Restored automatically on desync so the window
     /// returns to its own A/M/F choice. F (Focus) implies a pinned viewport,
@@ -453,6 +462,7 @@ impl ChartContainer {
             stashed_scale_mode: None,
             tag_inherits_home_overlay: false,
             needs_snap_after_backfill: false,
+            needs_y_rescale: false,
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
             data_error: None,
@@ -1050,6 +1060,7 @@ impl ChartContainer {
             // cold-snap off the mother's data that made the sibling diverge
             // from the mother pane (split viewport divergence, 2026-07-03).
             needs_snap_after_backfill: false,
+            needs_y_rescale: false,
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
             data_error: None,
@@ -1990,6 +2001,13 @@ impl ChartContainer {
         }
         // Don't store negative/zero widths — they'd poison the next bar_shift calc.
         if new_width > 0.0 {
+            if (old_width - new_width).abs() > 0.5 {
+                // Visible window changed → Auto-mode Y must be refit to it
+                // (split halves the pane, resize stretches it; inheriting a
+                // Y computed for the OLD width is the split-Y staleness bug,
+                // 2026-07-04). Consumed by consume_y_rescale in prepare.
+                self.needs_y_rescale = true;
+            }
             self.viewport.chart_width = new_width;
         }
         if new_height > 0.0 {
@@ -2068,6 +2086,24 @@ impl ChartContainer {
             self.price_scale.scale_mode = mode;
         }
         Some((self.viewport.view_start, self.viewport.bar_spacing))
+    }
+
+    /// Consume the one-shot Y-refit flag set by `resize_geometry` on a
+    /// material width change (split, window resize). Auto-mode Y is refit
+    /// to the CURRENT visible window; Manual/Focus windows just clear the
+    /// flag (the user owns their Y range). X is never touched here.
+    pub fn consume_y_rescale(&mut self, series: crate::active_series::ActiveSeries<'_>) {
+        if !self.needs_y_rescale {
+            return;
+        }
+        if series.is_empty() || self.viewport.chart_width <= 0.0 {
+            // Keep the flag armed until real data + dimensions exist.
+            return;
+        }
+        self.needs_y_rescale = false;
+        if self.price_scale.scale_mode.is_auto_y() {
+            self.calc_auto_scale(series);
+        }
     }
 
     /// Restore persisted zoom (`bar_spacing`) and price-scale display

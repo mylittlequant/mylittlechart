@@ -186,6 +186,12 @@ impl ChartApp {
                 if let Some((view_start, bar_spacing)) = window.consume_deferred_snap(series_pre) {
                     snapped_windows.push((chart_id, view_start, bar_spacing));
                 }
+                // Y-invariant (2026-07-04): width materially changed →
+                // refit Auto-mode Y to the new visible window.
+                let series_y = series_by_chart_pre.get(&chart_id)
+                    .map(|s| s.as_active_series())
+                    .unwrap_or(crate::active_series::ActiveSeries::Bars(&[]));
+                window.consume_y_rescale(series_y);
             }
 
             // Propagate viewport snap to sync-group peers so all synced windows
@@ -1050,6 +1056,14 @@ impl ChartApp {
                     if let Some((view_start, bar_spacing)) = window.consume_deferred_snap(series_split) {
                         snapped_windows.push((chart_id, view_start, bar_spacing));
                     }
+                    // Y-invariant (2026-07-04): split/resize changed this
+                    // leaf's width → refit Auto-mode Y to its new visible
+                    // window (both panes of a fresh split hit this — they
+                    // inherit a Y computed for the pre-split width).
+                    let series_y = series_by_chart_split.get(&chart_id)
+                        .map(|s| s.as_active_series())
+                        .unwrap_or(crate::active_series::ActiveSeries::Bars(&[]));
+                    window.consume_y_rescale(series_y);
                 }
                 // (diagnostic logging removed — snap-to-end confirmed working)
                 for (chart_id, view_start, bar_spacing) in snapped_windows {
