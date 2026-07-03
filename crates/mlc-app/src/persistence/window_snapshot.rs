@@ -12,7 +12,9 @@
 //! `ChartContainer` reference — only this constructor does.
 
 use mlc_core::drawing::primitives_v2::Primitive;
-use mlc_core::preset::snapshots::{ChartWindowSnapshot, DrawingSnapshot, PrimitiveSnapshot};
+use mlc_core::preset::snapshots::{
+    ChartWindowSnapshot, DrawingSnapshot, PriceScalePersist, PrimitiveSnapshot, ViewportPersist,
+};
 use mlc_core::state::{CommandHistory, Timeframe};
 use crate::chart_container::ChartContainer;
 use crate::chart_panel_state::ChartPanelState;
@@ -42,17 +44,20 @@ pub fn build_chart_window_snapshot(
 ) -> ChartWindowSnapshot {
     let drawings = DrawingSnapshot::from_primitives(window.id.0, primitives);
 
-    // Save full viewport — chart_width, bar_spacing, bar_count are all valid
-    // and needed for immediate snap in set_bars(). If app window was resized,
-    // sync_viewport_from_layout will proportionally adjust chart_width.
-    // Only zero view_start — snap-to-end always positions to latest bar.
-    let mut saved_viewport = window.viewport.clone();
-    saved_viewport.view_start = 0.0;
+    // Persist only the zoom level (bar_spacing) and price-scale display
+    // config. `view_start`, `chart_width`/`chart_height`, `bar_count`,
+    // `price_min`/`price_max`, and `scale_mode` are runtime-only —
+    // never serialized (viewport SWC arc, 2026-07-03).
+    let saved_viewport = ViewportPersist {
+        bar_spacing: window.viewport.bar_spacing,
+    };
 
-    let mut saved_price_scale = window.price_scale.clone();
-    // price_min/price_max are recalculated from bars; zero them out.
-    saved_price_scale.price_min = 0.0;
-    saved_price_scale.price_max = 0.0;
+    let saved_price_scale = PriceScalePersist {
+        mode: window.price_scale.mode,
+        base_price: window.price_scale.base_price,
+        width: window.price_scale.width,
+        user_precision: window.price_scale.user_precision,
+    };
 
     ChartWindowSnapshot {
         window_id: window.id.0,

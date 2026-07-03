@@ -12,19 +12,73 @@ fn default_account_type_spot() -> String {
     "S".to_string()
 }
 
-use crate::chart::types::price_scale::ScaleMode;
+use crate::chart::types::price_scale::{PriceScaleMode, ScaleMode};
 use crate::drawing::primitives_v2::Primitive;
 use crate::drawing::primitives_v2::config::TimeframeVisibilityConfig;
 use crate::state::history::CommandHistory;
 use crate::state::Timeframe;
 use crate::indicator_types::IndicatorGroupConfig;
 use crate::ids::SyncFlags;
-use crate::{CompareOverlay, CrosshairOptions, GridOptions, Legend, PriceScale, Tooltip, Viewport, Watermark};
+use crate::{CompareOverlay, CrosshairOptions, GridOptions, Legend, Tooltip, Watermark};
 
 // `PrimitiveSnapshot` lives in `mlc-core::drawing::PrimitiveSnapshot`
 // (next to the `Primitive` trait) so both runtime caches and the preset
 // system can speak about it without one depending on the other.
 pub use crate::drawing::PrimitiveSnapshot;
+
+// =============================================================================
+// ViewportPersist / PriceScalePersist
+// =============================================================================
+//
+// Viewport SWC arc (2026-07-03): `ChartWindowSnapshot` used to embed the
+// full `Viewport` / `PriceScale` chart types, wholesale-cloning runtime
+// fields (`view_start`, `chart_width`, `bar_count`, `price_min`/`price_max`,
+// `scale_mode`) that must never round-trip through disk — see
+// `docs/mlc/plans/viewport-swc-2026-07-03.md`. These minimal DTOs replace
+// them, keeping the on-disk JSON keys `"viewport"` / `"price_scale"`
+// unchanged so old preset files still deserialize (unknown/missing fields
+// are handled by `#[serde(default)]`); the extra legacy fields on old JSON
+// objects are simply ignored by serde.
+
+/// Persisted viewport state: zoom level only. `view_start`, `bar_count`,
+/// `chart_width`/`chart_height`, and `time_axis` are runtime-only and are
+/// never written to disk.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct ViewportPersist {
+    /// User's zoom level (pixels per bar). Restored verbatim on cold load.
+    #[serde(default = "default_bar_spacing")]
+    pub bar_spacing: f64,
+}
+
+fn default_bar_spacing() -> f64 {
+    8.0
+}
+
+impl Default for ViewportPersist {
+    fn default() -> Self {
+        Self { bar_spacing: default_bar_spacing() }
+    }
+}
+
+/// Persisted price-scale display configuration. `price_min`/`price_max`
+/// (recomputed from bars) and `scale_mode` (the A/M/F corner button —
+/// governed by the cold-load rule, never restored raw) are runtime-only
+/// and are never written to disk.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+pub struct PriceScalePersist {
+    /// Normal / Percent / Logarithmic display mode.
+    #[serde(default)]
+    pub mode: PriceScaleMode,
+    /// Base price for percent mode.
+    #[serde(default)]
+    pub base_price: f64,
+    /// Calculated width of the price scale area.
+    #[serde(default)]
+    pub width: f64,
+    /// User-configured precision override.
+    #[serde(default)]
+    pub user_precision: Option<usize>,
+}
 
 // =============================================================================
 // DrawingSnapshot
@@ -80,10 +134,12 @@ pub struct ChartWindowSnapshot {
     pub account_type: String,
     /// Timeframe (e.g. 1H, 4H).
     pub timeframe: Timeframe,
-    /// Viewport state (pan/zoom position).
-    pub viewport: Viewport,
-    /// Price scale configuration.
-    pub price_scale: PriceScale,
+    /// Persisted viewport state (zoom level only — see `ViewportPersist`).
+    #[serde(default)]
+    pub viewport: ViewportPersist,
+    /// Persisted price-scale display config (see `PriceScalePersist`).
+    #[serde(default)]
+    pub price_scale: PriceScalePersist,
     /// Data bubble this window belongs to (if any).
     #[serde(alias = "group_id")]
     pub bubble_id: Option<u64>,

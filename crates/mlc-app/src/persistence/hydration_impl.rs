@@ -114,9 +114,12 @@ impl ChartApp {
                                         ),
                                     );
 
-                                    // Apply all snapshot fields
-                                    window.viewport = snap.viewport.clone();
-                                    window.price_scale = snap.price_scale.clone();
+                                    // Apply non-viewport snapshot fields. Viewport / price-scale
+                                    // are restored below (bar_spacing + display config only —
+                                    // viewport SWC arc, 2026-07-03): `window` was just constructed
+                                    // via `with_id` above, so it already carries a fresh
+                                    // `Viewport::default()` / `PriceScale::default()` — no
+                                    // wholesale clone from the snapshot.
                                     window.scale_settings = snap.scale_settings.clone();
 
                                     // Phase 4 C+S2.8: restore display/series fields + drawing_manager into panel state.
@@ -227,6 +230,13 @@ impl ChartApp {
                                     if snap.viewport.bar_spacing > 0.0 {
                                         window.viewport.bar_spacing = snap.viewport.bar_spacing;
                                     }
+                                    // Restore price-scale display config only (mode, base_price,
+                                    // width, user_precision). price_min/price_max are NOT restored -
+                                    // calc_auto_scale recomputes them from bars after the cold snap.
+                                    window.price_scale.mode = snap.price_scale.mode;
+                                    window.price_scale.base_price = snap.price_scale.base_price;
+                                    window.price_scale.width = snap.price_scale.width;
+                                    window.price_scale.user_precision = snap.price_scale.user_precision;
                                     // Cold-load rule (2026-06-24): every cold preset apply must
                                     // land on Auto scale mode — viewport snaps to the right edge
                                     // (`needs_snap_after_backfill = true` below) and the Y axis
@@ -376,8 +386,12 @@ impl ChartApp {
                                             std::sync::Arc::clone(&self.core.bridge),
                                         ),
                                     );
-                                    window.viewport = snap.viewport.clone();
-                                    window.price_scale = snap.price_scale.clone();
+                                    // Viewport / price-scale are restored below (bar_spacing +
+                                    // display config only — viewport SWC arc, 2026-07-03): this
+                                    // branch patches an EXISTING window in place, so its
+                                    // `chart_width`/`chart_height`/`bar_count` are already real
+                                    // runtime values that must not be clobbered by a snapshot
+                                    // clone or a fresh `Viewport::default()`.
                                     window.scale_settings = snap.scale_settings.clone();
 
                                     // Restore command history
@@ -420,6 +434,13 @@ impl ChartApp {
                                     if snap.viewport.bar_spacing > 0.0 {
                                         window.viewport.bar_spacing = snap.viewport.bar_spacing;
                                     }
+                                    // Restore price-scale display config only (see twin branch
+                                    // above for rationale). price_min/price_max are left as-is —
+                                    // calc_auto_scale recomputes them from bars after the cold snap.
+                                    window.price_scale.mode = snap.price_scale.mode;
+                                    window.price_scale.base_price = snap.price_scale.base_price;
+                                    window.price_scale.width = snap.price_scale.width;
+                                    window.price_scale.user_precision = snap.price_scale.user_precision;
                                     // Cold-load rule (2026-06-24): force Auto scale mode on
                                     // cold preset apply — see twin branch above for rationale.
                                     window.restore_scale_mode = Some(ScaleMode::Auto);
