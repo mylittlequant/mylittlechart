@@ -18,7 +18,10 @@ use super::ChartRenderState;
 pub fn draw_pnf(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     let columns = match state.pnf_columns {
         Some(c) if !c.is_empty() => c,
-        _ => return,
+        _ => {
+            super::draw_waiting_placeholder(ctx, state, "P&F: waiting for live data…");
+            return;
+        }
     };
     let viewport = state.viewport;
     let price_scale = state.price_scale;

@@ -89,7 +89,7 @@ pub use mlc_core::chart::render_data::{
     GridRenderOptions, LineRenderStyle,
 };
 
-use mlc_core::render::{RenderContext, InputState, FrameResult};
+use mlc_core::render::{RenderContext, InputState, FrameResult, TextAlign, TextBaseline};
 
 /// Main chart rendering entry point
 ///
@@ -118,4 +118,25 @@ pub fn render_chart_frame(
     // which renders candles, scales, crosshair, etc.
 
     FrameResult::default()
+}
+
+/// Honest empty-series placeholder shared by every derived-chart renderer
+/// that silently no-ops when its data source is empty (Wave T1 commit 2,
+/// `docs/mlc/audits/series-types-ui-audit-2026-07-04.md`).
+///
+/// A blank pane reads as "broken"; this draws centered dim text instead —
+/// same visual language as footprint's zoom-out placeholder
+/// (`footprint::draw_no_data_placeholder`), factored out here so the other
+/// 8 empty-series renderers (cvd, tpo, renko, pnf, kagi, three_line_break,
+/// dom_heatmap, liquidation_heatmap) share ONE implementation instead of
+/// 8 copies.
+pub(crate) fn draw_waiting_placeholder(ctx: &mut dyn RenderContext, state: &ChartRenderState, msg: &str) {
+    let rect = &state.chart_rect;
+    ctx.set_fill_color("#787878");
+    ctx.set_font("12px sans-serif");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(msg, rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
 }

@@ -104,7 +104,7 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
             // pretending with candles. Owner needs to see "we have nothing"
             // not a fake series.
             eprintln!("[fp-render] state.footprint_bars empty/None — drawing No-data placeholder");
-            draw_no_data_placeholder(ctx, state, "Footprint: waiting for data…");
+            super::draw_waiting_placeholder(ctx, state, "Footprint: waiting for data…");
             return;
         }
     };
@@ -121,14 +121,14 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
 
     if bar_w < MIN_BAR_WIDTH_PX {
         eprintln!("[fp-render] bar_w {:.2} < MIN_BAR_WIDTH_PX {:.0} — drawing zoom-out placeholder", bar_w, MIN_BAR_WIDTH_PX);
-        draw_no_data_placeholder(ctx, state, "Footprint: zoom in to see clusters");
+        super::draw_waiting_placeholder(ctx, state, "Footprint: zoom in to see clusters");
         return;
     }
 
     let font_size = ((bar_w / 8.5).clamp(MIN_FONT_SIZE_PX, 16.0)).round();
     if font_size < MIN_FONT_SIZE_PX {
         eprintln!("[fp-render] font_size {:.0} < MIN — drawing zoom-out placeholder", font_size);
-        draw_no_data_placeholder(ctx, state, "Footprint: zoom in to see clusters");
+        super::draw_waiting_placeholder(ctx, state, "Footprint: zoom in to see clusters");
         return;
     }
 
@@ -369,18 +369,6 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.set_line_dash(&[]);
-}
-
-/// Honest empty state — text in the middle of the chart, no fake bars.
-fn draw_no_data_placeholder(ctx: &mut dyn RenderContext, state: &ChartRenderState, msg: &str) {
-    let rect = &state.chart_rect;
-    ctx.set_fill_color("#787878");
-    ctx.set_font("12px sans-serif");
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(msg, rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
 }
 
 /// CVD line drawn into a reserved horizontal strip at the bottom of the

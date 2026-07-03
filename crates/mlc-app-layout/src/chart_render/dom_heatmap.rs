@@ -47,6 +47,7 @@ pub fn draw_dom_heatmap(
     trade_dots: Option<&[DomTradeDot]>,
 ) {
     if buf.cells.is_empty() {
+        super::draw_waiting_placeholder(ctx, state, "DOM Heatmap: waiting for live data…");
         return;
     }
 

@@ -25,7 +25,10 @@ use super::ChartRenderState;
 pub fn draw_three_line_break(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     let lines = match state.three_line_break {
         Some(ls) if !ls.is_empty() => ls,
-        _ => return,
+        _ => {
+            super::draw_waiting_placeholder(ctx, state, "Three Line Break: waiting for live data…");
+            return;
+        }
     };
     let viewport = state.viewport;
     let price_scale = state.price_scale;

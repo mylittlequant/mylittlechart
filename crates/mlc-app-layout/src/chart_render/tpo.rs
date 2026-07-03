@@ -26,7 +26,10 @@ const DATE_HEADER_PX: f64 = 16.0;
 pub fn draw_tpo(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     let sessions = match state.tpo_sessions {
         Some(s) if !s.is_empty() => s,
-        _ => return,
+        _ => {
+            super::draw_waiting_placeholder(ctx, state, "TPO: waiting for live data…");
+            return;
+        }
     };
     let price_scale = state.price_scale;
     let rect = &state.chart_rect;

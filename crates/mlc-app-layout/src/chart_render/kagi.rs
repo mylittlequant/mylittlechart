@@ -17,7 +17,10 @@ use super::ChartRenderState;
 pub fn draw_kagi(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     let segments = match state.kagi_segments {
         Some(s) if !s.is_empty() => s,
-        _ => return,
+        _ => {
+            super::draw_waiting_placeholder(ctx, state, "Kagi: waiting for live data…");
+            return;
+        }
     };
     let viewport = state.viewport;
     let price_scale = state.price_scale;

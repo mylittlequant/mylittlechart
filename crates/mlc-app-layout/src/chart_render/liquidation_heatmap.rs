@@ -44,6 +44,7 @@ pub fn draw_liquidation_heatmap(
     dots: Option<&[LiquidationDot]>,
 ) {
     if buf.cells.is_empty() {
+        super::draw_waiting_placeholder(ctx, state, "Liquidation Heatmap: waiting for live data…");
         return;
     }
 

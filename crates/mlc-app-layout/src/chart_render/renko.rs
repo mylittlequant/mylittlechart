@@ -23,7 +23,10 @@ use super::ChartRenderState;
 pub fn draw_renko(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     let bricks = match state.renko_bars {
         Some(b) if !b.is_empty() => b,
-        _ => return,
+        _ => {
+            super::draw_waiting_placeholder(ctx, state, "Renko: waiting for live data…");
+            return;
+        }
     };
     let viewport = state.viewport;
     let price_scale = state.price_scale;

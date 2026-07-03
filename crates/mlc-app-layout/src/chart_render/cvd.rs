@@ -24,7 +24,10 @@ const MIN_CHART_HEIGHT_FOR_OVERLAY_PX: f64 = 220.0;
 pub fn draw_cvd_chart(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     let samples = match state.cvd_line {
         Some(s) if !s.is_empty() => s,
-        _ => return,
+        _ => {
+            super::draw_waiting_placeholder(ctx, state, "CVD: waiting for live data…");
+            return;
+        }
     };
     let rect = &state.chart_rect;
     draw_cvd_line_into_rect(ctx, state, samples, rect.x, rect.y, rect.width, rect.height);
