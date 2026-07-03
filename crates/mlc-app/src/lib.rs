@@ -14,6 +14,7 @@
 //! app.on_click(x, y);
 //! ```
 
+pub mod active_series;
 pub mod agent;
 
 // On wasm32, gate4agent is absent from the dep graph. Re-alias our stub
@@ -1268,6 +1269,15 @@ impl ChartApp {
         self.core.bubbles().timeframe(bid).cloned()
     }
 
+    /// `chart_type` string of the panel rendering this chart (e.g. "renko",
+    /// "candles"). `None` when the container or its panel state doesn't
+    /// exist yet — callers fall back to the `Bars` resolution.
+    #[inline]
+    pub fn chart_type_for_chart(&self, chart_id: mlc_core::state::ChartId) -> Option<&'static str> {
+        let panel_id = self.panel_app.panel_grid.containers().get(&chart_id)?.chart_panel_id;
+        self.panels_store.chart_panel.get(&panel_id).map(|p| p.chart_type)
+    }
+
     /// Resolve the group/bubble id for any sync member id.
     #[inline]
     pub fn group_for_member(&self, member: mlc_core::ids::SyncMemberId) -> Option<mlc_core::ids::BubbleId> {
@@ -1327,6 +1337,40 @@ impl ChartApp {
         self.panel_app.panel_grid.container_id_for_leaf(leaf_id)
             .map(|cid| self.bars_for_chart(cid))
             .unwrap_or_default()
+    }
+
+    /// Audit D8 (ActiveSeries seam): resolve the array `chart_id`'s
+    /// chart_type actually renders (owned snapshot, so the bubble lock is
+    /// released before the caller mutates windows in a loop). Falls back to
+    /// an empty `Bars` series when the container/bubble/panel state isn't
+    /// resolvable yet.
+    pub fn active_series_for_chart(&self, chart_id: mlc_core::state::ChartId) -> crate::active_series::OwnedActiveSeries {
+        let Some(bid) = self.bubble_for_chart(chart_id) else {
+            return crate::active_series::OwnedActiveSeries::default();
+        };
+        let chart_type = self.chart_type_for_chart(chart_id).unwrap_or("candles");
+        self.with_bubble(bid, |b| crate::active_series::resolve_active_series_owned(chart_type, b))
+            .unwrap_or_default()
+    }
+
+    /// Audit D8: same as [`Self::active_series_for_chart`] for the active window.
+    pub fn active_chart_active_series(&self) -> crate::active_series::OwnedActiveSeries {
+        self.panel_app.panel_grid.active_container_id()
+            .map(|cid| self.active_series_for_chart(cid))
+            .unwrap_or_default()
+    }
+
+    /// Audit D8 (chart-types-xaxis-audit §3 items c/e): the `Vec<Bar>`
+    /// timestamp shadow `ChartRenderState.bars` should carry for THIS
+    /// chart's chart_type, for time-scale labels + drawings ts→x. `None`
+    /// means "keep the real `bubble.bars`" (candle-family, CVD, TPO,
+    /// heatmaps, footprint, range/volume/tick/dollar-family — see
+    /// `ts_shadow_for_chart_type` for the per-type rationale).
+    pub fn ts_shadow_for_chart(&self, chart_id: mlc_core::state::ChartId) -> Option<Vec<mlc_core::Bar>> {
+        let bid = self.bubble_for_chart(chart_id)?;
+        let chart_type = self.chart_type_for_chart(chart_id).unwrap_or("candles");
+        self.with_bubble(bid, |b| crate::active_series::ts_shadow_for_chart_type(chart_type, b))
+            .flatten()
     }
 
     /// Test-only: clone of the `DataBridge` handle. Headless harness uses it
@@ -3205,28 +3249,30 @@ impl ChartApp {
         // known. Reposition every window so the last bar has 5 empty bars of
         // right margin (set_bars() couldn't do this because chart_width was 0).
         if self.needs_initial_viewport_fit {
-            // Snapshot bars per chart up front (immutable borrow), then mutate.
-            let bars_by_chart: std::collections::HashMap<mlc_core::state::ChartId, Vec<mlc_core::Bar>> =
-                self.panel_app.panel_grid.containers().iter()
-                    .map(|(cid, w)| {
-                        let bars = self.core.bubbles().bars(w.current_tag_id).to_vec();
-                        (*cid, bars)
-                    })
+            // Snapshot each chart's ACTIVE series up front (audit D8 — a
+            // renko/pnf/kagi/... window fits against its own array, not
+            // always the kline array), immutable borrow released before the
+            // mutable containers_mut() loop below.
+            let series_by_chart: std::collections::HashMap<mlc_core::state::ChartId, crate::active_series::OwnedActiveSeries> =
+                self.panel_app.panel_grid.containers().keys()
+                    .map(|cid| (*cid, self.active_series_for_chart(*cid)))
                     .collect();
-            // Only consume the flag if at least one chart actually has bars
+            // Only consume the flag if at least one chart actually has data
             // ready to be snapped. Otherwise we'd burn the one-shot on the
             // very first resize that fires before the initial request_bars
             // round-trip returns, and the viewport would freeze on the
             // oldest bars forever. Keeping the flag armed lets the next
             // resize (which usually happens after BarsLoaded triggers a
             // chart_dirty redraw) actually do the snap.
-            let any_bars = bars_by_chart.values().any(|v| !v.is_empty());
+            let any_bars = series_by_chart.values().any(|s| !s.as_active_series().is_empty());
             for (cid, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
-                let bars = bars_by_chart.get(cid).map(|v| v.as_slice()).unwrap_or(&[]);
-                if window.viewport().chart_width > 0.0 && window.viewport().bar_spacing > 0.0 && !bars.is_empty() {
+                let series = series_by_chart.get(cid)
+                    .map(|s| s.as_active_series())
+                    .unwrap_or(crate::active_series::ActiveSeries::Bars(&[]));
+                if window.viewport().chart_width > 0.0 && window.viewport().bar_spacing > 0.0 && !series.is_empty() {
                     window.snap_to_end(crate::chart_container::DEFAULT_SNAP_MARGIN);
                 }
-                window.calc_auto_scale(bars);
+                window.calc_auto_scale(series);
             }
             if any_bars {
                 self.needs_initial_viewport_fit = false;
@@ -3394,6 +3440,9 @@ impl ChartApp {
                 let overlay_panel = self.panels_store.chart_panel
                     .get(&overlay_panel_id)
                     .unwrap_or(&overlay_default_panel);
+                // Audit D8: resolve BEFORE taking the bubbles() read guard below
+                // (with_bubble takes its own read lock internally).
+                let overlay_ts_shadow = chart_id.and_then(|cid| self.ts_shadow_for_chart(cid));
                 let overlay_bubble_mgr = self.core.bubbles();
                 let overlay_window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
                     viewport: window.viewport(),
@@ -3406,7 +3455,7 @@ impl ChartApp {
                     oi_show: window.oi_show,
                     funding_show: window.funding_show,
                 };
-                if let Some(render_state) = overlay_bubble_mgr.render_state_for(
+                if let Some(mut render_state) = overlay_bubble_mgr.render_state_for(
                     window.current_tag_id,
                     overlay_window_inputs,
                     chart_rect,
@@ -3417,6 +3466,12 @@ impl ChartApp {
                     &overlay_panel.grid_options,
                     &overlay_panel.legend,
                 ) {
+                    // Audit D8: derived-chart-type panes get their own array's
+                    // timestamps for time-scale labels + drawings ts→x — see
+                    // `ts_shadow_for_chart_type` for the per-type rationale.
+                    if let Some(shadow) = overlay_ts_shadow.as_deref() {
+                        render_state.bars = shadow;
+                    }
                     let crosshair_config = mlc_core::chart::CrosshairConfig::default();
                     let render_config = ChartRenderConfig {
                         scale_theme: self.panel_app.scale_theme_for_render(),
@@ -3481,6 +3536,8 @@ impl ChartApp {
             let single_panel = self.panels_store.chart_panel
                 .get(&single_pid)
                 .unwrap_or(&single_default_panel);
+            // Audit D8: resolve BEFORE taking the bubbles() read guard below.
+            let single_overlay_ts_shadow = single_overlay_cid.and_then(|cid| self.ts_shadow_for_chart(cid));
             let single_overlay_bubble_mgr = self.core.bubbles();
             let single_overlay_window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
                 viewport: window.viewport(),
@@ -3493,7 +3550,7 @@ impl ChartApp {
                 oi_show: window.oi_show,
                 funding_show: window.funding_show,
             };
-            if let Some(render_state) = single_overlay_bubble_mgr.render_state_for(
+            if let Some(mut render_state) = single_overlay_bubble_mgr.render_state_for(
                 window.current_tag_id,
                 single_overlay_window_inputs,
                 chart_rect,
@@ -3504,6 +3561,9 @@ impl ChartApp {
                 &single_panel.grid_options,
                 &single_panel.legend,
             ) {
+                if let Some(shadow) = single_overlay_ts_shadow.as_deref() {
+                    render_state.bars = shadow;
+                }
                 let crosshair_config = mlc_core::chart::CrosshairConfig::default();
                 let render_config = ChartRenderConfig {
                     scale_theme: self.panel_app.scale_theme_for_render(),
@@ -3748,6 +3808,8 @@ impl ChartApp {
                     .get(&split_pid)
                     .unwrap_or(&split_default_panel);
                 let scale_corner_state = window.to_corner_state();
+                // Audit D8: resolve BEFORE taking the bubbles() read guard below.
+                let split_ts_shadow = leaf_chart_id.and_then(|cid| self.ts_shadow_for_chart(cid));
                 let split_bubble_mgr = self.core.bubbles();
                 let split_window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
                     viewport: window.viewport(),
@@ -3760,7 +3822,7 @@ impl ChartApp {
                     oi_show: window.oi_show,
                     funding_show: window.funding_show,
                 };
-                let render_state = match split_bubble_mgr.render_state_for(
+                let mut render_state = match split_bubble_mgr.render_state_for(
                     window.current_tag_id,
                     split_window_inputs,
                     chart_rect,
@@ -3774,6 +3836,9 @@ impl ChartApp {
                     Some(rs) => rs,
                     None => continue,  // window not yet attached to a bubble
                 };
+                if let Some(shadow) = split_ts_shadow.as_deref() {
+                    render_state.bars = shadow;
+                }
                 let crosshair_config = if self.pending_alert_screenshot {
                     mlc_core::chart::CrosshairConfig { vert_visible: false, horz_visible: false, ..Default::default() }
                 } else {
@@ -4343,6 +4408,9 @@ impl ChartApp {
                 .and_then(|pid| self.panels_store.chart_panel.get(&pid))
                 .unwrap_or(&single_fallback_panel);
             let window_opt = self.panel_app.panel_grid.active_container();
+            // Audit D8: resolve BEFORE taking the bubbles() read guard below.
+            let single_window_ts_shadow = self.panel_app.panel_grid.active_container_id()
+                .and_then(|cid| self.ts_shadow_for_chart(cid));
             let single_window_bubble_mgr = self.core.bubbles();
             let single_window_render_state = window_opt.and_then(|window| {
                 use mlc_core::chart::ChartRect;
@@ -4375,7 +4443,10 @@ impl ChartApp {
                     &single_window_panel.legend,
                 )
             });
-            let corner_zones_single = if let (Some(window), Some(render_state)) = (window_opt, single_window_render_state) {
+            let corner_zones_single = if let (Some(window), Some(mut render_state)) = (window_opt, single_window_render_state) {
+                if let Some(shadow) = single_window_ts_shadow.as_deref() {
+                    render_state.bars = shadow;
+                }
                 let inner_proportions_vec = crate::chart_container::collect_inner_proportions(&window.inner_docking);
                 let inner_sub_ids_vec = crate::chart_container::collect_inner_instance_ids(&window.inner_docking);
                 let single_window_drawings_guard = self.core.drawings();
@@ -7532,13 +7603,21 @@ impl ChartApp {
     /// Mirrors `TerminalApp::process_output_actions` but simplified:
     /// no multi-window panel manager, no frame layout offset.
     pub(crate) fn process_output_actions(&mut self, actions: Vec<ChartOutputAction>) {
-        fn calc_visible_price_range(window: &mut crate::chart_container::ChartContainer, bars: &[mlc_core::Bar]) {
-            window.calc_auto_scale(bars);
+        fn calc_visible_price_range(
+            window: &mut crate::chart_container::ChartContainer,
+            series: crate::active_series::ActiveSeries<'_>,
+        ) {
+            window.calc_auto_scale(series);
         }
         // Snapshot bars for the active chart once (read-only borrow), then proceed
         // with all the mutable container access below. process_output_actions
         // targets the active window throughout.
         let active_bars: Vec<mlc_core::Bar> = self.active_chart_bars();
+        // Audit D8: the ACTIVE chart_type's own array (renko/pnf/kagi/...)
+        // for autoscale — `active_bars` above stays kline-scoped for the ts
+        // math call sites below (drag anchors, magnet snap) that are out of
+        // this arc's scope.
+        let active_series_owned = self.active_chart_active_series();
 
         // Compute chart layout ONCE for coordinate conversion.
         // All actions from DefaultChartInputHandler use screen-absolute coords;
@@ -7585,7 +7664,7 @@ impl ChartApp {
                             }
                         }
                     } else if window.price_scale().scale_mode.is_auto_y() {
-                        calc_visible_price_range(window, &active_bars);
+                        calc_visible_price_range(window, active_series_owned.as_active_series());
                     } else {
                         let price_range = window.price_scale().price_max - window.price_scale().price_min;
                         let price_delta_scaled = price_delta * price_range / window.viewport().chart_height;
@@ -7611,7 +7690,7 @@ impl ChartApp {
                     if factor_x != 1.0 {
                         // zoom_horizontal dispatches the zoom then auto-scales
                         // when the mode is auto-Y (mirrors calc_visible_price_range).
-                        window.zoom_horizontal(local_center_x, factor_x, &active_bars);
+                        window.zoom_horizontal(local_center_x, factor_x, active_series_owned.as_active_series());
                     }
                     if factor_y != 1.0 {
                         let center = (window.price_scale().price_min + window.price_scale().price_max) / 2.0;
@@ -7678,14 +7757,14 @@ impl ChartApp {
                         }
                     } else {
                         window.set_scale_mode(ScaleMode::Auto);
-                        calc_visible_price_range(window, &active_bars);
+                        calc_visible_price_range(window, active_series_owned.as_active_series());
                     }
                 }
                 ChartOutputAction::ResetTimeScale => {
                     let Some(window) = self.panel_app.panel_grid.active_container_mut() else { continue; };
                     window.reset_time_scale();
                     window.set_scale_mode(ScaleMode::Auto);
-                    calc_visible_price_range(window, &active_bars);
+                    calc_visible_price_range(window, active_series_owned.as_active_series());
                 }
                 ChartOutputAction::TogglePriceScaleMode => {
                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
@@ -8268,16 +8347,32 @@ impl ChartApp {
                 None => return,
             }
         };
-        // Snapshot bars per peer leaf up front (immutable borrows), then mutate.
-        let peer_bars: std::collections::HashMap<mlc_core::LeafId, Vec<mlc_core::Bar>> =
-            sync_leaves.iter().map(|&lid| (lid, self.bars_for_leaf(lid))).collect();
+        // Audit D8 (chart-types-xaxis-audit §3(b)): peers resolve THEIR OWN
+        // active series for ts→index mapping — `bars_for_leaf` always
+        // resolved `bubble.bars`, so a kline→renko sync computed a
+        // kline-correct anchor and applied it to a viewport that indexes a
+        // renko array ("well-formed math, meaningless target"). Snapshot
+        // per-peer owned series up front (immutable borrows), then mutate.
+        let peer_series: std::collections::HashMap<mlc_core::LeafId, crate::active_series::OwnedActiveSeries> =
+            sync_leaves.iter()
+                .map(|&lid| {
+                    let owned = self.panel_app.panel_grid.container_id_for_leaf(lid)
+                        .map(|cid| self.active_series_for_chart(cid))
+                        .unwrap_or_default();
+                    (lid, owned)
+                })
+                .collect();
         for leaf_id in sync_leaves {
-            let this_peer_bars: &[mlc_core::Bar] = peer_bars.get(&leaf_id).map(|v| v.as_slice()).unwrap_or(&[]);
+            let this_peer_series = peer_series.get(&leaf_id)
+                .map(|s| s.as_active_series())
+                .unwrap_or(crate::active_series::ActiveSeries::Bars(&[]));
             if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
-                // Time-based sync: convert source timestamp to peer's bar index so
-                // windows with different bar counts land on the same calendar date.
+                // Time-based sync: convert source timestamp to peer's own
+                // active-series index so windows with different bar counts
+                // (or entirely different array kinds) land on the same
+                // calendar date / emission position.
                 let peer_view_start = anchor_ts
-                    .and_then(|ts| mlc_core::find_bar_for_timestamp(this_peer_bars, ts))
+                    .and_then(|ts| this_peer_series.idx_for_ts(ts * 1000))
                     .map(|idx| idx as f64 + frac)
                     .unwrap_or(view_start);
                 // Sync visible bar count: peer gets the same number of bars in view,
@@ -8297,7 +8392,7 @@ impl ChartApp {
                 // price ranges, the last-price projection lands alternately
                 // inside/outside the range, and the line + scale chip blink
                 // (owner report: right window of a 2-chart sync group ripples).
-                window.set_from_sync(peer_view_start, peer_spacing, scale_mode, this_peer_bars);
+                window.set_from_sync(peer_view_start, peer_spacing, scale_mode, this_peer_series);
             }
         }
     }

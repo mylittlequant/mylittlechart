@@ -1184,9 +1184,12 @@ impl ChartApp {
                         .map(|w| w.price_scale().scale_mode)
                         .unwrap_or(ScaleMode::Auto);
                     let next_mode = current_mode.next();
-                    let hit_bars: Vec<mlc_core::Bar> = self.bars_for_leaf(hit_leaf_id);
+                    let hit_series = self.panel_app.panel_grid
+                        .container_id_for_leaf(hit_leaf_id)
+                        .map(|cid| self.active_series_for_chart(cid))
+                        .unwrap_or_default();
                     if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(hit_leaf_id) {
-                        window.cycle_scale_mode(next_mode, &hit_bars);
+                        window.cycle_scale_mode(next_mode, hit_series.as_active_series());
                     }
                     // Mutate group.scale_mode when sync_viewport is on so the group
                     // remembers the mode for new joiners.

@@ -167,14 +167,12 @@ impl ChartApp {
         // chart_width values (see below).
         if !self.panel_app.panel_grid.is_split() {
             let mut snapped_windows: Vec<(ChartId, f64, f64)> = Vec::new(); // (chart_id, view_start, bar_spacing)
-            // Snapshot bars per chart up front to avoid borrow conflict during the
-            // mut-iter loop below.
-            let bars_by_chart_pre: std::collections::HashMap<ChartId, Vec<mlc_core::Bar>> =
-                self.panel_app.panel_grid.containers().iter()
-                    .map(|(cid, w)| {
-                        let bars = self.core.bubbles().bars(w.current_tag_id).to_vec();
-                        (*cid, bars)
-                    })
+            // Audit D8: snapshot each chart's OWN active series (renko/pnf/
+            // kagi/... array, not always the kline array) up front to avoid
+            // borrow conflict during the mut-iter loop below.
+            let series_by_chart_pre: std::collections::HashMap<ChartId, crate::active_series::OwnedActiveSeries> =
+                self.panel_app.panel_grid.containers().keys()
+                    .map(|cid| (*cid, self.active_series_for_chart(*cid)))
                     .collect();
             for (&chart_id, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                 // needs_snap_after_backfill alone (without needs_auto_scale_after_bars)
@@ -182,9 +180,10 @@ impl ChartApp {
                 // while chart_width was still 0, and update_bars never sets the
                 // deferred-autoscale flag. Consume the cold-snap here once width
                 // is known so the flag cannot strand.
-                let bars_pre: &[mlc_core::Bar] = bars_by_chart_pre.get(&chart_id)
-                    .map(|v| v.as_slice()).unwrap_or(&[]);
-                if let Some((view_start, bar_spacing)) = window.consume_deferred_snap(bars_pre) {
+                let series_pre = series_by_chart_pre.get(&chart_id)
+                    .map(|s| s.as_active_series())
+                    .unwrap_or(crate::active_series::ActiveSeries::Bars(&[]));
+                if let Some((view_start, bar_spacing)) = window.consume_deferred_snap(series_pre) {
                     snapped_windows.push((chart_id, view_start, bar_spacing));
                 }
             }
@@ -1039,18 +1038,16 @@ impl ChartApp {
             // Deferred viewport snap for split mode: now chart_width is real.
             {
                 let mut snapped_windows: Vec<(ChartId, f64, f64)> = Vec::new();
-                // Snapshot bars per chart.
-                let bars_by_chart_split: std::collections::HashMap<ChartId, Vec<mlc_core::Bar>> =
-                    self.panel_app.panel_grid.containers().iter()
-                        .map(|(cid, w)| {
-                            let bars = self.core.bubbles().bars(w.current_tag_id).to_vec();
-                            (*cid, bars)
-                        })
+                // Audit D8: snapshot each chart's own active series.
+                let series_by_chart_split: std::collections::HashMap<ChartId, crate::active_series::OwnedActiveSeries> =
+                    self.panel_app.panel_grid.containers().keys()
+                        .map(|cid| (*cid, self.active_series_for_chart(*cid)))
                         .collect();
                 for (&chart_id, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
-                    let bars_split: &[mlc_core::Bar] = bars_by_chart_split.get(&chart_id)
-                        .map(|v| v.as_slice()).unwrap_or(&[]);
-                    if let Some((view_start, bar_spacing)) = window.consume_deferred_snap(bars_split) {
+                    let series_split = series_by_chart_split.get(&chart_id)
+                        .map(|s| s.as_active_series())
+                        .unwrap_or(crate::active_series::ActiveSeries::Bars(&[]));
+                    if let Some((view_start, bar_spacing)) = window.consume_deferred_snap(series_split) {
                         snapped_windows.push((chart_id, view_start, bar_spacing));
                     }
                 }

@@ -397,9 +397,9 @@ impl ChartApp {
                         .active_container()
                         .map(|w| w.price_scale().scale_mode.next());
                     if let Some(next) = next {
-                        let auto_bars: Vec<mlc_core::Bar> = self.active_chart_bars();
+                        let auto_series = self.active_chart_active_series();
                         if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                            w.set_scale_mode_with_recalc(next, &auto_bars);
+                            w.set_scale_mode_with_recalc(next, auto_series.as_active_series());
                             eprintln!("[ChartApp] scales:auto_scale -> {:?}", next);
                         }
                         // Propagate scale_mode change to sync-group peers.

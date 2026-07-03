@@ -3075,9 +3075,13 @@ impl ChartApp {
                             });
                         if let Some(mid_bar) = mid_bar {
                             use mlc_core::chart::types::price_scale::ScaleMode;
+                            // Audit D8: X anchor above is always kline-ts (drawings
+                            // are ts-anchored regardless of chart_type); the Y
+                            // autoscale must key off whatever THIS window renders.
+                            let center_series = self.active_chart_active_series();
                             // Center the active leaf on X and switch it to Auto-Y.
                             if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                                window.center_on_bar_auto(mid_bar, &center_bars);
+                                window.center_on_bar_auto(mid_bar, center_series.as_active_series());
                             }
                             // Raise the center intent on the tag: propagate X +
                             // Auto-Y to every sync-viewport peer. The peer applies
@@ -3117,9 +3121,9 @@ impl ChartApp {
             let parts: Vec<&str> = widget_id.strip_prefix("signal_").unwrap_or_default().splitn(2, '_').collect();
             if parts.len() == 2 {
                 if let Ok(bar_index) = parts[1].parse::<i64>() {
-                    let signal_bars: Vec<mlc_core::Bar> = self.active_chart_bars();
+                    let signal_series = self.active_chart_active_series();
                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                        window.center_on_bar(bar_index as f64, &signal_bars);
+                        window.center_on_bar(bar_index as f64, signal_series.as_active_series());
                     }
                     eprintln!("[Sidebar] Signal clicked: center on bar {}", bar_index);
                 }

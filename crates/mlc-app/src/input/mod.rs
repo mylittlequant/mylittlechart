@@ -412,13 +412,12 @@ impl ChartApp {
                                 .map(|w| w.price_scale().scale_mode)
                                 .unwrap_or(ScaleMode::Auto);
                             let next_mode = current_mode.next();
-                            let bars_for_calc: Vec<mlc_core::Bar> = self.panel_app.panel_grid
+                            let series_for_calc = self.panel_app.panel_grid
                                 .container_id_for_leaf(leaf_id)
-                                .and_then(|cid| self.bubble_for_chart(cid))
-                                .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()))
+                                .map(|cid| self.active_series_for_chart(cid))
                                 .unwrap_or_default();
                             if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
-                                window.cycle_scale_mode(next_mode, &bars_for_calc);
+                                window.cycle_scale_mode(next_mode, series_for_calc.as_active_series());
                             }
                             // Mutate group.scale_mode when sync_viewport is on so the
                             // group remembers the mode for new joiners.
@@ -6188,6 +6187,25 @@ impl ChartApp {
                     .and_then(|cid| self.account_type_for_chart(cid))
                     .map(|at| at.to_string())
                     .unwrap_or_else(|| "S".to_string());
+                // Audit D8: this undo/redo only ever replaces KLINE data. For
+                // a candle-family window the active series IS the (about to
+                // be replaced) bars, so it must reflect the NEW fetch; for a
+                // window displaying a derived chart_type (renko/pnf/...) the
+                // active series is untouched by this symbol change, so it
+                // must resolve to whatever that array already holds instead
+                // of the newly-fetched kline count.
+                let active_chart_type = active_chart_id
+                    .and_then(|cid| self.chart_type_for_chart(cid))
+                    .unwrap_or("candles");
+                let is_candle_family = !matches!(
+                    active_chart_type,
+                    "renko" | "pnf" | "kagi" | "three_line_break" | "cvd" | "tpo"
+                );
+                let series_owned = if is_candle_family {
+                    None
+                } else {
+                    active_chart_id.map(|cid| self.active_series_for_chart(cid))
+                };
                 let mut new_exch: Option<String> = None;
                 let mut bars_for_bubble: Option<Vec<mlc_core::Bar>> = None;
                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
@@ -6197,7 +6215,10 @@ impl ChartApp {
                         // metadata lives on DataBubble (updated below), not on the
                         // (now-deleted) per-DM symbol-key cache.
                         bars_for_bubble = Some(bars.clone());
-                        window.reconcile_view_fresh(&bars);
+                        let series = series_owned.as_ref()
+                            .map(|s| s.as_active_series())
+                            .unwrap_or(crate::active_series::ActiveSeries::Bars(&bars));
+                        window.reconcile_view_fresh(&bars, series);
                         new_exch = Some(exch);
                         eprintln!("[Undo/Redo] Changed symbol to {}", new_symbol);
                     }
@@ -6220,12 +6241,30 @@ impl ChartApp {
                     .and_then(|cid| self.symbol_for_chart(cid))
                     .map(String::from)
                     .unwrap_or_default();
+                // Audit D8: see the ChangeSymbol arm above for the rationale
+                // (this undo only replaces kline data; a derived-chart_type
+                // window's bar_count must stay keyed to its own array).
+                let active_chart_type = active_chart_id
+                    .and_then(|cid| self.chart_type_for_chart(cid))
+                    .unwrap_or("candles");
+                let is_candle_family = !matches!(
+                    active_chart_type,
+                    "renko" | "pnf" | "kagi" | "three_line_break" | "cvd" | "tpo"
+                );
+                let series_owned = if is_candle_family {
+                    None
+                } else {
+                    active_chart_id.map(|cid| self.active_series_for_chart(cid))
+                };
                 let mut changed = false;
                 let mut bars_for_bubble: Option<Vec<mlc_core::Bar>> = None;
                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     if let Some(bars) = window.data_provider.get_bars(&cur_sym, new_timeframe) {
                         bars_for_bubble = Some(bars.clone());
-                        window.reconcile_view_fresh(&bars);
+                        let series = series_owned.as_ref()
+                            .map(|s| s.as_active_series())
+                            .unwrap_or(crate::active_series::ActiveSeries::Bars(&bars));
+                        window.reconcile_view_fresh(&bars, series);
                         changed = true;
                         eprintln!("[Undo/Redo] Changed timeframe to {:?}", new_timeframe);
                     }

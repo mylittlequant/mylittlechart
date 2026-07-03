@@ -180,10 +180,12 @@ impl ChartApp {
                 }
 
                 // Restore the window's pre-join scale mode.
-                let leaf_bars_desync: Vec<mlc_core::Bar> = self.bars_for_leaf(leaf_id);
+                let leaf_series_desync = self.panel_app.panel_grid.container_id_for_leaf(leaf_id)
+                    .map(|cid| self.active_series_for_chart(cid))
+                    .unwrap_or_default();
                 if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
                     if let Some(prev_mode) = window.stashed_scale_mode.take() {
-                        window.set_scale_mode_with_recalc(prev_mode, &leaf_bars_desync);
+                        window.set_scale_mode_with_recalc(prev_mode, leaf_series_desync.as_active_series());
                         eprintln!("[BubbleStore] Desync: restored stashed scale mode {:?}", prev_mode);
                     }
                 }
@@ -627,7 +629,16 @@ impl ChartApp {
                 .unwrap_or(false);
             if viewport_sync_on {
                 let group_mode = self.core.bubbles().scale_mode(group_id);
-                let joining_bars: Vec<mlc_core::Bar> = self.bars_for_leaf(joining_leaf);
+                // Audit D8: `current_tag_id` hasn't flipped to `group_id` yet
+                // (happens further below) but the window is about to render
+                // the GROUP's data, so resolve the active series against
+                // `group_id`'s bubble (not the not-yet-updated `current_tag_id`).
+                let joining_chart_type = self.panel_app.panel_grid.container_id_for_leaf(joining_leaf)
+                    .and_then(|cid| self.chart_type_for_chart(cid))
+                    .unwrap_or("candles");
+                let joining_series_owned = self.with_bubble(group_id, |b| {
+                    crate::active_series::resolve_active_series_owned(joining_chart_type, b)
+                }).unwrap_or_default();
                 if let (Some(group_mode), Some(window)) = (
                     group_mode,
                     self.panel_app.panel_grid.container_for_leaf_mut(joining_leaf),
@@ -635,7 +646,7 @@ impl ChartApp {
                     if window.stashed_scale_mode.is_none() {
                         window.stashed_scale_mode = Some(window.price_scale().scale_mode);
                     }
-                    window.set_scale_mode_with_recalc(group_mode, &joining_bars);
+                    window.set_scale_mode_with_recalc(group_mode, joining_series_owned.as_active_series());
                 }
             }
 

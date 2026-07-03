@@ -102,6 +102,17 @@ impl ChartApp {
                     }
                 }
 
+                // Audit D8: `BarsLoaded` fires per-BUBBLE, but a bubble can be
+                // displayed by peer windows on DIFFERENT chart_types (one
+                // candles, one renko) — resolve each matched window's OWN
+                // active series (kline bars still feed bar_count/autoscale
+                // correctly for candle-family; a renko peer must key off its
+                // own bricks instead). Snapshot before the mutable loop.
+                let series_by_chart: std::collections::HashMap<mlc_core::state::ChartId, crate::active_series::OwnedActiveSeries> =
+                    matched_windows.iter()
+                        .map(|(cid, _, _)| (*cid, self.active_series_for_chart(*cid)))
+                        .collect();
+
                 // Reconcile loop.
                 for (chart_id_key, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                     let Some((_, is_backfill, anchor)) = matched_windows.iter()
@@ -113,6 +124,9 @@ impl ChartApp {
                     let win_at = instrument_by_cid.get(chart_id_key).map(|(_, _, _, at)| *at).unwrap_or_default();
                     let win_sym = instrument_by_cid.get(chart_id_key).map(|(s, _, _, _)| s.clone()).unwrap_or_default();
                     let win_tf = instrument_by_cid.get(chart_id_key).map(|(_, tf, _, _)| tf.clone()).unwrap_or_else(mlc_core::state::Timeframe::h1);
+                    let series = series_by_chart.get(chart_id_key)
+                        .map(|s| s.as_active_series())
+                        .unwrap_or(crate::active_series::ActiveSeries::Bars(new_bars));
                     if is_backfill {
                         // Detect right-edge state BEFORE reconcile: was the user
                         // viewing the most recent bars when this backfill arrived?
@@ -131,13 +145,13 @@ impl ChartApp {
                                 && window.viewport().chart_width > 0.0
                                 && prev_count > 0.0
                         };
-                        window.reconcile_view_keep_anchor(new_bars, anchor);
+                        window.reconcile_view_keep_anchor(new_bars, series, anchor);
                         if window.needs_snap_after_backfill
-                            && !new_bars.is_empty()
+                            && !series.is_empty()
                             && window.viewport().chart_width > 0.0
                         {
-                            window.consume_cold_snap(new_bars);
-                        } else if was_at_end && !new_bars.is_empty() {
+                            window.consume_cold_snap(series);
+                        } else if was_at_end && !series.is_empty() {
                             // User was on right edge; backfill prepended older
                             // bars — re-snap to keep them on the right edge.
                             window.snap_to_end(DEFAULT_SNAP_MARGIN);
@@ -151,13 +165,13 @@ impl ChartApp {
                         // SWC arc, 2026-07-03) — fresh loads always seed Auto;
                         // `restore_scale_mode` (set by cold preset-load paths)
                         // overrides this inside `reconcile_view_fresh` when present.
-                        window.seed_fresh_load(new_bars);
+                        window.seed_fresh_load(new_bars, series);
                         window.pending_symbol_load = false;
                         if window.needs_snap_after_backfill
-                            && !new_bars.is_empty()
+                            && !series.is_empty()
                             && window.viewport().chart_width > 0.0
                         {
-                            window.consume_cold_snap(new_bars);
+                            window.consume_cold_snap(series);
                         }
                         let target = self.core.user().profile().domain.data_load.background_bar_count;
                         if target > 300 {
@@ -216,13 +230,24 @@ impl ChartApp {
                                 parked.bubble_store.set_bars(*bid_p, new_bars.clone());
                             }
                             for cid in cids {
+                                // Audit D8: resolve this parked window's OWN
+                                // chart_type against the parked BubbleStore
+                                // (not always the just-replaced kline array).
+                                let chart_type = parked.panel_grid.containers().get(&cid)
+                                    .and_then(|w| parked.panels_store.chart_panel.get(&w.chart_panel_id))
+                                    .map(|p| p.chart_type)
+                                    .unwrap_or("candles");
+                                let bid_for_series = parked.tag_manager.tag_for_chart(cid);
+                                let series_owned = bid_for_series.map(|b| crate::active_series::resolve_active_series_owned_from_store(
+                                    chart_type, &parked.bubble_store, b,
+                                )).unwrap_or_default();
                                 if let Some(window) = parked.panel_grid.containers_mut().get_mut(&cid) {
                                     let is_backfill = !window.pending_symbol_load
                                         && window.viewport().bar_count > 0;
                                     if is_backfill {
-                                        window.reconcile_view_keep_anchor(new_bars, None);
+                                        window.reconcile_view_keep_anchor(new_bars, series_owned.as_active_series(), None);
                                     } else {
-                                        window.reconcile_view_fresh(new_bars);
+                                        window.reconcile_view_fresh(new_bars, series_owned.as_active_series());
                                         window.pending_symbol_load = false;
                                     }
                                 }
@@ -407,17 +432,28 @@ impl ChartApp {
                     matched_anchors.push((*chart_id_key, window.capture_view_anchor(prev_bars_for_anchor), was_at_end));
                 }
 
+                // Audit D8: resolve each matched window's OWN active series
+                // before the mutable loop (see BarsLoaded branch for the
+                // cross-chart_type-peer rationale).
+                let series_by_chart: std::collections::HashMap<mlc_core::state::ChartId, crate::active_series::OwnedActiveSeries> =
+                    matched_anchors.iter()
+                        .map(|(cid, _, _)| (*cid, self.active_series_for_chart(*cid)))
+                        .collect();
+
                 for (chart_id_key, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                     let Some((_, anchor, was_at_end)) = matched_anchors.iter().find(|(c, _, _)| c == chart_id_key).copied() else { continue; };
-                    window.reconcile_view_keep_anchor(new_bars, anchor);
+                    let series = series_by_chart.get(chart_id_key)
+                        .map(|s| s.as_active_series())
+                        .unwrap_or(crate::active_series::ActiveSeries::Bars(new_bars));
+                    window.reconcile_view_keep_anchor(new_bars, series, anchor);
                     if window.needs_snap_after_backfill {
-                        window.consume_cold_snap(new_bars);
-                    } else if was_at_end && !new_bars.is_empty() {
+                        window.consume_cold_snap(series);
+                    } else if was_at_end && !series.is_empty() {
                         // User was at right edge before backfill prepended
                         // older bars — re-snap so the live tick stays visible.
                         window.snap_to_end(DEFAULT_SNAP_MARGIN);
                     } else if window.price_scale().scale_mode.is_auto_y() {
-                        window.calc_auto_scale(new_bars);
+                        window.calc_auto_scale(series);
                     }
                     prev_close_mirrors.push((*chart_id_key, new_bars.first().map(|b| b.open)));
                 }
@@ -486,13 +522,23 @@ impl ChartApp {
                     matched_anchors.push((*chart_id_key, window.capture_view_anchor(&prev_bars_for_anchor)));
                 }
 
+                // Audit D8: resolve each matched window's own active series
+                // (see BarsLoaded branch for the cross-chart_type-peer rationale).
+                let series_by_chart: std::collections::HashMap<mlc_core::state::ChartId, crate::active_series::OwnedActiveSeries> =
+                    matched_anchors.iter()
+                        .map(|(cid, _)| (*cid, self.active_series_for_chart(*cid)))
+                        .collect();
+
                 for (chart_id_key, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                     let Some((_, anchor)) = matched_anchors.iter().find(|(c, _)| c == chart_id_key).copied() else { continue; };
+                    let series = series_by_chart.get(chart_id_key)
+                        .map(|s| s.as_active_series())
+                        .unwrap_or(crate::active_series::ActiveSeries::Bars(new_bars));
                     window.scroll_fetch_in_flight = false;
                     window.scroll_fetch_started = None;
-                    window.reconcile_view_keep_anchor(new_bars, anchor);
+                    window.reconcile_view_keep_anchor(new_bars, series, anchor);
                     if window.price_scale().scale_mode.is_auto_y() {
-                        window.calc_auto_scale(new_bars);
+                        window.calc_auto_scale(series);
                     }
                     prev_close_mirrors.push((*chart_id_key, new_bars.first().map(|b| b.open)));
                 }
@@ -593,13 +639,19 @@ impl ChartApp {
                     if window.pending_symbol_load {
                         window.pending_symbol_load = false;
                     }
+                    // These windows are gated `is_derived` (range/volume/tick/
+                    // footprint/dollar/imbalance/run) — the station writes
+                    // that series directly INTO bubble.bars, so it IS the
+                    // kline array for this chart_type family (audit D8
+                    // resolution table) — plain `Bars` wrap is correct here.
+                    let series = crate::active_series::ActiveSeries::Bars(&bu_bubble_bars);
                     if window.needs_snap_after_backfill && window.viewport().chart_width > 0.0 {
-                        window.consume_cold_snap(&bu_bubble_bars);
+                        window.consume_cold_snap(series);
                     }
-                    window.set_bar_count(bu_bubble_bars.len());
+                    window.set_bar_count(series.len());
                     if window.price_scale().scale_mode.is_auto_y() {
                         let _as_start = web_time::Instant::now();
-                        window.calc_auto_scale(&bu_bubble_bars);
+                        window.calc_auto_scale(series);
                         self.last_auto_scale_us += _as_start.elapsed().as_micros() as u64;
                     }
                     // Live-tick follow: Follow mode snaps every tick; Auto mode
@@ -867,6 +919,18 @@ impl ChartApp {
             }
 
             // ── Derived chart types: snap + pending_symbol_load clear ──────────
+            //
+            // Audit D8 ("two arrays, one index"): this ONE shared arm used to
+            // key bar_count for ALL SIX structurally distinct appended-series
+            // events off `bubble.bars.len()` (the KLINE count) — wrong for
+            // every peer window actually rendering renko/pnf/kagi/tlb (their
+            // own array is a different length, so `visible_range()` computed
+            // start>=end and the pane went blank until bars "popped in").
+            // Each window now resolves its OWN active series from its OWN
+            // chart_type (not from which event variant fired) — a window
+            // displaying "candles" that happens to share this bubble with a
+            // renko peer must NOT have its bar_count perturbed by a
+            // RenkoBarAppended event that's irrelevant to what it renders.
             BubbleEvent::FootprintBarAppended { bid, exchange_id, symbol, account_type }
             | BubbleEvent::RenkoBarAppended { bid, exchange_id, symbol, account_type }
             | BubbleEvent::PnfBarAppended { bid, exchange_id, symbol, account_type }
@@ -874,16 +938,28 @@ impl ChartApp {
             | BubbleEvent::CvdSampleAppended { bid, exchange_id, symbol, account_type }
             | BubbleEvent::TpoSessionUpdated { bid, exchange_id, symbol, account_type }
             | BubbleEvent::TlbLineAppended { bid, exchange_id, symbol, account_type } => {
-                let bubble_bars: Vec<mlc_core::Bar> = self.with_bubble(*bid, |b| b.bars.clone()).unwrap_or_default();
                 let at_label = account_type.as_str();
-                for (_cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+                // Resolve target chart ids first (immutable borrow), then
+                // snapshot each one's own active series before the mutable
+                // containers_mut() loop.
+                let target_cids: Vec<mlc_core::state::ChartId> = self.panel_app.panel_grid
+                    .containers().iter()
+                    .filter(|(_, w)| w.current_tag_id == *bid)
+                    .map(|(cid, _)| *cid)
+                    .collect();
+                let series_by_chart: std::collections::HashMap<mlc_core::state::ChartId, crate::active_series::OwnedActiveSeries> =
+                    target_cids.iter().map(|cid| (*cid, self.active_series_for_chart(*cid))).collect();
+                for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                     if window.current_tag_id != *bid { continue; }
                     let _ = (exchange_id, symbol, at_label);
+                    let series = series_by_chart.get(cid_)
+                        .map(|s| s.as_active_series())
+                        .unwrap_or(crate::active_series::ActiveSeries::Bars(&[]));
                     if window.pending_symbol_load { window.pending_symbol_load = false; }
                     if window.needs_snap_after_backfill && window.viewport().chart_width > 0.0 {
-                        window.consume_cold_snap(&bubble_bars);
+                        window.consume_cold_snap(series);
                     }
-                    window.set_bar_count(bubble_bars.len());
+                    window.set_bar_count(series.len());
                 }
             }
 
@@ -961,7 +1037,7 @@ impl ChartApp {
                     if !target_cids.contains(cid_) { continue; }
                     if window.pending_symbol_load { window.pending_symbol_load = false; }
                     if window.needs_snap_after_backfill && window.viewport().chart_width > 0.0 {
-                        window.consume_cold_snap(&dom_bubble_bars);
+                        window.consume_cold_snap(crate::active_series::ActiveSeries::Bars(&dom_bubble_bars));
                     }
                 }
             }
@@ -1038,7 +1114,7 @@ impl ChartApp {
                     if !target_cids.contains(cid_) { continue; }
                     if window.pending_symbol_load { window.pending_symbol_load = false; }
                     if window.needs_snap_after_backfill && window.viewport().chart_width > 0.0 {
-                        window.consume_cold_snap(&liq_bubble_bars);
+                        window.consume_cold_snap(crate::active_series::ActiveSeries::Bars(&liq_bubble_bars));
                     }
                 }
             }

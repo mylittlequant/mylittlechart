@@ -691,12 +691,37 @@ impl ChartContainer {
     }
 
     /// Calculate auto-scale for price axis based on visible data.
-    /// Phase X0 / C5c: caller supplies `bars` (typically `&bubble.bars`).
-    pub fn calc_auto_scale(&mut self, bars: &[Bar]) {
-        self.price_scale.calc_auto_scale(
-            bars,
-            self.viewport.visible_range(),
-        );
+    ///
+    /// Audit D8 (ActiveSeries seam): the price range comes from whatever
+    /// array the chart_type actually renders (renko bricks, pnf columns,
+    /// ...), not always `bubble.bars` — callers resolve via
+    /// [`crate::active_series::resolve_active_series`] and pass the result
+    /// straight through. Mirrors `PriceScale::calc_auto_scale`'s body
+    /// (empty-range no-op, 4% padding, Focus-mode last-element extension)
+    /// without needing a `&[Bar]`-shaped view of non-Bar series.
+    pub fn calc_auto_scale(&mut self, series: crate::active_series::ActiveSeries<'_>) {
+        if !self.price_scale.scale_mode.is_auto_y() {
+            return;
+        }
+        let (start, end) = self.viewport.visible_range();
+        if start >= end || series.is_empty() {
+            return;
+        }
+        let Some((mut min, mut max)) = series.y_range(start..end) else { return };
+
+        // Focus mode also includes the very last element (live price tracking) —
+        // mirrors `PriceScale::calc_auto_scale`'s ScaleMode::Focus branch.
+        if self.price_scale.scale_mode == ScaleMode::Focus {
+            if let Some((last_min, last_max)) = series.y_range(series.len().saturating_sub(1)..series.len()) {
+                min = min.min(last_min);
+                max = max.max(last_max);
+            }
+        }
+
+        let range = max - min;
+        let padding = range * 0.04;
+        self.price_scale.price_min = min - padding;
+        self.price_scale.price_max = max + padding;
     }
 
     /// Consume the `needs_snap_after_backfill` one-shot flag.
@@ -707,13 +732,18 @@ impl ChartContainer {
     /// bars as a flat line).  Then clears the flag so the snap fires exactly once
     /// regardless of which delivery path (cache-served BarsLoaded, first-frame
     /// deferred, or BackfillComplete) arrives first.
-    /// Phase X0 / C5c: caller supplies `bars` (typically `&bubble.bars`).
-    pub fn consume_cold_snap(&mut self, bars: &[Bar]) {
+    /// Audit D8: caller resolves the active series for this window's
+    /// chart_type (`bubble.bars` for candle-family, the type's own slot for
+    /// renko/pnf/kagi/tlb/cvd) via
+    /// [`crate::active_series::resolve_active_series`] and passes it here —
+    /// the Y range must come from what's actually rendered, not always the
+    /// kline array.
+    pub fn consume_cold_snap(&mut self, series: crate::active_series::ActiveSeries<'_>) {
         let (vs0, bc0) = (self.viewport.view_start, self.viewport.bar_count);
         self.snap_to_end(DEFAULT_SNAP_MARGIN);
         let saved_mode = self.price_scale.scale_mode;
         self.price_scale.scale_mode = mlc_core::chart::types::price_scale::ScaleMode::Auto;
-        self.calc_auto_scale(bars);
+        self.calc_auto_scale(series);
         self.price_scale.scale_mode = saved_mode;
         self.needs_snap_after_backfill = false;
         self.log_view_jump("consume_cold_snap", vs0, bc0);
@@ -723,11 +753,15 @@ impl ChartContainer {
     ///
     /// Phase X0 / C5c: bars storage lives on the bubble; this method only
     /// performs the viewport-side effects after `bubble.bars` has been
-    /// replaced. The `bars` parameter is `&bubble.bars`.
+    /// replaced. `bars` is `&bubble.bars` (kline array — every caller of
+    /// this method is a kline-exclusive event: `BarsLoaded`, undo/redo
+    /// symbol/timeframe change). `series` is the ActiveSeries the window's
+    /// chart_type actually renders (audit D8) — for candle-family windows
+    /// this is `ActiveSeries::Bars(bars)`, same slice, zero-cost wrap.
     ///
     /// Use for the first data load. For backfill / incremental updates use
     /// [`reconcile_view_keep_anchor`] which preserves the user's viewport.
-    pub fn reconcile_view_fresh(&mut self, bars: &[Bar]) {
+    pub fn reconcile_view_fresh(&mut self, bars: &[Bar], series: crate::active_series::ActiveSeries<'_>) {
         let (vs0, bc0) = (self.viewport.view_start, self.viewport.bar_count);
         // A successful delivery clears any prior fetch error.
         self.data_error = None;
@@ -735,12 +769,13 @@ impl ChartContainer {
         // Update prev close line if enabled (derives prev_close from bars[0].open)
         self.update_prev_close_line(bars);
 
-        // Update bar count so the viewport knows how many bars exist.
-        self.viewport.bar_count = bars.len();
+        // Update bar count so the viewport knows how many elements the
+        // active series holds.
+        self.viewport.bar_count = series.len();
 
         if self.viewport.chart_width > 0.0 && self.viewport.bar_spacing > 0.0 {
             self.snap_to_end(DEFAULT_SNAP_MARGIN);
-            self.calc_auto_scale(bars);
+            self.calc_auto_scale(series);
             if let Some(mode) = self.restore_scale_mode.take() {
                 self.price_scale.scale_mode = mode;
             }
@@ -754,19 +789,25 @@ impl ChartContainer {
     /// Reconcile viewport after backfill / scroll-load — keep anchor by ts,
     /// keep user's pan/zoom and scale mode.
     ///
-    /// Phase X0 / C5c: bars storage lives on the bubble.
+    /// Phase X0 / C5c: bars storage lives on the bubble. `bars` is
+    /// `&bubble.bars` — every caller is a kline-exclusive event
+    /// (`BackfillCompleted`, `ScrollBarsAppended`, `BarsLoaded` backfill
+    /// branch), so the anchor lookup stays keyed to the kline timeline.
+    /// `series` is the ActiveSeries the window's chart_type renders (audit
+    /// D8) — for candle-family windows this is `ActiveSeries::Bars(bars)`.
     /// `prev_anchor_ts` is the timestamp of the bar that WAS at view_start
     /// before bubble.bars was replaced; caller captures it from the old
     /// bubble state right before the bridge writes the new series.
     pub fn reconcile_view_keep_anchor(
         &mut self,
         bars: &[Bar],
+        series: crate::active_series::ActiveSeries<'_>,
         prev_anchor: Option<(i64, f64)>,
     ) {
         let (vs0, bc0) = (self.viewport.view_start, self.viewport.bar_count);
         self.update_prev_close_line(bars);
 
-        self.viewport.bar_count = bars.len();
+        self.viewport.bar_count = series.len();
 
         if let Some((anchor_ts, frac)) = prev_anchor {
             if let Some(new_i) = bars.iter().position(|b| b.timestamp >= anchor_ts) {
@@ -781,7 +822,7 @@ impl ChartContainer {
             && self.viewport.chart_width > 0.0
             && self.viewport.bar_spacing > 0.0
         {
-            self.calc_auto_scale(bars);
+            self.calc_auto_scale(series);
         }
         self.log_view_jump("reconcile_view_keep_anchor", vs0, bc0);
     }
@@ -1632,20 +1673,6 @@ impl ChartContainer {
     // Zoom
     // =========================================================================
 
-    /// Zoom in at chart center (1.1x bar spacing).
-    pub fn zoom_in(&mut self, bars: &[Bar]) {
-        let center_x = self.viewport.chart_width / 2.0;
-        self.viewport.zoom_at(center_x, 1.1);
-        self.calc_auto_scale(bars);
-    }
-
-    /// Zoom out at chart center (0.9x bar spacing).
-    pub fn zoom_out(&mut self, bars: &[Bar]) {
-        let center_x = self.viewport.chart_width / 2.0;
-        self.viewport.zoom_at(center_x, 0.9);
-        self.calc_auto_scale(bars);
-    }
-
     /// Snap viewport to the most recent bar with `margin` bars of empty right space.
     ///
     /// `margin` is a count of empty bars shown to the right of the last candle.
@@ -1667,47 +1694,19 @@ impl ChartContainer {
         self.log_view_jump("snap_to_end", vs0, bc0);
     }
 
-    /// Fit all bars into the visible chart area. Phase X0 / C5c: bars supplied by caller.
-    pub fn fit_content(&mut self, bars: &[Bar]) {
-        let bar_count = bars.len();
-        if bar_count > 0 {
-            self.viewport.bar_spacing = self.viewport.chart_width / bar_count as f64;
-            self.viewport.bar_spacing = self.viewport.bar_spacing.clamp(1.0, 30.0);
-            self.snap_to_end(DEFAULT_SNAP_MARGIN);
-            self.calc_auto_scale(bars);
-        }
-    }
-
-    /// Reset zoom to default bar spacing (8px) and scroll to end.
-    pub fn reset_zoom(&mut self, bars: &[Bar]) {
-        self.viewport.bar_spacing = 8.0;
-        self.snap_to_end(DEFAULT_SNAP_MARGIN);
-        self.calc_auto_scale(bars);
-    }
-
     // =========================================================================
     // Split-aware scroll helpers (called when routing scroll to sub-charts)
     // =========================================================================
-
-    /// Pan the viewport horizontally by `pixel_delta` pixels.
-    ///
-    /// Delegates to [`Viewport::pan`] which dispatches axis-aware
-    /// (time mode shifts ts anchor, index mode converts via bar_spacing).
-    pub fn pan_horizontal(&mut self, pixel_delta: f64, bars: &[Bar]) {
-        self.viewport.pan(pixel_delta);
-        if self.price_scale.scale_mode.is_auto_y() {
-            self.calc_auto_scale(bars);
-        }
-    }
 
     /// Zoom the viewport horizontally around `center_x` (local pixel coord).
     ///
     /// `factor` > 1.0 zooms in (more bars per pixel), < 1.0 zooms out.
     /// Delegates to [`Viewport::zoom_at`] which handles clamping.
-    pub fn zoom_horizontal(&mut self, center_x: f64, factor: f64, bars: &[Bar]) {
+    /// `series` is the ActiveSeries the window's chart_type renders (audit D8).
+    pub fn zoom_horizontal(&mut self, center_x: f64, factor: f64, series: crate::active_series::ActiveSeries<'_>) {
         self.viewport.zoom_at(center_x, factor);
         if self.price_scale.scale_mode.is_auto_y() {
-            self.calc_auto_scale(bars);
+            self.calc_auto_scale(series);
         }
     }
 
@@ -1763,9 +1762,9 @@ impl ChartContainer {
     /// every fresh load starts Auto; `restore_scale_mode` from a cold
     /// preset-load path overrides this inside `reconcile_view_fresh` when
     /// present), then run the fresh-load viewport reconcile.
-    pub fn seed_fresh_load(&mut self, bars: &[Bar]) {
+    pub fn seed_fresh_load(&mut self, bars: &[Bar], series: crate::active_series::ActiveSeries<'_>) {
         self.price_scale.scale_mode = ScaleMode::Auto;
-        self.reconcile_view_fresh(bars);
+        self.reconcile_view_fresh(bars, series);
     }
 
     /// Cycle the A/M/F scale mode to `next` and apply its immediate
@@ -1773,13 +1772,13 @@ impl ChartContainer {
     /// recalculates the visible price range, and every sub-pane's
     /// `auto_scale` flag follows the new mode. Returns `next` so the
     /// caller can propagate it to a sync group / bubble.
-    pub fn cycle_scale_mode(&mut self, next: ScaleMode, bars: &[Bar]) -> ScaleMode {
+    pub fn cycle_scale_mode(&mut self, next: ScaleMode, series: crate::active_series::ActiveSeries<'_>) -> ScaleMode {
         self.price_scale.scale_mode = next;
         if next.is_follow() {
             self.snap_to_end(DEFAULT_SNAP_MARGIN);
         }
         if next.is_auto_y() {
-            self.calc_auto_scale(bars);
+            self.calc_auto_scale(series);
         }
         let is_auto = next.is_auto_y();
         for state in self.sub_pane_y_state.values_mut() {
@@ -1801,14 +1800,14 @@ impl ChartContainer {
     /// Auto. Used by reset-to-auto flows that also need to normalize
     /// sub-panes (double-click sub-pane reset, ResetPriceScale sub-pane
     /// branch, desync restore).
-    pub fn set_scale_mode_with_recalc(&mut self, mode: ScaleMode, bars: &[Bar]) {
+    pub fn set_scale_mode_with_recalc(&mut self, mode: ScaleMode, series: crate::active_series::ActiveSeries<'_>) {
         self.price_scale.scale_mode = mode;
         let is_auto = mode.is_auto_y();
         for state in self.sub_pane_y_state.values_mut() {
             state.auto_scale = is_auto;
         }
         if is_auto {
-            self.calc_auto_scale(bars);
+            self.calc_auto_scale(series);
         }
     }
 
@@ -1850,11 +1849,11 @@ impl ChartContainer {
     /// Center the viewport's X axis on `bar_idx`, keeping the current
     /// scale mode. Recalculates auto-scale if already in an auto-Y mode.
     /// Used by signal-row clicks (W11).
-    pub fn center_on_bar(&mut self, bar_idx: f64, bars: &[Bar]) {
+    pub fn center_on_bar(&mut self, bar_idx: f64, series: crate::active_series::ActiveSeries<'_>) {
         let visible_bars = self.viewport.chart_width / self.viewport.bar_spacing;
         self.viewport.view_start = (bar_idx - visible_bars / 2.0).max(0.0);
         if self.price_scale.scale_mode.is_auto_y() {
-            self.calc_auto_scale(bars);
+            self.calc_auto_scale(series);
         }
     }
 
@@ -1862,14 +1861,14 @@ impl ChartContainer {
     /// the main chart and every sub-pane. Used by drawing-row clicks in
     /// the Object Tree (W10), where centering on a primitive should also
     /// re-fit the Y axis regardless of the previous scale mode.
-    pub fn center_on_bar_auto(&mut self, bar_idx: f64, bars: &[Bar]) {
+    pub fn center_on_bar_auto(&mut self, bar_idx: f64, series: crate::active_series::ActiveSeries<'_>) {
         let visible_bars = self.viewport.chart_width / self.viewport.bar_spacing;
         self.viewport.view_start = (bar_idx - visible_bars / 2.0).max(0.0);
         self.price_scale.scale_mode = ScaleMode::Auto;
         for state in self.sub_pane_y_state.values_mut() {
             state.auto_scale = true;
         }
-        self.calc_auto_scale(bars);
+        self.calc_auto_scale(series);
     }
 
     /// Apply an undo/redo `ViewportChange` command snapshot verbatim.
@@ -1897,7 +1896,7 @@ impl ChartContainer {
         peer_view_start: f64,
         peer_spacing: f64,
         scale_mode: Option<ScaleMode>,
-        bars: &[Bar],
+        series: crate::active_series::ActiveSeries<'_>,
     ) -> bool {
         if let Some(mode) = scale_mode {
             self.price_scale.scale_mode = mode;
@@ -1913,11 +1912,11 @@ impl ChartContainer {
             self.viewport.view_start = peer_view_start;
             self.viewport.bar_spacing = peer_spacing;
             if self.price_scale.scale_mode.is_auto_y() {
-                self.calc_auto_scale(bars);
+                self.calc_auto_scale(series);
             }
             self.log_view_jump("set_from_sync", vs0, bc0);
         } else if scale_mode.is_some() && self.price_scale.scale_mode.is_auto_y() {
-            self.calc_auto_scale(bars);
+            self.calc_auto_scale(series);
         }
         moved
     }
@@ -2036,13 +2035,19 @@ impl ChartContainer {
     /// that landed before layout dimensions were known
     /// (`needs_auto_scale_after_bars` / `needs_snap_after_backfill`).
     ///
+    /// Audit D8: `series` is the ActiveSeries this window's chart_type
+    /// actually renders (resolved by the caller once per frame in
+    /// `prepare_frame` via `resolve_active_series`) — the emptiness gate
+    /// and the Y autoscale below must key off the rendered array, not
+    /// always `bubble.bars`.
+    ///
     /// Returns `Some((view_start, bar_spacing))` when a snap fired (so the
     /// caller can propagate the new position to sync-group peers);
-    /// `None` when the gate didn't pass (chart_width still 0, bars empty,
+    /// `None` when the gate didn't pass (chart_width still 0, series empty,
     /// or neither flag set).
-    pub fn consume_deferred_snap(&mut self, bars: &[Bar]) -> Option<(f64, f64)> {
+    pub fn consume_deferred_snap(&mut self, series: crate::active_series::ActiveSeries<'_>) -> Option<(f64, f64)> {
         if !(self.needs_auto_scale_after_bars || self.needs_snap_after_backfill)
-            || bars.is_empty()
+            || series.is_empty()
             || self.viewport.chart_width <= 0.0
         {
             return None;
@@ -2051,10 +2056,10 @@ impl ChartContainer {
         if self.needs_snap_after_backfill {
             // Cold-restore snap supersedes the plain deferred snap:
             // consume_cold_snap snaps + force-autoscales + clears the flag.
-            self.consume_cold_snap(bars);
+            self.consume_cold_snap(series);
         } else {
             self.snap_to_end(DEFAULT_SNAP_MARGIN);
-            self.calc_auto_scale(bars);
+            self.calc_auto_scale(series);
         }
         // restore_scale_mode is already consumed inside set_bars() for the
         // eager path; for the deferred path (chart_width was 0 at set_bars
