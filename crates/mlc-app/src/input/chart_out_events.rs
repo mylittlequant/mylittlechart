@@ -2240,6 +2240,9 @@ pub fn min_usable_bar_spacing(chart_type: &str) -> Option<f64> {
         // the body alone to fit legible text, plus a little headroom for
         // the per-level number labels so they don't touch the column edges.
         "footprint" => Some(50.0),
+        // P&F X/O shapes stretch to the box cell (`pnf.rs`); below ~12px of
+        // spacing the glyph is a sliver and the column grid is unreadable.
+        "pnf" => Some(12.0),
         _ => None,
     }
 }
