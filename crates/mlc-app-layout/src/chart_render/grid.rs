@@ -75,6 +75,7 @@ pub fn draw_grid(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
                 state.bars,
                 |text| ctx.measure_text(text),
                 state.time_format_settings,
+                state.non_temporal_axis,
             );
             &owned_ticks
         };
@@ -159,6 +160,7 @@ pub fn draw_grid_extended(
                 state.bars,
                 |text| ctx.measure_text(text),
                 state.time_format_settings,
+                state.non_temporal_axis,
             );
             &owned_ticks
         };

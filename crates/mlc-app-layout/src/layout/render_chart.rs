@@ -3135,6 +3135,7 @@ pub fn render_full_chart_panel(
         dom_trade_dots_ref: data.state.dom_trade_dots_ref,
         liq_heatmap_ref: data.state.liq_heatmap_ref,
         liq_dots_ref: data.state.liq_dots_ref,
+        non_temporal_axis: data.state.non_temporal_axis,
     };
 
     // 1. Background — fill the full window rect to avoid gaps when scales are
@@ -3556,6 +3557,7 @@ pub fn render_chart_overlay(
         dom_trade_dots_ref: state.dom_trade_dots_ref,
         liq_heatmap_ref: state.liq_heatmap_ref,
         liq_dots_ref: state.liq_dots_ref,
+        non_temporal_axis: state.non_temporal_axis,
     };
 
     // Compute total chart bounds (main + all sub-panes) for the vertical crosshair span.

@@ -439,6 +439,7 @@ impl TimeScale {
         bars: &[Bar],
         measure_text: F,
         format_settings: Option<&TimeFormatSettings>,
+        is_non_temporal: bool,
     ) -> Vec<TimeTick>
     where
         F: Fn(&str) -> f64,
@@ -446,6 +447,25 @@ impl TimeScale {
         let mut ticks = Vec::new();
 
         if bars.is_empty() {
+            return ticks;
+        }
+
+        // Non-temporal chart types (renko / pnf / kagi / three_line_break)
+        // render on a derived series with no fixed calendar cadence — the
+        // uniform/non-uniform heuristic below is meaningless for them (a
+        // 2-element renko can look "uniform") and the padded-extrapolation
+        // path further down would fabricate calendar labels past the last
+        // real element. Always use the per-bar path, which only emits
+        // candidates from real `bars`, and return before any extrapolation.
+        if is_non_temporal {
+            self.generate_per_bar_ticks(
+                &mut ticks,
+                bars,
+                viewport,
+                &measure_text,
+                format_settings,
+            );
+            ticks.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal));
             return ticks;
         }
 

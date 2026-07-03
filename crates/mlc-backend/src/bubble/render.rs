@@ -87,5 +87,9 @@ pub fn build_chart_render_state<'a>(
         dom_trade_dots_ref: bubble.dom_trade_dots.as_deref(),
         liq_heatmap_ref: bubble.liq_heatmap.as_ref(),
         liq_dots_ref: bubble.liq_dots.as_deref(),
+        // Default false — flipped to true by the caller (`mlc-app::lib.rs`)
+        // only when a non-temporal ts-shadow (renko/pnf/kagi/three_line_break)
+        // is swapped into `bars` after this state is built.
+        non_temporal_axis: false,
     }
 }

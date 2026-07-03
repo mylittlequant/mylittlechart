@@ -3471,6 +3471,7 @@ impl ChartApp {
                     // `ts_shadow_for_chart_type` for the per-type rationale.
                     if let Some(shadow) = overlay_ts_shadow.as_deref() {
                         render_state.bars = shadow;
+                        render_state.non_temporal_axis = true;
                     }
                     let crosshair_config = mlc_core::chart::CrosshairConfig::default();
                     let render_config = ChartRenderConfig {
@@ -3563,6 +3564,7 @@ impl ChartApp {
             ) {
                 if let Some(shadow) = single_overlay_ts_shadow.as_deref() {
                     render_state.bars = shadow;
+                    render_state.non_temporal_axis = true;
                 }
                 let crosshair_config = mlc_core::chart::CrosshairConfig::default();
                 let render_config = ChartRenderConfig {
@@ -3838,6 +3840,7 @@ impl ChartApp {
                 };
                 if let Some(shadow) = split_ts_shadow.as_deref() {
                     render_state.bars = shadow;
+                    render_state.non_temporal_axis = true;
                 }
                 let crosshair_config = if self.pending_alert_screenshot {
                     mlc_core::chart::CrosshairConfig { vert_visible: false, horz_visible: false, ..Default::default() }
@@ -4446,6 +4449,7 @@ impl ChartApp {
             let corner_zones_single = if let (Some(window), Some(mut render_state)) = (window_opt, single_window_render_state) {
                 if let Some(shadow) = single_window_ts_shadow.as_deref() {
                     render_state.bars = shadow;
+                    render_state.non_temporal_axis = true;
                 }
                 let inner_proportions_vec = crate::chart_container::collect_inner_proportions(&window.inner_docking);
                 let inner_sub_ids_vec = crate::chart_container::collect_inner_instance_ids(&window.inner_docking);

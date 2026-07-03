@@ -262,6 +262,13 @@ pub struct ChartRenderState<'a> {
     pub liq_heatmap_ref: Option<&'a crate::chart::liquidation_heatmap::LiquidationHeatmapBuffer>,
     /// Liquidation dot overlay for the `liquidation_heatmap` chart-type (C13).
     pub liq_dots_ref: Option<&'a [crate::chart::liquidation_heatmap::LiquidationDot]>,
+    /// True when the chart type is non-temporal (renko / pnf / kagi /
+    /// three_line_break). These types render on a derived series whose
+    /// `bars` shadow has no fixed calendar cadence — the X-axis MUST label
+    /// only real elements and never extrapolate synthetic future/past
+    /// timestamps. Forwarded to `TimeScale::generate_ticks` to bypass the
+    /// uniform-spacing heuristic entirely.
+    pub non_temporal_axis: bool,
 }
 
 /// Configuration for scale rendering

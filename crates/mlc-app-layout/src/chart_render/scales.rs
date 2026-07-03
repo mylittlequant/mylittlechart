@@ -295,6 +295,7 @@ pub fn draw_time_scale(
             bars,
             |text| ctx.measure_text(text),
             state.time_format_settings,
+            state.non_temporal_axis,
         );
         &owned_ticks
     };
