@@ -77,6 +77,35 @@ use mlc_core::state::Timeframe;
 use digdigdig3::core::websocket::KlineInterval;
 use crate::convert::timeframe_to_interval;
 
+/// Deep warm-seed depth for derived-chart-type subscriptions on native
+/// targets, passed to `SubscriptionSet::add_with_warm`.
+///
+/// See `nemo/docs/mlc/plans/dig3-station-0325-derived-seeding-2026-07-04.md`
+/// ("mlc follow-ups after publish", item 3) — native has no CORS/latency
+/// constraint on REST paging, so chart-open can afford a much deeper
+/// aggTrade/kline-approx backfill than the station-wide default.
+pub(crate) const DERIVED_WARM_N_NATIVE: usize = 50_000;
+
+/// Deep warm-seed depth for derived-chart-type subscriptions on wasm32.
+///
+/// Smaller than [`DERIVED_WARM_N_NATIVE`] — browser REST calls pay CORS
+/// preflight + proxy latency per page (see design-doc risk register), so
+/// the same page count costs proportionally more wall-clock time on the
+/// wasm target. 10_000 keeps the chart-open loading window bounded while
+/// still covering far more history than the station-wide shallow default.
+pub(crate) const DERIVED_WARM_N_WASM: usize = 10_000;
+
+/// Warm-seed depth to request for a fresh derived-chart-type subscription,
+/// picked by target arch (see [`DERIVED_WARM_N_NATIVE`] / [`DERIVED_WARM_N_WASM`]).
+#[inline]
+pub(crate) const fn derived_warm_n() -> usize {
+    if cfg!(target_arch = "wasm32") {
+        DERIVED_WARM_N_WASM
+    } else {
+        DERIVED_WARM_N_NATIVE
+    }
+}
+
 // `spawn_bg` / `spawn_bg_join` are inherent methods on `DataBridge` (see
 // the bottom of `impl DataBridge`). They live there so the native path can
 // `enter()` the captured `runtime_handle` before `tokio::spawn` —
@@ -2331,11 +2360,18 @@ impl DataBridge {
             let mut total_bars: u64 = 0;
             let mut respawn_n: u32 = 0;
             loop {
-                let sub_set = digdigdig3_station::SubscriptionSet::new().add(
+                // Deep warm seed on chart-open (design doc: dig3-station-0325-
+                // derived-seeding-2026-07-04.md, risk register — 50k native /
+                // 10k wasm for browser REST latency/CORS bounds). Only matters
+                // on respawn_n == 0 (the actual chart-open subscribe); later
+                // respawn cycles re-request the same depth harmlessly since
+                // the station has already seeded/registered the ring.
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add_with_warm(
                     exchange_id,
                     symbol_canonical.clone(),
                     account_type,
                     [stream.clone()],
+                    derived_warm_n(),
                 );
                 crate::dlog!(
                     "[Bridge::derived-bar-fwd subscribing] respawn={} {:?} {} wire={} stream={}",
@@ -2463,11 +2499,18 @@ impl DataBridge {
                     "[Bridge::footprint-fwd subscribing] respawn={} {:?} {} wire={} stream={}",
                     respawn_n, exchange_id, symbol_canonical, symbol_wire, stream_label,
                 );
-                let sub_set = digdigdig3_station::SubscriptionSet::new().add(
+                // Deep warm seed on chart-open (design doc: dig3-station-0325-
+                // derived-seeding-2026-07-04.md, risk register — 50k native /
+                // 10k wasm for browser REST latency/CORS bounds). Only matters
+                // on respawn_n == 0 (the actual chart-open subscribe); later
+                // respawn cycles re-request the same depth harmlessly since
+                // the station has already seeded/registered the ring.
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add_with_warm(
                     exchange_id,
                     symbol_canonical.clone(),
                     account_type,
                     [stream.clone()],
+                    derived_warm_n(),
                 );
                 let mut report = match station.subscribe(sub_set).await {
                     Ok(r) => r,
@@ -2601,8 +2644,11 @@ impl DataBridge {
             let stream_label = format!("{:?}", stream);
             let mut respawn_n: u32 = 0;
             loop {
-                let sub_set = digdigdig3_station::SubscriptionSet::new().add(
-                    exchange_id, symbol_canonical.clone(), account_type, [stream.clone()],
+                // Deep warm seed on chart-open (design doc: dig3-station-0325-
+                // derived-seeding-2026-07-04.md, risk register — 50k native /
+                // 10k wasm for browser REST latency/CORS bounds).
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add_with_warm(
+                    exchange_id, symbol_canonical.clone(), account_type, [stream.clone()], derived_warm_n(),
                 );
                 let mut report = match station.subscribe(sub_set).await {
                     Ok(r) => r,
@@ -2668,8 +2714,11 @@ impl DataBridge {
             let stream_label = format!("{:?}", stream);
             let mut respawn_n: u32 = 0;
             loop {
-                let sub_set = digdigdig3_station::SubscriptionSet::new().add(
-                    exchange_id, symbol_canonical.clone(), account_type, [stream.clone()],
+                // Deep warm seed on chart-open (design doc: dig3-station-0325-
+                // derived-seeding-2026-07-04.md, risk register — 50k native /
+                // 10k wasm for browser REST latency/CORS bounds).
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add_with_warm(
+                    exchange_id, symbol_canonical.clone(), account_type, [stream.clone()], derived_warm_n(),
                 );
                 let mut report = match station.subscribe(sub_set).await {
                     Ok(r) => r,
@@ -2734,8 +2783,11 @@ impl DataBridge {
             let stream_label = format!("{:?}", stream);
             let mut respawn_n: u32 = 0;
             loop {
-                let sub_set = digdigdig3_station::SubscriptionSet::new().add(
-                    exchange_id, symbol_canonical.clone(), account_type, [stream.clone()],
+                // Deep warm seed on chart-open (design doc: dig3-station-0325-
+                // derived-seeding-2026-07-04.md, risk register — 50k native /
+                // 10k wasm for browser REST latency/CORS bounds).
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add_with_warm(
+                    exchange_id, symbol_canonical.clone(), account_type, [stream.clone()], derived_warm_n(),
                 );
                 let mut report = match station.subscribe(sub_set).await {
                     Ok(r) => r,
@@ -2801,8 +2853,11 @@ impl DataBridge {
             let stream_label = format!("{:?}", stream);
             let mut respawn_n: u32 = 0;
             loop {
-                let sub_set = digdigdig3_station::SubscriptionSet::new().add(
-                    exchange_id, symbol_canonical.clone(), account_type, [stream.clone()],
+                // Deep warm seed on chart-open (design doc: dig3-station-0325-
+                // derived-seeding-2026-07-04.md, risk register — 50k native /
+                // 10k wasm for browser REST latency/CORS bounds).
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add_with_warm(
+                    exchange_id, symbol_canonical.clone(), account_type, [stream.clone()], derived_warm_n(),
                 );
                 let mut report = match station.subscribe(sub_set).await {
                     Ok(r) => r,
@@ -2866,8 +2921,11 @@ impl DataBridge {
             let stream_label = format!("{:?}", stream);
             let mut respawn_n: u32 = 0;
             loop {
-                let sub_set = digdigdig3_station::SubscriptionSet::new().add(
-                    exchange_id, symbol_canonical.clone(), account_type, [stream.clone()],
+                // Deep warm seed on chart-open (design doc: dig3-station-0325-
+                // derived-seeding-2026-07-04.md, risk register — 50k native /
+                // 10k wasm for browser REST latency/CORS bounds).
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add_with_warm(
+                    exchange_id, symbol_canonical.clone(), account_type, [stream.clone()], derived_warm_n(),
                 );
                 let mut report = match station.subscribe(sub_set).await {
                     Ok(r) => r,
@@ -2931,8 +2989,11 @@ impl DataBridge {
             let stream_label = format!("{:?}", stream);
             let mut respawn_n: u32 = 0;
             loop {
-                let sub_set = digdigdig3_station::SubscriptionSet::new().add(
-                    exchange_id, symbol_canonical.clone(), account_type, [stream.clone()],
+                // Deep warm seed on chart-open (design doc: dig3-station-0325-
+                // derived-seeding-2026-07-04.md, risk register — 50k native /
+                // 10k wasm for browser REST latency/CORS bounds).
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add_with_warm(
+                    exchange_id, symbol_canonical.clone(), account_type, [stream.clone()], derived_warm_n(),
                 );
                 let mut report = match station.subscribe(sub_set).await {
                     Ok(r) => r,
