@@ -987,11 +987,16 @@ impl ChartContainer {
             restore_scale_mode: None,
             stashed_scale_mode: None,
             tag_inherits_home_overlay: false,
-            // Pair with `pending_symbol_load: true` above — when the deferred
-            // REST sweep lands as BarsLoaded the reconcile path will fresh-snap
-            // the viewport to the right edge with the standard padding, same
-            // contract as `seed_default_chart`.
-            needs_snap_after_backfill: true,
+            // The fresh-snap contract is carried ENTIRELY by
+            // `pending_symbol_load: true` above — the BarsLoaded reconcile
+            // path (`reconcile_view_fresh`) snaps to the right edge on data
+            // arrival, same contract as `seed_default_chart`. Do NOT set
+            // `needs_snap_after_backfill` here: the unified per-frame
+            // deferred-snap path consumes that flag on whatever bars the
+            // (not-yet-reseeded) tag currently resolves to — a premature
+            // cold-snap off the mother's data that made the sibling diverge
+            // from the mother pane (split viewport divergence, 2026-07-03).
+            needs_snap_after_backfill: false,
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
             data_error: None,
@@ -1949,7 +1954,12 @@ impl ChartContainer {
     /// different callers.
     pub fn resize_geometry(&mut self, new_width: f64, new_height: f64) {
         let old_width = self.viewport.chart_width;
+        // A window with a pending deferred/cold snap has placeholder view
+        // state — bar-shifting it applies a spurious offset the upcoming
+        // snap then has to fight. Either pending flag suppresses the shift;
+        // dimensions below are always adopted regardless.
         if !self.needs_auto_scale_after_bars
+            && !self.needs_snap_after_backfill
             && (old_width - new_width).abs() > 0.5
             && self.viewport.bar_spacing > 0.0
             && old_width > 0.0
