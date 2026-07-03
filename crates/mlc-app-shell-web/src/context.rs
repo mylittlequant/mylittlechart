@@ -44,7 +44,7 @@ impl CoordSpace {
         if self.bar_spacing.abs() < f64::EPSILON {
             return 0.0;
         }
-        (bar - self.view_start) * self.bar_spacing
+        (bar - self.view_start) * self.bar_spacing + self.bar_spacing / 2.0
     }
 
     fn price_to_y(&self, price: f64) -> f64 {
