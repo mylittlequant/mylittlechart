@@ -42,19 +42,36 @@ pub fn draw_pnf(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     // all columns in a single P&F subscription share the same box_size.
     let box_size = columns[start].box_size.max(1e-12);
 
-    let box_h_px = (rect.height * box_size / price_range).max(6.0);
-    let font_size = (box_h_px * 0.8).clamp(7.0, 18.0);
-    ctx.set_font(&format!("{:.0}px monospace", font_size));
+    // X/O are SHAPES stretched to the box cell (cell = bar_spacing wide ×
+    // box_size-in-px tall), never fixed-size text glyphs — a 6-box column at
+    // a 100px+ box height must read as a contiguous column, not confetti.
+    let box_h_px = rect.height * box_size / price_range;
+    let cell_w = (bar_w * 0.8).max(1.0);
+    let half_w = cell_w * 0.5;
+
+    // Degenerate zoom: cells too small to draw individual glyphs — render
+    // each column as one solid bar spanning its full [bottom, top] extent.
+    let tiny = box_h_px < 3.0 || cell_w < 3.0;
 
     for i in start..end {
         let col = &columns[i];
         let cx = viewport.bar_to_x(i) + rect.x;
         let color = if col.is_x { &theme.candle_up } else { &theme.candle_down };
-        ctx.set_fill_color(color);
-        ctx.set_text_align(uzor::render::TextAlign::Center);
-        ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
 
-        let glyph = if col.is_x { "X" } else { "O" };
+        if tiny {
+            let y_top = rect.y + viewport.price_to_y(
+                col.top, price_scale.price_min, price_scale.price_max,
+            );
+            let y_bot = rect.y + viewport.price_to_y(
+                col.bottom, price_scale.price_min, price_scale.price_max,
+            );
+            ctx.set_fill_color(color);
+            let w = cell_w.max(1.0);
+            ctx.fill_rect(cx - w * 0.5, y_top, w, (y_bot - y_top).max(1.0));
+            continue;
+        }
+
+        ctx.set_stroke_color(color);
         // Render boxes top-to-bottom (top is highest price).
         let mut p = col.top;
         while p > col.bottom + 1e-9 {
@@ -64,14 +81,27 @@ pub fn draw_pnf(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
             let y_bot = rect.y + viewport.price_to_y(
                 p - box_size, price_scale.price_min, price_scale.price_max,
             );
-            let cy = (y_top + y_bot) * 0.5;
-            ctx.fill_text(glyph, cx, cy);
+            // Inset the glyph slightly inside its cell so adjacent boxes
+            // stay visually separate.
+            let pad = ((y_bot - y_top) * 0.10).max(0.5);
+            let top_i = y_top + pad;
+            let bot_i = y_bot - pad;
+            if col.is_x {
+                ctx.begin_path();
+                ctx.move_to(cx - half_w, bot_i);
+                ctx.line_to(cx + half_w, top_i);
+                ctx.move_to(cx - half_w, top_i);
+                ctx.line_to(cx + half_w, bot_i);
+                ctx.stroke();
+            } else {
+                let cy = (top_i + bot_i) * 0.5;
+                let ry = ((bot_i - top_i) * 0.5).max(0.5);
+                ctx.begin_path();
+                ctx.ellipse(cx, cy, half_w, ry, 0.0, 0.0, std::f64::consts::TAU);
+                ctx.stroke();
+            }
             p -= box_size;
         }
-        let _ = bar_w;
     }
-
-    ctx.set_text_align(uzor::render::TextAlign::Left);
-    ctx.set_text_baseline(uzor::render::TextBaseline::Top);
 }
 
