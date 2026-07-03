@@ -844,11 +844,25 @@ impl ChartApp {
                             })
                             .collect()
                     };
+                    let matched = !error_instrument_map.is_empty();
                     for (cid_err, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if error_instrument_map.contains_key(cid_err) {
                             window.data_error = Some(message.clone());
                         }
                     }
+                    log::warn!(
+                        "[data-error] {:?} {} at={} tf={}: {} (window_match={})",
+                        exchange_id, symbol, account_type, timeframe, message, matched,
+                    );
+                } else {
+                    // Connector/warmup-level error — no instrument to attach it
+                    // to (empty symbol = venue-wide, e.g. connect_public
+                    // failure). No window field to set; still surface to the log
+                    // so it isn't silently dropped (audit D6).
+                    log::warn!(
+                        "[data-error] {:?} (connector-level, no instrument): {}",
+                        exchange_id, message,
+                    );
                 }
             }
 
