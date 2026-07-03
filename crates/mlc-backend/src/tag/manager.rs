@@ -302,7 +302,17 @@ impl TagManager {
     /// Move all currently-Synced panels to a new tag (called when the active
     /// chart changes so Synced panels follow it). Also records `new_tag_id`
     /// as the active chart's tag.
+    ///
+    /// Idempotence guard (SWC Law 2 — one writer, guarded at the shared
+    /// writer, not at each caller): this is a single shared writer called
+    /// by per-window focus-change callers, which can legitimately fire on
+    /// every focus event even when the active chart's tag did not change.
+    /// Without the guard, a no-op focus refresh would still disconnect and
+    /// reconnect every synced panel.
     pub fn reassign_synced_panels(&mut self, new_tag_id: TagId) {
+        if self.active_chart_tag == Some(new_tag_id) {
+            return;
+        }
         let panels: Vec<SyncMemberId> = self.synced_panels.iter().copied().collect();
         for member in panels {
             self.disconnect(member);
