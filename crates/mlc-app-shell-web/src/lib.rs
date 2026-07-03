@@ -678,6 +678,12 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
         {
             let mut st = state.borrow_mut();
             st.chart.render(&mut ctx, now_ms, false);
+            // Overlay pass (crosshair, cursor labels, drawing previews) — a
+            // separate draw call by contract (native invokes it via its own
+            // overlay_scene, scene_builder.rs:186); canvas2d is immediate-mode
+            // so painting into the same ctx right after the base pass is
+            // equivalent compositing.
+            st.chart.render_overlay(&mut ctx);
             st.chart.render_modal_layer(&mut ctx, now_ms);
         }
         ctx.restore();
