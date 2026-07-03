@@ -774,7 +774,13 @@ impl ChartContainer {
             }
         }
 
-        if self.price_scale.scale_mode.is_auto_y() {
+        // Gate parity with reconcile_view_fresh (audit D1): a placeholder/transient
+        // dimension frame must not autoscale Y off whatever sliver of bars is
+        // visible at that width — the real resize + tick recalc covers it later.
+        if self.price_scale.scale_mode.is_auto_y()
+            && self.viewport.chart_width > 0.0
+            && self.viewport.bar_spacing > 0.0
+        {
             self.calc_auto_scale(bars);
         }
         self.log_view_jump("reconcile_view_keep_anchor", vs0, bc0);
