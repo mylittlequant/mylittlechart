@@ -709,12 +709,14 @@ impl ChartContainer {
     /// deferred, or BackfillComplete) arrives first.
     /// Phase X0 / C5c: caller supplies `bars` (typically `&bubble.bars`).
     pub fn consume_cold_snap(&mut self, bars: &[Bar]) {
+        let (vs0, bc0) = (self.viewport.view_start, self.viewport.bar_count);
         self.snap_to_end(DEFAULT_SNAP_MARGIN);
         let saved_mode = self.price_scale.scale_mode;
         self.price_scale.scale_mode = mlc_core::chart::types::price_scale::ScaleMode::Auto;
         self.calc_auto_scale(bars);
         self.price_scale.scale_mode = saved_mode;
         self.needs_snap_after_backfill = false;
+        self.log_view_jump("consume_cold_snap", vs0, bc0);
     }
 
     /// Reconcile viewport for initial load — resets viewport position and auto-scales.
@@ -726,6 +728,7 @@ impl ChartContainer {
     /// Use for the first data load. For backfill / incremental updates use
     /// [`reconcile_view_keep_anchor`] which preserves the user's viewport.
     pub fn reconcile_view_fresh(&mut self, bars: &[Bar]) {
+        let (vs0, bc0) = (self.viewport.view_start, self.viewport.bar_count);
         // A successful delivery clears any prior fetch error.
         self.data_error = None;
 
@@ -745,6 +748,7 @@ impl ChartContainer {
         } else {
             self.needs_auto_scale_after_bars = true;
         }
+        self.log_view_jump("reconcile_view_fresh", vs0, bc0);
     }
 
     /// Reconcile viewport after backfill / scroll-load — keep anchor by ts,
@@ -759,6 +763,7 @@ impl ChartContainer {
         bars: &[Bar],
         prev_anchor: Option<(i64, f64)>,
     ) {
+        let (vs0, bc0) = (self.viewport.view_start, self.viewport.bar_count);
         self.update_prev_close_line(bars);
 
         self.viewport.bar_count = bars.len();
@@ -772,6 +777,7 @@ impl ChartContainer {
         if self.price_scale.scale_mode.is_auto_y() {
             self.calc_auto_scale(bars);
         }
+        self.log_view_jump("reconcile_view_keep_anchor", vs0, bc0);
     }
 
     /// Capture the (timestamp, fractional offset) of the bar currently at
@@ -1648,9 +1654,11 @@ impl ChartContainer {
     /// `reconcile_view_to_bars` whenever bubble.bars length changes — no
     /// direct reference to a bars slice needed here.
     pub fn snap_to_end(&mut self, margin: f64) {
+        let (vs0, bc0) = (self.viewport.view_start, self.viewport.bar_count);
         let visible_f = self.viewport.chart_width / self.viewport.bar_spacing;
         let count = self.viewport.bar_count;
         self.viewport.view_start = (count as f64 + margin - visible_f).max(0.0);
+        self.log_view_jump("snap_to_end", vs0, bc0);
     }
 
     /// Fit all bars into the visible chart area. Phase X0 / C5c: bars supplied by caller.
@@ -1860,10 +1868,12 @@ impl ChartContainer {
 
     /// Apply an undo/redo `ViewportChange` command snapshot verbatim.
     pub fn apply_undo_viewport(&mut self, view_start: f64, bar_spacing: f64, price_min: f64, price_max: f64) {
+        let (vs0, bc0) = (self.viewport.view_start, self.viewport.bar_count);
         self.viewport.view_start = view_start;
         self.viewport.bar_spacing = bar_spacing;
         self.price_scale.price_min = price_min;
         self.price_scale.price_max = price_max;
+        self.log_view_jump("apply_undo_viewport", vs0, bc0);
     }
 
     /// Apply a sync-group propagation write from the source window.
@@ -1893,11 +1903,13 @@ impl ChartContainer {
         let moved = (self.viewport.view_start - peer_view_start).abs() > 1e-9
             || (self.viewport.bar_spacing - peer_spacing).abs() > 1e-9;
         if moved {
+            let (vs0, bc0) = (self.viewport.view_start, self.viewport.bar_count);
             self.viewport.view_start = peer_view_start;
             self.viewport.bar_spacing = peer_spacing;
             if self.price_scale.scale_mode.is_auto_y() {
                 self.calc_auto_scale(bars);
             }
+            self.log_view_jump("set_from_sync", vs0, bc0);
         } else if scale_mode.is_some() && self.price_scale.scale_mode.is_auto_y() {
             self.calc_auto_scale(bars);
         }
@@ -1918,6 +1930,7 @@ impl ChartContainer {
         bar_spacing: Option<f64>,
         bar_count: usize,
     ) {
+        let (vs0, bc0) = (self.viewport.view_start, self.viewport.bar_count);
         match mode {
             Some("focus") => {
                 if bar_count > 0 {
@@ -1943,6 +1956,7 @@ impl ChartContainer {
         if let Some(bs) = bar_spacing {
             self.viewport.bar_spacing = bs;
         }
+        self.log_view_jump("set_from_agent", vs0, bc0);
     }
 
     /// Resize the viewport's chart geometry, pinning the right edge (the
@@ -1953,6 +1967,7 @@ impl ChartContainer {
     /// and split-per-leaf (`prepare_frame`) resize paths — same body,
     /// different callers.
     pub fn resize_geometry(&mut self, new_width: f64, new_height: f64) {
+        let (vs0, bc0) = (self.viewport.view_start, self.viewport.bar_count);
         let old_width = self.viewport.chart_width;
         // A window with a pending deferred/cold snap has placeholder view
         // state — bar-shifting it applies a spurious offset the upcoming
@@ -1974,6 +1989,23 @@ impl ChartContainer {
         }
         if new_height > 0.0 {
             self.viewport.chart_height = new_height;
+        }
+        self.log_view_jump("resize_geometry", vs0, bc0);
+    }
+
+    /// Debug trap (viewport-SWC arc): every big-jump-capable intent reports
+    /// itself when it moves view_start or bar_count by more than 100 bars —
+    /// the single-door design makes the culprit of any runaway/teleport
+    /// identifiable by name in the log/console. Cheap (two compares) — kept
+    /// in release until the wasm tab-return teleport is closed.
+    fn log_view_jump(&self, tag: &str, vs0: f64, bc0: usize) {
+        let vs1 = self.viewport.view_start;
+        let bc1 = self.viewport.bar_count;
+        if (vs1 - vs0).abs() > 100.0 || bc1.abs_diff(bc0) > 100 {
+            log::warn!(
+                "[VPJUMP] {tag}: view_start {vs0:.1}->{vs1:.1} bar_count {bc0}->{bc1} cw={:.0} bs={:.2}",
+                self.viewport.chart_width, self.viewport.bar_spacing
+            );
         }
     }
 
@@ -2057,6 +2089,14 @@ impl ChartContainer {
             if last_bar >= right_edge_bar {
                 self.viewport.view_start += 1.0;
             }
+        }
+        // Beyond-end anomaly trap: view positioned way past the data edge.
+        if is_new_bar && self.viewport.view_start > self.viewport.bar_count as f64 + 60.0 {
+            log::warn!(
+                "[VPJUMP] advance_view_on_tick BEYOND-END: view_start={:.1} bar_count={} cw={:.0} bs={:.2}",
+                self.viewport.view_start, self.viewport.bar_count,
+                self.viewport.chart_width, self.viewport.bar_spacing
+            );
         }
     }
 

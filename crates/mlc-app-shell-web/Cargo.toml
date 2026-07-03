@@ -63,6 +63,10 @@ console_error_panic_hook = "0.1"
 # events vanish silently and the bridge looks idle when it's actually spinning.
 tracing      = "0.1"
 tracing-wasm = "0.2"
+# log→tracing bridge: mlc-app logs via the `log` crate; without this bridge
+# every log::warn!/info! from the app layer is invisible in the browser
+# console (only dig3's native `tracing` calls got through).
+tracing-log  = "0.2"
 
 # Tokio sync primitives — wasm32 uses the `sync + macros` subset; no rt
 tokio    = { version = "1", default-features = false, features = ["sync", "macros"] }

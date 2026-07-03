@@ -90,6 +90,9 @@ pub fn start() {
     // into the browser console. Without this the WS heal loops, mux churn,
     // and silence-timer fires are silent on wasm and the bridge appears
     // healthy when it's actually thrashing reconnects.
+    // Bridge `log`-crate records (mlc-app layer) into tracing so they reach
+    // the console alongside dig3's native tracing output.
+    let _ = tracing_log::LogTracer::init();
     tracing_wasm::set_as_global_default_with_config(
         tracing_wasm::WASMLayerConfigBuilder::new()
             // TRACE so we see every per-frame dispatch (dig3::ws::frame),
