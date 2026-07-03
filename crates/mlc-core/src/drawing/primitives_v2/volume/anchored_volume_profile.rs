@@ -5,8 +5,7 @@ use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor,
-    RenderContext, crisp, CONTROL_POINT_RADIUS, CONTROL_POINT_STROKE,
-    CONTROL_POINT_FILL, render_primitive_text, TextAlign,
+    RenderContext, crisp, render_primitive_text, TextAlign,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -53,7 +52,7 @@ impl Primitive for AnchoredVolumeProfile {
         vec![ControlPoint::point1(vp.bar_to_x_f64(b), cy)]
     }
 
-    fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
+    fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
         let x = ctx.ts_to_x_ms(self.anchor_ts);
         let chart_width = ctx.chart_width();
@@ -106,16 +105,6 @@ impl Primitive for AnchoredVolumeProfile {
         ctx.begin_path();
         ctx.arc(x, cy, 4.0 * dpr, 0.0, std::f64::consts::TAU);
         ctx.fill();
-
-        if is_selected {
-            ctx.set_fill_color(CONTROL_POINT_FILL);
-            ctx.set_stroke_color(CONTROL_POINT_STROKE);
-            ctx.set_stroke_width(1.5 * dpr);
-            ctx.begin_path();
-            ctx.arc(x, cy, CONTROL_POINT_RADIUS * dpr, 0.0, std::f64::consts::TAU);
-            ctx.fill();
-            ctx.stroke();
-        }
 
         if let Some(ref text) = self.data.text {
             if !text.content.is_empty() {

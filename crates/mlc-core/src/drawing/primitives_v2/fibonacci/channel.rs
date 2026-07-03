@@ -10,8 +10,8 @@ use super::super::{
     PrimitiveMetadata,
     ControlPoint, ControlPointType,
     PrimitiveColor, LineStyle, TextAlign,
-    HIT_TOLERANCE, CONTROL_POINT_RADIUS,
-    RenderContext, crisp, CONTROL_POINT_STROKE, CONTROL_POINT_FILL,
+    HIT_TOLERANCE,
+    RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params,
     config::FibLevelConfig,
 };
@@ -178,7 +178,7 @@ impl Primitive for FibChannel {
         vec![ControlPoint::point1(x1, y1), ControlPoint::point2(x2, y2), ControlPoint::point3(x3, y3)]
     }
 
-    fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
+    fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
         let x1 = ctx.ts_to_x_ms(self.ts1);
         let y1 = ctx.price_to_y(self.price1);
@@ -426,17 +426,6 @@ impl Primitive for FibChannel {
             }
         }
 
-        if is_selected {
-            ctx.set_stroke_color(CONTROL_POINT_STROKE);
-            ctx.set_fill_color(CONTROL_POINT_FILL);
-            ctx.set_stroke_width(1.5);
-            for (px, py) in [(x1, y1), (x2, y2), (x3, y3)] {
-                ctx.begin_path();
-                ctx.arc(px, py, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-                ctx.fill();
-                ctx.stroke();
-            }
-        }
     }
 
     fn level_configs(&self) -> Option<Vec<FibLevelConfig>> { Some(self.level_configs.clone()) }

@@ -9,7 +9,7 @@ use super::super::{
     PrimitiveMetadata,
     ControlPoint, ControlPointType, ControlPointCursor,
     PrimitiveColor, LineStyle, TextAlign, HIT_TOLERANCE,
-    RenderContext, crisp, CONTROL_POINT_RADIUS, CONTROL_POINT_STROKE, CONTROL_POINT_FILL,
+    RenderContext, crisp,
     render_primitive_text,
 };
 
@@ -123,7 +123,7 @@ impl Primitive for HorizontalLine {
         )]
     }
 
-    fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
+    fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
         let y = ctx.price_to_y(self.price);
         let crisp_y = crisp(y, dpr);
@@ -210,16 +210,6 @@ impl Primitive for HorizontalLine {
         }
 
         // Draw control point if selected
-        if is_selected {
-            let cx = ctx.chart_width() / 2.0;
-            ctx.set_stroke_color(CONTROL_POINT_STROKE);
-            ctx.set_fill_color(CONTROL_POINT_FILL);
-            ctx.set_stroke_width(1.5);
-            ctx.begin_path();
-            ctx.arc(cx, y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-            ctx.fill();
-            ctx.stroke();
-        }
     }
 
     fn to_json(&self) -> String {

@@ -10,7 +10,7 @@ use super::super::{
     ControlPoint, ControlPointType,
     PrimitiveColor, ExtendMode, LineStyle,
     point_to_line_distance, HIT_TOLERANCE, CONTROL_POINT_RADIUS,
-    RenderContext, crisp, CONTROL_POINT_STROKE, CONTROL_POINT_FILL,
+    RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params,
 };
 
@@ -179,7 +179,7 @@ impl Primitive for TrendLine {
         points
     }
 
-    fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
+    fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
 
         // Convert to screen coordinates
@@ -301,11 +301,6 @@ impl Primitive for TrendLine {
                 render_primitive_text_rotated(ctx, text, params.x, params.y, &self.data.color.stroke, params.rotation);
             }
         }
-
-        // Draw control points if selected
-        if is_selected {
-            self.draw_control_points(ctx, x1, y1, x2, y2);
-        }
     }
 
     fn to_json(&self) -> String {
@@ -327,38 +322,6 @@ impl Primitive for TrendLine {
 }
 
 impl TrendLine {
-    /// Render control points when selected
-    fn draw_control_points(&self, ctx: &mut dyn RenderContext, x1: f64, y1: f64, x2: f64, y2: f64) {
-        // Control point style
-        ctx.set_stroke_color(CONTROL_POINT_STROKE);
-        ctx.set_fill_color(CONTROL_POINT_FILL);
-        ctx.set_stroke_width(1.5);
-        ctx.set_line_dash(&[]);
-
-        // Point 1
-        ctx.begin_path();
-        ctx.arc(x1, y1, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-        ctx.fill();
-        ctx.stroke();
-
-        // Point 2
-        ctx.begin_path();
-        ctx.arc(x2, y2, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-        ctx.fill();
-        ctx.stroke();
-
-        // Center move handle (only if line is long enough)
-        let cx = (x1 + x2) / 2.0;
-        let cy = (y1 + y2) / 2.0;
-        let dist = ((cx - x1).powi(2) + (cy - y1).powi(2)).sqrt();
-        if dist > CONTROL_POINT_RADIUS * 4.0 {
-            ctx.begin_path();
-            ctx.arc(cx, cy, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-            ctx.fill();
-            ctx.stroke();
-        }
-    }
-
     /// Hit test control points
     fn hit_test_control_points(
         &self,

@@ -5,7 +5,7 @@ use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
-    RenderContext, crisp, LineStyle, CONTROL_POINT_RADIUS, CONTROL_POINT_STROKE, CONTROL_POINT_FILL,
+    RenderContext, crisp, LineStyle,
     render_primitive_text,
 };
 
@@ -74,7 +74,7 @@ impl Primitive for CycleLines {
         let cy = vp.price_to_y((ps.price_min + ps.price_max) / 2.0, ps.price_min, ps.price_max);
         vec![ControlPoint::point1(vp.bar_to_x_f64(bar1), cy), ControlPoint::point2(vp.bar_to_x_f64(bar2), cy)]
     }
-    fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
+    fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
         let x1 = ctx.ts_to_x_ms(self.ts1);
         let x2 = ctx.ts_to_x_ms(self.ts2);
@@ -117,24 +117,6 @@ impl Primitive for CycleLines {
             ctx.begin_path();
             ctx.move_to(crisp(line_x, dpr), crisp(chart_top, dpr));
             ctx.line_to(crisp(line_x, dpr), crisp(chart_bottom, dpr));
-            ctx.stroke();
-        }
-
-        if is_selected {
-            let mid_y = chart_bottom / 2.0;
-
-            ctx.set_fill_color(CONTROL_POINT_FILL);
-            ctx.set_stroke_color(CONTROL_POINT_STROKE);
-            ctx.set_stroke_width(2.0);
-            ctx.set_line_dash(&[]);
-            ctx.begin_path();
-            ctx.arc(crisp(x1, dpr), crisp(mid_y, dpr), CONTROL_POINT_RADIUS, 0.0, 2.0 * std::f64::consts::PI);
-            ctx.fill();
-            ctx.stroke();
-
-            ctx.begin_path();
-            ctx.arc(crisp(x2, dpr), crisp(mid_y, dpr), CONTROL_POINT_RADIUS, 0.0, 2.0 * std::f64::consts::PI);
-            ctx.fill();
             ctx.stroke();
         }
 

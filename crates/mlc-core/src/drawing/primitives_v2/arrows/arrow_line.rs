@@ -5,7 +5,7 @@ use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE, point_to_line_distance,
-    LineStyle, RenderContext, crisp, CONTROL_POINT_RADIUS, CONTROL_POINT_STROKE, CONTROL_POINT_FILL,
+    LineStyle, RenderContext, crisp,
     render_primitive_text_rotated, TextAlign, LineTextParams, normalize_text_rotation,
 };
 
@@ -104,7 +104,7 @@ impl Primitive for ArrowLine {
             ControlPoint::point2(vp.bar_to_x_f64(bar2), vp.price_to_y(self.price2, ps.price_min, ps.price_max)),
         ]
     }
-    fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
+    fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
         let x1 = ctx.ts_to_x_ms(self.ts1); let y1 = ctx.price_to_y(self.price1);
         let x2 = ctx.ts_to_x_ms(self.ts2); let y2 = ctx.price_to_y(self.price2);
@@ -187,16 +187,6 @@ impl Primitive for ArrowLine {
             }
         }
 
-        if is_selected {
-            ctx.set_stroke_color(CONTROL_POINT_STROKE);
-            ctx.set_fill_color(CONTROL_POINT_FILL);
-            ctx.set_stroke_width(1.5);
-            for (px, py) in [(x1, y1), (x2, y2)] {
-                ctx.begin_path();
-                ctx.arc(px, py, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-                ctx.fill(); ctx.stroke();
-            }
-        }
     }
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }

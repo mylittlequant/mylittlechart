@@ -5,7 +5,7 @@ use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
-    RenderContext, crisp, LineStyle, CONTROL_POINT_RADIUS, CONTROL_POINT_HIT_RADIUS, CONTROL_POINT_STROKE, CONTROL_POINT_FILL,
+    RenderContext, crisp, LineStyle, CONTROL_POINT_HIT_RADIUS,
     render_primitive_text,
     config::{LabelStyle, ConfigProperty, PropertyValue, PropertyCategory},
 };
@@ -84,7 +84,7 @@ impl Primitive for TrianglePattern {
         let pts = [(b1, self.price1_top), (b1, self.price1_bottom), (b2, self.price2_top), (b2, self.price2_bottom)];
         pts.iter().enumerate().map(|(i, (b, p))| ControlPoint::index(i as u8, vp.bar_to_x_f64(*b), vp.price_to_y(*p, ps.price_min, ps.price_max))).collect()
     }
-    fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
+    fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
         let x1 = ctx.ts_to_x_ms(self.ts1);
         let y1_top = ctx.price_to_y(self.price1_top);
@@ -181,18 +181,6 @@ impl Primitive for TrianglePattern {
             }
 
             ctx.fill_text(label, lx, ly);
-        }
-
-        if is_selected {
-            ctx.set_stroke_color(CONTROL_POINT_STROKE);
-            ctx.set_fill_color(CONTROL_POINT_FILL);
-            ctx.set_stroke_width(1.5);
-            for (x, y) in [(x1, y1_top), (x1, y1_bot), (x2, y2_top), (x2, y2_bot)] {
-                ctx.begin_path();
-                ctx.arc(x, y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-                ctx.fill();
-                ctx.stroke();
-            }
         }
 
         // Render text if present

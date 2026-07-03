@@ -5,8 +5,7 @@ use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
-    RenderContext, crisp, CONTROL_POINT_RADIUS, CONTROL_POINT_STROKE,
-    CONTROL_POINT_FILL, render_primitive_text, TextAlign,
+    RenderContext, crisp, render_primitive_text, TextAlign,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -67,7 +66,7 @@ impl Primitive for FixedVolumeProfile {
         vec![ControlPoint::point1(x1, cy), ControlPoint::point2(x2, cy)]
     }
 
-    fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
+    fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
         let x1 = ctx.ts_to_x_ms(self.ts1);
         let x2 = ctx.ts_to_x_ms(self.ts2);
@@ -138,23 +137,6 @@ impl Primitive for FixedVolumeProfile {
 
             ctx.set_global_alpha(1.0);
             ctx.set_line_dash(&[]);
-        }
-
-        if is_selected {
-            let cy = chart_height / 2.0;
-            ctx.set_fill_color(CONTROL_POINT_FILL);
-            ctx.set_stroke_color(CONTROL_POINT_STROKE);
-            ctx.set_stroke_width(1.5 * dpr);
-
-            ctx.begin_path();
-            ctx.arc(x1, cy, CONTROL_POINT_RADIUS * dpr, 0.0, std::f64::consts::TAU);
-            ctx.fill();
-            ctx.stroke();
-
-            ctx.begin_path();
-            ctx.arc(x2, cy, CONTROL_POINT_RADIUS * dpr, 0.0, std::f64::consts::TAU);
-            ctx.fill();
-            ctx.stroke();
         }
 
         if let Some(ref text) = self.data.text {

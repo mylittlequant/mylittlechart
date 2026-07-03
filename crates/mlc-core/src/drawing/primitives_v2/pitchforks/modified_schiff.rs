@@ -10,8 +10,8 @@ use super::super::{
     PrimitiveMetadata,
     ControlPoint, ControlPointType,
     PrimitiveColor, LineStyle,
-    HIT_TOLERANCE, CONTROL_POINT_RADIUS,
-    RenderContext, crisp, CONTROL_POINT_STROKE, CONTROL_POINT_FILL,
+    HIT_TOLERANCE,
+    RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params,
     config::FibLevelConfig,
 };
@@ -350,14 +350,8 @@ impl Primitive for ModifiedSchiff {
         ]
     }
 
-    fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
+    fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
-        let x1 = ctx.ts_to_x_ms(self.ts1);
-        let y1 = ctx.price_to_y(self.price1);
-        let x2 = ctx.ts_to_x_ms(self.ts2);
-        let y2 = ctx.price_to_y(self.price2);
-        let x3 = ctx.ts_to_x_ms(self.ts3);
-        let y3 = ctx.price_to_y(self.price3);
         let chart_width = ctx.chart_width();
 
         // Modified Schiff: use adjusted handle point
@@ -661,18 +655,6 @@ impl Primitive for ModifiedSchiff {
             }
         }
 
-        if is_selected {
-            ctx.set_stroke_color(CONTROL_POINT_STROKE);
-            ctx.set_fill_color(CONTROL_POINT_FILL);
-            ctx.set_stroke_width(1.5);
-
-            for (px, py) in [(x1, y1), (x2, y2), (x3, y3)] {
-                ctx.begin_path();
-                ctx.arc(px, py, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-                ctx.fill();
-                ctx.stroke();
-            }
-        }
     }
 
     fn level_configs(&self) -> Option<Vec<FibLevelConfig>> {

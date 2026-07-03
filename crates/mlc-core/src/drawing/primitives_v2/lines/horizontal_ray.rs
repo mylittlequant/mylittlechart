@@ -9,8 +9,8 @@ use super::super::{
     PrimitiveMetadata,
     ControlPoint, ControlPointType,
     PrimitiveColor, LineStyle,
-    HIT_TOLERANCE, CONTROL_POINT_HIT_RADIUS, CONTROL_POINT_RADIUS,
-    RenderContext, crisp, CONTROL_POINT_STROKE, CONTROL_POINT_FILL,
+    HIT_TOLERANCE, CONTROL_POINT_HIT_RADIUS,
+    RenderContext, crisp,
     render_primitive_text,
 };
 
@@ -91,7 +91,7 @@ impl Primitive for HorizontalRay {
         vec![ControlPoint::point1(x, y)]
     }
 
-    fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
+    fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
         let x = ctx.ts_to_x_ms(self.ts_ms);
         let y = ctx.price_to_y(self.price);
@@ -131,14 +131,6 @@ impl Primitive for HorizontalRay {
             }
         }
 
-        if is_selected {
-            ctx.set_stroke_color(CONTROL_POINT_STROKE);
-            ctx.set_fill_color(CONTROL_POINT_FILL);
-            ctx.set_stroke_width(1.5);
-            ctx.begin_path();
-            ctx.arc(x, y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-            ctx.fill(); ctx.stroke();
-        }
     }
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }

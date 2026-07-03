@@ -11,7 +11,7 @@ use super::super::{
     ControlPoint, ControlPointType,
     PrimitiveColor, LineStyle,
     point_to_line_distance, HIT_TOLERANCE, CONTROL_POINT_RADIUS, CONTROL_POINT_HIT_RADIUS,
-    RenderContext, crisp, CONTROL_POINT_STROKE, CONTROL_POINT_FILL,
+    RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params,
 };
 
@@ -148,7 +148,7 @@ impl Primitive for RegressionTrend {
         points
     }
 
-    fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
+    fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
         let x1 = ctx.ts_to_x_ms(self.ts1);
         let y1 = ctx.price_to_y(self.price1);
@@ -198,21 +198,6 @@ impl Primitive for RegressionTrend {
             ctx.stroke();
         }
         ctx.set_line_dash(&[]);
-
-        if is_selected {
-            ctx.set_stroke_color(CONTROL_POINT_STROKE);
-            ctx.set_fill_color(CONTROL_POINT_FILL);
-            ctx.set_stroke_width(1.5);
-            for (px, py) in [(x1, y1), (x2, y2)] {
-                ctx.begin_path();
-                ctx.arc(px, py, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-                ctx.fill(); ctx.stroke();
-            }
-            let cx = (x1 + x2) / 2.0; let cy = (y1 + y2) / 2.0;
-            ctx.begin_path();
-            ctx.arc(cx, cy, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-            ctx.fill(); ctx.stroke();
-        }
 
         if let Some(ref text) = self.data.text {
             if !text.content.is_empty() {

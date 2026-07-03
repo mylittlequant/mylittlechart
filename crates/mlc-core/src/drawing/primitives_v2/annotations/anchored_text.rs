@@ -7,7 +7,7 @@ use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, PrimitiveText,
-    RenderContext, CONTROL_POINT_RADIUS, CONTROL_POINT_STROKE, CONTROL_POINT_FILL,
+    RenderContext,
     render_primitive_text,
     config::{ConfigProperty, PropertyValue, PropertyCategory},
 };
@@ -95,7 +95,7 @@ impl Primitive for AnchoredText {
         let bar = timestamp_ms_to_bar_f64(bars, self.ts_ms);
         vec![ControlPoint::point1(vp.bar_to_x_f64(bar), vp.price_to_y(self.price, ps.price_min, ps.price_max))]
     }
-    fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
+    fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let x = ctx.ts_to_x_ms(self.ts_ms);
         let y = ctx.price_to_y(self.price);
 
@@ -106,15 +106,6 @@ impl Primitive for AnchoredText {
             }
         }
 
-        if is_selected {
-            ctx.set_stroke_color(CONTROL_POINT_STROKE);
-            ctx.set_fill_color(CONTROL_POINT_FILL);
-            ctx.set_stroke_width(1.5);
-            ctx.begin_path();
-            ctx.arc(x, y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-            ctx.fill();
-            ctx.stroke();
-        }
     }
 
     fn text_properties(&self) -> Option<Vec<ConfigProperty>> {

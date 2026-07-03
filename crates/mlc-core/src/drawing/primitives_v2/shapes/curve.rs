@@ -7,8 +7,8 @@ use super::super::{
     PrimitiveMetadata,
     ControlPoint, ControlPointType,
     PrimitiveColor, LineStyle,
-    HIT_TOLERANCE, CONTROL_POINT_HIT_RADIUS, CONTROL_POINT_RADIUS,
-    RenderContext, CONTROL_POINT_STROKE, CONTROL_POINT_FILL,
+    HIT_TOLERANCE, CONTROL_POINT_HIT_RADIUS,
+    RenderContext,
     render_primitive_text,
 };
 
@@ -139,7 +139,7 @@ impl Primitive for Curve {
         ]
     }
 
-    fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
+    fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let sx1 = ctx.ts_to_x_ms(self.start_ts);
         let sy1 = ctx.price_to_y(self.start_price);
         let scx = ctx.ts_to_x_ms(self.control_ts);
@@ -162,24 +162,6 @@ impl Primitive for Curve {
         ctx.quadratic_curve_to(scx, scy, sx2, sy2);
         ctx.stroke();
         ctx.set_line_dash(&[]);
-
-        if is_selected {
-            ctx.set_line_dash(&[4.0, 4.0]);
-            ctx.set_stroke_color("#888888");
-            ctx.begin_path();
-            ctx.move_to(sx1, sy1); ctx.line_to(scx, scy); ctx.line_to(sx2, sy2);
-            ctx.stroke();
-            ctx.set_line_dash(&[]);
-
-            ctx.set_stroke_color(CONTROL_POINT_STROKE);
-            ctx.set_fill_color(CONTROL_POINT_FILL);
-            ctx.set_stroke_width(1.5);
-            for (x, y) in [(sx1, sy1), (sx2, sy2), (scx, scy)] {
-                ctx.begin_path();
-                ctx.arc(x, y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-                ctx.fill(); ctx.stroke();
-            }
-        }
 
         if let Some(ref text) = self.data.text {
             if !text.content.is_empty() {

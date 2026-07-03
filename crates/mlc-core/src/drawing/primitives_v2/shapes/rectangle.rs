@@ -7,8 +7,8 @@ use super::super::{
     PrimitiveMetadata,
     ControlPoint, ControlPointType, ControlPointCursor,
     PrimitiveColor, LineStyle,
-    point_to_line_distance, HIT_TOLERANCE, CONTROL_POINT_HIT_RADIUS, CONTROL_POINT_RADIUS,
-    RenderContext, crisp, CONTROL_POINT_STROKE, CONTROL_POINT_FILL,
+    point_to_line_distance, HIT_TOLERANCE, CONTROL_POINT_HIT_RADIUS,
+    RenderContext, crisp,
     render_primitive_text,
 };
 
@@ -164,7 +164,7 @@ impl Primitive for Rectangle {
         ]
     }
 
-    fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
+    fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
         let x1 = ctx.ts_to_x_ms(self.ts1);
         let y1 = ctx.price_to_y(self.price1);
@@ -194,26 +194,6 @@ impl Primitive for Rectangle {
 
         ctx.stroke_rect(crisp(min_x, dpr), crisp(min_y, dpr), width, height);
         ctx.set_line_dash(&[]);
-
-        if is_selected {
-            ctx.set_stroke_color(CONTROL_POINT_STROKE);
-            ctx.set_fill_color(CONTROL_POINT_FILL);
-            ctx.set_stroke_width(1.5);
-
-            for (cx, cy) in [(x1, y1), (x2, y1), (x2, y2), (x1, y2)] {
-                ctx.begin_path();
-                ctx.arc(cx, cy, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-                ctx.fill(); ctx.stroke();
-            }
-            for (ex, ey) in [((x1 + x2) / 2.0, y1), (x2, (y1 + y2) / 2.0), ((x1 + x2) / 2.0, y2), (x1, (y1 + y2) / 2.0)] {
-                ctx.begin_path();
-                ctx.arc(ex, ey, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-                ctx.fill(); ctx.stroke();
-            }
-            ctx.begin_path();
-            ctx.arc((x1 + x2) / 2.0, (y1 + y2) / 2.0, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-            ctx.fill(); ctx.stroke();
-        }
 
         if let Some(ref text) = self.data.text {
             if !text.content.is_empty() {

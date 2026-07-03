@@ -10,8 +10,8 @@ use super::super::{
     PrimitiveMetadata,
     ControlPoint, ControlPointType,
     PrimitiveColor, LineStyle, TextAlign,
-    HIT_TOLERANCE, CONTROL_POINT_RADIUS,
-    RenderContext, crisp, CONTROL_POINT_STROKE, CONTROL_POINT_FILL,
+    HIT_TOLERANCE,
+    RenderContext, crisp,
     render_primitive_text,
     config::FibLevelConfig,
 };
@@ -168,10 +168,9 @@ impl Primitive for FibTimeZones {
         vec![ControlPoint::point1(x, y)]
     }
 
-    fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
+    fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
         let start_x = ctx.ts_to_x_ms(self.start_ts);
-        let start_y = ctx.price_to_y(self.start_price);
         let chart_height = ctx.chart_height();
 
         // Compute bar interval from ctx.bars()
@@ -336,15 +335,6 @@ impl Primitive for FibTimeZones {
             }
         }
 
-        if is_selected {
-            ctx.set_stroke_color(CONTROL_POINT_STROKE);
-            ctx.set_fill_color(CONTROL_POINT_FILL);
-            ctx.set_stroke_width(1.5);
-            ctx.begin_path();
-            ctx.arc(start_x, start_y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-            ctx.fill();
-            ctx.stroke();
-        }
     }
 
     fn level_configs(&self) -> Option<Vec<FibLevelConfig>> { Some(self.level_configs.clone()) }

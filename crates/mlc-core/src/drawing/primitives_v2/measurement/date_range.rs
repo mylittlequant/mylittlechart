@@ -5,7 +5,7 @@ use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
-    RenderContext, crisp, LineStyle, CONTROL_POINT_RADIUS, CONTROL_POINT_STROKE, CONTROL_POINT_FILL,
+    RenderContext, crisp, LineStyle,
     render_primitive_text, TextAlign,
 };
 
@@ -72,7 +72,7 @@ impl Primitive for DateRange {
         vec![ControlPoint::point1(vp.bar_to_x_f64(b1), y), ControlPoint::point2(vp.bar_to_x_f64(b2), y)]
     }
 
-    fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
+    fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
         let x1 = ctx.ts_to_x_ms(self.ts1);
         let x2 = ctx.ts_to_x_ms(self.ts2);
@@ -125,21 +125,6 @@ impl Primitive for DateRange {
         ctx.fill_text(&label, crisp(min_x + w / 2.0, dpr), crisp(y - 10.0, dpr));
 
         // Draw control points if selected
-        if is_selected {
-            ctx.set_fill_color(CONTROL_POINT_FILL);
-            ctx.set_stroke_color(CONTROL_POINT_STROKE);
-            ctx.set_stroke_width(1.0);
-
-            ctx.begin_path();
-            ctx.arc(crisp(x1, dpr), crisp(y, dpr), CONTROL_POINT_RADIUS, 0.0, std::f64::consts::PI * 2.0);
-            ctx.fill();
-            ctx.stroke();
-
-            ctx.begin_path();
-            ctx.arc(crisp(x2, dpr), crisp(y, dpr), CONTROL_POINT_RADIUS, 0.0, std::f64::consts::PI * 2.0);
-            ctx.fill();
-            ctx.stroke();
-        }
 
         // Render text if present
         if let Some(ref text) = self.data.text {

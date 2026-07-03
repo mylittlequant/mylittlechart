@@ -7,7 +7,7 @@ use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, PrimitiveText,
-    RenderContext, crisp, CONTROL_POINT_RADIUS, CONTROL_POINT_STROKE, CONTROL_POINT_FILL,
+    RenderContext, crisp,
     config::{ConfigProperty, PropertyValue, PropertyCategory},
 };
 
@@ -101,7 +101,7 @@ impl Primitive for Note {
             ControlPoint::point2(vp.bar_to_x_f64(bar2), vp.price_to_y(self.price2, ps.price_min, ps.price_max)),
         ]
     }
-    fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
+    fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
         let x1 = ctx.ts_to_x_ms(self.ts1);
         let y1 = ctx.price_to_y(self.price1);
@@ -128,18 +128,6 @@ impl Primitive for Note {
         ctx.line_to(crisp(corner_x - fold_size, dpr), crisp(corner_y + fold_size, dpr));
         ctx.line_to(crisp(corner_x, dpr), crisp(corner_y + fold_size, dpr));
         ctx.stroke();
-
-        if is_selected {
-            ctx.set_stroke_color(CONTROL_POINT_STROKE);
-            ctx.set_fill_color(CONTROL_POINT_FILL);
-            ctx.set_stroke_width(1.5);
-            for (px, py) in [(x1, y1), (x2, y2)] {
-                ctx.begin_path();
-                ctx.arc(px, py, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-                ctx.fill();
-                ctx.stroke();
-            }
-        }
 
         let content = self.get_content();
         if !content.is_empty() {

@@ -5,7 +5,7 @@ use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
-    RenderContext, CONTROL_POINT_RADIUS, CONTROL_POINT_STROKE, CONTROL_POINT_FILL,
+    RenderContext,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -60,7 +60,7 @@ impl Primitive for Brush {
     }
     fn control_points(&self, _bars: &[Bar], _vp: &Viewport, _ps: &PriceScale) -> Vec<ControlPoint> { vec![] }
 
-    fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
+    fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         if self.points.is_empty() {
             return;
         }
@@ -105,19 +105,6 @@ impl Primitive for Brush {
         }
         ctx.stroke();
 
-        if is_selected {
-            ctx.set_stroke_color(CONTROL_POINT_STROKE);
-            ctx.set_fill_color(CONTROL_POINT_FILL);
-            ctx.set_stroke_width(1.5);
-            for &(ts, price) in [self.points.first(), self.points.last()].iter().filter_map(|p| *p) {
-                let x = ctx.ts_to_x_ms(ts);
-                let y = ctx.price_to_y(price);
-                ctx.begin_path();
-                ctx.arc(x, y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-                ctx.fill();
-                ctx.stroke();
-            }
-        }
     }
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }

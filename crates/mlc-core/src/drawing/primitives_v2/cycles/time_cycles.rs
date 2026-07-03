@@ -5,7 +5,7 @@ use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
-    RenderContext, crisp, LineStyle, CONTROL_POINT_RADIUS, CONTROL_POINT_STROKE, CONTROL_POINT_FILL,
+    RenderContext, crisp, LineStyle,
     render_primitive_text,
 };
 
@@ -101,7 +101,7 @@ impl Primitive for TimeCycles {
         let base_ry = (vp.price_to_y(self.price + self.radius_price, ps.price_min, ps.price_max) - cy).abs();
         vec![ControlPoint::point1(cx, cy), ControlPoint::point2(cx + base_rx, cy + base_ry)]
     }
-    fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
+    fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
         let cx = ctx.ts_to_x_ms(self.ts_ms);
         let cy = ctx.price_to_y(self.price);
@@ -141,23 +141,6 @@ impl Primitive for TimeCycles {
         ctx.move_to(crisp(cx, dpr), crisp(chart_top, dpr));
         ctx.line_to(crisp(cx, dpr), crisp(chart_bottom, dpr));
         ctx.stroke();
-
-        if is_selected {
-            ctx.set_line_dash(&[]);
-
-            ctx.set_fill_color(CONTROL_POINT_FILL);
-            ctx.set_stroke_color(CONTROL_POINT_STROKE);
-            ctx.set_stroke_width(2.0);
-            ctx.begin_path();
-            ctx.arc(crisp(cx, dpr), crisp(cy, dpr), CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-            ctx.fill();
-            ctx.stroke();
-
-            ctx.begin_path();
-            ctx.arc(crisp(edge_x, dpr), crisp(edge_y, dpr), CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-            ctx.fill();
-            ctx.stroke();
-        }
 
         if let Some(ref text) = self.data.text {
             if !text.content.is_empty() {

@@ -466,7 +466,7 @@ pub trait Primitive: Send + Sync {
     ///
     /// Default implementation draws lines connecting all points - override for
     /// custom rendering (shapes, fills, text, etc.)
-    fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
+    fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         // Inline default implementation to avoid Sized bound issues
         let data = self.data();
         let points = self.points();
@@ -555,10 +555,6 @@ pub trait Primitive: Send + Sync {
         }
 
         ctx.set_line_dash(&[]);
-
-        if is_selected {
-            draw_control_points(ctx, &screen_points);
-        }
     }
 
 

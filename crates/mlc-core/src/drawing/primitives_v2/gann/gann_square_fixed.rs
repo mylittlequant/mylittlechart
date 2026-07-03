@@ -10,8 +10,8 @@ use super::super::{
     PrimitiveMetadata,
     ControlPoint, ControlPointType, ControlPointCursor,
     PrimitiveColor, LineStyle,
-    HIT_TOLERANCE, CONTROL_POINT_RADIUS,
-    RenderContext, crisp, CONTROL_POINT_STROKE, CONTROL_POINT_FILL,
+    HIT_TOLERANCE,
+    RenderContext, crisp,
     render_primitive_text,
     config::FibLevelConfig,
 };
@@ -327,7 +327,7 @@ impl Primitive for GannSquareFixed {
         ]
     }
 
-    fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
+    fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
         let cx = ctx.ts_to_x_ms(self.center_ts);
         let cy = ctx.price_to_y(self.center_price);
@@ -456,41 +456,6 @@ impl Primitive for GannSquareFixed {
             }
         }
 
-        if is_selected {
-            ctx.set_stroke_color(CONTROL_POINT_STROKE);
-            ctx.set_fill_color(CONTROL_POINT_FILL);
-            ctx.set_stroke_width(1.5);
-
-            // Draw center control point
-            ctx.begin_path();
-            ctx.arc(cx, cy, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-            ctx.fill();
-            ctx.stroke();
-
-            // Draw corner control points
-            for &(x, y) in &screen_corners {
-                ctx.begin_path();
-                ctx.arc(x, y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-                ctx.fill();
-                ctx.stroke();
-            }
-
-            // Draw edge control points
-            let half_bar_screen = (screen_corners[1].0 - cx).abs();
-            let half_price_screen = (cy - screen_corners[0].1).abs();
-            let edges = [
-                (cx, cy - half_price_screen), // top
-                (cx + half_bar_screen, cy),   // right
-                (cx, cy + half_price_screen), // bottom
-                (cx - half_bar_screen, cy),   // left
-            ];
-            for (ex, ey) in edges {
-                ctx.begin_path();
-                ctx.arc(ex, ey, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-                ctx.fill();
-                ctx.stroke();
-            }
-        }
     }
 
     fn level_configs(&self) -> Option<Vec<FibLevelConfig>> {

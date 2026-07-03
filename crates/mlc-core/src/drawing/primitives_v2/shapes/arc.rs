@@ -7,8 +7,8 @@ use super::super::{
     PrimitiveMetadata,
     ControlPoint, ControlPointType,
     PrimitiveColor, LineStyle,
-    HIT_TOLERANCE, CONTROL_POINT_HIT_RADIUS, CONTROL_POINT_RADIUS,
-    RenderContext, CONTROL_POINT_STROKE, CONTROL_POINT_FILL,
+    HIT_TOLERANCE, CONTROL_POINT_HIT_RADIUS,
+    RenderContext,
     render_primitive_text,
 };
 
@@ -144,7 +144,7 @@ impl Primitive for Arc {
         ]
     }
 
-    fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
+    fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let cx = ctx.ts_to_x_ms(self.center_ts);
         let cy = ctx.price_to_y(self.center_price);
         let rx = ctx.ts_to_x_ms(self.center_ts + self.radius_ms);
@@ -167,28 +167,6 @@ impl Primitive for Arc {
         ctx.arc(cx, cy, radius, start_rad, end_rad);
         ctx.stroke();
         ctx.set_line_dash(&[]);
-
-        if is_selected {
-            ctx.set_stroke_color(CONTROL_POINT_STROKE);
-            ctx.set_fill_color(CONTROL_POINT_FILL);
-            ctx.set_stroke_width(1.5);
-
-            ctx.begin_path();
-            ctx.arc(cx, cy, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-            ctx.fill(); ctx.stroke();
-
-            let start_x = cx + radius * start_rad.cos();
-            let start_y = cy + radius * start_rad.sin();
-            ctx.begin_path();
-            ctx.arc(start_x, start_y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-            ctx.fill(); ctx.stroke();
-
-            let end_x = cx + radius * end_rad.cos();
-            let end_y = cy + radius * end_rad.sin();
-            ctx.begin_path();
-            ctx.arc(end_x, end_y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-            ctx.fill(); ctx.stroke();
-        }
 
         if let Some(ref text) = self.data.text {
             if !text.content.is_empty() {

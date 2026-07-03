@@ -9,7 +9,7 @@ use super::super::{
     PrimitiveMetadata,
     ControlPoint, ControlPointType, ControlPointCursor,
     PrimitiveColor, LineStyle, HIT_TOLERANCE,
-    RenderContext, crisp, CONTROL_POINT_RADIUS, CONTROL_POINT_STROKE, CONTROL_POINT_FILL,
+    RenderContext, crisp,
     render_primitive_text_rotated,
 };
 
@@ -125,7 +125,7 @@ impl Primitive for VerticalLine {
         )]
     }
 
-    fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
+    fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
         let x = ctx.ts_to_x_ms(self.ts_ms);
         let crisp_x = crisp(x, dpr);
@@ -171,16 +171,6 @@ impl Primitive for VerticalLine {
         }
 
         // Draw control point if selected
-        if is_selected {
-            let cy = ctx.chart_height() / 2.0;
-            ctx.set_stroke_color(CONTROL_POINT_STROKE);
-            ctx.set_fill_color(CONTROL_POINT_FILL);
-            ctx.set_stroke_width(1.5);
-            ctx.begin_path();
-            ctx.arc(x, cy, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-            ctx.fill();
-            ctx.stroke();
-        }
     }
 
     fn to_json(&self) -> String {

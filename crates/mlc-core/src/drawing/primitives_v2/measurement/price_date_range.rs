@@ -5,7 +5,7 @@ use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE, point_to_line_distance,
-    RenderContext, crisp, LineStyle, CONTROL_POINT_RADIUS, CONTROL_POINT_STROKE, CONTROL_POINT_FILL,
+    RenderContext, crisp, LineStyle,
     render_primitive_text, TextAlign,
 };
 
@@ -72,7 +72,7 @@ impl Primitive for PriceDateRange {
         ]
     }
 
-    fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
+    fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
         let x1 = ctx.ts_to_x_ms(self.ts1);
         let y1 = ctx.price_to_y(self.price1);
@@ -138,21 +138,6 @@ impl Primitive for PriceDateRange {
         }
 
         // Draw control points if selected
-        if is_selected {
-            ctx.set_fill_color(CONTROL_POINT_FILL);
-            ctx.set_stroke_color(CONTROL_POINT_STROKE);
-            ctx.set_stroke_width(1.0);
-
-            ctx.begin_path();
-            ctx.arc(crisp(x1, dpr), crisp(y1, dpr), CONTROL_POINT_RADIUS, 0.0, std::f64::consts::PI * 2.0);
-            ctx.fill();
-            ctx.stroke();
-
-            ctx.begin_path();
-            ctx.arc(crisp(x2, dpr), crisp(y2, dpr), CONTROL_POINT_RADIUS, 0.0, std::f64::consts::PI * 2.0);
-            ctx.fill();
-            ctx.stroke();
-        }
 
         // Render text if present
         if let Some(ref text) = self.data.text {

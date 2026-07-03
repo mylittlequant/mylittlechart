@@ -7,8 +7,8 @@ use super::super::{
     PrimitiveMetadata,
     ControlPoint, ControlPointType, ControlPointCursor,
     PrimitiveColor, LineStyle,
-    HIT_TOLERANCE, CONTROL_POINT_HIT_RADIUS, CONTROL_POINT_RADIUS,
-    RenderContext, CONTROL_POINT_STROKE, CONTROL_POINT_FILL,
+    HIT_TOLERANCE, CONTROL_POINT_HIT_RADIUS,
+    RenderContext,
     render_primitive_text,
 };
 
@@ -139,7 +139,7 @@ impl Primitive for Circle {
         ]
     }
 
-    fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
+    fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let cx = ctx.ts_to_x_ms(self.center_ts);
         let cy = ctx.price_to_y(self.center_price);
         let rx = (ctx.ts_to_x_ms(self.center_ts + self.radius_ms) - cx).abs();
@@ -167,29 +167,6 @@ impl Primitive for Circle {
         ctx.ellipse(cx, cy, rx, ry, 0.0, 0.0, std::f64::consts::TAU);
         ctx.stroke();
         ctx.set_line_dash(&[]);
-
-        if is_selected {
-            ctx.set_stroke_color("#2196F3");
-            ctx.set_stroke_width(1.5);
-            ctx.set_line_dash(&[4.0, 4.0]);
-            ctx.begin_path();
-            ctx.move_to(cx - rx, cy - ry); ctx.line_to(cx + rx, cy - ry);
-            ctx.line_to(cx + rx, cy + ry); ctx.line_to(cx - rx, cy + ry);
-            ctx.close_path(); ctx.stroke();
-            ctx.set_line_dash(&[]);
-
-            ctx.set_stroke_color(CONTROL_POINT_STROKE);
-            ctx.set_fill_color(CONTROL_POINT_FILL);
-            ctx.set_stroke_width(1.5);
-            for (ex, ey) in [(cx, cy - ry), (cx + rx, cy), (cx, cy + ry), (cx - rx, cy)] {
-                ctx.begin_path();
-                ctx.arc(ex, ey, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-                ctx.fill(); ctx.stroke();
-            }
-            ctx.begin_path();
-            ctx.arc(cx, cy, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-            ctx.fill(); ctx.stroke();
-        }
 
         if let Some(ref text) = self.data.text {
             if !text.content.is_empty() {

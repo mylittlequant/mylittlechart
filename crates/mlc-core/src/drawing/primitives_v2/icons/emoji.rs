@@ -10,7 +10,7 @@ use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, ControlPointCursor, PrimitiveColor,
-    RenderContext, CONTROL_POINT_RADIUS, CONTROL_POINT_STROKE, CONTROL_POINT_FILL,
+    RenderContext, CONTROL_POINT_RADIUS,
     render_primitive_text, TextAlign,
 };
 
@@ -299,7 +299,6 @@ impl EmojiType {
         }
     }
 }
-
 
 /// Emoji primitive with 5 data-coordinate anchor points
 ///
@@ -1160,7 +1159,7 @@ impl Primitive for Emoji {
         ]
     }
 
-    fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
+    fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let cx = ctx.ts_to_x_ms(self.center_ts);
         let cy = ctx.price_to_y(self.center_price);
 
@@ -1172,58 +1171,6 @@ impl Primitive for Emoji {
         self.render_icon(ctx, cx, cy, half_w, half_h);
 
         // Draw control points if selected
-        if is_selected {
-            // Draw bounding box
-            ctx.set_stroke_color("#2196F3");
-            ctx.set_stroke_width(1.5);
-            ctx.set_line_dash(&[4.0, 4.0]);
-            ctx.begin_path();
-            ctx.move_to(cx - half_w, cy - half_h);
-            ctx.line_to(cx + half_w, cy - half_h);
-            ctx.line_to(cx + half_w, cy + half_h);
-            ctx.line_to(cx - half_w, cy + half_h);
-            ctx.close_path();
-            ctx.stroke();
-            ctx.set_line_dash(&[]);
-
-            ctx.set_stroke_color(CONTROL_POINT_STROKE);
-            ctx.set_fill_color(CONTROL_POINT_FILL);
-            ctx.set_stroke_width(1.5);
-
-            // Draw corner control handles (for proportional resize)
-            let corners = [
-                (cx - half_w, cy - half_h), // top-left
-                (cx + half_w, cy - half_h), // top-right
-                (cx + half_w, cy + half_h), // bottom-right
-                (cx - half_w, cy + half_h), // bottom-left
-            ];
-            for (corner_x, corner_y) in corners {
-                ctx.begin_path();
-                ctx.arc(corner_x, corner_y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-                ctx.fill();
-                ctx.stroke();
-            }
-
-            // Draw edge control handles (cross pattern)
-            let edges = [
-                (cx, cy - half_h), // top
-                (cx + half_w, cy), // right
-                (cx, cy + half_h), // bottom
-                (cx - half_w, cy), // left
-            ];
-            for (ex, ey) in edges {
-                ctx.begin_path();
-                ctx.arc(ex, ey, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-                ctx.fill();
-                ctx.stroke();
-            }
-
-            // Draw center move handle
-            ctx.begin_path();
-            ctx.arc(cx, cy, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
-            ctx.fill();
-            ctx.stroke();
-        }
 
         // Render text if present
         if let Some(ref text) = self.data.text {
