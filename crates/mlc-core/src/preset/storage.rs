@@ -139,14 +139,12 @@ pub fn save_preset(preset: &ChartPreset) -> Result<PathBuf, PresetError> {
     let dir = presets_dir();
     let path = dir.join(format!("{}.json", preset.id));
 
-    // Strip viewport-related data before writing to disk.
-    // Viewport is device-local — recalculated on bar load. Persisting it
-    // causes stale-viewport conflicts on restart (set_bars margin vs saved
-    // view_start).  ViewportChange commands are also stripped from undo/redo
-    // stacks since they reference stale positions.
+    // ViewportChange commands are stripped from undo/redo stacks since they
+    // reference stale positions. The snapshot's viewport field itself is
+    // ViewportPersist (bar_spacing only) — nothing else reaches disk by
+    // construction, so no field stripping is needed here.
     let mut stripped = preset.clone();
     for win in &mut stripped.windows {
-        win.viewport = Default::default();
         if let Some(ref mut history) = win.command_history {
             *history = history.stripped_for_persistence();
         }
