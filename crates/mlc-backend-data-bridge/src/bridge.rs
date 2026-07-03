@@ -1263,6 +1263,14 @@ impl DataBridge {
             let station_symbol_wire = wire_sym.clone();
             let station_interval = interval.clone();
             let station_tf_name = tf_name.clone();
+            // Dedup-gate guards, cloned so the task can evict its own key on
+            // every exit path — mirrors the trade path (subscribe_trades'
+            // task tail). Without this a dead forwarder leaves the key
+            // "subscribed" forever and every later request_bars(force=false)
+            // silently no-ops at dedup-L2 (audit D4).
+            let station_kline_subscribed = self.station_kline_subscribed.clone();
+            let station_kline_handles = self.station_kline_handles.clone();
+            let cache_key_task = cache_key.clone();
             let handle = self.spawn_bg_join(async move {
                 let kline_iv = KlineInterval::new(&station_interval);
                 let sub_set = digdigdig3_station::SubscriptionSet::new().add(
@@ -1276,6 +1284,13 @@ impl DataBridge {
                     Err(e) => {
                         crate::dlog!("[Bridge] station kline subscribe failed for {:?} sym={} tf={}: {:?}",
                             exchange_id, station_symbol_wire, station_tf_name, e);
+                        // Remove gate keys so a future request_bars can retry.
+                        if let Ok(mut subs) = station_kline_subscribed.lock() {
+                            subs.remove(&cache_key_task);
+                        }
+                        if let Ok(mut h) = station_kline_handles.lock() {
+                            h.remove(&cache_key_task);
+                        }
                         return;
                     }
                 };
@@ -1304,6 +1319,20 @@ impl DataBridge {
                         });
                     }
                 }
+                // Forwarder handle dropped (unsubscribe/grace expired/bg-tab
+                // throttle killed it). Remove from both gates so a future
+                // request_bars can re-spawn instead of no-op'ing at dedup-L2
+                // forever (audit D4).
+                if let Ok(mut subs) = station_kline_subscribed.lock() {
+                    subs.remove(&cache_key_task);
+                }
+                if let Ok(mut h) = station_kline_handles.lock() {
+                    h.remove(&cache_key_task);
+                }
+                crate::dlog!(
+                    "[Bridge] station kline forwarder exited {:?} sym={} tf={}, gate removed",
+                    exchange_id, station_symbol_wire, station_tf_name
+                );
             });
             if let Ok(mut h) = self.station_kline_handles.lock() {
                 h.insert(cache_key.clone(), handle);
