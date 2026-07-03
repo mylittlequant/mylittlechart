@@ -328,6 +328,11 @@ impl ChartApp {
                     let pid = self.panel_app.panel_grid
                         .active_container()
                         .map(|w| w.chart_panel_id);
+                    // Captured BEFORE the mutation below so the D9 kline-forwarder
+                    // refcount logic knows what family the window is LEAVING.
+                    let previous_ct: Option<&'static str> = pid
+                        .and_then(|chart_panel_id| self.panels_store.chart_panel.get(&chart_panel_id))
+                        .map(|p| p.chart_type);
                     let (chart_param, chart_interval): (f64, &'static str) = if let Some(chart_panel_id) = pid {
                         let panel = crate::chart_panel_bridge::ensure_chart_panel_state(
                             &mut self.panels_store, chart_panel_id,
@@ -385,6 +390,67 @@ impl ChartApp {
                                     let at = mlc_backend_data_bridge::account_type_to_dig3(at);
                                     let on_tick_tf = tf.tick_count().is_some();
 
+                                    // Audit D9 step 2: release the outgoing kline
+                                    // forwarder when leaving kline-family for a
+                                    // derived type that doesn't need the kline
+                                    // backdrop (footprint's cluster overlay and
+                                    // cvd's ts-domain both read live kline data —
+                                    // never abort under either). Only if NO OTHER
+                                    // container in THIS ChartApp still displays
+                                    // (exchange,symbol,tf,account) as kline-family
+                                    // or footprint — a sibling window/leaf sharing
+                                    // the same instrument must not go dark.
+                                    //
+                                    // Scope note: this only enumerates containers
+                                    // within the current ChartApp/process. Whether
+                                    // another OS window (a second ChartApp
+                                    // instance / daemon-mode session) displays the
+                                    // same instrument as kline-family is NOT
+                                    // reachable from here — `BackendCore::sessions`
+                                    // is pure connection metadata (app_id/label/
+                                    // heartbeat), it does not enumerate a peer
+                                    // session's live containers. If that
+                                    // cross-session case matters in practice, it
+                                    // needs its own arc (a shared kline-forwarder
+                                    // refcount on BackendCore, not per-ChartApp
+                                    // enumeration).
+                                    let was_kline_family = !matches!(
+                                        previous_ct,
+                                        Some("range_bar") | Some("volume_bar") | Some("tick_bar") | Some("footprint")
+                                        | Some("renko") | Some("pnf") | Some("kagi") | Some("cvd") | Some("tpo")
+                                        | Some("three_line_break")
+                                        | Some("dollar_bar") | Some("tick_imbalance_bar")
+                                        | Some("volume_imbalance_bar") | Some("run_bar")
+                                        | Some("dom_heatmap") | Some("liquidation_heatmap")
+                                    );
+                                    let target_needs_kline_backdrop = matches!(ct, "footprint" | "cvd");
+                                    if was_kline_family && is_derived_target && !target_needs_kline_backdrop && !on_tick_tf {
+                                        let still_needed = self.panel_app.panel_grid.containers().iter()
+                                            .any(|(other_cid, _)| {
+                                                if *other_cid == cid { return false; }
+                                                let same_instrument = self.symbol_for_chart(*other_cid).as_deref() == Some(symbol.as_str())
+                                                    && self.exchange_for_chart(*other_cid).as_deref() == Some(self.active_exchange.as_str())
+                                                    && self.account_type_for_chart(*other_cid) == Some(
+                                                        self.account_type_for_chart(cid).unwrap_or_default(),
+                                                    )
+                                                    && self.timeframe_for_chart(*other_cid).map(|t| t.name.clone()) == Some(tf.name.clone());
+                                                if !same_instrument { return false; }
+                                                let other_ct = self.chart_type_for_chart(*other_cid).unwrap_or("candles");
+                                                !matches!(
+                                                    other_ct,
+                                                    "range_bar" | "volume_bar" | "tick_bar" | "footprint"
+                                                    | "renko" | "pnf" | "kagi" | "cvd" | "tpo"
+                                                    | "three_line_break"
+                                                    | "dollar_bar" | "tick_imbalance_bar"
+                                                    | "volume_imbalance_bar" | "run_bar"
+                                                    | "dom_heatmap" | "liquidation_heatmap"
+                                                ) || other_ct == "footprint"
+                                            });
+                                        if !still_needed {
+                                            self.core.bridge.abort_kline_bars(self.active_exchange, &symbol, at, &tf.name);
+                                        }
+                                    }
+
                                     // Step 1: always abort any derived
                                     // subscription. The bridge.abort_* call is
                                     // idempotent when nothing's live.
@@ -401,12 +467,17 @@ impl ChartApp {
                                         // the new stream lands at the right
                                         // edge of the viewport.
                                         window.needs_snap_after_backfill = true;
-                                        // Phase X0 / C5c: DOM / liquidation heatmap storage now lives on
-                                        // the bubble. Cleanup on chart-type switch deferred: bubble
-                                        // can hold stale buffers, but the renderer only reads them when
-                                        // a chart_type matching dom_heatmap / liquidation_heatmap is
-                                        // active, so the bleed never reaches the user. If a future
-                                        // cleanup is desired, use bubble.clear_dom_heatmap() etc.
+                                    }
+                                    // Audit D9: clear every sibling derived slot except the
+                                    // target type on EVERY chart-type switch — the cleanup call
+                                    // site this deferred-cleanup comment used to reference never
+                                    // existed. Fixes stale-bricks-on-param-change too (renko
+                                    // box=10 -> box=20 no longer leaves old bricks behind — the
+                                    // re-subscribe below emits fresh data into an empty slot).
+                                    if let Some(bid) = self.bubble_for_chart(cid) {
+                                        self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
+                                            bubble.clear_derived_slots(Some(ct));
+                                        });
                                     }
                                     let _ = is_derived_target; // axis flip done in prepare_frame
 
@@ -574,6 +645,19 @@ impl ChartApp {
                             if self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
                                 let at = mlc_backend_data_bridge::account_type_to_dig3(at);
                                 let scaled = (value * 1e8) as u64;
+                                // Audit D9: a param change (e.g. renko box=10 -> box=20)
+                                // re-subscribes on the SAME chart_type — ChangeChartType's
+                                // clear never fires. append_renko/append_pnf/... only ever
+                                // push, so without this the new box size's bricks land
+                                // after the stale old-box bricks in the same slot. Clear
+                                // the target's own slot (keep=None) right before the
+                                // re-subscribe so it starts from empty; the re-sub below
+                                // repopulates it with fresh data at the new param.
+                                if let Some(bid) = self.bubble_for_chart(cid) {
+                                    self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
+                                        bubble.clear_derived_slots(None);
+                                    });
+                                }
                                 match active_ct.as_str() {
                                     "range_bar"  => self.core.bridge.request_range_bars(self.active_exchange, &symbol, at, scaled),
                                     "volume_bar" => self.core.bridge.request_volume_bars(self.active_exchange, &symbol, at, scaled),
