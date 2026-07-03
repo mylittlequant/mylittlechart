@@ -220,14 +220,6 @@ pub struct ProfileDomainSettings {
     #[serde(default = "default_recalc_mode")]
     pub recalc_mode: String,
 
-    /// Price scale mode preference.
-    ///
-    /// Valid values: `"Auto"`, `"Focus"`, `"Manual"`. Drives chart-open
-    /// scaling behaviour. Defaults to `"Auto"` when the field is absent
-    /// (older profiles).
-    #[serde(default = "default_scale_mode")]
-    pub scale_mode: String,
-
     /// Whether the internal Agent API server is enabled on startup.
     #[serde(default = "default_server_enabled")]
     pub server_enabled: bool,
@@ -280,7 +272,6 @@ impl ProfileDomainSettings {
             app_version: String::new(),
             bar_count: default_bar_count(),
             recalc_mode: default_recalc_mode(),
-            scale_mode: default_scale_mode(),
             server_enabled: default_server_enabled(),
             server_port: default_server_port(),
             exchange_keys: Vec::new(),
@@ -655,10 +646,6 @@ fn default_recalc_mode() -> String {
     "PerFrame".to_string()
 }
 
-fn default_scale_mode() -> String {
-    "Auto".to_string()
-}
-
 fn default_language() -> String {
     "en".to_string()
 }
@@ -761,7 +748,6 @@ mod json_compat_tests {
         assert_eq!(profile.domain.app_version, "0.5.100");
         assert_eq!(profile.domain.bar_count, 2000);
         assert_eq!(profile.domain.recalc_mode, "PerFrame");
-        assert_eq!(profile.domain.scale_mode, "Auto");
         assert!(profile.domain.server_enabled);
         assert_eq!(profile.domain.server_port, 17420);
         assert_eq!(profile.domain.connector_enabled.get("binance"), Some(&true));
@@ -800,7 +786,7 @@ mod json_compat_tests {
             "\"sidebar_visible\"", "\"sidebar_panel\"", "\"sidebar_width\"",
             "\"inline_bar_x\"", "\"inline_bar_y\"", "\"inline_bar_dock\"",
             "\"device_name\"", "\"app_version\"", "\"bar_count\"", "\"recalc_mode\"",
-            "\"scale_mode\"", "\"language\"", "\"server_enabled\"", "\"server_port\"",
+            "\"language\"", "\"server_enabled\"", "\"server_port\"",
             "\"exchange_keys\"", "\"connector_enabled\"", "\"notification_settings\"",
             "\"windows\"", "\"profile_id\"", "\"display_name\"", "\"avatar\"",
             "\"profile_created_at\"", "\"data_load\"",

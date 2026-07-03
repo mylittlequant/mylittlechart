@@ -53,10 +53,6 @@ impl<'a> User<'a> {
         self.mgr.recalc_mode()
     }
 
-    pub fn scale_mode(&self) -> mlc_core::chart::types::price_scale::ScaleMode {
-        self.mgr.scale_mode()
-    }
-
     pub fn server_enabled(&self) -> bool {
         self.mgr.server_enabled()
     }
@@ -147,14 +143,6 @@ impl<'a> UserMut<'a> {
 
     pub fn set_recalc_mode(&mut self, mode: mlc_backend_indicator_engine::RecalcMode) {
         self.mgr.set_recalc_mode(mode);
-    }
-
-    pub fn scale_mode(&self) -> mlc_core::chart::types::price_scale::ScaleMode {
-        self.mgr.scale_mode()
-    }
-
-    pub fn set_scale_mode(&mut self, mode: mlc_core::chart::types::price_scale::ScaleMode) {
-        self.mgr.set_scale_mode(mode);
     }
 
     // =========================================================================

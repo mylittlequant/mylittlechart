@@ -148,7 +148,11 @@ impl ChartApp {
                             backfill_requests.push((win_sym, win_tf, win_at));
                         }
                     } else {
-                        window.price_scale.scale_mode = self.core.user().scale_mode();
+                        // Global scale_mode persistence channel removed (viewport
+                        // SWC arc, 2026-07-03) — fresh loads always seed Auto;
+                        // `restore_scale_mode` (set by cold preset-load paths)
+                        // overrides this inside `reconcile_view_fresh` when present.
+                        window.price_scale.scale_mode = mlc_core::chart::types::price_scale::ScaleMode::Auto;
                         window.reconcile_view_fresh(new_bars);
                         window.pending_symbol_load = false;
                         if window.needs_snap_after_backfill

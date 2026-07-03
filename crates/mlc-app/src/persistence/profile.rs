@@ -5,7 +5,6 @@ use crate::agent as gate4agent;
 
 use crate::ChartApp;
 use crate::persistence::live_cache as preset_cache;
-use mlc_core::ScaleMode;
 
 impl ChartApp {
     /// Collect the current app state into a [`UserProfile`] snapshot.
@@ -32,11 +31,6 @@ impl ChartApp {
                 bar_count: existing.domain.bar_count,
                 data_load: existing.domain.data_load.clone(),
                 recalc_mode: existing.domain.recalc_mode.clone(),
-                scale_mode: match user_guard.scale_mode() {
-                    ScaleMode::Auto   => "Auto".to_string(),
-                    ScaleMode::Focus  => "Focus".to_string(),
-                    ScaleMode::Manual => "Manual".to_string(),
-                },
                 server_enabled: self.panel_app.user_settings_state.server_enabled,
                 server_port: self.panel_app.user_settings_state.server_port,
                 exchange_keys: existing.domain.exchange_keys.clone(),

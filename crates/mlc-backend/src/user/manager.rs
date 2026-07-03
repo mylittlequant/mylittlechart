@@ -2,7 +2,7 @@
 //!
 //! Promoted from `mlc-app::user_manager::{UserManager, ProfileManager}` /
 //! `mlc-app-shell-vello::AppState` per doctrine 1B: a headless daemon UI
-//! needs `UserProfile` (bar_count, data_load, recalc_mode, scale_mode, ...)
+//! needs `UserProfile` (bar_count, data_load, recalc_mode, ...)
 //! to request the correct amount of data and apply the same behaviour a
 //! native window would — this is domain state, not presentation, even
 //! though `UserProfile` also carries presentation fields (sidebar width,
@@ -21,7 +21,6 @@
 use std::collections::HashMap;
 
 use mlc_backend_indicator_engine::RecalcMode;
-use mlc_core::chart::types::price_scale::ScaleMode;
 use mlc_core::user_profile::{SettingsSnapshots, UserProfile};
 use mlc_vault::vault::VaultKey;
 
@@ -29,7 +28,7 @@ use mlc_vault::vault::VaultKey;
 /// session. One instance lives on `BackendCore`; per-window duplication is
 /// what this promotion removes (step 3.6c, following 3.6a/3.6b/3.6d).
 ///
-/// `connector_enabled`/`recalc_mode`/`scale_mode`/`server_enabled`/
+/// `connector_enabled`/`recalc_mode`/`server_enabled`/
 /// `server_port` (shared-BackendCore arc Phase C,
 /// `docs/mlc/plans/shared-backend-core-2026-07-03.md` §2.1) are the
 /// strongly-typed runtime caches of the same-named `profile.domain.*`
@@ -44,7 +43,6 @@ pub struct UserProfileManager {
     vault_key: Option<VaultKey>,
     connector_enabled: HashMap<String, bool>,
     recalc_mode: RecalcMode,
-    scale_mode: ScaleMode,
     server_enabled: bool,
     server_port: u16,
 }
@@ -147,14 +145,6 @@ impl UserProfileManager {
         self.recalc_mode = mode;
     }
 
-    pub fn scale_mode(&self) -> ScaleMode {
-        self.scale_mode
-    }
-
-    pub fn set_scale_mode(&mut self, mode: ScaleMode) {
-        self.scale_mode = mode;
-    }
-
     // =========================================================================
     // Agent API server settings (Phase C)
     // =========================================================================
@@ -213,8 +203,8 @@ mod tests {
         assert!(mgr.vault_key().is_none());
     }
 
-    // ── Phase C: connector_enabled / recalc_mode / scale_mode / server ────
-    // settings, promoted from shell-vello's per-window AppState mirror
+    // ── Phase C: connector_enabled / recalc_mode / server settings, ────────
+    // promoted from shell-vello's per-window AppState mirror
     // (`docs/mlc/plans/shared-backend-core-2026-07-03.md` §2.1).
 
     #[test]
@@ -239,15 +229,11 @@ mod tests {
     }
 
     #[test]
-    fn recalc_mode_and_scale_mode_roundtrip() {
+    fn recalc_mode_roundtrip() {
         let mut mgr = UserProfileManager::new();
         assert_eq!(mgr.recalc_mode(), RecalcMode::default());
         mgr.set_recalc_mode(RecalcMode::PerTick);
         assert_eq!(mgr.recalc_mode(), RecalcMode::PerTick);
-
-        assert_eq!(mgr.scale_mode(), ScaleMode::default());
-        mgr.set_scale_mode(ScaleMode::Manual);
-        assert_eq!(mgr.scale_mode(), ScaleMode::Manual);
     }
 
     #[test]

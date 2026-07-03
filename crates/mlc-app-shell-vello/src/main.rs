@@ -630,7 +630,7 @@ fn default_watchlist() -> mlc_app::WatchlistManager {
 }
 
 /// Seed `core`'s domain managers (presets, templates, watchlists, snapshots,
-/// connector_enabled, recalc_mode, scale_mode, server_enabled, server_port,
+/// connector_enabled, recalc_mode, server_enabled, server_port,
 /// vault_key) from disk-loaded profile state.
 ///
 /// Replaces `AppState::from_profile`'s domain half (shared-BackendCore arc,
@@ -684,17 +684,9 @@ fn seed_core_from_profile(
         }
     };
 
-    // Parse scale_mode from the profile string.
-    let scale_mode = match profile.domain.scale_mode.as_str() {
-        "Focus"  => mlc_core::ScaleMode::Focus,
-        "Manual" => mlc_core::ScaleMode::Manual,
-        _        => mlc_core::ScaleMode::Auto, // default / "Auto"
-    };
-
     let mut user = core.user_mut();
     user.set_connector_enabled(profile.domain.connector_enabled.clone());
     user.set_recalc_mode(recalc_mode);
-    user.set_scale_mode(scale_mode);
     user.set_server_enabled(profile.domain.server_enabled);
     user.set_server_port(profile.domain.server_port);
     drop(user);
@@ -2172,15 +2164,12 @@ impl App<'_> {
         //    available as fallback) for deterministic output instead of HashMap order.
         let mut profile = self.build_profile_for_save(window_states);
 
-        // save_all additionally persists scale mode, server settings, and
-        // notification settings — fields the lighter-weight dirty-drain
-        // paths (profile-dirty / geometry-only in about_to_wait) do not
-        // touch, so they stay out of `build_profile_for_save` itself.
-        profile.domain.scale_mode = match self.core.user().scale_mode() {
-            mlc_core::ScaleMode::Auto   => "Auto".to_string(),
-            mlc_core::ScaleMode::Focus  => "Focus".to_string(),
-            mlc_core::ScaleMode::Manual => "Manual".to_string(),
-        };
+        // save_all additionally persists server settings and notification
+        // settings — fields the lighter-weight dirty-drain paths
+        // (profile-dirty / geometry-only in about_to_wait) do not touch, so
+        // they stay out of `build_profile_for_save` itself. Scale mode is
+        // never persisted (viewport SWC arc, 2026-07-03) — every cold
+        // preset load forces Auto by design.
         profile.domain.server_enabled = self.core.user().server_enabled();
         profile.domain.server_port = self.core.user().server_port();
 
@@ -4054,7 +4043,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         // background windows that Windows won't deliver WM_PAINT to.
         let _t4 = web_time::Instant::now();
         {
-            // watchlists/presets/snapshots/templates/recalc_mode/scale_mode/
+            // watchlists/presets/snapshots/templates/recalc_mode/
             // server_enabled/server_port dirty-flag sync blocks are GONE
             // (shared-BackendCore arc Phase B+C) — every window's
             // `chart.core` is the SAME `Arc<BackendCore>` now, so a write
@@ -4071,11 +4060,13 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 pw.chart.sidebar_state.connector_enabled = connector_enabled.clone();
             }
 
-            // scale_mode lives on core.user() now (Phase C) — every read
-            // site (react.rs, profile.rs) reads through it directly, no
-            // per-window copy or sync needed at all (ChartApp::default_scale_mode
-            // field deleted). recalc_mode still needs a one-way push into
-            // IndicatorManager's own operational copy — that field drives the
+            // Global scale_mode persistence channel removed entirely
+            // (viewport SWC arc, 2026-07-03) — `core.user()` no longer
+            // carries a scale_mode at all; every window seeds Auto on
+            // fresh load and cold-load preset restore forces Auto by
+            // design (see hydration_impl.rs). recalc_mode still needs a
+            // one-way push into IndicatorManager's own operational copy —
+            // that field drives the
             // manager's internal dirty/recalc scheduling and is a legitimate
             // second copy (ONE core.user() value kept in sync with the ONE
             // IndicatorManager, not an N-window duplication).
@@ -4192,18 +4183,6 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     if delete_storage { "storage+cache" } else { "cache" },
                     symbol, exchange, timeframe.name, account_type
                 );
-            }
-        }
-
-        // Capture the active window's scale mode back to core.user() so it
-        // persists across sessions.  Reading after tick() ensures any toggle
-        // from this frame is captured.
-        if let Some(pw) = self.last_focused
-            .and_then(|id| self.windows.get(&id))
-            .or_else(|| self.windows.values().next())
-        {
-            if let Some(w) = pw.chart.panel_app.panel_grid.active_container() {
-                self.core.user_mut().set_scale_mode(w.price_scale.scale_mode);
             }
         }
 
