@@ -298,9 +298,6 @@ impl ChartApp {
         }
 
         for (_cid, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
-            if window.viewport.is_time_axis() {
-                window.viewport.disable_time_axis();
-            }
             // Refresh the Heikin Ashi memo if the chart panel is on
             // chart_type == "heikin_ashi" AND `bars` mutated since the
             // last frame. Cheap when stamp matches (single i64

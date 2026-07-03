@@ -6,40 +6,6 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Time-domain X axis (additive, opt-in).
-///
-/// When a chart's data is non-uniform in time (raw trades, range/tick/volume
-/// derived bars), the index-packed X axis mis-places everything because it
-/// assumes one uniform slot per record. `TimeAxis` makes X a direct linear
-/// function of the real timestamp: `x = (ts_ms - t_start_ms) / ms_per_px`.
-///
-/// This lives ALONGSIDE the legacy index fields. When `Viewport.time_axis` is
-/// `Some`, the time-aware methods (`ts_to_x` / `x_to_ts`) drive rendering and
-/// hit-testing for that chart; uniform time-bar charts leave it `None` and keep
-/// the proven index-packed path (weekend gaps hidden, TradingView-style).
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct TimeAxis {
-    /// Timestamp (ms) mapped to the left edge of the chart area (x = 0).
-    pub t_start_ms: i64,
-    /// Milliseconds per pixel (the zoom level in the time domain).
-    /// Always > 0.
-    pub ms_per_px: f64,
-}
-
-impl TimeAxis {
-    /// Map a timestamp (ms) to an X pixel (left edge of chart area = 0).
-    #[inline]
-    pub fn ts_to_x(&self, ts_ms: i64) -> f64 {
-        (ts_ms - self.t_start_ms) as f64 / self.ms_per_px
-    }
-
-    /// Map an X pixel back to a timestamp (ms).
-    #[inline]
-    pub fn x_to_ts(&self, x: f64) -> i64 {
-        self.t_start_ms + (x * self.ms_per_px).round() as i64
-    }
-}
-
 /// Viewport state for a chart
 ///
 /// Manages the visible region of the chart and provides coordinate conversion
@@ -64,12 +30,6 @@ pub struct Viewport {
 
     /// Total number of bars in the data
     pub bar_count: usize,
-
-    /// Optional time-domain X axis for non-uniform-time data (raw trades,
-    /// derived bars). `None` = legacy index-packed X (default, uniform bars).
-    /// Serde-default so old snapshots deserialize as index-mode.
-    #[serde(default)]
-    pub time_axis: Option<TimeAxis>,
 }
 
 impl Default for Viewport {
@@ -81,7 +41,6 @@ impl Default for Viewport {
             chart_width: 0.0,
             chart_height: 0.0,
             bar_count: 0,
-            time_axis: None,
         }
     }
 }
@@ -165,43 +124,24 @@ impl Viewport {
         relative_idx * self.bar_spacing + self.bar_spacing / 2.0
     }
 
-    /// Axis-aware X for a bar: time-axis mode uses real timestamp,
-    /// index mode falls back to `bar_to_x(idx)`. `bar_ts_ms` is the
-    /// bar's timestamp in milliseconds.
-    ///
-    /// This is the renderer's single entry point — callers do NOT
-    /// branch on `is_time_axis()`.
+    /// Axis-aware X for a bar: falls back to `bar_to_x(idx)`.
+    /// `bar_ts_ms` is accepted for call-site symmetry with `x_for_ts` but
+    /// unused in index mode (the only mode).
     #[inline]
-    pub fn x_for_bar(&self, bar_idx: usize, bar_ts_ms: i64) -> f64 {
-        if let Some(t) = self.time_axis {
-            t.ts_to_x(bar_ts_ms)
-        } else {
-            self.bar_to_x(bar_idx)
-        }
+    pub fn x_for_bar(&self, bar_idx: usize, _bar_ts_ms: i64) -> f64 {
+        self.bar_to_x(bar_idx)
     }
 
-    /// Axis-aware X for a sub-bar fractional position.
-    /// Time-axis mode uses the timestamp (the fractional index is
-    /// irrelevant). Index mode uses the fractional index.
+    /// Axis-aware X for a sub-bar fractional position (index mode).
     #[inline]
-    pub fn x_for_bar_f64(&self, bar_idx_f64: f64, bar_ts_ms: i64) -> f64 {
-        if let Some(t) = self.time_axis {
-            t.ts_to_x(bar_ts_ms)
-        } else {
-            self.bar_to_x_f64(bar_idx_f64)
-        }
+    pub fn x_for_bar_f64(&self, bar_idx_f64: f64, _bar_ts_ms: i64) -> f64 {
+        self.bar_to_x_f64(bar_idx_f64)
     }
 
-    /// Axis-aware X for a timestamp: time mode uses ts directly,
-    /// index mode binary-searches `bars` for the bar with the closest
-    /// timestamp. This is the primitive-renderer path.
-    ///
-    /// `bars` is required for index-mode bar lookup; callers that
-    /// know they're in time-axis mode can pass `&[]`.
+    /// Axis-aware X for a timestamp: binary-searches `bars` for the bar
+    /// with the closest timestamp, then resolves via `bar_to_x_f64`. This
+    /// is the primitive-renderer path.
     pub fn x_for_ts(&self, ts_ms: i64, bars: &[crate::types::Bar]) -> f64 {
-        if let Some(t) = self.time_axis {
-            return t.ts_to_x(ts_ms);
-        }
         if bars.is_empty() {
             return self.bar_to_x(0);
         }
@@ -251,28 +191,11 @@ impl Viewport {
         self.bar_to_x_f64(bar_f)
     }
 
-    /// Axis-aware reverse mapping: X pixel → bar index.
-    /// In index mode this is `x_to_bar`. In time mode it binary-searches
-    /// `bars` for the nearest bar by timestamp.
-    pub fn x_to_bar_axis_aware(&self, x: f64, bars: &[crate::types::Bar]) -> Option<usize> {
-        if let Some(t) = self.time_axis {
-            if bars.is_empty() { return None; }
-            let ts_ms = t.x_to_ts(x);
-            let ts_sec = ts_ms / 1000;
-            let idx = match bars.binary_search_by_key(&ts_sec, |b| b.timestamp) {
-                Ok(i) => i,
-                Err(0) => 0,
-                Err(i) if i >= bars.len() => bars.len() - 1,
-                Err(i) => {
-                    let prev = (ts_sec - bars[i - 1].timestamp).abs();
-                    let next = (bars[i].timestamp - ts_sec).abs();
-                    if prev <= next { i - 1 } else { i }
-                }
-            };
-            Some(idx)
-        } else {
-            self.x_to_bar(x)
-        }
+    /// Axis-aware reverse mapping: X pixel → bar index (index mode).
+    /// `bars` is accepted for call-site symmetry with `x_for_ts` but
+    /// unused in index mode (the only mode).
+    pub fn x_to_bar_axis_aware(&self, x: f64, _bars: &[crate::types::Bar]) -> Option<usize> {
+        self.x_to_bar(x)
     }
 
     /// Convert X pixel coordinate to bar index
@@ -327,122 +250,27 @@ impl Viewport {
         self.bar_spacing * self.bar_width_ratio
     }
 
-    // ── Time-domain X axis (active only when `time_axis` is `Some`) ──────────
-
-    /// `true` when this viewport positions X by real timestamp, not bar index.
-    #[inline]
-    pub fn is_time_axis(&self) -> bool {
-        self.time_axis.is_some()
-    }
-
-    /// Enable time-axis mode, fitting `[t_start_ms, t_end_ms]` into the chart
-    /// width with a small right margin (10% of the span) for incoming trades.
-    /// Falls back to a 1-minute window if the span is degenerate.
-    pub fn enable_time_axis_for_span(&mut self, t_start_ms: i64, t_end_ms: i64) {
-        let span = (t_end_ms - t_start_ms).max(60_000); // >= 1 minute
-        let margin = (span / 10).max(1);
-        let total = span + margin;
-        let width = self.chart_width.max(1.0);
-        let ms_per_px = total as f64 / width;
-        self.time_axis = Some(TimeAxis {
-            t_start_ms,
-            ms_per_px,
-        });
-    }
-
-    /// Disable time-axis mode (back to index-packed X).
-    #[inline]
-    pub fn disable_time_axis(&mut self) {
-        self.time_axis = None;
-    }
-
-    /// Map a timestamp (ms) to an X pixel. Returns `None` in index mode.
-    #[inline]
-    pub fn ts_to_x(&self, ts_ms: i64) -> Option<f64> {
-        self.time_axis.map(|t| t.ts_to_x(ts_ms))
-    }
-
-    /// Map an X pixel back to a timestamp (ms). Returns `None` in index mode.
-    #[inline]
-    pub fn x_to_ts(&self, x: f64) -> Option<i64> {
-        self.time_axis.map(|t| t.x_to_ts(x))
-    }
-
-    /// The (ts_start_ms, ts_end_ms) currently visible. `None` in index mode.
-    #[inline]
-    pub fn visible_time_range(&self) -> Option<(i64, i64)> {
-        self.time_axis
-            .map(|t| (t.t_start_ms, t.x_to_ts(self.chart_width)))
-    }
-
-    /// Pan the time axis by a pixel delta (drag). No-op in index mode.
+    /// Pan the view by a PIXEL delta, converting pixels to bars via
+    /// `bar_spacing`.
     ///
-    /// Dragging right (positive `pixel_delta`) moves the view into the past,
-    /// mirroring `pan()`'s bar semantics (`view_start -= bar_delta`).
-    pub fn pan_time(&mut self, pixel_delta: f64) {
-        if let Some(t) = self.time_axis.as_mut() {
-            t.t_start_ms -= (pixel_delta * t.ms_per_px).round() as i64;
-        }
-    }
-
-    /// Zoom the time axis at a pixel, keeping the timestamp under the cursor
-    /// fixed. `factor > 1.0` zooms in (fewer ms per pixel). No-op in index mode.
-    pub fn zoom_time_at(&mut self, x: f64, factor: f64) {
-        if let Some(t) = self.time_axis.as_mut() {
-            // Timestamp under the cursor before the zoom.
-            let ts_under = t.t_start_ms + (x * t.ms_per_px).round() as i64;
-            // Zoom in => fewer ms per pixel.
-            let new_ms_per_px = (t.ms_per_px / factor).max(f64::MIN_POSITIVE);
-            t.ms_per_px = new_ms_per_px;
-            // Re-anchor so the same timestamp stays under the cursor.
-            t.t_start_ms = ts_under - (x * new_ms_per_px).round() as i64;
-        }
-    }
-
-    /// Snap the time axis so the newest timestamp sits near the right edge,
-    /// leaving `right_margin_px` of empty space. No-op in index mode.
-    pub fn snap_time_to_end(&mut self, latest_ts_ms: i64, right_margin_px: f64) {
-        if let Some(t) = self.time_axis.as_mut() {
-            let viewport_ms = (self.chart_width * t.ms_per_px).round() as i64;
-            let margin_ms = (right_margin_px * t.ms_per_px).round() as i64;
-            t.t_start_ms = latest_ts_ms + margin_ms - viewport_ms;
-        }
-    }
-
-    /// Pan the view by a PIXEL delta (axis-aware). Time mode shifts the
-    /// time anchor; index mode converts pixels to bars via `bar_spacing`.
-    ///
-    /// Callers from input handlers pass raw mouse drag delta in pixels;
-    /// they no longer branch on axis mode.
+    /// Callers from input handlers pass raw mouse drag delta in pixels.
     pub fn pan(&mut self, pixel_delta: f64) {
-        if let Some(t) = self.time_axis.as_mut() {
-            t.t_start_ms -= (pixel_delta * t.ms_per_px).round() as i64;
-        } else if self.bar_spacing > 0.0 {
+        if self.bar_spacing > 0.0 {
             self.view_start -= pixel_delta / self.bar_spacing;
         }
     }
 
-    /// Pan the view by a BAR delta (index mode only). No-op in time mode
-    /// — callers that work in bar terms use this for snap/scroll math.
+    /// Pan the view by a BAR delta — callers that work in bar terms use
+    /// this for snap/scroll math.
     pub fn pan_bars(&mut self, bar_delta: f64) {
-        if self.time_axis.is_none() {
-            self.view_start -= bar_delta;
-        }
+        self.view_start -= bar_delta;
     }
 
-    /// Zoom at a specific X coordinate, maintaining the position under
-    /// cursor. Axis-aware: time mode zooms `ms_per_px`, index mode zooms
-    /// `bar_spacing`.
+    /// Zoom at a specific X coordinate, maintaining the bar index under
+    /// cursor.
     ///
     /// Factor > 1.0 zooms in, factor < 1.0 zooms out.
     pub fn zoom_at(&mut self, x: f64, factor: f64) {
-        if let Some(t) = self.time_axis.as_mut() {
-            let ts_under = t.t_start_ms + (x * t.ms_per_px).round() as i64;
-            let new_ms_per_px = (t.ms_per_px / factor).max(f64::MIN_POSITIVE);
-            t.ms_per_px = new_ms_per_px;
-            t.t_start_ms = ts_under - (x * new_ms_per_px).round() as i64;
-            return;
-        }
         let old_spacing = self.bar_spacing;
         let min = self.min_bar_spacing();
         let max = self.max_bar_spacing();
@@ -595,54 +423,6 @@ mod tests {
         assert_eq!(viewport.x_to_bar(5.0), Some(0));
         assert_eq!(viewport.x_to_bar(15.0), Some(1));
         assert_eq!(viewport.x_to_bar(-5.0), None);
-    }
-
-    #[test]
-    fn test_time_axis_maps_ts_to_x() {
-        let mut vp = Viewport {
-            chart_width: 1000.0,
-            ..Default::default()
-        };
-        // 10 ms per pixel, t=0 at x=0.
-        vp.time_axis = Some(TimeAxis { t_start_ms: 0, ms_per_px: 10.0 });
-        assert!((vp.ts_to_x(0).unwrap() - 0.0).abs() < 1e-6);
-        assert!((vp.ts_to_x(10_000).unwrap() - 1000.0).abs() < 1e-6); // right edge
-        assert_eq!(vp.x_to_ts(500.0), Some(5_000));
-        assert_eq!(vp.visible_time_range(), Some((0, 10_000)));
-        // Index-mode viewport returns None.
-        let idx_vp = Viewport::default();
-        assert!(idx_vp.ts_to_x(123).is_none());
-    }
-
-    #[test]
-    fn test_zoom_time_keeps_cursor_ts_fixed() {
-        let mut vp = Viewport {
-            chart_width: 1000.0,
-            ..Default::default()
-        };
-        vp.time_axis = Some(TimeAxis { t_start_ms: 0, ms_per_px: 10.0 });
-        // Cursor at x=400 → ts=4000 before zoom.
-        let ts_before = vp.x_to_ts(400.0).unwrap();
-        vp.zoom_time_at(400.0, 2.0); // zoom in 2x
-        let ts_after = vp.x_to_ts(400.0).unwrap();
-        assert_eq!(ts_before, ts_after, "ts under cursor must stay fixed on zoom");
-        // ms_per_px halved on 2x zoom-in.
-        assert!((vp.time_axis.unwrap().ms_per_px - 5.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn test_snap_time_to_end() {
-        let mut vp = Viewport {
-            chart_width: 1000.0,
-            ..Default::default()
-        };
-        vp.time_axis = Some(TimeAxis { t_start_ms: 0, ms_per_px: 10.0 });
-        // latest ts = 50_000, margin 50px (=500ms). Viewport spans 10_000ms.
-        vp.snap_time_to_end(50_000, 50.0);
-        let (start, end) = vp.visible_time_range().unwrap();
-        // end should be latest + margin = 50_500; start = end - 10_000 = 40_500.
-        assert_eq!(start, 40_500);
-        assert_eq!(end, 50_500);
     }
 
     #[test]

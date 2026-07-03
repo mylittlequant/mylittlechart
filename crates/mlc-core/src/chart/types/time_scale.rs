@@ -445,14 +445,6 @@ impl TimeScale {
     {
         let mut ticks = Vec::new();
 
-        // Time-axis charts (tick / derived bars) place ticks by real timestamp,
-        // independent of bar index / bar_spacing.
-        if viewport.is_time_axis() {
-            self.generate_time_axis_ticks(&mut ticks, viewport, &measure_text, format_settings);
-            ticks.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal));
-            return ticks;
-        }
-
         if bars.is_empty() {
             return ticks;
         }
@@ -586,75 +578,6 @@ impl TimeScale {
 
         // Reuse the bilateral-gap picker.
         self.select_ticks_with_spacing(ticks, candidates, viewport, measure_text, format_settings);
-    }
-
-    /// Generate ticks for a time-domain X axis (tick chart / derived bars).
-    ///
-    /// Picks the smallest "nice" step (1s … 1d) whose pixel cell is at least
-    /// `MIN_CELL_WIDTH`, walks aligned boundaries across the visible time range,
-    /// and positions each via `viewport.ts_to_x`. Labels reuse
-    /// `format_time_by_weight` (so sub-minute steps show HH:MM:SS).
-    fn generate_time_axis_ticks<F>(
-        &self,
-        ticks: &mut Vec<TimeTick>,
-        viewport: &Viewport,
-        _measure_text: &F,
-        format_settings: Option<&TimeFormatSettings>,
-    ) where
-        F: Fn(&str) -> f64,
-    {
-        let (ts_start, ts_end) = match viewport.visible_time_range() {
-            Some(r) => r,
-            None => return,
-        };
-        let axis = match viewport.time_axis {
-            Some(a) => a,
-            None => return,
-        };
-
-        // Candidate steps in ms, paired with the label weight.
-        // (ms per step, weight)
-        const STEPS: &[(i64, TickMarkWeight)] = &[
-            (1_000, TickMarkWeight::Second),
-            (5_000, TickMarkWeight::Second),
-            (10_000, TickMarkWeight::Second),
-            (30_000, TickMarkWeight::Second),
-            (60_000, TickMarkWeight::Minute1),
-            (5 * 60_000, TickMarkWeight::Minute5),
-            (15 * 60_000, TickMarkWeight::Minute5),
-            (30 * 60_000, TickMarkWeight::Minute30),
-            (3_600_000, TickMarkWeight::Hour),
-            (4 * 3_600_000, TickMarkWeight::Hour4),
-            (12 * 3_600_000, TickMarkWeight::Hour4),
-            (86_400_000, TickMarkWeight::Day),
-        ];
-
-        // Smallest step whose pixel cell >= MIN_CELL_WIDTH.
-        let step = STEPS
-            .iter()
-            .find(|(ms, _)| (*ms as f64 / axis.ms_per_px) >= Self::MIN_CELL_WIDTH)
-            .copied()
-            .unwrap_or((86_400_000, TickMarkWeight::Day));
-        let (step_ms, weight) = step;
-
-        // Walk aligned boundaries across the visible span.
-        let first = (ts_start / step_ms) * step_ms;
-        let mut ts = first;
-        // Cap iterations defensively (very wide span at tiny step).
-        let mut guard = 0;
-        while ts <= ts_end && guard < 10_000 {
-            let x = axis.ts_to_x(ts);
-            if x >= -50.0 && x <= viewport.chart_width + 50.0 {
-                let label = if let Some(settings) = format_settings {
-                    format_time_by_weight_with_settings(ts, weight, settings)
-                } else {
-                    format_time_by_weight(ts, weight)
-                };
-                ticks.push(TimeTick { bar_idx: 0, x, weight, label });
-            }
-            ts += step_ms;
-            guard += 1;
-        }
     }
 
     /// Generate intraday ticks (hours, minutes) for high zoom levels
@@ -1217,26 +1140,6 @@ mod tests {
             format_time_by_weight_with_settings(ts, TickMarkWeight::Minute1, &settings),
             "03:04"
         );
-    }
-
-    #[test]
-    fn test_time_axis_ticks_use_ts_not_index() {
-        use crate::chart::types::viewport::{TimeAxis, Viewport};
-        let mut vp = Viewport { chart_width: 1000.0, ..Default::default() };
-        // 100 ms/px -> 100_000 ms visible. Cell for 30s step = 30000/100 = 300px (>=50).
-        vp.time_axis = Some(TimeAxis { t_start_ms: 0, ms_per_px: 100.0 });
-        let ts = TimeScale::new();
-        // bars empty on purpose: time-axis path must NOT depend on bars.
-        let ticks = ts.generate_ticks(&vp, &[], |_s| 20.0, None);
-        assert!(!ticks.is_empty(), "time-axis must emit ticks with no bars");
-        // All tick X must land inside (with margin) the chart width.
-        for t in &ticks {
-            assert!(t.x >= -50.0 && t.x <= 1050.0, "tick x out of range: {}", t.x);
-        }
-        // Ticks must be strictly increasing in x (sorted, distinct boundaries).
-        for w in ticks.windows(2) {
-            assert!(w[1].x > w[0].x, "ticks not strictly increasing");
-        }
     }
 
     #[test]

@@ -363,29 +363,6 @@ pub fn draw_time_scale_cursor_label(
         return;
     }
 
-    // Time-axis (tick) chart: resolve ts directly from the cursor pixel.
-    if let Some(ts) = viewport.x_to_ts(crosshair.x) {
-        let x = crosshair.x;
-        let default_settings = TimeFormatSettings::default();
-        let format_settings = time_format_settings.unwrap_or(&default_settings);
-        let label = format_time_full_with_settings(ts, format_settings);
-        let tw = ctx.measure_text(&label) + 10.0;
-        let min_x = tw / 2.0;
-        let max_x = (viewport.chart_width - tw / 2.0).max(min_x);
-        let tx = if max_x >= min_x { x.clamp(min_x, max_x) } else { viewport.chart_width / 2.0 };
-        let tx = tx.round();
-        let box_x = origin_x + tx - tw / 2.0;
-        let box_y = origin_y + 2.0;
-        let box_height = config.time_scale_height - 4.0;
-        ctx.save();
-        ctx.set_fill_color(&scale_theme.crosshair_label_bg);
-        ctx.fill_rect(box_x, box_y, tw, box_height);
-        ctx.set_fill_color(&scale_theme.crosshair_label_text);
-        ctx.fill_text(&label, origin_x + tx, label_y);
-        ctx.restore();
-        return;
-    }
-
     // Resolve timestamp: use bar data when available, extrapolate for future bars.
     let ts_opt: Option<i64> = if let Some(bar_idx) = crosshair.bar_idx {
         bars.get(bar_idx).map(|b| b.timestamp)
@@ -410,13 +387,13 @@ pub fn draw_time_scale_cursor_label(
     };
 
     if let Some(ts) = ts_opt {
-        // ts is in seconds; convert to ms for axis-aware path.
+        // ts is in seconds; convert to ms for the axis-aware helpers.
         let ts_ms = ts.saturating_mul(1000);
         let x = if let Some(bar_idx) = crosshair.bar_idx {
             let bar_ts_ms = bars.get(bar_idx).map(|b| b.ts_ms()).unwrap_or(ts_ms);
             viewport.x_for_bar(bar_idx, bar_ts_ms)
         } else {
-            // Beyond data — for index mode use bar_f64, for time mode use ts directly.
+            // Beyond data — resolve via fractional bar index from timestamp.
             viewport.x_for_ts(ts_ms, bars)
         };
 

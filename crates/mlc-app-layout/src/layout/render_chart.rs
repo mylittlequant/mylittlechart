@@ -1764,7 +1764,6 @@ pub fn render_sub_pane_primitives(
         chart_width: content.width,
         chart_height: content.height,
         bar_count: state.viewport.bar_count,
-        time_axis: state.viewport.time_axis,
     };
 
     // Create a price scale for this pane
@@ -3708,7 +3707,6 @@ pub fn render_chart_overlay(
                     chart_width: content.width,
                     chart_height: content.height,
                     bar_count: corrected_viewport.bar_count,
-                    time_axis: corrected_viewport.time_axis,
                 };
                 let pane_price_scale = mlc_core::PriceScale {
                     price_min: pane_min,

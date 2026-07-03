@@ -768,18 +768,6 @@ impl ChartApp {
                     }
                 }
 
-                // Time-axis viewport advance.
-                for (cid_tu, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
-                    if !window.viewport.is_time_axis() { continue; }
-                    let follow = window.price_scale.scale_mode.is_follow() || window.price_scale.scale_mode == ScaleMode::Auto;
-                    if !follow { continue; }
-                    if let Some((win_sym, _, _, win_at)) = instrument_by_cid_tu.get(cid_tu) {
-                        if win_sym.as_str() == symbol && *win_at == trade_event_at {
-                            window.viewport.snap_time_to_end(*timestamp, 50.0);
-                        }
-                    }
-                }
-
                 // Panel ticks.
                 let _trade_panel_start = web_time::Instant::now();
                 for state in self.panels_store.big_trades.values_mut() { state.tick(); }

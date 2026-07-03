@@ -41,8 +41,8 @@ pub use crate::drawing::PrimitiveSnapshot;
 // objects are simply ignored by serde.
 
 /// Persisted viewport state: zoom level only. `view_start`, `bar_count`,
-/// `chart_width`/`chart_height`, and `time_axis` are runtime-only and are
-/// never written to disk.
+/// and `chart_width`/`chart_height` are runtime-only and are never written
+/// to disk.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct ViewportPersist {
     /// User's zoom level (pixels per bar). Restored verbatim on cold load.

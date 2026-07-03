@@ -238,9 +238,6 @@ impl ChartApp {
                         // Snap to right edge once first batch lands — without this
                         // the last bar sits at view_start=0 (left edge) after TF switch.
                         window.needs_snap_after_backfill = true;
-                        // NOTE: the X-axis kind (index vs time) is reconciled centrally
-                        // in prepare_frame from tf.is_tick() + real bar timestamps — do
-                        // NOT set time_axis here (it has no bars to anchor from yet).
                     }
                     if let Some(chart_id) = active_chart_id {
                         if let Some(bid) = self.core.tags().tag_for_chart(chart_id) {
@@ -399,13 +396,8 @@ impl ChartApp {
                                     );
 
                                     // Steps 2-5: mutate the active window.
-                                    // NOTE: axis mode (time vs index) is
-                                    // reconciled centrally in prepare_frame
-                                    // from chart_type + tf.is_tick(). DON'T
-                                    // toggle viewport.time_axis here — without
-                                    // real bar timestamps the anchor would be
-                                    // wrong, and the next prepare_frame would
-                                    // overwrite it anyway.
+                                    // X axis is always index-packed (see
+                                    // chart-types-xaxis-audit-2026-07-03.md).
                                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                                         {};
                                         window.viewport.bar_count = 0;
