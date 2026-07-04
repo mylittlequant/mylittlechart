@@ -285,6 +285,14 @@ pub fn draw_time_scale(
     // Note: Scale borders are now drawn by draw_scale_borders() in layout/render.rs
     // to ensure consistent full-rectangle borders around all scale areas.
 
+    // Non-temporal chart types (renko/pnf/kagi/3lb): no honest calendar
+    // mapping exists — draw the empty strip only, no date labels (owner
+    // decision 2026-07-04; degenerate month/extrapolated labels are worse
+    // than none).
+    if state.non_temporal() {
+        return;
+    }
+
     // Use pre-computed ticks if available, otherwise generate on-demand
     let owned_ticks;
     let ticks: &[mlc_core::chart::types::TimeTick] = if let Some(t) = state.time_ticks {

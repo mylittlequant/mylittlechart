@@ -271,6 +271,22 @@ pub struct ChartRenderState<'a> {
     pub non_temporal_axis: bool,
 }
 
+impl<'a> ChartRenderState<'a> {
+    /// Non-temporal chart types (renko / pnf / kagi / three_line_break) have
+    /// no honest calendar mapping on the X axis — the standard time grid and
+    /// calendar labels are hidden automatically for them. Detected from the
+    /// populated derived slot (in addition to the explicit flag) so it holds
+    /// in EVERY render path, including ones that never run the app-layer
+    /// ts-shadow swap.
+    pub fn non_temporal(&self) -> bool {
+        self.non_temporal_axis
+            || self.renko_bars.is_some()
+            || self.pnf_columns.is_some()
+            || self.kagi_segments.is_some()
+            || self.three_line_break.is_some()
+    }
+}
+
 /// Configuration for scale rendering
 #[derive(Clone, Debug)]
 pub struct ScaleConfig {
