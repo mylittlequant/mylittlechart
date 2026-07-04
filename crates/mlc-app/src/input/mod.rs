@@ -19,7 +19,7 @@ use crate::agent as gate4agent;
 mod sliders;
 mod color_picker;
 mod overlay;
-mod chart_out_events;
+pub(crate) mod chart_out_events;
 mod panel_click;
 mod sync_group;
 mod modals;

@@ -95,6 +95,43 @@ const CVD_STRIP_HEIGHT_PX: f64 = 28.0;
 /// Minimum chart height (px) below which we skip the CVD strip.
 const CVD_MIN_CHART_HEIGHT_PX: f64 = 160.0;
 
+/// Zoom-out fallback: render every visible footprint bar as a plain OHLC
+/// candle (wick + body). Used whenever `bar_w` is below cluster-text
+/// readability — the pane must read as a candle chart, never go blank.
+fn draw_candle_fallback(
+    ctx: &mut dyn RenderContext,
+    state: &ChartRenderState,
+    bars: &[mlc_core::types::FootprintBar],
+) {
+    let viewport = state.viewport;
+    let price_scale = state.price_scale;
+    let rect = &state.chart_rect;
+    let bar_w = viewport.bar_width();
+
+    let (start, end) = viewport.visible_range();
+    let end = end.min(bars.len());
+    if start >= end {
+        return;
+    }
+
+    draw_wicks(ctx, state, bars, start, end, bar_w);
+
+    let theme = state.theme;
+    let body_w = (bar_w * 0.7).max(1.0);
+    for i in start..end {
+        let bar = &bars[i];
+        let cx = viewport.bar_to_x(i) + rect.x;
+        if cx + body_w * 0.5 < rect.x || cx - body_w * 0.5 > rect.x + rect.width {
+            continue;
+        }
+        let up = bar.close >= bar.open;
+        let oy = rect.y + price_to_y_local(bar.open, price_scale, rect.height);
+        let cy = rect.y + price_to_y_local(bar.close, price_scale, rect.height);
+        ctx.set_fill_color(if up { &theme.candle_up } else { &theme.candle_down });
+        ctx.fill_rect(cx - body_w * 0.5, oy.min(cy), body_w, (oy - cy).abs().max(1.0));
+    }
+}
+
 /// Entry point — `super::candles::draw_footprint` routes here.
 pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     let bars = match state.footprint_bars {
@@ -103,7 +140,6 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
             // No footprint data yet — show explicit empty-state instead of
             // pretending with candles. Owner needs to see "we have nothing"
             // not a fake series.
-            eprintln!("[fp-render] state.footprint_bars empty/None — drawing No-data placeholder");
             super::draw_waiting_placeholder(ctx, state, "Footprint: waiting for data…");
             return;
         }
@@ -114,21 +150,12 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
     let rect = &state.chart_rect;
     let bar_w = viewport.bar_width();
 
-    eprintln!(
-        "[fp-render] enter: bars.len()={} bar_w={:.2} chart_rect=({:.0}x{:.0}) price_range={:.2}",
-        bars.len(), bar_w, rect.width, rect.height, price_scale.price_max - price_scale.price_min,
-    );
-
-    if bar_w < MIN_BAR_WIDTH_PX {
-        eprintln!("[fp-render] bar_w {:.2} < MIN_BAR_WIDTH_PX {:.0} — drawing zoom-out placeholder", bar_w, MIN_BAR_WIDTH_PX);
-        super::draw_waiting_placeholder(ctx, state, "Footprint: zoom in to see clusters");
-        return;
-    }
-
+    // Zoomed out below cluster-text readability — degrade to plain candles
+    // (industry behavior: footprint reads as candles at distance, clusters
+    // appear on zoom-in). Never a blank placeholder over existing data.
     let font_size = ((bar_w / 8.5).clamp(MIN_FONT_SIZE_PX, 16.0)).round();
-    if font_size < MIN_FONT_SIZE_PX {
-        eprintln!("[fp-render] font_size {:.0} < MIN — drawing zoom-out placeholder", font_size);
-        super::draw_waiting_placeholder(ctx, state, "Footprint: zoom in to see clusters");
+    if bar_w < MIN_BAR_WIDTH_PX || font_size < MIN_FONT_SIZE_PX {
+        draw_candle_fallback(ctx, state, bars);
         return;
     }
 

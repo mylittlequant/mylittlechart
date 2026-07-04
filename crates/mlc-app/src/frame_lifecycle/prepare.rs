@@ -174,6 +174,10 @@ impl ChartApp {
                 self.panel_app.panel_grid.containers().keys()
                     .map(|cid| (*cid, self.active_series_for_chart(*cid)))
                     .collect();
+            let type_by_chart_pre: std::collections::HashMap<ChartId, &'static str> =
+                self.panel_app.panel_grid.containers().keys()
+                    .filter_map(|cid| self.chart_type_for_chart(*cid).map(|ct| (*cid, ct)))
+                    .collect();
             for (&chart_id, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                 // needs_snap_after_backfill alone (without needs_auto_scale_after_bars)
                 // happens for startup-parked presets: update_bars() delivered bars
@@ -183,7 +187,17 @@ impl ChartApp {
                 let series_pre = series_by_chart_pre.get(&chart_id)
                     .map(|s| s.as_active_series())
                     .unwrap_or(crate::active_series::ActiveSeries::Bars(&[]));
-                if let Some((view_start, bar_spacing)) = window.consume_deferred_snap(series_pre) {
+                if let Some((view_start, mut bar_spacing)) = window.consume_deferred_snap(series_pre) {
+                    // Per-type min-usable spacing must also hold on fresh
+                    // snaps (hydration restores chart_type WITHOUT going
+                    // through the ChangeChartType handler — a persisted
+                    // footprint at candle-zoom otherwise wakes up unreadable).
+                    if let Some(min) = type_by_chart_pre.get(&chart_id)
+                        .and_then(|ct| crate::input::chart_out_events::min_usable_bar_spacing(ct))
+                    {
+                        window.ensure_min_bar_spacing(min);
+                        bar_spacing = window.viewport().bar_spacing;
+                    }
                     snapped_windows.push((chart_id, view_start, bar_spacing));
                 }
                 // Y-invariant (2026-07-04): width materially changed →
@@ -1049,11 +1063,23 @@ impl ChartApp {
                     self.panel_app.panel_grid.containers().keys()
                         .map(|cid| (*cid, self.active_series_for_chart(*cid)))
                         .collect();
+                let type_by_chart_split: std::collections::HashMap<ChartId, &'static str> =
+                    self.panel_app.panel_grid.containers().keys()
+                        .filter_map(|cid| self.chart_type_for_chart(*cid).map(|ct| (*cid, ct)))
+                        .collect();
                 for (&chart_id, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                     let series_split = series_by_chart_split.get(&chart_id)
                         .map(|s| s.as_active_series())
                         .unwrap_or(crate::active_series::ActiveSeries::Bars(&[]));
-                    if let Some((view_start, bar_spacing)) = window.consume_deferred_snap(series_split) {
+                    if let Some((view_start, mut bar_spacing)) = window.consume_deferred_snap(series_split) {
+                        // Same per-type min-spacing rule as the non-split
+                        // site — hydration bypasses ChangeChartType.
+                        if let Some(min) = type_by_chart_split.get(&chart_id)
+                            .and_then(|ct| crate::input::chart_out_events::min_usable_bar_spacing(ct))
+                        {
+                            window.ensure_min_bar_spacing(min);
+                            bar_spacing = window.viewport().bar_spacing;
+                        }
                         snapped_windows.push((chart_id, view_start, bar_spacing));
                     }
                     // Y-invariant (2026-07-04): split/resize changed this
