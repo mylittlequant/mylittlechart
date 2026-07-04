@@ -84,7 +84,7 @@ use crate::convert::timeframe_to_interval;
 /// ("mlc follow-ups after publish", item 3) — native has no CORS/latency
 /// constraint on REST paging, so chart-open can afford a much deeper
 /// aggTrade/kline-approx backfill than the station-wide default.
-pub(crate) const DERIVED_WARM_N_NATIVE: usize = 50_000;
+pub(crate) const DERIVED_WARM_N_NATIVE: usize = 500_000;
 
 /// Deep warm-seed depth for derived-chart-type subscriptions on wasm32.
 ///
@@ -93,7 +93,7 @@ pub(crate) const DERIVED_WARM_N_NATIVE: usize = 50_000;
 /// the same page count costs proportionally more wall-clock time on the
 /// wasm target. 10_000 keeps the chart-open loading window bounded while
 /// still covering far more history than the station-wide shallow default.
-pub(crate) const DERIVED_WARM_N_WASM: usize = 10_000;
+pub(crate) const DERIVED_WARM_N_WASM: usize = 100_000;
 
 /// Warm-seed depth to request for a fresh derived-chart-type subscription,
 /// picked by target arch (see [`DERIVED_WARM_N_NATIVE`] / [`DERIVED_WARM_N_WASM`]).
@@ -112,12 +112,12 @@ pub(crate) const fn derived_warm_n() -> usize {
 /// page count / cold-start wall-clock time both scale linearly with this
 /// value — see [`DERIVED_WARM_N_NATIVE`]/[`DERIVED_WARM_N_WASM`] doc for the
 /// same native/wasm rationale).
-pub(crate) const WARM_CAP_NATIVE: usize = 500_000;
+pub(crate) const WARM_CAP_NATIVE: usize = 5_000_000;
 
 /// Wasm counterpart of [`WARM_CAP_NATIVE`] — smaller because each REST page
 /// costs proportionally more wall-clock time on the browser target (CORS
 /// preflight + proxy latency per page).
-pub(crate) const WARM_CAP_WASM: usize = 100_000;
+pub(crate) const WARM_CAP_WASM: usize = 1_000_000;
 
 /// Hard ceiling on the doubled warm-seed depth, picked by target arch.
 #[inline]
