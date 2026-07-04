@@ -252,6 +252,21 @@ pub struct ChartContainer {
     /// Runtime-only state — not persisted to disk.
     pub scroll_fetch_started: Option<web_time::Instant>,
 
+    /// When a derived-chart-type deeper-seed request (renko/pnf/kagi/
+    /// three_line_break, counted-bar family, footprint, CVD, TPO) was
+    /// started, or `None` when no such request is in flight for this window.
+    ///
+    /// Sibling of `scroll_fetch_started`/`scroll_fetch_in_flight` for the
+    /// derived-reseed path (`DataBridge::request_deeper_derived_seed` /
+    /// `request_deeper_footprint_seed`) — kline scroll-left and derived
+    /// reseed are mutually exclusive per-window operations that share the
+    /// same left-edge trigger in `tick.rs`, so they need independent
+    /// in-flight guards (a chart never needs both at once, but reusing one
+    /// flag for both would let a stuck kline fetch block a derived reseed on
+    /// the SAME window forever, or vice versa). Same 10s timeout reset
+    /// rationale as `scroll_fetch_started`. Runtime-only, not persisted.
+    pub derived_seed_in_flight: Option<web_time::Instant>,
+
     /// Scale mode to restore after the next `set_bars()` call completes.
     ///
     /// Set by `LoadPreset` before bars arrive asynchronously. Consumed and
@@ -473,6 +488,7 @@ impl ChartContainer {
             needs_y_rescale: false,
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
+            derived_seed_in_flight: None,
             data_error: None,
             inner_docking: make_inner_docking_with_main_chart(panel_id),
             sub_pane_above_main: std::collections::HashSet::new(),
@@ -1072,6 +1088,7 @@ impl ChartContainer {
             needs_y_rescale: false,
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
+            derived_seed_in_flight: None,
             data_error: None,
             inner_docking: make_inner_docking_with_main_chart(new_panel_id),
             sub_pane_above_main: std::collections::HashSet::new(),

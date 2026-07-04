@@ -238,6 +238,41 @@ pub fn chart_type_hides_time_grid(chart_type: &str) -> bool {
     )
 }
 
+/// `chart_type`s whose scroll-left backfill must go through
+/// `DataBridge::request_deeper_seed_for_active` (full teardown + doubled-
+/// depth reseed of a stateful derived aggregator) instead of
+/// `request_scroll_bars` (kline REST-page prepend).
+///
+/// Kline family (candles/line/area/hollow_candles/heikin_ashi/bars/
+/// step_line/line_markers/hlc_area/baseline/histogram/columns) and
+/// `"footprint"` are NOT here — footprint's viewport bookkeeping still
+/// piggybacks `bubble.bars` (see `resolve_active_series`'s doc comment),
+/// and every kline-family type extends via the existing
+/// `request_scroll_bars` machinery, which stays untouched.
+///
+/// See `nemo/docs/mlc/plans/dig3-station-0325-derived-seeding-2026-07-04.md`
+/// for why derived state machines cannot use a "prepend older bars" fetch —
+/// the only way to deepen their history is a full station-side
+/// unsubscribe + respawn with a larger warm depth.
+pub fn chart_type_is_derived_seed(chart_type: &str) -> bool {
+    matches!(
+        chart_type,
+        "renko"
+            | "pnf"
+            | "kagi"
+            | "three_line_break"
+            | "range_bar"
+            | "tick_bar"
+            | "volume_bar"
+            | "dollar_bar"
+            | "tick_imbalance_bar"
+            | "volume_imbalance_bar"
+            | "run_bar"
+            | "cvd"
+            | "tpo"
+    )
+}
+
 pub fn ts_shadow_for_chart_type(chart_type: &str, bubble: &DataBubble) -> Option<Vec<Bar>> {
     match chart_type {
         "renko" | "pnf" | "kagi" | "three_line_break" => {

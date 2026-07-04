@@ -544,8 +544,28 @@ impl ChartApp {
         }
 
         // ── Layer 3: trigger scroll-fetch when viewport approaches left edge ───
+        //
+        // Routes by chart_type family (2026-07-04 derived-seed fix — see
+        // `nemo/docs/mlc/plans/dig3-station-0325-derived-seeding-2026-07-04.md`):
+        // - Kline family (candles/line/area/.../histogram/columns) + footprint
+        //   (footprint's viewport still piggybacks `bubble.bars` per the
+        //   `ActiveSeries::resolve_active_series` table) → `request_scroll_bars`
+        //   (existing kline machinery, untouched).
+        // - Derived (renko/pnf/kagi/three_line_break/range_bar/tick_bar/
+        //   volume_bar/dollar_bar/tick_imbalance_bar/volume_imbalance_bar/
+        //   run_bar/cvd/tpo) → `request_deeper_derived_seed` via
+        //   `request_deeper_seed_for_active` (full teardown + doubled-depth
+        //   respawn — derived state machines have no "prepend older bars").
+        //
+        // The leftmost-rendered-bar read now goes through `active_series_for_chart`
+        // (`ts_ms_at(0)` / `len()`) instead of hardcoding `bubble.bars` — the old
+        // code read `bubble.bars.first().timestamp` unconditionally and always
+        // called `request_scroll_bars`, which silently extended klines even for
+        // chart types that don't render them (renko/pnf/kagi/... kept re-fetching
+        // kline history nobody looked at, and NEVER deepened their own series).
         {
             let mut scroll_requests: Vec<(mlc_core::state::ChartId, String, String, String, mlc_core::instrument::AccountType)> = Vec::new();
+            let mut derived_seed_requests: Vec<(mlc_core::state::ChartId, &'static str, String, String, mlc_core::instrument::AccountType)> = Vec::new();
             let max_loaded = self.core.user().profile().domain.data_load.max_loaded_bars;
 
             let instrument_by_cid_scroll: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::state::Timeframe, String, mlc_core::instrument::AccountType)> = {
@@ -560,13 +580,38 @@ impl ChartApp {
                     .collect()
             };
 
-            let bar_counts_by_chart: std::collections::HashMap<mlc_core::state::ChartId, usize> =
-                self.panel_app.panel_grid.containers().iter()
-                    .map(|(cid, w)| (*cid, self.core.bubbles().bars(w.current_tag_id).len()))
+            // Resolve each chart's chart_type + rendered-series (bar_count,
+            // leftmost-ts) ONCE, before the mutable containers_mut() loop —
+            // `active_series_for_chart` takes an owned snapshot precisely so
+            // the bubble lock is released before this loop mutates windows.
+            let active_series_by_chart: std::collections::HashMap<mlc_core::state::ChartId, crate::active_series::OwnedActiveSeries> =
+                self.panel_app.panel_grid.containers().keys()
+                    .map(|cid| (*cid, self.active_series_for_chart(*cid)))
+                    .collect();
+            let chart_type_by_chart: std::collections::HashMap<mlc_core::state::ChartId, &'static str> =
+                self.panel_app.panel_grid.containers().keys()
+                    .filter_map(|cid| self.chart_type_for_chart(*cid).map(|ct| (*cid, ct)))
                     .collect();
 
             for (cid_scroll, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
-                if window.scroll_fetch_in_flight {
+                let chart_type = chart_type_by_chart.get(cid_scroll).copied().unwrap_or("candles");
+                let is_derived = crate::active_series::chart_type_is_derived_seed(chart_type);
+
+                // Per-chart-type-family in-flight guard: kline scroll and
+                // derived reseed are mutually exclusive per window but need
+                // independent flags — see `derived_seed_in_flight`'s doc
+                // comment on `ChartContainer`.
+                if is_derived {
+                    if window.derived_seed_in_flight.is_some() {
+                        if let Some(started) = window.derived_seed_in_flight {
+                            if started.elapsed() > std::time::Duration::from_secs(10) {
+                                crate::dlog!("[ChartApp] derived_seed_in_flight timeout, resetting for chart {:?}", cid_scroll);
+                                window.derived_seed_in_flight = None;
+                            }
+                        }
+                        if window.derived_seed_in_flight.is_some() { continue; }
+                    }
+                } else if window.scroll_fetch_in_flight {
                     if let Some(started) = window.scroll_fetch_started {
                         if started.elapsed() > std::time::Duration::from_secs(10) {
                             crate::dlog!("[ChartApp] scroll_fetch_in_flight timeout, resetting for chart {:?}", cid_scroll);
@@ -576,7 +621,12 @@ impl ChartApp {
                     }
                     if window.scroll_fetch_in_flight { continue; }
                 }
-                let bar_count_scroll = bar_counts_by_chart.get(cid_scroll).copied().unwrap_or(0);
+
+                let series = match active_series_by_chart.get(cid_scroll) {
+                    Some(s) => s.as_active_series(),
+                    None => continue,
+                };
+                let bar_count_scroll = series.len();
                 if bar_count_scroll == 0 { continue; }
                 if window.pending_symbol_load { continue; }
 
@@ -591,15 +641,26 @@ impl ChartApp {
                     None => continue,
                 };
 
-                window.scroll_fetch_in_flight = true;
-                window.scroll_fetch_started = Some(web_time::Instant::now());
-                scroll_requests.push((
-                    *cid_scroll,
-                    win_sym_sc.clone(),
-                    win_exch_sc.clone(),
-                    win_tf_sc.name.clone(),
-                    *win_at_sc,
-                ));
+                if is_derived {
+                    window.derived_seed_in_flight = Some(web_time::Instant::now());
+                    derived_seed_requests.push((
+                        *cid_scroll,
+                        chart_type,
+                        win_sym_sc.clone(),
+                        win_exch_sc.clone(),
+                        *win_at_sc,
+                    ));
+                } else {
+                    window.scroll_fetch_in_flight = true;
+                    window.scroll_fetch_started = Some(web_time::Instant::now());
+                    scroll_requests.push((
+                        *cid_scroll,
+                        win_sym_sc.clone(),
+                        win_exch_sc.clone(),
+                        win_tf_sc.name.clone(),
+                        *win_at_sc,
+                    ));
+                }
             }
 
             for (cid_req, symbol, exchange, tf_name, account_type) in scroll_requests {
@@ -622,6 +683,37 @@ impl ChartApp {
                 if let Some(tf) = parse_timeframe_name(&tf_name) {
                     self.core.bridge.request_scroll_bars(eid, &symbol, &tf, at, oldest_ts, 500);
                 }
+            }
+
+            for (cid_req, chart_type, symbol, exchange, account_type) in derived_seed_requests {
+                // Drop the stale (shorter) rendered slot BEFORE the reseed
+                // lands — the station-side ring-peek replay in `spawn_*_sub`
+                // (see `derived_bar_sub_body`/`renko_sub_body`/etc.) always
+                // replays the FULL newly-seeded ring on respawn, so clearing
+                // here and letting the replay repopulate is correct and
+                // avoids ever concatenating the old (shallow) series with the
+                // new (deep) one. Bar-family kinds (range/tick/volume/dollar/
+                // imbalance/run) share `bubble.bars` with kline — cleared via
+                // `clear_bars()`, same as `resolve_active_series`'s mapping
+                // for those chart_types.
+                if let Some(bid) = self.bubble_for_chart(cid_req) {
+                    self.core.bubbles_mut().with_bubble_mut(bid, |bubble| match chart_type {
+                        "renko" => bubble.clear_renko(),
+                        "pnf" => bubble.clear_pnf(),
+                        "kagi" => bubble.clear_kagi(),
+                        "three_line_break" => bubble.clear_three_line_break(),
+                        "tpo" => bubble.clear_tpo(),
+                        "cvd" => bubble.clear_cvd(),
+                        "range_bar" | "tick_bar" | "volume_bar" | "dollar_bar"
+                        | "tick_imbalance_bar" | "volume_imbalance_bar" | "run_bar" => bubble.clear_bars(),
+                        _ => {}
+                    });
+                }
+
+                let eid = digdigdig3::ExchangeId::from_str(&exchange)
+                    .unwrap_or(digdigdig3::ExchangeId::Binance);
+                let at = mlc_backend_data_bridge::account_type_to_dig3(account_type);
+                self.core.bridge.request_deeper_seed_for_active(eid, &symbol, at);
             }
         }
 
