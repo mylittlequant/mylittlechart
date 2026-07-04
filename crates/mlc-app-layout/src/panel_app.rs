@@ -437,14 +437,12 @@ pub fn chart_toolbar_render_toolbars(
                 }
             }
 
-            // TF picker not applicable for the active chart_type (renko/pnf/
-            // kagi/three_line_break, counted-bar family) — drop the control
-            // entirely rather than show a picker with no effect.
-            if allowed_timeframes.is_none() {
-                for section in &mut control_sections {
-                    section.items.retain(|item| item.id() != Some("timeframe_selector"));
-                }
-            }
+            // TF picker button always visible so its position in the toolbar
+            // stays stable across chart-type switches. When the current
+            // chart_type is TF-inert (renko/pnf/kagi/three_line_break,
+            // counted-bar family), the popup content is what tells the story
+            // via per-item disable (see `chart_toolbar_render_dropdown`);
+            // the button itself is not hidden. Owner rule 2026-07-04.
 
             let control_config = TcConfig {
                 sections: control_sections,
@@ -894,10 +892,14 @@ fn chart_toolbar_render_dropdown(
                     // in the allowed set has insufficient backfilled depth —
                     // disable it rather than remove it, so the full TF list
                     // stays visible/discoverable (only reachability changes).
-                    if let Some(allowed) = allowed_timeframes {
-                        if !allowed.contains(id.as_str()) {
-                            *disabled = true;
-                        }
+                    // `None` = TF picker is not applicable at all for the
+                    // active chart_type (TF-inert families) — disable EVERY
+                    // TF item; the button itself stays visible so its
+                    // toolbar position stays stable across chart-type switches.
+                    match allowed_timeframes {
+                        None => *disabled = true,
+                        Some(allowed) if !allowed.contains(id.as_str()) => *disabled = true,
+                        _ => {}
                     }
                 }
             }

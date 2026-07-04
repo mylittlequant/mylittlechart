@@ -220,6 +220,15 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
             continue;
         }
 
+        // Quantize dig3's raw per-trade levels down to the inferred
+        // display tick_size so ~25-40 rows land per bar (industry norm)
+        // instead of thousands of one-tick smears that render as a
+        // colored band without readable numbers.
+        let binned = quantize_levels(bar, tick_size);
+        let mut bar = bar.clone();
+        bar.levels = binned;
+        let bar = &bar;
+
         let poc_idx = bar.poc_idx();
         let va = bar.value_area(VALUE_AREA_FRACTION);
 
@@ -553,10 +562,7 @@ fn infer_tick_size(bars: &[FootprintBar]) -> f64 {
 
 /// Bin a bar's per-trade levels into a coarser `tick_size` ladder so the
 /// cluster grid has ~25-40 legible rows instead of thousands of single-
-/// trade entries from the dig3 aggregator. NOT YET WIRED — pending the
-/// pipeline diag pass (we need to see how many levels actually arrive
-/// before deciding whether to bin in mlc or fix dig3 aggregator).
-#[allow(dead_code)]
+/// trade entries from the dig3 aggregator.
 fn quantize_levels(bar: &FootprintBar, tick_size: f64) -> Vec<mlc_core::types::FootprintLevel> {
     if tick_size <= 0.0 || bar.levels.is_empty() {
         return bar.levels.clone();
