@@ -209,11 +209,20 @@ impl ChartApp {
                     };
                     let chart_type = self.chart_type_for_chart(active_chart_id).unwrap_or("candles");
                     let active_series = self.active_series_for_chart(active_chart_id);
+                    let series = active_series.as_active_series();
+                    // Cold state: no bars yet means depth is not measurable.
+                    // The user is choosing the FIRST TF for this chart —
+                    // never block that path, or the initial subscription
+                    // never happens and the chart stays empty forever
+                    // (regression seen after wiring depth-gate 2026-07-04).
+                    if series.is_empty() {
+                        return true;
+                    }
                     let now_ms = web_time::SystemTime::now()
                         .duration_since(web_time::UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_millis() as i64;
-                    match crate::active_series::allowed_timeframes(active_series.as_active_series(), chart_type, now_ms) {
+                    match crate::active_series::allowed_timeframes(series, chart_type, now_ms) {
                         None => true,
                         Some(allowed) => {
                             let ok = allowed.contains(timeframe_id.as_str());

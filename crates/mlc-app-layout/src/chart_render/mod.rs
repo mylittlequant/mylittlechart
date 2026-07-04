@@ -130,13 +130,33 @@ pub fn render_chart_frame(
 /// 8 empty-series renderers (cvd, tpo, renko, pnf, kagi, three_line_break,
 /// dom_heatmap, liquidation_heatmap) share ONE implementation instead of
 /// 8 copies.
-pub(crate) fn draw_waiting_placeholder(ctx: &mut dyn RenderContext, state: &ChartRenderState, msg: &str) {
+pub(crate) fn draw_waiting_placeholder(ctx: &mut dyn RenderContext, state: &ChartRenderState, _msg: &str) {
+    // Owner rule 2026-07-04: no wordy "waiting for data…" text — draw a
+    // small rotating spinner at the pane center instead. Angle is derived
+    // from the wall clock so every renderer stays stateless (RAM-only per
+    // SWC — no persisted animation frame counter).
     let rect = &state.chart_rect;
-    ctx.set_fill_color("#787878");
-    ctx.set_font("12px sans-serif");
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(msg, rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
+    let cx = rect.x + rect.width * 0.5;
+    let cy = rect.y + rect.height * 0.5;
+    let r_outer = rect.width.min(rect.height).min(64.0) * 0.15;
+    let r_inner = r_outer * 0.55;
+    let now_ms = web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as f64)
+        .unwrap_or(0.0);
+    // One full rotation per 1200ms.
+    let phase = (now_ms / 1200.0) * std::f64::consts::TAU;
+    for i in 0..8 {
+        let angle = phase + (i as f64) * std::f64::consts::TAU / 8.0;
+        // Trailing dots fade out.
+        let alpha = 0.15 + (i as f64) * 0.10;
+        let (sx, sy) = (cx + r_inner * angle.cos(), cy + r_inner * angle.sin());
+        let (ex, ey) = (cx + r_outer * angle.cos(), cy + r_outer * angle.sin());
+        ctx.set_stroke_color(&format!("rgba(150, 160, 175, {:.2})", alpha));
+        ctx.set_stroke_width(2.0);
+        ctx.begin_path();
+        ctx.move_to(sx, sy);
+        ctx.line_to(ex, ey);
+        ctx.stroke();
+    }
 }
