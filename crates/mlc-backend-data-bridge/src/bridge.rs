@@ -1806,18 +1806,13 @@ impl DataBridge {
             exchange_id, symbol, account_type, interval,
         );
 
-        // Fire a parallel klines REST backfill so `window.bars` is pre-populated
-        // with ~300 historical OHLC bars before the first live footprint cluster
-        // arrives. The footprint cluster grid renders OHLC candles for bars whose
-        // `levels[]` is empty (historical), and cluster numbers only for live bars
-        // that have real bid/ask data — the klines backfill fills that gap.
-        // warm_start=5000 aggTrades ≈ 30s at BTC rates = 0-1 closed bars; a klines
-        // fetch gives 300+ immediately.
-        {
-            let interval_ms = footprint_interval_to_ms(interval);
-            let tf = mlc_core::state::Timeframe::new(interval, interval_ms);
-            self.request_bars(exchange_id, symbol, &tf, account_type, None, Some(500), false);
-        }
+        // Note (2026-07-05): the previous version fired a parallel 500-bar
+        // kline REST backfill so `bubble.bars` could be used as a candle
+        // backdrop under the cluster grid. Owner: klines have nothing to do
+        // with footprint — footprint IS its own candle series (each
+        // FootprintPoint carries its own OHLC in .open/.high/.low/.close).
+        // Backdrop candles are rendered by the footprint renderer directly
+        // from bubble.footprint_bars, so no kline sub is needed.
 
         self.abort_derived_sub(exchange_id, symbol, account_type);
 
