@@ -140,8 +140,70 @@ async fn run() -> Result<(), JsValue> {
     let provider = WebWindowProvider::from_id("chart")
         .map_err(|e| JsValue::from_str(&e))?;
 
+    // Flush OPFS-backed persistence on tab close/hide. Drop can't await an
+    // async flush on wasm, so the browser tears down the wasm instance while
+    // dat/idx/blob buffers still hold uncommitted records. Two listeners
+    // cover both real teardown paths (visibilitychange="hidden" is the
+    // more-reliable signal on modern browsers; beforeunload for legacy).
+    install_persistence_flush_hooks(bridge.clone());
+
     web_sys::console::log_1(&"[mlc-app-shell-web] render loop running".into());
     run_render_loop(app, provider)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn install_persistence_flush_hooks(bridge: Arc<mlc_backend_data_bridge::DataBridge>) {
+    let Some(win) = web_sys::window() else { return; };
+
+    // visibilitychange — fires when the tab is hidden (background/close).
+    {
+        let bridge = bridge.clone();
+        let cb = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || {
+            let doc = match web_sys::window().and_then(|w| w.document()) {
+                Some(d) => d,
+                None => return,
+            };
+            if !doc.hidden() {
+                return;
+            }
+            let station = bridge.station();
+            spawn_local(async move {
+                match station.flush_persistence().await {
+                    Ok(()) => {
+                        web_sys::console::log_1(&"[mlc-app-shell-web] persistence flushed (hidden)".into());
+                    }
+                    Err(errs) => {
+                        web_sys::console::warn_1(&format!(
+                            "[mlc-app-shell-web] persistence flush errors ({} kinds)", errs.len()
+                        ).into());
+                    }
+                }
+            });
+        });
+        let _ = win.add_event_listener_with_callback(
+            "visibilitychange", cb.as_ref().unchecked_ref(),
+        );
+        // Leak the closure — it must outlive this scope for the lifetime of
+        // the shell (there is only one), same pattern as WebWindowProvider's
+        // long-lived DOM listeners.
+        cb.forget();
+    }
+
+    // beforeunload — legacy path for browsers that skip visibilitychange on
+    // real navigation-away. Same handler, no visibility gate.
+    {
+        let bridge = bridge.clone();
+        let cb = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || {
+            let station = bridge.station();
+            spawn_local(async move {
+                let _ = station.flush_persistence().await;
+            });
+        });
+        let _ = win.add_event_listener_with_callback(
+            "beforeunload", cb.as_ref().unchecked_ref(),
+        );
+        cb.forget();
+    }
 }
 
 // ─── App state ────────────────────────────────────────────────────────────────
