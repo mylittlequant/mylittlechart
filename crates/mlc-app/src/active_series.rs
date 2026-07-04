@@ -38,6 +38,12 @@ pub enum ActiveSeries<'a> {
     Pnf(&'a [PnfColumn]),
     Kagi(&'a [KagiSegment]),
     Tlb(&'a [ThreeLineBreakLine]),
+    /// Unreachable via [`resolve_active_series`] as of the 2026-07-04
+    /// taxonomy fix — CVD was demoted from a full-pane chart_type (which
+    /// used to resolve here) to a subpane overlay whose viewport now
+    /// borrows kline bookkeeping (`ActiveSeries::Bars`), like OI/Funding.
+    /// Kept (not deleted) per task scope — no wide refactor of the match
+    /// arms below that still exhaustively handle it.
     Cvd(&'a [CvdSample]),
     /// TPO bypasses Viewport bookkeeping entirely (manual block-accumulator
     /// layout, own date headers) — resolved only so callers have a non-panic
@@ -255,7 +261,6 @@ pub fn resolve_active_series<'a>(chart_type: &str, bubble: &'a DataBubble) -> Ac
         "pnf" => bubble.pnf_columns.as_deref().map(ActiveSeries::Pnf).unwrap_or(ActiveSeries::Bars(&[])),
         "kagi" => bubble.kagi_segments.as_deref().map(ActiveSeries::Kagi).unwrap_or(ActiveSeries::Bars(&[])),
         "three_line_break" => bubble.three_line_break.as_deref().map(ActiveSeries::Tlb).unwrap_or(ActiveSeries::Bars(&[])),
-        "cvd" => bubble.cvd_line.as_deref().map(ActiveSeries::Cvd).unwrap_or(ActiveSeries::Bars(&[])),
         "tpo" => bubble.tpo_sessions.as_deref().map(ActiveSeries::Tpo).unwrap_or(ActiveSeries::Bars(&[])),
         // candles/bars/hollow_candles/heikin_ashi/line/step_line/line_markers/
         // area/hlc_area/baseline/histogram/columns: bubble.bars directly.
@@ -343,7 +348,6 @@ pub fn resolve_active_series_owned_from_store(
         "pnf" => store.pnf_columns(bid).map(|s| OwnedActiveSeries::Pnf(s.to_vec())),
         "kagi" => store.kagi_segments(bid).map(|s| OwnedActiveSeries::Kagi(s.to_vec())),
         "three_line_break" => store.three_line_break(bid).map(|s| OwnedActiveSeries::Tlb(s.to_vec())),
-        "cvd" => store.cvd_line(bid).map(|s| OwnedActiveSeries::Cvd(s.to_vec())),
         "tpo" => store.tpo_sessions(bid).map(|s| OwnedActiveSeries::Tpo(s.to_vec())),
         _ => None,
     }

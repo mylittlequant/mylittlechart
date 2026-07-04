@@ -29,6 +29,9 @@ pub struct ChartWindowRenderInputs<'a> {
     pub oi_show: bool,
     /// Funding Rate display gate (window-local view state).
     pub funding_show: bool,
+    /// CVD sub-pane display gate (window-local view state). Demoted from a
+    /// full-pane chart_type to a subpane overlay (2026-07-04 taxonomy fix).
+    pub cvd_show: bool,
 }
 
 /// Build a `ChartRenderState` from window render inputs and the associated bubble.
@@ -74,7 +77,10 @@ pub fn build_chart_render_state<'a>(
         three_line_break: bubble.three_line_break.as_deref(),
         pnf_columns: bubble.pnf_columns.as_deref(),
         kagi_segments: bubble.kagi_segments.as_deref(),
-        cvd_line: bubble.cvd_line.as_deref(),
+        // Display gate (cvd_show) is per-window view state; storage is
+        // unconditional on bubble (demoted from chart_type — 2026-07-04
+        // taxonomy fix, mirrors oi_delta_ref/funding_rate_ref below).
+        cvd_line: if window.cvd_show { bubble.cvd_line.as_deref() } else { None },
         tpo_sessions: bubble.tpo_sessions.as_deref(),
         // ha_cache + vp_overlay are window-local derived caches (viewport-coupled).
         ha_cache: window.ha_cache,

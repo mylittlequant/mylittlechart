@@ -1828,7 +1828,8 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "pnf" | "point_and_figure" | "pointandfigure" => Some(ICON_BAR_CHART),
         "kagi" => Some(ICON_LINE_CHART),
         "three_line_break" | "threelinebreak" | "3lb" => Some(ICON_BAR_CHART),
-        "cvd" => Some(ICON_LINE_CHART),
+        // "cvd" removed (2026-07-04 taxonomy fix) — no longer a chart_type
+        // dropdown entry (demoted to a subpane overlay toggle).
         "tpo" | "market_profile" => Some(ICON_HISTOGRAM),
         "dollar_bar" | "dollarbar" => Some(ICON_BAR_CHART),
         "tick_imbalance_bar" | "tickimbalancebar" => Some(ICON_BAR_CHART),

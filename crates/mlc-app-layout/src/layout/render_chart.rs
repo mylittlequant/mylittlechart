@@ -29,7 +29,7 @@ use crate::chart_render::{
     ChartRenderState, ChartTheme, ChartRect,
     draw_grid, draw_grid_extended, draw_candles, draw_bars, draw_hollow_candles, draw_heikin_ashi,
     draw_range_bars, draw_volume_bars, draw_tick_bars, draw_footprint, draw_renko, draw_pnf, draw_kagi,
-    draw_cvd_chart, draw_tpo, draw_three_line_break, draw_volume_profile_overlay,
+    draw_cvd_overlay, draw_tpo, draw_three_line_break, draw_volume_profile_overlay,
     draw_oi_delta, draw_funding_rate_strip, draw_dom_heatmap, draw_liquidation_heatmap,
     draw_line_series, draw_area_series, draw_baseline_series,
     draw_step_line, draw_line_with_markers, draw_hlc_area, draw_histogram, draw_columns,
@@ -221,7 +221,10 @@ pub fn draw_series(ctx: &mut dyn RenderContext, state: &ChartRenderState, chart_
         "renko" => draw_renko(ctx, state),
         "pnf" => draw_pnf(ctx, state),
         "kagi" => draw_kagi(ctx, state),
-        "cvd" => draw_cvd_chart(ctx, state),
+        // "cvd" removed (2026-07-04 taxonomy fix) — CVD is now a subpane
+        // overlay (`draw_cvd_overlay`, gated by `cvd_line.is_some()`), not a
+        // full-pane chart_type. `draw_cvd_chart` (the old full-pane renderer)
+        // is unused now but kept in `chart_render/cvd.rs` per task scope.
         "tpo" => draw_tpo(ctx, state),
         "three_line_break" => draw_three_line_break(ctx, state),
         "footprint" => draw_footprint(ctx, state),
@@ -3222,6 +3225,14 @@ pub fn render_full_chart_panel(
         // 3d. Funding Rate strip (C15 — thin strip at bottom of chart area).
         if let Some(fr) = corrected_state.funding_rate_ref {
             draw_funding_rate_strip(ctx, &corrected_state, fr);
+        }
+
+        // 3e. CVD sub-pane strip (demoted from chart_type — 2026-07-04
+        // taxonomy fix). `corrected_state.cvd_line` is already gated by
+        // `window.cvd_show` at the writer (`mlc-backend/src/bubble/render.rs`
+        // `build_chart_render_state`) — mirrors oi_delta_ref/funding_rate_ref.
+        if corrected_state.cvd_line.is_some() {
+            draw_cvd_overlay(ctx, &corrected_state);
         }
 
         // 4. Last-price projection line.

@@ -935,7 +935,6 @@ impl ChartApp {
             | BubbleEvent::RenkoBarAppended { bid, exchange_id, symbol, account_type }
             | BubbleEvent::PnfBarAppended { bid, exchange_id, symbol, account_type }
             | BubbleEvent::KagiBarAppended { bid, exchange_id, symbol, account_type }
-            | BubbleEvent::CvdSampleAppended { bid, exchange_id, symbol, account_type }
             | BubbleEvent::TpoSessionUpdated { bid, exchange_id, symbol, account_type }
             | BubbleEvent::TlbLineAppended { bid, exchange_id, symbol, account_type } => {
                 let at_label = account_type.as_str();
@@ -962,6 +961,18 @@ impl ChartApp {
                     window.set_bar_count(series.len());
                 }
             }
+
+            // ── CVD (demoted from chart_type — 2026-07-04 taxonomy fix) ────────
+            //
+            // `bubble.append_cvd` already ran upstream (`BackendCore::tick_writers`)
+            // before this event fires — this arm exists only because
+            // `BubbleEvent` match is exhaustive. Unlike the derived-chart-type
+            // arm above, CVD needs no `pending_symbol_load`/`consume_cold_snap`/
+            // `set_bar_count` bookkeeping of its own: its viewport now borrows
+            // kline bookkeeping (same as OI/Funding), which the kline
+            // `BarUpdate` path already drives independently for every
+            // candle-family window.
+            BubbleEvent::CvdSampleAppended { .. } => {}
 
             // ── OI / Funding pass-throughs ─────────────────────────────────────
             BubbleEvent::OiUpdatePassthrough { exchange_id: _, account_type, symbol, point } => {

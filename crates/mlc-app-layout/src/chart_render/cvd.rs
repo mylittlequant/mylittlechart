@@ -2,12 +2,18 @@
 //!
 //! Two visual modes share the same data source (`state.cvd_line`):
 //!
-//! 1. [`draw_cvd_chart`] — when `chart_type == "cvd"`, this is the
-//!    primary visual on the chart. The whole chart vertical extent is
-//!    used; min/max auto-scaled to the visible CVD range.
-//! 2. [`draw_cvd_overlay`] — a reserved strip at the bottom of the
-//!    chart (similar to the footprint F5 strip), drawn on top of any
-//!    other chart type. Caller decides whether to enable.
+//! 1. [`draw_cvd_chart`] — full-pane visual filling the whole chart
+//!    vertical extent, min/max auto-scaled to the visible CVD range.
+//!    UNUSED as of the 2026-07-04 taxonomy fix: CVD was demoted from a
+//!    chart_type (`chart_type == "cvd"`, dispatched from `draw_series`)
+//!    to a subpane overlay — kept here (not deleted) per task scope, in
+//!    case a future full-pane CVD view is reinstated.
+//! 2. [`draw_cvd_overlay`] — a strip at the bottom of the chart (similar
+//!    to the footprint F5 strip), drawn on top of any other chart type,
+//!    gated by `window.cvd_show` at the writer
+//!    (`mlc-backend/src/bubble/render.rs::build_chart_render_state`).
+//!    This is the ACTIVE entry point, called unconditionally from
+//!    `render_chart.rs` whenever `state.cvd_line.is_some()`.
 //!
 //! Color flips per segment: green when CVD rising, red when falling.
 //! Baseline (zero or visible-range-min) drawn as a thin axis line.
@@ -19,8 +25,9 @@ use super::ChartRenderState;
 const STRIP_HEIGHT_PX: f64 = 60.0;
 const MIN_CHART_HEIGHT_FOR_OVERLAY_PX: f64 = 220.0;
 
-/// Primary CVD chart (chart_type = "cvd"). Draws the line filling the
-/// entire chart_rect height, with auto-scale to visible CVD range.
+/// Full-pane CVD chart. Draws the line filling the entire chart_rect
+/// height, with auto-scale to visible CVD range. UNUSED as of the
+/// 2026-07-04 taxonomy fix (see module doc) — kept per task scope.
 pub fn draw_cvd_chart(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     let samples = match state.cvd_line {
         Some(s) if !s.is_empty() => s,

@@ -334,7 +334,8 @@ fn chart_type_items() -> Vec<DropdownItemDef> {
             .with_icon(ToolbarIconId::new("BarChart")),
         DropdownItemDef::Separator,
         // ── Orderflow / profile visualizations ───────────────────────────────
-        DropdownItemDef::action("cvd", "CVD Line").with_icon(ToolbarIconId::new("LineChart")),
+        // "cvd" removed (2026-07-04 taxonomy fix) — CVD is now a subpane
+        // overlay toggled via `ToggleCvdOverlay`, not a chart_type.
         DropdownItemDef::action_with_input("tpo", "Market Profile (TPO)", "bar_mode_param", "30")
             .with_icon(ToolbarIconId::new("Histogram")),
         DropdownItemDef::Separator,
@@ -682,32 +683,14 @@ pub fn settings_menu_items() -> Vec<DropdownItemDef> {
             grid_columns: None,
         },
 
-        // Volume Profile overlay submenu (C10)
-        DropdownItemDef::Submenu {
-            id: "volume_profile_submenu".to_string(),
-            label: "Volume Profile".to_string(),
-            icon: Some(ToolbarIconId::new("Histogram")),
-            items: vec![
-                DropdownItemDef::action("vp_toggle", "Toggle overlay")
-                    .with_icon(ToolbarIconId::new("Histogram")),
-                DropdownItemDef::Separator,
-                DropdownItemDef::action("vp_mode_cycle", "Cycle mode (Visible / Session / Composite)"),
-            ],
-            grid_columns: None,
-        },
-
-        // OI / Funding Rate submenu (C15)
-        DropdownItemDef::Submenu {
-            id: "oi_funding_submenu".to_string(),
-            label: "OI / Funding".to_string(),
-            icon: Some(ToolbarIconId::new("Activity")),
-            items: vec![
-                DropdownItemDef::action("oi_toggle", "Toggle OI Delta")
-                    .with_icon(ToolbarIconId::new("Histogram")),
-                DropdownItemDef::action("funding_toggle", "Toggle Funding Strip"),
-            ],
-            grid_columns: None,
-        },
+        // Volume Profile / OI / Funding / CVD moved out of chart-settings
+        // (2026-07-04 taxonomy fix) — they are indicator/overlay-shaped, not
+        // chart settings. `volume_profile_submenu` and `oi_funding_submenu`
+        // are gone; the underlying actions (vp_toggle / vp_mode_cycle /
+        // oi_toggle / funding_toggle) still exist and still work — dispatch
+        // in `toolbar_state.rs`'s `settings_menu` match arm is untouched, they
+        // are just no longer reachable from this dropdown. See
+        // `docs/mlc/plans/chart-series-client-direct-2026-07-04.md`.
 
         // Crosshair submenu
         DropdownItemDef::Submenu {

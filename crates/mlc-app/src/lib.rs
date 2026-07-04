@@ -3454,6 +3454,7 @@ impl ChartApp {
                     vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
                     oi_show: window.oi_show,
                     funding_show: window.funding_show,
+                    cvd_show: window.cvd_show,
                 };
                 if let Some(mut render_state) = overlay_bubble_mgr.render_state_for(
                     window.current_tag_id,
@@ -3551,6 +3552,7 @@ impl ChartApp {
                 vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
                 oi_show: window.oi_show,
                 funding_show: window.funding_show,
+                cvd_show: window.cvd_show,
             };
             if let Some(mut render_state) = single_overlay_bubble_mgr.render_state_for(
                 window.current_tag_id,
@@ -3825,6 +3827,7 @@ impl ChartApp {
                     vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
                     oi_show: window.oi_show,
                     funding_show: window.funding_show,
+                    cvd_show: window.cvd_show,
                 };
                 let mut render_state = match split_bubble_mgr.render_state_for(
                     window.current_tag_id,
@@ -4436,6 +4439,7 @@ impl ChartApp {
                     vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
                     oi_show: window.oi_show,
                     funding_show: window.funding_show,
+                    cvd_show: window.cvd_show,
                 };
                 single_window_bubble_mgr.render_state_for(
                     window.current_tag_id,

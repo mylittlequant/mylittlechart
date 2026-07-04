@@ -307,7 +307,9 @@ impl ChartApp {
                     "renko"         => Some("renko"),
                     "pnf"           => Some("pnf"),
                     "kagi"          => Some("kagi"),
-                    "cvd"           => Some("cvd"),
+                    // "cvd" removed (2026-07-04 taxonomy fix) — CVD is now a
+                    // subpane overlay toggled via ToggleCvdOverlay, not a
+                    // chart_type routed through ChangeChartType.
                     "tpo"           => Some("tpo"),
                     "three_line_break" => Some("three_line_break"),
                     // ── López de Prado quant bars (C9) ────────────────────────
@@ -379,7 +381,7 @@ impl ChartApp {
                     let is_derived_target = matches!(
                         ct,
                         "range_bar" | "volume_bar" | "tick_bar" | "footprint"
-                        | "renko" | "pnf" | "kagi" | "cvd" | "tpo"
+                        | "renko" | "pnf" | "kagi" | "tpo"
                         | "three_line_break"
                         | "dollar_bar" | "tick_imbalance_bar"
                         | "volume_imbalance_bar" | "run_bar"
@@ -403,13 +405,21 @@ impl ChartApp {
                                     // Audit D9 step 2: release the outgoing kline
                                     // forwarder when leaving kline-family for a
                                     // derived type that doesn't need the kline
-                                    // backdrop (footprint's cluster overlay and
-                                    // cvd's ts-domain both read live kline data —
-                                    // never abort under either). Only if NO OTHER
-                                    // container in THIS ChartApp still displays
-                                    // (exchange,symbol,tf,account) as kline-family
-                                    // or footprint — a sibling window/leaf sharing
-                                    // the same instrument must not go dark.
+                                    // backdrop (footprint's cluster overlay reads
+                                    // live kline data — never abort under it).
+                                    // CVD used to be listed here too (its ts-domain
+                                    // also reads live kline data) but it is no
+                                    // longer a chart_type reachable via
+                                    // ChangeChartType (2026-07-04 taxonomy fix —
+                                    // demoted to a subpane overlay whose kline
+                                    // dependency is now implicit: it only ever
+                                    // renders alongside whatever kline-family
+                                    // chart_type the window is already on). Only
+                                    // if NO OTHER container in THIS ChartApp still
+                                    // displays (exchange,symbol,tf,account) as
+                                    // kline-family or footprint — a sibling
+                                    // window/leaf sharing the same instrument must
+                                    // not go dark.
                                     //
                                     // Scope note: this only enumerates containers
                                     // within the current ChartApp/process. Whether
@@ -427,13 +437,13 @@ impl ChartApp {
                                     let was_kline_family = !matches!(
                                         previous_ct,
                                         Some("range_bar") | Some("volume_bar") | Some("tick_bar") | Some("footprint")
-                                        | Some("renko") | Some("pnf") | Some("kagi") | Some("cvd") | Some("tpo")
+                                        | Some("renko") | Some("pnf") | Some("kagi") | Some("tpo")
                                         | Some("three_line_break")
                                         | Some("dollar_bar") | Some("tick_imbalance_bar")
                                         | Some("volume_imbalance_bar") | Some("run_bar")
                                         | Some("dom_heatmap") | Some("liquidation_heatmap")
                                     );
-                                    let target_needs_kline_backdrop = matches!(ct, "footprint" | "cvd");
+                                    let target_needs_kline_backdrop = matches!(ct, "footprint");
                                     if was_kline_family && is_derived_target && !target_needs_kline_backdrop && !on_tick_tf {
                                         let still_needed = self.panel_app.panel_grid.containers().iter()
                                             .any(|(other_cid, _)| {
@@ -449,7 +459,7 @@ impl ChartApp {
                                                 !matches!(
                                                     other_ct,
                                                     "range_bar" | "volume_bar" | "tick_bar" | "footprint"
-                                                    | "renko" | "pnf" | "kagi" | "cvd" | "tpo"
+                                                    | "renko" | "pnf" | "kagi" | "tpo"
                                                     | "three_line_break"
                                                     | "dollar_bar" | "tick_imbalance_bar"
                                                     | "volume_imbalance_bar" | "run_bar"
@@ -526,9 +536,10 @@ impl ChartApp {
                                             let scaled = (units * 1e8) as u64;
                                             self.core.bridge.request_kagi_bars(self.active_exchange, &symbol, at, scaled);
                                         }
-                                        "cvd" => {
-                                            self.core.bridge.request_cvd_line(self.active_exchange, &symbol, at);
-                                        }
+                                        // "cvd" removed (2026-07-04 taxonomy fix) —
+                                        // CVD subscribe now lives in the
+                                        // ToggleCvdOverlay handler below, mirroring
+                                        // ToggleOpenInterestOverlay/ToggleFundingRateStrip.
                                         "tpo" => {
                                             // Default 30-min letter buckets, Trade-source path (sub-tick precision, fast cold start).
                                             let freq = if chart_param > 0.0 { chart_param as u16 } else { 30 };
@@ -1015,6 +1026,41 @@ impl ChartApp {
                                 }
                                 if funding_show_now {
                                     self.core.bridge.request_funding_rate(
+                                        self.active_exchange, &symbol, at,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+                state_mutated = true;
+            }
+            // === CVD sub-pane (demoted from chart_type — 2026-07-04 taxonomy fix) ===
+            ChartOutEvent::ToggleCvdOverlay => {
+                let cid_opt = self.panel_app.panel_grid.active_container().map(|w| w.id);
+                if let Some(cid) = cid_opt {
+                    let symbol_opt = self.symbol_for_chart(cid);
+                    let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid);
+                    if let (Some(symbol), Some(at)) = (symbol_opt, at_opt) {
+                        if !symbol.is_empty() {
+                            let eid_str = self.active_exchange.as_str();
+                            let connector_enabled = self.sidebar_state.connector_enabled
+                                .get(eid_str).copied().unwrap_or(true);
+                            if connector_enabled {
+                                let at = mlc_backend_data_bridge::account_type_to_dig3(at);
+                                let cvd_show_now = {
+                                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
+                                        w.cvd_show = !w.cvd_show;
+                                        eprintln!("[ChartApp] cvd_show toggled -> {}", w.cvd_show);
+                                        w.cvd_show
+                                    } else { false }
+                                };
+                                // cvd_line storage lives on the bubble, like oi_delta/funding_rate.
+                                if let Some(bid) = self.bubble_for_chart(cid) {
+                                    self.core.bubbles_mut().with_bubble_mut(bid, |bubble| bubble.clear_cvd());
+                                }
+                                if cvd_show_now {
+                                    self.core.bridge.request_cvd_line(
                                         self.active_exchange, &symbol, at,
                                     );
                                 }

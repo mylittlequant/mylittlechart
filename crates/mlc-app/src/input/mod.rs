@@ -6199,7 +6199,7 @@ impl ChartApp {
                     .unwrap_or("candles");
                 let is_candle_family = !matches!(
                     active_chart_type,
-                    "renko" | "pnf" | "kagi" | "three_line_break" | "cvd" | "tpo"
+                    "renko" | "pnf" | "kagi" | "three_line_break" | "tpo"
                 );
                 let series_owned = if is_candle_family {
                     None
@@ -6249,7 +6249,7 @@ impl ChartApp {
                     .unwrap_or("candles");
                 let is_candle_family = !matches!(
                     active_chart_type,
-                    "renko" | "pnf" | "kagi" | "three_line_break" | "cvd" | "tpo"
+                    "renko" | "pnf" | "kagi" | "three_line_break" | "tpo"
                 );
                 let series_owned = if is_candle_family {
                     None

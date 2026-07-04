@@ -291,23 +291,28 @@ impl DataBubble {
     /// Clear every per-kind derived-series slot except the one belonging to
     /// `keep` (a chart_type string, or `None` to clear all of them).
     ///
-    /// Audit D9: chart-type switch used to clear NOTHING — the 7 sibling
-    /// slots (renko/pnf/kagi/tlb/cvd/tpo/heatmaps) kept whatever stale data
+    /// Audit D9: chart-type switch used to clear NOTHING — the sibling
+    /// slots (renko/pnf/kagi/tlb/tpo/heatmaps) kept whatever stale data
     /// a PRIOR chart_type left behind (e.g. renko box=10 bricks still in
     /// `renko_bars` after switching to box=20 — the re-subscribe emits fresh
     /// bricks, but the stale ones from the old box size were never dropped,
     /// so the pane briefly/permanently mixes both geometries). Called on
     /// EVERY chart_type switch by `ChangeChartType`, keyed to the NEW type.
     /// `bars` (kline) and `footprint_bars` are NEVER cleared here — kline
-    /// data backs candle-family AND is the backdrop several derived types
-    /// (footprint, cvd's ts-domain) depend on; footprint has its own
-    /// re-subscribe-driven replacement via `append_footprint`.
+    /// data backs candle-family AND is the backdrop footprint depends on;
+    /// footprint has its own re-subscribe-driven replacement via
+    /// `append_footprint`.
+    ///
+    /// `cvd` is deliberately NOT in this list (2026-07-04 taxonomy fix): CVD
+    /// was demoted from a chart_type to a subpane overlay toggled
+    /// independently of `chart_type` (like `oi_delta`/`funding_rate`, which
+    /// were never in this list either) — its lifecycle is now owned by
+    /// `clear_cvd()` called directly from the `ToggleCvdOverlay` handler.
     pub fn clear_derived_slots(&mut self, keep: Option<&str>) {
         if keep != Some("renko") { self.clear_renko(); }
         if keep != Some("pnf") { self.clear_pnf(); }
         if keep != Some("kagi") { self.clear_kagi(); }
         if keep != Some("three_line_break") { self.clear_three_line_break(); }
-        if keep != Some("cvd") { self.clear_cvd(); }
         if keep != Some("tpo") { self.clear_tpo(); }
         if keep != Some("dom_heatmap") {
             self.clear_dom_heatmap();
