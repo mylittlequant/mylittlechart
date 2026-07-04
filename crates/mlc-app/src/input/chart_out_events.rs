@@ -599,6 +599,19 @@ impl ChartApp {
                                                 self.core.bubbles_mut().set_timeframe(active_bid, footprint_tf);
                                             }
                                             self.core.bridge.request_footprint(self.active_exchange, &symbol, at, iv);
+                                            // Auto-enable the CVD sub-pane when
+                                            // switching to footprint (owner rule
+                                            // 2026-07-05): CVD is footprint's
+                                            // native companion. Idempotent —
+                                            // does nothing if already on.
+                                            let already_on = self.panel_app.panel_grid.active_container()
+                                                .map(|w| w.cvd_show).unwrap_or(false);
+                                            if !already_on {
+                                                if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
+                                                    w.cvd_show = true;
+                                                }
+                                                self.core.bridge.request_cvd_line(self.active_exchange, &symbol, at);
+                                            }
                                         }
                                         "renko" => {
                                             // Default: 0.5 % of last close for the box size; reversal = 2 (TradeStation classic).
