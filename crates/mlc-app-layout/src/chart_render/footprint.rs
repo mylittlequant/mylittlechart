@@ -88,13 +88,6 @@ const EXTRA_COLORS: FpExtraColors<'static> = FpExtraColors {
     cvd_axis: "rgba(120, 144, 156, 0.45)",
 };
 
-/// Height (px) of the CVD sub-strip drawn at the bottom of the chart
-/// area when ≥ 2 footprint bars are visible. Reserved out of the chart
-/// vertical extent — bars render above it.
-const CVD_STRIP_HEIGHT_PX: f64 = 28.0;
-/// Minimum chart height (px) below which we skip the CVD strip.
-const CVD_MIN_CHART_HEIGHT_PX: f64 = 160.0;
-
 /// Zoom-out fallback: render every visible footprint bar as a plain OHLC
 /// candle (wick + body). Used whenever `bar_w` is below cluster-text
 /// readability — the pane must read as a candle chart, never go blank.

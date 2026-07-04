@@ -29,7 +29,7 @@ use crate::chart_render::{
     ChartRenderState, ChartTheme, ChartRect,
     draw_grid, draw_grid_extended, draw_candles, draw_bars, draw_hollow_candles, draw_heikin_ashi,
     draw_range_bars, draw_volume_bars, draw_tick_bars, draw_footprint, draw_renko, draw_pnf, draw_kagi,
-    draw_cvd_overlay, draw_tpo, draw_three_line_break, draw_volume_profile_overlay,
+    draw_tpo, draw_three_line_break, draw_volume_profile_overlay,
     draw_oi_delta, draw_funding_rate_strip, draw_dom_heatmap, draw_liquidation_heatmap,
     draw_line_series, draw_area_series, draw_baseline_series,
     draw_step_line, draw_line_with_markers, draw_hlc_area, draw_histogram, draw_columns,

@@ -234,6 +234,18 @@ pub enum OrderbookSource {
     Ws,
 }
 
+/// Overlay kind — used to key `overlay_subs` so each overlay is independent.
+///
+/// Overlays are per-instrument sub-pane / strip subscriptions that coexist
+/// with any chart_type. They pair with derived / kline charts, not replace
+/// them (e.g. Footprint + CVD).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OverlayKind {
+    Cvd,
+    OpenInterest,
+    FundingRate,
+}
+
 /// Updates sent from async tasks to the sync chart thread.
 #[derive(Debug, Clone)]
 pub enum LiveUpdate {
@@ -692,6 +704,17 @@ pub struct DataBridge {
     /// the 30s grace unsubscribe fires) — otherwise stale TickBar forwarders
     /// keep emitting BarUpdate into the same window. Guarded by `std::sync::Mutex`.
     derived_subs: Arc<Mutex<HashMap<(ExchangeId, String, AccountType), BgJoinHandle>>>,
+    /// Active overlay subscription task handles — CVD, Open Interest, Funding
+    /// Rate. Keyed by `(ExchangeId, symbol, AccountType, OverlayKind)`.
+    ///
+    /// Overlays are NOT chart types: they coexist with any chart_type on the
+    /// same instrument (e.g. footprint + CVD sub-pane is footprint's canonical
+    /// pairing). Before this slot existed they shared `derived_subs` and
+    /// clobbered each other — enabling CVD right after `request_footprint`
+    /// aborted the just-spawned footprint forwarder (both keyed by the plain
+    /// instrument triplet). Kind is part of the key so different overlays on
+    /// the same instrument are independent.
+    overlay_subs: Arc<Mutex<HashMap<(ExchangeId, String, AccountType, OverlayKind), BgJoinHandle>>>,
     /// Tracks which `(ExchangeId, AccountType, symbol, timeframe)` keys already
     /// have a live `Stream::Kline` forwarder spawned by `request_bars`.
     ///
@@ -884,6 +907,7 @@ impl DataBridge {
             station_private_subscribed: Arc::new(Mutex::new(HashSet::new())),
             symbols_warmup_inflight: Arc::new(Mutex::new(HashSet::new())),
             derived_subs: Arc::new(Mutex::new(HashMap::new())),
+            overlay_subs: Arc::new(Mutex::new(HashMap::new())),
             station_kline_subscribed: Arc::new(Mutex::new(HashSet::new())),
             wire_symbol_cache: Arc::new(Mutex::new(HashMap::new())),
             wire_symbol_prewarmed_count: Arc::new(Mutex::new(HashMap::new())),
@@ -1867,6 +1891,39 @@ impl DataBridge {
         self.abort_derived_sub(exchange_id, symbol, account_type);
     }
 
+    /// Cancel the CVD overlay subscription for an instrument.
+    ///
+    /// Called from the ToggleCvdOverlay handler when the user turns the
+    /// sub-pane off. No-op when no CVD sub is live.
+    pub fn unsubscribe_cvd_line(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) {
+        self.abort_overlay_sub(exchange_id, symbol, account_type, OverlayKind::Cvd);
+    }
+
+    /// Cancel the Open Interest overlay subscription for an instrument.
+    pub fn unsubscribe_open_interest(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) {
+        self.abort_overlay_sub(exchange_id, symbol, account_type, OverlayKind::OpenInterest);
+    }
+
+    /// Cancel the Funding Rate overlay subscription for an instrument.
+    pub fn unsubscribe_funding_rate(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) {
+        self.abort_overlay_sub(exchange_id, symbol, account_type, OverlayKind::FundingRate);
+    }
+
     /// Subscribe to a Renko brick stream (`box_size_units` price-move per
     /// brick, ×1e8 fixed-point; `reversal_count` = bricks required to
     /// flip direction, industry standard = 2).
@@ -1951,26 +2008,33 @@ impl DataBridge {
     }
 
     /// Subscribe to the Cumulative Volume Delta line for an instrument.
+    ///
+    /// CVD is an overlay — it does NOT compete with derived chart types
+    /// (footprint/renko/pnf/etc.) for the `derived_subs` slot. It lives in
+    /// `overlay_subs` keyed by `(instrument, OverlayKind::Cvd)`, so
+    /// `request_footprint` followed by `request_cvd_line` (the auto-pair on
+    /// chart_type=footprint) leaves BOTH subs alive. The previous version
+    /// aborted the just-spawned footprint sub the moment CVD was enabled —
+    /// footprint stopped loading (owner-reported 2026-07-05).
     pub fn request_cvd_line(
         &self,
         exchange_id: ExchangeId,
         symbol: &str,
         account_type: AccountType,
     ) {
-        self.abort_derived_sub(exchange_id, symbol, account_type);
+        self.abort_overlay_sub(exchange_id, symbol, account_type, OverlayKind::Cvd);
         let station = self.station.clone();
         let tx = self.tx.clone();
         let symbol_str = symbol.to_string();
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
-        let sub_key = (exchange_id, symbol.to_string(), account_type);
+        let sub_key = (exchange_id, symbol.to_string(), account_type, OverlayKind::Cvd);
         let stream = digdigdig3_station::Stream::CvdLine;
         let warm_n = self.derived_warm_for_key(exchange_id, symbol, account_type, &stream);
-        self.record_active_stream(exchange_id, symbol, account_type, stream.clone());
         let handle = self.spawn_cvd_sub(
             station, tx, exchange_id, account_type,
             symbol_str, symbol_wire, stream, warm_n,
         );
-        if let Ok(mut subs) = self.derived_subs.lock() {
+        if let Ok(mut subs) = self.overlay_subs.lock() {
             subs.insert(sub_key, handle);
         }
     }
@@ -2389,17 +2453,18 @@ impl DataBridge {
         symbol: &str,
         account_type: AccountType,
     ) {
+        self.abort_overlay_sub(exchange_id, symbol, account_type, OverlayKind::OpenInterest);
         let station = self.station.clone();
         let tx = self.tx.clone();
         let symbol_str = symbol.to_string();
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
-        let sub_key = (exchange_id, symbol.to_string(), account_type);
+        let sub_key = (exchange_id, symbol.to_string(), account_type, OverlayKind::OpenInterest);
         let stream = digdigdig3_station::Stream::OpenInterest;
         let handle = self.spawn_open_interest_sub(
             station, tx, exchange_id, account_type,
             symbol_str, symbol_wire, stream,
         );
-        if let Ok(mut subs) = self.derived_subs.lock() {
+        if let Ok(mut subs) = self.overlay_subs.lock() {
             subs.insert(sub_key, handle);
         }
     }
@@ -2411,17 +2476,18 @@ impl DataBridge {
         symbol: &str,
         account_type: AccountType,
     ) {
+        self.abort_overlay_sub(exchange_id, symbol, account_type, OverlayKind::FundingRate);
         let station = self.station.clone();
         let tx = self.tx.clone();
         let symbol_str = symbol.to_string();
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
-        let sub_key = (exchange_id, symbol.to_string(), account_type);
+        let sub_key = (exchange_id, symbol.to_string(), account_type, OverlayKind::FundingRate);
         let stream = digdigdig3_station::Stream::FundingRate;
         let handle = self.spawn_funding_rate_sub(
             station, tx, exchange_id, account_type,
             symbol_str, symbol_wire, stream,
         );
-        if let Ok(mut subs) = self.derived_subs.lock() {
+        if let Ok(mut subs) = self.overlay_subs.lock() {
             subs.insert(sub_key, handle);
         }
     }
@@ -2449,6 +2515,25 @@ impl DataBridge {
     fn abort_derived_sub(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
         if let Ok(mut subs) = self.derived_subs.lock() {
             if let Some(h) = subs.remove(&(exchange_id, symbol.to_string(), account_type)) {
+                h.abort();
+            }
+        }
+    }
+
+    /// Abort the active overlay subscription for a given kind on an instrument.
+    ///
+    /// Cheap idempotent no-op when the slot is empty. Called before every
+    /// `request_cvd_line` / `request_open_interest` / `request_funding_rate`
+    /// so re-subscribes replace, not stack.
+    fn abort_overlay_sub(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        kind: OverlayKind,
+    ) {
+        if let Ok(mut subs) = self.overlay_subs.lock() {
+            if let Some(h) = subs.remove(&(exchange_id, symbol.to_string(), account_type, kind)) {
                 h.abort();
             }
         }
@@ -5830,31 +5915,3 @@ fn ob_delta_point_to_orderbook_delta(
     }
 }
 
-/// Convert a kline interval string (e.g. "1m", "5m", "1h", "4h", "1d") to
-/// milliseconds for use as a `Timeframe::interval_ms`.
-///
-/// Used by `request_footprint` to fire a parallel klines backfill using the
-/// same timeframe as the footprint cluster window.
-fn footprint_interval_to_ms(interval: &str) -> i64 {
-    match interval.to_lowercase().as_str() {
-        "1s"          =>          1_000,
-        "1m"          =>         60_000,
-        "3m"          =>        180_000,
-        "5m"          =>        300_000,
-        "15m"         =>        900_000,
-        "30m"         =>      1_800_000,
-        "1h"          =>      3_600_000,
-        "2h"          =>      7_200_000,
-        "4h"          =>     14_400_000,
-        "6h"          =>     21_600_000,
-        "8h"          =>     28_800_000,
-        "12h"         =>     43_200_000,
-        "1d"          =>     86_400_000,
-        "3d"          =>    259_200_000,
-        "1w"          =>    604_800_000,
-        "1month" | "1M" => 2_592_000_000,
-        // Unknown: fall back to 1 minute so the Timeframe at least sorts
-        // correctly; the interval string itself is what the klines REST uses.
-        _             =>         60_000,
-    }
-}

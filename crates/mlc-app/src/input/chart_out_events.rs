@@ -1088,6 +1088,10 @@ impl ChartApp {
                                     self.core.bridge.request_open_interest(
                                         self.active_exchange, &symbol, at,
                                     );
+                                } else {
+                                    self.core.bridge.unsubscribe_open_interest(
+                                        self.active_exchange, &symbol, at,
+                                    );
                                 }
                             }
                         }
@@ -1123,6 +1127,10 @@ impl ChartApp {
                                     self.core.bridge.request_funding_rate(
                                         self.active_exchange, &symbol, at,
                                     );
+                                } else {
+                                    self.core.bridge.unsubscribe_funding_rate(
+                                        self.active_exchange, &symbol, at,
+                                    );
                                 }
                             }
                         }
@@ -1156,6 +1164,12 @@ impl ChartApp {
                                 }
                                 if cvd_show_now {
                                     self.core.bridge.request_cvd_line(
+                                        self.active_exchange, &symbol, at,
+                                    );
+                                } else {
+                                    // Toggle-off: cancel the overlay sub so it stops
+                                    // forwarding events into the just-cleared bubble.
+                                    self.core.bridge.unsubscribe_cvd_line(
                                         self.active_exchange, &symbol, at,
                                     );
                                 }

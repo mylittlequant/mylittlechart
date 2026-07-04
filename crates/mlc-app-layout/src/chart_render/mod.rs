@@ -89,7 +89,7 @@ pub use mlc_core::chart::render_data::{
     GridRenderOptions, LineRenderStyle,
 };
 
-use mlc_core::render::{RenderContext, InputState, FrameResult, TextAlign, TextBaseline};
+use mlc_core::render::{RenderContext, InputState, FrameResult};
 
 /// Main chart rendering entry point
 ///
