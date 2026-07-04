@@ -175,13 +175,12 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
         return;
     }
 
-    // Reserve a strip at the bottom for the CVD line (F5) when there's
-    // space. The cluster + wicks render in the area above the strip.
-    let cvd_strip = if rect.height >= CVD_MIN_CHART_HEIGHT_PX && end - start >= 2 {
-        Some((rect.y + rect.height - CVD_STRIP_HEIGHT_PX, CVD_STRIP_HEIGHT_PX))
-    } else {
-        None
-    };
+    // CVD is now a first-class indicator that lives in the ChartContainer's
+    // indicator panel (add via "+" → Overlay → CVD). Removed the hand-drawn
+    // in-pane CVD strip that used to eat 28px at the bottom (owner report
+    // 2026-07-05: the manual strip looked out of place vs the real
+    // indicator sub-pane system).
+    let cvd_strip: Option<(f64, f64)> = None;
 
     // First: draw a thin OHLC wick line per bar so price excursion is
     // still readable behind the cluster text.

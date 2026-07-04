@@ -3227,13 +3227,13 @@ pub fn render_full_chart_panel(
             draw_funding_rate_strip(ctx, &corrected_state, fr);
         }
 
-        // 3e. CVD sub-pane strip (demoted from chart_type — 2026-07-04
-        // taxonomy fix). `corrected_state.cvd_line` is already gated by
-        // `window.cvd_show` at the writer (`mlc-backend/src/bubble/render.rs`
-        // `build_chart_render_state`) — mirrors oi_delta_ref/funding_rate_ref.
-        if corrected_state.cvd_line.is_some() {
-            draw_cvd_overlay(ctx, &corrected_state);
-        }
+        // CVD subpane removed here (owner report 2026-07-05): CVD is a
+        // first-class indicator that lives in the ChartContainer's
+        // indicator panel like every other overlay/indicator. The
+        // window.cvd_show / bubble.cvd_line pipeline stays wired (via
+        // ChartOutEvent::ToggleCvdOverlay + the mli overlay_cvd catalog
+        // entry) so the indicator panel can render it through the normal
+        // sub-pane system, not a hand-drawn strip on top of the chart.
 
         // 4. Last-price projection line.
         draw_last_price_line(ctx, &corrected_state);
