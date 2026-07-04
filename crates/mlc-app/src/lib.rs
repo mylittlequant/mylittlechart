@@ -4966,6 +4966,21 @@ impl ChartApp {
             let (active_sync_flags_owned, active_is_mono_group) = active_gid
                 .and_then(|gid| bubble_guard_tb.sync_flags(gid).map(|sf| (Some(sf), tags_guard_tb.get(gid).map(|t| t.members.len() <= 1).unwrap_or(true))))
                 .unwrap_or((None, true));
+            // TF picker gating (audit D8 follow-up, 2026-07-04): computed
+            // fresh every frame from the active window's chart_type + series
+            // depth — RAM-only, no persisted field (SWC).
+            let allowed_tfs = {
+                let cid = self.panel_app.panel_grid.active_container_id();
+                cid.map(|cid| {
+                    let chart_type = self.chart_type_for_chart(cid).unwrap_or("candles");
+                    let active_series = self.active_series_for_chart(cid);
+                    let now_ms = web_time::SystemTime::now()
+                        .duration_since(web_time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as i64;
+                    crate::active_series::allowed_timeframes(active_series.as_active_series(), chart_type, now_ms)
+                }).unwrap_or(None)
+            };
             let toolbar_result = self.panel_app.render_toolbars_with_theme(
                 ctx,
                 &panel_layout,
@@ -4978,6 +4993,7 @@ impl ChartApp {
                 active_sync_flags_owned.as_ref(),
                 active_is_mono_group,
                 presets_guard_tb.values(),
+                allowed_tfs.as_ref(),
             );
             drop(bubble_guard_tb);
             drop(tags_guard_tb);
@@ -5658,6 +5674,18 @@ impl ChartApp {
         let (active_sync_flags_owned, active_is_mono_group) = active_gid
             .and_then(|gid| bubble_guard_tb2.sync_flags(gid).map(|sf| (Some(sf), tags_guard_tb2.get(gid).map(|t| t.members.len() <= 1).unwrap_or(true))))
             .unwrap_or((None, true));
+        // TF picker gating (audit D8 follow-up, 2026-07-04) — see the
+        // `render()` call site for rationale; kept in parity here per the
+        // shell-web/native toolbar-duty binding invariant.
+        let allowed_tfs = self.panel_app.panel_grid.active_container_id().map(|cid| {
+            let chart_type = self.chart_type_for_chart(cid).unwrap_or("candles");
+            let active_series = self.active_series_for_chart(cid);
+            let now_ms = web_time::SystemTime::now()
+                .duration_since(web_time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as i64;
+            crate::active_series::allowed_timeframes(active_series.as_active_series(), chart_type, now_ms)
+        }).unwrap_or(None);
         let toolbar_result = self.panel_app.render_toolbars_with_theme(
             ctx,
             &panel_layout,
@@ -5670,6 +5698,7 @@ impl ChartApp {
             active_sync_flags_owned.as_ref(),
             active_is_mono_group,
             presets_guard_tb2.values(),
+            allowed_tfs.as_ref(),
         );
         drop(bubble_guard_tb2);
         drop(tags_guard_tb2);

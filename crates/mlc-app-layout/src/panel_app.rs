@@ -293,6 +293,14 @@ pub fn floating_inline_update_drag(
 /// `dropdown_theme` overrides colors used for dropdown/submenu popups.
 /// Pass `None` to fall back to `DropdownTheme::default()`.
 /// `ChartPanelApp::render_toolbars_with_theme` passes both themes from its ThemeManager.
+///
+/// `allowed_timeframes` gates the `timeframe_selector` control (writer:
+/// `mlc-app::active_series::allowed_timeframes`, audit D8 follow-up
+/// 2026-07-04). `None` means the TF picker is not applicable for the active
+/// chart_type (renko/pnf/kagi/three_line_break, counted-bar family) — the
+/// control is dropped from the control strip entirely instead of rendering
+/// a picker with no effect. `Some(set)` means the picker applies; TF ids not
+/// in `set` (insufficient backfilled depth) render disabled in the popup.
 pub fn chart_toolbar_render_toolbars(
     tb: &ChartToolbarState,
     ctx: &mut dyn RenderContext,
@@ -312,6 +320,7 @@ pub fn chart_toolbar_render_toolbars(
     active_symbol: Option<&str>,
     active_timeframe: Option<&str>,
     sidebar_w: f64,
+    allowed_timeframes: Option<&std::collections::HashSet<&'static str>>,
 ) -> ChartToolbarRenderResult {
         // Use provided theme or fall back to the hardcoded dark default.
         let theme: TcToolbarTheme = match toolbar_theme {
@@ -425,6 +434,15 @@ pub fn chart_toolbar_render_toolbars(
                             }
                         }
                     }
+                }
+            }
+
+            // TF picker not applicable for the active chart_type (renko/pnf/
+            // kagi/three_line_break, counted-bar family) — drop the control
+            // entirely rather than show a picker with no effect.
+            if allowed_timeframes.is_none() {
+                for section in &mut control_sections {
+                    section.items.retain(|item| item.id() != Some("timeframe_selector"));
                 }
             }
 
@@ -735,7 +753,7 @@ pub fn chart_toolbar_render_toolbars(
 
         // Render open dropdown if any
         let dropdown_result = if let Some(ref dropdown_id) = tb.open_dropdown_id {
-            chart_toolbar_render_dropdown(tb, ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group)
+            chart_toolbar_render_dropdown(tb, ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, allowed_timeframes)
         } else {
             None
         };
@@ -800,6 +818,7 @@ fn chart_toolbar_render_dropdown(
     _is_expanded: bool,
     split_without_group: bool,
     is_mono_group: bool,
+    allowed_timeframes: Option<&std::collections::HashSet<&'static str>>,
 ) -> Option<DropdownRenderInfo> {
         // 1. Find the button rect for this dropdown in the toolbar results.
         //    If open_dropdown_position is set (e.g. for new_tab_menu opened by chrome),
@@ -866,6 +885,19 @@ fn chart_toolbar_render_dropdown(
                     // Disable sync toggles for mono-groups (solo windows don't need sync)
                     if is_mono_group && id.starts_with("sync_") {
                         *disabled = true;
+                    }
+                }
+            }
+            if dropdown_id == "timeframe_selector" {
+                if let DropdownItem::Item { ref id, ref mut disabled, .. } = di {
+                    // Depth-gating (audit D8 follow-up, 2026-07-04): a TF not
+                    // in the allowed set has insufficient backfilled depth —
+                    // disable it rather than remove it, so the full TF list
+                    // stays visible/discoverable (only reachability changes).
+                    if let Some(allowed) = allowed_timeframes {
+                        if !allowed.contains(id.as_str()) {
+                            *disabled = true;
+                        }
                     }
                 }
             }

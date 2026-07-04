@@ -353,3 +353,101 @@ pub fn resolve_active_series_owned_from_store(
     }
     .unwrap_or_else(|| OwnedActiveSeries::Bars(store.bars(bid).to_vec()))
 }
+
+/// Minimum number of bars a timeframe must be able to backfill, from the
+/// active series' known depth, before it is offered as clickable in the TF
+/// picker. Arbitrary-but-fixed per owner spec (2026-07-04 TF-gating fix).
+const MIN_BARS_FOR_TF: i64 = 10;
+
+/// `chart_type`s where the timeframe concept is inert — the rendered series
+/// is not keyed by wall-clock/tick timeframe at all (it's a price/volume/
+/// count-driven transform), so a TF picker has no effect on what's drawn.
+/// Mirrors [`chart_type_hides_time_grid`]'s counted-bar family plus the
+/// non-temporal price-action transforms (renko/pnf/kagi/three_line_break).
+pub fn chart_type_hides_timeframe_picker(chart_type: &str) -> bool {
+    matches!(
+        chart_type,
+        "renko"
+            | "pnf"
+            | "kagi"
+            | "three_line_break"
+            | "range_bar"
+            | "tick_bar"
+            | "volume_bar"
+            | "dollar_bar"
+            | "tick_imbalance_bar"
+            | "volume_imbalance_bar"
+            | "run_bar"
+    )
+}
+
+/// The full set of `tf_*` dropdown item ids from the timeframe_selector
+/// toolbar definitions (`mlc-core/src/toolbar.rs`'s `standalone_top_toolbar`
+/// / `top_toolbar`). Kept as an independent literal here (not read back from
+/// the toolbar defs) so this writer is self-contained — see
+/// [`allowed_timeframes`].
+const ALL_TF_IDS: &[&str] = &[
+    "tf_1t", "tf_10t", "tf_100t", "tf_1000t",
+    "tf_1m", "tf_3m", "tf_5m", "tf_15m", "tf_30m",
+    "tf_1h", "tf_2h", "tf_4h", "tf_6h", "tf_12h",
+    "tf_1d", "tf_1w", "tf_1M",
+];
+
+/// Wall-clock duration (milliseconds) a `tf_*` id represents. `None` for
+/// tick timeframes (`tf_1t`/`tf_10t`/`tf_100t`/`tf_1000t`) — those aggregate
+/// by trade count, not by elapsed time, so depth-gating by `interval_ms *
+/// MIN_BARS_FOR_TF` does not apply to them (mirrors `Timeframe::tick`'s
+/// synthetic, non-duration `interval_ms`). Tick TFs are always allowed.
+fn tf_interval_ms(tf_id: &str) -> Option<i64> {
+    match tf_id {
+        "tf_1t" | "tf_10t" | "tf_100t" | "tf_1000t" => None,
+        "tf_1m" => Some(mlc_core::state::Timeframe::m1().interval_ms),
+        "tf_3m" => Some(3 * 60_000),
+        "tf_5m" => Some(mlc_core::state::Timeframe::m5().interval_ms),
+        "tf_15m" => Some(mlc_core::state::Timeframe::m15().interval_ms),
+        "tf_30m" => Some(mlc_core::state::Timeframe::m30().interval_ms),
+        "tf_1h" => Some(mlc_core::state::Timeframe::h1().interval_ms),
+        "tf_2h" => Some(2 * 3_600_000),
+        "tf_4h" => Some(mlc_core::state::Timeframe::h4().interval_ms),
+        "tf_6h" => Some(6 * 3_600_000),
+        "tf_12h" => Some(12 * 3_600_000),
+        "tf_1d" => Some(mlc_core::state::Timeframe::d1().interval_ms),
+        "tf_1w" => Some(mlc_core::state::Timeframe::w1().interval_ms),
+        "tf_1M" => Some(mlc_core::state::Timeframe::mn1().interval_ms),
+        _ => None,
+    }
+}
+
+/// Set of `tf_*` ids the timeframe picker should offer as clickable, or
+/// `None` when the picker is not applicable at all for this `chart_type`
+/// (callers hide the whole control rather than render a fully-disabled one).
+///
+/// Depth-gating (audit D8 follow-up, 2026-07-04): a TF is only useful if the
+/// active series actually has enough history behind it to backfill at least
+/// [`MIN_BARS_FOR_TF`] bars at that TF's resolution. `depth_ms` is derived
+/// from the active series' oldest known timestamp (`ts_ms_at(0)`) — an
+/// empty series has zero depth, so only tick TFs (depth-independent) stay
+/// enabled.
+pub fn allowed_timeframes(
+    active_series: ActiveSeries<'_>,
+    chart_type: &str,
+    now_ms: i64,
+) -> Option<std::collections::HashSet<&'static str>> {
+    if chart_type_hides_timeframe_picker(chart_type) {
+        return None;
+    }
+    let depth_ms = active_series
+        .ts_ms_at(0)
+        .map(|oldest_ts_ms| (now_ms - oldest_ts_ms).max(0))
+        .unwrap_or(0);
+    Some(
+        ALL_TF_IDS
+            .iter()
+            .copied()
+            .filter(|&tf_id| match tf_interval_ms(tf_id) {
+                None => true, // tick TFs: depth-independent, always allowed.
+                Some(interval_ms) => depth_ms >= interval_ms.saturating_mul(MIN_BARS_FOR_TF),
+            })
+            .collect(),
+    )
+}

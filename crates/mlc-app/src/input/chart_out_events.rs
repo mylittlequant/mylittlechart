@@ -195,6 +195,38 @@ impl ChartApp {
                         None
                     }
                 };
+                // Depth-gating guard (2026-07-04 TF-gating fix): re-check the
+                // resolved TF against `allowed_timeframes` so the agent-API
+                // bypass (`ChartApp::change_timeframe`, which routes through
+                // this same handler) can't force a TF the toolbar wouldn't
+                // let the user click. `None` (picker not applicable for this
+                // chart_type) never blocks — those chart types don't reach
+                // this dispatch path with a real TF change today, and a
+                // future caller shouldn't be surprised by a silent no-op.
+                let timeframe = timeframe.filter(|_| {
+                    let Some(active_chart_id) = self.panel_app.panel_grid.active_container_id() else {
+                        return true;
+                    };
+                    let chart_type = self.chart_type_for_chart(active_chart_id).unwrap_or("candles");
+                    let active_series = self.active_series_for_chart(active_chart_id);
+                    let now_ms = web_time::SystemTime::now()
+                        .duration_since(web_time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as i64;
+                    match crate::active_series::allowed_timeframes(active_series.as_active_series(), chart_type, now_ms) {
+                        None => true,
+                        Some(allowed) => {
+                            let ok = allowed.contains(timeframe_id.as_str());
+                            if !ok {
+                                log::warn!(
+                                    "[ChartApp] ChangeTimeframe: {} not allowed for chart_type {} at current depth, ignoring",
+                                    timeframe_id, chart_type,
+                                );
+                            }
+                            ok
+                        }
+                    }
+                });
                 if let Some(tf) = timeframe {
                     // Phase 4 S2.2: capture chart_id BEFORE mutating block.
                     // Phase 4 S2.7.1c: reads via branch_meta (B1 flip).
