@@ -270,6 +270,13 @@ pub fn chart_type_is_derived_seed(chart_type: &str) -> bool {
             | "run_bar"
             | "cvd"
             | "tpo"
+            // Footprint's OWN slot (bubble.footprint_bars) is derived — the
+            // kline backdrop that piggybacks bubble.bars extends via
+            // request_scroll_bars for free, but the cluster data needs the
+            // same teardown+deeper-warm reseed as the rest of the derived
+            // family. request_deeper_seed_for_active checks
+            // footprint_active_interval first so this dispatches correctly.
+            | "footprint"
     )
 }
 
