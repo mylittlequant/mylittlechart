@@ -557,6 +557,31 @@ impl ChartApp {
                                         }
                                         "footprint" => {
                                             let iv = if !chart_interval.is_empty() { chart_interval } else { "1m" };
+                                            // Force the window's kline-TF label
+                                            // to match the footprint bucket
+                                            // interval so the toolbar clock,
+                                            // legend header, and crosshair time
+                                            // stay coherent with the cluster
+                                            // grid (2026-07-05 owner report:
+                                            // switching to footprint on a 1H
+                                            // chart left the toolbar showing
+                                            // "1H" while clusters were bucketed
+                                            // at 1m). The kline REST backfill
+                                            // fired by request_footprint below
+                                            // already targets `iv`, so this
+                                            // just synchronises the UI-side
+                                            // record.
+                                            let iv_ms = match iv {
+                                                "1m" => 60_000, "3m" => 180_000, "5m" => 300_000,
+                                                "15m" => 900_000, "30m" => 1_800_000,
+                                                "1h" => 3_600_000, _ => 60_000,
+                                            };
+                                            let footprint_tf = mlc_core::state::Timeframe::new(iv, iv_ms);
+                                            if let Some(active_bid) = self.panel_app.panel_grid.active_container()
+                                                .map(|w| w.current_tag_id)
+                                            {
+                                                self.core.bubbles_mut().set_timeframe(active_bid, footprint_tf);
+                                            }
                                             self.core.bridge.request_footprint(self.active_exchange, &symbol, at, iv);
                                         }
                                         "renko" => {
