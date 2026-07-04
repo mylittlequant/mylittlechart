@@ -2568,12 +2568,13 @@ pub fn render_chart_window(
     config: &ChartRenderConfig,
     corner_state: &ScaleCornerState,
 ) -> ScaleCornerHitZones {
-    // Per-chart skeleton: while bars are still loading (cold preset, TF/symbol
-    // switch, freshly-spawned window) render ONLY the chart-rect background +
-    // empty price/time/corner frames. NO grid, NO bars, NO crosshair, NO
-    // ticks, NO labels, NO last-price chip — just the three boxes outlined so
-    // the chart's geometry is present from frame 1.
-    if state.bars.is_empty() {
+    // Per-chart skeleton: while there is no series data yet (cold preset,
+    // TF/symbol switch, freshly-spawned window, or an own-slot chart type
+    // whose derived data hasn't landed) render ONLY the chart-rect
+    // background + empty price/time/corner frames. NO grid, NO bars, NO
+    // crosshair, NO ticks, NO labels, NO last-price chip — just the three
+    // boxes outlined so the chart's geometry is present from frame 1.
+    if !state.has_any_series_data() {
         let theme_bg = &state.theme.background;
         let border = &config.scale_theme.scale_border;
         let scale_bg = &config.scale_theme.scale_bg;
@@ -3136,6 +3137,7 @@ pub fn render_full_chart_panel(
         liq_heatmap_ref: data.state.liq_heatmap_ref,
         liq_dots_ref: data.state.liq_dots_ref,
         non_temporal_axis: data.state.non_temporal_axis,
+        hide_time_grid: data.state.hide_time_grid,
     };
 
     // 1. Background — fill the full window rect to avoid gaps when scales are
@@ -3143,15 +3145,17 @@ pub fn render_full_chart_panel(
     ctx.set_fill_color(&corrected_state.theme.background);
     ctx.fill_rect(window_rect.x, window_rect.y, window_rect.width, window_rect.height);
 
-    // Loading / error state — when there are no bars yet, draw ONLY the three
-    // scale border lines (price scale separator, time scale separator, scale
-    // corner separator) so the chart skeleton has the same visible frame as
-    // the active path. NO scale fills, NO grid, NO bars, NO crosshair, NO
-    // ticks, NO labels — only the border strokes. The loading SPINNER is NOT
-    // drawn here — it lives as an overlay layer in the host renderer
-    // (`scene_builder.rs`) so it has its own redraw cadence and a host-level
-    // retire signal independent of the bars.is_empty() check this layer sees.
-    if corrected_state.bars.is_empty() {
+    // Loading / error state — when there is no series data yet (neither
+    // klines NOR an own-slot for chart types that render from a derived
+    // series — footprint/renko/PnF/Kagi/three-line-break/TPO/CVD/heatmaps),
+    // draw ONLY the three scale border lines (price scale separator, time
+    // scale separator, scale corner separator) so the chart skeleton has the
+    // same visible frame as the active path. NO scale fills, NO grid, NO
+    // bars, NO crosshair, NO ticks, NO labels — only the border strokes. The
+    // loading SPINNER is NOT drawn here — it lives as an overlay layer in the
+    // host renderer (`scene_builder.rs`) so it has its own redraw cadence and
+    // a host-level retire signal independent of the check this layer sees.
+    if !corrected_state.has_any_series_data() {
         let border = &data.config.scale_theme.scale_border;
         ctx.set_stroke_color(border);
         ctx.set_stroke_width(1.0);
@@ -3558,6 +3562,7 @@ pub fn render_chart_overlay(
         liq_heatmap_ref: state.liq_heatmap_ref,
         liq_dots_ref: state.liq_dots_ref,
         non_temporal_axis: state.non_temporal_axis,
+        hide_time_grid: state.hide_time_grid,
     };
 
     // Compute total chart bounds (main + all sub-panes) for the vertical crosshair span.
@@ -3623,9 +3628,12 @@ pub fn render_chart_overlay(
     }
 
     // 3. Price-scale cursor label
-    // Suppress while the chart is in loading state — no bars means no price
-    // axis is meaningful, so the cursor labels would chase an undefined value.
-    if state.crosshair.visible && !state.bars.is_empty() {
+    // Suppress while the chart is in loading state — no series data means no
+    // price axis is meaningful, so the cursor labels would chase an
+    // undefined value. Own-slot chart types (footprint/renko/etc.) have a
+    // meaningful price axis as soon as their derived data lands, even before
+    // klines arrive.
+    if state.crosshair.visible && state.has_any_series_data() {
         let mut leaf_scale_cfg = config.scale_config.clone();
         leaf_scale_cfg.price_scale_width = main_chart.price_scale.width;
         leaf_scale_cfg.time_scale_height = main_chart.time_scale.height;

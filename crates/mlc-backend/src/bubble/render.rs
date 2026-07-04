@@ -91,5 +91,9 @@ pub fn build_chart_render_state<'a>(
         // only when a non-temporal ts-shadow (renko/pnf/kagi/three_line_break)
         // is swapped into `bars` after this state is built.
         non_temporal_axis: false,
+        // Default false — flipped to true by the caller (`mlc-app::lib.rs`)
+        // for the counted-bar family (range/tick/volume/dollar/tick-imbalance/
+        // volume-imbalance/run bars).
+        hide_time_grid: false,
     }
 }

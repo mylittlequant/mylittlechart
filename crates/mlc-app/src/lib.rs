@@ -3473,6 +3473,7 @@ impl ChartApp {
                         render_state.bars = shadow;
                         render_state.non_temporal_axis = true;
                     }
+                    render_state.hide_time_grid = crate::active_series::chart_type_hides_time_grid(overlay_panel.chart_type);
                     let crosshair_config = mlc_core::chart::CrosshairConfig::default();
                     let render_config = ChartRenderConfig {
                         scale_theme: self.panel_app.scale_theme_for_render(),
@@ -3566,6 +3567,7 @@ impl ChartApp {
                     render_state.bars = shadow;
                     render_state.non_temporal_axis = true;
                 }
+                render_state.hide_time_grid = crate::active_series::chart_type_hides_time_grid(single_panel.chart_type);
                 let crosshair_config = mlc_core::chart::CrosshairConfig::default();
                 let render_config = ChartRenderConfig {
                     scale_theme: self.panel_app.scale_theme_for_render(),
@@ -3842,6 +3844,7 @@ impl ChartApp {
                     render_state.bars = shadow;
                     render_state.non_temporal_axis = true;
                 }
+                render_state.hide_time_grid = crate::active_series::chart_type_hides_time_grid(split_panel.chart_type);
                 let crosshair_config = if self.pending_alert_screenshot {
                     mlc_core::chart::CrosshairConfig { vert_visible: false, horz_visible: false, ..Default::default() }
                 } else {
@@ -4451,6 +4454,7 @@ impl ChartApp {
                     render_state.bars = shadow;
                     render_state.non_temporal_axis = true;
                 }
+                render_state.hide_time_grid = crate::active_series::chart_type_hides_time_grid(single_window_panel.chart_type);
                 let inner_proportions_vec = crate::chart_container::collect_inner_proportions(&window.inner_docking);
                 let inner_sub_ids_vec = crate::chart_container::collect_inner_instance_ids(&window.inner_docking);
                 let single_window_drawings_guard = self.core.drawings();

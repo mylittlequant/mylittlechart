@@ -63,7 +63,7 @@ pub fn draw_grid(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     // Draw vertical grid lines (time intervals). Hidden entirely for
     // non-temporal chart types — a calendar grid over renko/pnf/kagi/3lb
     // columns is meaningless (owner decision 2026-07-04).
-    if grid.vert_lines.visible && !state.non_temporal() {
+    if grid.vert_lines.visible && !state.non_temporal() && !state.hide_time_grid {
         ctx.set_stroke_color(&theme.grid_line);
         ctx.set_stroke_width(1.0);
 
@@ -150,7 +150,7 @@ pub fn draw_grid_extended(
 
     // Draw vertical grid lines (time intervals) - extended to full bounds.
     // Hidden for non-temporal chart types (same rule as `draw_grid`).
-    if grid.vert_lines.visible && !state.non_temporal() {
+    if grid.vert_lines.visible && !state.non_temporal() && !state.hide_time_grid {
         ctx.set_stroke_color(&theme.grid_line);
         ctx.set_stroke_width(1.0);
 

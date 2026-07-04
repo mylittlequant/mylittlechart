@@ -213,6 +213,25 @@ impl<'a> ActiveSeries<'a> {
 /// range/volume/tick/dollar bars, footprint, dom/liquidation heatmap)
 /// already lives in or intentionally reads `bubble.bars` — returns `None`
 /// (caller keeps the real kline bars unchanged).
+/// Counted-bar chart types: aggregation by trade count/volume/dollar/etc.,
+/// so successive bars close at wildly non-uniform wall-clock intervals —
+/// a regular vertical time grid over them is meaningless. Per-bar time
+/// LABELS stay (they carry real bar-close timestamps, handled by the
+/// per-bar tick path). Kept out of the `non_temporal` flag because
+/// their axis IS temporal — just non-uniform.
+pub fn chart_type_hides_time_grid(chart_type: &str) -> bool {
+    matches!(
+        chart_type,
+        "range_bar"
+            | "tick_bar"
+            | "volume_bar"
+            | "dollar_bar"
+            | "tick_imbalance_bar"
+            | "volume_imbalance_bar"
+            | "run_bar"
+    )
+}
+
 pub fn ts_shadow_for_chart_type(chart_type: &str, bubble: &DataBubble) -> Option<Vec<Bar>> {
     match chart_type {
         "renko" | "pnf" | "kagi" | "three_line_break" => {

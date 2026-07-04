@@ -269,6 +269,13 @@ pub struct ChartRenderState<'a> {
     /// timestamps. Forwarded to `TimeScale::generate_ticks` to bypass the
     /// uniform-spacing heuristic entirely.
     pub non_temporal_axis: bool,
+    /// True for the counted-bar family (range/tick/volume/dollar/tick-imbalance/
+    /// volume-imbalance/run bars) — hides the vertical time GRID only. Unlike
+    /// `non_temporal_axis`, calendar/time labels stay visible: counted bars
+    /// carry real per-bar timestamps, so the non-uniform tick path still
+    /// labels them meaningfully; only the uniform-spacing grid lines are
+    /// misleading and get suppressed.
+    pub hide_time_grid: bool,
 }
 
 impl<'a> ChartRenderState<'a> {
@@ -284,6 +291,25 @@ impl<'a> ChartRenderState<'a> {
             || self.pnf_columns.is_some()
             || self.kagi_segments.is_some()
             || self.three_line_break.is_some()
+    }
+
+    /// True when there is ANY series data to paint — either kline `bars`, or
+    /// a populated own-slot for a chart type that renders from a derived
+    /// series (footprint / renko / PnF / Kagi / three-line-break / TPO / CVD
+    /// / DOM heatmap / liquidation heatmap). The kline-loading skeleton gate
+    /// must NOT blank these chart types just because klines haven't landed
+    /// yet — their primary data lives in the own-slot, not in `bars`.
+    pub fn has_any_series_data(&self) -> bool {
+        !self.bars.is_empty()
+            || self.footprint_bars.is_some_and(|s| !s.is_empty())
+            || self.renko_bars.is_some_and(|s| !s.is_empty())
+            || self.pnf_columns.is_some_and(|s| !s.is_empty())
+            || self.kagi_segments.is_some_and(|s| !s.is_empty())
+            || self.three_line_break.is_some_and(|s| !s.is_empty())
+            || self.tpo_sessions.is_some_and(|s| !s.is_empty())
+            || self.cvd_line.is_some_and(|s| !s.is_empty())
+            || self.dom_heatmap_ref.is_some()
+            || self.liq_heatmap_ref.is_some()
     }
 }
 
