@@ -599,19 +599,14 @@ impl ChartApp {
                                                 self.core.bubbles_mut().set_timeframe(active_bid, footprint_tf);
                                             }
                                             self.core.bridge.request_footprint(self.active_exchange, &symbol, at, iv);
-                                            // Auto-enable the CVD sub-pane when
-                                            // switching to footprint (owner rule
-                                            // 2026-07-05): CVD is footprint's
-                                            // native companion. Idempotent —
-                                            // does nothing if already on.
-                                            let already_on = self.panel_app.panel_grid.active_container()
-                                                .map(|w| w.cvd_show).unwrap_or(false);
-                                            if !already_on {
-                                                if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                                                    w.cvd_show = true;
-                                                }
-                                                self.core.bridge.request_cvd_line(self.active_exchange, &symbol, at);
-                                            }
+                                            // The CVD sub-pane companion for footprint
+                                            // is now handled uniformly by
+                                            // `sync_default_indicators_for_chart_type`
+                                            // at the tail of Step 6 (adds the real
+                                            // mli `CVD` indicator to the chart's
+                                            // bubble, computed off the bar stream
+                                            // like MACD/RSI — no bespoke sub, no
+                                            // bespoke render path).
                                         }
                                         "renko" => {
                                             // Default: 0.5 % of last close for the box size; reversal = 2 (TradeStation classic).
@@ -725,6 +720,15 @@ impl ChartApp {
                                             }
                                         }
                                     }
+                                    // Owner rule 2026-07-05: each chart_type
+                                    // has a canonical companion indicator that
+                                    // opens automatically alongside the base
+                                    // series (footprint → CVD). Uses the real
+                                    // mli catalog id (`CVD`), so the sub-pane
+                                    // is populated by the same trubopipeline
+                                    // that drives MACD/RSI — no bespoke
+                                    // sub-scription, no bespoke render path.
+                                    self.sync_default_indicators_for_chart_type(cid, ct);
                                 }
                             }
                         }
@@ -2372,6 +2376,99 @@ impl ChartApp {
         }
     }
 
+    /// Reconcile the chart's set of "default companion" indicators against
+    /// what the new `chart_type` calls for.
+    ///
+    /// Owner rule (2026-07-05): each chart_type has one canonical companion
+    /// indicator that opens alongside the base series (footprint → CVD;
+    /// klines/candles → currently none, reserved for future Volume). Add if
+    /// missing, remove if the chart_type no longer wants it. Idempotent —
+    /// safe to call on every ChangeChartType, including no-op switches.
+    ///
+    /// Uses the real mli catalog id (`CVD`, `Vdelta`, ...), so the sub-pane
+    /// is populated by the same pipeline that drives MACD/RSI — no bespoke
+    /// subscription, no bespoke renderer.
+    pub(crate) fn sync_default_indicators_for_chart_type(
+        &mut self,
+        cid: mlc_core::ids::ChartId,
+        chart_type: &str,
+    ) {
+        // Companion indicator per chart_type. Extend the table when adding
+        // more auto-pairs (klines → Volume, tpo → VolumeProfile, ...).
+        let wanted: &[&str] = match chart_type {
+            "footprint" => &["CVD"],
+            _ => &[],
+        };
+
+        let bid = match self.bubble_for_chart(cid) {
+            Some(b) => b,
+            None => return,
+        };
+
+        // Instance type_ids in the manager are lowercased on create
+        // (indicator_bridge.rs). Compare on lowercase both sides.
+        let existing_type_ids: Vec<String> = self
+            .core
+            .indicators()
+            .instances_for_bubble(bid)
+            .into_iter()
+            .map(|inst| inst.type_id.to_lowercase())
+            .collect();
+
+        // ── Add missing companions ──────────────────────────────────
+        let bars: Vec<mlc_core::Bar> = self
+            .with_bubble(bid, |b| b.bars.clone())
+            .unwrap_or_default();
+        for id in wanted {
+            let lower = id.to_lowercase();
+            if existing_type_ids.iter().any(|t| *t == lower) {
+                continue;
+            }
+            let new_id_opt = self.core.indicators_mut().add(Some(bid), id);
+            if let Some(new_id) = new_id_opt {
+                if !bars.is_empty() {
+                    self.core.indicators_mut().recalc_bubble(bid, &bars);
+                }
+                self.push_undo_command(mlc_core::Command::AddIndicator {
+                    instance_id: new_id,
+                    type_id: id.to_string(),
+                    params_json: String::new(),
+                });
+                eprintln!(
+                    "[ChartApp] auto-added default indicator '{}' (id={}) for chart_type='{}'",
+                    id, new_id, chart_type
+                );
+            }
+        }
+
+        // ── Remove companions no longer wanted for this chart_type ──
+        // Set of default-companion type_ids across ALL chart_types — used
+        // to decide "is this instance a default we own?" so we never touch
+        // user-added indicators of the same type_id. Deliberately narrow:
+        // only ids we ever auto-add belong here.
+        const AUTO_MANAGED: &[&str] = &["cvd"];
+        let wanted_lower: Vec<String> = wanted.iter().map(|s| s.to_lowercase()).collect();
+        let to_remove: Vec<u64> = self
+            .core
+            .indicators()
+            .instances_for_bubble(bid)
+            .into_iter()
+            .filter(|inst| {
+                let t = inst.type_id.to_lowercase();
+                AUTO_MANAGED.contains(&t.as_str()) && !wanted_lower.contains(&t)
+            })
+            .map(|inst| inst.id)
+            .collect();
+        for id in to_remove {
+            self.delete_indicator_instance(id);
+            eprintln!(
+                "[ChartApp] auto-removed default indicator id={} on switch to chart_type='{}'",
+                id, chart_type
+            );
+        }
+
+        self.sync_sub_panes_from_manager();
+    }
 }
 
 /// Per-chart-type minimum-usable `bar_spacing` (px), enforced on
