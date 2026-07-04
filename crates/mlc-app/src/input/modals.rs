@@ -1003,6 +1003,17 @@ impl ChartApp {
                         self.modal_state.close();
                     }
                     OpenModal::IndicatorSearch => {
+                        // Opaque host-driven overlays (Volume Profile / OI Delta /
+                        // Funding Rate / CVD) are catalog entries for discoverability
+                        // only — they carry no `machine_id` in mli and are not
+                        // computed through `IndicatorManager`. Intercept here and
+                        // dispatch the existing Toggle event instead of falling
+                        // through to the regular add() path below.
+                        if let Some(event) = crate::overlay_toggle_for_catalog_id(item_id) {
+                            self.process_chart_out_event(event);
+                            self.modal_state.close();
+                            return;
+                        }
                         // Create indicator instance from catalog — bound to the active
                         // window, NOT to the symbol it currently displays.
                         let type_id_str = item_id.to_string();

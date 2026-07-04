@@ -71,3 +71,9 @@ uzor-render-canvas2d  = { path = "../uzor/uzor-render-canvas2d" }
 digdigdig3 = { path = "../digdigdig3/crates/digdigdig3" }
 digdigdig3-station = { path = "../digdigdig3/crates/digdigdig3-station" }
 digdigdig3-core = { path = "../digdigdig3/crates/dig3-core" }
+# Local mli (mylittleindicators) path build — same policy as uzor/dig3.
+# Pin in mlc-backend-indicator-engine/Cargo.toml stays at the published
+# 0.1.8; the patch resolves it to the working tree so in-flight catalog
+# changes (e.g. the overlay_* opaque overlay ids) are picked up without a
+# publish round-trip. Keep the pin == published mli version on every bump.
+mylittleindicators = { path = "../mylittleindicators" }

@@ -784,6 +784,16 @@ impl ChartApp {
             None => return,
         };
 
+        // Symmetric guard for the add-side intercept in modals.rs: an
+        // opaque host-driven overlay (Volume Profile / OI Delta / Funding
+        // Rate / CVD) never becomes a real `IndicatorInstance`, so this
+        // branch is not reachable in the current UI flow — kept for
+        // correctness if a caller ever passes an `overlay_*` backing id.
+        if let Some(event) = crate::overlay_toggle_for_catalog_id(&type_id) {
+            self.process_chart_out_event(event);
+            return;
+        }
+
         self.push_undo_command(mlc_core::Command::RemoveIndicator {
             instance_id: id,
             type_id: type_id.clone(),

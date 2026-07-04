@@ -178,6 +178,29 @@ pub fn account_type_to_label(at: digdigdig3::AccountType) -> &'static str {
 }
 
 // =============================================================================
+// Opaque overlay catalog ids
+// =============================================================================
+
+/// Map a catalog `type_id` chosen from the unified indicator picker to the
+/// [`mlc_core::events::ChartOutEvent`] Toggle variant that drives it, if it
+/// is one of the four opaque host-driven overlays (Volume Profile / OI Delta
+/// / Funding Rate / CVD). These ids carry the `overlay_` prefix in mli's
+/// catalog (`mylittleindicators::bar_indicators::overlay::overlay_catalog`)
+/// specifically so they can never collide with the real compute-indicator
+/// ids `volume_profile` / `cvd`. Returns `None` for every other catalog id
+/// — callers fall through to the regular `IndicatorManager::add` path.
+pub fn overlay_toggle_for_catalog_id(type_id: &str) -> Option<mlc_core::events::ChartOutEvent> {
+    use mlc_core::events::ChartOutEvent;
+    match type_id {
+        "overlay_volume_profile" => Some(ChartOutEvent::ToggleVolumeProfileOverlay),
+        "overlay_oi_delta" => Some(ChartOutEvent::ToggleOpenInterestOverlay),
+        "overlay_funding_rate" => Some(ChartOutEvent::ToggleFundingRateStrip),
+        "overlay_cvd" => Some(ChartOutEvent::ToggleCvdOverlay),
+        _ => None,
+    }
+}
+
+// =============================================================================
 // Timeframe parsing
 // =============================================================================
 
