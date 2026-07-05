@@ -134,7 +134,7 @@ impl ChartApp {
                                             "area"           => "area",
                                             "hlc_area"       => "hlc_area",
                                             "baseline"       => "baseline",
-                                            "histogram"      => "histogram",
+                                            // legacy "histogram" chart_type migrates to candles (removed 2026-07-05)
                                             "columns"        => "columns",
                                             _                => "candles",
                                         };
@@ -451,7 +451,7 @@ impl ChartApp {
                                         "area"           => "area",
                                         "hlc_area"       => "hlc_area",
                                         "baseline"       => "baseline",
-                                        "histogram"      => "histogram",
+                                        // legacy "histogram" chart_type migrates to candles (removed 2026-07-05)
                                         "columns"        => "columns",
                                         _                => "candles",
                                     };

@@ -241,7 +241,6 @@ pub fn top_toolbar() -> PanelToolbarDef {
                 DropdownItemDef::Separator,
                 DropdownItemDef::action("hlc_area", "HLC Area").with_icon(ToolbarIconId::new("HlcArea")),
                 DropdownItemDef::action("baseline", "Baseline").with_icon(ToolbarIconId::new("Baseline")),
-                DropdownItemDef::action("histogram", "Histogram").with_icon(ToolbarIconId::new("Histogram")),
                 DropdownItemDef::action("columns", "Columns").with_icon(ToolbarIconId::new("Columns")),
             ]).with_icon(ToolbarIconId::new("Candlestick"))
               .with_tooltip(t_toolbar(TK::ChartType)),
@@ -307,7 +306,9 @@ fn chart_type_items() -> Vec<DropdownItemDef> {
         DropdownItemDef::Separator,
         DropdownItemDef::action("hlc_area", MK::HlcArea.get(lang)).with_icon(ToolbarIconId::new("HlcArea")),
         DropdownItemDef::action("baseline", MK::Baseline.get(lang)).with_icon(ToolbarIconId::new("Baseline")),
-        DropdownItemDef::action("histogram", MK::Histogram.get(lang)).with_icon(ToolbarIconId::new("Histogram")),
+        // "histogram" removed 2026-07-05 (owner): it rendered VOLUME instead
+        // of price — a lightweight-charts SERIES type mistakenly ported as a
+        // chart style. The VOLUME indicator owns that visual now.
         DropdownItemDef::action("columns", MK::Columns.get(lang)).with_icon(ToolbarIconId::new("Columns")),
         // ── Derived chart types — bars built from trades by dig3-station ─────
         // Each row carries an inline numeric/text input on the right edge so

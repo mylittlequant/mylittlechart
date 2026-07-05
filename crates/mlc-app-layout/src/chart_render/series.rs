@@ -6,7 +6,7 @@
 //!
 //! - `draw_line_series()` - Simple line connecting close prices
 //! - `draw_area_series()` - Filled area under line
-//! - `draw_histogram()` - Volume/histogram bars
+
 //! - `draw_baseline_series()` - Split fill above/below baseline
 //! - `draw_step_line()` - Staircase pattern line
 //! - `draw_line_with_markers()` - Line with dot markers
@@ -114,57 +114,11 @@ pub fn draw_area_series(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     ctx.stroke();
 }
 
-/// Draw histogram bars (volume bars) from bar data
-///
-/// Bars are drawn from bottom, scaled to 30% of chart height.
-/// Color based on bullish/bearish direction.
-pub fn draw_histogram(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
-    let rect = &state.chart_rect;
-    let viewport = state.viewport;
-    let theme = state.theme;
-    let bars = state.bars;
-
-    let (start, end) = viewport.visible_range();
-    let end = end.min(bars.len());
-
-    if start >= end {
-        return;
-    }
-
-    let bar_w = (viewport.bar_width() * 0.6).max(2.0);
-
-    // Find volume range for scaling
-    let mut vol_min = f64::MAX;
-    let mut vol_max = f64::MIN;
-    for bar in bars.iter().take(end).skip(start) {
-        let v = bar.volume;
-        if v < vol_min { vol_min = v; }
-        if v > vol_max { vol_max = v; }
-    }
-    if vol_max <= vol_min {
-        vol_max = vol_min + 1.0;
-    }
-
-    let bottom_y = rect.bottom();
-    let max_height = rect.height * 0.3; // 30% of chart height
-
-    for (i, bar) in bars.iter().enumerate().take(end).skip(start) {
-        let x = rect.x + viewport.x_for_bar(i, bar.ts_ms());
-
-        // Scale volume to height
-        let vol_ratio = (bar.volume - vol_min) / (vol_max - vol_min);
-        let h = (vol_ratio * max_height).max(1.0);
-
-        let color = if bar.is_bullish() {
-            &theme.candle_up
-        } else {
-            &theme.candle_down
-        };
-
-        ctx.set_fill_color(color);
-        ctx.fill_rect(x - bar_w / 2.0, bottom_y - h, bar_w, h);
-    }
-}
+// NOTE: `draw_histogram` (the "histogram" CHART TYPE — a full-pane VOLUME
+// render with no price series) was removed 2026-07-05. It was a
+// lightweight-charts SERIES type mistakenly ported as a chart style; the
+// VOLUME indicator (main-pane bottom overlay via `draw_volume_overlay`)
+// owns that visual now.
 
 /// Draw baseline series (area fill above/below baseline with color coding)
 ///

@@ -344,7 +344,9 @@ impl ChartApp {
                     "area"          => Some("area"),
                     "hlc_area"      => Some("hlc_area"),
                     "baseline"      => Some("baseline"),
-                    "histogram"     => Some("histogram"),
+                    // "histogram" removed 2026-07-05 — it drew VOLUME, not
+                    // price (lightweight-charts series type mis-ported as a
+                    // chart style); legacy saves fall through to "candles".
                     "columns"       => Some("columns"),
                     // Phase 2C: derived bar streams from dig3-station — own
                     // subscription, no per-frame folding. Bars arrive via
@@ -2497,7 +2499,7 @@ impl ChartApp {
             // no kline backdrop to pin a bottom histogram against.
             "candles" | "hollow_candles" | "heikin_ashi" | "bars"
             | "line" | "step_line" | "line_markers" | "area" | "hlc_area"
-            | "baseline" | "histogram" | "columns" => &["VOLUME"],
+            | "baseline" | "columns" => &["VOLUME"],
             _ => &[],
         };
 

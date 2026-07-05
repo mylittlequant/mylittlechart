@@ -57,7 +57,7 @@ pub use funding_rate::draw_funding_rate_strip;
 pub use dom_heatmap::draw_dom_heatmap;
 pub use liquidation_heatmap::draw_liquidation_heatmap;
 pub use series::{
-    draw_line_series, draw_area_series, draw_histogram,
+    draw_line_series, draw_area_series,
     draw_baseline_series, draw_step_line, draw_line_with_markers,
     draw_line_from_data, draw_hlc_area, draw_columns, draw_compare_overlay,
 };
