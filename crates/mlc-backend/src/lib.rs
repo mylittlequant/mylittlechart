@@ -1197,6 +1197,13 @@ impl BackendCore {
                             // anchor collapses, leaving the viewport pinned to
                             // the historic index whenever bars grow underneath).
                             let mut mgr = self.bubbles_mut();
+                            // bars-ownership gate: a footprint-owned bubble's
+                            // bar series is written by FootprintUpdate; a kline
+                            // REST load for the same instrument (another
+                            // window, hydration seed) must not stomp it.
+                            if mgr.bars_source(bid) == crate::bubble::BarsSource::FootprintOhlc {
+                                continue;
+                            }
                             let prev_bars = mgr.bars(bid).to_vec();
                             mgr.replace_bars(bid, bars.clone());
                             drop(mgr);
@@ -1222,6 +1229,10 @@ impl BackendCore {
                         // bubble.bars before overwrite so the reactor's
                         // capture_view_anchor sees real prior state.
                         let mut mgr = self.bubbles_mut();
+                        // bars-ownership gate (see BarsLoaded arm).
+                        if mgr.bars_source(bid) == crate::bubble::BarsSource::FootprintOhlc {
+                            continue;
+                        }
                         let prev_bars = mgr.bars(bid).to_vec();
                         mgr.replace_bars(bid, bars.clone());
                         drop(mgr);
@@ -1252,6 +1263,10 @@ impl BackendCore {
                         .bubbles_for_instrument(exchange_id.as_str(), &at_label, &symbol);
                     for bid in bids {
                         let mut mgr = self.bubbles_mut();
+                        // bars-ownership gate (see BarsLoaded arm).
+                        if mgr.bars_source(bid) == crate::bubble::BarsSource::FootprintOhlc {
+                            continue;
+                        }
                         let merged = mgr.merge_scroll_bars(bid, &bars);
                         drop(mgr);
                         events.push(BubbleEvent::ScrollBarsAppended {
@@ -1439,6 +1454,14 @@ impl BackendCore {
                     let bids = self.bubbles()
                         .bubbles_for_instrument(exchange_id.as_str(), &fp_at_label, fp_sym.as_str());
                     for bid in bids {
+                        // bars-ownership gate, mirror image of the kline arms:
+                        // footprint OHLC lands ONLY in the bubble whose window
+                        // is actually in footprint mode. Without this, a
+                        // candles window on the same instrument gets 1m-bucket
+                        // footprint bars interleaved into its own timeline.
+                        if self.bubbles().bars_source(bid) != crate::bubble::BarsSource::FootprintOhlc {
+                            continue;
+                        }
                         {
                             self.bubbles_mut().with_bubble_mut(bid, |bubble| {
                                 let prev_cvd = {

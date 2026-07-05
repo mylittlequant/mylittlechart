@@ -1670,6 +1670,11 @@ impl ChartApp {
                 bridge.ensure_connector(eid);
                 bridge.request_bars(eid, sym, tf, at, None, Some(app.core.user().profile().domain.bar_count as usize), false);
             }
+            // Footprint windows: ignite the derived pipeline + stamp bar-series
+            // ownership (the kline request above is dropped by the ownership
+            // gate for these bubbles). Runs synchronously right after, so the
+            // flag lands before any REST response can.
+            app.ignite_footprint_windows();
 
             // Defer viewport positioning until the first resize() when chart_width is known.
             app.needs_initial_viewport_fit = true;
@@ -2618,6 +2623,9 @@ impl ChartApp {
                     bridge.request_bars(eid, sym, tf, at, None, Some(app.core.user().profile().domain.bar_count as usize), false);
                     nw_reqbars_n += 1;
                 }
+                // Footprint windows: ignite the derived pipeline + ownership
+                // stamp (see the startup post-load loop for rationale).
+                app.ignite_footprint_windows();
                 let nw_reqbars_us = _t_nw_reqbars.elapsed().as_micros();
 
                 let nw_cold_us = _t_nw_cold.elapsed().as_micros();

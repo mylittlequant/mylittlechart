@@ -9,6 +9,25 @@ use mlc_core::instrument::InstrumentAddress;
 use mlc_core::state::CommandHistory;
 use mlc_core::state::Timeframe;
 
+/// Ownership marker for `DataBubble.bars` (single-writer contract).
+///
+/// `Kline` (default): the kline family owns `bars` — REST loads
+/// (`BarsLoaded`/`BackfillComplete`/`ScrollBarsLoaded`), live kline WS
+/// (`BarUpdate`) and trade-built bars (`TradeUpdate`) may write.
+///
+/// `FootprintOhlc`: the footprint pipeline owns `bars` — each
+/// `FootprintUpdate` upserts the bar built from the FootprintPoint's own
+/// OHLC, and every kline-family writer must drop its write for this
+/// bubble. Set by the footprint arm of `ChangeChartType` (and preset
+/// hydration of a footprint window); reset to `Kline` on switch to any
+/// other chart type.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum BarsSource {
+    #[default]
+    Kline,
+    FootprintOhlc,
+}
+
 /// A mathematical data space: bars, primitives, indicator configs, alerts,
 /// and derived series for one instrument+timeframe.
 ///
@@ -78,8 +97,25 @@ pub struct DataBubble {
     // =========================================================================
 
     /// OHLC bars for the bubble's instrument. Written by `BarsLoaded`,
-    /// `BackfillComplete`, `ScrollBarsLoaded`, `BarUpdate`, `TradeUpdate`.
+    /// `BackfillComplete`, `ScrollBarsLoaded`, `BarUpdate`, `TradeUpdate`
+    /// — but ONLY while `bars_source == BarsSource::Kline`. See
+    /// [`BarsSource`] for the ownership contract.
     pub bars: Vec<mlc_core::Bar>,
+
+    /// Who owns writes into `bars` right now (single-writer contract).
+    ///
+    /// Footprint is the one chart type whose own derived pipeline
+    /// (`FootprintUpdate`) writes OHLC bars into `bars` while the window
+    /// stays on a TIME timeframe — so the tick-TF exclusion that protects
+    /// range/volume/tick bubbles does not fire, and five independent kline
+    /// writers (live kline WS `BarUpdate`, trade-built bars from
+    /// `TradeUpdate`, `BarsLoaded` REST replace, `BackfillComplete`,
+    /// `ScrollBarsLoaded`) were interleaving a 2000-bar kline timeline with
+    /// the ~N footprint-derived bars, desyncing the index axis (blank
+    /// clusters, grid drift, phantom X labels). Every kline-family writer
+    /// MUST check this flag before touching `bars`; `FootprintUpdate`
+    /// writes only when it holds ownership.
+    pub bars_source: BarsSource,
 
     /// Footprint cluster bars. Written by `FootprintUpdate`.
     pub footprint_bars: Option<Vec<mlc_core::types::FootprintBar>>,
@@ -178,6 +214,7 @@ impl DataBubble {
             prev_close_price: None,
             connection_status: ConnectionStatus::default(),
             bars: Vec::new(),
+            bars_source: BarsSource::default(),
             footprint_bars: None,
             renko_bars: None,
             three_line_break: None,
@@ -343,6 +380,7 @@ impl Clone for DataBubble {
             connection_status: self.connection_status,
             // === Per-Kind storage (Phase X0) ===
             bars: self.bars.clone(),
+            bars_source: self.bars_source,
             footprint_bars: self.footprint_bars.clone(),
             renko_bars: self.renko_bars.clone(),
             three_line_break: self.three_line_break.clone(),

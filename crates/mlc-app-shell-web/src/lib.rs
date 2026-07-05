@@ -366,6 +366,29 @@ fn run_render_loop(
                     )
                 }))
                 .unwrap_or_else(|| ("<none>".to_string(), 0.0, 0.0, 0.0));
+            // Footprint-hang diag (handoff 2026-07-05 §2.1-2.3): expose BOTH
+            // series' extents + the derived-seed flag so the cluster/grid
+            // drift and the cold-open spinner can be diagnosed from live
+            // numbers instead of code-guessing.
+            let (first_ts_bubble, fp_len, fp_first_ts, fp_last_ts, fp_last_cum_delta) = active_bid
+                .and_then(|bid| st.chart.with_bubble(bid, |b| {
+                    let fp = b.footprint_bars.as_deref().unwrap_or(&[]);
+                    (
+                        b.bars.first().map(|x| x.timestamp as f64).unwrap_or(0.0),
+                        fp.len() as f64,
+                        fp.first().map(|x| x.open_time as f64).unwrap_or(0.0),
+                        fp.last().map(|x| x.open_time as f64).unwrap_or(0.0),
+                        fp.last().map(|x| x.cumulative_delta).unwrap_or(0.0),
+                    )
+                }))
+                .unwrap_or((0.0, 0.0, 0.0, 0.0, 0.0));
+            let chart_type = active_cid
+                .and_then(|cid| st.chart.chart_type_for_chart(cid))
+                .unwrap_or("<none>");
+            let seed_in_flight = active_cid
+                .and_then(|cid| st.chart.panel_app.panel_grid.containers().get(&cid))
+                .map(|w| w.derived_seed_in_flight.is_some())
+                .unwrap_or(false);
             let (view_start, bar_spacing, chart_width, bar_count_vp) = active_cid
                 .and_then(|cid| st.chart.panel_app.panel_grid.containers().get(&cid))
                 .map(|w| (
@@ -384,6 +407,13 @@ fn run_render_loop(
             let _ = js_sys::Reflect::set(&dbg, &"bar_spacing".into(), &bar_spacing.into());
             let _ = js_sys::Reflect::set(&dbg, &"chart_width".into(), &chart_width.into());
             let _ = js_sys::Reflect::set(&dbg, &"bar_count_vp".into(), &bar_count_vp.into());
+            let _ = js_sys::Reflect::set(&dbg, &"chart_type".into(), &chart_type.into());
+            let _ = js_sys::Reflect::set(&dbg, &"first_ts_bubble".into(), &first_ts_bubble.into());
+            let _ = js_sys::Reflect::set(&dbg, &"fp_len".into(), &fp_len.into());
+            let _ = js_sys::Reflect::set(&dbg, &"fp_first_ts".into(), &fp_first_ts.into());
+            let _ = js_sys::Reflect::set(&dbg, &"fp_last_ts".into(), &fp_last_ts.into());
+            let _ = js_sys::Reflect::set(&dbg, &"fp_last_cum_delta".into(), &fp_last_cum_delta.into());
+            let _ = js_sys::Reflect::set(&dbg, &"seed_in_flight".into(), &seed_in_flight.into());
 
             // Compare overlay diag — for debugging the compare-chart retry path.
             // Shows what compare series are currently mounted on the active

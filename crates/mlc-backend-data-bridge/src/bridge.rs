@@ -1848,16 +1848,27 @@ impl DataBridge {
         let kline_iv = KlineInterval::new(interval);
         let stream = digdigdig3_station::Stream::Footprint(kline_iv);
         let warm_n = self.derived_warm_for_key(exchange_id, symbol, account_type, &stream);
-        if let Ok(mut m) = self.footprint_active_interval.lock() {
-            m.insert((exchange_id, symbol.to_string(), account_type), interval.to_string());
-        }
+        let interval_changed = if let Ok(mut m) = self.footprint_active_interval.lock() {
+            let prev = m.insert((exchange_id, symbol.to_string(), account_type), interval.to_string());
+            prev.is_some_and(|p| p != interval)
+        } else {
+            false
+        };
 
         // Get-or-create the per-key footprint Vec BEFORE spawning the
-        // forwarder so the first event has a place to land.
+        // forwarder so the first event has a place to land. The key carries
+        // no interval — on a bucket-interval change the old points belong to
+        // a different timeline, so start the Vec over instead of upserting
+        // 5m points after 1m ones.
         let series: SharedFootprintSeries = self.footprint_series
             .entry((exchange_id, account_type, symbol.to_string()))
             .or_insert_with(|| Arc::new(tokio::sync::RwLock::new(Vec::new())))
             .clone();
+        if interval_changed {
+            if let Ok(mut w) = series.try_write() {
+                w.clear();
+            }
+        }
 
         let handle = self.spawn_footprint_sub(
             station, tx, series, exchange_id, account_type,

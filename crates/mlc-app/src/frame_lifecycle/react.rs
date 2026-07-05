@@ -601,6 +601,15 @@ impl ChartApp {
 
                 for bid_bu in &target_bubbles_bu {
                     let is_new = self.core.bubbles_mut().with_bubble_mut(*bid_bu, |bubble| {
+                        // bars-ownership gate: footprint is in the is_derived
+                        // set above, but its bars come from FootprintUpdate —
+                        // a live kline BarUpdate for the same instrument must
+                        // not interleave here. Range/volume/tick bubbles keep
+                        // the default Kline source, so their station-written
+                        // BarUpdate stream passes unchanged.
+                        if bubble.bars_source == mlc_backend::bubble::BarsSource::FootprintOhlc {
+                            return false;
+                        }
                         let last_ts = bubble.bars.last().map(|b| b.timestamp);
                         if last_ts == Some(bar.timestamp) {
                             if let Some(last) = bubble.last_bar_mut() {
@@ -734,6 +743,14 @@ impl ChartApp {
 
                 for (bid_tu, period_secs) in &bubble_periods {
                     let outcome = self.core.bubbles_mut().with_bubble_mut(*bid_tu, |bubble| {
+                        // bars-ownership gate: footprint-owned bubbles get their
+                        // OHLC from FootprintUpdate; trade-built bars would
+                        // interleave a second timeline (the tick-TF exclusion
+                        // above never fires for footprint — its TF is a time
+                        // bucket like "1m").
+                        if bubble.bars_source == mlc_backend::bubble::BarsSource::FootprintOhlc {
+                            return (false, false);
+                        }
                         if let Some(last_ts) = bubble.bars.last().map(|b| b.timestamp) {
                             let candle_end = last_ts + period_secs;
                             if trade_ts_secs >= candle_end {
@@ -786,6 +803,10 @@ impl ChartApp {
                 if needs_backfill {
                     let bridge = self.core.bridge.clone();
                     for cid in self.panel_app.panel_grid.containers().keys() {
+                        // Footprint windows own their bar series — a kline
+                        // REST refill would be dropped by the BarsLoaded
+                        // ownership gate anyway; don't spend the request.
+                        if self.chart_type_for_chart(*cid) == Some("footprint") { continue; }
                         let sym_match = self.symbol_for_chart(*cid).map_or(false, |s| s == *symbol);
                         let win_at = self.account_type_for_chart(*cid);
                         let at_match = win_at.map_or(false, |at| at == trade_event_at);
@@ -859,6 +880,9 @@ impl ChartApp {
                 }
                 drop(wl_guard);
                 for (cid, _) in self.panel_app.panel_grid.containers().iter() {
+                    // Footprint windows own their bar series (see BarsLoaded
+                    // ownership gate) — skip the kline refetch.
+                    if self.chart_type_for_chart(*cid) == Some("footprint") { continue; }
                     let sym = self.symbol_for_chart(*cid).unwrap_or_default();
                     if sym.is_empty() { continue; }
                     let exch = self.exchange_for_chart(*cid).unwrap_or_default();

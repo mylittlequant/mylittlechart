@@ -118,6 +118,10 @@ impl<'a> Bubbles<'a> {
         self.store.bars(bid)
     }
 
+    pub fn bars_source(&self, bid: BubbleId) -> super::data_bubble::BarsSource {
+        self.store.bars_source(bid)
+    }
+
     pub fn footprint_bars(&self, bid: BubbleId) -> Option<&[mlc_core::types::FootprintBar]> {
         self.store.footprint_bars(bid)
     }
@@ -303,6 +307,10 @@ impl<'a> BubblesMut<'a> {
 
     pub fn bars(&self, bid: BubbleId) -> &[mlc_core::Bar] {
         self.store.bars(bid)
+    }
+
+    pub fn bars_source(&self, bid: BubbleId) -> super::data_bubble::BarsSource {
+        self.store.bars_source(bid)
     }
 
     pub fn symbol(&self, bid: BubbleId) -> Option<&str> {

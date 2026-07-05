@@ -484,8 +484,12 @@ impl ChartApp {
                                         | Some("volume_imbalance_bar") | Some("run_bar")
                                         | Some("dom_heatmap") | Some("liquidation_heatmap")
                                     );
-                                    let target_needs_kline_backdrop = matches!(ct, "footprint");
-                                    if was_kline_family && is_derived_target && !target_needs_kline_backdrop && !on_tick_tf {
+                                    // NOTE: footprint used to be exempted here via a
+                                    // `target_needs_kline_backdrop` flag — stale since
+                                    // 441d623d dropped the kline backdrop (footprint IS
+                                    // its own OHLC series). It now releases the shared
+                                    // kline forwarder like every other derived type.
+                                    if was_kline_family && is_derived_target && !on_tick_tf {
                                         let still_needed = self.panel_app.panel_grid.containers().iter()
                                             .any(|(other_cid, _)| {
                                                 if *other_cid == cid { return false; }
@@ -505,7 +509,7 @@ impl ChartApp {
                                                     | "dollar_bar" | "tick_imbalance_bar"
                                                     | "volume_imbalance_bar" | "run_bar"
                                                     | "dom_heatmap" | "liquidation_heatmap"
-                                                ) || other_ct == "footprint"
+                                                )
                                             });
                                         if !still_needed {
                                             self.core.bridge.abort_kline_bars(self.active_exchange, &symbol, at, &tf.name);
@@ -538,6 +542,19 @@ impl ChartApp {
                                     if let Some(bid) = self.bubble_for_chart(cid) {
                                         self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
                                             bubble.clear_derived_slots(Some(ct));
+                                            // Single-writer ownership of bubble.bars:
+                                            // footprint's own pipeline writes the bar
+                                            // series; every other chart type returns
+                                            // ownership to the kline family. Set here
+                                            // (one choke point for every switch) so
+                                            // the kernel/reactor write gates see the
+                                            // right owner before the first event of
+                                            // the new mode lands.
+                                            bubble.bars_source = if ct == "footprint" {
+                                                mlc_backend::bubble::BarsSource::FootprintOhlc
+                                            } else {
+                                                mlc_backend::bubble::BarsSource::Kline
+                                            };
                                         });
                                     }
                                     let _ = is_derived_target; // axis flip done in prepare_frame
@@ -579,11 +596,18 @@ impl ChartApp {
                                             //   4. dispatch request_footprint (its
                                             //      internal REST + WS sub target
                                             //      the new interval automatically).
-                                            if tf.name != iv {
-                                                self.core.bridge.abort_kline_bars(
-                                                    self.active_exchange, &symbol, at, &tf.name,
-                                                );
-                                            }
+                                            // Unconditional: footprint owns its OHLC
+                                            // timeline (441d623d dropped the kline
+                                            // backdrop). The old `tf.name != iv`
+                                            // guard left the live kline sub running
+                                            // whenever the chart was ALREADY on the
+                                            // bucket interval (1m chart → footprint
+                                            // 1m) — that surviving sub was one of
+                                            // the five writers interleaving a kline
+                                            // timeline into bubble.bars.
+                                            self.core.bridge.abort_kline_bars(
+                                                self.active_exchange, &symbol, at, &tf.name,
+                                            );
                                             let iv_ms = match iv {
                                                 "1m" => 60_000, "3m" => 180_000, "5m" => 300_000,
                                                 "15m" => 900_000, "30m" => 1_800_000,
@@ -845,6 +869,32 @@ impl ChartApp {
                             let eid_str = self.active_exchange.as_str();
                             if self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
                                 let at = mlc_backend_data_bridge::account_type_to_dig3(at);
+                                // Bucket-interval change re-subscribes on the SAME
+                                // chart_type — ChangeChartType's clear never fires
+                                // (same class of bug as the D9 param-change fix).
+                                // Old-interval clusters and bars are semantically
+                                // incompatible with the new bucket timeline: clear
+                                // both slots and re-stamp the bubble TF before the
+                                // re-subscribe repopulates from scratch.
+                                let iv_ms = match static_iv {
+                                    "1m" => 60_000, "5m" => 300_000, "15m" => 900_000,
+                                    "30m" => 1_800_000, "1h" => 3_600_000, "4h" => 14_400_000,
+                                    _ => 60_000,
+                                };
+                                if let Some(bid) = self.bubble_for_chart(cid) {
+                                    self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
+                                        bubble.clear_footprint();
+                                        bubble.clear_bars();
+                                        bubble.bars_source = mlc_backend::bubble::BarsSource::FootprintOhlc;
+                                    });
+                                    self.core.bubbles_mut().set_timeframe(
+                                        bid, mlc_core::state::Timeframe::new(static_iv, iv_ms),
+                                    );
+                                }
+                                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                                    window.begin_fresh_load();
+                                    window.needs_snap_after_backfill = true;
+                                }
                                 self.core.bridge.request_footprint(self.active_exchange, &symbol, at, static_iv);
                             }
                         }
@@ -2373,6 +2423,50 @@ impl ChartApp {
 
         if state_mutated {
             self.autosave_snapshot();
+        }
+    }
+
+    /// Ignite the footprint pipeline for every restored window whose
+    /// chart_type is `footprint`.
+    ///
+    /// The startup / new-window post-load loops only fire kline
+    /// `request_bars` — a hydrated footprint window never went through
+    /// ChangeChartType's Step 6, so nothing subscribed its derived stream:
+    /// the pane sat on the spinner forever while the kline seed painted a
+    /// foreign timeline (cold-open hang, handoff 2026-07-05 §2.3). Also
+    /// stamps `bars_source = FootprintOhlc` so the kline-family write gates
+    /// drop the parallel kline seed for these bubbles.
+    pub(crate) fn ignite_footprint_windows(&mut self) {
+        let targets: Vec<(mlc_core::state::ChartId, String, String, mlc_core::instrument::AccountType, &'static str)> =
+            self.panel_app.panel_grid.containers().iter()
+                .filter_map(|(cid, w)| {
+                    if self.chart_type_for_chart(*cid) != Some("footprint") { return None; }
+                    let sym = self.symbol_for_chart(*cid)?;
+                    if sym.is_empty() { return None; }
+                    let exch = self.exchange_for_chart(*cid)?;
+                    let at = self.account_type_for_chart(*cid)?;
+                    let iv = self.panels_store.chart_panel.get(&w.chart_panel_id)
+                        .map(|p| p.chart_type_interval)
+                        .unwrap_or("1m");
+                    Some((*cid, sym.to_string(), exch.to_string(), at, iv))
+                })
+                .collect();
+        for (cid, sym, exch, at, iv) in targets {
+            let eid = digdigdig3::ExchangeId::from_str(&exch)
+                .unwrap_or(digdigdig3::ExchangeId::Binance);
+            if !self.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
+                continue;
+            }
+            let at = mlc_backend_data_bridge::account_type_to_dig3(at);
+            if let Some(bid) = self.bubble_for_chart(cid) {
+                self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
+                    bubble.clear_bars();
+                    bubble.bars_source = mlc_backend::bubble::BarsSource::FootprintOhlc;
+                });
+            }
+            self.core.bridge.ensure_connector(eid);
+            self.core.bridge.request_footprint(eid, &sym, at, iv);
+            eprintln!("[ChartApp] ignited footprint sub for restored window {:?} iv={}", cid, iv);
         }
     }
 

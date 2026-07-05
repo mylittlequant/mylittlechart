@@ -1320,7 +1320,7 @@ impl ChartApp {
                     let bar_count = self.core.user().profile().domain.bar_count as usize;
                     let mut bars_requested: usize = 0;
                     // Phase 4 S2.7.1c: read via branch_meta (B6 tuple-collect flip).
-                    let window_bar_data: Vec<(String, String, mlc_core::state::Timeframe, mlc_core::instrument::AccountType)> = self
+                    let window_bar_data: Vec<(mlc_core::state::ChartId, String, String, mlc_core::state::Timeframe, mlc_core::instrument::AccountType, &'static str, &'static str)> = self
                         .panel_app
                         .panel_grid
                         .iter_containers()
@@ -1332,10 +1332,14 @@ impl ChartApp {
                                 .map(String::from).unwrap_or_default();
                             let tf = self.timeframe_for_chart(cid).unwrap_or_else(mlc_core::state::Timeframe::h1);
                             let at = self.account_type_for_chart(cid).unwrap_or_default();
-                            (sym, exch, tf, at)
+                            let ct = self.chart_type_for_chart(cid).unwrap_or("candles");
+                            let fp_iv = self.panels_store.chart_panel.get(&w.chart_panel_id)
+                                .map(|p| p.chart_type_interval)
+                                .unwrap_or("1m");
+                            (cid, sym, exch, tf, at, ct, fp_iv)
                         })
                         .collect();
-                    for (sym, exch, tf, at_typed) in &window_bar_data {
+                    for (cid, sym, exch, tf, at_typed, ct, fp_iv) in &window_bar_data {
                         let eid = digdigdig3::ExchangeId::from_str(&exch)
                             .unwrap_or(digdigdig3::ExchangeId::Binance);
                         if !self.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
@@ -1343,6 +1347,25 @@ impl ChartApp {
                         }
                         let at = mlc_backend_data_bridge::account_type_to_dig3(*at_typed);
                         self.core.bridge.ensure_connector(eid);
+                        if *ct == "footprint" {
+                            // A hydrated footprint window never went through
+                            // ChangeChartType's Step 6, so nothing ignited its
+                            // derived sub — the pane sat on the spinner forever
+                            // while the kline seed below painted a foreign
+                            // timeline (cold-open hang, handoff 2026-07-05
+                            // §2.3). Ignite the footprint pipeline instead of
+                            // the kline fetch, and stamp bar-series ownership
+                            // so the kline-family write gates hold.
+                            if let Some(bid) = self.bubble_for_chart(*cid) {
+                                self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
+                                    bubble.clear_bars();
+                                    bubble.bars_source = mlc_backend::bubble::BarsSource::FootprintOhlc;
+                                });
+                            }
+                            self.core.bridge.request_footprint(eid, sym, at, fp_iv);
+                            bars_requested += 1;
+                            continue;
+                        }
                         self.core.bridge.request_bars(eid, sym, tf, at, None, Some(bar_count), true);
                         bars_requested += 1;
                     }

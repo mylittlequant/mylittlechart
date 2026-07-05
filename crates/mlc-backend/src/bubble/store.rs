@@ -67,6 +67,7 @@ impl BubbleStore {
             connection_status: ConnectionStatus::default(),
             // === Per-Kind storage (Phase X0) ===
             bars: Vec::new(),
+            bars_source: crate::bubble::data_bubble::BarsSource::default(),
             footprint_bars: None,
             renko_bars: None,
             three_line_break: None,
@@ -111,6 +112,7 @@ impl BubbleStore {
             connection_status: ConnectionStatus::default(),
             // === Per-Kind storage (Phase X0) ===
             bars: Vec::new(),
+            bars_source: crate::bubble::data_bubble::BarsSource::default(),
             footprint_bars: None,
             renko_bars: None,
             three_line_break: None,
@@ -411,6 +413,13 @@ impl BubbleStore {
     // =========================================================================
 
     /// OHLC bars for a bubble. Empty slice if the bubble doesn't exist.
+    /// Current `bars` ownership marker (see [`super::data_bubble::BarsSource`]).
+    /// Unknown bubble reads as the default `Kline` — the safe side for the
+    /// kline-family writers that consult this before writing.
+    pub fn bars_source(&self, bid: BubbleId) -> super::data_bubble::BarsSource {
+        self.bubbles.get(&bid).map(|b| b.bars_source).unwrap_or_default()
+    }
+
     pub fn bars(&self, bid: BubbleId) -> &[mlc_core::Bar] {
         self.bubbles.get(&bid).map(|b| b.bars.as_slice()).unwrap_or(&[])
     }
