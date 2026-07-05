@@ -2931,8 +2931,6 @@ impl DataBridge {
             return;
         }
 
-        self.abort_derived_sub(exchange_id, symbol, account_type);
-
         let station = self.station.clone();
         let tx = self.tx.clone();
         let symbol_str = symbol.to_string();
@@ -2941,13 +2939,86 @@ impl DataBridge {
         let warm_state = self.derived_warm_state.clone();
         let seed_exhausted = self.derived_seed_exhausted.clone();
         let derived_subs = self.derived_subs.clone();
+        let deepen_in_flight = self.footprint_deepen_in_flight.clone();
         let series: SharedFootprintSeries = self.footprint_series
             .entry((exchange_id, account_type, symbol.to_string()))
             .or_insert_with(|| Arc::new(tokio::sync::RwLock::new(Vec::new())))
             .clone();
 
+        // In-place deepen (same path as the cold-open lazy deepen): the live
+        // sub keeps running while `rewarm_footprint` pages the doubled trade
+        // window off to the side; older bars land as ONE
+        // FootprintHistoryPrepended batch. The old teardown+respawn left the
+        // chart without live updates for the whole re-page and replayed the
+        // deep ring as thousands of per-point events. Teardown survives only
+        // as the fallback for a dead ring (sub broken → cold respawn IS the
+        // recovery).
         self.spawn_bg(async move {
+            let flight_key = (exchange_id, symbol_str.clone(), account_type);
+            {
+                let Ok(mut inflight) = deepen_in_flight.lock() else { return; };
+                if !inflight.insert(flight_key.clone()) {
+                    crate::dlog!(
+                        "[Bridge::request_deeper_footprint_seed] {:?} {} at={:?} — deepen already in flight, no-op",
+                        exchange_id, symbol_str, account_type,
+                    );
+                    return;
+                }
+            }
             let key = derived_stream_series_key(exchange_id, account_type, &symbol_wire, &stream);
+            let ring_alive = station
+                .series::<digdigdig3_station::data::FootprintPoint>(&key)
+                .is_some();
+            if ring_alive {
+                let older = station.rewarm_footprint(&key, &symbol_wire, new_warm_n).await;
+                crate::dlog!(
+                    "[Bridge::request_deeper_footprint_seed] {:?} {} at={:?} — rewarm spliced {} older bars (warm {} → {})",
+                    exchange_id, symbol_str, account_type, older.len(), current, new_warm_n,
+                );
+                if older.is_empty() {
+                    // Ring alive but nothing older produced — venue history
+                    // exhausted at this depth; stop the doubling ladder.
+                    if let Ok(mut exhausted) = seed_exhausted.lock() {
+                        exhausted.insert((exchange_id, symbol_str.clone(), account_type, stream.clone()));
+                    }
+                } else {
+                    if let Ok(mut ws) = warm_state.lock() {
+                        ws.insert(
+                            (exchange_id, symbol_str.clone(), account_type, stream.clone()),
+                            new_warm_n,
+                        );
+                    }
+                    {
+                        let mut w = series.write().await;
+                        let old = std::mem::take(&mut *w);
+                        let head = old.first().map(|p| p.open_time);
+                        let boundary_replaced = head.is_some_and(|h| {
+                            older.last().is_some_and(|p| p.open_time == h)
+                        });
+                        w.reserve(older.len() + old.len());
+                        w.extend(older.iter().cloned());
+                        w.extend(old.into_iter().skip(usize::from(boundary_replaced)));
+                    }
+                    let _ = tx.send(LiveUpdate::FootprintHistoryPrepended {
+                        exchange_id,
+                        account_type,
+                        symbol: symbol_str.clone(),
+                        points: older,
+                    });
+                }
+                if let Ok(mut inflight) = deepen_in_flight.lock() {
+                    inflight.remove(&flight_key);
+                }
+                return;
+            }
+
+            // Fallback: no live ring for the key — the sub is gone/broken;
+            // cold respawn at the doubled depth is the recovery path.
+            if let Ok(mut subs) = derived_subs.lock() {
+                if let Some(h) = subs.remove(&sub_key) {
+                    h.abort();
+                }
+            }
             if let Err(e) = station.force_unsubscribe_and_await(&key).await {
                 crate::dlog!(
                     "[Bridge::request_deeper_footprint_seed] force_unsubscribe_and_await failed {:?} {} at={:?}: {:?}",
@@ -2974,6 +3045,9 @@ impl DataBridge {
             }
 
             let ok_count = first_ok_rx.await.unwrap_or(0);
+            if let Ok(mut inflight) = deepen_in_flight.lock() {
+                inflight.remove(&flight_key);
+            }
             if ok_count == 0 {
                 if let Ok(mut exhausted) = seed_exhausted.lock() {
                     exhausted.insert((exchange_id, symbol_str, account_type, stream));
