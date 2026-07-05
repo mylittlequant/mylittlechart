@@ -2067,7 +2067,12 @@ impl ChartContainer {
             && self.viewport.bar_spacing > 0.0
             && self.viewport.chart_width > 0.0
         {
-            const MIN_VISIBLE_DATA_BARS: f64 = 3.0;
+            // Owner 2026-07-06: 3-bar minimum was too aggressive — at
+            // deep zoom (2 visible bars) the clamp blocked Manual-mode
+            // future-scroll while ≥3 bars were still off-screen to the
+            // left. The original intent of the clamp was «keep the last
+            // bar visible»; one bar is sufficient for that.
+            const MIN_VISIBLE_DATA_BARS: f64 = 1.0;
             let max_vs = (self.viewport.bar_count as f64 - MIN_VISIBLE_DATA_BARS).max(0.0);
             if self.viewport.view_start > max_vs {
                 self.viewport.view_start = max_vs;
