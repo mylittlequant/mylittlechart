@@ -775,27 +775,41 @@ impl ChartContainer {
         if self.viewport.chart_height <= 0.0 || series.is_empty() {
             return;
         }
-        let Some((last_low, last_high)) = series.y_range(series.len().saturating_sub(1)..series.len())
-        else { return };
+        // Owner doctrine 2026-07-06: F Y guard tracks the LIVE TICK PRICE
+        // (last close), not the last bar's high/low. Tick can move between
+        // bar h/l values or breach either as it moves — the guard must
+        // catch it on the tick itself, universally, regardless of chart
+        // type. Series-family agnostic: last-element close for bar-shaped
+        // series, last-element value for scalar series.
+        let last_price = match series {
+            crate::active_series::ActiveSeries::Bars(s) => s.last().map(|b| b.close),
+            crate::active_series::ActiveSeries::Renko(s) => s.last().map(|b| if b.up { b.top } else { b.bottom }),
+            crate::active_series::ActiveSeries::Pnf(s) => s.last().map(|c| if c.is_x { c.top } else { c.bottom }),
+            crate::active_series::ActiveSeries::Kagi(s) => s.last().map(|k| k.end_price),
+            crate::active_series::ActiveSeries::Tlb(s) => s.last().map(|l| l.high()),
+            crate::active_series::ActiveSeries::Cvd(s) => s.last().map(|c| c.value),
+            crate::active_series::ActiveSeries::Tpo(_) => None,
+        };
+        let Some(tick) = last_price else { return };
         let cur_min = self.price_scale.price_min;
         let cur_max = self.price_scale.price_max;
         let cur_range = cur_max - cur_min;
         if cur_range <= 0.0 || !cur_range.is_finite() {
-            // Degenerate range — fall back to a plain reconcile so the
-            // scale can bootstrap; the growth-only invariant holds only
-            // when the current range is a real interval.
+            // Degenerate range — bootstrap via A-mode fit so the scale has
+            // real bounds; growth-only guard only makes sense afterwards.
+            let saved = self.price_scale.scale_mode;
+            self.price_scale.scale_mode = ScaleMode::Auto;
             self.calc_auto_scale(series);
+            self.price_scale.scale_mode = saved;
             return;
         }
-        // 2% of pane height, converted from pixels back to price units.
+        // 2% of pane height, in price units. cur_range spans chart_height
+        // pixels, so 2% * chart_height * price_per_px == 0.02 * cur_range.
         const FOCUS_Y_GUARD_RATIO: f64 = 0.02;
-        let price_per_px = cur_range / self.viewport.chart_height;
-        let guard_price = FOCUS_Y_GUARD_RATIO * self.viewport.chart_height * price_per_px;
-        // Grow-only: last bar's high wants `>= guard_price` room above it,
-        // low wants the same below it. `price_min` moves DOWN, `price_max`
-        // moves UP, never the other direction.
-        let want_max = last_high + guard_price;
-        let want_min = last_low - guard_price;
+        let guard_price = FOCUS_Y_GUARD_RATIO * cur_range;
+        // Grow-only: tick wants `>= guard_price` room to both bounds.
+        let want_max = tick + guard_price;
+        let want_min = tick - guard_price;
         if want_max > cur_max {
             self.price_scale.price_max = want_max;
         }
