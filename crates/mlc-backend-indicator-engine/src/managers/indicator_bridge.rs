@@ -395,6 +395,30 @@ mod tests {
     }
 
     #[test]
+    fn test_volume_definition_registered() {
+        // Owner report 2026-07-05: VOLUME neither auto-added nor in the
+        // picker. This pins the mli→definitions hop: the catalog VOLUME
+        // signature must arrive as an overlay histogram definition.
+        let bridge = IndicatorBridge::new();
+        let vol = bridge.get_definition("VOLUME").expect("VOLUME must be in the catalog");
+        assert_eq!(vol.type_id, "volume");
+        assert!(vol.overlay, "VOLUME must render in the main pane");
+        assert_eq!(vol.histogram_style, HistogramStyle::FromBottom);
+        assert!(
+            vol.outputs.iter().any(|o| matches!(o.output_type, IndicatorOutputType::Histogram)),
+            "VOLUME output must be a histogram"
+        );
+        // The picker/definitions map is fed by get_all_definitions (the
+        // per-category enumeration), NOT by get_definition's direct id
+        // lookup — pin that hop separately.
+        let all = bridge.get_all_definitions();
+        assert!(
+            all.iter().any(|d| d.type_id == "volume"),
+            "VOLUME must be present in get_all_definitions (picker source)"
+        );
+    }
+
+    #[test]
     fn test_get_overlay_definitions() {
         let bridge = IndicatorBridge::new();
         let overlays = bridge.get_overlay_definitions();

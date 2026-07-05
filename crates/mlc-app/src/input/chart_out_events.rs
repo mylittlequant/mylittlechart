@@ -6,6 +6,16 @@ use crate::{ChartApp, sglog};
 use mlc_core::UIStyle;
 use mlc_core::state::modal_state::OpenModal;
 
+/// Wasm-diagnosable counters for the default-companion mechanic (exported
+/// via MLC_DEBUG): how many times the all-windows sync ran this session,
+/// and how many companion adds succeeded / silently failed.
+pub static COMPANION_SYNC_RUNS: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0);
+pub static COMPANION_ADD_OK: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0);
+pub static COMPANION_ADD_FAIL: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0);
+
 impl ChartApp {
     /// Drain the cure work LoadPreset's warm path deferred. Called by the host
     /// AFTER the first frame following a preset swap has been presented so
@@ -2435,6 +2445,11 @@ impl ChartApp {
 
     /// Run the default-companion reconcile for EVERY open window.
     ///
+    /// [`COMPANION_SYNC_RUNS`] / [`COMPANION_ADD_OK`] / [`COMPANION_ADD_FAIL`]
+    /// are wasm-diagnosable counters (exported via MLC_DEBUG) — owner
+    /// report 2026-07-05: VOLUME never auto-appears; these pin whether the
+    /// sync ran at all vs the add silently failing.
+    ///
     /// `sync_default_indicators_for_chart_type` only fires inside
     /// ChangeChartType — a restored window never passes through it, so a
     /// hydrated candles chart came up without its VOLUME companion and a
@@ -2442,6 +2457,7 @@ impl ChartApp {
     /// Called from the startup / new-window / LoadPreset post-load paths,
     /// right after `ignite_footprint_windows`.
     pub(crate) fn sync_default_indicators_for_all_windows(&mut self) {
+        COMPANION_SYNC_RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let targets: Vec<(mlc_core::state::ChartId, &'static str)> =
             self.panel_app.panel_grid.containers().keys()
                 .map(|cid| (*cid, self.chart_type_for_chart(*cid).unwrap_or("candles")))
@@ -2514,6 +2530,11 @@ impl ChartApp {
             // `info.id().to_lowercase()`) — passing "CVD"/"VOLUME" verbatim
             // returns None silently. Always add by the lowercased id.
             let new_id_opt = self.core.indicators_mut().add(Some(bid), &lower);
+            if new_id_opt.is_some() {
+                COMPANION_ADD_OK.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            } else {
+                COMPANION_ADD_FAIL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             if let Some(new_id) = new_id_opt {
                 if !bars.is_empty() {
                     self.core.indicators_mut().recalc_bubble(bid, &bars);

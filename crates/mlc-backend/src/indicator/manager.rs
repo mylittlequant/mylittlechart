@@ -111,27 +111,23 @@ impl IndicatorManager {
             self.definitions.insert(definition.type_id.clone(), definition);
         }
 
-        self.register_legacy_aliases();
     }
 
-    /// Migration aliases for type_ids that used to resolve through a
-    /// bypass path that no longer exists.
+    /// Normalize legacy type_ids at LOOKUP time — never stored in
+    /// `definitions` (a stored alias entry duplicates the row in every
+    /// definitions-driven UI list; owner report 2026-07-05: two identical
+    /// "VOLUME" rows in the indicator picker).
     ///
-    /// `builtin_volume` — pre-cutover hardcoded volume-histogram bypass
-    /// (compute-builtin, `machine_id: None`, copied `bar.volume` directly).
-    /// Removed in favor of the real mli catalog entry `"VOLUME"`
-    /// (`BarIndicatorId::Volume`, lowercased type_id `"volume"`), which
-    /// computes through the normal `IndicatorCalculator` path and renders
-    /// identically (`overlay: true`, single histogram output "volume",
-    /// `HistogramStyle::FromBottom` → `draw_volume_overlay`). Persisted
-    /// instances with type_id "builtin_volume" (old presets/snapshots) must
-    /// keep resolving — `IndicatorInstance::new` copies `type_id` from the
-    /// definition's OWN field, not the lookup key, so any instance created
-    /// via this alias normalizes to `type_id: "volume"` immediately. Hard
-    /// cutover — no parallel builtin compute path remains.
-    fn register_legacy_aliases(&mut self) {
-        if let Some(volume_def) = self.definitions.get("volume").cloned() {
-            self.definitions.insert("builtin_volume".to_string(), volume_def);
+    /// `builtin_volume` — pre-cutover hardcoded volume-histogram bypass,
+    /// replaced by the real mli catalog entry (type_id `"volume"`).
+    /// Persisted instances with the old id (old presets/snapshots) keep
+    /// resolving through this normalization; `IndicatorInstance::new`
+    /// copies `type_id` from the definition's OWN field ("volume"), so the
+    /// legacy id disappears from live state on first restore.
+    fn normalize_legacy_type_id(type_id: &str) -> &str {
+        match type_id {
+            "builtin_volume" => "volume",
+            other => other,
         }
     }
 
@@ -168,6 +164,7 @@ impl IndicatorManager {
     /// `assign_bubble` to bind it to a bubble — until then it lives in the
     /// "no-bubble" bucket (key 0).
     pub fn create_instance(&mut self, type_id: &str) -> Option<u64> {
+        let type_id = Self::normalize_legacy_type_id(type_id);
         let definition = self.definitions.get(type_id)?.clone();
         let id = self.next_id;
         self.next_id += 1;
@@ -188,6 +185,7 @@ impl IndicatorManager {
             return false;
         }
 
+        let type_id = Self::normalize_legacy_type_id(type_id);
         let definition = match self.definitions.get(type_id) {
             Some(d) => d.clone(),
             None => return false,

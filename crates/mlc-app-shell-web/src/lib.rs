@@ -435,6 +435,13 @@ fn run_render_loop(
                 let _ = js_sys::Reflect::set(&dbg, &"instances".into(), &inst_list.into());
                 let def_count = st.chart.core.indicators().definitions().len() as f64;
                 let _ = js_sys::Reflect::set(&dbg, &"def_count".into(), &def_count.into());
+                use std::sync::atomic::Ordering::Relaxed;
+                let _ = js_sys::Reflect::set(&dbg, &"comp_sync_runs".into(),
+                    &(mlc_app::input::chart_out_events::COMPANION_SYNC_RUNS.load(Relaxed) as f64).into());
+                let _ = js_sys::Reflect::set(&dbg, &"comp_add_ok".into(),
+                    &(mlc_app::input::chart_out_events::COMPANION_ADD_OK.load(Relaxed) as f64).into());
+                let _ = js_sys::Reflect::set(&dbg, &"comp_add_fail".into(),
+                    &(mlc_app::input::chart_out_events::COMPANION_ADD_FAIL.load(Relaxed) as f64).into());
             }
 
             // Compare overlay diag — for debugging the compare-chart retry path.
