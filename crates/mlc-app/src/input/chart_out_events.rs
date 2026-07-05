@@ -2488,14 +2488,18 @@ impl ChartApp {
             if existing_type_ids.iter().any(|t| *t == lower) {
                 continue;
             }
-            let new_id_opt = self.core.indicators_mut().add(Some(bid), id);
+            // `create_instance` looks definitions up CASE-SENSITIVELY and the
+            // map is keyed by the lowercased catalog id (indicator_bridge.rs
+            // `info.id().to_lowercase()`) — passing "CVD"/"VOLUME" verbatim
+            // returns None silently. Always add by the lowercased id.
+            let new_id_opt = self.core.indicators_mut().add(Some(bid), &lower);
             if let Some(new_id) = new_id_opt {
                 if !bars.is_empty() {
                     self.core.indicators_mut().recalc_bubble(bid, &bars);
                 }
                 self.push_undo_command(mlc_core::Command::AddIndicator {
                     instance_id: new_id,
-                    type_id: id.to_string(),
+                    type_id: lower.clone(),
                     params_json: String::new(),
                 });
                 eprintln!(

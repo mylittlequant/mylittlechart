@@ -2718,7 +2718,9 @@ impl ChartApp {
                     let bid = app.panel_app.panel_grid.containers()
                         .get(&chart_id)
                         .map(|w| w.current_tag_id);
-                    app.core.indicators_mut().add(bid, "VOLUME");
+                    // definitions map is keyed by the LOWERCASED catalog id —
+                    // create_instance's lookup is case-sensitive.
+                    app.core.indicators_mut().add(bid, "volume");
                 }
 
                 bridge.ensure_connector(exchange_id);

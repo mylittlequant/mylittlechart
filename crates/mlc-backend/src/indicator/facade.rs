@@ -596,23 +596,28 @@ impl<'a> IndicatorsMut<'a> {
 
         if let Some(cvd) = self.bubbles.cvd_line(bid) {
             if !cvd.is_empty() {
-                // cvd_at_or_before(ts_ms): last sample with ts_ms <= the
-                // given bound. Samples are append-ordered (ascending ts_ms).
-                let cvd_at_or_before = |bound_ms: i64| -> f64 {
-                    cvd.iter()
-                        .rev()
-                        .find(|s| s.ts_ms <= bound_ms)
-                        .map(|s| s.value)
-                        .unwrap_or(0.0)
+                // Two-pointer sweep: samples are append-ordered (ascending
+                // ts_ms) and the per-bar bounds are monotonically increasing,
+                // so one forward cursor covers all bars in O(bars + samples).
+                // A per-bar rev-scan is O(bars × samples) — with a deep
+                // sample line and 2000 bars that's real jank on every recalc.
+                let mut cursor = 0usize;
+                let mut last_val = 0.0_f64;
+                let mut advance_to = |bound_ms: i64| -> f64 {
+                    while cursor < cvd.len() && cvd[cursor].ts_ms <= bound_ms {
+                        last_val = cvd[cursor].value;
+                        cursor += 1;
+                    }
+                    last_val
                 };
 
                 let mut out = Vec::with_capacity(bars.len());
-                let mut prev_cvd = cvd_at_or_before(bars[0].timestamp * 1000 - 1);
+                let mut prev_cvd = advance_to(bars[0].timestamp * 1000 - 1);
                 for i in 0..bars.len() {
                     // bar_end = next bar's start (exclusive), or i64::MAX
                     // for the last bar (= "as of the latest known sample").
                     let bar_end_ms = bars.get(i + 1).map(|b| b.timestamp * 1000).unwrap_or(i64::MAX);
-                    let cur_cvd = cvd_at_or_before(bar_end_ms);
+                    let cur_cvd = advance_to(bar_end_ms);
                     let delta = cur_cvd - prev_cvd;
                     out.push((delta.max(0.0), (-delta).max(0.0)));
                     prev_cvd = cur_cvd;
